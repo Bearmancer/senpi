@@ -120,6 +120,7 @@ describe("builtin compaction canonical routes", () => {
 		await handler(
 			{
 				type: "before_agent_start",
+				trigger: "prompt",
 				prompt: "incoming prompt ".repeat(1_500),
 				systemPrompt: "You are senpi.",
 				systemPromptOptions: { cwd: process.cwd() },

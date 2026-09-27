@@ -9,6 +9,7 @@ import {
 	type KernelToHostMessage,
 } from "../../bridge/protocol.ts";
 import { applySessionEnvironment, type SessionEnvironment } from "../session-env.ts";
+import type { KernelPreludePlan } from "../shared/kernel-prelude-plan.ts";
 import { type CodemodeRuntimeAssetEnvironment, requireCodemodeRuntimeAsset } from "../shared/runtime-asset.ts";
 import {
 	defaultSpawn,
@@ -19,6 +20,7 @@ import {
 	numberOrNull,
 	signalOrNull,
 	splitCommand,
+	sweepProcessGroup,
 	waitForExit,
 	withTimeout,
 } from "./process.ts";
@@ -29,6 +31,7 @@ export interface PythonTransportRunInput {
 	readonly cellId: string;
 	readonly code: string;
 	readonly timeoutMs?: number;
+	readonly preludePlan?: KernelPreludePlan;
 }
 
 export interface PythonTransportOptions {
@@ -114,7 +117,11 @@ export class PythonKernelTransport {
 	}
 
 	run(input: PythonTransportRunInput): void {
-		this.#write({ type: "run", cellId: input.cellId, code: input.code, timeoutMs: input.timeoutMs });
+		const preludes = input.preludePlan && {
+			install: input.preludePlan.install.map(({ exports, python }) => ({ exports: [...exports], python })),
+			remove: [...input.preludePlan.remove],
+		};
+		this.#write({ type: "run", cellId: input.cellId, code: input.code, timeoutMs: input.timeoutMs, preludes });
 	}
 
 	interrupt(reason: string): void {
@@ -145,7 +152,10 @@ export class PythonKernelTransport {
 		} catch (error) {
 			if (!(error instanceof Error)) throw error;
 		}
-		if (!(await exited)) await hardKill(this.#child, hardKillWaitMs);
+		// hardKill kills the whole group; a graceful leader exit does not, so sweep it
+		// to retire any subprocess the cell left running in the kernel's process group.
+		if (await exited) sweepProcessGroup(this.#child);
+		else await hardKill(this.#child, hardKillWaitMs);
 	}
 
 	retire(): Promise<void> {

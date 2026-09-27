@@ -2,8 +2,21 @@ import type { ExtensionAPI, ExtensionContext, ToolDefinition } from "../../types
 import { WAKE_SOURCE_STATE_EVENT, type WakeSourceStateEvent } from "../monitor-state-event.ts";
 import { TOOL_NAMES } from "./family.ts";
 import { formatResultDetails, formatResultText, formatUserMessage } from "./format.ts";
+import {
+	ASK_USER_ASKED_EVENT,
+	ASK_USER_QUESTION_ENTRY,
+	ASK_USER_SETTLEMENT_ENTRY,
+	type AskUserAskedEvent,
+	type AskUserQuestionEntry,
+	emitAskUserNotification,
+} from "./notify.ts";
 import { createPendingQuestion } from "./pending.ts";
-import { getPendingQuestions, type QuestionDialogOptions, registerPendingQuestion } from "./registry.ts";
+import {
+	getPendingQuestions,
+	type QuestionDialogOptions,
+	queueQuestionOutcome,
+	registerPendingQuestion,
+} from "./registry.ts";
 import { renderCall, renderResult } from "./render.ts";
 import {
 	AskUserSchemaError,
@@ -40,42 +53,73 @@ function result(
  * question stays silent: it was dismissed, superseded, or aborted.
  */
 function deliverAnswer(
-	pi: ExtensionAPI,
+	pi: Pick<ExtensionAPI, "sendUserMessage" | "events">,
 	ctx: ExtensionContext,
 	request: QuestionRequest,
 	response: QuestionResponse,
+	variant: "codex" | "claude",
 ): void {
 	if (response.status === "cancelled") return;
 	pi.sendUserMessage(formatUserMessage(response, request.requestId, request.questions), {
 		deliverAs: ctx.isIdle() ? "followUp" : "steer",
 	});
+	void emitAskUserNotification(pi, ctx, request, response, variant);
 }
-function emitWake(pi: ExtensionAPI, sessionId: string) {
+function emitWake(pi: Pick<ExtensionAPI, "events">, sessionId: string) {
 	const entries = getPendingQuestions(sessionId).filter((e) => !e.request.waitForAnswer);
 	const event: WakeSourceStateEvent = {
 		source: "ask-user",
 		activeCount: entries.length,
 		items: entries.map((e) => ({
 			id: e.request.requestId,
+			deadlineAtMs: e.pending.deadlineAtMs,
 			description: e.request.questions.map((q) => q.header).join(", "),
 		})),
 	};
 	pi.events.emit(WAKE_SOURCE_STATE_EVENT, event);
 }
-function startQuestion(
-	pi: ExtensionAPI,
-	ctx: ExtensionContext,
+export function startQuestion(
+	initialPi: Pick<ExtensionAPI, "sendUserMessage" | "events" | "appendEntry">,
+	initialCtx: ExtensionContext,
 	request: QuestionRequest,
 	signal: AbortSignal | undefined,
-	state: AskUserState,
+	initialState: AskUserState,
+	variant: "codex" | "claude",
+	{ resuming = false }: { resuming?: boolean } = {},
 ) {
+	let pi = initialPi;
+	let ctx = initialCtx;
+	let state = initialState;
+	let notify = ctx.ui.notify.bind(ctx.ui);
 	const question = ctx.ui.question;
-	if (!question) throw new Error("Question UI is unavailable");
+	if (!question && !resuming) throw new Error("Question UI is unavailable");
 	const sessionId = ctx.sessionManager.getSessionId();
-	const controller = new AbortController();
+	const existing = getPendingQuestions(sessionId).find((entry) => entry.request.requestId === request.requestId);
+	if (existing) return existing.completion;
+	const orphaned = (): QuestionResponse => ({
+		status: "orphaned-after-restart",
+		answers: {},
+		unanswered: request.questions.map((question) => question.id),
+	});
+	let controller = new AbortController();
+	let attached = true;
+	let ownerBound = true;
+	let generation = 0;
 	const completion = Promise.withResolvers<QuestionResponse>();
 	let settled = false;
 	let unregister = () => {};
+	const publish = (
+		ownerPi: Pick<ExtensionAPI, "sendUserMessage" | "events" | "appendEntry">,
+		ownerCtx: ExtensionContext,
+		response: QuestionResponse,
+	) => {
+		if (!request.waitForAnswer)
+			ownerPi.appendEntry(ASK_USER_SETTLEMENT_ENTRY, {
+				requestId: request.requestId,
+				status: response.status,
+			});
+		if (!request.waitForAnswer || resuming) deliverAnswer(ownerPi, ownerCtx, request, response, variant);
+	};
 	const finish = (response: QuestionResponse) => {
 		if (settled) return;
 		settled = true;
@@ -83,6 +127,18 @@ function startQuestion(
 		unregister();
 		signal?.removeEventListener("abort", abort);
 		if (!request.waitForAnswer) emitWake(pi, sessionId);
+		pi.events.emit("herdr:blocked", { active: false, id: request.requestId });
+		if (ownerBound) publish(pi, ctx, response);
+		else {
+			// The old API is invalid after reload. End the request at its deadline,
+			// notify the still-live UI, and deliver through the next bound runner.
+			queueQuestionOutcome(sessionId, (nextPi, nextCtx) => publish(nextPi, nextCtx, response));
+			if (response.status !== "cancelled")
+				notify(
+					`Question ${request.requestId} ended (${response.status}) while reload was incomplete. Its outcome will reach the model when the session starts again.`,
+					"error",
+				);
+		}
 		completion.resolve(response);
 		// This extension owns the authoritative idle timer (pending.ts), so a UI
 		// bridge that is still waiting learns the outcome only from this abort.
@@ -97,13 +153,51 @@ function startQuestion(
 		idleTimeoutMs: request.timeoutMs,
 		onTimeout: finish,
 	});
-	const cancel = (message?: string) => {
-		const response = pending.cancel();
+	const cancel = (message?: string, reportDetachedLoss = false) => {
+		const lost = !attached && reportDetachedLoss;
+		const response = pending.cancel(lost ? "orphaned-after-restart" : "cancelled");
 		finish(message ? { ...response, comment: message } : response);
+		if (lost) notify(message ?? "The pending question could not be restored.", "error");
 	};
 	const abort = () => cancel();
-	unregister = registerPendingQuestion(sessionId, { request, pending, completion: completion.promise, cancel });
+	unregister = registerPendingQuestion(sessionId, {
+		request,
+		pending,
+		completion: completion.promise,
+		cancel,
+		detach() {
+			if (!attached || settled) return;
+			attached = false;
+			ownerBound = false;
+			generation++;
+			controller.abort("reload");
+		},
+		rebind(nextPi, nextCtx, nextState) {
+			pi = nextPi;
+			ctx = nextCtx;
+			state = nextState;
+			notify = ctx.ui.notify.bind(ctx.ui);
+			ownerBound = true;
+		},
+		reattach() {
+			if (attached || settled) return;
+			attached = true;
+			controller = new AbortController();
+			attach();
+		},
+	});
+	pi.appendEntry<AskUserQuestionEntry>(ASK_USER_QUESTION_ENTRY, {
+		requestId: request.requestId,
+		headers: request.questions.map((question) => question.header),
+	});
 	if (!request.waitForAnswer) emitWake(pi, sessionId);
+	pi.events.emit(ASK_USER_ASKED_EVENT, { ctx, request, variant } satisfies AskUserAskedEvent);
+	const first = request.questions[0];
+	pi.events.emit("herdr:blocked", {
+		active: true,
+		label: first ? `${first.header} — ${first.question}` : "Question",
+		id: request.requestId,
+	});
 	signal?.addEventListener("abort", abort, { once: true });
 	let draft: { answers: QuestionResponse["answers"]; comment?: string } = { answers: {} };
 	const opts: QuestionDialogOptions = {
@@ -111,9 +205,11 @@ function startQuestion(
 		signal: controller.signal,
 		deliver: request.waitForAnswer ? "tool-result" : "user-message",
 		hardDeadlineAtMs: Date.now() + 7_200_000,
+		getDeadlineAtMs: () => pending.deadlineAtMs,
 		onProgress: (progress) => {
 			draft = { ...draft, ...progress, answers: progress.answers ?? draft.answers };
 			pending.touch(draft);
+			if (!request.waitForAnswer) emitWake(pi, sessionId);
 		},
 	};
 	const accept = (response: QuestionResponse) => {
@@ -134,18 +230,50 @@ function startQuestion(
 	const fail = (error: unknown) => {
 		if (settled) return;
 		const message = `Question UI failed: ${error instanceof Error ? error.message : String(error)}`;
+		if (resuming || generation > 0) {
+			accept({ ...orphaned(), comment: message });
+			ctx.ui.notify(message, "error");
+			return;
+		}
 		cancel(message);
 		ctx.ui.notify(message, "error");
 	};
-	if (signal?.aborted) abort();
-	else {
+	const attach = () => {
+		const currentGeneration = generation;
+		const currentQuestion = ctx.ui.question;
+		if (!currentQuestion) {
+			accept(orphaned());
+			if (generation > 0)
+				ctx.ui.notify("The pending question could not be restored: question UI is unavailable.", "error");
+			return;
+		}
 		try {
-			question.call(ctx.ui, request, opts).then(accept, fail);
+			currentQuestion
+				.call(ctx.ui, request, {
+					...opts,
+					signal: controller.signal,
+					// The first attachment owns the whole budget; a re-attachment inherits what the
+					// authoritative idle timer has left, so a reload cannot hand the question a fresh one.
+					timeout: currentGeneration === 0 ? request.timeoutMs : pending.remainingMs(Date.now()),
+					initialDraft: draft,
+					onProgress: (progress) => {
+						if (attached && generation === currentGeneration) opts.onProgress(progress);
+					},
+				})
+				.then(
+					(response) => {
+						if (attached && generation === currentGeneration) accept(response);
+					},
+					(error: unknown) => {
+						if (attached && generation === currentGeneration) fail(error);
+					},
+				);
 		} catch (error: unknown) {
 			fail(error);
 		}
-	}
-	if (!request.waitForAnswer) void completion.promise.then((response) => deliverAnswer(pi, ctx, request, response));
+	};
+	if (signal?.aborted) abort();
+	else attach();
 	return completion.promise;
 }
 export function createAskUserTool(variant: AskUserVariant, pi: ExtensionAPI, state: AskUserState): ToolDefinition {
@@ -195,13 +323,16 @@ export function createAskUserTool(variant: AskUserVariant, pi: ExtensionAPI, sta
 				pi.setActiveTools(pi.getActiveTools().filter((name) => !Object.values(TOOL_NAMES).includes(name)));
 				return result(variant, unavailable, request);
 			}
-			const completion = startQuestion(pi, ctx, request, signal, state);
+			const completion = startQuestion(pi, ctx, request, signal, state, variant);
 			if (!request.waitForAnswer)
 				return {
 					content: [{ type: "text", text: "Question accepted; the answer will arrive as a user message." }],
 					details: { accepted: true, requestId: request.requestId, status: "pending" },
 				};
 			const response = await completion;
+			if (response.status !== "cancelled") {
+				void emitAskUserNotification(pi, ctx, request, response, variant);
+			}
 			return result(
 				variant,
 				response,

@@ -1,5 +1,27 @@
 # changes.md — websearch (vendored)
 
+## 2026-09-24 - Sync with pi-websearch 0.4.0: Kagi and SERPdive providers (senpi#2079)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/websearch/websearch/providers/kagi.ts` (new, pi-websearch#9): POSTs to `https://kagi.com/api/v1/search` with bearer auth, caps `limit` at 20, maps domain filters to `lens.sites_included` / `lens.sites_excluded`, and normalizes `data.search[]` with `time` as `publishedAt`.
+- `packages/coding-agent/src/core/extensions/builtin/websearch/websearch/providers/serpdive.ts` (new, pi-websearch#7): POSTs to `https://api.serpdive.com/v1/search` with bearer auth, caps `max_results` at 10, folds domain filters into the query, and uses `results[].content` as the snippet.
+- `packages/coding-agent/src/core/extensions/builtin/websearch/websearch/types.ts`, `config.ts`, `provider-endpoints.ts`, `providers.ts`: `kagi` and `serpdive` join the provider union, config validation (both require `apiKey`), default endpoints and the module registry.
+- Upstream's dot-to-bracket property access, `NativeAuthResult` nullable headers, and `ExtensionContext`-typed `tool.ts` context were already equivalent in senpi or are superseded by the senpi adaptations below; not re-applied.
+- `packages/coding-agent/test/suite/websearch-kagi-serpdive-providers.test.ts` ports upstream's provider request/normalization and config-validation cases.
+
+### Why
+
+senpi#2079 adopts pi-websearch 0.4.0; the two providers are the only runtime changes in that release.
+
+### Why an extension could not handle it
+
+The provider registry and `SearchProvider` union are private to this builtin; another extension cannot add a provider to its routing.
+
+### Expected merge conflict zones
+
+- LOW in `websearch/types.ts`, `websearch/config.ts` `PROVIDERS`, `websearch/provider-endpoints.ts`, `websearch/providers.ts` (one line each per provider).
+
 ## Senpi merge repair (2026-08-13)
 
 - Native route discovery accepts registry `ProviderHeaders`, preserving nullable deletion markers while it
@@ -8,7 +30,7 @@
 - This remains a Senpi adaptation because the builtin bridges Senpi's model registry into the vendored
   extension; re-vendoring can overwrite `native.ts` and `tool.ts`.
 
-Vendored from [`code-yeongyu/pi-websearch`](https://github.com/code-yeongyu/pi-websearch) at `7fb28c31623bafb77f437095d57315c26f202dc2` (0.3.0).
+Vendored from [`code-yeongyu/pi-websearch`](https://github.com/code-yeongyu/pi-websearch) at `7fb28c31623bafb77f437095d57315c26f202dc2` (0.3.0); the 0.4.0 providers (`d0ca9b5`) were ported by hand on 2026-09-24.
 
 ## Senpi adaptations vs upstream
 

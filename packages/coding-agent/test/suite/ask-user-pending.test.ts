@@ -126,6 +126,17 @@ describe("createPendingQuestion", () => {
 		expect(pending.state).toBe("answered");
 	});
 
+	it("(e2) submit(partialAnswers) is answered with unanswered ids", () => {
+		const pending = createSut();
+		const result = pending.submit({ q1: { selected: ["A"] } });
+		expect(result).toEqual({
+			status: "answered",
+			answers: { q1: { selected: ["A"] } },
+			unanswered: ["q2"],
+		});
+		expect(pending.state).toBe("answered");
+	});
+
 	it('(f) submit({}, "") returns false and stays pending', () => {
 		const pending = createSut();
 		expect(pending.submit({}, "")).toBe(false);

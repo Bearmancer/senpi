@@ -1,3 +1,24 @@
+## 2026-09-16 - Bound one compaction and settle its stream inside the watchdog (#1741)
+
+### What changed
+
+- `packages/coding-agent/src/core/compaction/stream-watchdog.ts`: `consumeStreamWithIdleTimeout` gains an optional `settle()` callback and returns its value, awaiting the stream's final `result()` under the SAME idle and wall-clock timers as iteration (overloads keep the settle-less call sites at `Promise<void>`). Adds the compaction-wide bound `SUMMARIZATION_TOTAL_BUDGET_MS` (900,000 ms), `summarizationTotalBudgetMs(attemptOverrideMs?)`, `SummarizationTotalBudgetError`, and `createSummarizationDeadline(totalBudgetMs, now?)` whose `attemptBudgetMs()` clamps one attempt to the compaction's remaining budget and throws once nothing is left.
+- `packages/coding-agent/src/core/compaction/compaction.ts`: `completeSummarization` returns the value settled inside `consumeStreamWithIdleTimeout` instead of awaiting `responseStream.result()` after the watchdog's `finally` cleared its timers.
+
+### Why
+
+- Issue #1741: final `result()` settlement sat outside the watchdog, so a provider whose iterator ends without a terminal `done`/`error` event parked compaction forever with no timer armed at all.
+- The per-attempt budget is size-scaled (2 ms per estimated input token, 30-minute ceiling) and every retry re-arms it, so a large session's total wait grew with the very thing that made it slow. One compaction now shares a single deadline that never scales with the input; only an explicit `compaction.summarizationMaxDurationMs` override raises it.
+
+### Why an extension could not handle it
+
+- The watchdog is core compaction mechanics shared by the core route and the builtin extension route; an extension cannot arm a timer around a stream core owns, nor bound an operation whose attempts core and the extension split between them.
+
+### Expected merge conflict zones
+
+- MEDIUM: `stream-watchdog.ts` `consumeStreamWithIdleTimeout` signature and its loop exits.
+- LOW: `compaction.ts` `completeSummarization` stream settlement.
+
 ## 2026-09-07 - Effective admission reserve (#7921 case 2)
 
 ### What changed
@@ -638,3 +659,21 @@ If upstream changes branch summary preparation or adds new branch summary data s
 
 - LOW: `compaction.ts` around `completeSummarization` and the `generateSummary*` signatures.
 - LOW: `compaction-settings.ts`, `compaction-settings-access.ts`, and `compaction-settings-resolver.ts` settings contracts.
+
+## 2026-09-12 - Upstream sync (upstream/main@71dca871) integration repairs
+
+### What changed
+
+- `packages/coding-agent/src/core/compaction/branch-summarization.ts`: fork `BranchSummaryStreamOptions` (`extraBody`, `extensionRunner` emitting `session_before_compact`, `CompactionPreparation` hand-off, `randomUUID` entry ids) unioned with upstream's `maxTokens = min(4096, model.maxTokens)` clamp and its `getSummarizationFailure` routing so length-capped summaries become typed errors.
+
+### Why
+
+- Branch summaries must go through the fork's extension hook and payload options while honoring upstream's output cap and failure classification.
+
+### Why an extension could not handle it
+
+- The summarization request is built inside core before `session_before_compact` fires; an extension can veto it but not change its budget or error typing.
+
+### Expected merge conflict zones
+
+- MEDIUM: `generateBranchSummary` option plumbing and the `streamSimple`/`streamFn` call.

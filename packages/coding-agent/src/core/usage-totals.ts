@@ -1,4 +1,5 @@
 import type { Usage } from "@earendil-works/pi-ai/compat";
+import { getPromptCachePrewarmUsage } from "./extensions/builtin/cache-keepalive/prewarm-entry.ts";
 import type { SessionEntry } from "./session-manager.ts";
 
 export interface UsageTotals {
@@ -49,6 +50,9 @@ export function getUsageCostBreakdown(entries: SessionEntry[]): UsageCostBreakdo
 		} else if ((entry.type === "branch_summary" || entry.type === "compaction") && entry.usage) {
 			key = "Tools/summaries";
 			usage = entry.usage;
+		} else {
+			usage = getPromptCachePrewarmUsage(entry);
+			if (usage) key = "Tools/summaries";
 		}
 		if (!key || !usage) continue;
 

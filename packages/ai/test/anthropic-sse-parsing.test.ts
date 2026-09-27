@@ -167,7 +167,7 @@ describe("Anthropic raw SSE parsing", () => {
 		} as unknown as Anthropic;
 
 		await streamAnthropic(
-			getModel("openrouter", "anthropic/claude-3-haiku"),
+			getModel("anthropic", "claude-haiku-4-5"),
 			{ messages: [{ role: "user", content: "Hello", timestamp: 1 }] },
 			{ client, thinkingEnabled: false },
 		).result();
@@ -215,6 +215,7 @@ describe("Anthropic raw SSE parsing", () => {
 		const delta = JSON.parse(events[4].data) as Record<string, unknown>;
 		delta.input_transformations = [
 			{ type: "thinking_dropped", path: "messages.3.content.0", reason: "model_binding_mismatch" },
+			{ type: "thinking_mismatch_allowed", path: "messages.3.content.1", reason: "prefix_binding_mismatch" },
 		];
 		events[4].data = JSON.stringify(delta);
 
@@ -234,6 +235,11 @@ describe("Anthropic raw SSE parsing", () => {
 							type: "thinking_dropped",
 							path: "messages.3.content.0",
 							reason: "model_binding_mismatch",
+						},
+						{
+							type: "thinking_mismatch_allowed",
+							path: "messages.3.content.1",
+							reason: "prefix_binding_mismatch",
 						},
 					],
 				},

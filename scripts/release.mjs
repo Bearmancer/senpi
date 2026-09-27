@@ -37,6 +37,7 @@ import { join } from "node:path";
 import { computeNextVersion } from "./calver.mjs";
 import { syncRemoteMainBeforePush } from "./release-git.mjs";
 import {
+	runClaudeCodeModelSupportReport,
 	runGenerateImageModels,
 	runGenerateModels,
 	runInstallLock,
@@ -122,8 +123,7 @@ function runCommand(bin, args, extraEnv) {
 		execFileSync(bin, args, extraEnv ? { stdio: "inherit", env: { ...process.env, ...extraEnv } } : { stdio: "inherit" });
 	} catch (err) {
 		const message = err && typeof err === "object" && "message" in err ? err.message : String(err);
-		process.stderr.write(`[release] error: ${bin} ${args.join(" ")} failed: ${message}\n`);
-		process.exit(1);
+		throw new Error(`${bin} ${args.join(" ")} failed: ${message}`, { cause: err });
 	}
 }
 
@@ -346,6 +346,7 @@ function main() {
 	runSyncVersions(args.dryRun, runCommand, log, dryRunLog);
 	runPackageLockRefresh(args.dryRun, runCommand, log, dryRunLog);
 	runGenerateModels(args.dryRun, runCommand, log, dryRunLog);
+	runClaudeCodeModelSupportReport(args.dryRun, runCommand, log, dryRunLog);
 	runGenerateImageModels(args.dryRun, runCommand, log, dryRunLog);
 	runShrinkwrap(args.dryRun, runCommand, log, dryRunLog);
 	runInstallLock(args.dryRun, runCommand, log, dryRunLog);
@@ -374,4 +375,9 @@ function main() {
 	}
 }
 
-main();
+try {
+	main();
+} catch (err) {
+	process.stderr.write(`[release] error: ${err instanceof Error ? err.message : String(err)}\n`);
+	process.exitCode = 1;
+}

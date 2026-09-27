@@ -2,6 +2,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { type CodemodeRuntimeAssetEnvironment, requireCodemodeRuntimeAsset } from "../shared/runtime-asset.ts";
 import { createInlineWorker, type WorkerLike } from "./inline-worker.ts";
+import { resolveKernelToolNameSource } from "./kernel-contract.ts";
 import { type JavaScriptKernelOptions, localBridgeConnection } from "./local-module-loader.ts";
 import { spawnNodeWorker, WorkerStartupCancelledError, waitForReady } from "./worker-host.ts";
 
@@ -16,6 +17,7 @@ export function resolveJsWorkerEntryUrl(options: JavaScriptWorkerEntryUrlOptions
 
 export interface WorkerStartupHooks {
 	readonly options: JavaScriptKernelOptions;
+	readonly kernelGeneration: number;
 	/** Wires the worker into the kernel; throws `WorkerStartupCancelledError` once the generation is stale. */
 	publish(worker: WorkerLike): void;
 	isCurrent(worker: WorkerLike): boolean;
@@ -27,7 +29,7 @@ export async function startWorkerWithInlineFallback(hooks: WorkerStartupHooks, s
 	let worker = spawnWorker(hooks.options);
 	hooks.publish(worker);
 	try {
-		await initializeWorker(worker, hooks.options, signal);
+		await initializeWorker(worker, hooks, signal);
 		return;
 	} catch (error) {
 		if (!hooks.isCurrent(worker) || error instanceof WorkerStartupCancelledError) {
@@ -41,7 +43,7 @@ export async function startWorkerWithInlineFallback(hooks: WorkerStartupHooks, s
 	if (!hooks.canFallBackInline()) throw new WorkerStartupCancelledError();
 	worker = createInlineWorker(hooks.options.cwd, hooks.options.parallelPoolWidth);
 	hooks.publish(worker);
-	await initializeWorker(worker, hooks.options, signal);
+	await initializeWorker(worker, hooks, signal);
 }
 
 function spawnWorker(options: JavaScriptKernelOptions): WorkerLike {
@@ -54,16 +56,16 @@ function spawnWorker(options: JavaScriptKernelOptions): WorkerLike {
 	}
 }
 
-async function initializeWorker(
-	worker: WorkerLike,
-	options: JavaScriptKernelOptions,
-	signal: AbortSignal,
-): Promise<void> {
+async function initializeWorker(worker: WorkerLike, hooks: WorkerStartupHooks, signal: AbortSignal): Promise<void> {
 	const ready = waitForReady(worker, signal);
+	const options = hooks.options;
 	worker.postMessage({
 		type: "init",
 		sessionId: options.sessionId,
 		connection: localBridgeConnection(options),
+		kernelGeneration: hooks.kernelGeneration,
+		hostToolNames: resolveKernelToolNameSource(options.hostToolNames),
+		foreignLanguageNames: resolveKernelToolNameSource(options.foreignLanguageNames),
 		...(options.sessionEnv === undefined ? {} : { sessionEnv: options.sessionEnv }),
 	});
 	await ready;

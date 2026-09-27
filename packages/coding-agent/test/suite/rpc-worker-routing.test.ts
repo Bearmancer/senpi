@@ -185,23 +185,22 @@ it("broadcasts question prompts across IPC and hydrates a late attachment", asyn
 		const updated = a.wait((r) => r.type === "question_updated");
 		b.send({ type: "extension_ui_progress", sessionId, id: frame.id, answers: { q1: { selected: ["A"] } } });
 		expect((await updated).remainingMs).toBeGreaterThan(0);
+		// A submission with neither an answer nor a comment carries no decision: it is
+		// rejected and the question stays pending for every attachment.
 		const incomplete = b.wait((r) => r.error === "question_incomplete");
-		b.send({
-			type: "extension_ui_response",
-			sessionId,
-			id: frame.id,
-			answers: { q1: { selected: ["A"] } },
-			comment: "",
-		});
+		b.send({ type: "extension_ui_response", sessionId, id: frame.id, answers: {}, comment: "" });
 		await incomplete;
 		const ra = a.wait((r) => r.type === "question_resolved");
 		const rb = b.wait((r) => r.type === "question_resolved");
-		b.send({ type: "extension_ui_response", sessionId, id: frame.id, answers: {}, comment: "do it" });
-		expect(await ra).toMatchObject({ outcome: "comment-submitted" });
-		expect(await rb).toMatchObject({ outcome: "comment-submitted" });
+		// A partial answer map is a decision on every surface (ask-user/pending.ts): it
+		// resolves the question as answered and reports the ids left unanswered.
+		b.send({ type: "extension_ui_response", sessionId, id: frame.id, answers: { q1: { selected: ["A"] } } });
+		const resolution = { outcome: "answered", answers: { q1: { selected: ["A"] } }, unanswered: ["q2"] };
+		expect(await ra).toMatchObject(resolution);
+		expect(await rb).toMatchObject(resolution);
 		expect((await prompt).success).toBe(true);
 		const late = b.wait((r) => r.error === "question_already_resolved");
-		b.send({ type: "extension_ui_response", sessionId, id: frame.id, answers: {} });
+		b.send({ type: "extension_ui_response", sessionId, id: frame.id, answers: {}, comment: "do it" });
 		await late;
 		expect(c.records.filter((r) => r.method === "question")).toHaveLength(1);
 		const state = await c.request({ type: "get_state", sessionId });

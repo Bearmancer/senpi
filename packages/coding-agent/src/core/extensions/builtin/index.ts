@@ -1,12 +1,12 @@
 import type { ExtensionFactory } from "../types.ts";
 import accountExtension from "./account/index.ts";
 import anthropicBashExtension from "./anthropic-bash/index.ts";
+import anthropicSubscriptionExtension from "./anthropic-subscription/index.ts";
 import anthropicWebSearchExtension from "./anthropic-web-search/index.ts";
 import askUserExtension from "./ask-user/index.ts";
 import bashTimeoutExtension from "./bash-timeout/index.ts";
 import btwExtension from "./btw/index.ts";
 import cacheKeepAliveExtension from "./cache-keepalive/index.ts";
-import claudeSdkOauthExtension from "./claude-sdk-oauth/index.ts";
 import compactionExtension from "./compaction/index.ts";
 import configReloadExtension from "./config-reload/index.ts";
 import cursorCliOauthExtension from "./cursor-cli-oauth/index.ts";
@@ -16,6 +16,7 @@ import goalExtension from "./goal/index.ts";
 import gptAccountExtension from "./gpt-account.ts";
 import gptApplyPatchExtension from "./gpt-apply-patch/index.ts";
 import helpExtension from "./help/index.ts";
+import herdrExtension from "./herdr/index.ts";
 import historySearchExtension from "./history-search/index.ts";
 import hooksExtension from "./hooks/index.ts";
 import imageGenExtension from "./imagegen/index.ts";
@@ -34,6 +35,7 @@ import promptUrlWidgetExtension from "./prompt-url-widget.ts";
 import reasoningExtension from "./reasoning/index.ts";
 import recommendedModelsExtension from "./recommended-models/index.ts";
 import redrawsExtension from "./redraws.ts";
+import repositoryIdentityExtension from "./repository-identity.ts";
 import piRulesExtension from "./rules/index.ts";
 import serviceTierExtension from "./service-tier.ts";
 import terminalExtension from "./terminal/index.ts";
@@ -67,6 +69,7 @@ export const builtinExtensions: BuiltinExtensionFactory[] = [
 	{ id: "permission-system", factory: permissionSystemExtension },
 	{ id: "gpt-apply-patch", factory: gptApplyPatchExtension },
 	{ id: "ask-user", factory: askUserExtension },
+	{ id: "herdr", factory: herdrExtension },
 	{ id: "imagegen", factory: imageGenExtension },
 	// Follows imagegen so the native injector's bypass wiring observes the registered client tool.
 	{ id: "openai-image-gen", factory: openaiImageGenExtension },
@@ -91,6 +94,7 @@ export const builtinExtensions: BuiltinExtensionFactory[] = [
 	{ id: "history-search", factory: historySearchExtension },
 	{ id: "help", factory: helpExtension },
 	{ id: "import-repro", factory: importReproExtension },
+	{ id: "repository-identity", factory: repositoryIdentityExtension },
 	{ id: "websearch", factory: websearchExtension },
 	{ id: "webfetch", factory: webfetchExtension },
 	{ id: "video-in", factory: videoInExtension },
@@ -106,7 +110,7 @@ export const builtinExtensions: BuiltinExtensionFactory[] = [
 	// dedicated commands (claude-account, cursor accounts) keep their own names.
 	{ id: "account", factory: accountExtension },
 	{ id: "gpt-account", factory: gptAccountExtension },
-	{ id: "claude-sdk-oauth", factory: claudeSdkOauthExtension },
+	{ id: "claude-sdk-oauth", factory: anthropicSubscriptionExtension },
 	// Registers unconditionally and reports executable/auth state through its oauth check, so it stays beside the other provider lane.
 	{ id: "cursor-cli-oauth", factory: cursorCliOauthExtension },
 	// Config reload follows settings-dependent builtins so reloads rebuild their resolved settings before catalog feeders observe them.

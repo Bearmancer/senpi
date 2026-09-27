@@ -17,6 +17,7 @@ import { createFindToolDefinition } from "../src/core/tools/find.ts";
 import { createGrepToolDefinition } from "../src/core/tools/grep.ts";
 import { createLsToolDefinition } from "../src/core/tools/ls.ts";
 import { createReadToolDefinition } from "../src/core/tools/read.ts";
+import { getTextOutput as getRenderedTextOutput } from "../src/core/tools/render-utils.ts";
 import { createWriteToolDefinition } from "../src/core/tools/write.ts";
 import {
 	createEditTool,
@@ -152,6 +153,12 @@ describe("Coding Agent Tools", () => {
 			expect(output).toContain("Line 10");
 			expect(output).not.toContain("Line 11");
 			expect(output).toContain("[90 more lines in file. Use offset=11 to continue.]");
+			// #2041: continuation instructions stay in model content, not the tool card.
+			expect(result.content).toEqual([
+				{ type: "text", text: `${lines.slice(0, 10).join("\n")}\n` },
+				{ type: "text", text: "[90 more lines in file. Use offset=11 to continue.]", audience: "model" },
+			]);
+			expect(getRenderedTextOutput(result, false)).toBe(`${lines.slice(0, 10).join("\n")}\n`);
 		});
 
 		it("should handle offset + limit together", async () => {
@@ -874,7 +881,7 @@ describe("Coding Agent Tools", () => {
 			});
 
 			const output = getTextOutput(result);
-			expect(output).toContain("example.txt:2: match line");
+			expect(output).toContain("example.txt\n2: match line");
 		});
 
 		it("should respect global limit and include context lines", async () => {
@@ -890,10 +897,11 @@ describe("Coding Agent Tools", () => {
 			});
 
 			const output = getTextOutput(result);
-			expect(output).toContain("context.txt-1- before");
-			expect(output).toContain("context.txt:2: match one");
-			expect(output).toContain("context.txt-3- after");
-			expect(output).toContain("[1 matches limit reached. Use limit=2 for more, or refine pattern]");
+			expect(output).toContain("context.txt\n1- before");
+			expect(output).toContain("2: match one");
+			expect(output).toContain("3- after");
+			expect(output).toContain("[grep: matches=1 files=1");
+			expect(result.details).toMatchObject({ totalLimitReached: true });
 			// Ensure second match is not present
 			expect(output).not.toContain("match two");
 		});

@@ -1,6 +1,6 @@
 # packages/coding-agent/src/core/dynamic-prompt
 
-Fork-introduced system-prompt assembler. Replaces upstream's static `buildSystemPrompt()` with a layered builder: identity → intent gate → working-task → verification → tool reference → policies → style → optional per-model tuning. Every preset under `extensions/builtin/prompt-preset/` ultimately calls into this builder. See `changes.md` for the full evolution.
+Fork-introduced system-prompt assembler. Replaces upstream's static `buildSystemPrompt()` with a layered builder: identity → intent gate → working-task → verification → tool reference → policies → handoff → style → optional per-model tuning. Every preset under `extensions/builtin/prompt-preset/` ultimately calls into this builder. See `changes.md` for the full evolution.
 
 ## FILES
 
@@ -16,6 +16,7 @@ dynamic-prompt/
 ├── tool-categorization.ts  # categorizeTools() + getToolsPromptDisplay()
 ├── tool-section.ts         # CATEGORY_ORDER + CATEGORY_LABELS for rendering
 ├── policies.ts             # Hard blocks injected into every prompt
+├── handoff.ts              # buildHandoffSection() — labeled handoff block (Ask / For you / Now / Next): when progress reaches the user, and what it carries; the Claude and Kimi K3 cores render it too
 ├── style.ts                # buildStyleSection() — output formatting + length norms
 └── changes.md              # Dense fork tracker (dated sections)
 ```
@@ -31,7 +32,7 @@ dynamic-prompt/
 | Tune verification tier definitions | `verification.ts` |
 | Add/remove a tool category | `types.ts` (`AvailableTool["category"]`) + `tool-categorization.ts` + `tool-section.ts` |
 | Per-model addendum to the prompt | callers pass `tuningSection` (see `extensions/builtin/prompt-preset/`) |
-| Full per-model core rewrite | callers pass `corePrompt` (see `prompt-preset/gpt-5.5.ts`) — replaces identity→style, keeps tool section/context/skills/date/cwd assembly |
+| Full per-model core rewrite | callers pass `corePrompt` (see `prompt-preset/gpt-5.5.ts`) — replaces identity→style, keeps tool section/context/skills/workstation assembly |
 
 ## SECTION ORDER (assembled in `build.ts`)
 
@@ -41,10 +42,13 @@ dynamic-prompt/
 4. **Verification** — V1/V2/V3 tiers + claim audit
 5. **Tool reference** — categorized snippets + guidelines from registered tools
 6. **Policies** — hard blocks
-7. **Style** — execution stance + output formatting
-8. **Optional `tuningSection`** — per-model preset addendum (appended last)
+7. **Handoff** — when and how progress reaches the user
+8. **Style** — execution stance + output formatting
+9. **Optional `tuningSection`** — per-model preset addendum (appended last)
 
-When `corePrompt` is set, sections 1–7 are replaced by the override's output (the rendered tool section is handed to it via `DynamicPromptCoreContext`); tuning, context files, skills, and date/cwd assembly are unchanged.
+When `corePrompt` is set, sections 1–8 are replaced by the override's output (the rendered tool section is handed to it via `DynamicPromptCoreContext`); tuning, context files, skills, and workstation assembly are unchanged.
+
+The prompt carries no date or cwd: both reach the model as an append-only `environment-context` custom message (`core/environment-context.ts`, injected by `agent-session.ts` before a turn when a value changes) so the system prompt is byte-stable across days and directories (senpi#2093). Never add per-turn values back here.
 
 ## CONVENTIONS
 

@@ -14,11 +14,21 @@ export const SESSION_WORKER_LIMITS = {
 	controlMs: 5_000,
 } as const;
 
+/** Wire values the host writes into a worker's wait signal; `conflict` is the generic denial. */
+export const WORKER_CREDIT_CODES = { granted: 1, conflict: 2, limit: 3 } as const;
+
+/** Host decision on a worker's session-write path request. */
+export type SessionWriteGrant = keyof typeof WORKER_CREDIT_CODES;
+
 export interface WorkerSnapshot {
 	state: RpcSessionState;
 	/** Canonicalized by the owning worker, never by the transport thread. */
 	sessionPath?: string;
+	/** Every canonical path this worker's live session writers still own. */
+	liveSessionPaths: readonly string[];
 	busy: boolean;
+	/** Turn/request activity, excluding durable wake-source holds. */
+	handoffBusy?: boolean;
 	streaming: boolean;
 }
 
@@ -50,7 +60,7 @@ export type SessionWorkerToHost =
 			record: object;
 			connection?: string;
 			signal: SharedArrayBuffer;
-			activity: Pick<WorkerSnapshot, "busy" | "streaming">;
+			activity: Pick<WorkerSnapshot, "busy" | "handoffBusy" | "streaming">;
 			snapshot?: WorkerSnapshot;
 	  }
 	| { type: "width"; connection?: string; width: number; signal: SharedArrayBuffer }

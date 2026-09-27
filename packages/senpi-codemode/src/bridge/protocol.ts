@@ -1,6 +1,7 @@
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import { type Static, Type } from "typebox";
 import { Value } from "typebox/value";
+import { kernelToolHostToKernelSchemas, kernelToolKernelToHostSchemas } from "./kernel-tools-protocol.ts";
 
 export const BRIDGE_FRAME_MAX_BYTES = 10 * 1024 * 1024;
 
@@ -27,12 +28,24 @@ const hostToKernelMessageSchema = Type.Union([
 		sessionId: Type.String({ minLength: 1 }),
 		connection: connectionConfigSchema,
 		sessionEnv: Type.Optional(Type.Record(Type.String(), Type.String())),
+		kernelGeneration: Type.Optional(Type.Integer({ minimum: 1 })),
+		hostToolNames: Type.Optional(Type.Array(Type.String({ minLength: 1 }))),
+		foreignLanguageNames: Type.Optional(Type.Array(Type.String({ minLength: 1 }))),
 	}),
 	Type.Object({
 		type: Type.Literal("run"),
 		cellId: Type.String({ minLength: 1 }),
 		code: Type.String(),
 		timeoutMs: Type.Optional(Type.Integer({ minimum: 1 })),
+		/** Python only: active tool globals to install before the cell and deactivated ones to remove. */
+		preludes: Type.Optional(
+			Type.Object({
+				install: Type.Array(
+					Type.Object({ exports: Type.Array(Type.String({ minLength: 1 })), python: Type.String() }),
+				),
+				remove: Type.Array(Type.String({ minLength: 1 })),
+			}),
+		),
 	}),
 	Type.Object({
 		type: Type.Literal("tool-reply"),
@@ -53,6 +66,7 @@ const hostToKernelMessageSchema = Type.Union([
 	Type.Object({
 		type: Type.Literal("close"),
 	}),
+	...kernelToolHostToKernelSchemas,
 ]);
 
 const kernelToHostMessageSchema = Type.Union([
@@ -92,6 +106,7 @@ const kernelToHostMessageSchema = Type.Union([
 		durationMs: Type.Integer({ minimum: 0 }),
 	}),
 	Type.Object({ type: Type.Literal("closed") }),
+	...kernelToolKernelToHostSchemas,
 ]);
 
 const bridgeMessageSchema = Type.Union([hostToKernelMessageSchema, kernelToHostMessageSchema]);

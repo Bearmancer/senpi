@@ -1,5 +1,43 @@
 # Cache Keep-Alive Extension Changes
 
+## 2026-09-24 - Prewarm the OpenAI GPT-5.6+ prompt cache at session start (senpi#2096)
+
+### What changed
+
+- `session-prewarm.ts` (new): on every `session_start` for a native OpenAI Responses model with explicit prompt caching (and `cacheRetention` not `none`), one detached `warmPromptCache` request writes the first user turn's prefix: the model, context (system prompt after the `before_agent_start` preview pass, the agent's tools in request order, empty conversation), and options (reasoning, thinking selection/budgets, session id, effective service tier, `onPayload`, `before_provider_headers`, auth, `extraBody`) come from `ctx.getPromptCachePrefixRequest()`, which the host resolves after session start has settled, the way the turn resolves them. It never awaits in the turn path, is aborted on the next `session_start` and on `session_shutdown`, times out after 30 s, and records a `prompt-cache-prewarm` custom entry (`warmed` with priced usage, or `failed` with the error).
+- `prewarm-entry.ts` (new): the entry type and `getPromptCachePrewarmUsage`, which core session stats read.
+- `index.ts`: creates the prewarm, starts it from the `session_start` handler and cancels it on `session_shutdown`; `createCacheKeepAliveExtension` accepts an `isPromptCachePrewarmModel` override for tests. The opt-in Anthropic keep-alive loop is unchanged.
+
+### Why
+
+The first turn of every GPT-5.6+ session paid a cold prefix; the platform's `prompt_cache_options.prewarm` writes it ahead of the user's first message. The platform reuses a prefix only up to a block boundary, so the prewarm has to send the turn's exact developer message and tools: the earlier `ctx.getSystemPrompt()` snapshot taken inside this `session_start` handler was about 6k tokens shorter than the first turn's prompt (live QA: prewarm wrote 12,242, the first turn read 0 and wrote 18,444).
+
+### Why an extension could not handle it
+
+This is the extension; the change stays inside this builtin apart from the session-stats read documented in `core/changes.md`.
+
+### Expected merge conflict zones
+
+- `session_start` and `session_shutdown` handlers and the factory signature in `index.ts`.
+
+## 2026-09-21 - Do not warm parked retained sessions (#1902)
+
+### What changed
+
+- `index.ts` cancels its timer on `session_parked`, rejects rearming while parked even when a detached turn finishes, and rearms on `session_resumed`.
+
+### Why
+
+- Parked sessions deliberately allow the cache to expire rather than paying for periodic warm requests.
+
+### Why an extension could not handle it
+
+- The timer and generation fence are private to this builtin.
+
+### Expected merge conflict zones
+
+- `arm()` guard and session lifecycle subscriptions. Request/cost caps and TUI cadence remain unchanged.
+
 ## 2026-09-07 - Keep-alive no longer stands down for an armed goal timer (code-yeongyu/oh-my-openagent#7720)
 
 ### What changed

@@ -14,7 +14,8 @@ export default mergeConfig(
 			testTimeout: 30000,
 			setupFiles: ["./test/setup.ts"],
 			// Tests run offline by default; opt in with allowNetwork() from test/test-network-env.ts.
-			env: { PI_OFFLINE: "1" },
+			// Vitest runs on Node, so the Node.js runtime notice is off unless a test unstubs it.
+			env: { PI_OFFLINE: "1", PI_SKIP_RUNTIME_NOTICE: "1" },
 			unstubEnvs: true,
 			reporters: process.env.GITHUB_ACTIONS ? ["dot", "github-actions"] : ["dot"],
 			silent: "passed-only",
@@ -49,6 +50,8 @@ export default mergeConfig(
 		resolve: {
 			alias: [
 				{ find: /^@earendil-works\/pi-ai\/node\/provider-scope$/, replacement: aiSrcProviderScope },
+				{ find: /^@earendil-works\/pi-ai$/, replacement: workspaceSourcePaths.aiIndex },
+				{ find: /^@earendil-works\/pi-agent-core$/, replacement: workspaceSourcePaths.agentIndex },
 				{ find: /^@earendil-works\/pi-pty$/, replacement: ptySrcIndex },
 				{
 					find: /^@earendil-works\/pi-client$/,

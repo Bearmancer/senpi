@@ -113,7 +113,7 @@ export class ConnectionQuestionBridge {
 					if (!("answers" in response)) return false;
 					answers = response.answers;
 					comment = response.comment;
-					if (!comment?.trim() && unanswered().length) return false;
+					if (!comment?.trim() && Object.keys(answers).length === 0) return false;
 					finish(comment?.trim() ? "comment-submitted" : "answered");
 					return true;
 				},

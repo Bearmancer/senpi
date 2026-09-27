@@ -3,6 +3,7 @@ import type {
 	MessageCreateParamsStreaming,
 	BetaMessageParam as MessageParam,
 } from "@anthropic-ai/sdk/resources/beta/messages/messages.js";
+import { resolveToolNameMatch } from "../utils/tool-name-match.ts";
 import { demotedToolCallText, demotedToolResultText } from "../utils/unavailable-tool-text.ts";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -34,50 +35,19 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  * The same wire path can also recase the tool it namespaces (`memory` comes
  * back as `mcp__a4e6__Memory`, `lsp_symbols` as `mcp__a4e6__LspSymbols`), so
  * the suffix alone no longer matches the request's tool name byte for byte.
- * Names are therefore compared with case and `_`/`-` separators folded away,
- * and a folded key resolves only when exactly one request tool owns it: the
- * fold never guesses between two candidates.
+ * Names are therefore resolved by the shared lenient matcher
+ * (`utils/tool-name-match.ts`, also used by the inbound tool-call resolver):
+ * case and `_`/`-` folded away, an `mcp_`/`mcp__` prefix stripped on either
+ * side, and a name resolves only when exactly one request tool matches.
  */
-const GATEWAY_TOOL_NAMESPACE = /^mcp__[^_]+__(.+)$/;
-
-interface AvailableToolNames {
-	readonly defined: ReadonlySet<string>;
-	readonly folded: ReadonlyMap<string, string>;
-}
-
-function foldToolNameKey(name: string): string {
-	return name.toLowerCase().replaceAll(/[-_]/g, "");
-}
-
-function collectAvailableToolNames(tools: unknown): AvailableToolNames {
+function collectAvailableToolNames(tools: unknown): ReadonlySet<string> {
 	const defined = new Set<string>();
 	if (Array.isArray(tools)) {
 		for (const tool of tools) {
 			if (isRecord(tool) && typeof tool.name === "string") defined.add(tool.name);
 		}
 	}
-	const folded = new Map<string, string>();
-	const ambiguous = new Set<string>();
-	for (const name of defined) {
-		const key = foldToolNameKey(name);
-		if (folded.has(key)) ambiguous.add(key);
-		else folded.set(key, name);
-	}
-	for (const key of ambiguous) folded.delete(key);
-	return { defined, folded };
-}
-
-function resolveAvailableToolName(name: string, available: AvailableToolNames): string | undefined {
-	const suffix = GATEWAY_TOOL_NAMESPACE.exec(name)?.[1];
-	const candidates = suffix === undefined ? [name] : [name, suffix];
-	for (const candidate of candidates) {
-		if (available.defined.has(candidate)) return candidate;
-	}
-	for (const candidate of candidates) {
-		const folded = available.folded.get(foldToolNameKey(candidate));
-		if (folded !== undefined) return folded;
-	}
-	return undefined;
+	return defined;
 }
 
 function isNativeToolSearchResultBlock(block: unknown): block is Record<string, unknown> & {
@@ -99,7 +69,7 @@ export function demoteUnavailableToolReferences(params: MessageCreateParamsStrea
 	if (!Array.isArray(messages) || messages.length === 0) return params;
 
 	const available = collectAvailableToolNames(params.tools);
-	const resolve = (name: string): string | undefined => resolveAvailableToolName(name, available);
+	const resolve = (name: string): string | undefined => resolveToolNameMatch(name, available);
 
 	const demotedCallNames = new Map<string, string>();
 	const renamedCallNames = new Map<string, string>();
@@ -114,7 +84,7 @@ export function demoteUnavailableToolReferences(params: MessageCreateParamsStrea
 	}
 
 	let changed = false;
-	const availableToolNames = [...available.defined];
+	const availableToolNames = [...available];
 	const seenDemotedCallNames = new Set<string>();
 	const rewrittenMessages: MessageParam[] = [];
 	for (const message of messages) {

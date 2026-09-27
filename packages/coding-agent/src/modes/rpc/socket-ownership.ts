@@ -27,8 +27,27 @@ export interface SocketFileIdentity {
  */
 export const PUBLIC_SOCKET_IDENTITY_FILE = "public-socket.owner";
 
+/** What the public path holds relative to the entry a generation bound there. */
+export type EndpointOwnership = "held" | "replaced" | "absent" | "unknown";
+
 /** Default bound on waiting for a supervisor to publish its ownership token. */
 export const SOCKET_IDENTITY_WAIT_MS = 30_000;
+
+/**
+ * `sun_path` is 104 bytes INCLUDING its terminator on macOS, so a bindable path fits in 103.
+ * A generation's bind path is the longest name this daemon ever produces, which makes it the
+ * one that must be checked before a bind turns the overflow into a truncated, silently wrong
+ * endpoint.
+ */
+export const MAX_SOCKET_PATH_BYTES = 103;
+
+/**
+ * Where a successor generation binds before it owns the public name. It never binds the live
+ * public path: that path belongs to the running host until the successor is proven to work.
+ */
+export function generationBindPath(publicSocket: string, generation: number): string {
+	return `${publicSocket}.next-${generation}`;
+}
 
 function sameSocketIdentity(a: SocketFileIdentity, b: SocketFileIdentity): boolean {
 	return a.dev === b.dev && a.ino === b.ino;
@@ -43,6 +62,50 @@ export async function statSocketIdentity(socketPath: string): Promise<SocketFile
 		if (isNodeErrorCode(cause, "ENOENT")) return undefined;
 		throw cause;
 	}
+}
+
+/**
+ * What the public path now holds relative to the entry `identity` describes, in ONE stat so the
+ * answers cannot disagree with each other:
+ *
+ * - `held`: still this generation's own entry.
+ * - `replaced`: a successor renamed its socket over it, or something else took the name.
+ * - `absent`: no entry at all - somebody's `rm`, a swept temp directory, a deleted workspace.
+ * - `unknown`: nothing can be proven (no identity, win32, an abstract socket, a failed stat).
+ *
+ * `replaced` and `absent` are both losses of reachability, but they are NOT the same observation
+ * and callers must keep them apart: a successor is serving clients on that name, while an absent
+ * name serves nobody. `unknown` is never a claim.
+ */
+export async function classifyEndpointOwnership(
+	socketPath: string,
+	identity: SocketFileIdentity | undefined,
+): Promise<EndpointOwnership> {
+	if (identity === undefined || process.platform === "win32" || socketPath.startsWith("\0")) return "unknown";
+	let current: SocketFileIdentity | undefined;
+	try {
+		current = await statSocketIdentity(socketPath);
+	} catch {
+		return "unknown";
+	}
+	if (current === undefined) return "absent";
+	return sameSocketIdentity(current, identity) ? "held" : "replaced";
+}
+
+/**
+ * Whether `socketPath` is served by a DIFFERENT entry than `identity` describes: a successor
+ * generation renamed its own socket over it, or something else took the name. A generation that
+ * finds this true no longer owns the endpoint and cannot be reached by path any more.
+ *
+ * An absent entry and an unknown identity both answer `false`. Supersession has to be POSITIVELY
+ * observed - a name that is merely missing is somebody's `rm`, not a newer host, and treating it as
+ * one would make a healthy daemon drain itself.
+ */
+export async function socketEntryReplaced(
+	socketPath: string,
+	identity: SocketFileIdentity | undefined,
+): Promise<boolean> {
+	return (await classifyEndpointOwnership(socketPath, identity)) === "replaced";
 }
 
 /** Records a bound socket identity for teardown paths that cannot hold it in memory. */

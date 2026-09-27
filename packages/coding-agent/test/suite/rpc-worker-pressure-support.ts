@@ -54,6 +54,19 @@ SessionEventWriter.prototype.enqueueControl = function (record) {
 		const phase = Number(record.id.split(":")[1]);
 		signal("PROBE", phase, { ...state(streams.get(phase), phase), bufferedRecords: this.bufferedRecordCount, bufferedBytes: this.bufferedByteLength });
 	}
+	if (typeof record.id === "string" && record.id.startsWith("pressure-command:")) {
+		const phase = Number(record.id.split(":")[1]);
+		signal("COMMAND", phase, { ...state(streams.get(phase), phase), bufferedRecords: this.bufferedRecordCount, bufferedBytes: this.bufferedByteLength });
+	}
+	return result;
+};
+const publish = SessionEventWriter.prototype.enqueue;
+SessionEventWriter.prototype.enqueue = function (sessionId, record) {
+	const result = Reflect.apply(publish, this, [sessionId, record]);
+	if (record && typeof record.id === "string" && record.id.startsWith("pressure-command:")) {
+		const phase = Number(record.id.split(":")[1]);
+		signal("COMMAND", phase, { ...state(streams.get(phase), phase), bufferedRecords: this.bufferedRecordCount, bufferedBytes: this.bufferedByteLength });
+	}
 	return result;
 };
 const close = SessionEventWriter.prototype.closeSession;
@@ -85,7 +98,7 @@ export function observePressure(input: Readable) {
 		events.emit(line.slice(0, separator), line.slice(separator + 1));
 	});
 	return {
-		async wait(kind: "BLOCKED" | "PROBE" | "DRAIN" | "TERMINAL", phase: number) {
+		async wait(kind: "BLOCKED" | "PROBE" | "DRAIN" | "TERMINAL" | "COMMAND", phase: number) {
 			const [raw] = await once(events, `PRESSURE_${kind}:${phase}`, {
 				signal: AbortSignal.any([abort.signal, AbortSignal.timeout(10_000)]),
 			});

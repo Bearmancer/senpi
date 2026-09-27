@@ -1,5 +1,7 @@
+import type { TextContent } from "@earendil-works/pi-ai";
 import type { TerminalManager } from "../manager.ts";
 import type { MonitorEvent, MonitorRegistry } from "../monitor-registry.ts";
+import { splitModelOnlyNotices } from "../output-format.ts";
 import type { TerminalRuntimeSession } from "../runtime-session.ts";
 import type { TimeoutAction } from "../settings.ts";
 
@@ -32,11 +34,16 @@ export interface TerminalToolContext {
 	readonly onMonitorRearmed?: (id: string) => void;
 	/** Clears notifier bookkeeping when multiple paused monitors are resumed. */
 	readonly onMonitorsResumed?: (ids: readonly string[]) => void;
+	/**
+	 * Lazy persistence: bind the session's lease and manifest recorder before the first durable
+	 * registration. Resolves immediately when persistence is already bound or unavailable.
+	 */
+	readonly ensurePersistence?: () => Promise<void>;
 }
 
 /** Minimal tool-result shape returned by the terminal tools. */
 export interface TerminalToolResult {
-	content: Array<{ type: "text"; text: string }>;
+	content: TextContent[];
 	details: Record<string, unknown> | undefined;
 	isError?: boolean;
 }
@@ -64,4 +71,13 @@ export function textResult(
 
 export function errorResult(text: string): TerminalToolResult {
 	return { content: [{ type: "text", text }], details: undefined, isError: true };
+}
+
+/** A result whose truncation/drop notices are model-only parts (see `splitModelOnlyNotices`). */
+export function noticedResult(
+	text: string,
+	notices: ReadonlyArray<string | undefined>,
+	extra?: { details?: Record<string, unknown>; isError?: boolean },
+): TerminalToolResult {
+	return { content: splitModelOnlyNotices(text, notices), details: extra?.details, isError: extra?.isError };
 }

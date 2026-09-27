@@ -16,7 +16,7 @@ import type {
 	OAuthCredential,
 	OAuthLoginCallbacks,
 } from "@earendil-works/pi-ai";
-import { findEnvKeys, getEnvApiKey } from "@earendil-works/pi-ai";
+import { findEnvKeys, getEnvApiKey, readByProviderId } from "@earendil-works/pi-ai";
 import {
 	appendLoginSlot,
 	type CredentialSlot,
@@ -27,13 +27,14 @@ import {
 	upsertSlot,
 } from "@earendil-works/pi-ai/auth/pool/slots";
 import { builtinProviders } from "@earendil-works/pi-ai/providers/all";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "fs";
 import { dirname, join } from "path";
 import lockfile from "proper-lockfile";
 import { getAgentDir } from "../config.ts";
 import { raceWithAbortSignal } from "../utils/abort.ts";
-import { getFileRevision, normalizePath } from "../utils/paths.ts";
+import { getFileContentRevision, normalizePath } from "../utils/paths.ts";
 import { stripBom } from "../utils/text.ts";
+import { migrateLegacyProviderKeys } from "./auth-provider-key-migration.ts";
 import {
 	CredentialStoreBusyError,
 	FILE_STORAGE_LOCK_OPTIONS,
@@ -84,7 +85,9 @@ type LockResult<T> = {
 	next?: string;
 };
 
-// The mode applies only on creation so administrator-managed modes and ACLs remain intact.
+// Every write stages a fresh 0o600 file and renames it over the store, so the
+// credential file is never briefly world-readable and never half-written; the
+// restrictive mode also wins over any wider mode an earlier direct write left.
 const AUTH_FILE_WRITE_OPTIONS = { encoding: "utf-8", mode: 0o600 } as const;
 
 type AuthFileReload = {
@@ -129,6 +132,34 @@ export class FileAuthStorageBackend implements AuthStorageBackend {
 		}
 	}
 
+	/**
+	 * Atomic credential write: stage a 0o600 temp file beside the store and
+	 * rename it over the target. An existing store may carry an
+	 * administrator-set mode; it is copied onto the temp before the rename, so
+	 * preservation matches the previous in-place write (whose mode applied only
+	 * on creation) and the staged bytes are never wider than the file already
+	 * was. Cross-process writers are serialized by the proper-lockfile lock the
+	 * caller already holds, so the pid-suffixed temp cannot collide; a crashed
+	 * write leaves at worst a 0o600 temp behind.
+	 */
+	private writeAuthFile(content: string): void {
+		const temporary = `${this.authPath}.${process.pid}.tmp`;
+		try {
+			writeFileSync(temporary, content, AUTH_FILE_WRITE_OPTIONS);
+			if (existsSync(this.authPath)) {
+				chmodSync(temporary, statSync(this.authPath).mode & 0o777);
+			}
+			renameSync(temporary, this.authPath);
+		} catch (error) {
+			try {
+				rmSync(temporary, { force: true });
+			} catch {
+				// Best effort; a stale temp is already 0o600.
+			}
+			throw error;
+		}
+	}
+
 	private acquireLockSyncWithRetry(path: string): () => void {
 		const startedAt = Date.now();
 		let attempt = 0;
@@ -163,7 +194,7 @@ export class FileAuthStorageBackend implements AuthStorageBackend {
 			const current = existsSync(this.authPath) ? readFileSync(this.authPath, "utf-8") : undefined;
 			const { result, next } = fn(current);
 			if (next !== undefined) {
-				writeFileSync(this.authPath, next, AUTH_FILE_WRITE_OPTIONS);
+				this.writeAuthFile(next);
 			}
 			return result;
 		} finally {
@@ -243,7 +274,7 @@ export class FileAuthStorageBackend implements AuthStorageBackend {
 			throwIfCompromised();
 			options?.signal?.throwIfAborted();
 			if (next !== undefined) {
-				writeFileSync(this.authPath, next, AUTH_FILE_WRITE_OPTIONS);
+				this.writeAuthFile(next);
 			}
 			throwIfCompromised();
 			return result;
@@ -316,13 +347,17 @@ export class ReadOnlyAuthStorage implements CredentialStore {
 
 	async read(providerId: string, options?: AuthOperationOptions): Promise<Credential | undefined> {
 		options?.signal?.throwIfAborted();
-		const credential = this.load()[providerId];
+		// Read boundary (senpi#1989): an auth.json written by an earlier version is
+		// keyed by the legacy provider id. Try the canonical key first, then the
+		// legacy spelling, so a credential is never reported missing after the
+		// rename. Nothing is rewritten here.
+		const credential = readByProviderId(this.load(), providerId);
 		options?.signal?.throwIfAborted();
 		if (!credential) return undefined;
 		if (credential.type !== "api_key" || !credential.key || isCommandConfigValue(credential.key)) {
 			return structuredClone(credential);
 		}
-		return { ...credential, key: resolveConfigValue(credential.key, credential.env) };
+		return { ...credential, key: await resolveConfigValue(credential.key, credential.env) };
 	}
 
 	async list(options?: AuthOperationOptions): Promise<readonly CredentialInfo[]> {
@@ -401,7 +436,7 @@ export class AuthStorage implements CredentialStore {
 			sharedAuthFileReadState = { authPath, readState: this.readState };
 		}
 		if (authPath) {
-			const revision = getFileRevision(authPath);
+			const revision = getFileContentRevision(authPath);
 			if (revision !== undefined && revision === this.readState.revision) return;
 		}
 		this.reload();
@@ -427,19 +462,52 @@ export class AuthStorage implements CredentialStore {
 	}
 
 	private parseStorageData(content: string | undefined): AuthStorageData {
-		return this.parseStorageContent(content).data;
+		if (!content) return {};
+		// Mutation paths keep the stored keys as-is: the key migration (and its
+		// pre-write backup) belongs to the load seam, so a write can never drop a
+		// legacy entry without the backup that preserves it.
+		return repairPoisonedPoolSlots(JSON.parse(stripBom(content)) as AuthStorageData).data;
 	}
 
-	/** Reports whether the parse had to heal poisoned pool slots, so a load can write the repair back once. */
-	private parseStorageContent(content: string | undefined): { data: AuthStorageData; repaired: boolean } {
+	/**
+	 * Reports whether the parse healed poisoned pool slots or moved legacy
+	 * provider keys, so a load can write the result back exactly once. Repair
+	 * runs FIRST, while the entry still sits under its legacy key, so poisoned
+	 * sentinel slots heal with old-key derivation semantics; the sentinel
+	 * matcher accepts legacy materials too, so a later load of an already
+	 * migrated credential heals the same way.
+	 */
+	private parseStorageContent(content: string | undefined): {
+		data: AuthStorageData;
+		repaired: boolean;
+		migrated: boolean;
+	} {
 		if (!content) {
-			return { data: {}, repaired: false };
+			return { data: {}, repaired: false, migrated: false };
 		}
-		return repairPoisonedPoolSlots(JSON.parse(stripBom(content)) as AuthStorageData);
+		const repaired = repairPoisonedPoolSlots(JSON.parse(stripBom(content)) as AuthStorageData);
+		const migrated = migrateLegacyProviderKeys(repaired.data);
+		return { data: migrated.data, repaired: repaired.repaired, migrated: migrated.migrated };
 	}
 
 	private recordError(error: unknown): void {
 		this.errors.push(error instanceof Error ? error : new Error(String(error)));
+	}
+
+	/**
+	 * Timestamped 0o600 copy of the pre-migration bytes, written inside the
+	 * held store lock before the migrated document replaces them. A migration
+	 * re-run after a crash between backup and rewrite writes another backup;
+	 * the loop suffix keeps same-millisecond names from overwriting each other.
+	 */
+	private backupAuthFile(content: string | undefined): void {
+		if (!this.authPath || content === undefined) return;
+		const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+		let backupPath = `${this.authPath}.backup-${stamp}`;
+		for (let attempt = 1; existsSync(backupPath); attempt++) {
+			backupPath = `${this.authPath}.backup-${stamp}-${attempt}`;
+		}
+		writeFileSync(backupPath, content, AUTH_FILE_WRITE_OPTIONS);
 	}
 
 	private updateReadState(data: AuthStorageData, revision?: string): void {
@@ -458,10 +526,13 @@ export class AuthStorage implements CredentialStore {
 			this.storage.withLock((current) => {
 				const parsed = this.parseStorageContent(current);
 				data = parsed.data;
-				// A written repair invalidates the revision read before it; leaving it
-				// unset makes the next reader re-read instead of trusting a stale stamp.
-				revision = parsed.repaired || !this.authPath ? undefined : getFileRevision(this.authPath);
-				return parsed.repaired
+				// A written repair or migration invalidates the revision read before
+				// it; leaving it unset makes the next reader re-read instead of
+				// trusting a stale stamp.
+				revision =
+					parsed.repaired || parsed.migrated || !this.authPath ? undefined : getFileContentRevision(this.authPath);
+				if (parsed.migrated) this.backupAuthFile(current);
+				return parsed.repaired || parsed.migrated
 					? { result: undefined, next: JSON.stringify(parsed.data, null, 2) }
 					: { result: undefined };
 			});
@@ -482,11 +553,11 @@ export class AuthStorage implements CredentialStore {
 	}
 
 	get(provider: string): Credential | undefined {
-		return this.data[provider];
+		return readByProviderId(this.data, provider);
 	}
 
 	getProviderEnv(provider: string): Record<string, string> | undefined {
-		const credential = this.data[provider];
+		const credential = readByProviderId(this.data, provider);
 		return credential?.type === "api_key" && credential.env ? { ...credential.env } : undefined;
 	}
 
@@ -510,7 +581,7 @@ export class AuthStorage implements CredentialStore {
 	}
 
 	listSlots(provider: string): CredentialSlot[] {
-		return listSlots(this.data[provider] as PooledCredential | undefined);
+		return listSlots(readByProviderId(this.data, provider) as PooledCredential | undefined);
 	}
 
 	setSlot(provider: string, slot: CredentialSlot): void {
@@ -564,9 +635,11 @@ export class AuthStorage implements CredentialStore {
 	private async reloadFromStorageAsync(options?: AuthOperationOptions): Promise<AuthStorageData> {
 		return this.storage.withLockAsync(async (content) => {
 			const parsed = this.parseStorageContent(content);
-			const revision = parsed.repaired || !this.authPath ? undefined : getFileRevision(this.authPath);
+			const revision =
+				parsed.repaired || parsed.migrated || !this.authPath ? undefined : getFileContentRevision(this.authPath);
 			this.updateReadState(parsed.data, revision);
-			return parsed.repaired
+			if (parsed.migrated) this.backupAuthFile(content);
+			return parsed.repaired || parsed.migrated
 				? { result: parsed.data, next: JSON.stringify(parsed.data, null, 2) }
 				: { result: parsed.data };
 		}, options);
@@ -583,7 +656,7 @@ export class AuthStorage implements CredentialStore {
 				return this.readState.data;
 			}
 		}
-		const revision = getFileRevision(this.authPath);
+		const revision = getFileContentRevision(this.authPath);
 		if (revision !== undefined && revision === this.readState.revision) return this.readState.data;
 		if (!this.readState.reload) {
 			const controller = new AbortController();
@@ -630,7 +703,7 @@ export class AuthStorage implements CredentialStore {
 		options?.signal?.throwIfAborted();
 		if (credential?.type !== "api_key") return credential;
 		if (credential.key === undefined) return credential;
-		return { ...credential, key: resolveConfigValue(credential.key, credential.env) };
+		return { ...credential, key: await resolveConfigValue(credential.key, credential.env) };
 	}
 
 	async modify(
@@ -645,7 +718,7 @@ export class AuthStorage implements CredentialStore {
 			const next = await fn(currentData[provider]);
 			if (next === undefined) {
 				latestData = currentData;
-				revision = this.authPath ? getFileRevision(this.authPath) : undefined;
+				revision = this.authPath ? getFileContentRevision(this.authPath) : undefined;
 				return { result: currentData[provider] };
 			}
 
@@ -792,7 +865,8 @@ export function readStoredCredential(
 ): Credential | undefined {
 	try {
 		const data = JSON.parse(stripBom(readFileSync(normalizePath(authPath), "utf-8"))) as AuthStorageData;
-		return data[providerId];
+		// Read boundary (senpi#1989): try canonical, then the legacy spelling.
+		return readByProviderId(data, providerId);
 	} catch {
 		return undefined;
 	}

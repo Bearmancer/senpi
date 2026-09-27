@@ -188,6 +188,9 @@ export function createPendingQuestion(options: PendingQuestionOptions): PendingQ
 			if (unansweredIds(options.request, answers).length === 0) {
 				return settle(buildResponse("answered", options.request, answers, comment), false);
 			}
+			if (Object.keys(answers).length > 0) {
+				return settle(buildResponse("answered", options.request, answers, comment), false);
+			}
 			return false;
 		},
 		cancel(reason = "cancelled") {

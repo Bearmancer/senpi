@@ -1,5 +1,6 @@
 import type { Skill } from "../skills.ts";
 import { formatSkillsForPrompt } from "../skills.ts";
+import { buildHandoffSection } from "./handoff.ts";
 import { buildIdentitySection } from "./identity.ts";
 import { buildIntentGate } from "./intent-gate.ts";
 import { buildPoliciesSection } from "./policies.ts";
@@ -19,6 +20,11 @@ export interface DynamicPromptCoreContext {
 }
 
 export interface BuildDynamicSystemPromptOptions {
+	/**
+	 * Session working directory. Not rendered: cwd and date reach the model as an
+	 * append-only environment-context message so this prompt stays byte-stable
+	 * across days and directories (senpi#2093).
+	 */
 	cwd: string;
 	selectedTools: string[];
 	toolSnippets: Record<string, string>;
@@ -29,7 +35,7 @@ export interface BuildDynamicSystemPromptOptions {
 	/**
 	 * Replaces the default core sections (identity through style) with a
 	 * model-specific full rewrite. Tool section, tuning, context files, skills,
-	 * date, and cwd assembly stay in this builder.
+	 * and workstation assembly stay in this builder.
 	 */
 	corePrompt?: (context: DynamicPromptCoreContext) => string;
 	/**
@@ -58,9 +64,7 @@ function buildContextFilesSection(contextFiles: Array<{ path: string; content: s
 }
 
 export function buildDynamicSystemPrompt(options: BuildDynamicSystemPromptOptions): string {
-	const promptCwd = options.cwd.replace(/\\/g, "/");
 	const tools = categorizeTools(options.selectedTools);
-	const date = new Date().toISOString().slice(0, 10);
 
 	const toolSection = buildToolSection({
 		tools,
@@ -82,6 +86,8 @@ export function buildDynamicSystemPrompt(options: BuildDynamicSystemPromptOption
 				toolSection,
 				"",
 				buildPoliciesSection(),
+				"",
+				buildHandoffSection(),
 				"",
 				buildStyleSection(),
 			];
@@ -108,12 +114,6 @@ export function buildDynamicSystemPrompt(options: BuildDynamicSystemPromptOption
 			dialect: options.workstationDialect ?? "default",
 		}),
 	);
-
-	// The claude-sdk-oauth lane appends these dynamic lines after the stable sections so the composed
-	// prompt is a single string. An earlier draft split at this point for prompt-cache scoping, but a
-	// wire-level probe proved the installed CLI joins array elements into one system block, so the
-	// split was removed (the sentinel leaked to the model as literal text).
-	sections.push("", `Current date: ${date}`, `Current working directory: ${promptCwd}`);
 
 	return sections.join("\n");
 }

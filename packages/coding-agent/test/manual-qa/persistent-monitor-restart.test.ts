@@ -11,6 +11,8 @@ import { join } from "node:path";
 import { expect, it, vi } from "vitest";
 import registerTerminalExtension from "../../src/core/extensions/builtin/terminal/index.ts";
 import { MonitorRegistry } from "../../src/core/extensions/builtin/terminal/monitor-registry.ts";
+import { RESTORE_DIGEST_CUSTOM_TYPE } from "../../src/core/extensions/builtin/terminal/restore-digest.ts";
+import { whenRestoreDecided } from "../../src/core/extensions/builtin/terminal/restore-session.ts";
 import type { ExtensionAPI, ExtensionContext, ToolDefinition } from "../../src/core/extensions/types.ts";
 
 const harness = vi.hoisted(() => ({
@@ -40,6 +42,7 @@ type Generation = {
 	tools: Map<string, Tool>;
 	handlers: Map<string, Handler[]>;
 	messages: string[];
+	digests: Array<{ outcome: string; monitors: Array<{ description: string; outcome: string }> }>;
 	context: ExtensionContext;
 	api: ExtensionAPI;
 	fire(event: string, payload: unknown): Promise<void>;
@@ -49,6 +52,7 @@ function generation(dir: string): Generation {
 	const tools = new Map<string, Tool>();
 	const handlers = new Map<string, Handler[]>();
 	const messages: string[] = [];
+	const digests: Array<{ outcome: string; monitors: Array<{ description: string; outcome: string }> }> = [];
 	const api = {
 		cwd: dir,
 		registerTool: (tool: Tool) => tools.set(tool.name, tool),
@@ -63,8 +67,11 @@ function generation(dir: string): Generation {
 		registerRemovedToolHint: () => {},
 		registerLazyToolActivator: () => {},
 		on: (event: string, handler: Handler) => handlers.set(event, [...(handlers.get(event) ?? []), handler]),
-		sendMessage: (message: { content?: unknown }) =>
-			messages.push(typeof message.content === "string" ? message.content : JSON.stringify(message.content)),
+		sendMessage: (message: { content?: unknown; customType?: string; details?: unknown }) => {
+			messages.push(typeof message.content === "string" ? message.content : JSON.stringify(message.content));
+			if (message.customType === RESTORE_DIGEST_CUSTOM_TYPE)
+				digests.push(message.details as (typeof digests)[number]);
+		},
 		sendUserMessage: () => {},
 		appendEntry: () => {},
 		setSessionName: () => {},
@@ -100,6 +107,7 @@ function generation(dir: string): Generation {
 		tools,
 		handlers,
 		messages,
+		digests,
 		context,
 		api,
 		async fire(event, payload) {
@@ -204,10 +212,15 @@ it("restores persistent monitors across two session generations and enforces the
 		b = generation(dir);
 		const detachedNotice = nextMessage(b, (content) => content.includes("changed while detached"));
 		await b.fire("session_start", { type: "session_start", reason: "resume" });
-		const digest = b.messages.filter((message) => message.includes("Terminal state after restart"));
-		expect(digest).toHaveLength(1);
-		expect(digest[0]).toContain("restored 2");
-		expect(digest[0]).toContain("lost 2");
+		await whenRestoreDecided(SESSION_ID);
+		expect(b.digests).toHaveLength(1);
+		const outcomes = (b.digests[0]?.monitors ?? []).map((entry) => [entry.description, entry.outcome]);
+		// Both durable watches and the ephemeral one (60 s left) come back; nothing else is a monitor.
+		expect(outcomes.sort()).toEqual([
+			["deploy changes", "restored"],
+			["service log", "restored"],
+			["temporary wait", "restored"],
+		]);
 		const restored = b.tools.get("bash");
 		const monitorB = b.tools.get("monitor");
 		if (!monitorB || !restored) throw new Error("restored generation tools missing");

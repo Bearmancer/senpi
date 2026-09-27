@@ -215,6 +215,8 @@ class DefaultCodemodeSessionManager implements CodemodeSessionManager {
 				cwd: this.#options.cwd,
 				parallelPoolWidth,
 				onMessage,
+				hostToolNames: () => this.#options.listTools?.().map((tool) => tool.name) ?? [],
+				foreignLanguageNames: () => this.#foreignKernelToolNames(),
 				...(this.#options.sessionEnv ? { sessionEnv: this.#options.sessionEnv } : {}),
 				...(localRoots ? { localRoots: { ...localRoots } } : {}),
 				...(this.#options.artifactsDir ? { artifactsDir: this.#options.artifactsDir } : {}),
@@ -257,6 +259,15 @@ class DefaultCodemodeSessionManager implements CodemodeSessionManager {
 			connection,
 			onMessage,
 		});
+	}
+
+	#foreignKernelToolNames(): string[] {
+		const names: string[] = [];
+		for (const [language, kernel] of this.#kernels) {
+			if (language === "js") continue;
+			names.push(...(kernel.listKernelToolNames?.() ?? []));
+		}
+		return names;
 	}
 
 	#contextFor(signal: AbortSignal): ExtensionContext {

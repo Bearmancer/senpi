@@ -1,7 +1,7 @@
 export const EVAL_PROMPT_TEMPLATE = `Run one step of code in a persistent kernel.
 
 <instruction>
-**One eval call = one cell = one logical step.** Top-level names persist per language across eval calls{{#if spawns}}, tool calls and \`task\` subagents{{else}} and tool calls{{/if}}: define helpers and clients once and reuse them instead of re-importing or re-reading. Rebuild state only after \`reset\`, a kernel restart, or a \`NameError\`/\`ReferenceError\`, and check a sentinel variable first so a re-run cannot duplicate side effects.
+**One eval call = one cell = one logical step.** Top-level names persist per language across eval calls{{#if spawns}}, tool calls and \`task\` subagents{{else}} and tool calls{{/if}}: define helpers and clients once and reuse them instead of re-importing or re-reading. For large text, use bounded chunks or write it to a file and read it with offsets; treat truncation notices as incomplete data and follow the full-output path. Rebuild state only after \`reset\`, a kernel restart, or a \`NameError\`/\`ReferenceError\`, and check a sentinel variable first so a re-run cannot duplicate side effects.
 
 {{#if styleClaude}}<eval_first_batching>
 Batch a step's independent calls in one cell with \`parallel(thunks)\`; write real code around them - loops, branches, joins, a try/except per risky item - and keep every failed or missing item in the result verbatim; re-read truncated output before deciding.
@@ -26,7 +26,7 @@ Host: {{hostLine}} — cells execute here. Size \`parallel(thunks)\` pools to it
 
 \`language\`: {{#if py}}\`"py"\` IPython kernel{{/if}}{{#ifAll py js}}, {{/ifAll}}{{#if js}}\`"js"\` persistent JavaScript VM{{/if}}{{#if rb}}{{#ifAny py js}}, {{/ifAny}}\`"rb"\` persistent Ruby kernel{{/if}}{{#if jl}}{{#ifAny py js rb}}, {{/ifAny}}\`"jl"\` persistent Julia kernel{{/if}}.
 
-A cell that outlives the foreground window detaches: it keeps its language kernel busy (another language can continue) and completes as one notification with its value or error and buffered output. Its own execution time is capped at {{runBudgetSeconds}}s — time inside host tool calls is not charged; raise \`timeout\` only for a declared long run — and a killed js cell that cannot settle restarts its kernel with every global lost. Do not re-run a detached cell; read or cancel it with \`eval({ action: "peek", cell_id })\` / \`eval({ action: "stop", cell_id })\`.
+A cell that outlives the foreground window detaches and keeps running; further cells on the same language queue behind it in submission order on the same kernel (state is shared, execution is serial) while other languages run at once, up to {{maxDetachedCells}} background cells per session; each detached cell completes as one notification. Do not re-run a detached or queued cell; read, cancel or enumerate them with \`eval({ action: "peek" | "stop", cell_id })\` / \`eval({ action: "list" })\`; list shows live and recently settled cells across languages without consuming notifications. Its own execution time is capped at {{runBudgetSeconds}}s — queue time and time inside host tool calls are not charged; the hard limit stays wall-clock from submission; raise \`timeout\` only for a declared long run — and a killed js cell that cannot settle restarts its kernel with every global lost.
 
 {{#if py}}Python runs on a live event loop: use top-level \`await\`; \`asyncio.run(…)\` raises.{{/if}}
 {{#if js}}{{#if jsBun}}JS runs in-process on Bun {{jsVersion}}: top-level \`await\`/\`return\` work; \`Bun.*\` builtins available, including \`new Bun.WebView()\` — a headless browser (navigate/click/evaluate/screenshot) to reach for before \`curl\` or a browser CLI when a page needs JS, a login, or a screenshot. Shell out through \`Bun.$\` or \`Bun.spawn\`, never \`Bun.spawnSync\`: a synchronous child blocks the worker and cannot be interrupted.{{#if bunSkillPath}} MUST READ the bun-1-4 skill at {{bunSkillPath}} before your first js cell — its builtins replace the npm packages you would otherwise install.{{/if}}{{else}}JS runs under Node.js worker: top-level \`await\`/\`return\` work; \`fetch\`/\`Buffer\` available.{{/if}}{{/if}}
@@ -56,9 +56,12 @@ tool_schema(name?) → dict
     Parameter schema of a tool (omit \`name\` to list tool names); a failed \`tool.<name>()\` call also returns the expected parameters.
 completion(prompt, model?="default", system?=None, schema?=None) → str | dict
     Oneshot, stateless. \`model\`: \`"smol"\` fast | \`"default"\` session | \`"slow"\` most capable. \`schema\` (JSON-Schema) → parsed structured output.
-{{#if spawns}}agent(prompt, agent?="{{spawnDefaultAgent}}", model?=None, label?=None, schema?=None, handle?=False) → str | dict
-    Run a subagent → final output. \`agent\` picks a discovered agent. \`schema\` as in completion(). \`handle\` → workflow node { text, output, handle: \`agent://<id>\`, id, agent } (parsed under \`data\` with \`schema\`).
-{{/if}}parallel(thunks) → list
+{{#if spawns}}agent(prompt, agent?="{{spawnDefaultAgent}}", model?=None, label?=None, schema?=None, isolated?=None, apply?=None, merge?=None, handle?=False) → str | dict
+    Isolation options need a host that supports isolation; otherwise a warning. \`merge\`: \`"patch"\`/\`"branch"\` (False/True aliases). Unapplied foreground changes throw with recovery instructions. Handles return immediately: await the completion notification or read \`task_output\` for the isolation result.
+    Run a subagent → final output. \`agent\` picks a discovered agent. \`schema\` as in completion(). \`handle\` → workflow node { text, output, handle: \`agent://<id>\`, id, run_epoch, agent } (parsed under \`data\` with \`schema\`).
+{{/if}}workpool(agent, name, mode?) → { pool_id, push(items), close(), inspect(), cancel() }
+    Thin host-tool adapter; agent is a plain-data spec. The host owns scheduling and keyed yields; explicitly close for automatic aggregate delivery. Requires the host workpool tool; omitted mode uses its default.
+parallel(thunks) → list
     Thunks through a bounded pool (as wide as a \`task\` batch), input order kept; a throwing thunk propagates.
 pipeline(items, ...stages) → list
     Map items through one-arg stages with a barrier between stages; each stage receives the previous stage's result.
@@ -66,7 +69,8 @@ log(message) → None
     Progress line above the status tree.
 phase(title) → None
     Phase grouping subsequent status lines.
-\`\`\`
+{{#if kernelPreludeDocs}}{{kernelPreludeDocs}}
+{{/if}}\`\`\`
 </prelude>
 {{#if spawns}}
 <workflow>

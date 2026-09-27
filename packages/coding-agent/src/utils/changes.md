@@ -1,5 +1,78 @@
 # changes
 
+## 2026-09-17 - Detect managed tools by stat, not by spawn (senpi#1781)
+
+### What changed
+
+- `packages/coding-agent/src/utils/tools-manager.ts`: `commandExists` walks `PATH` and accepts a regular file carrying an exec bit, with a `PATHEXT` candidate list on Windows, instead of running `spawnSync(cmd, ["--version"])`.
+
+### Why
+
+- The probe sat on the interactive startup path through `ensureTool`, costing a process spawn per candidate. The new `tui` timing namespace measured that seam at a median of 11 ms with a 30 ms worst case on a loaded host; stat-ing the same directories answers the same question in about 1 ms and removes the spawn's load sensitivity.
+
+### Why an extension could not handle it
+
+- Managed-tool resolution is host infrastructure consumed by the bash and grep tools before extensions run.
+
+### Expected merge conflict zones
+
+- LOW: `commandExists` and its new `executableCandidates` helper in `tools-manager.ts`.
+
+## 2026-09-15 - Track detached children by process group until the last descendant exits (senpi#1697)
+
+### What changed
+
+- `packages/coding-agent/src/utils/shell.ts`: the detached-child shutdown registry now stores `{ pid, pgid, leaderExited }` entries keyed by pid instead of bare pids. `trackDetachedChildPid()`/`untrackDetachedChildPid()` keep their signatures and route through that model; new `noteDetachedChildExited()` releases an entry on the leader's exit only when `process.kill(-pgid, 0)` reports the group empty (win32 keeps untrack-on-exit, having no such group); new `pruneTrackedDetachedChildren()` drops drained groups; new `listTrackedDetachedChildren()` exposes frozen copies for diagnostics and tests.
+- `packages/coding-agent/src/utils/shell.ts`: `killTrackedDetachedChildren()` prunes first, then SIGKILLs each tracked group (`kill(-pgid)`) and only falls back to `kill(pid)` while the leader is still known to be alive — it no longer reuses `killProcessTree()`'s unconditional direct-pid fallback. It stays synchronous, because shutdown paths call it and then `process.exit()` in the same tick.
+
+### Why
+
+- Detached shells are spawned into their own process group, and background descendants (`sleep 30 &`, `nohup server &`) keep running in that group after the shell exits. Releasing ownership at the leader's exit left those descendants running past shutdown, and re-killing a long-lived tracked pid directly risked signalling an unrelated process after pid reuse ([#1697](https://github.com/code-yeongyu/senpi/issues/1697)).
+
+### Why an extension could not handle it
+
+- The registry is a leaf utility shared by the bash tool, hook command runner, and every shutdown path (print, interactive, rpc, multi-session host); extensions run inside the process this registry cleans up after and cannot observe group membership on its behalf.
+
+### Expected merge conflict zones
+
+- MEDIUM: the tracked-children block in `packages/coding-agent/src/utils/shell.ts` (upstream carries a plain `Set<number>` with `killProcessTree` per pid); keep the group model and re-apply upstream edits inside it.
+
+## 2026-09-11 - Parse versioned changelog entries for branded sources (senpi#1583)
+
+### What changed
+
+- `packages/coding-agent/src/utils/changelog.ts`: parses dated version headers and fenced examples safely, compares SemVer and CalVer entries, preserves prerelease suffixes, bounds notifications to the active source version, and de-duplicates repeated versions.
+
+### Why
+
+- Changelog notifications must understand Senpi's CalVer revisions and branded prerelease labels without showing entries from another source or future release.
+
+### Why an extension could not handle it
+
+- Parsing and ordering happen inside the host's changelog utility before interactive extensions receive control.
+
+### Expected merge conflict zones
+
+- LOW: changelog header parsing and version comparison helpers.
+
+## 2026-09-11 - Add content revisions for file-backed caches
+
+### What changed
+
+- `packages/coding-agent/src/utils/paths.ts` adds a SHA-256 file-content revision helper for auth and provider-settings caches.
+
+### Why
+
+- A content change must invalidate a cache even when the filesystem reports unchanged mtime and size.
+
+### Why an extension could not handle it
+
+- The revision primitive is shared by core auth storage and provider settings loaders.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/utils/paths.ts` file-revision helpers.
+
 ## Canonical identity resolves through the native realpath (2026-09-07)
 
 ### What changed
@@ -529,3 +602,21 @@ The divergence lives in core wiring, package identity, or build plumbing that ex
 ### Expected merge conflict zones on next upstream sync
 
 - LOW: new `duration.ts` utility and its fork-tracker entry.
+
+## Upstream sync (upstream/main@71dca871) integration repairs (2026-09-12)
+
+### What changed
+
+- `packages/coding-agent/src/utils/tools-manager.ts`: the offline gate reads `envValue("OFFLINE")` (SENPI_ then PI_ prefix) instead of `process.env.PI_OFFLINE`, and the download stream is typed as `NodeReadableStream<Uint8Array>` instead of `as any`; upstream's musl fd/rg and version lookup changes were adopted.
+
+### Why
+
+- Every environment switch in the fork honors the brand prefix, and the fork lints with `--error-on-warnings`.
+
+### Why an extension could not handle it
+
+- Tool download runs during startup before extensions load.
+
+### Expected merge conflict zones
+
+- LOW: `isOffline()` and the `pipeline(Readable.fromWeb(...))` call.

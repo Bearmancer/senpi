@@ -40,7 +40,7 @@ function summaryMaxTokens(model: Model<any>, contextWindow: number): number {
  * summarization request that inherits the provider's default reasoning mode
  * burns its latency (and output budget) on invisible thinking before emitting
  * the summary. Disable or minimize reasoning per wire family; adapters ignore
- * options their provider does not support. Mirrors how OpenAI Codex keeps its
+ * options their provider does not support. Mirrors how ChatGPT Subscription keeps its
  * compaction turn cheap.
  */
 function summarizationReasoningOptions(model: Model<any>): Record<string, unknown> {
@@ -62,6 +62,15 @@ function summarizationReasoningOptions(model: Model<any>): Record<string, unknow
 	}
 }
 
+/**
+ * Whether `summarizationReasoningOptions` pins anything for this model. The
+ * empty-stop retry drops that pin, so it is only worth a request when there is
+ * one to drop; otherwise the retry would replay the identical prompt.
+ */
+export function hasSummarizationReasoningOverride(model: Model<any>): boolean {
+	return Object.keys(summarizationReasoningOptions(model)).length > 0;
+}
+
 export function getSummaryText(message: Message): string {
 	const content = Array.isArray(message.content)
 		? message.content
@@ -78,7 +87,7 @@ export function isAssistantMessage(message: Message): message is AssistantMessag
 }
 
 /**
- * Providers registered through `pi.registerProvider()` (claude-sdk-oauth, Kiro, any
+ * Providers registered through `pi.registerProvider()` (anthropic-subscription, Kiro, any
  * extension provider) exist only in Senpi's ModelRuntime, never in compat's builtin
  * api-registry, which rejects their api id outright. Dispatch through the runtime
  * whenever it is reachable and keep compat for contexts constructed without a registry.
@@ -96,6 +105,8 @@ function summarizationStream(
 export async function generateSummaryMessage(options: {
 	context: SpeculativeCompactionContext;
 	forbidToolCalls?: boolean;
+	/** Skip the model's reasoning override (effort pin, or `thinkingEnabled: false` on Anthropic); retry path for relays that return empty text when it is pinned. */
+	omitReasoningOptions?: boolean;
 	/** Resolved per-attempt duration budget; falls back to the size-adaptive default. */
 	maxDurationMs?: number;
 	messages: AgentMessage[];
@@ -156,10 +167,12 @@ export async function generateSummaryMessage(options: {
 			},
 			maxTokens: summaryMaxTokens(options.snapshot.model, options.snapshot.contextWindow),
 			signal: requestController.signal,
-			...summarizationReasoningOptions(options.snapshot.model),
+			...(options.omitReasoningOptions ? {} : summarizationReasoningOptions(options.snapshot.model)),
 			...(options.forbidToolCalls ? { toolChoice: "none" as const } : {}),
 		});
-		await consumeStreamWithIdleTimeout(responseStream, {
+		// Settlement rides inside the watchdog: a provider whose iterator ends
+		// without a terminal event used to park here with every timer cleared.
+		return await consumeStreamWithIdleTimeout(responseStream, {
 			idleTimeoutMs: DEFAULT_SUMMARIZATION_IDLE_TIMEOUT_MS,
 			maxDurationMs,
 			abort: () => requestController.abort(),
@@ -169,8 +182,8 @@ export async function generateSummaryMessage(options: {
 					options.onProgress?.(event.delta);
 				}
 			},
+			settle: async (): Promise<Message | undefined> => await responseStream.result(),
 		});
-		return await responseStream.result();
 	} finally {
 		if (options.signal) options.signal.removeEventListener("abort", onCallerAbort);
 	}

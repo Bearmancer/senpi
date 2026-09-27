@@ -49,7 +49,7 @@ Senpi is an extension-first coding-agent monorepo. Keep changes scoped, preserve
 | `bench/` | Benchmark baselines and improvement ledger (data only; run via `scripts/run-pr530-benchmarks.mjs`) |
 | `.github/` | CI/release/issue automation plus committed merge and release agent drivers |
 | `.agents/skills/senpi-qa/` | Required real-CLI QA harness; private dependency island outside the workspace |
-| `local-ignore/` | QA evidence archive; gitignored except deliberately tracked historical receipts |
+| `local-ignore/` | QA evidence archive; gitignored and never tracked (the PR body carries the QA summary) |
 
 ## WHERE TO LOOK
 
@@ -114,13 +114,14 @@ Runtime flow: `ai` (models/auth -> providers -> api) feeds `agent/src/agent-loop
 ## QUALITY GATES
 
 - Any runtime change under `packages/{ai,agent,coding-agent,tui,pty,senpi-codemode}` (the release-managed set) plus `crates/senpi-pty` requires scoped tests, `bun run check`, and real CLI QA through `.agents/skills/senpi-qa/`.
-- Save QA receipts under `local-ignore/qa-evidence/<YYYYMMDD>-<slug>/`; no evidence means no commit or push. Evidence, logs, comments, and PR bodies must never contain tokens, credentials, auth headers, cookies, or raw environment dumps.
+- Save QA receipts under `local-ignore/qa-evidence/<YYYYMMDD>-<slug>/`; no evidence means no commit or push. The receipts stay local: summarize them in the PR body (decisive excerpt plus a `sha256sum` line per file) and never `git add -f` them; `scripts/tracked-harness-artifacts-audit.test.mjs` fails when any path under `.omo/`, `local-ignore/`, `.qa-evidence/` or `qa-evidence/` is tracked. Evidence, logs, comments, and PR bodies must never contain tokens, credentials, auth headers, cookies, or raw environment dumps.
 - Default/unit tests must not spend tokens or require real credentials; coding-agent tests use the faux provider and `packages/coding-agent/test/suite/harness.ts` (the legacy `test/test-harness.ts` must not be extended).
 - Tests added or changed run directly until green. New coding-agent lifecycle tests go in `test/suite/`; when a regression test fixes a GitHub issue, add a comment with the issue number next to the test; the flat `test/*.test.ts` root cluster is legacy placement and must not grow.
 - Test quarantine is a safety boundary: `test/setup.ts` forces `SENPI_CODING_AGENT_DIR` into a temp dir and always wins over an inherited value. Never reintroduce an `if (!process.env.SENPI_CODING_AGENT_DIR)` short-circuit — that once deleted a real user agent dir.
 - Live/credentialed surfaces are opt-in only: `packages/ai/test/live-api-gates.ts` (`PI_ENABLE_*`), `packages/coding-agent/test/integration/` (`PI_RUN_INTEGRATION=1`), `packages/evals` (`bun run eval --provider X --model Y`). `packages/evals/.eval/` artifacts hold prompts and responses — treat as sensitive.
 - Async tests subscribe before triggering, with bounded deadlines or fake timers; fixed sleeps survive only at genuine OS boundaries and must not be copied from legacy tests.
 - Documentation-only changes use focused validators and `git diff --check`, not runtime QA — but `packages/coding-agent/docs/` ships in the tarball and is test-asserted, so doc edits there can fail CI.
+- For manual checks of the interactive TUI in a controlled tmux terminal, load and follow `.senpi/skills/interactive-testing.md`.
 
 ## DEPENDENCIES AND INFRA
 
@@ -143,6 +144,7 @@ Runtime flow: `ai` (models/auth -> providers -> api) feeds `agent/src/agent-loop
 - Releases use CalVer and lockstep-version the packages in `scripts/release-packages.mjs`; the pipeline runs `.github/agent/` drivers -> `scripts/release.mjs` -> `publish-npm.yml` -> `build-binaries.yml` / `native-prebuilds.yml`.
 - Release only from clean `main` after changelog audit and release smoke tests; `scripts/release.mjs` owns versioning, generated artifacts, checks, commits, tag, and push.
 - Never rerun the release script after its tag is pushed; failed publishing is retried from the existing tag workflow. Publishing is fork-scoped: `scripts/publish.mjs` rewrites private `@earendil-works/pi-*` packages into public `@code-yeongyu/senpi-*` manifests, and upstream names never appear on npm.
+- For release preparation, local release smoke tests, publishing, and recovery, load and follow `.senpi/skills/release.md`; it points at `.github/agent/release-driver.md` and the two-phase `publish-npm.yml` flow.
 
 ## NOTES
 

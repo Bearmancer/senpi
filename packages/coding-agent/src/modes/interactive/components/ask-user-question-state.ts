@@ -11,11 +11,13 @@ import type { QuestionRequest, QuestionResponse } from "../../../core/extensions
 
 export type QuestionAnswers = QuestionResponse["answers"];
 export type QuestionDraft = { answers?: QuestionAnswers; comment?: string };
-export type QuestionFocus = "options" | "own-answer" | "comment";
+export type QuestionFocus = "options" | "own-answer" | "submit";
 
-export const COMMENT_LABEL = "Comment (sent as your reply; other questions stay unanswered)";
+export const COMMENT_LABEL = "Comment (optional; unanswered questions are reported)";
 export const OWN_ANSWER_LABEL = "Type your own answer...";
 export const NOT_ANSWERED_NOTICE = "You have not answered all questions";
+export const DISMISS_NOTICE = "Press Esc again to dismiss (answers will be discarded)";
+export const PARTIAL_SUBMIT_NOTICE = "Press Enter again to submit with unanswered questions";
 
 /** Countdown chip label: minutes above five minutes, mm:ss at or below. */
 export function formatCountdownLabel(remainingMs: number): string {
@@ -31,13 +33,17 @@ export class AskUserQuestionState {
 	activeIndex = 0;
 	highlightIndex = 0;
 	focus: QuestionFocus = "options";
+	/** Highlighted row on the Submit tab: a review row per question, then the comment editor. */
+	submitRowIndex: number;
 	notice: string | undefined;
 	comment: string | undefined;
+	private dismissPending = false;
 	private readonly selected = new Map<string, string[]>();
 	private readonly texts = new Map<string, string>();
 
 	constructor(request: QuestionRequest) {
 		this.request = request;
+		this.submitRowIndex = this.commentRowIndex;
 	}
 
 	get activeQuestion(): QuestionRequest["questions"][number] {
@@ -53,12 +59,98 @@ export class AskUserQuestionState {
 		return this.ownAnswerRowIndex + 1;
 	}
 
+	get activeTabIndex(): number {
+		return this.focus === "submit" ? this.request.questions.length : this.activeIndex;
+	}
+
+	get commentRowIndex(): number {
+		return this.request.questions.length;
+	}
+
+	get isCommentFocused(): boolean {
+		return this.focus === "submit" && this.submitRowIndex === this.commentRowIndex;
+	}
+
 	switchQuestion(delta: number): void {
-		const count = this.request.questions.length;
-		if (count <= 1) return;
-		this.activeIndex = (this.activeIndex + delta + count) % count;
+		this.switchTab(delta);
+	}
+
+	switchTab(delta: number): void {
+		const count = this.request.questions.length + 1;
+		const next = (this.activeTabIndex + delta + count) % count;
+		if (next === this.request.questions.length) {
+			this.enterSubmit();
+		} else {
+			this.jumpToQuestion(next);
+		}
+	}
+
+	advance(): void {
+		if (this.activeIndex + 1 < this.request.questions.length) {
+			this.jumpToQuestion(this.activeIndex + 1);
+			return;
+		}
+		this.enterSubmit();
+	}
+
+	jumpToQuestion(index: number): void {
+		this.focus = "options";
+		this.activeIndex = index;
 		this.highlightIndex = 0;
+		this.clearTransient();
+	}
+
+	enterSubmit(): void {
+		this.focus = "submit";
+		this.submitRowIndex = this.commentRowIndex;
+		this.highlightIndex = 0;
+		this.clearTransient();
+	}
+
+	returnToOptions(): void {
+		this.leaveOwnAnswer(0);
+	}
+
+	/** Close the own-answer editor and highlight `row` of the active question. */
+	leaveOwnAnswer(row: number): void {
+		this.focus = "options";
+		this.highlightIndex = Math.min(Math.max(0, row), this.ownAnswerRowIndex);
+		this.clearTransient();
+	}
+
+	/** Move the Submit-tab highlight by `delta`, clamped to the review rows and the comment editor. */
+	moveSubmitRow(delta: number): void {
+		this.submitRowIndex = Math.min(Math.max(0, this.submitRowIndex + delta), this.commentRowIndex);
+		this.clearTransient();
+	}
+
+	focusComment(): void {
+		this.submitRowIndex = this.commentRowIndex;
+	}
+
+	private clearTransient(): void {
 		this.notice = undefined;
+		this.dismissPending = false;
+	}
+
+	requestDismiss(): "confirm" | "cancel" {
+		if (!this.hasDraft()) return "cancel";
+		if (!this.dismissPending) {
+			this.dismissPending = true;
+			this.notice = DISMISS_NOTICE;
+			return "confirm";
+		}
+		return "cancel";
+	}
+
+	acceptPartialSubmit(): void {
+		this.dismissPending = false;
+		this.notice = undefined;
+	}
+
+	private hasDraft(): boolean {
+		if ((this.comment ?? "").trim() !== "") return true;
+		return this.request.questions.some((question) => this.isAnswered(question.id));
 	}
 
 	selectedFor(questionId: string): string[] {
@@ -98,13 +190,31 @@ export class AskUserQuestionState {
 		this.notice = undefined;
 	}
 
-	/** Replace the question's answer with typed text; empty text clears it. */
+	/** Replace the question's answer with typed text; empty text is a no-op so existing option selections survive. */
 	setOwnAnswer(questionId: string, text: string): void {
 		const trimmed = text.trim();
+		if (trimmed === "") return;
 		this.selected.delete(questionId);
-		if (trimmed === "") this.texts.delete(questionId);
-		else this.texts.set(questionId, trimmed);
+		this.texts.set(questionId, trimmed);
 		this.notice = undefined;
+	}
+
+	clearAnswer(questionId: string): void {
+		this.selected.delete(questionId);
+		this.texts.delete(questionId);
+		this.notice = undefined;
+	}
+
+	/** Seed selections, own texts and the comment from a previously captured draft. */
+	restoreDraft(draft: QuestionDraft): void {
+		for (const question of this.request.questions) {
+			const answer = draft.answers?.[question.id];
+			if (!answer) continue;
+			const selected = answer.selected.filter((label) => question.options.some((option) => option.label === label));
+			if (selected.length > 0) this.selected.set(question.id, selected);
+			if (answer.text !== undefined && answer.text.trim() !== "") this.texts.set(question.id, answer.text.trim());
+		}
+		if (draft.comment !== undefined && draft.comment.trim() !== "") this.comment = draft.comment;
 	}
 
 	answers(): QuestionAnswers {
@@ -122,10 +232,12 @@ export class AskUserQuestionState {
 		return this.request.questions.filter((question) => !this.isAnswered(question.id)).map((q) => q.id);
 	}
 
-	/** Submit outcome: comment wins, then completeness; undefined means stay open. */
-	submitOutcome(): "answered" | "comment-submitted" | undefined {
+	/** Submit outcome: comment wins, then answers; undefined means stay open. */
+	submitOutcome(forcePartial = false): "answered" | "comment-submitted" | undefined {
 		if ((this.comment ?? "").trim() !== "") return "comment-submitted";
 		if (this.unanswered().length === 0) return "answered";
+		if (this.answeredCount() > 0) return "answered";
+		if (forcePartial) return "answered";
 		return undefined;
 	}
 

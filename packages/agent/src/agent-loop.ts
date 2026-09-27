@@ -11,6 +11,7 @@ import {
 	type CursorExecResolvedCarrier,
 	EventStream,
 	isCursorExecResolved,
+	supportsAllowedToolChoice,
 	type ToolResultMessage,
 	validateToolArguments,
 } from "@earendil-works/pi-ai";
@@ -24,6 +25,8 @@ import {
 	shouldTerminateAssistantTurn,
 } from "./assistant-terminal-state.ts";
 import { getDefaultStreamFn, withEmptyAssistantRecovery } from "./stream-fn.ts";
+import { prepareAgentToolCallArguments } from "./tool-arguments.ts";
+import { resolveCallTool, withToolNameCorrection } from "./tool-name-alias.ts";
 import type {
 	AgentContext,
 	AgentEvent,
@@ -399,15 +402,39 @@ async function runLoop(
 	await emit({ type: "agent_end", messages: newMessages });
 }
 
+/**
+ * senpi#2095: a model that accepts an allowed-tools restriction receives every declared tool plus the
+ * callable subset by name; any other model receives the callable tools alone, as before.
+ */
+function providerTools(
+	context: AgentContext,
+	model: AgentLoopConfig["model"] | undefined,
+): Pick<Context, "tools" | "activeToolNames"> {
+	const declaredTools = context.declaredTools;
+	if (declaredTools === undefined || model === undefined || !supportsAllowedToolChoice(model)) {
+		return { tools: context.tools };
+	}
+	const activeTools = context.tools ?? [];
+	const declaredNames = new Set(declaredTools.map((tool) => tool.name));
+	return {
+		tools: [...declaredTools, ...activeTools.filter((tool) => !declaredNames.has(tool.name))],
+		activeToolNames: activeTools.map((tool) => tool.name),
+	};
+}
+
 /** Build the provider context using the same transform and conversion pipeline as an agent request. */
 export async function buildProviderContext(
 	context: AgentContext,
-	config: Pick<AgentLoopConfig, "convertToLlm" | "transformContext">,
+	config: Pick<AgentLoopConfig, "convertToLlm" | "transformContext"> & Partial<Pick<AgentLoopConfig, "model">>,
 	signal?: AbortSignal,
 ): Promise<Context> {
 	let messages = context.messages;
 	if (config.transformContext) messages = await config.transformContext(messages, signal);
-	return { systemPrompt: context.systemPrompt, messages: await config.convertToLlm(messages), tools: context.tools };
+	return {
+		systemPrompt: context.systemPrompt,
+		messages: await config.convertToLlm(messages),
+		...providerTools(context, config.model),
+	};
 }
 
 /**
@@ -849,18 +876,19 @@ async function executeToolCallsSequential(
 	const messages: ToolResultMessage[] = [];
 
 	for (const toolCall of toolCalls) {
+		const tool = await resolveCallTool(currentContext, toolCall, config);
 		await emit({
 			type: "tool_execution_start",
 			toolCallId: toolCall.id,
-			toolName: toolCall.name,
+			toolName: tool?.name ?? toolCall.name,
 			args: toolCall.arguments,
 		});
 
-		const preparation = await prepareToolCall(currentContext, assistantMessage, toolCall, config, signal);
+		const preparation = await prepareToolCall(currentContext, assistantMessage, toolCall, tool, config, signal);
 		let finalized: FinalizedToolCallOutcome;
 		if (preparation.kind === "immediate") {
 			finalized = {
-				toolCall,
+				toolCall: preparation.toolCall,
 				result: preparation.result,
 				isError: preparation.isError,
 			};
@@ -911,15 +939,16 @@ async function executeToolCallsParallel(
 	let currentParallelWave: Promise<FinalizedToolCallOutcome>[] = [];
 
 	for (const toolCall of toolCalls) {
+		const tool = await resolveCallTool(currentContext, toolCall, config);
 		await emit({
 			type: "tool_execution_start",
 			toolCallId: toolCall.id,
-			toolName: toolCall.name,
+			toolName: tool?.name ?? toolCall.name,
 			args: toolCall.arguments,
 		});
 
-		const preparation = await prepareToolCall(currentContext, assistantMessage, toolCall, config, signal);
-		const isSequential = isSequentialToolCall(currentContext, toolCall);
+		const preparation = await prepareToolCall(currentContext, assistantMessage, toolCall, tool, config, signal);
+		const isSequential = isSequentialToolCall(currentContext, preparation.toolCall);
 		const dependencies = isSequential
 			? [...(lastSequentialCall ? [lastSequentialCall] : []), ...currentParallelWave]
 			: lastSequentialCall
@@ -1007,6 +1036,7 @@ type PreparedToolCall = {
 	toolCall: AgentToolCall;
 	tool: AgentTool;
 	args: unknown;
+	requestedName?: string;
 };
 
 type ImmediateToolCallOutcome = {
@@ -1037,19 +1067,7 @@ export interface PreparedAgentToolCall {
 	args: unknown;
 }
 
-export function prepareAgentToolCallArguments(tool: AgentTool, toolCall: AgentToolCall): AgentToolCall {
-	if (!tool.prepareArguments) {
-		return toolCall;
-	}
-	const preparedArguments = tool.prepareArguments(toolCall.arguments);
-	if (preparedArguments === toolCall.arguments) {
-		return toolCall;
-	}
-	return {
-		...toolCall,
-		arguments: preparedArguments as Record<string, unknown>,
-	};
-}
+export { prepareAgentToolCallArguments };
 
 export function prepareAgentToolCall(tool: AgentTool, toolCall: AgentToolCall): PreparedAgentToolCall {
 	const preparedToolCall = prepareAgentToolCallArguments(tool, toolCall);
@@ -1064,6 +1082,7 @@ async function prepareToolCall(
 	currentContext: AgentContext,
 	assistantMessage: AssistantMessage,
 	toolCall: AgentToolCall,
+	tool: AgentTool | undefined,
 	config: AgentLoopConfig,
 	signal: AbortSignal | undefined,
 ): Promise<PreparedToolCall | ImmediateToolCallOutcome> {
@@ -1076,10 +1095,6 @@ async function prepareToolCall(
 		};
 	}
 
-	let tool = currentContext.tools?.find((candidate) => candidate.name === toolCall.name);
-	if (!tool && config.resolveUnknownToolCall) {
-		tool = await config.resolveUnknownToolCall(toolCall.name, currentContext);
-	}
 	if (!tool) {
 		const hint = config.removedToolHints?.[toolCall.name];
 		return {
@@ -1091,7 +1106,30 @@ async function prepareToolCall(
 			isError: true,
 		};
 	}
+	if (tool.name !== toolCall.name) {
+		const requestedName = toolCall.name;
+		const outcome = await prepareResolvedToolCall(
+			currentContext,
+			assistantMessage,
+			{ ...toolCall, name: tool.name },
+			tool,
+			config,
+			signal,
+		);
+		if (outcome.kind === "prepared") return { ...outcome, requestedName };
+		return { ...outcome, result: withToolNameCorrection(outcome.result, requestedName, tool.name) };
+	}
+	return prepareResolvedToolCall(currentContext, assistantMessage, toolCall, tool, config, signal);
+}
 
+async function prepareResolvedToolCall(
+	currentContext: AgentContext,
+	assistantMessage: AssistantMessage,
+	toolCall: AgentToolCall,
+	tool: AgentTool,
+	config: AgentLoopConfig,
+	signal: AbortSignal | undefined,
+): Promise<PreparedToolCall | ImmediateToolCallOutcome> {
 	try {
 		const preparedToolCall = prepareAgentToolCall(tool, toolCall);
 		const validatedArgs = preparedToolCall.args;
@@ -1249,6 +1287,9 @@ async function finalizeExecutedToolCall(
 			result = createErrorToolResult(error instanceof Error ? error.message : String(error));
 			isError = true;
 		}
+	}
+	if (prepared.requestedName !== undefined) {
+		result = withToolNameCorrection(result, prepared.requestedName, prepared.toolCall.name);
 	}
 
 	return {

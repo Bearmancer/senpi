@@ -86,6 +86,96 @@ function isTermuxSession(): boolean {
 /**
  * Component interface - all components must implement this
  */
+export type TuiMouseEventType = "press" | "release" | "move" | "drag" | "click" | "wheel";
+export type TuiMouseButton = "left" | "middle" | "right" | "none";
+
+/** Normalized cell-based mouse event. Coordinates are zero-based. */
+export interface TuiMouseEvent {
+	type: TuiMouseEventType;
+	button: TuiMouseButton;
+	/** Coordinates local to the receiving component. */
+	x: number;
+	y: number;
+	/** Absolute terminal coordinates. */
+	screenX: number;
+	screenY: number;
+	/** Current component bounds. */
+	width: number;
+	height: number;
+	shift: boolean;
+	alt: boolean;
+	ctrl: boolean;
+	/** Logical lines. Negative values scroll up. */
+	wheelDelta?: number;
+	/** Consecutive click count when type is click. */
+	clickCount?: number;
+}
+
+export interface TuiMouseEventResult {
+	/** Stop propagation and suppress renderer-level fallback behavior. */
+	handled?: boolean;
+	/** Route subsequent drag/release events to this component. Implies handled. */
+	capture?: boolean;
+	/** Give keyboard focus to this component. Implies handled. */
+	focus?: boolean;
+	/**
+	 * Explicitly request or suppress a render. Move and release default to false;
+	 * press, click, drag, and wheel default to true.
+	 */
+	render?: boolean;
+}
+
+/** Internal target metadata used by containers and alternate-screen dispatch. */
+export interface TuiMouseDispatchTarget {
+	component: Component;
+	originX: number;
+	originY: number;
+	width: number;
+	height: number;
+}
+
+/** Result of dispatching to a concrete component. */
+export interface TuiMouseDispatchResult extends TuiMouseEventResult {
+	handled: true;
+	target: TuiMouseDispatchTarget;
+	/** Keyboard focus target, which may be a delegating parent container. */
+	focusTarget?: Component;
+}
+
+/**
+ * Dispatch an event to a component and retain the exact target and coordinate
+ * transform. Containers use this when forwarding events to nested children.
+ */
+export function dispatchMouseEvent(component: Component, event: TuiMouseEvent): TuiMouseDispatchResult | undefined {
+	const result = component.handleMouse?.(event);
+	if (!result) return undefined;
+	if ("target" in result) return result as TuiMouseDispatchResult;
+	if (!result.handled && !result.capture && !result.focus) return undefined;
+	return {
+		...result,
+		handled: true,
+		...(result.focus ? { focusTarget: component } : {}),
+		target: {
+			component,
+			originX: event.screenX - event.x,
+			originY: event.screenY - event.y,
+			width: event.width,
+			height: event.height,
+		},
+	};
+}
+
+/** Recreate local coordinates for a previously dispatched mouse target. */
+export function retargetMouseEvent(event: TuiMouseEvent, target: TuiMouseDispatchTarget): TuiMouseEvent {
+	return {
+		...event,
+		x: event.screenX - target.originX,
+		y: event.screenY - target.originY,
+		width: target.width,
+		height: target.height,
+	};
+}
+
 export interface Component {
 	/**
 	 * Render the component to lines for the given viewport width
@@ -94,10 +184,11 @@ export interface Component {
 	 */
 	render(width: number): string[];
 
-	/**
-	 * Optional handler for keyboard input when component has focus
-	 */
+	/** Optional handler for keyboard input when component has focus. */
 	handleInput?(data: string): void;
+
+	/** Optional normalized mouse handler. */
+	handleMouse?(event: TuiMouseEvent): TuiMouseEventResult | undefined;
 
 	/**
 	 * If true, component receives key release events (Kitty protocol).
@@ -163,6 +254,15 @@ export function isFocusable(component: Component | null): component is Component
 }
 
 /**
+ * Only a component that can receive keys may own keyboard focus. A wrapper that merely
+ * handles mouse events (MouseRegion and friends) has no handleInput, so focusing it would
+ * silently swallow every later keystroke.
+ */
+export function canReceiveKeys(component: Component | null): boolean {
+	return component !== null && typeof component.handleInput === "function";
+}
+
+/**
  * Cursor position marker - APC (Application Program Command) sequence.
  * This is a zero-width escape sequence that terminals ignore.
  * Components emit this at the cursor position when focused.
@@ -179,6 +279,17 @@ const renderErrorLoggedClasses = new Set<string>();
 let renderErrorLogWrites = 0;
 let renderDiagnosticLineScans = 0;
 const DIAGNOSTIC_LOG_MODE = 0o600;
+
+function defaultDiagnosticLogDirectory(): string {
+	return path.join(os.homedir(), ".senpi", "agent");
+}
+
+/**
+ * Render containment logs from module scope because `Container` has no TUI
+ * instance, so the host-resolved log directory has to be published here or the
+ * diagnostic silently lands outside the agent directory the operator reads.
+ */
+let renderErrorLogDirectory: string | undefined;
 const VIEWPORT_RENDER_OVERSCAN = 16;
 // Keep scroll-region wins cheap when a few visible rows mutate during append streaming.
 const MAX_SCROLL_DIFF_ROWS = 4;
@@ -243,7 +354,7 @@ function logRenderErrorOnce(component: Component, error: unknown): void {
 	renderErrorLogWrites += 1;
 
 	const errorText = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
-	const logPath = path.join(os.homedir(), ".senpi", "agent", "senpi-debug.log");
+	const logPath = path.join(renderErrorLogDirectory ?? defaultDiagnosticLogDirectory(), "senpi-debug.log");
 	const msg = `[${new Date().toISOString()}] render error: ${componentName}: ${errorText}\n`;
 	appendRenderErrorLogBestEffort(logPath, msg);
 }
@@ -391,6 +502,14 @@ export interface OverlayUnfocusOptions {
 	target: Component | null;
 }
 
+/** Last rendered terminal-relative overlay rectangle. */
+export interface OverlayBounds {
+	row: number;
+	col: number;
+	width: number;
+	height: number;
+}
+
 /**
  * Handle returned by showOverlay for controlling the overlay
  */
@@ -407,6 +526,8 @@ export interface OverlayHandle {
 	unfocus(options?: OverlayUnfocusOptions): void;
 	/** Check if this overlay currently has focus */
 	isFocused(): boolean;
+	/** Get the most recent rendered bounds for a visible overlay. */
+	getBounds(): OverlayBounds | undefined;
 }
 
 type OverlayStackEntry = {
@@ -415,6 +536,15 @@ type OverlayStackEntry = {
 	preFocus: Component | null;
 	hidden: boolean;
 	focusOrder: number;
+	bounds?: OverlayBounds;
+};
+
+type RenderedOverlayLayout = {
+	entry: OverlayStackEntry;
+	row: number;
+	col: number;
+	width: number;
+	height: number;
 };
 
 type OverlayBlockedFocusResume = { status: "restore-overlay" } | { status: "focus-target"; target: Component | null };
@@ -439,6 +569,7 @@ type TuiConstructorOptions = {
 export class Container implements Component {
 	children: Component[] = [];
 	private disposed = false;
+	private mouseLayout?: { width: number; children: Array<{ component: Component; height: number }> };
 
 	addChild(component: Component): void {
 		this.children.push(component);
@@ -484,8 +615,31 @@ export class Container implements Component {
 		}
 	}
 
+	handleMouse(event: TuiMouseEvent): TuiMouseDispatchResult | undefined {
+		if (event.y < 0 || event.y >= event.height) return undefined;
+		const mouseChildren =
+			this.mouseLayout?.width === event.width
+				? this.mouseLayout.children
+				: this.children.map((component) => ({ component, height: component.render(event.width).length }));
+		let childY = 0;
+		for (const { component: child, height: childHeight } of mouseChildren) {
+			if (event.y >= childY && event.y < childY + childHeight) {
+				const result = dispatchMouseEvent(child, {
+					...event,
+					y: event.y - childY,
+					height: childHeight,
+				});
+				if (result?.focus && (this as Component).handleInput) return { ...result, focusTarget: this };
+				return result;
+			}
+			childY += childHeight;
+		}
+		return undefined;
+	}
+
 	render(width: number): string[] {
 		const lines: string[] = [];
+		const mouseChildren: Array<{ component: Component; height: number }> = [];
 		for (const child of this.children) {
 			let childLines: string[];
 			try {
@@ -496,10 +650,12 @@ export class Container implements Component {
 				// Focus ownership stays unchanged; render containment must not steal or clear focus implicitly.
 				childLines = [`[render error: ${componentName}]`];
 			}
+			mouseChildren.push({ component: child, height: childLines.length });
 			for (const line of childLines) {
 				lines.push(line);
 			}
 		}
+		this.mouseLayout = { width, children: mouseChildren };
 		return lines;
 	}
 }
@@ -605,11 +761,13 @@ export abstract class TuiBase extends Container {
 	private terminalColorSchemeListeners = new Set<(scheme: TerminalColorScheme) => void>();
 	private terminalColorSchemeNotificationsEnabled = false;
 	#lastCursorVisibility: boolean | undefined;
+	/** Directory for debug/crash logs. The fork keeps a concrete default (`~/.senpi/agent`) so PI_DEBUG_REDRAW and crash dumps stay in the agent directory. */
 	protected readonly logDirectory: string;
 
 	// Overlay stack for modal components rendered on top of base content
 	private focusOrderCounter = 0;
 	private overlayStack: OverlayStackEntry[] = [];
+	private renderedOverlayLayouts: RenderedOverlayLayout[] = [];
 
 	get hasOverlayEntries(): boolean {
 		return this.overlayStack.length > 0;
@@ -623,10 +781,188 @@ export abstract class TuiBase extends Container {
 		// Preserve existing positional boolean callers while allowing explicit render-policy overrides.
 		const normalizedOptions = typeof options === "boolean" ? { showHardwareCursor: options } : (options ?? {});
 		this.#muxDetector = normalizedOptions.muxDetector ?? isMultiplexerSession;
-		this.logDirectory = logDirectory ?? path.join(os.homedir(), ".senpi", "agent");
+		this.logDirectory = logDirectory ?? defaultDiagnosticLogDirectory();
+		renderErrorLogDirectory = this.logDirectory;
 		if (normalizedOptions.showHardwareCursor !== undefined) {
 			this.showHardwareCursor = normalizedOptions.showHardwareCursor;
 		}
+	}
+
+	private mouseLeases = new Map<symbol, string>();
+	private mouseBlockers = new Set<"suspended" | "external-editor" | "shutting-down">();
+	protected placementEpoch = 0;
+	protected anchor: {
+		kind: "unknown" | "cleared" | "viewport" | "cpr";
+		frameTopScreenRow?: number;
+		epoch: number;
+		rows: number;
+		columns: number;
+	} = { kind: "unknown", epoch: 0, rows: 0, columns: 0 };
+	private mouseCommittedLineCount = 0;
+	private mouseAnchorPending = false;
+	private mouseWriteUnsubscribe?: () => void;
+	protected mouseExternalWritePending = false;
+
+	/** Host-owned intent. A replacement renderer starts with no leases. */
+	acquireMouseCapture(reason: string): () => void {
+		const token = Symbol(reason);
+		const first = this.mouseLeases.size === 0;
+		this.mouseLeases.set(token, reason);
+		if (first) {
+			this.mouseWriteUnsubscribe ??= this.terminal.observeExternalWrites?.(() => {
+				this.placementEpoch++;
+				this.mouseExternalWritePending = true;
+			});
+			this.applyMouseTracking(this.mouseCaptureEnabled);
+			this.calibrateMouseAnchor();
+		}
+		return () => {
+			if (!this.mouseLeases.delete(token)) return;
+			if (this.mouseLeases.size === 0) this.applyMouseTracking(false);
+		};
+	}
+
+	private resetMouseCaptureState(): void {
+		this.mouseLeases.clear();
+		this.mouseBlockers.clear();
+		this.mouseWriteUnsubscribe?.();
+		this.mouseWriteUnsubscribe = undefined;
+		this.placementEpoch++;
+	}
+
+	protected get mouseCaptureEnabled(): boolean {
+		return this.mouseLeases.size > 0 && this.mouseBlockers.size === 0;
+	}
+
+	protected applyMouseTracking(_enabled: boolean): void {}
+
+	protected getMouseLayoutRoots(): readonly Component[] {
+		return [...this.getMountedRoots(), ...this.renderedOverlayLayouts.map((layout) => layout.entry.component)];
+	}
+
+	protected setMouseBlocker(name: "suspended" | "external-editor" | "shutting-down", on: boolean): void {
+		if (this.mouseBlockers.has(name) === on) return;
+		if (on) this.mouseBlockers.add(name);
+		else this.mouseBlockers.delete(name);
+		this.placementEpoch++;
+		this.applyMouseTracking(this.mouseCaptureEnabled);
+	}
+
+	protected noteFullRender(clear: boolean): void {
+		this.placementEpoch++;
+		this.anchor = {
+			kind: clear ? "cleared" : "unknown",
+			frameTopScreenRow: clear ? 0 : undefined,
+			epoch: this.placementEpoch,
+			rows: this.terminal.rows,
+			columns: this.terminal.columns,
+		};
+		this.mouseCommittedLineCount = this.previousLines.length;
+		this.noteCommittedMouseFrame();
+		this.calibrateMouseAnchor();
+	}
+
+	/** Called only after the renderer has published its geometry and bytes. */
+	protected noteCommittedMouseFrame(): void {
+		if (this.mouseCommittedLineCount !== this.previousLines.length) this.placementEpoch++;
+		this.mouseCommittedLineCount = this.previousLines.length;
+		if (this.previousLines.some(isImageLine)) {
+			this.placementEpoch++;
+			this.anchor.kind = "unknown";
+			return;
+		}
+		if (this.previousLines.length >= this.terminal.rows) {
+			this.anchor = {
+				kind: "viewport",
+				epoch: this.placementEpoch,
+				rows: this.terminal.rows,
+				columns: this.terminal.columns,
+			};
+		} else if (
+			this.anchor.epoch !== this.placementEpoch ||
+			this.anchor.rows !== this.terminal.rows ||
+			this.anchor.columns !== this.terminal.columns
+		) {
+			this.anchor = {
+				kind: "unknown",
+				epoch: this.placementEpoch,
+				rows: this.terminal.rows,
+				columns: this.terminal.columns,
+			};
+		}
+	}
+
+	/** Never block a frame on terminal protocol negotiation or a missing reply. */
+	protected calibrateMouseAnchor(): void {
+		if (
+			!this.mouseCaptureEnabled ||
+			this.stopped ||
+			this.mouseAnchorPending ||
+			this.mouseExternalWritePending ||
+			!this.terminal.queryCursorPosition ||
+			this.previousLines.length === 0 ||
+			this.previousLines.some(isImageLine)
+		)
+			return;
+		if (
+			this.anchor.kind !== "unknown" &&
+			this.anchor.epoch === this.placementEpoch &&
+			this.anchor.rows === this.terminal.rows &&
+			this.anchor.columns === this.terminal.columns
+		)
+			return;
+		const epoch = this.placementEpoch;
+		const rows = this.terminal.rows;
+		const columns = this.terminal.columns;
+		const hardwareCursorRow = this.hardwareCursorRow;
+		const lineCount = this.previousLines.length;
+		this.mouseAnchorPending = true;
+		void this.terminal.queryCursorPosition().then((position) => {
+			this.mouseAnchorPending = false;
+			if (
+				!position ||
+				this.stopped ||
+				!this.mouseCaptureEnabled ||
+				epoch !== this.placementEpoch ||
+				rows !== this.terminal.rows ||
+				columns !== this.terminal.columns ||
+				hardwareCursorRow !== this.hardwareCursorRow ||
+				lineCount !== this.previousLines.length
+			)
+				return;
+			const top = position.row - 1 - hardwareCursorRow;
+			if (
+				!Number.isSafeInteger(top) ||
+				top < 0 ||
+				top + lineCount > rows ||
+				!Number.isSafeInteger(position.column) ||
+				position.column < 1 ||
+				// Some emulators report the pending-wrap cell just past the right edge.
+				position.column > columns + 1 ||
+				(position.page !== undefined && position.page !== 1)
+			)
+				return;
+			this.anchor = { kind: "cpr", frameTopScreenRow: top, epoch, rows, columns };
+		});
+	}
+
+	/** Input rows are one-based; the returned committed frame line is zero-based. */
+	protected resolveFrameLine(screenRow: number): number | undefined {
+		const anchor = this.anchor;
+		if (
+			anchor.kind === "unknown" ||
+			anchor.epoch !== this.placementEpoch ||
+			anchor.rows !== this.terminal.rows ||
+			anchor.columns !== this.terminal.columns ||
+			screenRow < 1 ||
+			screenRow > anchor.rows
+		)
+			return undefined;
+		const line =
+			anchor.kind === "viewport"
+				? this.previousViewportTop + screenRow - 1
+				: screenRow - 1 - (anchor.frameTopScreenRow ?? 0);
+		return line >= 0 && line < this.previousLines.length ? line : undefined;
 	}
 
 	protected resetRenderState(): void {}
@@ -663,8 +999,8 @@ export abstract class TuiBase extends Container {
 
 	/**
 	 * Set whether to trigger full re-render when content shrinks.
-	 * When true (default), empty rows are cleared when content shrinks.
-	 * When false, empty rows remain (reduces redraws on slower terminals).
+	 * When true, empty rows are cleared when content shrinks.
+	 * When false (default), empty rows remain (reduces redraws on slower terminals).
 	 */
 	setClearOnShrink(enabled: boolean): void {
 		this.clearOnShrink = enabled;
@@ -897,6 +1233,10 @@ export abstract class TuiBase extends Container {
 				this.requestRender();
 			},
 			isFocused: () => this.focusedComponent === component,
+			getBounds: () => {
+				if (!this.overlayStack.includes(entry) || !this.isOverlayVisible(entry) || !entry.bounds) return undefined;
+				return { ...entry.bounds };
+			},
 		};
 	}
 
@@ -926,6 +1266,76 @@ export abstract class TuiBase extends Container {
 		return this.overlayStack.some(
 			(entry) => entry.component === this.focusedComponent && this.isOverlayVisible(entry),
 		);
+	}
+
+	/**
+	 * Keyboard focus owner for a clicked component: the overlay that owns it, else the component
+	 * itself when it can receive keys, else the nearest surrounding component that can. Null when
+	 * nothing in that chain can - a mouse-only control (a clickable row, a tab strip) that owned
+	 * focus would swallow every later keystroke.
+	 */
+	protected resolveMouseFocusTarget(component: Component): Component | null {
+		for (let index = this.overlayStack.length - 1; index >= 0; index--) {
+			const overlay = this.overlayStack[index]!;
+			if (this.isOverlayVisible(overlay) && this.containsComponent(overlay.component, component)) {
+				return overlay.component;
+			}
+		}
+		if (canReceiveKeys(component)) return component;
+		return this.findKeyFocusOwner(component);
+	}
+
+	/** Deepest mounted ancestor of `target` that can receive keys, excluding `target` itself. */
+	private findKeyFocusOwner(target: Component): Component | null {
+		const path: Component[] = [];
+		const walk = (node: Component): boolean => {
+			path.push(node);
+			if (node === target) return true;
+			if (node instanceof Container) {
+				for (const child of node.children) if (walk(child)) return true;
+			}
+			path.pop();
+			return false;
+		};
+		for (const root of this.getMouseLayoutRoots()) {
+			path.length = 0;
+			if (!walk(root)) continue;
+			for (let index = path.length - 2; index >= 0; index--) {
+				const candidate = path[index]!;
+				if (canReceiveKeys(candidate)) return candidate;
+			}
+			return null;
+		}
+		return null;
+	}
+
+	/** Dispatch to the visually topmost overlay under the pointer. */
+	protected dispatchMouseToOverlay(event: TuiMouseEvent): { hit: boolean; result?: TuiMouseDispatchResult } {
+		for (let index = this.renderedOverlayLayouts.length - 1; index >= 0; index--) {
+			const layout = this.renderedOverlayLayouts[index]!;
+			if (
+				event.screenX < layout.col ||
+				event.screenX >= layout.col + layout.width ||
+				event.screenY < layout.row ||
+				event.screenY >= layout.row + layout.height
+			) {
+				continue;
+			}
+			const result = dispatchMouseEvent(layout.entry.component, {
+				...event,
+				x: event.screenX - layout.col,
+				y: event.screenY - layout.row,
+				width: layout.width,
+				height: layout.height,
+			});
+			return result
+				? {
+						hit: true,
+						result: result.focus ? { ...result, focusTarget: layout.entry.component } : result,
+					}
+				: { hit: true };
+		}
+		return { hit: false };
 	}
 
 	/** Check if an overlay entry is currently visible */
@@ -1021,6 +1431,7 @@ export abstract class TuiBase extends Container {
 			this.terminal.write("\x1b[?2031l");
 		}
 		this.beforeTerminalStop(options);
+		this.resetMouseCaptureState();
 		// Move cursor to the end of the content to prevent overwriting/artifacts on exit.
 		// Skipped when the screen is preserved for another renderer taking over this terminal.
 		if (!options.preserveScreen && this.previousLines.length > 0) {
@@ -1454,11 +1865,16 @@ export abstract class TuiBase extends Container {
 
 	/** Composite all overlays into content lines (sorted by focusOrder, higher = on top). */
 	protected compositeOverlays(lines: string[], termWidth: number, termHeight: number): string[] {
-		if (this.overlayStack.length === 0) return lines;
+		if (this.overlayStack.length === 0) {
+			this.renderedOverlayLayouts = [];
+			return lines;
+		}
 		const result = [...lines];
 
+		for (const entry of this.overlayStack) entry.bounds = undefined;
+
 		// Pre-render all visible overlays and calculate positions
-		const rendered: { overlayLines: string[]; row: number; col: number; w: number }[] = [];
+		const rendered: { entry: OverlayStackEntry; overlayLines: string[]; row: number; col: number; w: number }[] = [];
 		let minLinesNeeded = result.length;
 
 		const visibleEntries = this.overlayStack.filter((e) => this.isOverlayVisible(e));
@@ -1480,10 +1896,18 @@ export abstract class TuiBase extends Container {
 
 			// Get final row/col with actual overlay height
 			const { row, col } = this.resolveOverlayLayout(options, overlayLines.length, termWidth, termHeight);
+			entry.bounds = { row, col, width, height: overlayLines.length };
 
-			rendered.push({ overlayLines, row, col, w: width });
+			rendered.push({ entry, overlayLines, row, col, w: width });
 			minLinesNeeded = Math.max(minLinesNeeded, row + overlayLines.length);
 		}
+		this.renderedOverlayLayouts = rendered.map(({ entry, row, col, w, overlayLines }) => ({
+			entry,
+			row,
+			col,
+			width: w,
+			height: overlayLines.length,
+		}));
 
 		// Pad to at least terminal height so overlays have screen-relative positions.
 		// Excludes maxLinesRendered: the historical high-water mark caused self-reinforcing
@@ -1827,6 +2251,7 @@ export abstract class TuiBase extends Container {
 		this.previousKittyImageIds = this.collectKittyImageIds(newLines);
 		this.previousWidth = width;
 		this.previousHeight = height;
+		this.placementEpoch++;
 	}
 
 	private renderScrollbackReplay(
@@ -1866,6 +2291,7 @@ export abstract class TuiBase extends Container {
 		this.previousKittyImageIds = this.collectKittyImageIds(newLines);
 		this.previousWidth = width;
 		this.previousHeight = height;
+		this.placementEpoch++;
 	}
 
 	private renderMuxViewportRepaint(
@@ -1906,6 +2332,7 @@ export abstract class TuiBase extends Container {
 		this.previousKittyImageIds = this.collectKittyImageIds(newLines);
 		this.previousWidth = width;
 		this.previousHeight = height;
+		this.placementEpoch++;
 		return true;
 	}
 
@@ -2011,6 +2438,7 @@ export abstract class TuiBase extends Container {
 		const height = this.terminal.rows;
 		const widthChanged = this.previousWidth !== 0 && this.previousWidth !== width;
 		const heightChanged = this.previousHeight !== 0 && this.previousHeight !== height;
+		if (widthChanged || heightChanged) this.placementEpoch++;
 		const previousBufferLength = this.previousHeight > 0 ? this.previousViewportTop + this.previousHeight : height;
 		let prevViewportTop = heightChanged ? Math.max(0, previousBufferLength - height) : this.previousViewportTop;
 		let viewportTop = prevViewportTop;
@@ -2088,6 +2516,7 @@ export abstract class TuiBase extends Container {
 			this.previousKittyImageIds = this.collectKittyImageIds(newLines);
 			this.previousWidth = width;
 			this.previousHeight = height;
+			this.noteFullRender(clear);
 		};
 
 		const debugRedraw = process.env.PI_DEBUG_REDRAW === "1";

@@ -95,6 +95,7 @@ function createMutableAgentState(
 		set messages(nextMessages: AgentMessage[]) {
 			messages = nextMessages.slice();
 		},
+		declaredTools: initialState?.declaredTools?.slice(),
 		isStreaming: false,
 		streamingMessage: undefined,
 		pendingToolCalls: new Set<string>(),
@@ -262,7 +263,7 @@ export class Agent {
 	async buildProviderContext(context: AgentContext, signal?: AbortSignal): Promise<Context> {
 		return buildProviderContextFromAgentContext(
 			context,
-			{ convertToLlm: this.convertToLlm, transformContext: this.transformContext },
+			{ convertToLlm: this.convertToLlm, transformContext: this.transformContext, model: this._state.model },
 			signal,
 		);
 	}
@@ -567,6 +568,7 @@ export class Agent {
 			systemPrompt: this._state.systemPrompt,
 			messages: this._state.messages.slice(),
 			tools: this._state.tools.slice(),
+			...(this._state.declaredTools ? { declaredTools: this._state.declaredTools.slice() } : {}),
 		};
 	}
 

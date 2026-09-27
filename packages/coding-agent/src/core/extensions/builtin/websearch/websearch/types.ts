@@ -1,6 +1,7 @@
 export type SearchProvider =
 	| "exa"
 	| "tavily"
+	| "serpdive"
 	| "brave"
 	| "duckduckgo-html"
 	| "deepseek"
@@ -12,7 +13,8 @@ export type SearchProvider =
 	| "anthropic"
 	| "perplexity"
 	| "xai"
-	| "kimi";
+	| "kimi"
+	| "kagi";
 
 export type SearchContextSize = "low" | "medium" | "high";
 export type CodexSearchMode = "cached" | "live";

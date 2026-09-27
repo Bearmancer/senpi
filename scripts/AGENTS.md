@@ -22,6 +22,14 @@ cell grid. Prefixes encode role:
   the `npm_execpath` basename), pnpm-only `npm_config_*` scrubbing, execpath-aware spawning that
   forwards SIGINT/SIGTERM/SIGHUP to the child, and per-manager forwarded-argument shaping.
 - `build-all.mjs`: PM-agnostic build orchestrator in dependency phases, built on `package-manager.mjs`.
+- `build-coding-agent-bundle.mjs`: esbuild release bundle of the compiled coding-agent (and the
+  `packages/ai` lazy loaders it reaches). `packages/coding-agent`'s `build:bundle` script runs it as
+  the last step of that package's `build`, so every root build emits
+  `packages/coding-agent/dist/bundle/` — the tree both `bin.pi` and `bin.senpi` resolve to and the
+  npm tarball ships. The unbundled `dist/` tree is still published for library consumers, the RPC
+  supervisor re-entry and this directory's profiler. It consumes compiled `dist/` output from
+  `packages/ai` and `packages/coding-agent`, so it runs after those builds, never before them.
+  `node-bundle-smoke.test.ts` rebuilds it and runs the bundled CLI under both Node and Bun.
 - `run-workspaces.mjs`: root -> workspace script runner
   (`node scripts/run-workspaces.mjs [--if-present] [--workspace <name|path>]... <script> [-- <args>]`):
   resolves the root `workspaces` field, runs `<pm> run <script>` per workspace sequentially in path
@@ -45,6 +53,20 @@ cell grid. Prefixes encode role:
   `check-ts-relative-imports.mjs`, `check-browser-smoke.mjs`, `diff-model-catalog.mjs`,
   `publish-model-catalog.mjs`, `generate-thinking-capabilities.mjs` — `bun run check` chains them.
 
+## Release entry graph validation
+
+After a lifecycle-disabled install, run `npm rebuild canvas --foreground-scripts`
+(as the release builder does) to provide its native binding. Then run
+`bun test scripts/release-graph-codemode.test.ts` followed by
+`bun test scripts/release-graph-exclusions.test.ts`. The codemode suite rebuilds
+all workspace entries and prepares compile assets before measuring real Bun output
+contributions, so direct invocation also replaces stale `dist` from another branch.
+The CI `Test (workspaces + scripts)` job runs these commands in its
+`Fresh release entry graphs (codemode and exclusions)` step, before either script
+suite can invalidate generated output. These Bun `.ts` tests are not part of the
+Node `.mjs` script-test glob. Run them only in a checkout whose generated outputs
+you can rebuild; no source or package manifest is rewritten by this gate.
+
 ## changes.md tracker
 
 `scripts/changes.md` is the hand-written change tracker feeding CHANGELOG gates.
@@ -59,9 +81,15 @@ parse `## YYYY-MM-DD` and `## Title (YYYY-MM-DD)` dialects.
 
 Embeds workspace packages in the published `@code-yeongyu/senpi` tarball. `sourceOnly: false`
 ships `dist/index.js` (build before staging); `sourceOnly: true` ships `src/` (only
-`senpi-codemode`). Every `requiredFiles` entry is validated; `@earendil-works/pi-pty` also
-requires `native/index.js` and a platform prebuild. The tarball is fully self-contained: `copyPublishDependencies` stages the ENTIRE runtime
-closure from `publish-deps.lock.json` into `packages/coding-agent/node_modules`, and
+`senpi-codemode`). Every `requiredFiles` entry is validated; `@earendil-works/pi-pty` and
+`@code-yeongyu/senpi-desktop-engine` also require `native/index.js` and a platform prebuild
+(`nativePrebuildFile(target, packageName)` names it per package). The tarball is fully self-contained: `copyPublishDependencies` (delegating to
+`prepare-senpi-publish-dependencies.mjs`) stages the ENTIRE runtime closure from
+`publish-deps.lock.json` into `packages/coding-agent/node_modules` so the staged tree mirrors that
+manifest exactly — nested entries included, npm's workspace-local placements at the top level with a
+conflicting root copy re-nested under its dependents (`prepare-senpi-publish-placements.mjs`),
+version-matched against the installed copy, unlisted leftovers pruned — regardless of how the
+developer's package manager hoisted `node_modules`, and
 `stagePublishManifest` rewrites `bundleDependencies` to every platform-portable staged
 package while original `dependencies` keys stay intact, pointing through npm aliases to
 fork-owned `@code-yeongyu/senpi-*` packages (npm packs original import paths; Bun resolves

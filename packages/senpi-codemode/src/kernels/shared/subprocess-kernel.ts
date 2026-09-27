@@ -1,6 +1,8 @@
 import type { HostToKernelMessage, KernelToHostMessage } from "../../bridge/protocol.ts";
 import { decodeBridgeFrame, encodeBridgeFrame, isKernelToHostMessage } from "../../bridge/protocol.ts";
 import type { KernelInterruptHandle } from "../../tool/types.ts";
+import type { KernelToolsInvokeOptions } from "../js/kernel-tools-types.ts";
+import { rejectKernelToolsUnavailable } from "../kernel-tools-unavailable.ts";
 import { applySessionEnvironment } from "../session-env.ts";
 import type { KernelResult, KernelRunInput, SubprocessKernelOptions, ToolCallMessage } from "./subprocess-contract.ts";
 import { type SubprocessLike, SubprocessProcess, type SubprocessSpawn, spawnSubprocess } from "./subprocess-process.ts";
@@ -47,12 +49,22 @@ export class SubprocessKernel {
 		return run;
 	}
 
-	async interrupt(reason = "interrupted"): Promise<KernelInterruptHandle> {
+	cancelQueued(cellId: string, reason: string): boolean {
+		return this.runs.remove(cellId, reason);
+	}
+
+	queueSnapshot(): { activeCellId: string | null; queuedCellIds: readonly string[] } {
+		return this.runs.snapshot();
+	}
+
+	async interrupt(reason = "interrupted", cellId?: string): Promise<KernelInterruptHandle> {
+		if (cellId !== undefined && this.runs.active?.input.cellId !== cellId) {
+			const cancelled = this.cancelQueued(cellId, reason);
+			return { stateRetained: Promise.resolve(true), ...(cancelled ? {} : { note: "cell not found" }) };
+		}
 		if (this.closed) return { stateRetained: Promise.resolve(true) };
 		if (!this.runs.active) {
-			if (!this.retirementPromise) return { stateRetained: Promise.resolve(true) };
-			const queued = this.runs.takeWaiting();
-			if (queued) this.runs.settle(queued, failureResult(queued, new CellInterruptedError(reason)));
+			this.runs.settleAll(new CellInterruptedError(reason));
 			return { stateRetained: Promise.resolve(true) };
 		}
 		const process = this.process;
@@ -67,6 +79,18 @@ export class SubprocessKernel {
 		if (this.failure) throw this.failure;
 		// Restart always spawns a fresh interpreter, so no user global survives.
 		return { stateRetained: Promise.resolve(false) };
+	}
+
+	listKernelToolNames(): readonly string[] {
+		return [];
+	}
+
+	describeKernelTools(_names: readonly string[]): Promise<never> {
+		return rejectKernelToolsUnavailable();
+	}
+
+	invokeKernelTool(_request: unknown, _options?: AbortSignal | KernelToolsInvokeOptions): Promise<never> {
+		return rejectKernelToolsUnavailable();
 	}
 
 	nextToolCall(): Promise<ToolCallMessage> {

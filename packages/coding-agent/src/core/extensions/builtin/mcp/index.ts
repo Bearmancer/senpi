@@ -1,5 +1,13 @@
 import { bindToProviderScope } from "@earendil-works/pi-ai/node/provider-scope";
-import type { ExtensionAPI, ExtensionContext, ExtensionFactory, SessionStartEvent } from "../../types.ts";
+import type {
+	BeforeAgentStartEvent,
+	BeforeAgentStartEventResult,
+	ExtensionAPI,
+	ExtensionContext,
+	ExtensionFactory,
+	ExtensionHandler,
+	SessionStartEvent,
+} from "../../types.ts";
 import { installMcpNativeToolSearchGate } from "../tool-search/native-search.ts";
 import { registerMcpCommands } from "./commands.ts";
 import {
@@ -18,6 +26,7 @@ import {
 	type SkillMcpDeclarations,
 	skillActivationTargets,
 } from "./skills.ts";
+import { MCP_ATTACH_SETTLE_TIMEOUT_MS } from "./startup-race.ts";
 import { reportMcpAsyncError, safeEventBusOn, wrapAsync } from "./wrap.ts";
 
 const MCP_BUILTIN_EXTENSION_PATH = "<builtin:mcp>";
@@ -53,7 +62,7 @@ export function createMcpExtension(service: McpService, sessionOwned = true): Ex
 			},
 		};
 
-		registerMcpCommands(pi, service);
+		registerMcpCommands(pi, service, () => attachPromise);
 
 		installMcpNativeToolSearchGate(() => {
 			const setting = service.getNativeToolSearchSetting();
@@ -127,21 +136,29 @@ export function createMcpExtension(service: McpService, sessionOwned = true): Ex
 		);
 		pi.on("session_start", (event, ctx) => {
 			const work = onSessionStart(event, ctx);
-			// Reload's runner.emit("session_start") is on the hot-reload critical path
-			// (~260ms when this awaits reconnect). Attach is already single-flight via
-			// attachPromise + service.#attachQueue; before_agent_start awaits it.
-			if (event.reason === "reload") {
-				void work;
-				return;
-			}
-			return work;
+			// session_start is dispatched serially inside interactive startup, so awaiting attach here
+			// puts a cold server's boot and catalog handshake in front of the first frame: measured at
+			// 254ms median of a 292ms dispatch on a real config, against 0.2ms with no servers. Attach
+			// is single-flight via attachPromise + service.#attachQueue and before_agent_start awaits
+			// it, so the first turn still carries the full tool set; only the first paint stops waiting.
+			void work;
 		});
-		pi.on("before_agent_start", async (event, ctx) => {
+		const onBeforeAgentStart: ExtensionHandler<BeforeAgentStartEvent, BeforeAgentStartEventResult> = async (
+			event,
+			ctx,
+		) => {
 			try {
-				// Elicitation (todo 41): point mid-call forms at this session's UI.
-				service.setMcpElicitationUiProvider(() => ctx.ui);
-				await (attachPromise ?? attach({ type: "session_start", reason: "startup" }, ctx));
-				const skills = (event.systemPromptOptions.skills ?? []) as readonly SkillLike[];
+				// A preview (senpi#2115) composes from the attach session_start already started:
+				// it binds no elicitation UI, starts no attach, and attaches no skill-declared servers.
+				const preview = event.preview === true;
+				if (preview) {
+					await attachPromise;
+				} else {
+					// Elicitation (todo 41): point mid-call forms at this session's UI.
+					service.setMcpElicitationUiProvider(() => ctx.ui);
+					await (attachPromise ?? attach({ type: "session_start", reason: "startup" }, ctx));
+				}
+				const skills = preview ? [] : ((event.systemPromptOptions.skills ?? []) as readonly SkillLike[]);
 				if (skills.length > 0) {
 					skillsByName = new Map(skills.map((skill) => [skill.name, skill]));
 					skillDecls = parseSkillMcpDeclarations(skills);
@@ -154,6 +171,16 @@ export function createMcpExtension(service: McpService, sessionOwned = true): Ex
 					];
 					for (const warning of warnings) createMcpLogger("skills").warn(warning);
 				}
+				// attachPromise resolves at the startup-race deadline, which leaves a slow
+				// server still handshaking: assembling the prompt here would publish that
+				// server's stale instructions - or none at all - for the whole session.
+				// Await the attach's own completion signal instead, bounded; on timeout the
+				// turn still goes out and the server's catalog lands on a later turn.
+				if ((await service.whenAttachSettled()) === "timeout") {
+					createMcpLogger("service").warn("MCP attach still settling at prompt build", {
+						timeoutMs: MCP_ATTACH_SETTLE_TIMEOUT_MS,
+					});
+				}
 				const systemPrompt = injectMcpInstructions(service, event.systemPrompt);
 				return systemPrompt === undefined ? undefined : { systemPrompt };
 			} catch (error) {
@@ -161,7 +188,8 @@ export function createMcpExtension(service: McpService, sessionOwned = true): Ex
 				await reportMcpAsyncError("mcp.before_agent_start", error, sink);
 				return undefined;
 			}
-		});
+		};
+		pi.on("before_agent_start", onBeforeAgentStart, { previewSafe: true });
 		pi.on(
 			"session_shutdown",
 			wrapAsync(

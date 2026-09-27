@@ -15,11 +15,17 @@ import {
 } from "@earendil-works/pi-tui";
 import { KeybindingsManager } from "../../../core/keybindings.ts";
 import type { SessionInfo, SessionListProgress } from "../../../core/session-manager.ts";
-import { canonicalizePath as _canonicalizePath } from "../../../utils/paths.ts";
 import { theme } from "../theme/theme.ts";
 import { DynamicBorder } from "./dynamic-border.ts";
 import { keyHint, keyText } from "./keybinding-hints.ts";
 import { filterAndSortSessions, hasSessionName, type NameFilter, type SortMode } from "./session-selector-search.ts";
+import {
+	buildSessionTree,
+	type CanonicalPathResolver,
+	createCanonicalPathResolver,
+	type FlatSessionNode,
+	flattenSessionTree,
+} from "./session-selector-tree.ts";
 
 type SessionScope = "current" | "all";
 
@@ -46,11 +52,6 @@ function formatSessionDate(date: Date): string {
 	if (diffDays < 30) return `${Math.floor(diffDays / 7)}w`;
 	if (diffDays < 365) return `${Math.floor(diffDays / 30)}mo`;
 	return `${Math.floor(diffDays / 365)}y`;
-}
-
-function canonicalizePath(path: string | undefined): string | undefined {
-	if (!path) return path;
-	return _canonicalizePath(path);
 }
 
 class SessionSelectorHeader implements Component {
@@ -186,97 +187,6 @@ class SessionSelectorHeader implements Component {
 	}
 }
 
-/** A session tree node for hierarchical display */
-interface SessionTreeNode {
-	session: SessionInfo;
-	children: SessionTreeNode[];
-	latestActivity: number;
-}
-
-/** Flattened node for display with tree structure info */
-interface FlatSessionNode {
-	session: SessionInfo;
-	depth: number;
-	isLast: boolean;
-	/** For each ancestor level, whether there are more siblings after it */
-	ancestorContinues: boolean[];
-}
-
-/**
- * Build a tree structure from sessions based on parentSessionPath.
- * Returns root nodes sorted by modified date (descending).
- */
-function buildSessionTree(sessions: SessionInfo[]): SessionTreeNode[] {
-	const byPath = new Map<string, SessionTreeNode>();
-
-	for (const session of sessions) {
-		const sessionPath = canonicalizePath(session.path) ?? session.path;
-		byPath.set(sessionPath, { session, children: [], latestActivity: session.modified.getTime() });
-	}
-
-	const roots: SessionTreeNode[] = [];
-
-	for (const session of sessions) {
-		const sessionPath = canonicalizePath(session.path) ?? session.path;
-		const node = byPath.get(sessionPath)!;
-		const parentPath = canonicalizePath(session.parentSessionPath);
-
-		if (parentPath && byPath.has(parentPath)) {
-			byPath.get(parentPath)!.children.push(node);
-		} else {
-			roots.push(node);
-		}
-	}
-
-	const updateLatestActivity = (node: SessionTreeNode): number => {
-		let latestActivity = node.session.modified.getTime();
-		for (const child of node.children) {
-			latestActivity = Math.max(latestActivity, updateLatestActivity(child));
-		}
-		node.latestActivity = latestActivity;
-		return latestActivity;
-	};
-
-	for (const root of roots) {
-		updateLatestActivity(root);
-	}
-
-	// Sort children and roots by latest activity in each subtree (descending)
-	const sortNodes = (nodes: SessionTreeNode[]): void => {
-		nodes.sort((a, b) => b.latestActivity - a.latestActivity);
-		for (const node of nodes) {
-			sortNodes(node.children);
-		}
-	};
-	sortNodes(roots);
-
-	return roots;
-}
-
-/**
- * Flatten tree into display list with tree structure metadata.
- */
-function flattenSessionTree(roots: SessionTreeNode[]): FlatSessionNode[] {
-	const result: FlatSessionNode[] = [];
-
-	const walk = (node: SessionTreeNode, depth: number, ancestorContinues: boolean[], isLast: boolean): void => {
-		result.push({ session: node.session, depth, isLast, ancestorContinues });
-
-		for (let i = 0; i < node.children.length; i++) {
-			const childIsLast = i === node.children.length - 1;
-			// Only show continuation line for non-root ancestors
-			const continues = depth > 0 ? !isLast : false;
-			walk(node.children[i]!, depth + 1, [...ancestorContinues, continues], childIsLast);
-		}
-	};
-
-	for (let i = 0; i < roots.length; i++) {
-		walk(roots[i]!, 0, [], i === roots.length - 1);
-	}
-
-	return result;
-}
-
 /**
  * Custom session list component with multi-line items and search
  */
@@ -296,6 +206,7 @@ class SessionList implements Component, Focusable {
 	private showPath = false;
 	private confirmingDeletePath: string | null = null;
 	private currentSessionCanonicalPath?: string;
+	private canonicalPath: CanonicalPathResolver = createCanonicalPathResolver();
 	public onSelect?: (sessionPath: string) => void;
 	public onCancel?: () => void;
 	public onExit: () => void = () => {};
@@ -334,7 +245,7 @@ class SessionList implements Component, Focusable {
 		this.sortMode = sortMode;
 		this.nameFilter = nameFilter;
 		this.keybindings = keybindings;
-		this.currentSessionCanonicalPath = canonicalizePath(currentSessionFilePath);
+		this.currentSessionCanonicalPath = this.canonicalPath(currentSessionFilePath);
 		this.filterSessions("");
 
 		// Handle Enter in search input - select current item
@@ -360,6 +271,7 @@ class SessionList implements Component, Focusable {
 
 	setSessions(sessions: SessionInfo[], showCwd: boolean): void {
 		this.allSessions = sessions;
+		this.canonicalPath = createCanonicalPathResolver();
 		this.showCwd = showCwd;
 		this.filterSessions(this.searchInput.getValue());
 	}
@@ -371,7 +283,7 @@ class SessionList implements Component, Focusable {
 
 		if (this.sortMode === "threaded" && !trimmed) {
 			// Threaded mode without search: show tree structure
-			const roots = buildSessionTree(nameFiltered);
+			const roots = buildSessionTree(nameFiltered, this.canonicalPath);
 			this.filteredSessions = flattenSessionTree(roots);
 		} else {
 			// Other modes or with search: flat list
@@ -406,7 +318,7 @@ class SessionList implements Component, Focusable {
 
 	private isCurrentSessionPath(path: string): boolean {
 		if (!this.currentSessionCanonicalPath) return false;
-		return (canonicalizePath(path) ?? path) === this.currentSessionCanonicalPath;
+		return (this.canonicalPath(path) ?? path) === this.currentSessionCanonicalPath;
 	}
 
 	invalidate(): void {}
@@ -465,9 +377,10 @@ class SessionList implements Component, Focusable {
 			const age = formatSessionDate(session.modified);
 			const msgCount = String(session.messageCount);
 			let rightPart = `${msgCount} ${age}`;
-			if (this.showCwd && session.cwd) {
+			if ((this.showCwd || session.moved) && session.cwd) {
 				rightPart = `${shortenPath(session.cwd)} ${rightPart}`;
 			}
+			const movedBadge = session.moved ? "moved from " : "";
 			if (this.showPath) {
 				rightPart = `${shortenPath(session.path)} ${rightPart}`;
 			}
@@ -499,8 +412,10 @@ class SessionList implements Component, Focusable {
 			// Build line
 			const leftPart = cursor + theme.fg("dim", prefix) + styledMsg;
 			const leftWidth = visibleWidth(leftPart);
-			const spacing = Math.max(1, width - leftWidth - visibleWidth(rightPart));
-			const styledRight = theme.fg(isConfirmingDelete ? "error" : "dim", rightPart);
+			const spacing = Math.max(1, width - leftWidth - visibleWidth(movedBadge + rightPart));
+			const styledRight =
+				(movedBadge ? theme.fg("warning", movedBadge) : "") +
+				theme.fg(isConfirmingDelete ? "error" : "dim", rightPart);
 
 			let line = leftPart + " ".repeat(spacing) + styledRight;
 			if (isSelected) {

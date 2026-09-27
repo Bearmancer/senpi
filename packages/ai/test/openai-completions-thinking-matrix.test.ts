@@ -14,6 +14,12 @@ const context: Context = {
 	messages: [{ role: "user", content: "Hello", timestamp: Date.now() }],
 };
 
+/** The same model with no catalog ladder, so the provider's no-metadata fallback ladder applies. */
+function withoutCatalogLadder(model: Model<"openai-completions">): Model<"openai-completions"> {
+	const { thinkingLevelMap: _catalogLadder, ...rest } = model;
+	return rest;
+}
+
 async function capturePayload(
 	model: Model<"openai-completions">,
 	reasoning?: SimpleStreamOptions["reasoning"],
@@ -113,8 +119,8 @@ describe("OpenAI Completions thinking ladder fallbacks", () => {
 			expected: { thinking: { type: "enabled" }, reasoning_effort: "max" },
 		},
 		{
-			name: "OpenRouter DeepSeek's high-only ladder",
-			model: getOpenAICompletionsModel("openrouter", "deepseek/deepseek-r1"),
+			name: "OpenRouter DeepSeek's high-only fallback ladder",
+			model: withoutCatalogLadder(getOpenAICompletionsModel("openrouter", "deepseek/deepseek-r1")),
 			reasoning: "minimal" as const,
 			expected: { reasoning: { effort: "high" } },
 		},
@@ -233,11 +239,20 @@ describe("OpenAI Completions thinking ladder fallbacks", () => {
 		expect(await capturePayload(model, "max")).toMatchObject({ reasoning_effort: "high" });
 	});
 
-	it("does not send OpenRouter's none sentinel for mandatory Kimi K3 thinking", async () => {
-		const model = getOpenAICompletionsModel("openrouter", "moonshotai/kimi-k3");
+	it("does not send OpenRouter's none sentinel under the Kimi K3 fallback ladder", async () => {
+		const model = withoutCatalogLadder(getOpenAICompletionsModel("openrouter", "moonshotai/kimi-k3"));
 
 		const payload = await capturePayload(model);
 
+		expect(payload.reasoning).toBeUndefined();
+	});
+
+	it("does not send OpenRouter's none sentinel to a model the catalog marks reasoning-mandatory", async () => {
+		const model = getOpenAICompletionsModel("openrouter", "deepseek/deepseek-r1");
+
+		const payload = await capturePayload(model);
+
+		expect(model.thinkingLevelMap?.off).toBeNull();
 		expect(payload.reasoning).toBeUndefined();
 	});
 });

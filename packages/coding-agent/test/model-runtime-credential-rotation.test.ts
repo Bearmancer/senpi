@@ -189,10 +189,10 @@ describe("credential rotation over a pooled provider", () => {
 			],
 		};
 		// The store parse heals the pool before rotation ever lists it.
-		const store = AuthStorage.inMemory({ "claude-sdk-oauth": poisoned });
-		const healed = (await store.read("claude-sdk-oauth")) as PooledCredential;
+		const store = AuthStorage.inMemory({ "anthropic-subscription": poisoned });
+		const healed = (await store.read("anthropic-subscription")) as PooledCredential;
 		const sources = {
-			providerId: "claude-sdk-oauth",
+			providerId: "anthropic-subscription",
 			credential: healed,
 			env: () => undefined,
 			repository: sentinelRepository,
@@ -348,13 +348,17 @@ describe("credential rotation over a pooled provider", () => {
 	});
 
 	test("expired stored cooldown admits and runs exactly one probe", async () => {
+		const defaultRevision = await repository.storedCredentialRevision("test", "default", { key: "key-default" });
+		const workRevision = await repository.storedCredentialRevision("test", "work", { key: "key-work" });
 		await repository.mutateSlotState("test", "stored", "default", () => ({
 			blockedUntil: NOW - 1,
 			blockReason: "rate_limit",
+			credentialRevision: defaultRevision,
 		}));
 		await repository.mutateSlotState("test", "stored", "work", () => ({
 			blockedUntil: NOW + 60_000,
 			blockReason: "rate_limit",
+			credentialRevision: workRevision,
 		}));
 		const attempted: string[] = [];
 		await collect(
@@ -457,9 +461,11 @@ describe("credential rotation over a pooled provider", () => {
 	});
 
 	test("successful pooled request completes after selection", async () => {
+		const defaultRevision = await repository.storedCredentialRevision("test", "default", { key: "key-default" });
 		await repository.mutateSlotState("test", "stored", "default", () => ({
 			blockedUntil: NOW + 60_000,
 			blockReason: "rate_limit",
+			credentialRevision: defaultRevision,
 		}));
 		await repository.mutateSlotState("test", "stored", "work", () => ({}));
 		const attempted: string[] = [];
@@ -489,9 +495,11 @@ describe("credential rotation over a pooled provider", () => {
 		expect(successfulState?.blockReason).toBeUndefined();
 	});
 	test("lists both stored slots with sidecar health overlaid", async () => {
+		const workRevision = await repository.storedCredentialRevision("test", "work", { key: "key-work" });
 		await repository.mutateSlotState("test", "stored", "work", () => ({
 			blockedUntil: NOW + 60_000,
 			blockReason: "rate_limit",
+			credentialRevision: workRevision,
 		}));
 
 		const slots = await listRotationSlots({
@@ -562,30 +570,29 @@ describe("credential rotation over a pooled provider", () => {
 		expect(new Set(chosen).size).toBe(1);
 	});
 
-	test("a failure after a delta never rotates and carries the suppression marker", async () => {
+	test("a failure after a delta never rotates and forwards the provider's own terminal event", async () => {
 		const attempted: string[] = [];
-		let caught: unknown;
-		try {
-			await collect(
-				streamWithCredentialRotation({
-					sources: {
-						providerId: "test",
-						credential: pooled(),
-						env: () => undefined,
-						repository,
-					},
-					affinityKey: "session-2",
-					runAttempt: (slot) => {
-						attempted.push(slot.name);
-						return stream(startEvent(), textEvent("partial"), errorEvent("429 rate limited"));
-					},
-				}),
-			);
-		} catch (error) {
-			caught = error;
-		}
+		const seen = await collect(
+			streamWithCredentialRotation({
+				sources: {
+					providerId: "test",
+					credential: pooled(),
+					env: () => undefined,
+					repository,
+				},
+				affinityKey: "session-2",
+				runAttempt: (slot) => {
+					attempted.push(slot.name);
+					return stream(startEvent(), textEvent("partial"), errorEvent("429 rate limited"));
+				},
+			}),
+		);
 		expect(attempted).toHaveLength(1);
-		expect((caught as Error).message.startsWith("senpi:no-turn-retry:")).toBe(true);
+		const terminal = seen.at(-1);
+		expect(terminal?.type).toBe("error");
+		// The session layer decides replay from the provider's own text; the pool
+		// must not stamp a marker that would disable retry and fallback outright.
+		expect(terminal?.type === "error" ? terminal.error.errorMessage : undefined).toBe("429 rate limited");
 	});
 
 	test("env slots form a pool and a rotated env value clears its own stale block", async () => {

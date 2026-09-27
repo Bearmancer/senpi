@@ -18,7 +18,8 @@ goal per thread, re-engages the agent via hidden continuation prompts. 34 `.ts` 
   `lifecycle-helpers.ts`, `direct-input-lifecycle.ts`, `agent-end-continuation.ts`,
   `continuation-recovery.ts`, `reload-reengagement.ts`.
 - **Prompt/format**: `prompt.ts` (untrusted-objective + completion audit), `format.ts`,
-  `todo-gate.ts`, `last-assistant-message.ts`, `terminal-provider-error.ts`.
+  `todo-gate.ts`, `todo-owed-backstop.ts` (no-goal turn-end backstop), `last-assistant-message.ts`,
+  `terminal-provider-error.ts`.
 - **UI/tickers**: `ui.ts` (footer segment), `elapsed-ticker.ts`, `wait-ticker.ts`,
   `wait-progress.ts`, `cache-warm.ts`, `cache-warm-renderer.ts`.
 
@@ -67,11 +68,16 @@ a `"user"` mutation. `active`/`complete` never prompt.
   and legacy `pi-goal` stores/status spellings migrate on read. Objectives trim and cap at
   4,000 code points with a truncation marker plus full-text sidecar.
 - **Continuation is opt-in by state**: hidden prompts queue only while the goal is `active`,
-  the agent is idle, and no messages are pending.
+  the agent is idle, and no messages are pending. The todo-owed backstop
+  (`todo-owed-backstop.ts`) is the no-goal mirror: it queues its hidden followUp only when
+  nothing else owns the turn end, at most two per chain of unattended turns (the chain
+  resets on accepted direct input, `session_start`, `session_tree`), never in print/json.
 - **Live footer is ticker-driven**: `refreshGoalUi` drives `GoalElapsedTicker` once per second
   while a goal is `active` with an open accounting window; `GoalWaitTicker` independently
   refreshes the continuation countdown while a monitor or user-grace timer is armed. Both
   require a TUI context and stop on their owning lifecycle cleanup.
 - Inert until a goal exists; `loop` (#31) and later builtins register after it. Tests:
   `test/suite/goal-{store,modules,extension,elapsed-ticker,wait-progress}.test.ts`
-  (faux/mocked `pi`, temp-file store, no real APIs).
+  (faux/mocked `pi`, temp-file store, no real APIs), plus
+  `test/suite/goal-todo-stale-reminder.test.ts` and
+  `test/suite/goal-todo-owed-backstop.test.ts` (harness + faux provider).

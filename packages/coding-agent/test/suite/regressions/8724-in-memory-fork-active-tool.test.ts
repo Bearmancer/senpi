@@ -97,6 +97,7 @@ describe("regression #8724: in-memory fork during an active tool turn", () => {
 		]);
 		await runtime.session.prompt("next prompt");
 
+		// senpi#2093/#2118: the first turn opens with the environment context folded into the prompt's user message.
 		expect(capturedRoles).toEqual(["user"]);
 	});
 });

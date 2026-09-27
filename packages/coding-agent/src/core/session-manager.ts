@@ -1,5 +1,6 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { ImageContent, Message, TextContent, ThinkingSelection, Usage } from "@earendil-works/pi-ai";
+import { normalizeProviderId } from "@earendil-works/pi-ai";
 import { randomBytes, randomUUID } from "crypto";
 import {
 	appendFileSync,
@@ -10,6 +11,7 @@ import {
 	readdirSync,
 	readFileSync,
 	readSync,
+	rmSync,
 	statSync,
 	writeFileSync,
 } from "fs";
@@ -18,9 +20,16 @@ import { join, resolve } from "path";
 import { StringDecoder } from "string_decoder";
 import { APP_NAME, getAgentDir as getDefaultAgentDir, getSessionsDir } from "../config.ts";
 import { normalizePath, resolvePath } from "../utils/paths.ts";
-import { listSessionInfos, listSessionsFromDir, type SessionListProgress } from "./session-discovery.ts";
+import type { RepositoryIdentity } from "./repository-identity.ts";
+import { listSessionFilesInDir, listSessionsFromDir, type SessionListProgress } from "./session-discovery.ts";
+import { materializeSessionEntries } from "./session-entry-materializer.ts";
 import { type ResidentStoreStats, ResidentStringStore } from "./session-resident-store.ts";
-import { reserveSessionWrite } from "./session-write-reservation.ts";
+import {
+	hasOtherLiveSessionWriter,
+	registerSessionWriter,
+	reserveSessionWrite,
+	unregisterSessionWriter,
+} from "./session-write-reservation.ts";
 
 export type { SessionListProgress } from "./session-discovery.ts";
 
@@ -282,6 +291,10 @@ export interface SessionInfo {
 	messageCount: number;
 	firstMessage: string;
 	allMessagesText: string;
+	/** Latest repository identity the session recorded (see `repository-identity`). */
+	repositoryIdentity?: RepositoryIdentity;
+	/** Set on sessions of the current repository recorded at a path that no longer exists. */
+	moved?: boolean;
 }
 
 export type ReadonlySessionManager = Pick<
@@ -491,7 +504,10 @@ function getSessionContextSettings(
 					preFallbackThinkingLevel = thinkingLevel;
 					preFallbackThinkingSelection = thinkingSelection;
 					if (entry.originalProvider && entry.originalModelId) {
-						model = { provider: entry.originalProvider, modelId: entry.originalModelId };
+						// Read boundary (senpi#1989): a session recorded by an earlier
+						// version carries the legacy provider id, so normalize on read.
+						// No rewrite is added here.
+						model = { provider: normalizeProviderId(entry.originalProvider), modelId: entry.originalModelId };
 						isModelSelectionExplicit = true;
 					}
 				}
@@ -510,13 +526,13 @@ function getSessionContextSettings(
 				// model id must not become an authoritative selection; the fallback-original restore
 				// above guards the same way, and a later assistant message still restores the model.
 				if (entry.provider && entry.modelId) {
-					model = { provider: entry.provider, modelId: entry.modelId };
+					model = { provider: normalizeProviderId(entry.provider), modelId: entry.modelId };
 					isModelSelectionExplicit = true;
 				}
 			}
 		} else if (entry.type === "message" && entry.message.role === "assistant" && !isInFallbackWindow) {
-			if (isModelSelectionExplicit && model?.provider === entry.message.provider) continue;
-			model = { provider: entry.message.provider, modelId: entry.message.model };
+			if (isModelSelectionExplicit && model?.provider === normalizeProviderId(entry.message.provider)) continue;
+			model = { provider: normalizeProviderId(entry.message.provider), modelId: entry.message.model };
 			isModelSelectionExplicit = false;
 		}
 	}
@@ -874,6 +890,8 @@ export class SessionManager {
 	private leafId: string | null = null;
 	private residentStore = new ResidentStringStore();
 	private mirrorTrimmed = false;
+	// Counts loaded/appended entries, including those removed from the resident mirror.
+	private fullEntryCount = 0;
 	private compactEntriesCache: { mutation: number; entries: SessionEntry[] } | null = null;
 	// Monotonic counter bumped by every mutator; memoized materialized views are
 	// keyed on it so read hot paths (footer, RPC) never re-materialize unchanged sessions.
@@ -905,12 +923,24 @@ export class SessionManager {
 		this.cwd = resolvePath(cwd);
 		this.sessionDir = normalizePath(sessionDir);
 		this.persist = persist;
+		// A persisted manager owns its session file for as long as it lives; the shared
+		// RPC host reads this registry to release grants no writer holds anymore.
+		if (persist) registerSessionWriter(this);
 		if (persist && this.sessionDir && !existsSync(this.sessionDir)) {
 			mkdirSync(this.sessionDir, { recursive: true });
 		}
+		// Lazily resolved: the session id only exists once the header loads or
+		// newSession() runs. Unpersisted sessions disable eviction entirely —
+		// dropping strings with no backing would lose them.
+		this.residentStore.configure({
+			blobsDir: () =>
+				this.persist && this.sessionId ? join(this.sessionDir, "resident-blobs", this.sessionId) : undefined,
+		});
 
 		if (sessionFile) {
-			this._setSessionFile(sessionFile, preloadedFileEntries);
+			this._setSessionFile(sessionFile, preloadedFileEntries, newSessionOptions);
+		} else if (preloadedFileEntries?.length) {
+			this._loadEntries(preloadedFileEntries, newSessionOptions);
 		} else {
 			this.newSession(newSessionOptions);
 		}
@@ -938,30 +968,45 @@ export class SessionManager {
 		this._setSessionFile(sessionFile);
 	}
 
-	private _setSessionFile(sessionFile: string, preloadedFileEntries?: FileEntry[]): void {
+	private _setSessionFile(
+		sessionFile: string,
+		preloadedFileEntries?: FileEntry[],
+		newSessionOptions?: NewSessionOptions,
+	): void {
 		if (this.persist) reserveSessionWrite(resolvePath(sessionFile));
 		this.sessionFile = resolvePath(sessionFile);
 		this.mirrorTrimmed = false;
 		this.residentStore.clear();
 		if (existsSync(this.sessionFile)) {
-			this.fileEntries = preloadedFileEntries ?? loadEntriesFromFile(this.sessionFile);
+			const entries = preloadedFileEntries ?? loadEntriesFromFile(this.sessionFile);
 
 			// If file was empty, initialize it with a valid session header. If it was
 			// non-empty but did not parse as a pi session, fail without modifying it.
-			if (this.fileEntries.length === 0) {
+			if (entries.length === 0) {
 				const explicitPath = this.sessionFile;
 				if (statSync(explicitPath).size > 0) {
 					throw new Error(`Session file is not a valid ${APP_NAME} session: ${explicitPath}`);
 				}
-				this.newSession();
-				this.sessionFile = explicitPath;
+				// The explicit path is already granted above and keeps being written here:
+				// allocating a second path would take a grant no writer ever uses.
+				// An empty file carries no identity yet, so a caller-supplied id still applies.
+				this._resetToNewSession(newSessionOptions);
 				this._rewriteFile();
 				this.flushed = true;
 				return;
 			}
 
+			// A file-backed load keeps the reader contract: an entry set without a header
+			// adopts a fresh id in memory instead of creating a replacement session file
+			// (which `_loadEntries`' header-less branch would do for ingested entries).
+			this.fileEntries = entries;
+
 			const header = this.fileEntries.find((e) => e.type === "session") as SessionHeader | undefined;
 			this.sessionId = header?.id ?? createSessionId();
+			// Blobs left under this id by a process that is gone are a disposable cache:
+			// the JSONL is the authority for every entry and this store rewrites what it
+			// evicts, so clearing them bounds the directory to one process lifetime.
+			this._releaseBlobsDirUnlessShared();
 
 			if (migrateToCurrentVersion(this.fileEntries)) {
 				this._rewriteFile();
@@ -972,16 +1017,42 @@ export class SessionManager {
 			this.mutationCount++;
 			this.flushed = true;
 		} else {
-			const explicitPath = this.sessionFile;
-			this.newSession();
-			this.sessionFile = explicitPath; // preserve explicit path from --session flag
+			// Same here: the explicit path from --session stays the only granted one.
+			// The file does not exist yet, so this open CREATES the session: a caller-supplied
+			// id is the session's identity from here on. An EXISTING file never reaches this
+			// branch, which is why a supplied id can never overwrite a header id.
+			this._resetToNewSession(newSessionOptions);
+			// A host-minted id is referenced by nothing yet, so its file may wait for the first
+			// assistant message. A CALLER-chosen id is already held in the caller's own records:
+			// the file has to answer to it now, or a reopen before the first reply would mint a
+			// different identity and the caller's record would point at nothing (#2010).
+			if (newSessionOptions?.id !== undefined) {
+				this._rewriteFile();
+				this.flushed = true;
+			}
 		}
 	}
 
 	newSession(options?: NewSessionOptions): string | undefined {
+		const timestamp = this._resetToNewSession(options);
+		if (this.persist) {
+			const fileTimestamp = timestamp.replace(/[:.]/g, "-");
+			const path = join(this.getSessionDir(), `${fileTimestamp}_${this.sessionId}.jsonl`);
+			reserveSessionWrite(path);
+			this.sessionFile = path;
+		}
+		return this.sessionFile;
+	}
+
+	/** Resets every in-memory field onto a fresh header. Allocates no session path. */
+	private _resetToNewSession(options?: NewSessionOptions): string {
 		if (options?.id !== undefined) {
 			assertValidSessionId(options.id);
 		}
+		// Capture the previous backing before the id changes: the blobsDir
+		// provider resolves against the new id after this assignment, so clear()
+		// below would otherwise leak the old session's blob directory on disk.
+		const previousBlobsDir = this.residentStore.resolvedBlobsDir();
 		this.sessionId = options?.id ?? createSessionId();
 		const timestamp = new Date().toISOString();
 		const header: SessionHeader = {
@@ -994,7 +1065,11 @@ export class SessionManager {
 		};
 		this.fileEntries = [header];
 		this.mirrorTrimmed = false;
+		this.fullEntryCount = 0;
 		this.residentStore.clear();
+		if (previousBlobsDir) {
+			this._removeBlobsDir(previousBlobsDir);
+		}
 		this.byId.clear();
 		this.entryOrdersById.clear();
 		this.messageEntryPositions = new WeakMap();
@@ -1012,14 +1087,29 @@ export class SessionManager {
 		};
 		this.mutationCount++;
 		this.flushed = false;
+		return timestamp;
+	}
 
-		if (this.persist) {
-			const fileTimestamp = timestamp.replace(/[:.]/g, "-");
-			const path = join(this.getSessionDir(), `${fileTimestamp}_${this.sessionId}.jsonl`);
-			reserveSessionWrite(path);
-			this.sessionFile = path;
+	private _loadEntries(entries: FileEntry[], options?: NewSessionOptions): void {
+		const header = entries.find((e) => e.type === "session") as SessionHeader | undefined;
+
+		if (header) {
+			this.fileEntries = entries;
+			this.sessionId = header.id;
+
+			if (migrateToCurrentVersion(this.fileEntries)) {
+				this._rewriteFile();
+			}
+		} else {
+			this.newSession(options);
+			this.fileEntries = this.fileEntries.concat(entries);
 		}
-		return this.sessionFile;
+
+		// Ingested entries join the same resident-string store as file-loaded ones, so large
+		// payloads stay out-of-line and every reader materializes through the one path.
+		this.fileEntries = this.fileEntries.map((entry) => this.residentStore.externalize(entry));
+		this._buildIndex();
+		this.mutationCount++;
 	}
 
 	private _buildIndex(): void {
@@ -1038,8 +1128,10 @@ export class SessionManager {
 			cost: 0,
 			latestCacheHitRate: undefined,
 		};
+		let fullEntryCount = 0;
 		for (const [order, entry] of this.fileEntries.entries()) {
 			if (entry.type === "session") continue;
+			fullEntryCount++;
 			this.byId.set(entry.id, entry);
 			this.entryOrdersById.set(entry.id, order);
 			this.leafId = entry.id;
@@ -1057,6 +1149,10 @@ export class SessionManager {
 					this.labelTimestampsById.delete(entry.targetId);
 				}
 			}
+		}
+		// A trimmed mirror cannot replace the full-history count.
+		if (!this.mirrorTrimmed) {
+			this.fullEntryCount = fullEntryCount;
 		}
 	}
 
@@ -1095,6 +1191,14 @@ export class SessionManager {
 
 	getSessionFile(): string | undefined {
 		return this.sessionFile;
+	}
+
+	/**
+	 * Exposes the resident store for out-of-band string lifecycles such as the
+	 * agent's runtime message state (tokenized while idle, hydrated per turn).
+	 */
+	getResidentStore(): ResidentStringStore {
+		return this.residentStore;
 	}
 
 	getResidentStoreStats(): ResidentStoreStats {
@@ -1138,6 +1242,7 @@ export class SessionManager {
 		this.byId.set(residentEntry.id, residentEntry);
 		this.entryOrdersById.set(residentEntry.id, this.fileEntries.length - 1);
 		this.leafId = residentEntry.id;
+		this.fullEntryCount++;
 		this._accumulateUsage(residentEntry);
 		this.mutationCount++;
 		this._persist(residentEntry);
@@ -1340,6 +1445,35 @@ export class SessionManager {
 		return entry.id;
 	}
 
+	/**
+	 * Release what outlives this manager in the process: the shared host's write
+	 * grant and the blob directory backing its resident mirror. The session JSONL
+	 * is untouched - it is the authority the next reader loads from. Idempotent.
+	 */
+	dispose(): void {
+		unregisterSessionWriter(this);
+		this._releaseBlobsDirUnlessShared();
+	}
+
+	/**
+	 * The blob directory is keyed by session id, so every live manager over the same
+	 * session file hydrates from it. Removing it while one of them is still reading
+	 * would cost that manager a full JSONL recovery per evicted string, so the last
+	 * owner to let go is the one that clears it.
+	 */
+	private _releaseBlobsDirUnlessShared(): void {
+		const blobsDir = this.residentStore.resolvedBlobsDir();
+		if (!blobsDir) return;
+		if (this.sessionFile && hasOtherLiveSessionWriter(this.sessionFile, this)) return;
+		this._removeBlobsDir(blobsDir);
+	}
+
+	private _removeBlobsDir(dir: string): void {
+		try {
+			rmSync(dir, { force: true, recursive: true });
+		} catch {}
+	}
+
 	private _trimMirrorAfterCompaction(compaction: CompactionEntry): void {
 		if (!this.persist) return;
 		const firstKeptIndex = this.fileEntries.findIndex((entry) => entry.id === compaction.firstKeptEntryId);
@@ -1356,7 +1490,7 @@ export class SessionManager {
 			if (entry.type !== "session") entry.parentId = parentId;
 			parentId = entry.type === "session" ? null : entry.id;
 		}
-		this.residentStore.clear();
+		this.residentStore.spillResident();
 		this.mirrorTrimmed = true;
 		this.fileEntries = [header, ...retained]
 			.filter((entry): entry is FileEntry => entry !== undefined)
@@ -1523,19 +1657,20 @@ export class SessionManager {
 		if (fromId !== undefined && !entriesById.has(fromId) && this.mirrorTrimmed && this.sessionFile) {
 			entriesById = new Map(
 				this._loadFullHistoryEntries()
-					.filter((entry) => entry.type !== "session")
-					.map((entry) => [entry.id, this.residentStore.materialize(entry) as SessionEntry]),
+					.filter((entry): entry is SessionEntry => entry.type !== "session")
+					.map((entry) => [entry.id, this.residentStore.materialize(entry)]),
 			);
 		}
 		let current = startId ? entriesById.get(startId) : undefined;
 		while (current) {
-			path.unshift(this._materializeEntry(current));
+			path.unshift(current);
 			current = current.parentId ? entriesById.get(current.parentId) : undefined;
 		}
+		const materializedPath = this._materializeEntries(path);
 		if (fromId === undefined) {
-			this.branchCache = { leafId: this.leafId, mutation: this.mutationCount, entries: path };
+			this.branchCache = { leafId: this.leafId, mutation: this.mutationCount, entries: materializedPath };
 		}
-		return path;
+		return materializedPath;
 	}
 
 	/**
@@ -1612,11 +1747,41 @@ export class SessionManager {
 		if (this.entriesCache !== null && this.entriesCache.mutation === this.mutationCount) {
 			return this.entriesCache.entries;
 		}
-		const entries = this.fileEntries
-			.filter((e): e is SessionEntry => e.type !== "session")
-			.map((entry) => this._materializeEntry(entry));
-		this.entriesCache = { mutation: this.mutationCount, entries };
-		return entries;
+		const entries = this.fileEntries.filter((e): e is SessionEntry => e.type !== "session");
+		const materializedEntries = this._materializeEntries(entries);
+		this.entriesCache = { mutation: this.mutationCount, entries: materializedEntries };
+		return materializedEntries;
+	}
+
+	/** Returns the maintained non-header entry count without loading or materializing history. */
+	getEntryCount(): number {
+		return this.fullEntryCount;
+	}
+
+	/**
+	 * Release the memoized materialized views. Materialized entries hold the full
+	 * persisted strings, so views kept between turns pin the whole session text
+	 * in memory even while nothing runs. The next read rebuilds them from the
+	 * bounded resident store.
+	 */
+	dropMaterializedCaches(): void {
+		this.entriesCache = null;
+		this.branchCache = null;
+		this.compactEntriesCache = null;
+	}
+
+	private _materializeEntries(entries: readonly SessionEntry[]): SessionEntry[] {
+		return materializeSessionEntries(entries, {
+			residentStore: this.residentStore,
+			loadHistoryEntries: () => this._loadFullHistoryEntries(),
+			onMaterialized: (entry) => {
+				if (entry.type !== "message") return;
+				const order = this.entryOrdersById.get(entry.id);
+				if (order !== undefined) {
+					this.messageEntryPositions.set(entry.message, { entryId: entry.id, order });
+				}
+			},
+		});
 	}
 
 	private _getCompactEntries(): SessionEntry[] {
@@ -1781,10 +1946,27 @@ export class SessionManager {
 		// Because labels are real tree entries, later entries can be children of labels;
 		// removing labels requires re-chaining the retained path to avoid orphaned subtrees.
 		const pathWithoutLabels: SessionEntry[] = [];
+		const replacementByLabelId = new Map<string, string>();
+		const pendingLabelIds: string[] = [];
 		let pathParentId: string | null = null;
 		for (const entry of path) {
-			if (entry.type === "label") continue;
-			pathWithoutLabels.push({ ...entry, parentId: pathParentId });
+			if (entry.type === "label") {
+				pendingLabelIds.push(entry.id);
+				continue;
+			}
+			for (const labelId of pendingLabelIds) {
+				replacementByLabelId.set(labelId, entry.id);
+			}
+			pendingLabelIds.length = 0;
+			pathWithoutLabels.push(
+				entry.type === "compaction"
+					? {
+							...entry,
+							parentId: pathParentId,
+							firstKeptEntryId: replacementByLabelId.get(entry.firstKeptEntryId) ?? entry.firstKeptEntryId,
+						}
+					: { ...entry, parentId: pathParentId },
+			);
 			pathParentId = entry.id;
 		}
 
@@ -1831,13 +2013,19 @@ export class SessionManager {
 			}
 
 			reserveSessionWrite(newSessionFile);
+			// Materialize the branched entries while the previous backing is still
+			// readable, then clear: re-externalizing tokenized entries after clear()
+			// would bake sentinel tokens into the new branched JSONL.
+			const branchedEntries = this._materializeEntries([...pathWithoutLabels, ...labelEntries]);
+			const previousBlobsDir = this.residentStore.resolvedBlobsDir();
 			this.residentStore.clear();
+			if (previousBlobsDir) {
+				this._removeBlobsDir(previousBlobsDir);
+			}
 			this.mirrorTrimmed = false;
-			this.fileEntries = [header, ...pathWithoutLabels, ...labelEntries].map((entry) =>
-				this.residentStore.externalize(entry),
-			);
 			this.sessionId = newSessionId;
 			this.sessionFile = newSessionFile;
+			this.fileEntries = [header, ...branchedEntries.map((entry) => this.residentStore.externalize(entry))];
 			this._buildIndex();
 			this.mutationCount++;
 
@@ -1872,10 +2060,9 @@ export class SessionManager {
 			labelEntries.push(labelEntry);
 			parentId = labelEntry.id;
 		}
+		const branchedEntries = this._materializeEntries([...pathWithoutLabels, ...labelEntries]);
 		this.residentStore.clear();
-		this.fileEntries = [header, ...pathWithoutLabels, ...labelEntries].map((entry) =>
-			this.residentStore.externalize(entry),
-		);
+		this.fileEntries = [header, ...branchedEntries.map((entry) => this.residentStore.externalize(entry))];
 		this.sessionId = newSessionId;
 		this._buildIndex();
 		this.mutationCount++;
@@ -1897,8 +2084,10 @@ export class SessionManager {
 	 * @param path Path to session file
 	 * @param sessionDir Optional session directory for /new or /branch. If omitted, derives from file's parent.
 	 * @param cwdOverride Optional cwd override instead of the session header cwd.
+	 * @param options Applied only when this open CREATES the session (the path does not exist
+	 * yet, or exists and is empty). An existing session file keeps the id in its header.
 	 */
-	static open(path: string, sessionDir?: string, cwdOverride?: string): SessionManager {
+	static open(path: string, sessionDir?: string, cwdOverride?: string, options?: NewSessionOptions): SessionManager {
 		const resolvedPath = resolvePath(path);
 		reserveSessionWrite(resolvedPath);
 		let header: SessionHeader | null = null;
@@ -1924,7 +2113,7 @@ export class SessionManager {
 		const cwd = cwdOverride ?? (header ? getSessionHeaderCwd(header) : undefined) ?? process.cwd();
 		// If no sessionDir provided, derive from file's parent directory
 		const dir = sessionDir ? normalizePath(sessionDir) : resolve(resolvedPath, "..");
-		return new SessionManager(cwd, dir, resolvedPath, true, undefined, preloadedFileEntries);
+		return new SessionManager(cwd, dir, resolvedPath, true, options, preloadedFileEntries);
 	}
 
 	/**
@@ -1942,9 +2131,9 @@ export class SessionManager {
 		return new SessionManager(cwd, dir, undefined, true);
 	}
 
-	/** Create an in-memory session (no file persistence) */
-	static inMemory(cwd: string = process.cwd(), options?: NewSessionOptions): SessionManager {
-		return new SessionManager(cwd, "", undefined, false, options);
+	/** Create an in-memory session (no file persistence), optionally from entries held outside the filesystem. */
+	static inMemory(cwd: string = process.cwd(), options?: NewSessionOptions, entries?: FileEntry[]): SessionManager {
+		return new SessionManager(cwd, "", undefined, false, options, entries);
 	}
 
 	/**
@@ -2068,12 +2257,16 @@ export class SessionManager {
 				}
 			}
 
-			// Process all files with progress tracking
+			// Process each directory through its own summary index, with progress over all files
 			let loaded = 0;
-			const sessions = await listSessionInfos(dirFiles.flat(), () => {
+			const onLoaded = (): void => {
 				loaded++;
 				progress?.(loaded, totalFiles);
-			});
+			};
+			const sessions: SessionInfo[] = [];
+			for (const [index, dir] of dirs.entries()) {
+				sessions.push(...(await listSessionFilesInDir(dir, dirFiles[index] ?? [], onLoaded)));
+			}
 
 			sessions.sort((a, b) => b.modified.getTime() - a.modified.getTime());
 			return sessions;

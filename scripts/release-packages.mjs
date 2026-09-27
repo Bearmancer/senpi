@@ -1,7 +1,7 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { findPackageDirectories } from "./package-workspaces.mjs";
-import { resolveRegistryPackages } from "./registry-packages.mjs";
+import { registrySourcePackageNames, resolveRegistryPackages } from "./registry-packages.mjs";
 
 export const WORKSPACE_PACKAGES = [
 	"packages/ai/package.json",
@@ -14,6 +14,23 @@ export const WORKSPACE_PACKAGES = [
 	"packages/telemetry/package.json",
 	"packages/senpi-codemode/package.json",
 	"packages/tui/package.json",
+];
+
+// Bundled runtime workspaces that ship inside the senpi tarball but do NOT ride the fork's CalVer
+// lockstep: they keep upstream's own release version. The install-lock generator must still treat
+// them as internal (resolving their dependency closure from the local workspace manifest, never
+// fetching upstream registry metadata) so the closure matches the bundled copy; they are exempt
+// from the lockstep version check because their version is not the fork CalVer. chord is here
+// because it is byte-for-byte upstream apart from packaging metadata, so it keeps `@earendil-works/chord`'s
+// own published identity instead of a fork alias (issue #1632). The desktop packages are here
+// because they are private and never published: they ship only inside the senpi tarball.
+export const BUNDLED_INTERNAL_WORKSPACES = [
+	"packages/chord/package.json",
+	"packages/desktop-engine/package.json",
+	"packages/desktop-prelude/package.json",
+	"packages/desktop-protocol/package.json",
+	"packages/desktop-service/package.json",
+	"packages/desktop-tool/package.json",
 ];
 
 function writeWorkspaceVersion(file, version, dryRun, log, dryRunLog) {
@@ -60,4 +77,21 @@ export function getPublicWorkspacePackages() {
 			name: registryName,
 			version,
 		}));
+}
+
+// Upstream's check-runtime-deps targets every workspace package without `private: true`.
+// The fork's published sources are `private: true` under their upstream `@earendil-works/pi-*`
+// names (publish.mjs rewrites them to `@code-yeongyu/senpi-*` manifests), so the fork's
+// runtime-dependency contract is the union: public-by-flag packages (client/protocol here,
+// everything in upstream-shaped fixtures) plus the fork's registry sources. Private,
+// unpublished workspaces (chord, senpi-server, sqlite-node) stay out; chord keeps upstream's own
+// release identity so its declared edges resolve to upstream's published version (issue #1632).
+export function getRuntimeDepsCheckPackages() {
+	return findPackageDirectories()
+		.map((directory) => ({
+			directory,
+			...JSON.parse(readFileSync(join(directory, "package.json"), "utf8")),
+		}))
+		.filter((pkg) => pkg.private !== true || registrySourcePackageNames.has(pkg.name))
+		.map(({ directory }) => ({ directory }));
 }

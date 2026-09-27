@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
+// Refs #1645: borrowed image-submit receivers retain the real composer classifier.
+
 /**
  * Submission-channel coverage for pasted images: the `[Image #N]` markers the
  * paste handler inserts must resolve, at submit time, into the images array
@@ -63,6 +65,7 @@ interface FakeEditor {
 	addToHistory: MockFn;
 	insertImageMarker: MockFn;
 	insertTextAtCursor: MockFn;
+	setReplyLabel: MockFn;
 	onSubmit?: (text: string) => void | Promise<void>;
 	onImageMarkersChanged?: (order: number[]) => void;
 }
@@ -75,11 +78,16 @@ interface FakeSession {
 	prompt: MockFn;
 	reserveQueuedInputOrder: MockFn;
 	extensionRunner: { getCommand: (name: string) => unknown };
-	modelRuntime: { getError: () => string | undefined; refresh: () => Promise<unknown> };
+	modelRuntime: {
+		getError: () => string | undefined;
+		getWarnings: () => readonly string[];
+		refresh: () => Promise<unknown>;
+	};
 	fallbackValidationWarnings: readonly string[];
 }
 
 interface ModeContext {
+	composerDestination: { kind: "chat" };
 	defaultEditor: FakeEditor;
 	editor: FakeEditor;
 	session: FakeSession;
@@ -129,10 +137,14 @@ interface ModeContext {
 	isExtensionCommand?: (text: string) => boolean;
 	getExpandedEditorText?: () => string;
 	beginUserEcho?: (text: string, images?: readonly ImageContent[]) => string | undefined;
+	submitAsyncQuestionComment?: (text: string) => boolean;
+	setComposerReply?: () => void;
 }
 
 type ModePrototype = {
 	setupEditorSubmitHandler(this: ModeContext): void;
+	submitAsyncQuestionComment(this: ModeContext, text: string): boolean;
+	setComposerReply(this: ModeContext): void;
 	getUserInput(this: ModeContext): Promise<UserSubmission>;
 	run(this: ModeContext): Promise<void>;
 	handleFollowUp(this: ModeContext): Promise<void>;
@@ -178,6 +190,7 @@ function createModeContext(): ModeContext {
 		addToHistory: vi.fn(),
 		insertImageMarker: vi.fn(() => 1),
 		insertTextAtCursor: vi.fn(),
+		setReplyLabel: vi.fn(),
 		onImageMarkersChanged: undefined,
 	};
 	const session: FakeSession = {
@@ -188,12 +201,17 @@ function createModeContext(): ModeContext {
 		prompt: vi.fn(async () => {}),
 		reserveQueuedInputOrder: vi.fn(() => 0),
 		extensionRunner: { getCommand: vi.fn(() => undefined) },
-		modelRuntime: { getError: vi.fn(() => undefined), refresh: vi.fn(async () => undefined) },
+		modelRuntime: {
+			getError: vi.fn(() => undefined),
+			getWarnings: vi.fn(() => []),
+			refresh: vi.fn(async () => undefined),
+		},
 		fallbackValidationWarnings: [],
 	};
 	const context: ModeContext = Object.assign(
 		{
-			defaultEditor: {} as FakeEditor,
+			composerDestination: { kind: "chat" },
+			defaultEditor: { setReplyLabel: vi.fn() } as FakeEditor,
 			editor,
 			session,
 			pendingImages: new Map<number, ImageContent>(),
@@ -244,6 +262,8 @@ function createModeContext(): ModeContext {
 		"getUserInput",
 		"buildMainLoopPromptOptions",
 		"beginUserEcho",
+		"submitAsyncQuestionComment",
+		"setComposerReply",
 	] as const) {
 		const real = proto[method] as unknown as ((this: ModeContext, ...args: never[]) => unknown) | undefined;
 		if (typeof real === "function") {
@@ -282,9 +302,23 @@ function submit(context: ModeContext, text: string): Promise<void> {
 	return Promise.resolve(handler(text));
 }
 
-/** Start the real getUserInput() so the widened channel can be observed end-to-end. */
+async function bounded<T>(promise: Promise<T>): Promise<T> {
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	try {
+		return await Promise.race([
+			promise,
+			new Promise<never>((_, reject) => {
+				timer = setTimeout(() => reject(new Error("Submission channel did not settle")), 5_000);
+			}),
+		]);
+	} finally {
+		if (timer !== undefined) clearTimeout(timer);
+	}
+}
+
+/** Subscribe to the actual input handoff before submission, with no polling. */
 function beginUserInput(context: ModeContext): Promise<UserSubmission> {
-	return proto.getUserInput.call(context);
+	return bounded(proto.getUserInput.call(context));
 }
 
 /** Distinct solid-color 16x16 PNGs so mispairing is observable, not just count loss. */
@@ -345,9 +379,9 @@ describe("InteractiveMode image submission - normal channel", () => {
 		context.pendingImages.set(1, pending);
 		prepareSubmitHandler(context);
 
-		const runPromise = proto.run.call(context);
+		const stopped = expect(bounded(proto.run.call(context))).rejects.toBe(stop);
 		await submit(context, "look at [Image #1]");
-		await expect(runPromise).rejects.toBe(stop);
+		await stopped;
 
 		expect(context.session.prompt).toHaveBeenCalledTimes(1);
 		const [promptText, promptOptions] = context.session.prompt.mock.calls[0] as [
@@ -375,9 +409,9 @@ describe("InteractiveMode image submission - normal channel", () => {
 		});
 		prepareSubmitHandler(context);
 
-		const runPromise = proto.run.call(context);
+		const stopped = expect(bounded(proto.run.call(context))).rejects.toBe(stop);
 		await submit(context, "just text");
-		await expect(runPromise).rejects.toBe(stop);
+		await stopped;
 
 		expect(context.session.prompt).toHaveBeenCalledTimes(1);
 		const [promptText, promptOptions] = context.session.prompt.mock.calls[0] as [string, Record<string, unknown>];
@@ -454,7 +488,7 @@ describe("InteractiveMode image submission - normal channel", () => {
 
 		const userInput = beginUserInput(context);
 		editor.handleInput("\r"); // the real Enter -> submitValue -> onSubmit path
-		const resolved = await vi.waitFor(async () => await userInput);
+		const resolved = await userInput;
 
 		expect(resolved.text).toBe("[Image #1][Image #2]");
 		expect(resolved.images).toEqual([

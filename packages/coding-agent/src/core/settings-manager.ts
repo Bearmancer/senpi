@@ -1,5 +1,12 @@
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
-import type { Transport } from "@earendil-works/pi-ai";
+import {
+	DEFAULT_MAX_AGENT_RETRY_DELAY_MS,
+	LEGACY_PROVIDER_IDS,
+	normalizeModelRef,
+	normalizeProviderId,
+	readByProviderId,
+	type Transport,
+} from "@earendil-works/pi-ai";
 import { SENPI_DEFAULT_RETRY_PROFILE } from "@earendil-works/pi-ai/utils/retry-profile/profiles";
 import type {
 	RetryPolicyProfile,
@@ -17,7 +24,7 @@ import { findNearestParentConfigDir } from "../nearest-parent-config.ts";
 import { normalizePath, resolvePath } from "../utils/paths.ts";
 import { stripBom } from "../utils/text.ts";
 import { envValue } from "./brand.ts";
-import type { CompactionSettings } from "./compaction-settings-access.ts";
+import type { CompactionModelSelector, CompactionSettings } from "./compaction-settings-access.ts";
 import {
 	compactionEnabled,
 	compactionKeepRecentTokens,
@@ -43,6 +50,7 @@ import {
 	resolveHintPolicySettings,
 	resolveRetryFallbackSettings,
 } from "./retry-fallback/settings.ts";
+import { withoutOverride } from "./settings-overrides.ts";
 import {
 	ASK_USER_DEFAULT_TIMEOUT_MINUTES,
 	ASK_USER_MAX_TIMEOUT_MINUTES,
@@ -55,14 +63,34 @@ import {
 	type OpenAISettings,
 	type PromptCacheKeepAliveSettings,
 	type PromptCacheSettings,
+	type ProviderConcurrencySettings,
 	type ThinkingBudgetsSettings,
+	type TodoFirstTurnPlan,
+	type TodoSettings,
 } from "./settings-shapes.ts";
-import type { BranchSummarySettings, TerminalSettings } from "./terminal-settings.ts";
+import {
+	type BranchSummarySettings,
+	isTerminalMouseMode,
+	type TerminalMouseMode,
+	type TerminalSettings,
+} from "./terminal-settings.ts";
 
+// `CompactionSettings` (now including `modelOverrides`), `CompactionModelOverride`,
+// `RetrySettings` and the rest of the public settings shapes live in their own modules;
+// this re-export keeps every existing importer's path working.
 export type * from "./settings-public-types.ts";
 
 export const DEFAULT_STREAM_START_TIMEOUT_MS = 300_000;
 export const DEFAULT_PROVIDER_STREAM_RETRY_TIMEOUT_MS = 30_000;
+
+/** Warn threshold for a single `session_shutdown` extension handler. */
+export const DEFAULT_SESSION_SHUTDOWN_HANDLER_WARN_MS = 2_000;
+/**
+ * Hard cap for a single `session_shutdown` extension handler. Higher than the
+ * 2s warning because several extensions persist durable state at shutdown; a
+ * hung handler still must not hold quit/reload/new/resume hostage.
+ */
+export const DEFAULT_SESSION_SHUTDOWN_HANDLER_TIMEOUT_MS = 10_000;
 
 export type TuiMode = RendererTuiMode;
 export type FullscreenExitOutput = "transcript" | "resume-hint";
@@ -125,7 +153,9 @@ export interface ExperimentalSettings {
 }
 
 export interface Settings {
+	providers?: Record<string, ProviderConcurrencySettings>;
 	lastChangelogVersion?: string;
+	changelogSeen?: Record<string, string>;
 	defaultProvider?: string;
 	defaultModel?: string;
 	defaultThinkingLevel?: ThinkingLevel;
@@ -169,6 +199,7 @@ export interface Settings {
 	images?: ImageSettings;
 	lookAt?: LookAtSettings;
 	askUser?: AskUserSettings;
+	todo?: TodoSettings;
 	recommendedModels?: string[]; // Preferred default model ids, in priority order
 	favoriteModels?: string[]; // Model patterns for Ctrl+P cycling (same format as --models CLI flag)
 	enabledModels?: string[]; // Legacy global model narrowing patterns (same format as --models CLI flag)
@@ -187,6 +218,8 @@ export interface Settings {
 	httpProxy?: string; // Proxy URL applied as HTTP_PROXY and HTTPS_PROXY for Pi-managed HTTP clients
 	httpIdleTimeoutMs?: number; // HTTP header/body idle timeout in milliseconds; 0 disables it
 	websocketConnectTimeoutMs?: number; // WebSocket connect/open handshake timeout in milliseconds; 0 disables it
+	sessionShutdownHandlerWarnMs?: number; // Warn when one session_shutdown extension handler runs this long; 0 disables the warning
+	sessionShutdownHandlerTimeoutMs?: number; // Abort and skip a session_shutdown extension handler after this long; 0 disables the cap
 	tuiMode?: TuiMode; // default: "regular"
 	fullscreenExitOutput?: FullscreenExitOutput; // default: "transcript"; no effect in regular TUI mode
 	fullscreenScrollbar?: ScrollViewScrollbar; // default: "auto"; no effect in regular TUI mode
@@ -593,6 +626,8 @@ export class SettingsManager {
 	private projectSettings: Settings;
 	private settings: Settings;
 	private projectTrusted: boolean;
+	/** CLI/SDK overrides (`applyOverrides`): never persisted, re-applied on every recompute. */
+	private runtimeOverrides: Settings = {};
 	private modifiedFields = new Set<keyof Settings>(); // Track global fields modified during session
 	private modifiedNestedFields = new Map<keyof Settings, Set<string>>(); // Track global nested field modifications
 	private modifiedProjectFields = new Set<keyof Settings>(); // Track project fields modified during session
@@ -604,6 +639,7 @@ export class SettingsManager {
 	private settingsPaths: SettingsPaths;
 	private selectedSources = new Map<SettingsScope, SettingsSourceSelection>();
 	private sourceListeners: SettingsSourceListener[] = [];
+	private providerSettingsListeners = new Set<() => void>();
 
 	private constructor(
 		storage: SettingsStorage,
@@ -775,7 +811,77 @@ export class SettingsManager {
 			delete retrySettings.maxDelayMs;
 		}
 
+		// Migrate renamed subscription provider ids (senpi#1989) in place, on first
+		// parse: the settings block key, defaultProvider, the provider prefix of
+		// defaultModel, favoriteModels, the `${provider}/${id}` keys of the model
+		// maps, and retry.fallbackChains keys + the providers named inside rungs.
+		// Idempotent (normalize is a no-op on canonical ids) and never hard-errors:
+		// an unrecognised shape is left untouched.
+		SettingsManager.migrateRenamedProviderIds(settings);
+
 		return settings as Settings;
+	}
+
+	/** camelCase provider-settings block key, e.g. `claude-sdk-oauth` -> `claudeSdkOauthProvider`. */
+	private static providerSettingsKey(providerId: string): string {
+		const camel = providerId
+			.split("-")
+			.map((part, i) => (i === 0 ? part : part.charAt(0).toUpperCase() + part.slice(1)))
+			.join("");
+		return `${camel}Provider`;
+	}
+
+	private static migrateRenamedProviderIds(settings: Record<string, unknown>): void {
+		// settings block key: <legacyCamel>Provider -> <canonicalCamel>Provider
+		for (const [legacyId, canonicalId] of Object.entries(LEGACY_PROVIDER_IDS)) {
+			const legacyKey = SettingsManager.providerSettingsKey(legacyId);
+			const canonicalKey = SettingsManager.providerSettingsKey(canonicalId);
+			if (legacyKey in settings && !(canonicalKey in settings)) {
+				settings[canonicalKey] = settings[legacyKey];
+				delete settings[legacyKey];
+			}
+		}
+
+		if (typeof settings.defaultProvider === "string") {
+			settings.defaultProvider = normalizeProviderId(settings.defaultProvider);
+		}
+		if (typeof settings.defaultModel === "string") {
+			settings.defaultModel = normalizeModelRef(settings.defaultModel);
+		}
+		if (Array.isArray(settings.favoriteModels)) {
+			settings.favoriteModels = settings.favoriteModels.map((entry) =>
+				typeof entry === "string" ? normalizeModelRef(entry) : entry,
+			);
+		}
+
+		for (const field of ["modelThinkingLevels", "modelServiceTiers", "modelLastOnThinkingLevels"]) {
+			const map = settings[field];
+			if (typeof map === "object" && map !== null && !Array.isArray(map)) {
+				settings[field] = SettingsManager.rekeyByModelRef(map as Record<string, unknown>);
+			}
+		}
+
+		if (typeof settings.retry === "object" && settings.retry !== null && !Array.isArray(settings.retry)) {
+			const retry = settings.retry as Record<string, unknown>;
+			const chains = retry.fallbackChains;
+			if (typeof chains === "object" && chains !== null && !Array.isArray(chains)) {
+				const rekeyed: Record<string, unknown> = {};
+				for (const [key, rungs] of Object.entries(chains as Record<string, unknown>)) {
+					const nextRungs = Array.isArray(rungs)
+						? rungs.map((rung) => (typeof rung === "string" ? normalizeModelRef(rung) : rung))
+						: rungs;
+					rekeyed[normalizeModelRef(key)] = nextRungs;
+				}
+				retry.fallbackChains = rekeyed;
+			}
+		}
+	}
+
+	/** Rewrite every `${provider}/${id}` key of a model map through normalizeModelRef. */
+	private static rekeyByModelRef(map: Record<string, unknown>): Record<string, unknown> {
+		const out: Record<string, unknown> = {};
+		for (const [key, value] of Object.entries(map)) out[normalizeModelRef(key)] = value;
+		return out;
 	}
 
 	getGlobalSettings(): Settings {
@@ -784,6 +890,29 @@ export class SettingsManager {
 
 	getProjectSettings(): Settings {
 		return structuredClone(this.projectSettings);
+	}
+
+	getProviderSettings(): Record<string, ProviderConcurrencySettings> {
+		return structuredClone(this.settings.providers ?? {});
+	}
+
+	getProviderConcurrencyLimit(providerId: string): number {
+		// Read boundary (senpi#1989): a `providers` block written by an earlier
+		// version is keyed by the legacy provider id, so try the canonical key
+		// first and then the legacy spelling instead of silently detaching the
+		// user's configured limit.
+		const value = readByProviderId(this.settings.providers, providerId)?.maxConcurrency;
+		return typeof value === "number" && Number.isInteger(value) && value > 0 ? value : Infinity;
+	}
+
+	subscribeToProviderSettings(listener: () => void): () => void {
+		this.providerSettingsListeners.add(listener);
+		return () => this.providerSettingsListeners.delete(listener);
+	}
+
+	private updateSettings(settings: Settings): void {
+		this.settings = settings;
+		for (const listener of this.providerSettingsListeners) listener();
 	}
 
 	getPromptCacheGoalBackstopMaxSeconds(): number {
@@ -804,12 +933,23 @@ export class SettingsManager {
 		};
 	}
 
-	getAskUserSettings(): { enabled: boolean; timeoutMinutes: number } {
+	getAskUserSettings(): { enabled: boolean; timeoutMinutes: number; bell: boolean } {
 		const configured = this.settings.askUser;
 		return {
 			enabled: typeof configured?.enabled === "boolean" ? configured.enabled : true,
 			timeoutMinutes: resolveAskUserTimeoutMinutes(configured?.timeoutMinutes),
+			bell: typeof configured?.bell === "boolean" ? configured.bell : true,
 		};
+	}
+
+	getTodoFirstTurnPlan(): TodoFirstTurnPlan {
+		const configured = this.settings.todo?.firstTurnPlan;
+		return configured === "remind" || configured === "off" ? configured : "force";
+	}
+
+	getTodoTurnEndBackstop(): boolean {
+		const configured = this.settings.todo?.turnEndBackstop;
+		return typeof configured === "boolean" ? configured : true;
 	}
 
 	isProjectTrusted(): boolean {
@@ -828,7 +968,7 @@ export class SettingsManager {
 		if (!trusted) {
 			this.projectSettings = {};
 			this.projectSettingsLoadError = null;
-			this.settings = deepMergeSettings(this.globalSettings, this.projectSettings);
+			this.updateSettings(this.mergedSettings());
 			return;
 		}
 
@@ -839,7 +979,7 @@ export class SettingsManager {
 		if (projectLoad.error) {
 			this.recordError("project", projectLoad.error);
 		}
-		this.settings = deepMergeSettings(this.globalSettings, this.projectSettings);
+		this.updateSettings(this.mergedSettings());
 	}
 
 	async reload(): Promise<void> {
@@ -869,7 +1009,7 @@ export class SettingsManager {
 			this.recordError("project", projectLoad.error);
 		}
 
-		this.settings = deepMergeSettings(this.globalSettings, this.projectSettings);
+		this.updateSettings(this.mergedSettings());
 	}
 
 	getSelectedSettingsSources(): SettingsSourceSelection[] {
@@ -896,11 +1036,18 @@ export class SettingsManager {
 
 	/** Apply additional overrides on top of current settings */
 	applyOverrides(overrides: Partial<Settings>): void {
-		this.settings = deepMergeSettings(this.settings, overrides);
+		this.runtimeOverrides = deepMergeSettings(this.runtimeOverrides, overrides);
+		this.updateSettings(this.mergedSettings());
+	}
+
+	/** Persisted global+project settings with the session-only override layer on top. */
+	private mergedSettings(): Settings {
+		return deepMergeSettings(deepMergeSettings(this.globalSettings, this.projectSettings), this.runtimeOverrides);
 	}
 
 	/** Mark a global field as modified during this session */
 	private markModified(field: keyof Settings, nestedKey?: string): void {
+		this.runtimeOverrides = withoutOverride(this.runtimeOverrides, field, nestedKey);
 		this.modifiedFields.add(field);
 		if (nestedKey) {
 			if (!this.modifiedNestedFields.has(field)) {
@@ -912,6 +1059,7 @@ export class SettingsManager {
 
 	/** Mark a project field as modified during this session */
 	private markProjectModified(field: keyof Settings, nestedKey?: string): void {
+		this.runtimeOverrides = withoutOverride(this.runtimeOverrides, field, nestedKey);
 		this.modifiedProjectFields.add(field);
 		if (nestedKey) {
 			if (!this.modifiedProjectNestedFields.has(field)) {
@@ -995,7 +1143,7 @@ export class SettingsManager {
 	}
 
 	private save(): void {
-		this.settings = deepMergeSettings(this.globalSettings, this.projectSettings);
+		this.updateSettings(this.mergedSettings());
 
 		if (this.globalSettingsLoadError) {
 			return;
@@ -1013,7 +1161,7 @@ export class SettingsManager {
 	private saveProjectSettings(settings: Settings): void {
 		this.assertProjectTrustedForWrite();
 		this.projectSettings = structuredClone(settings);
-		this.settings = deepMergeSettings(this.globalSettings, this.projectSettings);
+		this.updateSettings(this.mergedSettings());
 
 		if (this.projectSettingsLoadError) {
 			return;
@@ -1052,6 +1200,19 @@ export class SettingsManager {
 	setLastChangelogVersion(version: string): void {
 		this.globalSettings.lastChangelogVersion = version;
 		this.markModified("lastChangelogVersion");
+		this.save();
+	}
+
+	getChangelogSeen(source = "engine"): string | undefined {
+		return (
+			this.settings.changelogSeen?.[source] ?? (source === "engine" ? this.settings.lastChangelogVersion : undefined)
+		);
+	}
+
+	setChangelogSeen(source: string, version: string): void {
+		if (!source || this.globalSettings.changelogSeen?.[source] === version) return;
+		this.globalSettings.changelogSeen = { ...(this.globalSettings.changelogSeen ?? {}), [source]: version };
+		this.markModified("changelogSeen", source);
 		this.save();
 	}
 
@@ -1256,17 +1417,23 @@ export class SettingsManager {
 		this.save();
 	}
 
-	getCompactionReserveTokens(): number {
-		return compactionReserveTokens(this.settings.compaction);
+	/**
+	 * Token budgets resolve through the per-model override table (`compaction.modelOverrides`,
+	 * exact `provider/modelId` keys) before the ordinary setting and the built-in default.
+	 */
+	getCompactionReserveTokens(forModel?: CompactionModelSelector): number {
+		return compactionReserveTokens(this.settings.compaction, forModel);
 	}
 
-	getCompactionKeepRecentTokens(): number {
-		return compactionKeepRecentTokens(this.settings.compaction);
+	getCompactionKeepRecentTokens(forModel?: CompactionModelSelector): number {
+		return compactionKeepRecentTokens(this.settings.compaction, forModel);
 	}
 
-	getCompactionSettings(): ResolvedCompactionSettings & { model?: string } {
+	getCompactionSettings(forModel?: CompactionModelSelector): ResolvedCompactionSettings & { model?: string } {
 		return {
-			...resolveCompactionSettings(this.settings.compaction),
+			...resolveCompactionSettings(this.settings.compaction, forModel),
+			// `compaction.model` is the summarization model, a different concept from the
+			// session model whose per-model token budgets `forModel` resolves.
 			model: this.settings.compaction?.model,
 		};
 	}
@@ -1295,10 +1462,16 @@ export class SettingsManager {
 		this.save();
 	}
 
+	/** True when the user explicitly configured retry.maxAgentDelayMs in settings (not the shipped default). */
+	isRetryMaxAgentDelayMsConfigured(): boolean {
+		return this.settings.retry?.maxAgentDelayMs !== undefined;
+	}
+
 	getRetrySettings(): {
 		enabled: boolean;
 		maxRetries: number;
 		baseDelayMs: number;
+		maxAgentDelayMs: number;
 	} {
 		return {
 			enabled: this.getRetryEnabled(),
@@ -1306,6 +1479,7 @@ export class SettingsManager {
 			// same budget on every consumer, so the default tracks the shipped profile.
 			maxRetries: this.settings.retry?.maxRetries ?? SENPI_DEFAULT_RETRY_PROFILE.turn.maxRetries,
 			baseDelayMs: this.settings.retry?.baseDelayMs ?? 2000,
+			maxAgentDelayMs: this.settings.retry?.maxAgentDelayMs ?? DEFAULT_MAX_AGENT_RETRY_DELAY_MS,
 		};
 	}
 
@@ -1412,6 +1586,47 @@ export class SettingsManager {
 		}
 		this.globalSettings.httpIdleTimeoutMs = Math.floor(timeoutMs);
 		this.markModified("httpIdleTimeoutMs");
+		this.save();
+	}
+
+	/**
+	 * How long one extension's `session_shutdown` handler may run before the host
+	 * warns about it. 0 disables the warning.
+	 */
+	getSessionShutdownHandlerWarnMs(): number {
+		return (
+			parseTimeoutSetting(this.settings.sessionShutdownHandlerWarnMs, "sessionShutdownHandlerWarnMs") ??
+			DEFAULT_SESSION_SHUTDOWN_HANDLER_WARN_MS
+		);
+	}
+
+	setSessionShutdownHandlerWarnMs(warnMs: number): void {
+		if (!Number.isFinite(warnMs) || warnMs < 0) {
+			throw new Error(`Invalid sessionShutdownHandlerWarnMs setting: ${String(warnMs)}`);
+		}
+		this.globalSettings.sessionShutdownHandlerWarnMs = Math.floor(warnMs);
+		this.markModified("sessionShutdownHandlerWarnMs");
+		this.save();
+	}
+
+	/**
+	 * Hard cap on one extension's `session_shutdown` handler. On expiry the host
+	 * aborts that handler's `event.signal`, reports an extension error and moves
+	 * on to the next handler. 0 disables the cap (unbounded, pre-budget behavior).
+	 */
+	getSessionShutdownHandlerTimeoutMs(): number {
+		return (
+			parseTimeoutSetting(this.settings.sessionShutdownHandlerTimeoutMs, "sessionShutdownHandlerTimeoutMs") ??
+			DEFAULT_SESSION_SHUTDOWN_HANDLER_TIMEOUT_MS
+		);
+	}
+
+	setSessionShutdownHandlerTimeoutMs(timeoutMs: number): void {
+		if (!Number.isFinite(timeoutMs) || timeoutMs < 0) {
+			throw new Error(`Invalid sessionShutdownHandlerTimeoutMs setting: ${String(timeoutMs)}`);
+		}
+		this.globalSettings.sessionShutdownHandlerTimeoutMs = Math.floor(timeoutMs);
+		this.markModified("sessionShutdownHandlerTimeoutMs");
 		this.save();
 	}
 
@@ -1878,6 +2093,19 @@ export class SettingsManager {
 		}
 		this.globalSettings.terminal.imageWidthCells = Math.max(1, Math.floor(width));
 		this.markModified("terminal", "imageWidthCells");
+		this.save();
+	}
+
+	getTerminalMouse(): TerminalMouseMode {
+		const value = this.settings.terminal?.mouse;
+		return isTerminalMouseMode(value) ? value : "whilePending";
+	}
+
+	setTerminalMouse(mouse: TerminalMouseMode): void {
+		if (!isTerminalMouseMode(mouse)) throw new TypeError("Invalid terminal.mouse");
+		this.globalSettings.terminal ??= {};
+		this.globalSettings.terminal.mouse = mouse;
+		this.markModified("terminal", "mouse");
 		this.save();
 	}
 

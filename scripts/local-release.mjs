@@ -10,6 +10,12 @@ import { prepareSenpiBundledWorkspaces } from "./prepare-senpi-bundled-workspace
 export { run } from "./local-release-runner.mjs";
 
 const packages = [
+	// Chord is `private: true` and never published to the registry, but it is a bundled
+	// dependency of @code-yeongyu/senpi: local-release must build it (staging requires its
+	// dist under coding-agent/node_modules) and pack it so the isolated installs can resolve
+	// the registry-absent `@earendil-works/chord` through a file: tarball, like every other
+	// bundled workspace.
+	{ directory: "packages/chord", name: "@earendil-works/chord" },
 	{ directory: "packages/telemetry", name: "@earendil-works/pi-telemetry" },
 	{ directory: "packages/ai", name: "@earendil-works/pi-ai" },
 	{ directory: "packages/pty", name: "@earendil-works/pi-pty" },
@@ -18,6 +24,12 @@ const packages = [
 	{ directory: "packages/protocol", name: "@earendil-works/pi-protocol" },
 	{ directory: "packages/client", name: "@earendil-works/pi-client" },
 	{ directory: "packages/senpi-codemode", name: "@code-yeongyu/senpi-codemode" },
+	// The desktop packages are private and bundled like chord, in build order.
+	{ directory: "packages/desktop-protocol", name: "@code-yeongyu/senpi-desktop-protocol" },
+	{ directory: "packages/desktop-prelude", name: "@code-yeongyu/senpi-desktop-prelude" },
+	{ directory: "packages/desktop-engine", name: "@code-yeongyu/senpi-desktop-engine" },
+	{ directory: "packages/desktop-service", name: "@code-yeongyu/senpi-desktop-service" },
+	{ directory: "packages/desktop-tool", name: "@code-yeongyu/senpi-desktop-tool" },
 	{ directory: "packages/coding-agent", name: "@code-yeongyu/senpi" },
 ];
 const packageCliCommand = "senpi";
@@ -140,7 +152,6 @@ function buildBunBinaryRelease(targetDirectory, archiveDirectory) {
 	const binaryBuildDirectory = join(archiveDirectory, "binary-build");
 	run("./scripts/build-binaries.sh", [
 		"--skip-install",
-		"--skip-deps",
 		"--skip-build",
 		"--platform",
 		platform,

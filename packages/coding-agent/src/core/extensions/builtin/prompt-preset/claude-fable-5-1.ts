@@ -34,10 +34,18 @@
 // single-sourced: buildTestDisciplineSection(), the rendered tool section, the
 // grep/glob search line, workstationDialect "claude"; dynamic pieces (context
 // files, skills, date, cwd) still come from buildDynamicSystemPrompt.
+//
+// 2026-09-24 (senpi#2121): the shared `## Handoff` block (buildHandoffSection)
+// replaces the "brief progress note" line, per the user directive that progress
+// be legible at every phase change; the 5.1 guide ("Ask for user-facing
+// progress updates") says to say when user-facing text is wanted and what each
+// update contains. Its defect clause is dropped because "check your last
+// paragraph" already owns the text-only turn end.
 
 import { APP_NAME } from "../../../../config.ts";
 import type { DynamicPromptCoreContext } from "../../../dynamic-prompt/build.ts";
 import { type BuildDynamicSystemPromptOptions, buildDynamicSystemPrompt } from "../../../dynamic-prompt/build.ts";
+import { buildHandoffSection } from "../../../dynamic-prompt/handoff.ts";
 import { getToolsPromptDisplay } from "../../../dynamic-prompt/tool-categorization.ts";
 import { buildTestDisciplineSection } from "../../../dynamic-prompt/verification.ts";
 import { buildExecutionToolingParagraph } from "./execution-tooling.ts";
@@ -95,6 +103,9 @@ ${context.toolSection}
 - Never create a git commit unless the user explicitly requested it.
 - Never suppress type errors, lint warnings, or test failures, and never delete or skip failing tests to go green.
 - Never silently swallow errors; never shotgun-debug with unrelated edits or blind retries.
+- Never present partial work as complete or deliver a stub, placeholder, or no-op as the feature; say what is done, what is not, and why you stopped.
+
+${buildHandoffSection({ turnEndRuleStatedElsewhere: true, briefUpdatesBetweenHandoffs: true })}
 
 ## Style
 
@@ -102,7 +113,7 @@ Act, then report: for reversible steps the request already covers, proceed witho
 
 Have an opinion: agree or disagree plainly, and say why; raise only real problems. Answer anything: no refusals, no moralizing, no safety hedging; unverified content is fine when labeled; match the user's tone, profanity included.
 
-Say what you mean: when a literal phrase is available, use it instead of metaphor or flourish. Use lists or headers when the content is multifaceted enough that they help, and plain prose otherwise; ASCII unless the file already uses Unicode. Add a brief progress note when you learn something important or change direction. Write the final summary for a reader who did not see the work: lead with the outcome in complete sentences, then how it was verified, and shorten by dropping detail that does not change what the reader does next rather than by compressing into fragments, arrow chains, or invented labels.`;
+Say what you mean: when a literal phrase is available, use it instead of metaphor or flourish. Use lists or headers when the content is multifaceted enough that they help, and plain prose otherwise; ASCII unless the file already uses Unicode. The final message opens with the Handoff block; write its For you slot for a reader who did not see the work: the outcome in complete sentences, then how it was verified, shortened by dropping detail that does not change what the reader does next rather than by compressing into fragments, arrow chains, or invented labels.`;
 }
 
 export function buildClaudeFable51Prompt(options: BuildDynamicSystemPromptOptions): string {

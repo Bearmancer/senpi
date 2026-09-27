@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { stream as streamOpenAICompletions } from "../src/api/openai-completions.ts";
 import { getModel } from "../src/compat.ts";
 import type { Model } from "../src/types.ts";
+import { fireworksCompletionsModels, requireModels } from "./fireworks-catalog.ts";
 
 interface FakeOpenAIClientOptions {
 	apiKey: string;
@@ -220,10 +221,9 @@ describe("openai-completions prompt caching", () => {
 		expect(headers["x-session-affinity"]).toBe("session-affinity");
 	});
 
-	it.each(["accounts/fireworks/models/glm-5p2", "accounts/fireworks/routers/glm-5p2-fast"] as const)(
+	it.each(requireModels(fireworksCompletionsModels(), 1).map((model) => [model.id, model] as const))(
 		"sends Fireworks session affinity for %s",
-		async (modelId) => {
-			const model = getModel("fireworks", modelId);
+		async (_id, model) => {
 			const { headers } = await captureRequest({ sessionId: "fireworks-session" }, model);
 
 			expect(headers["x-session-affinity"]).toBe("fireworks-session");
@@ -274,6 +274,18 @@ describe("openai-completions prompt caching", () => {
 		expect(headers["x-session-affinity"]).toBeUndefined();
 	});
 
+	it("sends OpenRouter session-affinity header by default for built-in OpenRouter models", async () => {
+		const model = getModel("openrouter", "auto");
+		const { payload, headers } = await captureRequest({ sessionId: "session-openrouter" }, model);
+
+		expect(payload?.session_id).toBe("session-openrouter");
+		expect(payload?.prompt_cache_key).toBeUndefined();
+		expect(headers["x-session-id"]).toBe("session-openrouter");
+		expect(headers.session_id).toBeUndefined();
+		expect(headers["x-client-request-id"]).toBeUndefined();
+		expect(headers["x-session-affinity"]).toBeUndefined();
+	});
+
 	it("omits OpenRouter session-affinity data when explicitly disabled", async () => {
 		const model = createModel({
 			provider: "openrouter",
@@ -297,6 +309,35 @@ describe("openai-completions prompt caching", () => {
 		expect(headers.session_id).toBeUndefined();
 		expect(headers["x-client-request-id"]).toBeUndefined();
 		expect(headers["x-session-affinity"]).toBeUndefined();
+	});
+
+	// senpi#2097: GPT-5.6+ on api.openai.com must not send a per-session prompt_cache_key.
+	it("omits prompt_cache_key for gpt-6-luna on api.openai.com", async () => {
+		const luna = getModel("openai", "gpt-6-luna");
+		const model = createModel({
+			id: luna.id,
+			provider: luna.provider,
+			baseUrl: luna.baseUrl,
+			cost: luna.cost,
+		});
+
+		const { payload } = await captureRequest({ sessionId: "session-2097" }, model);
+
+		expect(payload?.prompt_cache_key).toBeUndefined();
+	});
+
+	it("sets prompt_cache_key for gpt-5.5 on api.openai.com", async () => {
+		const gpt55 = getModel("openai", "gpt-5.5");
+		const model = createModel({
+			id: gpt55.id,
+			provider: gpt55.provider,
+			baseUrl: gpt55.baseUrl,
+			cost: gpt55.cost,
+		});
+
+		const { payload } = await captureRequest({ sessionId: "session-2097" }, model);
+
+		expect(payload?.prompt_cache_key).toBe("session-2097");
 	});
 
 	it("lets explicit headers override generated session-affinity headers", async () => {

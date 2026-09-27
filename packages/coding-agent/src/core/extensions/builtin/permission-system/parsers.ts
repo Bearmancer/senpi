@@ -1,5 +1,6 @@
 import { dirname, resolve } from "node:path";
 import { realpathWithoutOpen } from "../../../../utils/paths.ts";
+import type { ToolInfo } from "../../types.ts";
 import { extractPatchedPaths } from "../gpt-apply-patch/index.ts";
 import { BashArity } from "../permission-system/arity.ts";
 import { extractExternalPaths, isExternalPath } from "../permission-system/external-dir.ts";
@@ -81,6 +82,21 @@ function withExternalDirectoryRequests(
 	];
 }
 
+/** The requests a tool's own `permissionParser` derives from this call, or undefined when the tool declares none. */
+export function toolOwnedPermissionRequests(
+	tools: readonly ToolInfo[],
+	toolName: string,
+	input: Record<string, unknown>,
+	cwd: string,
+): PermissionRequest[] | undefined {
+	const parser = tools.find((tool) => tool.name === toolName)?.permissionParser;
+	return parser?.(input, cwd).map((request) => ({
+		permission: request.permission,
+		patterns: [...request.patterns],
+		always: [...request.always],
+	}));
+}
+
 /** Registry for tool-specific permission parsers */
 export class ParserRegistry {
 	private readonly parsers = new Map<string, ToolPermissionParser>();
@@ -88,6 +104,11 @@ export class ParserRegistry {
 	/** Register a parser for a specific tool */
 	register(toolName: string, parser: ToolPermissionParser): void {
 		this.parsers.set(toolName, parser);
+	}
+
+	/** Whether a built-in parser owns this tool */
+	has(toolName: string): boolean {
+		return this.parsers.has(toolName);
 	}
 
 	/** Parse tool input into permission requests */

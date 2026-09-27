@@ -90,6 +90,8 @@ export interface HarnessOptions {
 	settingsContent?: string;
 	retryProfile?: import("@earendil-works/pi-ai/utils/retry-profile/types").RetryPolicyProfile;
 	evalOnlyToolNames?: string[];
+	/** Send the senpi#2093 environment-context message. Off by default so transcript-pinning tests stay exact. */
+	environmentContext?: boolean;
 }
 
 export interface Harness {
@@ -249,6 +251,7 @@ export async function createHarness(options: HarnessOptions = {}): Promise<Harne
 		autoTitleSessions: options.autoTitleSessions,
 		fallbackNow: options.fallbackNow,
 		retryRandom: options.retryRandom ?? (() => 0.5),
+		environmentContext: options.environmentContext ?? false,
 	});
 
 	const events: AgentSessionEvent[] = [];

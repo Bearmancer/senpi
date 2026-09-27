@@ -20,7 +20,7 @@ import {
 	contextProvenanceFingerprint,
 	getContextProvenance,
 } from "../context-provenance.ts";
-import { calculateCost } from "../models.ts";
+import { calculateCost, supportsConfigurationUpdate } from "../models.ts";
 import type {
 	Api,
 	AssistantMessage,
@@ -48,6 +48,8 @@ import {
 	resolveGrammarConstrainedSampling,
 	resolveJsonSchemaStrictSampling,
 } from "./constrained-sampling.ts";
+import { parsePromptCacheDiagnostics } from "./openai-responses-prompt-cache.ts";
+import { withResponsesCompletionGrace } from "./responses-completion-grace.ts";
 import { transformMessages } from "./transform-messages.ts";
 
 // =============================================================================
@@ -149,6 +151,12 @@ export interface ConvertResponsesMessagesOptions {
 	deferredTools?: ReadonlyMap<string, Tool>;
 	deferredToolsMode?: "additional-tools" | "tool-search";
 	toolOptions?: ConvertResponsesToolsOptions;
+	/**
+	 * Send the system prompt as one `input_text` block carrying an explicit
+	 * `prompt_cache_breakpoint`, so the platform writes and looks up the prefix at the end of
+	 * the system prompt even when hosted tools (`web_search_preview`) are present (senpi#2096).
+	 */
+	systemPromptCacheBreakpoint?: boolean;
 	/** Internal request-local provenance sealing pass. Never serialized to provider payloads. */
 	sealContextProvenance?: boolean;
 }
@@ -282,16 +290,19 @@ export function convertResponsesMessages<TApi extends Api>(
 	if (includeSystemPrompt && context.systemPrompt) {
 		const compat = model.compat as { supportsDeveloperRole?: boolean } | undefined;
 		const role = model.reasoning && compat?.supportsDeveloperRole !== false ? "developer" : "system";
-		messages.push({
-			role,
-			content: sanitizeSurrogates(context.systemPrompt),
-		});
+		const text = sanitizeSurrogates(context.systemPrompt);
+		if (options?.systemPromptCacheBreakpoint === true) {
+			const block = { type: "input_text" as const, text, prompt_cache_breakpoint: { mode: "explicit" } };
+			messages.push({ role, content: [block] });
+		} else {
+			messages.push({ role, content: text });
+		}
 	}
 
 	let msgIndex = 0;
 	for (const msg of transformedMessages) {
 		if (msg.role === "configurationUpdate") {
-			if (model.id !== "gpt-6-astra" || !["openai", "openai-codex"].includes(model.provider)) continue;
+			if (!supportsConfigurationUpdate(model)) continue;
 			const previous = messages[messages.length - 1];
 			if (previous?.type === "configuration_update") {
 				messages[messages.length - 1] = {
@@ -877,12 +888,17 @@ export async function processResponsesStream<TApi extends Api>(
 		if (response?.id) {
 			output.responseId = response.id;
 		}
+		const promptCacheDiagnostics = parsePromptCacheDiagnostics(
+			(response as { prompt_cache_diagnostics?: unknown } | undefined)?.prompt_cache_diagnostics,
+		);
+		if (promptCacheDiagnostics) output.promptCacheDiagnostics = promptCacheDiagnostics;
 		if (response?.usage) {
 			const inputDetails = response.usage.input_tokens_details as
-				| { cached_tokens?: number; cache_write_tokens?: number }
+				| { cached_tokens?: number; cache_write_tokens?: number; cache_creation_tokens?: number }
 				| undefined;
 			const cachedTokens = inputDetails?.cached_tokens || 0;
-			const cacheWriteTokens = inputDetails?.cache_write_tokens || 0;
+			// OpenAI platform reports cache_write_tokens; some compatible gateways use cache_creation_tokens.
+			const cacheWriteTokens = inputDetails?.cache_write_tokens ?? inputDetails?.cache_creation_tokens ?? 0;
 			output.usage = {
 				// OpenAI includes cached and cache-write tokens in input_tokens, so subtract both.
 				input: Math.max(0, (response.usage.input_tokens || 0) - cachedTokens - cacheWriteTokens),
@@ -909,13 +925,14 @@ export async function processResponsesStream<TApi extends Api>(
 		output.rawStopReason = incompleteReason ? `${status}.${incompleteReason}` : status;
 		const mappedStop = mapStopReason(status, incompleteReason);
 		output.stopReason = mappedStop.stopReason;
-		output.errorMessage = mappedStop.errorMessage;
+		if (mappedStop.errorMessage === undefined) delete output.errorMessage;
+		else output.errorMessage = mappedStop.errorMessage;
 		if (output.content.some((b) => b.type === "toolCall") && output.stopReason === "stop") {
 			output.stopReason = "toolUse";
 		}
 	};
 
-	for await (const event of openaiStream) {
+	for await (const event of withResponsesCompletionGrace(openaiStream)) {
 		if (event.type === "response.created") {
 			output.responseId = event.response.id;
 		} else if (event.type === "response.output_item.added") {

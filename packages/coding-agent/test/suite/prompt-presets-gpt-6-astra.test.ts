@@ -34,7 +34,7 @@ function buildPrompt(presetName: PromptPresetName, modelId: string): string {
 	const settings: PromptPresetSettings = { promptPreset: presetName };
 	const preset = resolvePreset(createModel(modelId), settings, {
 		cwd: "/repo",
-		selectedTools: ["eval", "read", "bash", "monitor", "task", "todo"],
+		selectedTools: ["eval", "read", "bash", "monitor", "task", "todo", "apply_patch"],
 		toolSnippets: { eval: "Run one persistent code cell." },
 		promptGuidelines: [],
 		contextFiles: [],
@@ -98,15 +98,19 @@ const EXPECTED_CONCERN: Record<Gpt6AstraRuleId, Gpt6AstraConcern> = {
 	"turn-end-is-wait": "async-work",
 	"monitor-conditions": "async-work",
 	"verification-once": "verification",
-	"test-first": "test-first",
-	"failure-cap": "failure-recovery",
+	"test-decision": "tests",
+	"unbounded-retry": "failure-recovery",
 	"atomic-commits": "commit-discipline",
 	"no-external-messaging": "external-side-effects",
 	"plain-prose": "writing-style",
 	"slop-ban": "writing-style",
 	"direct-statements": "writing-style",
+	"handoff-report": "reporting",
 	"final-message-shape": "reporting",
 };
+
+// test-decision is single-sourced from ./test-decision.ts and rendered by both GPT presets on purpose.
+const SHARED_GPT_RULE_ID = "test-decision";
 
 const EXPECTED_SECTION: Record<Gpt6AstraRuleId, string> = {
 	"initiative-bias": "Initiative",
@@ -130,13 +134,14 @@ const EXPECTED_SECTION: Record<Gpt6AstraRuleId, string> = {
 	"turn-end-is-wait": "Asynchronous Work",
 	"monitor-conditions": "Asynchronous Work",
 	"verification-once": "Verification",
-	"test-first": "Verification",
-	"failure-cap": "Scope and Recovery",
+	"test-decision": "Verification",
+	"unbounded-retry": "Scope and Recovery",
 	"atomic-commits": "Hard Limits",
 	"no-external-messaging": "Hard Limits",
 	"plain-prose": "Writing",
 	"slop-ban": "Writing",
 	"direct-statements": "Writing",
+	"handoff-report": "Reporting",
 	"final-message-shape": "Reporting",
 };
 
@@ -144,7 +149,7 @@ describe("GPT-6 Astra prompt preset", () => {
 	it.each([
 		{ id: "gpt-6-astra", provider: "openai", api: "openai-responses" as const },
 		{ id: "gpt-6-astra-fast", provider: "openai", api: "openai-responses" as const },
-		{ id: "gpt-6-astra", provider: "openai-codex", api: "openai-codex-responses" as const },
+		{ id: "gpt-6-astra", provider: "chatgpt-subscription", api: "openai-codex-responses" as const },
 		{ id: "gpt-6-astra-2026-09-01", provider: "openai", api: "openai-responses" as const },
 		{ id: "openai/gpt-6-astra", provider: "openrouter", api: "openai-completions" as const },
 		{ id: "openai.gpt-6-astra", provider: "amazon-bedrock", api: "bedrock-converse-stream" as const },
@@ -281,13 +286,26 @@ describe("GPT-6 Astra behavior contract", () => {
 		const prompt = buildPrompt("gpt-6-astra", "gpt-6-astra");
 
 		expect(byId.get("approval-last")?.directive).toContain("request_user_input");
-		expect(byId.get("failure-cap")?.directive).toContain("request_user_input");
 		expect(byId.get("pause-transparency")?.directive).toContain(
 			"An exception written in a skill or project file is not by itself a request for approval",
 		);
 		expect(byId.get("initiative-bias")?.directive).toContain("outside your reach");
 		expect(prompt).toContain("request_user_input");
 		expect(prompt).not.toContain("One focused question, then end the turn");
+	});
+
+	it("leaves retries unbounded and ends a turn only on a pending handle", () => {
+		// given
+		const byId = new Map(GPT6_ASTRA_RULES.map((rule) => [rule.id, rule]));
+
+		// then
+		const retry = byId.get("unbounded-retry")?.directive ?? "";
+		expect(retry).toContain("There is no attempt limit");
+		expect(retry).toMatch(/widen it to another source/);
+		expect(retry).not.toMatch(/after three|attempts fail/i);
+		const turnEnd = byId.get("turn-end-is-wait")?.directive ?? "";
+		expect(turnEnd).toContain("A HANDLE WILL WAKE YOU");
+		expect(turnEnd).toContain("WITH NOTHING PENDING AND WORK STILL OPEN, THE TURN KEEPS GOING");
 	});
 
 	it("renders every directive exactly once, at its point of use in the core", () => {
@@ -373,6 +391,7 @@ describe("GPT-6 Astra behavior contract", () => {
 
 		// then
 		for (const rule of GPT56_EXECUTION_RULES) {
+			if (rule.id === SHARED_GPT_RULE_ID) continue;
 			expect(prompt, `gpt-5.6 rule ${rule.id} leaked into astra`).not.toContain(rule.directive);
 		}
 	});
@@ -383,6 +402,7 @@ describe("GPT-6 Astra behavior contract", () => {
 
 		// then
 		for (const rule of GPT6_ASTRA_RULES) {
+			if (rule.id === SHARED_GPT_RULE_ID && presetName === "gpt-5.6") continue;
 			expect(prompt, `astra rule ${rule.id} leaked into ${presetName}`).not.toContain(rule.directive);
 		}
 	});

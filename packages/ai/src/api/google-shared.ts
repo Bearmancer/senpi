@@ -127,6 +127,22 @@ function supportsMultimodalFunctionResponse(modelId: string): boolean {
 	return true;
 }
 
+// Gemini expects `contents` to alternate between user and model turns: the @google/genai Chat history contract is
+// "a list of contents alternating between user and model", and generateContent answers 400 "Please ensure that
+// multiturn requests alternate between user and model" for adjacent same-role turns. Adjacent senpi messages can
+// share a role (the hidden environment-context user message right before the prompt, a user prompt after tool
+// results, the Gemini < 3 tool-result image turn), so a turn whose role matches the previous one is folded into it
+// with its parts kept in order. This also keeps every function response of one model turn in a single user turn,
+// which Cloud Code Assist requires.
+function appendContent(contents: Content[], content: Content): void {
+	const previous = contents[contents.length - 1];
+	if (previous?.role === content.role && previous.parts && content.parts) {
+		previous.parts.push(...content.parts);
+		return;
+	}
+	contents.push(content);
+}
+
 /**
  * Convert internal messages to Gemini Content[] format.
  */
@@ -148,7 +164,7 @@ export function convertMessages<T extends GoogleApiType>(
 	for (const msg of transformedMessages) {
 		if (msg.role === "user") {
 			if (typeof msg.content === "string") {
-				contents.push({
+				appendContent(contents, {
 					role: "user",
 					parts: [{ text: sanitizeSurrogates(msg.content) }],
 				});
@@ -166,7 +182,7 @@ export function convertMessages<T extends GoogleApiType>(
 					}
 				});
 				if (parts.length === 0) continue;
-				contents.push({
+				appendContent(contents, {
 					role: "user",
 					parts,
 				});
@@ -224,7 +240,7 @@ export function convertMessages<T extends GoogleApiType>(
 			}
 
 			if (parts.length === 0) continue;
-			contents.push({
+			appendContent(contents, {
 				role: "model",
 				parts,
 			});
@@ -264,21 +280,14 @@ export function convertMessages<T extends GoogleApiType>(
 				},
 			};
 
-			// Cloud Code Assist API requires all function responses to be in a single user turn.
-			// Check if the last content is already a user turn with function responses and merge.
-			const lastContent = contents[contents.length - 1];
-			if (lastContent?.role === "user" && lastContent.parts?.some((p) => p.functionResponse)) {
-				lastContent.parts.push(functionResponsePart);
-			} else {
-				contents.push({
-					role: "user",
-					parts: [functionResponsePart],
-				});
-			}
+			appendContent(contents, {
+				role: "user",
+				parts: [functionResponsePart],
+			});
 
-			// For Gemini < 3, add images in a separate user message
+			// For Gemini < 3, images follow the function response as plain parts of the same user turn
 			if (hasImages && !modelSupportsMultimodalFunctionResponse) {
-				contents.push({
+				appendContent(contents, {
 					role: "user",
 					parts: [{ text: "Tool result image:" }, ...imageParts],
 				});

@@ -14,10 +14,10 @@
  * Both variables are unset for every other host launch, so nothing changes for
  * plain `senpi --mode rpc` runs, hosts started by hand, or embedders.
  */
-import { createReadStream, rmSync } from "node:fs";
+import { rmSync } from "node:fs";
 import { rm } from "node:fs/promises";
+import { Socket } from "node:net";
 import { envValue } from "../../core/brand.ts";
-import { readProcessIdentity } from "../app-server/daemon/process.ts";
 
 /** Inherited fd whose EOF means "the supervisor died"; set by the supervisor only. */
 export const HOST_WATCH_FD_ENV = "SENPI_RPC_HOST_WATCH_FD";
@@ -29,8 +29,6 @@ export const HOST_PUBLIC_SOCKET_ENV = "SENPI_RPC_HOST_PUBLIC_SOCKET";
 export const HOST_WATCH_PPID_ENV = "SENPI_RPC_HOST_WATCH_PPID";
 /** Poll cadence for the ppid fallback. */
 export const HOST_WATCH_PPID_INTERVAL_MS = 250;
-/** Bound the Windows PowerShell identity probe so one stuck query cannot stop future polls. */
-const HOST_WATCH_PPID_PROBE_TIMEOUT_MS = 1_000;
 export const HOST_CLEANUP_PATHS_ENV = "SENPI_RPC_HOST_CLEANUP_PATHS";
 
 export interface HostWatchdogConfig {
@@ -135,9 +133,16 @@ export function armHostWatchdog(
  * to it, so any readable data is ignored; only close matters. An fd that cannot
  * be opened (never inherited) leaves the binding inert rather than killing a
  * healthy host.
+ *
+ * The pipe is read through a net.Socket rather than a file stream because the read has to live
+ * on the EVENT LOOP, not in libuv's thread pool. A thread-pool read blocks in `read(2)` until the
+ * supervisor dies, and `process.exit()` joins the thread pool before it terminates - so a host
+ * that decides to exit on its own (an idle exit, or the park-everything drain of a generation
+ * handoff) would hang in exit until something killed it. With a socket the same EOF arrives from
+ * kqueue/epoll and nothing holds the exit.
  */
 function watchFdForEof(fd: number, fire: (reason: string) => void): () => void {
-	let stream: ReturnType<typeof createReadStream>;
+	let stream: Socket;
 	let streamFailed = false;
 	let fired = false;
 	const fireOnce = (reason: string): void => {
@@ -146,9 +151,8 @@ function watchFdForEof(fd: number, fire: (reason: string) => void): () => void {
 		fire(reason);
 	};
 	try {
-		// The watchdog owns this inherited read end. autoClose is required on
-		// Win32 so the stream releases fd 3 and observes the pipe's terminal close.
-		stream = createReadStream("", { fd, autoClose: true });
+		// The watchdog owns this inherited read end; destroying the socket releases it.
+		stream = new Socket({ fd, readable: true, writable: false });
 	} catch {
 		return () => {};
 	}
@@ -179,8 +183,6 @@ function watchFdForEof(fd: number, fire: (reason: string) => void): () => void {
  * fd could be inherited.
  */
 function watchPpid(supervisorPid: number, fire: (reason: string) => void): () => void {
-	let checking = false;
-	let missingIdentityChecks = 0;
 	// Tests and embedders may bind the watchdog to this process itself; that
 	// is a valid live binding rather than evidence of supervisor loss.
 	if (supervisorPid === process.pid) return () => {};
@@ -189,20 +191,12 @@ function watchPpid(supervisorPid: number, fire: (reason: string) => void): () =>
 			fire(`supervisor pid ${supervisorPid} is gone (ppid=${process.ppid})`);
 			return;
 		}
-		if (checking) return;
-		checking = true;
-		void readProcessIdentity(supervisorPid, process.platform, HOST_WATCH_PPID_PROBE_TIMEOUT_MS)
-			.then((result) => {
-				if (result.kind === "error") return;
-				if (result.kind === "absent") missingIdentityChecks++;
-				else missingIdentityChecks = 0;
-				if (process.ppid === supervisorPid && result.kind === "present") return;
-				if (process.ppid === supervisorPid && missingIdentityChecks < 3) return;
-				fire(`supervisor pid ${supervisorPid} is gone (ppid=${process.ppid})`);
-			})
-			.finally(() => {
-				checking = false;
-			});
+		// A dead supervisor is reaped by its own parent and this process is then
+		// reparented, so the ppid comparison observes the loss without spawning
+		// `ps` every tick; both checks here are free syscalls.
+		if (process.ppid !== supervisorPid) {
+			fire(`supervisor pid ${supervisorPid} is gone (ppid=${process.ppid})`);
+		}
 	}, HOST_WATCH_PPID_INTERVAL_MS);
 	timer.unref?.();
 	return () => clearInterval(timer);

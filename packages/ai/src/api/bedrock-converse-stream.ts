@@ -793,7 +793,9 @@ function supportsNativeXhighEffort(model: Model<"bedrock-converse-stream">): boo
 function rejectsDisabledThinking(model: Model<"bedrock-converse-stream">): boolean {
 	if (model.thinkingLevelMap?.off === null) return true;
 	const candidates = getModelMatchCandidates(model.id, model.name);
-	return candidates.some((s) => s.includes("fable-5") || s.includes("mythos-5"));
+	return candidates.some(
+		(s) => s.includes("fable-5") || s.includes("mythos-5") || s.includes("opus-5-5") || s.includes("opus-5.5"),
+	);
 }
 
 function mapThinkingLevelToEffort(
@@ -927,6 +929,20 @@ function convertToolResultContent(content: (TextContent | ImageContent)[]): Tool
 	return result;
 }
 
+// Bedrock Converse requires the conversation to alternate between user and assistant roles and answers
+// "A conversation must alternate between user and assistant roles" otherwise. Adjacent senpi messages can share a
+// role (the hidden environment-context user message right before the prompt, a user prompt after tool results, a
+// user message around a skipped empty assistant), so a message whose role matches the previous wire message is
+// folded into it with its blocks kept in order.
+function appendMessage(result: Message[], message: Message): void {
+	const previous = result[result.length - 1];
+	if (previous?.role === message.role && previous.content && message.content) {
+		previous.content.push(...message.content);
+		return;
+	}
+	result.push(message);
+}
+
 function convertMessages(
 	context: Context,
 	model: Model<"bedrock-converse-stream">,
@@ -963,7 +979,7 @@ function convertMessages(
 					}
 					if (content.length === 0) content.push({ text: EMPTY_TEXT_PLACEHOLDER });
 				}
-				result.push({
+				appendMessage(result, {
 					role: ConversationRole.USER,
 					content,
 				});
@@ -1039,7 +1055,7 @@ function convertMessages(
 				if (contentBlocks.length === 0) {
 					continue;
 				}
-				result.push({
+				appendMessage(result, {
 					role: ConversationRole.ASSISTANT,
 					content: contentBlocks,
 				});
@@ -1076,7 +1092,7 @@ function convertMessages(
 				// Skip the messages we've already processed
 				i = j - 1;
 
-				result.push({
+				appendMessage(result, {
 					role: ConversationRole.USER,
 					content: toolResults,
 				});

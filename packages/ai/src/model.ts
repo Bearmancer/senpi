@@ -4,6 +4,7 @@ import type {
 	BedrockCompat,
 	CacheRetention,
 	ModelCost,
+	ModelThinkingLevel,
 	OpenAICompletionsCompat,
 	OpenAIResponsesCompat,
 	ProviderId,
@@ -53,7 +54,20 @@ export interface Model<TApi extends Api> {
 					? BedrockCompat
 					: TApi extends "cursor-agent"
 						? CursorAgentCompat
-						: never;
+						: TApi extends "devin-agent"
+							? DevinAgentCompat
+							: never;
+}
+
+/** Devin (Cascade) model metadata the transport branches on. */
+export interface DevinAgentCompat {
+	/**
+	 * Server-side router (`adaptive`): its uid is never a legal chat model uid, so
+	 * the transport resolves it through `AssignModel` before every turn.
+	 */
+	modelRouter?: boolean;
+	/** The lane accepts several tool calls per turn; absent means one at a time. */
+	supportsParallelToolCalls?: boolean;
 }
 
 /** Cursor agent protocol model metadata. */
@@ -72,5 +86,13 @@ export interface CursorAgentCompat {
 		thinkingMode?: boolean;
 		/** Exact catalog variant sent when no explicit selection exists. */
 		representativeVariantId: string;
+		/**
+		 * Derived-group variant ids: normalized thinking level -> the exact
+		 * server-listed variant id observed in the live catalog. Present only on
+		 * identities derived at runtime from ids the static alias table does not
+		 * list; explicit selections resolve through it before any capability
+		 * lookup (senpi#2038).
+		 */
+		variantIds?: Readonly<Partial<Record<ModelThinkingLevel, string>>>;
 	};
 }

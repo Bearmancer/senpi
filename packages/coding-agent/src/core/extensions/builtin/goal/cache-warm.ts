@@ -1,5 +1,5 @@
-import type { Api, Model, ProviderEnv } from "@earendil-works/pi-ai";
-import { resolvePromptCacheTtlSeconds } from "@earendil-works/pi-ai";
+import type { Api, Model, PromptCacheLifetime, ProviderEnv } from "@earendil-works/pi-ai";
+import { resolvePromptCacheLifetime } from "@earendil-works/pi-ai";
 import type { TokenUsageSnapshot } from "./types.ts";
 
 /** Custom session-entry type carrying the cache-warm continuation story. */
@@ -18,6 +18,12 @@ export const GOAL_MONITOR_CONTINUATION_FALLBACK_DELAY_MS = 240_000;
  * periodic re-check lands inside the cache.
  */
 export const GOAL_MONITOR_BACKSTOP_DEFAULT_DELAY_MS = 270_000;
+/**
+ * Backstop used instead of the 270s default when the active model's prompt cache is best-effort
+ * (for example direct DeepSeek, code-yeongyu/senpi#831): there is no TTL for the re-check to land
+ * inside, so the goal only needs the long liveness re-check, not a cache-preservation wake.
+ */
+export const GOAL_MONITOR_BEST_EFFORT_BACKSTOP_SECONDS = 3570;
 const GOAL_MONITOR_CONTINUATION_MIN_DELAY_MS = 1_000;
 const GOAL_MONITOR_CONTINUATION_HARD_CEILING_MS = 3_600_000;
 
@@ -46,10 +52,36 @@ export function resolveGoalMonitorContinuationDelayMs(goalBackstopMaxSeconds: nu
 	);
 }
 
+/**
+ * Backstop ceiling in seconds for the active model's cache lifetime. The built-in 270s default exists
+ * to land the re-check inside a 5-minute TTL; a best-effort cache has no TTL, so an unconfigured
+ * backstop becomes the long liveness re-check. The settings getter reports an unset value as the
+ * 270s default, so a value equal to it is treated as the default.
+ */
+export function resolveGoalBackstopMaxSecondsForCache(
+	goalBackstopMaxSeconds: number | undefined,
+	lifetime: PromptCacheLifetime | undefined,
+): number | undefined {
+	if (lifetime?.kind !== "best-effort") return goalBackstopMaxSeconds;
+	const isDefault =
+		goalBackstopMaxSeconds === undefined || goalBackstopMaxSeconds * 1000 === GOAL_MONITOR_BACKSTOP_DEFAULT_DELAY_MS;
+	return isDefault ? GOAL_MONITOR_BEST_EFFORT_BACKSTOP_SECONDS : goalBackstopMaxSeconds;
+}
+
+/** Prompt-cache lifetime of the active model, from the provider's documented cache contract. */
+export function resolveGoalPromptCacheLifetime(
+	model: Model<Api> | undefined,
+	env: NodeJS.ProcessEnv,
+): PromptCacheLifetime | undefined {
+	return model === undefined ? undefined : resolvePromptCacheLifetime(model, toProviderEnv(env));
+}
+
 /** Cache context captured when a monitor-wait continuation is scheduled. */
 export interface GoalCacheWarmMetrics {
-	/** Prompt-cache TTL of the active model in seconds, when known. */
+	/** Prompt-cache TTL of the active model in seconds, when the provider documents one. */
 	readonly ttlSeconds?: number;
+	/** Set when the provider caches automatically with no expiry contract; no TTL or savings are claimed. */
+	readonly cacheLifetime?: "best-effort";
 	/** Tokens sitting warm in the provider prompt cache after the last turn. */
 	readonly cachedTokens: number;
 	/** Estimated USD saved by re-reading those tokens from cache instead of paying a cold input read. */
@@ -114,7 +146,11 @@ export function estimateCacheWarmMetrics(
 	lastTurnUsage: Pick<TokenUsageSnapshot, "cacheRead" | "cacheWrite"> | undefined,
 ): GoalCacheWarmMetrics | undefined {
 	const cachedTokens = clampTokens(lastTurnUsage?.cacheRead) + clampTokens(lastTurnUsage?.cacheWrite);
-	const ttlSeconds = model === undefined ? undefined : resolvePromptCacheTtlSeconds(model, toProviderEnv(env));
+	const lifetime = resolveGoalPromptCacheLifetime(model, env);
+	if (lifetime?.kind === "best-effort") {
+		return cachedTokens === 0 ? undefined : { cachedTokens, cacheLifetime: "best-effort" };
+	}
+	const ttlSeconds = lifetime?.kind === "ttl" ? lifetime.ttlSeconds : undefined;
 	if (ttlSeconds === undefined && cachedTokens === 0) return undefined;
 	const estimatedSavedUsd =
 		model !== undefined && cachedTokens > 0

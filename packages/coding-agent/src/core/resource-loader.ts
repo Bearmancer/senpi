@@ -19,6 +19,9 @@ import {
 	globalDefaultExtensionFactories,
 	globalDefaultExtensionIds,
 } from "./extensions/builtin/index.ts";
+import type { HostMcpRegistry } from "./extensions/builtin/mcp/host-registry.ts";
+import { createMcpExtension } from "./extensions/builtin/mcp/index.ts";
+import { McpService } from "./extensions/builtin/mcp/service.ts";
 import {
 	clearExtensionCache,
 	createExtensionRuntime,
@@ -30,15 +33,20 @@ import type {
 	Extension,
 	ExtensionFactory,
 	ExtensionRuntime,
+	ExtensionSessionProfile,
 	InlineExtension,
 	LoadExtensionsResult,
 	LoadedHookSources,
+	SessionContext,
+	SessionKind,
 } from "./extensions/types.ts";
+import { EMPTY_SESSION_CONTEXT } from "./extensions/types.ts";
 import { findGitPaths } from "./footer-data-provider.ts";
 import { dedupePathsByPackageIdentity, findNearestPackageIdentity } from "./package-identity.ts";
 import { DefaultPackageManager, type PathMetadata, type ResolvedResource } from "./package-manager.ts";
 import type { PromptTemplate } from "./prompt-templates.ts";
 import { loadPromptTemplates } from "./prompt-templates.ts";
+import { memoizeResolvedPaths, resolvedPathsMemoKey } from "./resolved-paths-memo.ts";
 import { SettingsManager } from "./settings-manager.ts";
 import type { Skill } from "./skills.ts";
 import { loadSkills } from "./skills.ts";
@@ -117,7 +125,6 @@ const moduleRequire = createRequire(import.meta.url);
 const bundledBuiltinExtensions: ReadonlyArray<{
 	id: string;
 	resolvePackage: () => string;
-	resolveBinaryFactory?: () => Promise<ExtensionFactory>;
 }> = [
 	{
 		id: "codemode",
@@ -127,7 +134,6 @@ const bundledBuiltinExtensions: ReadonlyArray<{
 				"senpi-codemode/package.json",
 				join("node_modules", "@code-yeongyu", "senpi-codemode", "package.json"),
 			),
-		resolveBinaryFactory: async () => require("@code-yeongyu/senpi-codemode").default as ExtensionFactory,
 	},
 ];
 
@@ -326,6 +332,10 @@ export interface DefaultResourceLoaderOptions {
 	agentDir: string;
 	settingsManager?: SettingsManager;
 	sharedHostEnabled?: boolean;
+	/** Visibility class of the session these resources are loaded for; defaults to `interactive`. */
+	sessionKind?: SessionKind;
+	/** Opaque labels the session was opened with; defaults to `{}`. */
+	sessionContext?: SessionContext;
 	eventBus?: EventBus;
 	additionalExtensionPaths?: string[];
 	additionalSkillPaths?: string[];
@@ -333,6 +343,7 @@ export interface DefaultResourceLoaderOptions {
 	additionalThemePaths?: string[];
 	additionalHookPaths?: string[];
 	extensionFactories?: InlineExtension[];
+	mcpRegistry?: HostMcpRegistry;
 	noExtensions?: boolean;
 	noSkills?: boolean;
 	noPromptTemplates?: boolean;
@@ -363,6 +374,8 @@ export class DefaultResourceLoader implements ResourceLoader {
 	private agentDir: string;
 	private settingsManager: SettingsManager;
 	private sharedHostEnabled: boolean;
+	/** The per-session facts every extension of this session is loaded with. */
+	private extensionSession: ExtensionSessionProfile;
 	private eventBus: EventBus;
 	private packageManager: DefaultPackageManager;
 	private additionalExtensionPaths: string[];
@@ -426,6 +439,11 @@ export class DefaultResourceLoader implements ResourceLoader {
 		this.agentDir = resolvePath(options.agentDir);
 		this.settingsManager = options.settingsManager ?? SettingsManager.create(this.cwd, this.agentDir);
 		this.sharedHostEnabled = options.sharedHostEnabled ?? this.settingsManager.getExperimentalSharedHost();
+		this.extensionSession = {
+			sharedHostEnabled: this.sharedHostEnabled,
+			sessionKind: options.sessionKind ?? "interactive",
+			sessionContext: options.sessionContext ?? EMPTY_SESSION_CONTEXT,
+		};
 		this.eventBus = options.eventBus ?? createEventBus();
 		this.packageManager = new DefaultPackageManager({
 			cwd: this.cwd,
@@ -437,7 +455,18 @@ export class DefaultResourceLoader implements ResourceLoader {
 		this.additionalPromptTemplatePaths = options.additionalPromptTemplatePaths ?? [];
 		this.additionalThemePaths = options.additionalThemePaths ?? [];
 		this.additionalHookPaths = options.additionalHookPaths ?? [];
-		this.builtinExtensionFactories = builtinExtensions;
+		this.builtinExtensionFactories =
+			options.mcpRegistry === undefined
+				? builtinExtensions
+				: builtinExtensions.map((extension) =>
+						extension.id === "mcp"
+							? {
+									...extension,
+									factory: (pi) =>
+										createMcpExtension(new McpService({ mcpRegistry: options.mcpRegistry }))(pi),
+								}
+							: extension,
+					);
 		this.extensionFactories = options.extensionFactories ?? [];
 		this.noExtensions = options.noExtensions ?? false;
 		this.noSkills = options.noSkills ?? false;
@@ -573,24 +602,28 @@ export class DefaultResourceLoader implements ResourceLoader {
 		}
 	}
 
-	async loadProjectTrustExtensions(): Promise<LoadExtensionsResult> {
+	async loadProjectTrustExtensions(options: { readonly refresh?: boolean } = {}): Promise<LoadExtensionsResult> {
 		// Force untrusted project settings for the bootstrap pass. This keeps project-local
 		// extensions/packages out while still loading user/global and temporary CLI extensions.
 		this.settingsManager.setProjectTrusted(false);
 		await this.settingsManager.reload();
-		return this.loadCurrentExtensionSet({ includeInlineFactories: true });
+		return this.loadCurrentExtensionSet({ includeInlineFactories: true, ...options });
 	}
 
 	async reload(options?: ResourceLoaderReloadOptions): Promise<void> {
 		resetTimings("extensions");
 
-		if (this.loaded) {
+		// A re-load of this loader is the signal that disk may have changed - it
+		// discards the extension cache, and it must not read package resolution
+		// through the host memo either (a package's own manifest is not in the key).
+		const refresh = this.loaded;
+		if (refresh) {
 			clearExtensionCache();
 		}
 		this.ensureGlobalDefaultExtensions();
 		let preTrustExtensions: LoadExtensionsResult | undefined;
 		if (options?.resolveProjectTrust) {
-			preTrustExtensions = await this.loadProjectTrustExtensions();
+			preTrustExtensions = await this.loadProjectTrustExtensions({ refresh });
 			const projectTrusted = await options.resolveProjectTrust({ extensionsResult: preTrustExtensions });
 			this.settingsManager.setProjectTrusted(projectTrusted);
 		}
@@ -601,10 +634,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 		if (!settingsAreFresh) {
 			await this.settingsManager.reload();
 		}
-		const resolvedPaths = await this.packageManager.resolve();
-		const cliExtensionPaths = await this.packageManager.resolveExtensionSources(this.additionalExtensionPaths, {
-			temporary: true,
-		});
+		const { resolvedPaths, cliExtensionPaths } = await this.resolvePackagePaths({ refresh });
 		time("packageResolve", "extensions");
 		// Keep package metadata available for later extendResources() passes.
 		this.resourceMetadataByPath = new Map();
@@ -635,21 +665,22 @@ export class DefaultResourceLoader implements ResourceLoader {
 		const enabledSkills = enabledSkillResources.map((resource) => this.mapSkillPath(resource, metadataByPath));
 
 		// Add CLI paths metadata. Explicit -e/-s resources must keep CLI precedence
-		// even when they resolve through a package manifest.
-		for (const r of cliExtensionPaths.extensions) {
-			metadataByPath.set(r.path, { source: "cli", scope: "temporary", origin: "top-level" });
-		}
-		for (const r of cliExtensionPaths.skills) {
-			metadataByPath.set(r.path, { source: "cli", scope: "temporary", origin: "top-level" });
-		}
-		for (const r of cliExtensionPaths.prompts) {
-			metadataByPath.set(r.path, { source: "cli", scope: "temporary", origin: "top-level" });
-		}
-		for (const r of cliExtensionPaths.themes) {
-			metadataByPath.set(r.path, { source: "cli", scope: "temporary", origin: "top-level" });
-		}
-		for (const r of cliExtensionPaths.hooks) {
-			metadataByPath.set(r.path, { source: "cli", scope: "temporary", origin: "top-level" });
+		// even when they resolve through a package manifest. A package that declared
+		// itself part of the harness keeps the system scope and root it resolved to.
+		const cliMetadata = (resource: ResolvedResource): PathMetadata =>
+			resource.metadata.scope === "system"
+				? { source: "cli", scope: "system", origin: "top-level", baseDir: resource.metadata.baseDir }
+				: { source: "cli", scope: "temporary", origin: "top-level" };
+		for (const resources of [
+			cliExtensionPaths.extensions,
+			cliExtensionPaths.skills,
+			cliExtensionPaths.prompts,
+			cliExtensionPaths.themes,
+			cliExtensionPaths.hooks,
+		]) {
+			for (const r of resources) {
+				metadataByPath.set(r.path, cliMetadata(r));
+			}
 		}
 
 		const cliEnabledExtensions = getEnabledPaths(cliExtensionPaths.extensions);
@@ -796,22 +827,40 @@ export class DefaultResourceLoader implements ResourceLoader {
 		}
 	}
 
-	private buildGlobalDefaultExtensionLoadOptions(): {
+	private resolvePackagePaths(options: { readonly refresh?: boolean } = {}) {
+		return memoizeResolvedPaths(
+			resolvedPathsMemoKey({
+				agentDir: this.agentDir,
+				cwd: this.cwd,
+				globalSettings: this.settingsManager.getGlobalSettings(),
+				projectSettings: this.settingsManager.getProjectSettings(),
+				additionalExtensionPaths: this.additionalExtensionPaths,
+			}),
+			async () => ({
+				resolvedPaths: await this.packageManager.resolve(),
+				cliExtensionPaths: await this.packageManager.resolveExtensionSources(this.additionalExtensionPaths, {
+					temporary: true,
+				}),
+			}),
+			options,
+		);
+	}
+
+	private buildGlobalDefaultExtensionLoadOptions(): ExtensionSessionProfile & {
 		factoryResolver: ExtensionFactoryResolver;
-		sharedHostEnabled: boolean;
 	} {
 		return {
 			factoryResolver: (_extensionPath, resolvedPath) =>
 				resolveGeneratedGlobalDefaultExtensionFactory(resolvedPath, this.agentDir),
-			sharedHostEnabled: this.sharedHostEnabled,
+			...this.extensionSession,
 		};
 	}
 
-	private async loadCurrentExtensionSet(options: { includeInlineFactories: boolean }): Promise<LoadExtensionsResult> {
-		const resolvedPaths = await this.packageManager.resolve();
-		const cliExtensionPaths = await this.packageManager.resolveExtensionSources(this.additionalExtensionPaths, {
-			temporary: true,
-		});
+	private async loadCurrentExtensionSet(options: {
+		includeInlineFactories: boolean;
+		readonly refresh?: boolean;
+	}): Promise<LoadExtensionsResult> {
+		const { resolvedPaths, cliExtensionPaths } = await this.resolvePackagePaths({ refresh: options.refresh });
 		const enabledExtensions = resolvedPaths.extensions.filter((r) => r.enabled).map((r) => r.path);
 		const cliEnabledExtensions = cliExtensionPaths.extensions.filter((r) => r.enabled).map((r) => r.path);
 		const extensionPaths = this.noExtensions
@@ -828,7 +877,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 			return extensionsResult;
 		}
 
-		const inlineExtensions = await this.loadExtensionFactories(extensionsResult.runtime, this.sharedHostEnabled);
+		const inlineExtensions = await this.loadExtensionFactories(extensionsResult.runtime);
 		extensionsResult.extensions.push(...inlineExtensions.extensions);
 		extensionsResult.errors.push(...inlineExtensions.errors);
 		return extensionsResult;
@@ -850,7 +899,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 				undefined,
 				this.buildGlobalDefaultExtensionLoadOptions(),
 			);
-			const inlineExtensions = await this.loadExtensionFactories(extensionsResult.runtime, this.sharedHostEnabled);
+			const inlineExtensions = await this.loadExtensionFactories(extensionsResult.runtime);
 			extensionsResult.extensions.unshift(...inlineExtensions.extensions);
 			this.rebuildExtensionFlagDefaults(extensionsResult);
 			extensionsResult.errors.push(...inlineExtensions.errors);
@@ -1033,8 +1082,10 @@ export class DefaultResourceLoader implements ResourceLoader {
 	}
 
 	private applyExtensionSourceInfo(extensions: Extension[], metadataByPath: Map<string, PathMetadata>): void {
+		const bundledPackageRoots = this.getBundledExtensionPackageRoots();
 		for (const extension of extensions) {
 			extension.sourceInfo =
+				this.getHarnessExtensionSourceInfo(extension, bundledPackageRoots) ??
 				this.findSourceInfoForPath(extension.path, undefined, metadataByPath) ??
 				this.getDefaultSourceInfoForPath(extension.path);
 			for (const command of extension.commands.values()) {
@@ -1094,10 +1145,11 @@ export class DefaultResourceLoader implements ResourceLoader {
 
 	private getDefaultSourceInfoForPath(filePath: string): SourceInfo {
 		if (filePath.startsWith("<") && filePath.endsWith(">")) {
+			const source = filePath.slice(1, -1).split(":")[0] || "temporary";
 			return {
 				path: filePath,
-				source: filePath.slice(1, -1).split(":")[0] || "temporary",
-				scope: "temporary",
+				source,
+				scope: source === "builtin" ? "system" : "temporary",
 				origin: "top-level",
 			};
 		}
@@ -1305,10 +1357,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 		}
 	}
 
-	private async loadExtensionFactories(
-		runtime: ExtensionRuntime,
-		sharedHostEnabled: boolean,
-	): Promise<{
+	private async loadExtensionFactories(runtime: ExtensionRuntime): Promise<{
 		extensions: Extension[];
 		errors: Array<{ path: string; error: string }>;
 	}> {
@@ -1329,7 +1378,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 					this.eventBus,
 					runtime,
 					extensionPath,
-					sharedHostEnabled,
+					this.extensionSession,
 				);
 				extensions.push(extension);
 			} catch (error) {
@@ -1338,26 +1387,11 @@ export class DefaultResourceLoader implements ResourceLoader {
 			}
 		}
 
-		const bundledExtensionPaths: string[] = [];
 		for (const bundledExtension of bundledBuiltinExtensions) {
 			if (!activeBuiltinExtensionIds.has(bundledExtension.id)) {
 				continue;
 			}
 			try {
-				if (isBunBinary && bundledExtension.resolveBinaryFactory) {
-					const factory = await bundledExtension.resolveBinaryFactory();
-					const extensionPath = `<builtin:${bundledExtension.id}>`;
-					const extension = await loadExtensionFromFactory(
-						factory,
-						this.cwd,
-						this.eventBus,
-						runtime,
-						extensionPath,
-						sharedHostEnabled,
-					);
-					extensions.push(extension);
-					continue;
-				}
 				const packageJsonPath = bundledExtension.resolvePackage();
 				const entries = this.resolvePackageExtensionEntries(packageJsonPath);
 				if (entries.length === 0) {
@@ -1367,7 +1401,18 @@ export class DefaultResourceLoader implements ResourceLoader {
 					});
 					continue;
 				}
-				bundledExtensionPaths.push(...entries);
+				const bundledResult = await loadExtensions(
+					entries,
+					this.cwd,
+					this.eventBus,
+					runtime,
+					this.extensionSession,
+				);
+				for (const extension of bundledResult.extensions) {
+					if (isBunBinary) extension.path = `<builtin:${bundledExtension.id}>`;
+					extensions.push(extension);
+				}
+				errors.push(...bundledResult.errors);
 			} catch (error) {
 				const message = error instanceof Error ? error.message : "package resolution failed";
 				errors.push({
@@ -1375,14 +1420,6 @@ export class DefaultResourceLoader implements ResourceLoader {
 					error: `Bundled extension unavailable: ${message}`,
 				});
 			}
-		}
-
-		if (bundledExtensionPaths.length > 0) {
-			const bundledResult = await loadExtensions(bundledExtensionPaths, this.cwd, this.eventBus, runtime, {
-				sharedHostEnabled,
-			});
-			extensions.push(...bundledResult.extensions);
-			errors.push(...bundledResult.errors);
 		}
 
 		for (const [index, input] of this.extensionFactories.entries()) {
@@ -1396,7 +1433,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 					this.eventBus,
 					runtime,
 					extensionPath,
-					sharedHostEnabled,
+					this.extensionSession,
 				);
 				extension.hidden = isNamed && input.hidden;
 				extensions.push(extension);
@@ -1410,18 +1447,70 @@ export class DefaultResourceLoader implements ResourceLoader {
 	}
 
 	private getBundledExtensionEntryPaths(): Set<string> {
-		const paths = new Set<string>();
+		return new Set(this.getBundledExtensionPackageRoots().keys());
+	}
+
+	/**
+	 * Source info for an extension file the harness itself provides: a bundled extension entry, or a
+	 * global-default shim this loader generated under the agent extensions directory. A file at a shim
+	 * path that no longer carries the generated banner is user-authored and gets no system scope.
+	 */
+	private getHarnessExtensionSourceInfo(
+		extension: Extension,
+		bundledPackageRoots: Map<string, string>,
+	): SourceInfo | undefined {
+		const bundledPackageRoot = bundledPackageRoots.get(extension.resolvedPath);
+		if (bundledPackageRoot !== undefined) {
+			return {
+				path: extension.path,
+				source: "builtin",
+				scope: "system",
+				origin: "top-level",
+				baseDir: bundledPackageRoot,
+			};
+		}
+		if (this.isGeneratedGlobalDefaultExtensionShimPath(extension.resolvedPath)) {
+			return {
+				path: extension.path,
+				source: "builtin",
+				scope: "system",
+				origin: "top-level",
+				baseDir: join(this.agentDir, "extensions"),
+			};
+		}
+		return undefined;
+	}
+
+	private isGeneratedGlobalDefaultExtensionShimPath(resolvedPath: string): boolean {
+		const shimPath = resolve(resolvedPath);
+		const isShimPath = globalDefaultExtensionIds.some(
+			(extensionId) => resolve(getGlobalDefaultExtensionShimPath(this.agentDir, extensionId)) === shimPath,
+		);
+		if (!isShimPath) {
+			return false;
+		}
+		try {
+			return isGeneratedGlobalDefaultExtensionShim(readFileSync(shimPath, "utf-8"));
+		} catch {
+			return false;
+		}
+	}
+
+	/** Resolved entry path of every active bundled extension mapped to the root of the package that ships it. */
+	private getBundledExtensionPackageRoots(): Map<string, string> {
+		const packageRoots = new Map<string, string>();
 		for (const bundledExtension of bundledBuiltinExtensions) {
 			try {
 				const packageJsonPath = bundledExtension.resolvePackage();
+				const packageRoot = resolve(packageJsonPath, "..");
 				for (const extensionPath of this.resolvePackageExtensionEntries(packageJsonPath)) {
-					paths.add(this.resolveExtensionLoadPath(extensionPath));
+					packageRoots.set(this.resolveExtensionLoadPath(extensionPath), packageRoot);
 				}
 			} catch {
 				// Bundled resolution errors are already reported by loadExtensionFactories().
 			}
 		}
-		return paths;
+		return packageRoots;
 	}
 
 	private resolvePackageExtensionEntries(packageJsonPath: string): string[] {

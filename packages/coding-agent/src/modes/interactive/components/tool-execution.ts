@@ -1,5 +1,5 @@
 import { Container, Spacer, type TUI } from "@earendil-works/pi-tui";
-import type { ToolDef } from "../../../core/tools/index.ts";
+import { isModelOnlyText } from "../../../core/tools/model-only-text.ts";
 import { getTextOutput as getRenderedTextOutput } from "../../../core/tools/render-utils.ts";
 import { GrokToolRow } from "../grok/tool-row.ts";
 import { theme } from "../theme/theme.ts";
@@ -9,7 +9,14 @@ import { createBoundedRenderSignature } from "./render-signature.ts";
 import { hasCompletedTodoTasks, TODO_STRIKE_FRAME_INTERVAL_MS, TODO_STRIKE_TOTAL_FRAMES } from "./todo-strike.ts";
 import { ToolExecutionImages } from "./tool-execution-images.ts";
 import { ToolExecutionRenderer } from "./tool-execution-renderer.ts";
-import type { ToolExecutionIdentity, ToolExecutionRenderState, ToolExecutionResult } from "./tool-execution-types.ts";
+import type {
+	ToolExecutionIdentity,
+	ToolExecutionRenderState,
+	ToolExecutionResult,
+	ToolRenderers,
+} from "./tool-execution-types.ts";
+
+export type { ToolRenderers } from "./tool-execution-types.ts";
 
 export interface ToolExecutionOptions {
 	showImages?: boolean;
@@ -68,7 +75,7 @@ export class ToolExecutionComponent extends Container {
 		toolCallId: string,
 		args: unknown,
 		options: ToolExecutionOptions = {},
-		toolDefinition: ToolDef | undefined,
+		toolDefinition: ToolRenderers | undefined,
 		ui: TUI,
 		cwd: string,
 		presentation: ToolExecutionPresentation = "classic",
@@ -90,10 +97,19 @@ export class ToolExecutionComponent extends Container {
 			this.addChild(new Spacer(1));
 			this.addChild(this.grokRow);
 		} else {
-			this.renderer = new ToolExecutionRenderer(this.identity, initialState, () => {
-				this.invalidate();
-				this.ui.requestRender();
-			});
+			this.renderer = new ToolExecutionRenderer(
+				this.identity,
+				initialState,
+				() => {
+					this.invalidate();
+					this.ui.requestRender();
+				},
+				// Left-clicking a finished tool card toggles it like the expand keybinding does.
+				() => {
+					this.setExpanded(!this.expanded);
+					this.ui.requestRender();
+				},
+			);
 			this.images = new ToolExecutionImages(() => {
 				this.invalidateRenderCache();
 				this.ui.requestRender();
@@ -111,6 +127,11 @@ export class ToolExecutionComponent extends Container {
 		this.lastDisplaySignature = undefined;
 		this.updateSpinnerAnimation();
 		this.updateDisplay();
+	}
+
+	/** Read-only presentation state; execution routing continues to own this original card. */
+	get presentationSnapshot() {
+		return { identity: this.identity, state: this.createRenderState(), presentation: this.presentation };
 	}
 
 	markExecutionStarted(): void {
@@ -233,7 +254,9 @@ export class ToolExecutionComponent extends Container {
 			expanded: this.expanded,
 			showImages: this.showImages,
 			spinnerFrame: this.spinnerFrame,
-			result: this.result,
+			result: this.result
+				? { ...this.result, content: this.result.content.filter((part) => !isModelOnlyText(part)) }
+				: undefined,
 		};
 	}
 

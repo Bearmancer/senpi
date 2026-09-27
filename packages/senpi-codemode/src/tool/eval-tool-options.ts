@@ -1,4 +1,10 @@
-import type { AgentToolResult, AgentToolUpdateCallback, ExtensionContext, ToolDefinition } from "@code-yeongyu/senpi";
+import type {
+	AgentToolResult,
+	AgentToolUpdateCallback,
+	ExtensionContext,
+	KernelPreludeContribution,
+	ToolDefinition,
+} from "@code-yeongyu/senpi";
 import type { EvalSchemaToolInfo } from "../bridges/schema-bridge.ts";
 import type { CompletionRequest, CompletionResult } from "../completion/handler.ts";
 import type { ResolvedCodemodeSettings } from "../config/settings.ts";
@@ -11,6 +17,7 @@ import type {
 	EnabledEvalLanguages,
 	EvalInputSchema,
 	EvalKernelManager,
+	EvalResultDetails,
 	EvalRuntimes,
 	EvalToolDetails,
 	EvalToolInput,
@@ -34,6 +41,7 @@ export interface CreateEvalToolOptions {
 	 * replaces it. Rendered into the tool schema and description; also seeds a self-created manager.
 	 */
 	readonly runBudgetSeconds?: number;
+	readonly maxDetachedCells?: number;
 	readonly executeTool: ExecuteTool;
 	readonly listTools?: () => readonly EvalSchemaToolInfo[];
 	readonly complete?: (request: CompletionRequest, ctx: ExtensionContext) => Promise<CompletionResult>;
@@ -45,7 +53,7 @@ export interface CreateEvalToolOptions {
 	readonly onCellSettled?: (payload: EvalExecutionEventPayload) => void;
 	readonly timeoutFactory?: EvalTimeoutFactory;
 	readonly proxyExecutor?: (params: EvalToolInput, signal?: AbortSignal) => Promise<AgentToolResult<EvalToolDetails>>;
-	readonly renderers?: Pick<ToolDefinition<EvalInputSchema, EvalToolDetails>, "renderCall" | "renderResult">;
+	readonly renderers?: Pick<ToolDefinition<EvalInputSchema, EvalResultDetails>, "renderCall" | "renderResult">;
 	readonly spawns?: boolean;
 	/** Whether the session registry exposes the monitor tool through eval. */
 	readonly monitor?: boolean;
@@ -56,6 +64,10 @@ export interface CreateEvalToolOptions {
 	readonly runtimes?: EvalRuntimes;
 	/** Absolute path of the active bun-1-4 skill; the prompt names it as MUST READ on a bun kernel. */
 	readonly bunSkillPath?: string;
+	/** Kernel globals of the tools active when a cell is submitted; read once per cell. */
+	readonly kernelPreludes?: () => readonly KernelPreludeContribution[];
+	/** Contributions whose documentation lines the description lists; snapshot taken when the tool is (re)registered. */
+	readonly promptKernelPreludes?: readonly KernelPreludeContribution[];
 }
 
 export interface EvalCellInvocation {

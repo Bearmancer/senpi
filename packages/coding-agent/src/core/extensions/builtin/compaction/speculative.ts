@@ -19,15 +19,19 @@ import {
 	prepareCompaction,
 } from "../../../compaction/index.ts";
 import {
+	createSummarizationDeadline,
 	StreamDurationBudgetError,
 	StreamIdleTimeoutError,
+	SummarizationTotalBudgetError,
 	summarizationMaxDurationMs,
+	summarizationTotalBudgetMs,
 } from "../../../compaction/stream-watchdog.ts";
 import {
 	createWarmAnchorSnapshot,
 	isWarmSummaryAnchorValid,
 	type WarmAnchorSnapshot,
 } from "../../../compaction/warm-anchor.ts";
+import { CredentialFailoverError, TURN_RETRY_SUPPRESSION_PREFIX } from "../../../credential-pool/failover.ts";
 import { convertToLlm } from "../../../messages.ts";
 import type { ModelRegistry } from "../../../model-registry.ts";
 import type { ReadonlySessionManager } from "../../../session-manager.ts";
@@ -42,7 +46,12 @@ import {
 } from "./overflow-retry.ts";
 import { computeEffectiveKeepRecentTokens, computeEffectiveThreshold } from "./policy.ts";
 import { buildPrompt, type MergedCompactionPromptVariant } from "./prompts.ts";
-import { generateSummaryMessage, getSummaryText, isAssistantMessage } from "./speculative-summary.ts";
+import {
+	generateSummaryMessage,
+	getSummaryText,
+	hasSummarizationReasoningOverride,
+	isAssistantMessage,
+} from "./speculative-summary.ts";
 
 import { allowSummarizationRetry, DEFAULT_SUMMARIZATION_RETRY_POLICY } from "./summarization-retry.ts";
 
@@ -125,12 +134,20 @@ export type SummaryRequestFailureKind = "upstream-stream-truncated";
 export class SummaryRequestError extends Error {
 	readonly transient: boolean;
 	readonly failureKind?: SummaryRequestFailureKind;
+	/**
+	 * The provider refused the request (refusal/sensitive stop details) rather
+	 * than failing it. Carried explicitly because the message text cannot encode
+	 * it, and because a refusal must never authorize destructive context
+	 * reduction: dropping older detail would not make the model comply.
+	 */
+	readonly refused: boolean;
 
-	constructor(message: string, transient: boolean, failureKind?: SummaryRequestFailureKind) {
+	constructor(message: string, transient: boolean, failureKind?: SummaryRequestFailureKind, refused = false) {
 		super(message);
 		this.name = "SummaryRequestError";
 		this.transient = transient;
 		this.failureKind = failureKind;
+		this.refused = refused;
 	}
 }
 
@@ -140,7 +157,8 @@ const UPSTREAM_STREAM_TRUNCATED_PATTERN = /(?:^|[^A-Za-z0-9_])upstream_stream_tr
  * Only failures with no cheaper recovery earn another billed request.
  *
  * Every class that `classifyRequiredCompactionFallbackFailure` recognizes
- * (watchdog timeouts, `upstream-stream-truncated`, overflow exhaustion,
+ * (watchdog timeouts, the compaction-wide total budget, terminal provider and
+ * credential failures, `upstream-stream-truncated`, overflow exhaustion,
  * empty-summary generation failures) already
  * has a deterministic zero-LLM recovery, and context overflow is answered by
  * shrinking the input in the surrounding loop - replaying those would pay for a
@@ -150,15 +168,27 @@ const UPSTREAM_STREAM_TRUNCATED_PATTERN = /(?:^|[^A-Za-z0-9_])upstream_stream_tr
  */
 function isRetryableSummaryAttempt(error: unknown): boolean {
 	if (error instanceof StreamDurationBudgetError || error instanceof StreamIdleTimeoutError) return false;
+	if (error instanceof SummarizationTotalBudgetError) return false;
 	if (error instanceof SummarizationOverflowExhaustedError) return false;
 	if (error instanceof SummaryGenerationError) return false;
+	// Mirrors the `summarization-provider-failure` class: credential rotation has
+	// already spent every slot it may spend, and the marker means output was
+	// committed, so another billed attempt buys nothing the fallback cannot
+	// rebuild for free. Message text alone must not re-authorize it - the wrapped
+	// provider detail can read as transient (#1741).
+	if (error instanceof CredentialFailoverError) return false;
+	if (error instanceof Error && error.message.startsWith(TURN_RETRY_SUPPRESSION_PREFIX)) return false;
 	if (error instanceof SummaryRequestError) return error.failureKind === undefined && error.transient;
 	if (error instanceof Error) return isRetryableErrorMessage(error.message);
 	return false;
 }
 
+function isRefusalStop(response: AssistantMessage): boolean {
+	return response.stopDetails?.type === "refusal" || response.stopDetails?.type === "sensitive";
+}
+
 function summaryRequestFailureKind(response: AssistantMessage): SummaryRequestFailureKind | undefined {
-	if (response.stopDetails?.type === "refusal" || response.stopDetails?.type === "sensitive") return undefined;
+	if (isRefusalStop(response)) return undefined;
 	return UPSTREAM_STREAM_TRUNCATED_PATTERN.test(response.errorMessage ?? "") ? "upstream-stream-truncated" : undefined;
 }
 
@@ -273,10 +303,18 @@ export async function runExtensionCompaction(
 		requestSnapshot.contextWindow,
 		promptTokens,
 	);
+	// One deadline for the whole compaction. The per-attempt budget scales with the
+	// input and every retry re-arms it, so without this a large session could hold
+	// the turn for attempt-budget x attempts with no bound the user can predict.
+	const deadline = createSummarizationDeadline(
+		summarizationTotalBudgetMs(requestSnapshot.preparation.settings.summarizationMaxDurationMs),
+	);
 	const overflowRetryStartMs = Date.now();
 	let overflowAttempts = 0;
 	const summarizationToolsOffered = (requestSnapshot.tools?.length ?? 0) > 0;
+	const reasoningOverrideOffered = hasSummarizationReasoningOverride(requestSnapshot.model);
 	let toolUseRetrySpent = false;
+	let reasoningOverrideRetrySpent = false;
 
 	while (true) {
 		if (signal?.aborted) return undefined;
@@ -307,7 +345,9 @@ export async function runExtensionCompaction(
 					const attempt = await generateSummaryMessage({
 						context,
 						forbidToolCalls: toolUseRetrySpent,
-						maxDurationMs: attemptBudgetMs,
+						// Re-clamped per attempt, not per loop turn: a retry that starts
+						// near the deadline gets only what is left, and none starts past it.
+						maxDurationMs: deadline.attemptBudgetMs(attemptBudgetMs),
 						messages: currentMessages,
 						onProgress,
 						prompt,
@@ -318,6 +358,7 @@ export async function runExtensionCompaction(
 							headers: auth.headers,
 							extraBody: auth.extraBody,
 						},
+						...(reasoningOverrideRetrySpent ? { omitReasoningOptions: true } : {}),
 					});
 					if (
 						attempt &&
@@ -330,12 +371,14 @@ export async function runExtensionCompaction(
 							attempt.errorMessage || "Compaction summary request failed",
 							failureKind !== undefined || isRetryableAssistantError(attempt),
 							failureKind,
+							isRefusalStop(attempt),
 						);
 					}
 					return attempt;
 				},
 				(error) =>
 					retryEligible &&
+					deadline.remainingMs() > 0 &&
 					allowSummarizationRetry(Date.now() - retryStartedMs, attemptBudgetMs) &&
 					isRetryableSummaryAttempt(error),
 				DEFAULT_SUMMARIZATION_RETRY_POLICY,
@@ -375,6 +418,7 @@ export async function runExtensionCompaction(
 				response.errorMessage || "Compaction summary request failed",
 				failureKind !== undefined || isRetryableAssistantError(response),
 				failureKind,
+				isRefusalStop(response),
 			);
 		}
 
@@ -382,12 +426,26 @@ export async function runExtensionCompaction(
 		if (!summary) {
 			const stopReason = isAssistantMessage(response) ? response.stopReason : "unknown";
 			// A summarizer can hijack the forwarded agent tools and answer with a
-			// bare tool call (observed on openai-codex gpt-5.6-sol, 2026-08-31),
+			// bare tool call (observed on chatgpt-subscription gpt-5.6-sol, 2026-08-31),
 			// which used to surface as a terminal empty-summary failure. Spend one
 			// retry with tool calling forbidden; the tools stay in the request
 			// because Anthropic rejects tool_use history without the tools param.
 			if (stopReason === "toolUse" && summarizationToolsOffered && !toolUseRetrySpent) {
 				toolUseRetrySpent = true;
+				continue;
+			}
+			// Some OpenAI-completions relays complete with a normal stop but zero
+			// text when the summarization prompt pins an explicit reasoning effort
+			// (GLM-5.3-flash behind a custom relay, 2026-09-17: HTTP 200 carrying
+			// only the role prelude). Spend one retry without the reasoning
+			// override, but only when the first attempt carried one: a model with
+			// no override would just replay the identical prompt. On Anthropic the
+			// override is `thinkingEnabled: false`, so the retry runs with the
+			// provider's default thinking, clamped by the compaction deadline.
+			// Persistent emptiness still throws and the deterministic fallback
+			// owns recovery.
+			if (stopReason === "stop" && reasoningOverrideOffered && !reasoningOverrideRetrySpent) {
+				reasoningOverrideRetrySpent = true;
 				continue;
 			}
 			throw new SummaryGenerationError(

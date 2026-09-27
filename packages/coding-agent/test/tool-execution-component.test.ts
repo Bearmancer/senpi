@@ -1,5 +1,5 @@
 import { join, resolve } from "node:path";
-import { Container, Text, type TUI } from "@earendil-works/pi-tui";
+import { Container, Text, type TUI, type TuiMouseEvent } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import { beforeAll, describe, expect, test, vi } from "vitest";
 import { getReadmePath } from "../src/config.ts";
@@ -11,6 +11,7 @@ import { type BashOperations, createBashToolDefinition } from "../src/core/tools
 import { renderToolDiff } from "../src/core/tools/diff-render.ts";
 import { createReadTool, createReadToolDefinition } from "../src/core/tools/read.ts";
 import type { ReadClassifier } from "../src/core/tools/read-classifiers.ts";
+import { withBuiltInRenderers } from "../src/core/tools/renderers/index.ts";
 import { createWriteToolDefinition } from "../src/core/tools/write.ts";
 import { keyText } from "../src/modes/interactive/components/keybinding-hints.ts";
 import {
@@ -90,6 +91,8 @@ function captureTodoTool(): ToolDefinition<typeof TODO_PARAMS_SCHEMA> {
 	registerTodoTool(pi as unknown as ExtensionAPI, {
 		getCurrentPhases: () => [],
 		setCurrentPhases: () => {},
+		getCurrentAsk: () => undefined,
+		setCurrentAsk: () => {},
 		syncWidget: () => {},
 	});
 	if (!capturedTool) throw new Error("Expected todo tool registration");
@@ -202,6 +205,48 @@ describe("ToolExecutionComponent parity", () => {
 		expect(component.render(120)).toEqual([]);
 	});
 
+	test("omits model-only text before custom renderers without mutating stored content (#2041)", () => {
+		const toolDefinition: ToolDefinition = {
+			...createBaseToolDefinition(),
+			renderResult: (result) =>
+				new Text(
+					result.content
+						.filter((part) => part.type === "text")
+						.map((part) => part.text)
+						.join("\n"),
+					0,
+					0,
+				),
+		};
+		const component = new ToolExecutionComponent(
+			"custom_tool",
+			"model-only",
+			{},
+			{},
+			toolDefinition,
+			createFakeTui(),
+			process.cwd(),
+		);
+		const result: Parameters<ToolExecutionComponent["updateResult"]>[0] = {
+			content: [
+				{ type: "text", text: "visible body" },
+				{ type: "text", text: "hidden instruction", audience: "model" },
+			],
+			details: {},
+			isError: false,
+		};
+		component.updateResult(result, false);
+		for (const expanded of [false, true]) {
+			component.setExpanded(expanded);
+			const rendered = stripAnsi(component.render(120).join("\n"));
+			expect(rendered).toContain("visible body");
+			expect(rendered).not.toContain("hidden instruction");
+		}
+		expect(result.content).toHaveLength(2);
+		expect(result.content[1]).toMatchObject({ audience: "model", text: "hidden instruction" });
+		component.dispose();
+	});
+
 	test("advances pending render frames for self-rendered write calls while args stream", () => {
 		vi.useFakeTimers();
 		try {
@@ -252,7 +297,7 @@ describe("ToolExecutionComponent parity", () => {
 			"tool-2",
 			{ path: "README.md", oldText: "before", newText: "after" },
 			{},
-			overrideDefinition,
+			withBuiltInRenderers("edit", overrideDefinition),
 			createFakeTui(),
 			process.cwd(),
 		);
@@ -348,7 +393,7 @@ describe("ToolExecutionComponent parity", () => {
 		}
 	});
 
-	test("bash renderer does not duplicate final full output truncation details", async () => {
+	test("bash renderer omits final model-only notices and renderer-owned warnings", async () => {
 		const operations: BashOperations = {
 			exec: async (_command, _cwd, { onData }) => {
 				for (let i = 1; i <= 4000; i++) {
@@ -378,10 +423,9 @@ describe("ToolExecutionComponent parity", () => {
 		component.updateResult({ ...result, isError: false }, false);
 
 		const rendered = stripAnsi(component.render(200).join("\n"));
-		expect(rendered.match(/Full output:/g)?.length ?? 0).toBe(1);
-		expect(rendered).toMatch(/line-4000[^\n]*\n[^\S\n]*\n \[Full output:/);
-		expect(rendered).not.toMatch(/line-4000[^\n]*\n[^\S\n]*\n[^\S\n]*\n \[Full output:/);
-		expect(rendered).toContain("Truncated: showing 2000 of 4000 lines");
+		expect(rendered.match(/Full output:/g)?.length ?? 0).toBe(0);
+		expect(rendered).toContain("line-4000");
+		expect(rendered).not.toContain("Truncated:");
 		expect(rendered).not.toContain("[Showing lines 2001-4000 of 4000. Full output:");
 	});
 
@@ -411,7 +455,7 @@ describe("ToolExecutionComponent parity", () => {
 			"tool-4b",
 			{ path: "notes.txt" },
 			{},
-			overrideDefinition,
+			withBuiltInRenderers("read", overrideDefinition),
 			createFakeTui(),
 			process.cwd(),
 		);
@@ -433,7 +477,7 @@ describe("ToolExecutionComponent parity", () => {
 			"tool-4c",
 			{ path: "README.md" },
 			{},
-			overrideDefinition,
+			withBuiltInRenderers("read", overrideDefinition),
 			createFakeTui(),
 			process.cwd(),
 		);
@@ -680,6 +724,42 @@ describe("ToolExecutionComponent parity", () => {
 		const rendered = component.render(120).join("\n");
 		expect(stripAnsi(rendered)).toContain(error);
 		expect(rendered).toContain(theme.fg("toolOutput", error));
+	});
+
+	test("expands a collapsed tool result when clicked", () => {
+		const component = new ToolExecutionComponent(
+			"read",
+			"tool-click-expand",
+			{ path: "notes.txt" },
+			{},
+			createReadToolDefinition(process.cwd()),
+			createFakeTui(),
+			process.cwd(),
+		);
+		component.updateResult(
+			{ content: [{ type: "text", text: "hidden content" }], details: undefined, isError: false },
+			false,
+		);
+		const width = 120;
+		const lines = component.render(width);
+		const resultRow = lines.findIndex((line) => stripAnsi(line).includes("notes.txt"));
+		expect(resultRow).toBeGreaterThanOrEqual(0);
+		const event: TuiMouseEvent = {
+			type: "click",
+			button: "left",
+			x: 2,
+			y: resultRow,
+			screenX: 2,
+			screenY: resultRow,
+			width,
+			height: lines.length,
+			shift: false,
+			alt: false,
+			ctrl: false,
+			clickCount: 1,
+		};
+		expect(component.handleMouse(event)?.handled).toBe(true);
+		expect(stripAnsi(component.render(width).join("\n"))).toContain("hidden content");
 	});
 
 	test("collapses ordinary read results until expanded", () => {

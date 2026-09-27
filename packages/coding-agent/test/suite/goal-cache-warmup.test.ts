@@ -34,15 +34,39 @@ function cacheModel(): Model<Api> {
 	} as Model<Api>;
 }
 
+function deepseekModel(): Model<Api> {
+	return {
+		...cacheModel(),
+		id: "deepseek-v4-pro",
+		api: "openai-completions",
+		provider: "deepseek",
+		baseUrl: "https://api.deepseek.com",
+	} as Model<Api>;
+}
+
+function gpt6Model(): Model<Api> {
+	return {
+		...cacheModel(),
+		id: "gpt-6-luna",
+		api: "openai-responses",
+		provider: "openai",
+		baseUrl: "https://api.openai.com/v1",
+	} as Model<Api>;
+}
+
 async function setupWarmHarness(
 	threadId: string,
+	options: { readonly model?: Model<Api>; readonly goalBackstopMaxSeconds?: number } = {},
 ): Promise<{ harness: GoalHarness; notices: string[]; ctx: Awaited<ReturnType<typeof makeGoalContext>> }> {
 	const notices: string[] = [];
 	const harness = createGoalHarness();
 	const ctx = await makeGoalContext(notices, threadId, {
 		pendingMessages: false,
-		model: cacheModel(),
+		model: options.model ?? cacheModel(),
 		cacheSafeWaitSeconds: 270,
+		...(options.goalBackstopMaxSeconds !== undefined
+			? { goalBackstopMaxSeconds: options.goalBackstopMaxSeconds }
+			: {}),
 	});
 	await runGoalHandlers(harness.handlers, "session_start", { type: "session_start", reason: "reload" }, ctx);
 	await harness.tools.get("create_goal")?.execute("create", { objective: "Keep watching" }, undefined, undefined, ctx);
@@ -105,6 +129,48 @@ describe("goal cache-warm continuation story", () => {
 				cache: expect.objectContaining({ cachedTokens: 120_000, ttlSeconds: 300 }),
 			}),
 		);
+	});
+
+	// code-yeongyu/senpi#831: direct DeepSeek has no cache TTL, so the default wait is the long liveness re-check.
+	it("does not arm a 270s cache-preservation wake for DeepSeek's best-effort cache", async () => {
+		vi.useFakeTimers();
+		vi.setSystemTime(0);
+		const { harness } = await setupWarmHarness("thread-cache-best-effort", { model: deepseekModel() });
+
+		expect(channelEvents(harness, "goal_continuation_scheduled")).toEqual([
+			expect.objectContaining({
+				delayMs: 3_570_000,
+				cache: { cachedTokens: 120_000, cacheLifetime: "best-effort" },
+			}),
+		]);
+
+		await vi.advanceTimersByTimeAsync(BACKSTOP_DELAY_MS);
+		expect(harness.sent).toHaveLength(0);
+	});
+
+	it("honors an explicit backstop on a best-effort lane", async () => {
+		vi.useFakeTimers();
+		const { harness } = await setupWarmHarness("thread-cache-best-effort-configured", {
+			model: deepseekModel(),
+			goalBackstopMaxSeconds: 900,
+		});
+
+		expect(channelEvents(harness, "goal_continuation_scheduled")).toEqual([
+			expect.objectContaining({ delayMs: 900_000 }),
+		]);
+	});
+
+	// code-yeongyu/senpi#2090: GPT-6 reports its 30-minute TTL; the liveness backstop stays the configured default.
+	it("reports the 30-minute GPT-6 TTL while keeping the default backstop", async () => {
+		vi.useFakeTimers();
+		const { harness } = await setupWarmHarness("thread-cache-gpt6", { model: gpt6Model() });
+
+		expect(channelEvents(harness, "goal_continuation_scheduled")).toEqual([
+			expect.objectContaining({
+				delayMs: BACKSTOP_DELAY_MS,
+				cache: expect.objectContaining({ cachedTokens: 120_000, ttlSeconds: 1800 }),
+			}),
+		]);
 	});
 
 	it("celebrates the cache-warm wake when the deferred continuation fires", async () => {

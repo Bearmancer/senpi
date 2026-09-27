@@ -33,6 +33,7 @@ import type {
 	Model,
 	ModelCostRates,
 	ModelThinkingLevel,
+	OpenAIResponsesCompat,
 	ProviderHeaders,
 	ProviderRequestOptions,
 	ProviderStreams,
@@ -230,6 +231,11 @@ export interface Models {
 
 	streamSimple(model: Model<Api>, context: Context, options?: ModelsSimpleStreamOptions): AssistantMessageEventStream;
 	completeSimple(model: Model<Api>, context: Context, options?: ModelsSimpleStreamOptions): Promise<AssistantMessage>;
+	streamDeferred(
+		model: Model<Api>,
+		handle: DeferredHandle,
+		options?: ModelsDeferredFetchOptions,
+	): AssistantMessageEventStream;
 	fetchDeferred(
 		model: Model<Api>,
 		handle: DeferredHandle,
@@ -579,8 +585,11 @@ class ModelsImpl implements MutableModels {
 		if (!method?.login) {
 			throw new ModelsError("auth", `${provider.name} does not support ${type} login`);
 		}
-		const loginOperation: Promise<Credential> = method.login({ ...interaction, signal });
+		const { onAccountCommitted, ...providerInteraction } = interaction;
+		const loginOperation: Promise<Credential> = method.login({ ...providerInteraction, signal });
 		const credential = await raceWithAbortSignal(loginOperation, signal);
+		let committedName: string | undefined;
+		let committedOrigin: "generated" | "provider" | undefined;
 		let mutationStarted = false;
 		let markMutationStarted: (() => void) | undefined;
 		const started = new Promise<void>((resolve) => {
@@ -591,7 +600,10 @@ class ModelsImpl implements MutableModels {
 			async (current) => {
 				mutationStarted = true;
 				markMutationStarted?.();
-				return appendLoginSlot(current, credential);
+				return appendLoginSlot(current, credential, (name, origin) => {
+					committedName = name;
+					committedOrigin = origin;
+				});
 			},
 			{ signal },
 		);
@@ -618,6 +630,9 @@ class ModelsImpl implements MutableModels {
 		} catch (error) {
 			signal.throwIfAborted();
 			throw new ModelsError("auth", `Credential store modify failed for ${providerId}`, { cause: error });
+		}
+		if (committedName !== undefined && committedOrigin !== undefined) {
+			onAccountCommitted?.({ providerId, name: committedName, origin: committedOrigin });
 		}
 		return credential;
 	}
@@ -721,11 +736,11 @@ class ModelsImpl implements MutableModels {
 		return this.streamSimple(model, context, options).result();
 	}
 
-	async fetchDeferred(
+	streamDeferred(
 		model: Model<Api>,
 		handle: DeferredHandle,
 		options?: ModelsDeferredFetchOptions,
-	): Promise<AssistantMessage> {
+	): AssistantMessageEventStream {
 		return lazyStream(model, async () => {
 			const provider = this.requireProvider(model);
 			if (!provider.fetchDeferred) {
@@ -733,7 +748,15 @@ class ModelsImpl implements MutableModels {
 			}
 			const { requestModel, requestOptions } = await this.applyAuth(model, options);
 			return provider.fetchDeferred(requestModel, handle, requestOptions as DeferredFetchOptions);
-		}).result();
+		});
+	}
+
+	async fetchDeferred(
+		model: Model<Api>,
+		handle: DeferredHandle,
+		options?: ModelsDeferredFetchOptions,
+	): Promise<AssistantMessage> {
+		return this.streamDeferred(model, handle, options).result();
 	}
 
 	async cancelDeferred(
@@ -1014,6 +1037,8 @@ const XHIGH_MODEL_IDS = [
 	"gpt-5.6-sol",
 	"gpt-5.6-terra",
 	"gpt-6-astra",
+	"gpt-6-sol",
+	"gpt-6-luna",
 	"deepseek-v4-pro",
 	"deepseek-v4-flash",
 	"opus-4-6",
@@ -1058,6 +1083,22 @@ export function supportsMax<TApi extends Api>(model: Model<TApi>): boolean {
 	return supportsMaxModel(model);
 }
 
+const CONFIGURATION_UPDATE_APIS: readonly Api[] = [
+	"openai-responses",
+	"openai-codex-responses",
+	"azure-openai-responses",
+];
+
+/**
+ * Whether a mid-session reasoning-effort change is sent as a Responses `configuration_update`
+ * input item instead of a new top-level `reasoning.effort`, which discards the cached prefix.
+ * Only catalog metadata (`compat.supportsConfigurationUpdate`) opts a model in.
+ */
+export function supportsConfigurationUpdate<TApi extends Api>(model: Model<TApi>): boolean {
+	if (!CONFIGURATION_UPDATE_APIS.includes(model.api)) return false;
+	return (model.compat as OpenAIResponsesCompat | undefined)?.supportsConfigurationUpdate === true;
+}
+
 /** OpenAI-compatible APIs that accept a native `max` reasoning effort on the wire. */
 const OPENAI_MAX_APIS: Api[] = [
 	"openai-responses",
@@ -1066,8 +1107,8 @@ const OPENAI_MAX_APIS: Api[] = [
 	"openai-completions",
 ];
 
-/** Model family that accepts native `max` effort on OpenAI-compatible APIs. */
-const OPENAI_MAX_MODEL_IDS = ["gpt-5.6-sol", "gpt-6-astra"];
+/** Model families that accept native `max` effort on OpenAI-compatible APIs. */
+const OPENAI_MAX_MODEL_IDS = ["gpt-5.6-sol", "gpt-6-astra", "gpt-6-sol", "gpt-6-luna"];
 
 const MAX_MODEL_IDS = [
 	"opus-4-6",

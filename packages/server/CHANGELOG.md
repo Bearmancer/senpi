@@ -8,6 +8,344 @@
 
 ### Fixed
 
+## [2026.9.27-2] - 2026-09-27
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.9.27] - 2026-09-27
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.9.26] - 2026-09-26
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.9.25] - 2026-09-25
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.9.24-3] - 2026-09-24
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.9.24-2] - 2026-09-24
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.9.24] - 2026-09-24
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.9.23-5] - 2026-09-23
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.9.23-4] - 2026-09-23
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.9.23-3] - 2026-09-23
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.9.23-2] - 2026-09-23
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.9.23] - 2026-09-23
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.9.22-4] - 2026-09-22
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.9.22-3] - 2026-09-22
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.9.22-2] - 2026-09-22
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.9.22] - 2026-09-21
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.9.21-2] - 2026-09-21
+
+### Breaking Changes
+
+### Changed
+
+- Updated the test runner to Vitest 5.0.1. ([#1895](https://github.com/code-yeongyu/senpi/issues/1895))
+
+### Fixed
+
+## [2026.9.21] - 2026-09-21
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.9.20] - 2026-09-20
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.9.19-2] - 2026-09-19
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.9.19] - 2026-09-19
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.9.18-6] - 2026-09-18
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.9.18-5] - 2026-09-18
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.9.18-4] - 2026-09-18
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.9.18-3] - 2026-09-18
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.9.18-2] - 2026-09-18
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.9.18] - 2026-09-18
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.9.17-4] - 2026-09-17
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.9.17-3] - 2026-09-17
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.9.17-2] - 2026-09-17
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.9.17] - 2026-09-17
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.9.16-3] - 2026-09-16
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.9.16-2] - 2026-09-16
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.9.16] - 2026-09-16
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.9.15-2] - 2026-09-15
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.9.15] - 2026-09-15
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.9.13-2] - 2026-09-13
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.9.13] - 2026-09-13
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.9.12-3] - 2026-09-12
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.9.12-2] - 2026-09-12
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.9.12] - 2026-09-12
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.9.11] - 2026-09-11
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
 ## [2026.9.10-2] - 2026-09-10
 
 ### Breaking Changes

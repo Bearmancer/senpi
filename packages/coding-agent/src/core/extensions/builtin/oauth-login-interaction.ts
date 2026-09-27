@@ -11,7 +11,7 @@
  * command for the same provider. Every dialog is also bound to the per-prompt
  * `AuthPrompt.signal`, so a manual-code dialog is released without cancelling
  * the login when the provider's local callback server wins the race
- * (`loginOpenAICodex`). `auth_url` opens the browser only in the TUI, because
+ * (`loginChatGptSubscription`). `auth_url` opens the browser only in the TUI, because
  * an RPC client renders the notice on its own machine.
  */
 
@@ -22,7 +22,7 @@ import type { ExtensionCommandContext } from "../types.ts";
 export const LOGIN_CANCELLED_MESSAGE = "Login cancelled";
 
 export interface ExtensionLoginInteractionOptions {
-	/** Provider name rendered in notices, e.g. "OpenAI Codex OAuth". */
+	/** Provider name rendered in notices, e.g. "ChatGPT Subscription OAuth". */
 	readonly providerLabel: string;
 	/** Provider id; a later login for the same id cancels this one. */
 	readonly providerId?: string | undefined;

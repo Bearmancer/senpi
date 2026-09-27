@@ -140,6 +140,11 @@ describe("ask-user formatters", () => {
 		answers: { q1: { selected: ["OAuth (Recommended)"] }, q2: { selected: ["date-fns"] } },
 		unanswered: [],
 	};
+	const answeredPartial: QuestionResponse = {
+		status: "answered",
+		answers: { q1: { selected: ["OAuth (Recommended)"] } },
+		unanswered: ["q2"],
+	};
 	const commentSubmitted: QuestionResponse = {
 		status: "comment-submitted",
 		answers: { q1: { selected: ["OAuth (Recommended)"] } },
@@ -162,6 +167,7 @@ describe("ask-user formatters", () => {
 	const orphaned: QuestionResponse = { status: "orphaned-after-restart", answers: {}, unanswered: ["q1", "q2"] };
 	const unavailable: QuestionResponse = { status: "unavailable", answers: {}, unanswered: ["q1", "q2"] };
 	const answeredText = "Auth method: OAuth (Recommended)\nLibrary: date-fns";
+	const answeredPartialText = "Auth method: OAuth (Recommended)\nUnanswered: Library";
 	const commentText = "The user responded: just ship it\nAuth method: OAuth (Recommended)\nUnanswered: Library";
 	const timedOutText = `The user did not answer within 30 minutes. ${TIMEOUT_KO}\n${CONTINUE}`;
 	const timedOutDraftText = `The user did not answer within 30 minutes. ${TIMEOUT_KO}\nBefore going idle the user had selected: Auth method: OAuth (Recommended)\n${CONTINUE}`;
@@ -169,6 +175,7 @@ describe("ask-user formatters", () => {
 	it("(e) formatter snapshots for all six statuses in both variants", () => {
 		for (const variant of VARIANTS) {
 			expect(formatResultText(variant, answered, QUESTIONS)).toBe(answeredText);
+			expect(formatResultText(variant, answeredPartial, QUESTIONS)).toBe(answeredPartialText);
 			expect(formatResultText(variant, commentSubmitted, QUESTIONS)).toBe(commentText);
 			expect(formatResultText(variant, timedOut, QUESTIONS)).toBe(timedOutText);
 			expect(formatResultText(variant, timedOutWithDraft, QUESTIONS)).toBe(timedOutDraftText);

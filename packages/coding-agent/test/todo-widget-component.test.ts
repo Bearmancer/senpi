@@ -64,6 +64,7 @@ function createTodoHarness(
 		},
 		sessionManager: options.sessionManager ?? {
 			getSessionFile: () => undefined,
+			getBranch: () => [],
 		},
 	} as unknown as ExtensionContext;
 

@@ -1,5 +1,27 @@
 # changes
 
+## 2026-09-24 - Pin pi-apply-patch 0.1.3, no port needed (senpi#2079)
+
+Every `src/index.ts` change between 0.1.2 and 0.1.3 is already in senpi's multi-file port: custom Responses API gating (`extension.ts`, broader than upstream's provider list), paths outside cwd (`workspace.ts`), final diff preview in result details (`tool.ts`), per-file mutation queues (`apply.ts`), and failure codes with `failedFiles` / reread classification (`recovery.ts`, `types.ts`). The sync report's single hunk is the whole upstream monolith against senpi's barrel `index.ts`. Only `external-versions.json` changes.
+
+## 2026-09-21 - Recognize provider-prefixed GPT model ids (#1891)
+
+### What changed
+
+- `extension.ts`: recognizes GPT family segments after provider delimiters, case-insensitively, while preserving the existing API-specific JSON/freeform gate.
+
+### Why
+
+- Prefixes such as `codex/gpt-6-astra` already selected a GPT prompt but left its patch tool inactive. The regression covers preset agreement, model switches, lazy activation and real patch execution.
+
+### Why an extension could not handle it
+
+- This builtin owns the activation predicate and tool variant; another extension cannot safely override its decision.
+
+### Expected merge conflict zones
+
+- LOW: `extension.ts` model-id predicate.
+
 ## Binary-safe patch previews (2026-08-05)
 
 ### What changed

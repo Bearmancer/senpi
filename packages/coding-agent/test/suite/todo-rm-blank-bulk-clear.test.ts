@@ -40,6 +40,8 @@ function captureTodoTool(initialPhases: readonly TodoPhase[]) {
 		setCurrentPhases: (phases) => {
 			currentPhases = clonePhases(phases);
 		},
+		getCurrentAsk: () => undefined,
+		setCurrentAsk: () => {},
 		syncWidget: () => {},
 	});
 	if (!capturedTool) throw new Error("Expected todo tool to be registered");

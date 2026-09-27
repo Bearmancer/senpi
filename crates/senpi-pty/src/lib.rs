@@ -99,6 +99,16 @@ impl NativePtySession {
     pub fn wait<'env>(&mut self, env: &'env Env) -> NapiResult<PromiseRaw<'env, NativePtyExit>> {
         self.wait_exit(env)
     }
+
+    #[napi(getter)]
+    pub fn pid(&self) -> Option<u32> {
+        self.session.as_ref().and_then(PtySession::pid)
+    }
+
+    #[napi(getter, js_name = "processGroupId")]
+    pub fn process_group_id(&self) -> Option<i32> {
+        self.session.as_ref().and_then(PtySession::process_group_id)
+    }
 }
 
 impl NativePtySession {

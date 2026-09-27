@@ -57,8 +57,12 @@ function answeredLines(response: QuestionResponse, questions: Questions): string
 
 function formatBody(response: QuestionResponse, questions: Questions): string {
 	switch (response.status) {
-		case "answered":
-			return answeredLines(response, questions).join("\n");
+		case "answered": {
+			const lines = answeredLines(response, questions);
+			const unanswered = response.unanswered.map((id) => headerFor(id, questions));
+			if (unanswered.length > 0) lines.push(`Unanswered: ${unanswered.join(", ")}`);
+			return lines.join("\n");
+		}
 		case "comment-submitted": {
 			const lines = [`The user responded: ${response.comment?.trim() ?? ""}`, ...answeredLines(response, questions)];
 			const unanswered = response.unanswered.map((id) => headerFor(id, questions));
@@ -96,6 +100,16 @@ export function formatResultText(
 
 export function formatUserMessage(response: QuestionResponse, requestId: string, questions: Questions = []): string {
 	return `[Answer to question ${requestId}]\n${formatBody(response, questions)}`;
+}
+
+export interface AskUserAnswerFrame {
+	readonly requestId: string;
+	readonly body: string;
+}
+
+export function parseAskUserAnswerFrame(text: string): AskUserAnswerFrame | undefined {
+	const match = /^\[Answer to question ([^\]\r\n]+)\]\r?\n([\s\S]*)$/.exec(text);
+	return match ? { requestId: match[1], body: match[2] } : undefined;
 }
 
 function selectedAnswers(answer: { selected: string[]; text?: string }): string[] {

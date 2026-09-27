@@ -74,7 +74,7 @@ export function shouldQueueGoalContinuationAfterAgentEnd(
 	return goal?.status === "active" && !hasPendingMessages && didAgentEndCleanly(messages);
 }
 
-function didAgentEndCleanly(messages: readonly AgentMessage[]): boolean {
+export function didAgentEndCleanly(messages: readonly AgentMessage[]): boolean {
 	const lastAssistantIndex = findLastAssistantMessageIndex(messages);
 	if (lastAssistantIndex === undefined) return false;
 

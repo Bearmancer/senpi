@@ -13,6 +13,7 @@ import { convertToLlm, filterContextExcludedMessages } from "../../../messages.t
 import { noticeEntryRenderer } from "../../notice/index.ts";
 import type { EntryRenderer, ExtensionAPI, ExtensionContext, ExtensionFactory } from "../../types.ts";
 import { formatWarmTokenCount } from "../goal/cache-warm.ts";
+import { createSessionPrewarm } from "./session-prewarm.ts";
 
 export const CACHE_KEEPALIVE_ENTRY_TYPE = "cache-keepalive";
 export const CACHE_WARM_PING_EVENT = "cache_warm_ping";
@@ -57,15 +58,20 @@ export const renderCacheKeepAliveEntry: EntryRenderer<CacheKeepAliveEntryData> =
 });
 
 export function createCacheKeepAliveExtension(
-	dependencies: { readonly warmPromptCache?: WarmPromptCacheFn } = {},
+	dependencies: {
+		readonly warmPromptCache?: WarmPromptCacheFn;
+		readonly isPromptCachePrewarmModel?: (model: Model<any>) => boolean;
+	} = {},
 ): ExtensionFactory {
 	const warm = dependencies.warmPromptCache ?? warmPromptCache;
 	return (pi: ExtensionAPI) => {
+		const prewarm = createSessionPrewarm(pi, { warm, isPrewarmModel: dependencies.isPromptCachePrewarmModel });
 		let ctx: ExtensionContext | undefined;
 		let timer: ReturnType<typeof setTimeout> | undefined;
 		let inFlight = false;
 		let generation = 0;
 		let active = false;
+		let parked = false;
 		let attempts = 0;
 		let cumulativeEstimatedUsd = 0;
 		let lastCompletedAtMs: number | undefined;
@@ -99,7 +105,7 @@ export function createCacheKeepAliveExtension(
 		}
 
 		function arm(): void {
-			if (timer !== undefined || inFlight) return;
+			if (parked || timer !== undefined || inFlight) return;
 			const current = ctx;
 			const settings = current?.getPromptCacheKeepAliveSettings?.();
 			if (!settings?.enabled || current?.model === undefined || lastCompletedAtMs === undefined) return;
@@ -238,6 +244,7 @@ export function createCacheKeepAliveExtension(
 			lastUsage = usage;
 			lastCompletedAtMs = lastAssistantTimestamp(lastMessages);
 			arm();
+			prewarm.start(nextCtx);
 		});
 
 		pi.on("agent_end", (event, nextCtx) => {
@@ -258,10 +265,20 @@ export function createCacheKeepAliveExtension(
 			stop("model-changed");
 			arm();
 		});
+		pi.on("session_parked", () => {
+			parked = true;
+			stop("session-parked");
+		});
+		pi.on("session_resumed", (_event, nextCtx) => {
+			parked = false;
+			ctx = nextCtx;
+			arm();
+		});
 		pi.on("agent_start", () => stop("agent-busy"));
 		pi.on("input", () => stop("user-input"));
 		pi.on("session_shutdown", () => {
 			stop("session-dispose");
+			prewarm.cancel();
 			ctx = undefined;
 		});
 	};

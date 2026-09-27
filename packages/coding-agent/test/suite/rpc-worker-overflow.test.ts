@@ -3,6 +3,7 @@ import {
 	MAX_SHARED_STDIO_QUEUE_BYTES,
 	MAX_SHARED_STDIO_QUEUE_RECORDS,
 } from "../../src/modes/rpc/session-event-writer.ts";
+import { WORKER_CREDIT_CODES } from "../../src/modes/rpc/session-worker-protocol.ts";
 import { startWorkerHost } from "./rpc-worker-host-support.ts";
 import { observePressure, PRESSURE_BYTES, pressureExtension, pressurePreload } from "./rpc-worker-pressure-support.ts";
 import { reservationPhase as pressureStep } from "./rpc-worker-reservation-support.ts";
@@ -58,6 +59,10 @@ it.each([false, true])(
 				const drained = track(signals.wait("DRAIN", phase));
 				const commandId = `pressure-command:${phase}`;
 				const command = track(wire.wait((record) => record.type === "response" && record.id === commandId));
+				// Fires when the host queues that prompt's response, which over a socket happens
+				// while the peer is still blocked. Registered before the prompt so the phase-2
+				// close below can order itself against it instead of racing it.
+				const commandQueued = track(signals.wait("COMMAND", phase));
 				wire.pauseReading();
 				wire.send({ id: commandId, type: "prompt", sessionId, message: `/pressure ${phase}` });
 				const pressure = await blocked;
@@ -74,7 +79,11 @@ it.each([false, true])(
 				const held = await probed;
 				expect(held.needDrain).toBe(true);
 				expect(held.pendingBytes).toBeGreaterThan(0);
-				expect(held.credit).toBe(0);
+				// Real OS transport still full. Over a socket the worker is nevertheless already
+				// credited: credit is returned when the record is accepted into that connection's
+				// bounded queue, not when the peer drains it (#1774). The shared stdio lane keeps
+				// its stdout backpressure wait, so there the worker is still uncredited (0).
+				expect(held.credit).toBe(socket ? WORKER_CREDIT_CODES.granted : 0);
 				expect(held.bufferedBytes).toBeLessThanOrEqual(MAX_SHARED_STDIO_QUEUE_BYTES);
 				expect(held.bufferedRecords).toBeLessThanOrEqual(MAX_SHARED_STDIO_QUEUE_RECORDS);
 				if (socket) {
@@ -107,6 +116,11 @@ it.each([false, true])(
 				);
 				const closeId = "pressure-close";
 				const terminal = track(wire.wait((record) => record.type === "response" && record.id === closeId, 10_000));
+				// Over a socket the worker is credited on queue acceptance (#1774), so the prompt
+				// runs to completion while its peer is still blocked; admit the close only after
+				// that response is queued, so the outcome below is a contract and not a race. On
+				// the stdio lane the worker is still paced by stdout, so the close interrupts it.
+				if (socket) expect((await commandQueued).needDrain).toBe(true);
 				wire.send({ id: closeId, type: "close_session", sessionId });
 				const queued = await terminalQueued;
 				expect(queued.needDrain).toBe(true);
@@ -116,7 +130,7 @@ it.each([false, true])(
 				await drained;
 				await closed;
 				expect(await terminal).toMatchObject({ command: "close_session", sessionId, success: true });
-				expect((await command).success).toBe(false);
+				expect((await command).success).toBe(socket);
 				expect((await probeResponse).success).toBe(true);
 				await wire.request({ type: "list_sessions" });
 				const sessionRecords = wire.records.filter((record) => record.sessionId === sessionId);

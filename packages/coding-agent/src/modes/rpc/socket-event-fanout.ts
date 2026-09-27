@@ -1,3 +1,5 @@
+import { loopBlockedMark, loopBlockedMsSince } from "./loop-blocked-time.ts";
+
 type SocketSink = {
 	writeRaw(chunk: string): void;
 	waitForBackpressure(): Promise<void>;
@@ -22,17 +24,23 @@ type QueueEntry = {
 // above any single burst a normal session produces.
 const DEFAULT_QUEUE_BYTES = 64 * 1024 * 1024;
 
-// A session worker returns its output credit only after every destination of
-// that session has drained (session-event-writer.ts, waitForSessionBackpressure),
-// and it fails itself when the host has not answered within
-// SESSION_WORKER_LIMITS.controlMs (session-worker.ts, session_worker_credit_timeout).
-// A peer that stops reading its socket therefore used to kill the producing
-// session after 5 s (observed live 2026-09-09/10: a desktop client stalled on
-// its own ack pacing, the kernel buffer filled, and the worker was quarantined
-// mid-turn). Treat a write that cannot complete within this budget exactly like
-// a byte overflow: fail-closed disconnect of THAT peer, who must resync, while
-// the session keeps its credit. Must stay below controlMs; a test pins that.
-export const DEFAULT_STALL_MS = 4_000;
+// Dead-peer detector, NOT a credit pacer. A session worker's output credit is
+// returned when every destination has ACCEPTED the record into its bounded queue
+// (session-event-writer.ts, waitForSessionBackpressure), so a peer's kernel drain
+// is no longer on the worker's critical path and this budget is deliberately
+// independent of SESSION_WORKER_LIMITS.controlMs (5 s). It used to be forced below
+// that deadline, which made a client busy for 4 s with >= 16 KB pending (macOS unix
+// stream buffers are 8 KB each way) indistinguishable from a dead one: it was cut
+// and its sessions were released (#1774). Tens of seconds of no progress at all is
+// the liveness signal we actually want; the peer is then cut exactly like a byte
+// overflow - fail-closed, it must resync - while the session keeps running.
+//
+// The budget is loop-SERVED time. While the host's own loop is blocked nobody can
+// drain anything, and on unblock the timers phase runs before the pending drain I/O,
+// so a wall-clock deadline cut every live peer after a long host stall (#1905). The
+// deadline therefore re-arms for whatever blocked time the loop-lag watchdog recorded
+// inside its window, and only a window the loop fully served ends in a cut.
+export const DEFAULT_STALL_MS = 30_000;
 
 export class SocketEventQueueStallError extends Error {
 	readonly pendingBytes: number;
@@ -138,6 +146,18 @@ export class SocketEventSinkActor {
 		if (this.failure !== undefined) throw this.failure;
 	}
 
+	/**
+	 * Resolve once every record enqueued so far has been ACCEPTED into this queue.
+	 *
+	 * `enqueue` admits a record synchronously, or fails closed on byte overflow, so
+	 * acceptance is already settled by the time a caller asks - and it never waits for
+	 * the peer to drain. This is the session worker's credit point (#1774); use
+	 * `flush()` where the queue must actually reach the transport (close, shutdown).
+	 */
+	waitForAcceptance(): Promise<void> {
+		return Promise.resolve();
+	}
+
 	close(): void {
 		this.closed = true;
 		this.queue.length = 0;
@@ -146,12 +166,22 @@ export class SocketEventSinkActor {
 
 	/**
 	 * Resolve when the sink accepted the write, or throw SocketEventQueueStallError
-	 * once the peer has held the transport full for stallMs. The notice is best
-	 * effort: the socket is already not draining, so writeRaw may only buffer it.
+	 * once the peer has held the transport full for stallMs. The notice may only reach
+	 * the sink's buffer - the peer is not draining - so the transport delivers it on
+	 * close by half-closing the socket and destroying it only after a bounded grace
+	 * (socket-sink.ts).
 	 */
 	private waitForDrainOrStall(writtenBytes: number): Promise<void> {
 		return new Promise<void>((resolve, reject) => {
-			const timer = setTimeout(() => {
+			let timer: ReturnType<typeof setTimeout>;
+			let blockedMark = loopBlockedMark();
+			const onDeadline = (): void => {
+				const blockedMs = loopBlockedMsSince(blockedMark);
+				if (blockedMs > 0) {
+					blockedMark = loopBlockedMark();
+					timer = setTimeout(onDeadline, Math.min(blockedMs, this.stallMs));
+					return;
+				}
 				const stall = new SocketEventQueueStallError(this.queuedBytes + writtenBytes, this.stallMs);
 				try {
 					this.sink.writeRaw(`${JSON.stringify({ type: "overflow", error: "stalled, resync required" })}\n`);
@@ -159,7 +189,8 @@ export class SocketEventSinkActor {
 					// The peer is unreachable either way; the failure below closes it.
 				}
 				reject(stall);
-			}, this.stallMs);
+			};
+			timer = setTimeout(onDeadline, this.stallMs);
 			this.sink.waitForBackpressure().then(
 				() => {
 					clearTimeout(timer);

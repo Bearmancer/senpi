@@ -23,6 +23,7 @@ Core source modifications are minimised and tracked in [`changes.md`](#fork-stra
 
 | Package | Description |
 |---------|-------------|
+| **[@earendil-works/chord](packages/chord)** | Standalone application-composition runtime for services, replicated state, RPC, and plugins |
 | **[@earendil-works/pi-telemetry](packages/telemetry)** | Vendor-neutral telemetry contracts, reference adapter, conformance tests, and typed schemas |
 | **[@earendil-works/pi-ai](packages/ai)** | Unified multi-provider LLM API (OpenAI, Anthropic, Google, etc.) |
 | **[@earendil-works/pi-agent-core](packages/agent)** | Agent runtime with tool calling and state management |
@@ -160,6 +161,7 @@ You do **not** need to install these packages for normal senpi use; their functi
 
 | Package | Included as | Builtin capability |
 |---|---|---|
+| [`pi-anthropic-bash`](https://github.com/code-yeongyu/pi-anthropic-bash) | `anthropic-bash` | Anthropic-native bash tool variant. |
 | [`pi-anthropic-web-search`](https://github.com/code-yeongyu/pi-anthropic-web-search) | `anthropic-web-search` | Anthropic-native web search support. |
 | [`pi-apply-patch`](https://github.com/code-yeongyu/pi-apply-patch) | `gpt-apply-patch` | Codex-style `apply_patch` tool for GPT-family runs. |
 | [`pi-bash-timeout`](https://github.com/code-yeongyu/pi-bash-timeout) | `bash-timeout` | Bash timeout defaults, max timeout enforcement, and prompt policy. |
@@ -171,7 +173,7 @@ You do **not** need to install these packages for normal senpi use; their functi
 | [`pi-webfetch`](https://github.com/code-yeongyu/pi-webfetch) | `webfetch` | Fetches URL content as markdown, text, or HTML with bounded time and size. |
 | [`pi-websearch`](https://github.com/code-yeongyu/pi-websearch) | `websearch` | Provider-backed web search with config-gated activation and source-aware results. |
 
-Other builtins such as `permission-system`, `prompt-preset`, `anthropic-bash`, `service-tier`, `tool-pair-guard`, `compaction`, `history-search`, and `session-observer` are senpi-owned builtin extensions without installable sibling packages.
+Other builtins such as `permission-system`, `prompt-preset`, `service-tier`, `tool-pair-guard`, `compaction`, `history-search`, and `session-observer` are senpi-owned builtin extensions without installable sibling packages.
 
 ## Why "senpi"
 

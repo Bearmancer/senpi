@@ -1,4 +1,4 @@
-import { createHash, randomBytes } from "node:crypto";
+import { randomBytes } from "node:crypto";
 import { type FSWatcher, watch } from "node:fs";
 import { access, type FileHandle, lstat, open, stat } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
@@ -8,6 +8,9 @@ import type {
 	TerminalMonitorEndedEvent as MonitorEndedEvent,
 	TerminalMonitorEndedReason as MonitorEndedReason,
 } from "../monitor-state-event.ts";
+import { digestFileHandle } from "./monitor-file-digest.ts";
+import { FileWatchLoop } from "./monitor-file-watch.ts";
+import { MonitorLineBuffer } from "./monitor-line-buffer.ts";
 import type { TerminalRuntimeSession } from "./runtime-session.ts";
 import { DEFAULT_DURABLE_MONITOR_FIRE_BUDGET, FIRE_BUDGET_AUTO_MUTE_SUMMARY, FIRE_BUDGET_WINDOW_MS } from "./shared.ts";
 import type { MonitorDurabilityClass } from "./terminal-manifest.ts";
@@ -146,7 +149,7 @@ interface FileMonitorRecord {
 	readonly event: "create" | "modify";
 	readonly watcher: FSWatcher;
 	readonly release: () => void;
-	readonly poll: ReturnType<typeof setInterval>;
+	readonly watch: FileWatchLoop;
 	paused: boolean;
 	settled: boolean;
 	present: boolean;
@@ -160,7 +163,8 @@ interface FileMonitorRecord {
 	dirtyPasses: number;
 	dirtyWindowStartedAt: number;
 	checking: Promise<void> | undefined;
-	readonly deadline: ReturnType<typeof setTimeout>;
+	/** Unset for a persistent watch: it has no live deadline, only its durability expiry. */
+	readonly deadline: ReturnType<typeof setTimeout> | undefined;
 }
 
 interface MonitorRecord {
@@ -177,7 +181,7 @@ interface MonitorRecord {
 	readonly expiresAt: number | undefined;
 	readonly runtime: TerminalRuntimeSession;
 	readonly filter: RegExp | undefined;
-	lineBuffer: string;
+	lineBuffer: MonitorLineBuffer;
 	mutedDropped: number;
 	paused: boolean;
 	settled: boolean;
@@ -201,6 +205,7 @@ export class MonitorRegistry {
 	readonly #files = new Map<string, FileMonitorRecord>();
 	#nextFileId = 1;
 	#disposed = false;
+	#parked = false;
 	#pendingRegistrations = 0;
 	readonly #pending = new Set<PendingFileRegistration>();
 	#lifecycle = 0;
@@ -211,6 +216,16 @@ export class MonitorRegistry {
 		this.#onEnded = options?.onEnded;
 		this.#onFire = options?.onFire;
 		this.#reserve = options?.reserve;
+	}
+
+	/** Attachment parking is independent of persisted monitor mute and wake budgets. */
+	setParked(parked: boolean): void {
+		if (this.#parked === parked) return;
+		this.#parked = parked;
+		for (const record of this.#files.values()) {
+			if (parked) record.watch.pause();
+			else if (!record.paused) record.watch.resume();
+		}
 	}
 
 	snapshot(): readonly MonitorSnapshotEntry[] {
@@ -371,6 +386,7 @@ export class MonitorRegistry {
 			cleanupRegistration();
 			throw new Error("Cannot create file monitor: monitor registry is disposed.");
 		}
+		const persistent = options.persistent ?? options.expiresAt !== undefined;
 		const record: FileMonitorRecord = {
 			id,
 			monitorId: options.monitorId ?? allocateMonitorId(),
@@ -379,11 +395,8 @@ export class MonitorRegistry {
 			startedAtMs: Date.now(),
 			command: null,
 			filter: null,
-			persistent: options.persistent ?? options.expiresAt !== undefined,
-			deadlineMs:
-				(options.persistent ?? options.expiresAt !== undefined)
-					? null
-					: (options.deadlineMs ?? Date.now() + options.timeoutMs),
+			persistent,
+			deadlineMs: persistent ? null : (options.deadlineMs ?? Date.now() + options.timeoutMs),
 			fireCount: 0,
 			lastFiredAtMs: null,
 			expiresAt: options.expiresAt,
@@ -393,7 +406,7 @@ export class MonitorRegistry {
 			event: options.event,
 			watcher,
 			release: release ?? (() => {}),
-			poll: setInterval(() => void this.#checkFile(id), 250),
+			watch: new FileWatchLoop(() => void this.#checkFile(id)),
 			paused: false,
 			settled: false,
 			present: initial !== null,
@@ -407,12 +420,15 @@ export class MonitorRegistry {
 			dirtyPasses: 0,
 			dirtyWindowStartedAt: 0,
 			checking: undefined,
-			deadline: setTimeout(() => {
-				const current = this.#files.get(id);
-				if (current) this.#settleFile(current, "watcher timed_out");
-			}, options.timeoutMs),
+			deadline: persistent
+				? undefined
+				: setTimeout(() => {
+						const current = this.#files.get(id);
+						if (current) this.#settleFile(current, "watcher timed_out");
+					}, options.timeoutMs),
 		};
 		this.#files.set(id, record);
+		if (this.#parked) record.watch.pause();
 		finishRegistration();
 		this.#finishPending(pending, true);
 		if (registrationError || this.#disposed || lifecycle !== this.#lifecycle) {
@@ -433,7 +449,12 @@ export class MonitorRegistry {
 
 	/** Emit one restored-watch line through the SAME sink a live watch uses (coalescing, wake budget). */
 	emitFileLine(id: string, line: string): boolean {
-		const record = this.#files.get(id);
+		return this.#files.has(id) && this.emitLine(id, line);
+	}
+
+	/** Inject one line into a live command or file watch's event stream (e.g. a restore notice). */
+	emitLine(id: string, line: string): boolean {
+		const record = this.#records.get(id) ?? this.#files.get(id);
 		if (!record || record.settled) return false;
 		this.#emitForRecord(record, { type: "line", id: record.id, description: record.description, line });
 		return true;
@@ -457,7 +478,7 @@ export class MonitorRegistry {
 	#settleFile(record: FileMonitorRecord, summary: string): void {
 		if (record.settled) return;
 		record.settled = true;
-		clearInterval(record.poll);
+		record.watch.stop();
 		clearTimeout(record.deadline);
 		record.watcher.close();
 		record.release();
@@ -477,7 +498,7 @@ export class MonitorRegistry {
 
 	async #checkFile(id: string): Promise<void> {
 		const record = this.#files.get(id);
-		if (!record || record.settled) return;
+		if (!record || record.settled || record.paused || this.#parked) return;
 		if (record.checking) {
 			record.dirty = true;
 			return;
@@ -594,7 +615,7 @@ export class MonitorRegistry {
 			expiresAt: options.expiresAt,
 			runtime: options.runtime,
 			filter: options.filter,
-			lineBuffer: "",
+			lineBuffer: new MonitorLineBuffer(),
 			mutedDropped: 0,
 			paused: false,
 			settled: false,
@@ -620,6 +641,7 @@ export class MonitorRegistry {
 			const record = this.#records.get(id) ?? this.#files.get(id);
 			if (!record || record.paused) continue;
 			record.paused = true;
+			if ("watch" in record) record.watch.pause();
 			paused.push(record.id);
 		}
 		if (paused.length > 0) this.#notifyChange();
@@ -642,7 +664,7 @@ export class MonitorRegistry {
 			// A rearm (or any resume) restarts the rolling fire budget while keeping its window start.
 			if ("fireWindow" in record && record.fireWindow !== undefined) record.fireWindow.count = 0;
 			resumed.push({ id: record.id, mutedDropped });
-			if ("pendingChange" in record && record.pendingChange) void this.#checkFile(record.id);
+			if ("watch" in record && !this.#parked) record.watch.resume();
 		}
 		if (resumed.length > 0) this.#notifyChange();
 		return resumed;
@@ -729,24 +751,7 @@ export class MonitorRegistry {
 	}
 
 	async #digestHandle(handle: FileHandle, signal?: AbortSignal): Promise<string> {
-		const SAMPLE_SIZE = 64 * 1024;
-		if (signal?.aborted) throw new Error("file monitor registration cancelled");
-		const metadata = await handle.stat();
-		const hash = createHash("sha256");
-		const first = Buffer.alloc(Math.min(SAMPLE_SIZE, metadata.size));
-		if (first.length > 0) {
-			await handle.read(first, 0, first.length, 0);
-			hash.update(first);
-		}
-		if (metadata.size > SAMPLE_SIZE) {
-			const middle = Buffer.alloc(SAMPLE_SIZE);
-			await handle.read(middle, 0, middle.length, Math.floor((metadata.size - middle.length) / 2));
-			hash.update(middle);
-			const last = Buffer.alloc(SAMPLE_SIZE);
-			await handle.read(last, 0, last.length, metadata.size - last.length);
-			hash.update(last);
-		}
-		return `${metadata.size}:${hash.digest("hex")}`;
+		return digestFileHandle(handle, signal);
 	}
 
 	#notifyChange(): void {
@@ -755,13 +760,7 @@ export class MonitorRegistry {
 
 	#consume(record: MonitorRecord, chunk: string): void {
 		if (record.settled || chunk.length === 0) return;
-		let remaining = record.lineBuffer + chunk;
-		for (;;) {
-			const newline = remaining.indexOf("\n");
-			if (newline < 0) break;
-			const rawLine = remaining.slice(0, newline);
-			remaining = remaining.slice(newline + 1);
-			const line = rawLine.endsWith("\r") ? rawLine.slice(0, -1) : rawLine;
+		for (const line of record.lineBuffer.append(chunk)) {
 			const matchesFilter = !record.filter || record.filter.test(line);
 			if (!matchesFilter) continue;
 			if (record.paused) {
@@ -786,7 +785,6 @@ export class MonitorRegistry {
 				}
 			}
 		}
-		record.lineBuffer = remaining;
 	}
 
 	#settle(record: MonitorRecord): void {

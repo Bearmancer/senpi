@@ -238,6 +238,7 @@ describe("terminal extension footer status wiring", () => {
 			registerTool: (tool: { name: string; execute: (id: string, input: MonitorInput) => Promise<unknown> }) => {
 				tools.set(tool.name, tool);
 			},
+			registerMessageRenderer: () => {},
 			on: (event: string, handler: Handler) => {
 				const existing = handlers.get(event) ?? [];
 				existing.push(handler);

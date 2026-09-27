@@ -7,10 +7,13 @@ import {
 	SocketEventSinkActor,
 } from "../../src/modes/rpc/socket-event-fanout.ts";
 
-// A stalled peer must be cut before the producing worker's credit deadline, or
-// the host quarantines a healthy session (session_worker_credit_timeout).
-it("cuts a stalled socket peer before the worker credit deadline", () => {
-	expect(DEFAULT_STALL_MS).toBeLessThan(SESSION_WORKER_LIMITS.controlMs);
+// The stall cut is a dead-peer detector, not a credit pacer. Worker credit is returned
+// when a record is accepted into each connection's bounded queue (rpc-socket-credit.test.ts),
+// so this budget is a transport liveness bound and is deliberately NOT tied to the worker's
+// control deadline: a client busy for a few seconds is not a dead peer.
+it("budgets the dead-peer cut independently of the worker control deadline", () => {
+	expect(DEFAULT_STALL_MS).toBe(30_000);
+	expect(DEFAULT_STALL_MS).toBeGreaterThan(SESSION_WORKER_LIMITS.controlMs);
 });
 
 it("fails a sink whose peer never drains and keeps a draining sibling untouched", async () => {
@@ -46,7 +49,7 @@ it("fails a sink whose peer never drains and keeps a draining sibling untouched"
 	}
 });
 
-it("returns session credit and disconnects only the stalled peer", async () => {
+it("returns session credit without waiting for a drain and cuts only the dead peer", async () => {
 	vi.useFakeTimers();
 	try {
 		const writer = new SessionEventWriter(() => {});
@@ -70,22 +73,24 @@ it("returns session credit and disconnects only the stalled peer", async () => {
 		writer.attachConnectionToSession("a", "rpc-1");
 		writer.attachConnectionToSession("b", "rpc-1");
 		expect(writer.enqueue("rpc-1", { type: "message_update", text: "x" })).toBe(true);
-		// The worker's credit return waits on every destination of the session.
 		let credited = false;
-		const credit = writer.waitForSessionBackpressure("rpc-1").then(
-			() => (credited = true),
-			() => (credited = true),
-		);
-		await vi.advanceTimersByTimeAsync(49);
-		expect(credited).toBe(false);
-		await vi.advanceTimersByTimeAsync(1);
-		await credit;
+		void writer.waitForSessionBackpressure("rpc-1").then(() => {
+			credited = true;
+		});
+		// Both queues accepted the record, so the worker's credit is due with no clock
+		// movement at all - neither peer's kernel drain is on the credit path.
+		await vi.advanceTimersByTimeAsync(0);
 		expect(credited).toBe(true);
+		expect(closed).toEqual([]);
+		// The stalled peer is still cut on its own budget, and only it.
+		await vi.advanceTimersByTimeAsync(49);
+		expect(closed).toEqual([]);
+		await vi.advanceTimersByTimeAsync(1);
 		expect(closed).toEqual(["a"]);
 		expect(a.at(-1)).toBe('{"type":"overflow","error":"stalled, resync required"}\n');
 		expect(b).toHaveLength(1);
 		expect(JSON.parse(b[0]!)).toMatchObject({ type: "message_update", sessionId: "rpc-1" });
-		// A later record for the session no longer waits on the cut peer.
+		// A later record for the session still returns credit and still reaches the live peer.
 		expect(writer.enqueue("rpc-1", { type: "message_update", text: "y" })).toBe(true);
 		await writer.waitForSessionBackpressure("rpc-1");
 		expect(b).toHaveLength(2);
@@ -93,6 +98,7 @@ it("returns session credit and disconnects only the stalled peer", async () => {
 		vi.useRealTimers();
 	}
 });
+
 it("keeps the writer and its stdio lane alive when one socket peer stalls", async () => {
 	vi.useFakeTimers();
 	try {

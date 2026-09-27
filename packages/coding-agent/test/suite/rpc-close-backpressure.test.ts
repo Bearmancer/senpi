@@ -181,15 +181,33 @@ it.each(["quarantined", "finalizing-records", "finalizing-bytes"])(
 		const router = new SessionCommandRouter(host.registry, writer, { cwd });
 		const gate = Promise.withResolvers<void>();
 		const entered = Promise.withResolvers<void>();
+		const markedDone = Promise.withResolvers<void>();
 		const closeMarked = host.registry.closeMarked.bind(host.registry);
 		const finalizing = state !== "quarantined";
 		const teardown = vi.spyOn(host.registry, "closeMarked").mockImplementation(async (handle) => {
 			entered.resolve();
 			if (finalizing) await gate.promise;
-			await closeMarked(handle);
+			try {
+				await closeMarked(handle);
+			} finally {
+				markedDone.resolve();
+			}
 		});
 		let reader: Awaited<ReturnType<typeof open>> | undefined;
 		const pending: Array<Promise<unknown>> = [];
+		const unstickWorker = async (): Promise<void> => {
+			if (!reader) return;
+			const rescue = await open(fifo, "r+");
+			try {
+				await unlink(fifo);
+				const header = `${JSON.stringify({ type: "session", version: 3, id: "bound-durable", timestamp: new Date(0).toISOString(), cwd })}\n`;
+				await writeFile(fifo, header);
+				await rescue.write(header);
+			} finally {
+				await Promise.all([reader.close(), rescue.close()]);
+				reader = undefined;
+			}
+		};
 		try {
 			const opening = host.send("opening", { type: "open_session", cwd, sessionPath: fifo });
 			pending.push(opening);
@@ -224,17 +242,31 @@ it.each(["quarantined", "finalizing-records", "finalizing-bytes"])(
 				error: expect.stringContaining("session_path_in_use"),
 			});
 			gate.resolve();
+			if (finalizing) {
+				await phase("close-grace", markedDone.promise);
+				expect(host.exited.has(worker)).toBe(false);
+				expect(host.registry.peek(entry.sessionId)?.state).toBe("quarantined");
+				await writer.flush();
+				expect(records.filter((record) => record.type === "session_closed")).toEqual([]);
+				expect(records.filter((record) => record.type === "overflow")).toEqual([overflow]);
+				await unstickWorker();
+			}
 			await phase("close-replies-settled", Promise.all(pending));
 			expect(writer.pendingCloseRecordCount).toBe(0);
 			expect(writer.pendingCloseByteLength).toBe(0);
-			expect(host.exited.has(worker)).toBe(false);
-			expect(host.registry.peek(entry.sessionId)?.state).toBe("quarantined");
+			if (finalizing) {
+				expect(host.exited.has(worker)).toBe(true);
+				expect(host.registry.peek(entry.sessionId)).toBeUndefined();
+			} else {
+				expect(host.exited.has(worker)).toBe(false);
+				expect(host.registry.peek(entry.sessionId)?.state).toBe("quarantined");
+			}
 			await writer.flush();
 			expect(records.filter((record) => record.type === "overflow")).toEqual([overflow]);
 			const replies = records.filter((record) => record.sessionId === entry.sessionId);
 			if (finalizing)
 				expect(replies.splice(0, 2)).toEqual([
-					{ type: "session_closed", sessionId: entry.sessionId },
+					{ type: "session_closed", sessionId: entry.sessionId, reason: "client_close" },
 					expect.objectContaining({ id: "first", success: true }),
 				]);
 			expect(replies.length).toBeGreaterThan(0);
@@ -251,15 +283,7 @@ it.each(["quarantined", "finalizing-records", "finalizing-bytes"])(
 			});
 		} finally {
 			gate.resolve();
-			const rescue = await open(fifo, "r+");
-			try {
-				await unlink(fifo);
-				const header = `${JSON.stringify({ type: "session", version: 3, id: "bound-durable", timestamp: new Date(0).toISOString(), cwd })}\n`;
-				await writeFile(fifo, header);
-				await rescue.write(header);
-			} finally {
-				await Promise.all([reader?.close(), rescue.close()]);
-			}
+			await unstickWorker();
 			await host.dispose();
 			await Promise.all(pending);
 			await router.dispose();

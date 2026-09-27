@@ -1,8 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { mapSdkToolNameToPi, resolveSdkTools } from "../../src/core/extensions/builtin/anthropic-subscription/tools.ts";
 import askUserExtension from "../../src/core/extensions/builtin/ask-user/index.ts";
 import { getPendingQuestions } from "../../src/core/extensions/builtin/ask-user/registry.ts";
+import { askUserRenderers } from "../../src/core/extensions/builtin/ask-user/render.ts";
 import { WAIT_FLAG_STEER_TEXT } from "../../src/core/extensions/builtin/ask-user/schema.ts";
-import { mapSdkToolNameToPi, resolveSdkTools } from "../../src/core/extensions/builtin/claude-sdk-oauth/tools.ts";
 import type { ExtensionAPI, ExtensionContext, QuestionResponse } from "../../src/core/extensions/types.ts";
 import { createHarness, type Harness } from "./harness.ts";
 
@@ -82,15 +83,25 @@ describe("ask-user builtin", () => {
 	it.each([
 		[false, false],
 		[true, true],
-	])("does not register when disabled (%s, flag %s)", async (enabled, flag) => {
-		const { runner } = await setup(enabled, flag);
-		expect(runner.getFlags().get("no-ask-user")).toMatchObject({ type: "boolean", default: false });
-		expect(
-			runner
-				.getAllRegisteredTools()
-				.filter((t) => ["ask_user_question", "request_user_input"].includes(t.definition.name)),
-		).toEqual([]);
-	});
+	])(
+		"does not register or activate when disabled, yet still renders its cards (%s, flag %s)",
+		async (enabled, flag) => {
+			const { h, runner, tool, ctx } = await setup(enabled, flag);
+			expect(runner.getFlags().get("no-ask-user")).toMatchObject({ type: "boolean", default: false });
+			expect(
+				runner
+					.getAllRegisteredTools()
+					.filter((t) => ["ask_user_question", "request_user_input"].includes(t.definition.name)),
+			).toEqual([]);
+			expect(
+				h.session.getActiveToolNames().filter((name) => ["ask_user_question", "request_user_input"].includes(name)),
+			).toEqual([]);
+			for (const name of ["ask_user_question", "request_user_input"])
+				expect(askUserRenderers(name)?.renderCall).toBeTypeOf("function");
+			expect(tool).toBeUndefined();
+			expect(ctx.ui.question).not.toHaveBeenCalled();
+		},
+	);
 	it("returns blocking answers through the formatter", async () => {
 		const { tool, ctx, deliveries } = await setup();
 		const result = await required(tool).execute("blocking", args, undefined, undefined, ctx);
@@ -101,6 +112,7 @@ describe("ask-user builtin", () => {
 	});
 	it("returns async acceptance before answer and tracks wake source until settlement", async () => {
 		const { tool, ctx, wakeEvents, deliveries } = await setup();
+		vi.useFakeTimers({ toFake: ["Date"], now: 0 });
 		const completion = Promise.withResolvers<QuestionResponse>();
 		const resolved = Promise.withResolvers<void>();
 		ctx.ui.question = vi.fn(() => completion.promise);
@@ -122,7 +134,11 @@ describe("ask-user builtin", () => {
 		await resolved.promise;
 		expect(getPendingQuestions(ctx.sessionManager.getSessionId())).toEqual([]);
 		expect(wakeEvents).toEqual([
-			{ source: "ask-user", activeCount: 1, items: [{ id: "async", description: "Library" }] },
+			{
+				source: "ask-user",
+				activeCount: 1,
+				items: [{ id: "async", description: "Library", deadlineAtMs: 1_800_000 }],
+			},
 			{ source: "ask-user", activeCount: 0, items: [] },
 		]);
 		expect(deliveries).toEqual(["[Answer to question async]\nLibrary: A"]);

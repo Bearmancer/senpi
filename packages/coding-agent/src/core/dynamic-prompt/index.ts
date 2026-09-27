@@ -1,5 +1,6 @@
 export type { BuildDynamicSystemPromptOptions, DynamicPromptCoreContext } from "./build.ts";
 export { buildDynamicSystemPrompt } from "./build.ts";
+export { buildHandoffSection } from "./handoff.ts";
 export { buildIdentitySection } from "./identity.ts";
 export { buildIntentGate } from "./intent-gate.ts";
 export { buildPoliciesSection } from "./policies.ts";

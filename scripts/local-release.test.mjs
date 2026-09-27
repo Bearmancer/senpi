@@ -154,6 +154,11 @@ function writeLocalReleaseFixture(repoRoot) {
 		packages: {},
 	});
 	for (const [directory, name] of [
+		// Provenance (upstream merge 2026-09-12): the chord workspace rides the fork's bundled
+		// build now — prepare-senpi-bundled-workspaces stages packages/chord into the senpi
+		// tarball (requiring package.json, dist/index.js, dist/context/index.js), so the
+		// local-release fixture must materialize those loader-visible files like the real repo.
+		["packages/chord", "@earendil-works/chord"],
 		["packages/telemetry", "@earendil-works/pi-telemetry"],
 		["packages/ai", "@earendil-works/pi-ai"],
 		["packages/pty", "@earendil-works/pi-pty"],
@@ -163,6 +168,11 @@ function writeLocalReleaseFixture(repoRoot) {
 		["packages/client", "@earendil-works/pi-client"],
 		["packages/session-backends/sqlite-node", "@earendil-works/pi-storage-sqlite-node"],
 		["packages/senpi-codemode", "@code-yeongyu/senpi-codemode"],
+		["packages/desktop-protocol", "@code-yeongyu/senpi-desktop-protocol"],
+		["packages/desktop-prelude", "@code-yeongyu/senpi-desktop-prelude"],
+		["packages/desktop-engine", "@code-yeongyu/senpi-desktop-engine"],
+		["packages/desktop-service", "@code-yeongyu/senpi-desktop-service"],
+		["packages/desktop-tool", "@code-yeongyu/senpi-desktop-tool"],
 		["packages/coding-agent", "@code-yeongyu/senpi"],
 		["packages/server", "@code-yeongyu/senpi-server"],
 	]) {
@@ -173,6 +183,17 @@ function writeLocalReleaseFixture(repoRoot) {
 		});
 		mkdirSync(join(repoRoot, directory, "dist"), { recursive: true });
 		writeFileSync(join(repoRoot, directory, "dist", "index.js"), "");
+		if (directory === "packages/agent") {
+			// pi-agent-core's dist reaches these grammars through compile-time `type: "file"`
+			// imports, so staging requires them the way it requires chord's context entry.
+			mkdirSync(join(repoRoot, directory, "assets", "tree-sitter"), { recursive: true });
+			writeFileSync(join(repoRoot, directory, "assets", "tree-sitter", "javascript.wasm"), "");
+			writeFileSync(join(repoRoot, directory, "assets", "tree-sitter", "web-tree-sitter.wasm"), "");
+		}
+		if (directory === "packages/chord") {
+			mkdirSync(join(repoRoot, directory, "dist", "context"), { recursive: true });
+			writeFileSync(join(repoRoot, directory, "dist", "context", "index.js"), "");
+		}
 		if (directory === "packages/client" || directory === "packages/protocol") {
 			writeFileSync(join(repoRoot, directory, "dist", "index.d.ts"), "");
 		}
@@ -186,6 +207,10 @@ function writeLocalReleaseFixture(repoRoot) {
 		join(repoRoot, "packages", "pty", "native", "prebuilds", nativeTarget, `senpi_pty.${nativeTarget}.node`),
 		"",
 	);
+
+	// The desktop engine package is staged with its native loader; its host executable is optional.
+	mkdirSync(join(repoRoot, "packages", "desktop-engine", "native"), { recursive: true });
+	writeFileSync(join(repoRoot, "packages", "desktop-engine", "native", "index.js"), "");
 
 	// senpi-codemode is bundled source-only; prepareSenpiBundledWorkspaces requires its loader-visible sources.
 	mkdirSync(join(repoRoot, "packages", "senpi-codemode", "src", "kernels", "py"), { recursive: true });

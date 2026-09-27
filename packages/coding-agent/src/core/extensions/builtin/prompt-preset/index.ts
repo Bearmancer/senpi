@@ -1,6 +1,13 @@
 import type { BuildDynamicSystemPromptOptions } from "../../../dynamic-prompt/build.ts";
 import { SettingsManager } from "../../../settings-manager.ts";
-import type { ExtensionAPI, ExtensionContext, ModelSelectEvent } from "../../types.ts";
+import type {
+	BeforeAgentStartEvent,
+	BeforeAgentStartEventResult,
+	ExtensionAPI,
+	ExtensionContext,
+	ExtensionHandler,
+	ModelSelectEvent,
+} from "../../types.ts";
 import { resolvePreset, resolvePresetName } from "./presets.ts";
 import { loadPromptPresetSettings } from "./settings.ts";
 
@@ -69,7 +76,10 @@ function refreshHeader(ctx: ExtensionContext, event?: Pick<ModelSelectEvent, "mo
 }
 
 export default function promptPresetExtension(pi: ExtensionAPI): void {
-	pi.on("before_agent_start", async (event, ctx) => {
+	const onBeforeAgentStart: ExtensionHandler<BeforeAgentStartEvent, BeforeAgentStartEventResult> = async (
+		event,
+		ctx,
+	) => {
 		const model = ctx.model;
 		if (!model) {
 			return undefined;
@@ -87,7 +97,8 @@ export default function promptPresetExtension(pi: ExtensionAPI): void {
 		}
 
 		return { systemPrompt: withUserAppends(preset.prompt, event.systemPromptOptions) };
-	});
+	};
+	pi.on("before_agent_start", onBeforeAgentStart, { previewSafe: true });
 
 	pi.on("session_start", async (_event, ctx) => {
 		refreshHeader(ctx);

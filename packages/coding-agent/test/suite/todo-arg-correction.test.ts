@@ -118,6 +118,8 @@ function captureTodoTool(initialPhases: readonly TodoPhase[]) {
 		setCurrentPhases: (phases) => {
 			currentPhases = clonePhases(phases);
 		},
+		getCurrentAsk: () => undefined,
+		setCurrentAsk: () => {},
 		syncWidget: () => {},
 	});
 	if (!capturedTool) throw new Error("Expected todo tool to be registered");
@@ -126,7 +128,9 @@ function captureTodoTool(initialPhases: readonly TodoPhase[]) {
 		tool: capturedTool,
 		getCurrentPhases: () => clonePhases(currentPhases),
 		getAppendCalls: () => appendCalls,
-		context: { sessionManager: { getSessionFile: () => undefined } } as unknown as ExtensionContext,
+		context: {
+			sessionManager: { getSessionFile: () => undefined, getBranch: () => [] },
+		} as unknown as ExtensionContext,
 	};
 }
 

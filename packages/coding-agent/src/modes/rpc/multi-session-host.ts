@@ -1,8 +1,9 @@
 import { access, chmod, mkdir, unlink } from "node:fs/promises";
-import { createConnection, createServer, type Server, type Socket } from "node:net";
+import { createConnection, createServer, type Server } from "node:net";
 import { dirname, join } from "node:path";
 import type { CreateAgentSessionRuntimeFactory } from "../../core/agent-session-runtime.ts";
 import { envValue } from "../../core/brand.ts";
+import { HostMcpRegistry } from "../../core/extensions/builtin/mcp/host-registry.ts";
 import {
 	flushRawStdout,
 	takeOverStdout,
@@ -11,11 +12,17 @@ import {
 } from "../../core/output-guard.ts";
 import type { CliRuntimeConfiguration } from "../../main.ts";
 import { killTrackedDetachedChildren } from "../../utils/shell.ts";
+import { startHostChildReaper } from "./child-reaper.ts";
 import type { RpcConnectionSink } from "./connection-handler.ts";
 import { parseClientCapabilities } from "./custom-capability.ts";
+import { GENERATION_HANDOFF_CAPABILITY } from "./host-decision.ts";
 import { parseIdleExitMs } from "./host-lifecycle.ts";
+import { HostMemorySampler } from "./host-memory-sampler.ts";
+import { createEndpointReservations } from "./host-reservations.ts";
 import { armHostWatchdog, readHostWatchdogConfigFromBrandEnv } from "./host-watchdog.ts";
 import { attachJsonlLineReader, MAX_RPC_LINE_CHARACTERS } from "./jsonl.ts";
+import { LoopLagWatchdog } from "./loop-lag-watchdog.ts";
+import { hostGeneration, hostInstanceId } from "./protocol-identity.ts";
 import { rpcCommandShapeError } from "./rpc-input-validation.ts";
 import type { RpcCommand, RpcResponse } from "./rpc-types.ts";
 import { type RpcBindingFactory, SessionCommandRouter } from "./session-command-router.ts";
@@ -26,10 +33,12 @@ import {
 	readSocketIdentityFile,
 	type SocketFileIdentity,
 	shieldSocketDuringClose,
+	socketEntryReplaced,
 	statSocketIdentity,
 	unlinkOwnedSocket,
 	waitForSocketIdentityFile,
 } from "./socket-ownership.ts";
+import { socketSink } from "./socket-sink.ts";
 import {
 	authenticateSocket,
 	ensureSocketSecret,
@@ -73,6 +82,7 @@ export interface HostIdleOverrides {
 	closeGraceMs?: number;
 	/** Shutdown hook the empty-exit window invokes; hosts pass their exit path. */
 	onEmptyExit?: () => void;
+	onHandoffParked?: (connections: readonly string[]) => Promise<void>;
 	/** Gate consulted before the empty-exit window advances (connected clients block it). */
 	canExitWhenEmpty?: () => boolean;
 }
@@ -92,6 +102,35 @@ export function resolveHostIdlePolicy(
 			DEFAULT_SESSION_IDLE_EVICTION_MS,
 		emptyExitMs:
 			overrides.emptyExitMs ?? parseIdleExitMs(env[RPC_HOST_EMPTY_EXIT_MS_ENV]) ?? DEFAULT_HOST_EMPTY_EXIT_MS,
+	};
+}
+
+/**
+ * Arm the host's self-observation: event-loop stall detection with per-session
+ * attribution, and RSS reporting that tightens idle parking under pressure and, above the
+ * refuse watermark, declines NEW worker sessions (#1905). Both run on unref'd timers, and
+ * neither aborts or kills anything the host already holds.
+ */
+function startHostObservers(
+	router: SessionCommandRouter,
+	writer: SessionEventWriter,
+	options: { onIdlePressure?: (rssMb: number) => void } = {},
+): { stop: () => void } {
+	const loopLag = new LoopLagWatchdog({ emit: (record) => writer.broadcastHostRecord(record) });
+	const memory = new HostMemorySampler({
+		emit: (record) => writer.broadcastHostRecord(record),
+		sessions: () => router.sessionCount,
+		onPressure: (pressure) => router.setMemoryPressure(pressure),
+		onCritical: (critical, rssMb) => router.setMemoryCritical(critical, rssMb),
+		...(options.onIdlePressure ? { onIdlePressure: options.onIdlePressure } : {}),
+	});
+	loopLag.start();
+	memory.start();
+	return {
+		stop: () => {
+			loopLag.stop();
+			memory.stop();
+		},
 	};
 }
 
@@ -130,8 +169,17 @@ export function createHostCore(
 			: new RpcSessionRegistry({
 					agentDir: options.agentDir,
 					createRuntime: options.createRuntime,
+					mcpRegistry: new HostMcpRegistry(),
 					now: policy.now,
 					closeGraceMs: idle.closeGraceMs ?? parseIdleExitMs(process.env[RPC_CLOSE_GRACE_MS_ENV]) ?? 10_000,
+					// Two generations of this daemon can be alive at once during a handoff; the claims
+					// they publish here are what keeps them off one session file.
+					pathReservations: createEndpointReservations({
+						agentDir: options.agentDir,
+						socket: listenSocketPath(options),
+						instanceId: hostInstanceId(),
+						onFailure: hostLog,
+					}),
 				}),
 		writer,
 		options,
@@ -142,6 +190,7 @@ export function createHostCore(
 			idleEvictionMs: policy.idleEvictionMs,
 			emptyExitMs: policy.emptyExitMs,
 			onEmptyExit: idle.onEmptyExit,
+			onHandoffParked: idle.onHandoffParked,
 			canExitWhenEmpty: idle.canExitWhenEmpty,
 		},
 	);
@@ -174,10 +223,12 @@ async function runStdioHost(options: MultiSessionHostOptions): Promise<never> {
 	const { router, handle } = createHostCore(options, writer, undefined, {
 		onEmptyExit: () => void shutdown(0),
 	});
+	const observers = startHostObservers(router, writer);
 	let shuttingDown = false;
 	const shutdown = async (exitCode = 0): Promise<never> => {
 		if (shuttingDown) process.exit(exitCode);
 		shuttingDown = true;
+		observers.stop();
 		detach();
 		await router.dispose();
 		await writer.flush();
@@ -205,18 +256,49 @@ async function runSocketHost(options: MultiSessionHostOptions, socketPath: strin
 	await prepareSocketPath(socketPath);
 	const writer = new SessionEventWriter(() => {});
 	const connections = new Map<string, Connection>();
+	let draining = false;
+	let handoffAnnounced = false;
 	const { router, handle } = createHostCore(
 		options,
 		writer,
-		parseClientCapabilities(envValue("RPC_CLIENT_CAPABILITIES")).filter(
-			(capability) => capability !== "rendered_components",
-		),
+		[
+			...parseClientCapabilities(envValue("RPC_CLIENT_CAPABILITIES")).filter(
+				(capability) => capability !== "rendered_components",
+			),
+			// A socket host installs the SIGUSR1 drain below, so it can be handed off to a newer
+			// generation instead of being killed. A host that does not advertise this is never
+			// signalled - SIGUSR1 would simply terminate it, sessions and all.
+			GENERATION_HANDOFF_CAPABILITY,
+		],
 		// Supervised hosts idle-exit via the supervisor, but a socket host that
 		// outlives its supervisor (or is started bare) still self-exits when empty.
 		// A connected client counts as occupancy even with no session open: exiting
 		// under it would drop its socket and read as a crash to the supervisor.
-		{ onEmptyExit: () => void shutdown(0), canExitWhenEmpty: () => connections.size === 0 },
+		// While DRAINING the opposite is true: the successor generation owns the socket, so a
+		// sessionless connection must not hold this host open.
+		{
+			onEmptyExit: () => void shutdown(0),
+			canExitWhenEmpty: () => draining || connections.size === 0,
+			onHandoffParked: async (ids) => {
+				await Promise.all(
+					ids.map(async (id) => {
+						await writer.flushConnection(id);
+						connections.get(id)?.close();
+					}),
+				);
+			},
+		},
 	);
+	const observers = startHostObservers(router, writer, {
+		// The shape #1893 measured: gigabytes resident with `sessions.total 0`. Say it once, and when
+		// this generation no longer owns the endpoint, leave - nobody can reach it to ask.
+		onIdlePressure: (rssMb) => {
+			hostLog(`memory pressure with no sessions: rssMb=${rssMb}`);
+			void endpointSuperseded().then((superseded) => {
+				if (superseded) drainForHandoff();
+			}, noop);
+		},
+	});
 	let nextConnection = 0;
 	let shuttingDown = false;
 	const secret =
@@ -224,6 +306,10 @@ async function runSocketHost(options: MultiSessionHostOptions, socketPath: strin
 			? await ensureSocketSecret(process.env[SOCKET_SECRET_FILE_ENV] ?? socketSecretPath(socketPath))
 			: undefined;
 	const watchdogConfig = readHostWatchdogConfigFromBrandEnv();
+	// This host's OWN copy of the crash-path cleanup list. A drain empties it: once a successor
+	// generation is registered, the daemon state files under those paths describe the successor,
+	// and a crash of this (already replaced) host must not take them with it.
+	const crashCleanupPaths = [...(watchdogConfig?.cleanupPaths ?? [])];
 	// Crash-path ownership for the supervisor's PUBLIC socket: the supervisor
 	// records the identity of the entry it bound (inside its private scratch
 	// directory, which no replacement supervisor writes) right after its listen,
@@ -241,6 +327,10 @@ async function runSocketHost(options: MultiSessionHostOptions, socketPath: strin
 	let supervisorPublicIdentity: SocketFileIdentity | undefined;
 	const server = createServer((socket) => {
 		const accept = (): void => {
+			if (draining || shuttingDown) {
+				socket.destroy();
+				return;
+			}
 			const id = `socket-${++nextConnection}`;
 			const sink = socketSink(socket);
 			writer.registerConnection(id, sink);
@@ -291,14 +381,25 @@ async function runSocketHost(options: MultiSessionHostOptions, socketPath: strin
 	server.on("error", (cause) => {
 		if (!shuttingDown) process.stderr.write(`senpi rpc socket listener failed: ${errorMessage(cause)}\n`);
 	});
+	// Long-lived hosts outlive many session workers, and a terminated worker thread
+	// takes its children's exit watchers with it (measured: every spawn API leaks
+	// that way). The reaper claims those abandoned children; it never touches one a
+	// live thread could still be waiting for.
+	const stopChildReaper = await startHostChildReaper(hostLog);
 	const shutdown = async (exitCode = 0, watchdogCleanup?: Promise<void>): Promise<never> => {
 		if (shuttingDown) process.exit(exitCode);
 		shuttingDown = true;
+		observers.stop();
+		stopChildReaper();
 		// On Windows, destroying named-pipe sockets does not always make libuv's
 		// server.close callback fire: connected pipe instances can remain in the
 		// kernel after the JavaScript handles are destroyed. Keep the normal drain
 		// path, but never let that platform-specific close stall orphan the host.
 		try {
+			// Dispose while connections are still registered so `session_closed`
+			// `{ reason: "host_shutdown" }` reaches clients before the sockets die.
+			await router.dispose();
+			await writer.flush();
 			for (const connection of connections.values()) {
 				connection.detach();
 				connection.close();
@@ -311,8 +412,6 @@ async function runSocketHost(options: MultiSessionHostOptions, socketPath: strin
 					? Promise.race([closeServer(server), delay(WINDOWS_SHUTDOWN_HARD_EXIT_MS)])
 					: closeServer(server),
 			);
-			await router.dispose();
-			await writer.flush();
 			// Ownership-checked: unlink only the entry THIS process bound. After a
 			// takeover renamed a newer host's socket over the same path, the
 			// identity no longer matches and the replacement stays published.
@@ -328,13 +427,53 @@ async function runSocketHost(options: MultiSessionHostOptions, socketPath: strin
 			process.exit(exitCode);
 		}
 	};
+	/**
+	 * Announce through the record writer, never inside the supervisor's raw byte proxy. This
+	 * preserves JSONL framing and FIFO before parking, including when a record spans proxy reads.
+	 * Active turns/requests keep running; durable wake-source holds resume on reopen.
+	 */
+	const drainForHandoff = (): void => {
+		if (shuttingDown) return;
+		if (draining) {
+			if (handoffAnnounced) router.beginDrain();
+			return;
+		}
+		draining = true;
+		crashCleanupPaths.length = 0;
+		hostLog("draining for a generation handoff");
+		void endpointSuperseded()
+			.then((superseded) => {
+				writer.broadcastHostRecord({
+					type: "host_superseded",
+					instanceId: hostInstanceId(),
+					generation: hostGeneration(process.env),
+					successor: superseded ? { socket: supervisorPublicSocketPath ?? socketPath } : null,
+				});
+				handoffAnnounced = true;
+				router.beginDrain();
+			})
+			.catch((cause: unknown) => {
+				hostLog(`handoff announcement failed: ${String(cause)}`);
+			});
+	};
+	/**
+	 * Whether the endpoint this host serves is held by another socket entry now. A supervised host
+	 * answers for the PUBLIC path its supervisor bound - its own listener is a private hop nobody
+	 * replaces - and a bare host for the path it bound itself.
+	 */
+	const endpointSuperseded = (): Promise<boolean> =>
+		supervisorPublicSocketPath === undefined
+			? socketEntryReplaced(socketPath, boundIdentity)
+			: socketEntryReplaced(supervisorPublicSocketPath, supervisorPublicIdentity);
 	registerShutdownSignals(shutdown);
+	if (process.platform !== "win32") process.on("SIGUSR1", drainForHandoff);
 	// Arm before listen: a supervisor death during the listen transition must
 	// still close the child and clean its private endpoint.
 	const watchdog =
 		watchdogConfig && supervisorPublicOwnerFile
 			? {
 					...watchdogConfig,
+					cleanupPaths: crashCleanupPaths,
 					// The supervisor may die while this host is still waiting for the token
 					// below; read it before the watchdog removes the scratch directory, or the
 					// shutdown's ownership check has nothing to prove with and leaves the
@@ -343,7 +482,7 @@ async function runSocketHost(options: MultiSessionHostOptions, socketPath: strin
 						supervisorPublicIdentity ??= await readSocketIdentityFile(supervisorPublicOwnerFile);
 					},
 				}
-			: watchdogConfig;
+			: watchdogConfig && { ...watchdogConfig, cleanupPaths: crashCleanupPaths };
 	armHostWatchdog(watchdog, (reason, cleanup) => {
 		process.stderr.write(`senpi rpc host: ${reason}; shutting down\n`);
 		// Enter shutdown before killing session-owned child processes. The Windows
@@ -370,6 +509,8 @@ function delay(ms: number): Promise<void> {
 	return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function noop(): void {}
+
 function parseError(error: string): RpcResponse {
 	return { type: "response", command: "parse", success: false, error };
 }
@@ -380,6 +521,12 @@ function oversizedLineError(): string {
 
 function errorMessage(cause: unknown): string {
 	return cause instanceof Error ? cause.message : String(cause);
+}
+
+/** The endpoint this host listens on, or nothing when it speaks stdio and shares no socket. */
+function listenSocketPath(options: MultiSessionHostOptions): string | undefined {
+	if (options.listen === undefined || options.listen === "stdio://") return undefined;
+	return resolveSocketPath(options.listen, options.agentDir);
 }
 
 function resolveSocketPath(value: string, agentDir: string): string {
@@ -395,31 +542,6 @@ function resolveSocketPath(value: string, agentDir: string): string {
 
 function formatSocketAddress(socketPath: string): string {
 	return socketPath.startsWith("\0") ? `unix://@${socketPath.slice(1)}` : `unix://${socketPath}`;
-}
-
-function socketSink(socket: Socket): RpcConnectionSink {
-	let needsDrain = false;
-	return {
-		writeRaw(chunk) {
-			if (!socket.destroyed) needsDrain = !socket.write(chunk);
-		},
-		close() {
-			socket.destroy();
-		},
-		waitForBackpressure() {
-			if (socket.destroyed || !needsDrain) return Promise.resolve();
-			needsDrain = false;
-			return new Promise<void>((resolve) => {
-				const done = () => {
-					socket.off("drain", done);
-					socket.off("close", done);
-					resolve();
-				};
-				socket.once("drain", done);
-				socket.once("close", done);
-			});
-		},
-	};
 }
 
 async function prepareSocketPath(socketPath: string): Promise<void> {

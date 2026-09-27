@@ -1,7 +1,15 @@
 import { AsyncLocalStorage } from "node:async_hooks";
+import type { SessionKind } from "../../core/extensions/types.ts";
 import { MEDIA_PLACEHOLDERS_CAPABILITY } from "./custom-capability.ts";
 import { serializeJsonLine } from "./jsonl.ts";
 import { omitInlineMedia } from "./media-placeholders.ts";
+import type {
+	RpcHostLifecycleEvent,
+	RpcOpenQueuedEvent,
+	RpcSessionClosedEvent,
+	RpcSessionClosedReason,
+	RpcSessionParkedEvent,
+} from "./rpc-types.ts";
 import {
 	RENDERED_COMPONENT_RECORD,
 	SessionEventFanout,
@@ -14,6 +22,10 @@ export { RENDERED_COMPONENT_RECORD, type SessionEventWriterConnection } from "./
 /** Await every actor's drain; a failed actor is a cut peer, not a writer failure. */
 const settleActors = (actors: readonly SocketEventSinkActor[]): Promise<void> =>
 	Promise.all(actors.map((actor) => actor.flush().catch(() => undefined))).then(() => undefined);
+
+/** Await every actor's ACCEPTANCE of what it was given; never the peer's kernel drain. */
+const acceptActors = (actors: readonly SocketEventSinkActor[]): Promise<void> =>
+	Promise.all(actors.map((actor) => actor.waitForAcceptance())).then(() => undefined);
 
 type RawWriter = (chunk: string) => void;
 type BackpressureWaiter = () => Promise<void>;
@@ -93,6 +105,8 @@ export class SessionEventWriter {
 	private readonly controlQueue: RecordQueue = { latestByKey: new Map(), ready: false };
 	private readonly readyQueues: RecordQueue[] = [];
 	private readonly sealedSessions = new Set<string>();
+	/** Sessions whose lifecycle records stay on their attached connections (`kind: "worker"`). */
+	private readonly workerSessions = new Set<string>();
 	private readonly writeRaw: RawWriter;
 	private readonly waitForBackpressure?: BackpressureWaiter;
 	private readonly scheduleFlush: FlushScheduler;
@@ -188,6 +202,23 @@ export class SessionEventWriter {
 		return this.fanout.hasCapableConnection(sessionId);
 	}
 
+	/**
+	 * Records a session's visibility class. A worker session is machine-driven work that
+	 * only its attached connections track, so its lifecycle records are delivered to them
+	 * instead of broadcast; an interactive session keeps the broadcast every client (the
+	 * desktop mirror, the supervisor's idle observer) relies on.
+	 */
+	setSessionKind(sessionId: string, kind: SessionKind): void {
+		if (kind === "worker") this.workerSessions.add(sessionId);
+		else this.workerSessions.delete(sessionId);
+	}
+
+	/** Drain just this connection before closing it after its last handoff park. */
+	async flushConnection(id: string): Promise<void> {
+		const target = this.fanout.get(id);
+		if (target) await settleActors([target.actor]);
+	}
+
 	/** Execute a connection's command with its response destination in context. */
 	withConnection<T>(id: string, task: () => T): T {
 		return this.connectionContext.run(id, task);
@@ -212,12 +243,16 @@ export class SessionEventWriter {
 		const { [RENDERED_COMPONENT_RECORD]: _rendered, ...wireTagged } = tagged;
 		const line = serializeJsonLine(wireTagged);
 		if (this.fanout.isEmpty() && this.exceedsStdioCapacity(line)) {
-			this.closeSession(sessionId, {
-				type: "response",
-				command: "close_session",
-				success: false,
-				error: "session_output_overflow, resync required",
-			});
+			this.closeSession(
+				sessionId,
+				{
+					type: "response",
+					command: "close_session",
+					success: false,
+					error: "session_output_overflow, resync required",
+				},
+				"error",
+			);
 			return false;
 		}
 		const targets = this.fanout.targets(
@@ -255,23 +290,30 @@ export class SessionEventWriter {
 	}
 
 	/**
-	 * Return worker credit only after this session's destinations consumed their
-	 * queues. A destination that failed (byte overflow or stall) was already cut
-	 * and closed by the fanout's onFailure; it must not withhold the session's
-	 * credit, or one bad peer kills the producing worker (session_worker_credit_timeout).
+	 * Return worker credit once this session's destinations have ACCEPTED the record
+	 * into their bounded queues - never when the slowest peer's kernel has drained it.
+	 * A client that is merely busy would otherwise pace the producing worker into
+	 * session_worker_credit_timeout and force the dead-peer budget under
+	 * SESSION_WORKER_LIMITS.controlMs (#1774). Delivery stays bounded by each queue's
+	 * maxQueueBytes and its dead-peer cut. A destination that failed (byte overflow or
+	 * stall) was already cut and closed by the fanout's onFailure; it is a cut peer,
+	 * not a writer failure. The shared stdio lane keeps its stdout backpressure wait.
 	 */
 	waitForSessionBackpressure(sessionId: string): Promise<void> {
 		if (this.fanout.isEmpty()) return this.flush();
+		return acceptActors(this.sessionActors(sessionId));
+	}
+
+	/** Registered actors this session's records are delivered to, plus the caller's own. */
+	private sessionActors(sessionId: string): SocketEventSinkActor[] {
 		const targets = new Set([
 			...this.fanout.targets(sessionId, this.currentConnection(), false, false, undefined),
 			this.currentConnection(),
 		]);
-		return settleActors(
-			[...targets].flatMap((target) => {
-				const registered = target === undefined ? undefined : this.fanout.get(target);
-				return registered ? [registered.actor] : [];
-			}),
-		);
+		return [...targets].flatMap((target) => {
+			const registered = target === undefined ? undefined : this.fanout.get(target);
+			return registered ? [registered.actor] : [];
+		});
 	}
 
 	/** Queue one untagged host-control response for the current connection. */
@@ -302,22 +344,116 @@ export class SessionEventWriter {
 	}
 
 	/**
+	 * Queue one HOST-level lifecycle record for every registered connection, or the
+	 * shared stdio lane when none is registered. Unlike session records it is not tagged
+	 * with a routing handle by the writer: `host_stalled` carries the handle it blames,
+	 * and `host_memory_pressure` belongs to the process, not to a session.
+	 */
+	/**
+	 * Tell ONE opener where it sits in the open queue, before its open reaches the loop.
+	 *
+	 * Sent to the opening connection only: a queue position is about that caller's request, not
+	 * about the host. If the connection is gone the record is dropped rather than queued - a
+	 * position is worthless to a client that already left.
+	 */
+	sendOpenQueued(connection: string, record: RpcOpenQueuedEvent): void {
+		// Reconstruct so desktop `refresh-senpi-events.ts` sees a literal `type:` site in this file.
+		const wire: RpcRecord = {
+			type: "queued",
+			for_request: record.for_request,
+			position: record.position,
+			in_flight: record.in_flight,
+		};
+		const target = this.fanout.get(connection);
+		if (target === undefined) return;
+		target.actor.enqueue(serializeJsonLine(wire));
+		this.requestFlush();
+	}
+
+	broadcastHostRecord(record: RpcHostLifecycleEvent): void {
+		// Reconstruct so desktop `refresh-senpi-events.ts` sees literal `type:` sites in this file.
+		let wire: RpcRecord;
+		switch (record.type) {
+			case "host_superseded":
+				wire = {
+					type: "host_superseded",
+					instanceId: record.instanceId,
+					generation: record.generation,
+					successor: record.successor,
+				};
+				break;
+			case "host_stalled":
+				wire = {
+					type: "host_stalled",
+					driftMs: record.driftMs,
+					...(record.sessionId !== undefined ? { sessionId: record.sessionId } : {}),
+					...(record.tool !== undefined ? { tool: record.tool } : {}),
+				};
+				break;
+			case "host_memory_pressure":
+				wire = { type: "host_memory_pressure", rssMb: record.rssMb, sessions: record.sessions };
+				break;
+			default: {
+				const exhaustive: never = record;
+				throw new Error(`unexpected host record ${exhaustive}`);
+			}
+		}
+		if (this.fanout.isEmpty()) {
+			this.append(this.controlQueue, wire);
+			this.markReady(this.controlQueue);
+		} else this.fanout.broadcast(serializeJsonLine(wire));
+		this.requestFlush();
+	}
+
+	/**
 	 * Prevent subsequent records for a session and append its terminal response.
 	 * Existing records retain FIFO order; this response is therefore that
 	 * session's final stdout record.
 	 */
-	closeSession(sessionId: string, response: object): void {
+	closeSession(sessionId: string, response: object, reason?: RpcSessionClosedReason, sessionPath?: string): void {
 		if (this.sealedSessions.has(sessionId)) return;
 		this.sealedSessions.add(sessionId);
 		this.fanout.forgetSession(sessionId);
 		const targetId = this.connectionContext.getStore();
-		const lifecycle = { type: "session_closed", sessionId };
+		// `reason` tells an attached client WHY the handle ended, so a park it can reopen by path is
+		// not read as a session that is gone. Absent unless the caller names one; clients tolerate that.
+		const lifecycle: RpcSessionClosedEvent = {
+			type: "session_closed",
+			sessionId,
+			...(reason && { reason }),
+			...(sessionPath && { sessionPath }),
+		};
 		if (this.fanout.isEmpty()) this.appendSessionRecord(sessionId, lifecycle);
+		else if (this.workerSessions.has(sessionId))
+			this.fanout.deliverToSession(sessionId, serializeJsonLine(lifecycle));
 		else this.fanout.broadcast(serializeJsonLine(lifecycle));
 		const taggedResponse = { ...response, sessionId };
 		const registered = targetId === undefined ? undefined : this.fanout.get(targetId);
 		if (registered) registered.actor.enqueue(serializeJsonLine(taggedResponse));
 		else this.appendSessionRecord(sessionId, taggedResponse, targetId);
+		this.requestFlush();
+	}
+
+	/**
+	 * Seal a session the host PARKED and publish `session_parked`.
+	 *
+	 * Parking is the idle sweep putting a RETAINED session back on disk: the routing
+	 * handle ends exactly as a close ends it, but the session survives and reopens with
+	 * `open_session { sessionPath }`, so the record a client dispatches on must say so
+	 * instead of claiming the session ended. Delivery follows the `session_closed` rule -
+	 * a worker session's record reaches only its attached connections, an interactive
+	 * session's reaches every connection. No client asked for this teardown, so there is
+	 * no close response to answer.
+	 */
+	parkSession(sessionId: string, sessionPath: string): void {
+		if (this.sealedSessions.has(sessionId)) return;
+		this.sealedSessions.add(sessionId);
+		this.fanout.forgetSession(sessionId);
+		const lifecycle: RpcSessionParkedEvent = { type: "session_parked", sessionId, sessionPath };
+		if (this.fanout.isEmpty()) this.appendSessionRecord(sessionId, lifecycle);
+		else if (this.workerSessions.has(sessionId))
+			this.fanout.deliverToSession(sessionId, serializeJsonLine(lifecycle));
+		else this.fanout.broadcast(serializeJsonLine(lifecycle));
 		this.requestFlush();
 	}
 
@@ -330,10 +466,12 @@ export class SessionEventWriter {
 		sessionId: string,
 		response: object,
 		records = 2,
-	): { release: () => void; complete: (terminal: boolean) => void } | undefined {
+	): { release: () => void; complete: (terminal: boolean, reason?: RpcSessionClosedReason) => void } | undefined {
 		const bytes =
 			Buffer.byteLength(serializeJsonLine({ ...response, sessionId })) +
-			(records === 2 ? Buffer.byteLength(serializeJsonLine({ type: "session_closed", sessionId })) : 0);
+			(records === 2
+				? Buffer.byteLength(serializeJsonLine({ type: "session_closed", sessionId, reason: "client_close" }))
+				: 0);
 		if (
 			this.bufferedRecordCount + this.reservedCloseRecords + records > MAX_SHARED_STDIO_QUEUE_RECORDS ||
 			this.bufferedByteLength + this.reservedCloseBytes + bytes > MAX_SHARED_STDIO_QUEUE_BYTES
@@ -371,10 +509,10 @@ export class SessionEventWriter {
 		};
 		return {
 			release,
-			complete: (terminal) => {
+			complete: (terminal, reason) => {
 				if (!active) return;
 				release();
-				if (terminal) this.closeSession(sessionId, response);
+				if (terminal) this.closeSession(sessionId, response, reason);
 				else this.appendClosedResponse(sessionId, response);
 			},
 		};
@@ -402,6 +540,7 @@ export class SessionEventWriter {
 	 */
 	forgetSession(sessionId: string): void {
 		this.sealedSessions.delete(sessionId);
+		this.workerSessions.delete(sessionId);
 		this.fanout.forgetSession(sessionId);
 	}
 

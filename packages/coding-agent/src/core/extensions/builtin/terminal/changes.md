@@ -1,4 +1,154 @@
+## 2026-09-24 - Monitor resume durability: identity leases, grace-window restores, one digest (senpi#2108)
+
+### What changed
+
+Ownership (who may restore a session):
+
+- `manifest-lease.ts`: the lease record is v2, `{v: 2, token, pid, startedAtMs, bootAtMs, processStartedAtMs, acquiredAtMs}`. `startedAtMs` duplicates `acquiredAtMs` so a v1 reader still parses the file instead of reclaiming it. A found lease is classified `self`, `dead`, `reused` (pid alive but its OS start instant differs from the recorded one, so the pid was reused and the lease is reclaimed) or `live-foreign`. A boot mismatch alone never reclaims an alive pid. Same pid is `live-foreign` only when the lease token belongs to a generation of this process that is still running; tokens are retired the moment a shutdown starts, so an in-process `/resume` re-enters its own lease. Release compares the token, so a stale release is a no-op.
+- `lease-keeper.ts`: a generation that lost to a live foreign holder polls every 10 s with `stat` and `kill(pid, 0)` only, re-runs the acquire when the holder's file or pid is gone, and hands over exactly once. A `stop()` that lands while that acquire is in flight releases the lease it got, and shutdown awaits the keeper's tick before releasing.
+- `lease-file.ts`: on a filesystem with hard links a lease is never visible half-written: it is written to a private temp file and published with `link` (exclusive) or `rename` (replace). Every removal of a lease, by an acquire or by the GC, is a reclaim under an exclusive `<lease>.lock` that removes the file only while it still holds exactly the record that was judged stale, so a fresh lease another process published meanwhile is never deleted. A reclaim lock records its holder's pid, boot and start instant (checked the same way for this process's own pid) and is broken only when that process is gone or its pid was reused, and only if it still holds what was judged stale; a lock that cannot be parsed is abandoned after 30 s. An acquire that finds a reclaim in progress waits on that live reclaimer, never on the stale record. If an acquire still cannot settle (the lease kept changing), the session waits on the keeper instead of staying undecided. Residual limits, both needing a reclaim lock left by a crash (kill -9 inside a few file operations) first: breaking that lock can race another reclaimer inside sub-millisecond windows and, in the worst interleaving, end with two lease owners; and a lock put back after such a race can belong to a process that already finished, so it counts as held (blocking reclaim of a dead lease) until that process exits. Neither is reachable without a crash-left lock. The GC applies the same rules to locks and removes temp files abandoned for more than 30 s. A v1 lease (no `processStartedAtMs`) is a reuse only when the pid's process started after the lease was taken.
+- `process-identity.ts`: boot instant from `os.uptime`, own start from `process.uptime` floored to the second like `ps` and captured once at load (a Linux suspend stops that clock), and the tolerances (boot 120 s, process start 3 s). `process-start-probe.ts` reads a foreign pid's start instant cold (procfs, one `ps`, or one PowerShell query).
+- `terminal-state-gc.ts`: a bounded background sweep (at most 500 entries) of the shared terminal state dir unlinks dead and reused leases and empty manifests; unparseable leases go through the same reclaim; unparseable manifests and the current session's files are kept.
+
+What the manifest records:
+
+- `terminal-manifest-model.ts`: monitors and background sessions gain an optional `runtime` `{pid, processGroupId?, startedAtMs, bootAtMs, argv}` and ephemeral monitors an optional absolute `deadlineMs`. Both are optional and unknown keys are ignored on read, so `TERMINAL_MANIFEST_VERSION` stays 1 in both directions. A malformed runtime record fails closed like every other field.
+- `runtime-session.ts` exposes `identity()` from the PTY child's pid and process group. `packages/pty` and `crates/senpi-pty` expose `pid`/`processGroupId` on session handles (additive napi getters, ABI sentinel unchanged; the darwin-arm64 prebuild was rebuilt).
+- `terminal-manifest-parse.ts`: the strict fail-closed parse, moved verbatim out of `restore.ts`.
+- Persistence is lazy: no lease and no manifest until the first durable registration or an existing manifest to restore. An empty manifest is unlinked instead of written. Print and JSON one-shot modes persist nothing (`monitor-state-dir.ts` returns no dir for them). A reload generation seeds its writer from disk (SF-2), so the first post-reload transition keeps the pre-reload entries.
+
+What a watched command sees (`tools/monitor.ts`, `tools/kill-bash.ts`, `monitor-state-dir.ts`):
+
+- `SENPI_MONITOR_ID` on every command watch. `SENPI_MONITOR_STATE_DIR` only on a persistent one: `<sessionDir>/extensions/terminal/state/<mon_id>/`, removed by `kill_bash`, kept when the process dies so the restore can hand it back. A restore re-spawn adds `SENPI_MONITOR_RESTORED=1` and `SENPI_MONITOR_DOWNTIME_MS`, an upper bound.
+- `prompt.ts`: the restore-aware base-HEAD baseline pattern (baseline file in the state dir, `git fetch -q || true` before comparing) taught inside the 3435-byte section ceiling.
+
+How entries come back:
+
+- `restore.ts` classifies every entry up front, runs the handlers concurrently and returns a result per monitor (outcome, reason, orphan handling), each background session as running (pid, confirmed by boot, start instant and argv on every platform) or exited, and a downtime upper bound: now minus the newest of the manifest's last transition and the last transcript entry before this process started (`session-activity.ts`). An ephemeral watch with time left is re-spawned with only that time; one past its deadline is lost with that reason.
+- `orphan-reaper.ts`: before a re-spawn, a crash-orphaned watcher is killed (process group, SIGTERM then SIGKILL) only when confirmed: alive on the same boot, start within 2 s of the recorded instant, and a content marker (`SENPI_MONITOR_ID=<id>` in `/proc/<pid>/environ` on Linux, argv elsewhere). Anything unverifiable is left running and reported. win32 never kills.
+- `durable-command.ts`: the re-spawn waits `RESTORE_GRACE_MS` (2000 ms). A non-zero exit inside the window is `lost` with `exited <code> in <ms>ms: <first output line, sanitized, capped>`; a zero exit is the new outcome `completed`; a survivor is `restored` and gets one injected line through `registry.emitLine`, `restored after up to <d> offline; the command started fresh`, which isn't a budget hit.
+- After every decided restore the manifest is rewritten to the truth (removed when nothing survived): a re-spawned watch's new `runtime` is recorded, so a second crash finds and stops that process instead of starting another copy, and a lost, expired or completed watch is dropped so it is never re-run. A restore that throws still decides (a `corrupt` digest) and keeps the lease bound for shutdown.
+- A persistent watch's state dir is removed whenever it ends for good: `kill_bash`, its command exiting, its expiry, or a restore that reports it lost, expired or completed. Only a shutdown or reload (the watch is suspended, not ended) keeps it.
+- `durable-file.ts` / `monitor-registry.ts`: a persistent file watch has no live deadline (SF-1); a live ephemeral file entry is re-registered with its remaining time.
+
+How the session learns about it:
+
+- `restore-digest.ts`: ONE custom message per generation, type `senpi-terminal:restore-digest`, `display: true`, content starting `Terminal state after restart`, details `{generation, outcome: decided|deferred|corrupt, downtimeMs, downtimeIsUpperBound, holder?, actionable, monitors, backgroundSessions}`, rendered through `registerMessageRenderer`. A slot keeps it pending until a model is bound and delivers exactly one decided digest. Actionable (lost, orphan, running background) goes as a `followUp` with `triggerTurn`; the rest ride the `nextTurn`. `terminal.notify: off` keeps it a user notice. No RPC event was added.
+- `restore-session.ts` and `extension-state.ts`: `session_start` takes the lease, restores on a detached promise and fills the slot. A live foreign holder shows `monitors held by pid N` in the footer, leaves a deferred note, and starts the keeper, whose takeover runs the same restore once. The digest flushes on decision, `model_select` and real input. Shutdown stops the keeper, awaits an in-flight restore, suspends and flushes the manifest, and releases the lease by token.
+
+### Why
+
+A pid alone proved nothing: a reused pid looked like a live holder, a same-pid `/resume` saw itself as foreign, and a crashed process left its watcher running while the restore spawned a second one. A heartbeat wouldn't have fixed it: it needs a timer in every session and still can't tell a stalled holder from a dead one, while boot instant plus process start instant identifies the holder without any writer. Counting a re-spawn as restored before it ran hid missing scripts, and a restore with no model bound dropped its digest.
+
+### Why an extension could not handle it
+
+The lease, manifest, restore handlers and the PTY child identity are this builtin's own state and its spawn path; the pid getters needed the native binding.
+
+### Expected merge conflict zones
+
+`extension.ts` lifecycle hooks (`session_start`, `model_select`, shutdown), `tools/monitor.ts` create path and env, `restore.ts` return shape, `terminal-manifest-model.ts` types, `packages/pty` session handle types.
+
+## 2026-09-23 — PTY bash truncation markers are model-only text parts (senpi#2063)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/terminal/output-format.ts`: `formatTerminalToolOutput` also returns the kept output (`body`) and the truncation `marker` separately; `text` is unchanged. New `splitModelOnlyNotices(text, notices)` turns line-delimited notices into `audience: "model"` parts whose "\n"-join is byte-identical to `text`.
+- `packages/coding-agent/src/core/extensions/builtin/terminal/tools/context.ts`: `TerminalToolResult.content` is `TextContent[]`; new `noticedResult`.
+- `packages/coding-agent/src/core/extensions/builtin/terminal/tools/bash.ts`: the final foreground result emits the `[Showing lines A-B of N; earlier output dropped]` marker as a model-only part; streaming progress updates (display-only) use the body without the marker.
+- `packages/coding-agent/src/core/extensions/builtin/terminal/tools/bash-output.ts`: the `[N earlier chars dropped]` notice and the truncation marker are model-only parts.
+- `packages/coding-agent/src/core/extensions/builtin/terminal/tools/render.ts`: the bash_output/monitor result renderer joins visible text parts and skips model-only parts.
+
+### Why
+
+#2062 made built-in tool notices model-only, but the live `bash` tool is this PTY builtin, whose formatter appended its own marker to the body, so every truncated bash card still showed `earlier output dropped` in the TUI and desktop. A scripted run against the published 2026.9.23-4 bundle showed the marker; after this change it is gone while the model's tool messages stay byte-identical (26,875 bytes, same content).
+
+### Why an extension could not handle it
+
+This is the terminal builtin's own result shape; the notice has to be split where the result is built.
+
+### Expected merge conflict zones
+
+`tools/bash.ts` near the final `textResult`/`noticedResult` return and the progress emitter; `tools/bash-output.ts` read-delta return; `tools/render.ts` `setResult`.
+
+## 2026-09-21 - Stop parked-session file polling (#1902)
+
+### What changed
+
+- `extension.ts` consumes retained-session parked/resumed events.
+- `monitor-registry.ts` pauses file-watch loops while parked, including watches registered by a detached turn, and resumes only watches not independently muted.
+
+### Why
+
+- The last socket disconnect did not stop the 250ms file-watch polls. Parking must not be persisted as a user mute or reset a monitor's wake budget.
+
+### Why an extension could not handle it
+
+- This builtin owns the live monitor registry and its polling loops.
+
+### Expected merge conflict zones
+
+- Terminal lifecycle subscriptions and monitor registration/check/resume paths.
+
+## 2026-09-17 - Load pi-pty on the first terminal session (senpi#1781)
+
+### What changed
+
+- New `pty.lazy.ts` owns the single deferred `import("@earendil-works/pi-pty")`; `manager.ts` and `runtime-session.ts` keep type-only pi-pty imports.
+- `TerminalManager.create` awaits `loadPty()` before constructing the session registry and the runtime session; the constructor no longer builds a registry, and the synchronous get/list/stop/teardown/reserve paths treat an unloaded registry as empty.
+- `SessionRegistryCapacityError` is re-exported as a type; `isCapacityError` matches `instanceof` against the loaded class and falls back to the error name before pi-pty has loaded.
+- `runtime-session.ts` top-level-awaits `loadPty()` so its synchronous constructor still works, and `manager.ts` dynamic-imports it so that await never joins the engine startup graph.
+
+### Why
+
+- pi-pty's `dist/screen.js` imports `@xterm/headless` at module evaluation, whose initialization spent about 458ms in `RegExp.prototype.test` on every CLI boot even when no terminal session was ever created.
+
+### Why an extension could not handle it
+
+- The terminal builtin is the in-tree owner of the PTY session graph; an outside extension cannot change its static imports.
+
+### Expected merge conflict zones
+
+- MEDIUM: the `manager.ts` constructor, `create`, `isCapacityError` and the capacity-error re-export.
+- LOW: `runtime-session.ts` constructor imports.
+
+## 2026-09-15 - Monitor bounds: paused watch zero-poll, capped line buffer (#1698)
+
+### What changed
+
+- `monitor-registry.ts` delegates to three extracted units: `monitor-line-buffer.ts` (tail capped at 64KiB), `monitor-file-watch.ts` (poll timer cleared while paused, immediate check on resume), and `monitor-file-digest.ts` (the sampled SHA-256 digest, moved unchanged).
+- A paused file monitor now does zero stat/digest work (its 250ms timer is cleared, not just ignored); resume runs one immediate check, preserving the deferred-fire semantics for changes made during the pause.
+
+### Why
+
+- A paused monitor still polled and digested its file every 250ms, and a newline-less output stream grew the session monitor's retained line tail without bound — both measured as idle-session CPU and memory growth.
+
+### Why an extension could not handle it
+
+- The poll scheduling and line buffering are internal to the monitor registry; extensions see only the public pause/resume API.
+
+### Expected merge conflict zones
+
+- LOW: `monitor-registry.ts` record fields (`poll` -> `watch`, `lineBuffer` string -> `MonitorLineBuffer`), pause/resume bodies, `#consume`. Public API and event payloads unchanged.
+
 # terminal builtin extension — fork surface
+
+## Replacement bash preserves declared eval exposure (2026-09-14, #1678)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/terminal/tools/bash.ts` declares `exposure: "eval"` on the PTY-backed bash replacement, matching the core bash definition.
+
+### Why
+
+- `packages/coding-agent/src/core/extensions/builtin/terminal/tools/bash.ts` replaces the core definition in normal SDK/CLI sessions. Without its own declaration, removing bash from the fixed eval-only set unintentionally exposes the replacement directly to the model.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/builtin/terminal/tools/bash.ts` owns this builtin replacement's definition. The declaration belongs on that definition, not in another name-based policy exception.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/builtin/terminal/tools/bash.ts`: the definition returned by createPtyBashTool. Spawn, path and process handling are unchanged.
 
 ## Foreground git commands stay non-interactive (2026-09-08)
 

@@ -2,7 +2,8 @@ import { existsSync } from "fs";
 import { readdir } from "fs/promises";
 import { join } from "path";
 import type { SessionHeader, SessionInfo } from "./session-manager.ts";
-import { readCachedSessionSummary } from "./session-summary-cache.ts";
+import { readCachedSessionSummary, type SessionSummaryStore } from "./session-summary-cache.ts";
+import { SessionSummaryIndex } from "./session-summary-index.ts";
 
 export type SessionListProgress = (loaded: number, total: number) => void;
 
@@ -20,10 +21,10 @@ function resolveModified(activityTime: number | undefined, header: SessionHeader
  * The summary is derived from every record in the file, so a row's name, first
  * message, message count, and activity time are exact regardless of where those
  * records sit. Repeat listings of an unchanged file are served from the
- * stat-keyed summary cache and deserialize nothing.
+ * stat-keyed summary cache (or `store` on a cache miss) and stream nothing.
  */
-export async function buildSessionInfo(filePath: string): Promise<SessionInfo | null> {
-	const cached = await readCachedSessionSummary(filePath);
+export async function buildSessionInfo(filePath: string, store?: SessionSummaryStore): Promise<SessionInfo | null> {
+	const cached = await readCachedSessionSummary(filePath, store);
 	if (!cached) return null;
 
 	const { summary, mtime } = cached;
@@ -40,12 +41,14 @@ export async function buildSessionInfo(filePath: string): Promise<SessionInfo | 
 		messageCount: summary.messageCount,
 		firstMessage: summary.firstUserMessage || "(no messages)",
 		allMessagesText: summary.allMessagesText,
+		...(summary.repositoryIdentity ? { repositoryIdentity: summary.repositoryIdentity } : {}),
 	};
 }
 
 async function buildSessionInfosWithConcurrency(
 	files: readonly string[],
 	onLoaded: () => void,
+	store: SessionSummaryStore | undefined,
 ): Promise<(SessionInfo | null)[]> {
 	const results: (SessionInfo | null)[] = new Array(files.length).fill(null);
 	const inFlight = new Set<Promise<void>>();
@@ -57,7 +60,7 @@ async function buildSessionInfosWithConcurrency(
 		if (!file) return;
 
 		let task: Promise<void>;
-		task = buildSessionInfo(file)
+		task = buildSessionInfo(file, store)
 			.then((info) => {
 				results[index] = info;
 			})
@@ -84,12 +87,31 @@ async function buildSessionInfosWithConcurrency(
 }
 
 /** Build picker rows for an explicit file list, dropping files that are not sessions. */
-export async function listSessionInfos(files: readonly string[], onLoaded: () => void): Promise<SessionInfo[]> {
-	const results = await buildSessionInfosWithConcurrency(files, onLoaded);
+export async function listSessionInfos(
+	files: readonly string[],
+	onLoaded: () => void,
+	store?: SessionSummaryStore,
+): Promise<SessionInfo[]> {
+	const results = await buildSessionInfosWithConcurrency(files, onLoaded, store);
 	const sessions: SessionInfo[] = [];
 	for (const info of results) {
 		if (info) sessions.push(info);
 	}
+	return sessions;
+}
+
+/**
+ * Build picker rows for session files that all live in `dir`, served through
+ * and then persisted into that directory's summary index.
+ */
+export async function listSessionFilesInDir(
+	dir: string,
+	files: readonly string[],
+	onLoaded: () => void,
+): Promise<SessionInfo[]> {
+	const index = new SessionSummaryIndex(dir);
+	const sessions = await listSessionInfos(files, onLoaded, index);
+	await index.persist(files);
 	return sessions;
 }
 
@@ -107,7 +129,7 @@ export async function listSessionsFromDir(
 		const files = dirEntries.filter((name) => name.endsWith(".jsonl")).map((name) => join(dir, name));
 		const total = progressTotal ?? files.length;
 		let loaded = 0;
-		return await listSessionInfos(files, () => {
+		return await listSessionFilesInDir(dir, files, () => {
 			loaded++;
 			onProgress?.(progressOffset + loaded, total);
 		});

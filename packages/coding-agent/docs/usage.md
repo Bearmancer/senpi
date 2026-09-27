@@ -47,11 +47,11 @@ Type `/` in the editor to open command completion. Extensions can register custo
 | `/scoped-models` | Enable/disable models for Ctrl+P cycling |
 | `/reasoning [on\|off]` | Show or toggle reasoning for the current model |
 | `/efforts [level]` | Show or set reasoning effort (graded models only) |
-| `/fast [on\|off]` | Toggle fast mode (OpenAI Codex models, persisted per model) |
+| `/fast [on\|off]` | Toggle fast mode (ChatGPT Subscription models, persisted per model) |
 | `/settings` | Theme, message delivery, transport, and other preferences |
 | `/resume` | Pick from previous sessions |
 | `/new` | Start a new session |
-| `/name <name>` | Set session display name |
+| `/rename [name]` | Rename the current session (`/name` is an alias) |
 | `/session` | Show session file, ID, messages, tokens, and cost |
 | `/tree` | Jump to any point in the session and continue from there |
 | `/trust` | Save project trust decision for future sessions |
@@ -81,7 +81,7 @@ Type `/` in the editor to open command completion. Extensions can register custo
 
 **`/efforts [minimal|low|medium|high|xhigh|max]`** sets the reasoning effort ladder for graded models. On/off-only models are directed to use `/reasoning` instead. `xhigh` and `max` appear only when the model supports them. No-arg shows current effort and available levels.
 
-**`/fast [on|off]`** toggles OpenAI Codex fast mode (`service_tier: "priority"`). The choice is remembered per model and survives restarts. No-arg toggles. Non-Codex models are told fast mode is unavailable. If the active model selection pins `:priority` via a favorite decorator, `/fast off` is blocked and explains why.
+**`/fast [on|off]`** toggles ChatGPT Subscription fast mode (`service_tier: "priority"`). The choice is remembered per model and survives restarts. No-arg toggles. Non-Codex models are told fast mode is unavailable. If the active model selection pins `:priority` via a favorite decorator, `/fast off` is blocked and explains why.
 
 All three commands work over RPC and headless (no selector opened, status sent as text notifications).
 
@@ -226,6 +226,7 @@ cat README.md | senpi -p "Summarize this text"
 | `-r`, `--resume` | Browse and select a session |
 | `--session <path\|id>` | Use a specific session file or partial UUID |
 | `--fork <path\|id>` | Fork a session file or partial UUID into a new session |
+| `--rebind <path\|id>` | Move a session of this repository, recorded at another path (moved or re-cloned), into this directory and continue it |
 | `--session-dir <dir>` | Custom session storage directory |
 | `--no-session` | Ephemeral mode; do not save |
 | `--name <name>`, `-n <name>` | Set session display name at startup |
@@ -240,6 +241,14 @@ cat README.md | senpi -p "Summarize this text"
 | `--no-tools`, `-nt` | Disable all tools |
 
 Built-in tools: `read`, `bash`, `edit`, `write`, `grep`, `find`, `ls`.
+
+#### `grep` tool contract
+
+Use `tool.grep({ pattern, path, glob, ignoreCase, literal, context, before, after, mode, limit, skip, timeoutMs, hidden, gitignore })` inside eval. `pattern` is required; `path` accepts a file, directory, array, or a `<file>:L1-L2` selector. `glob` accepts positive patterns and `!` exclusions. `mode` is `content` (default), `count`, or `files`; `limit` and `skip` paginate file results. `before`/`after` override `context`.
+
+Content output uses `path` blocks with `N: match` and `N- context` rows, followed by a footer such as `[grep: matches=2 files=2 searched=42 elapsedMs=8 engine=native nextSkip=none]`. The footer is always present. Tool results include `details` v1 with structured matches, file counts, scan status, and pagination metadata.
+
+The engine is selected automatically. `SENPI_GREP_ENGINE=auto|native|rg` selects the preferred engine, and `SENPI_GREP_NATIVE_PATH` overrides the native addon path. Native search honors filesystem policy and ignore files; ripgrep is the fallback.
 
 ### Resource Options
 

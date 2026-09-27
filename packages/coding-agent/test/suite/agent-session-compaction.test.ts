@@ -772,9 +772,13 @@ describe("AgentSession compaction characterization", () => {
 		});
 		harnesses.push(harness);
 		const seedTimestamp = Date.now() - 2_000;
+		// The faux provider bills call 1 against the REAL dynamic system prompt plus the tool
+		// schema (~3.3k tokens at the time of writing), so the seed only tops the context up: it
+		// must leave call 1 under the threshold while the 300-repeat tool result alone carries the
+		// assembled context over it. Keep the seed well clear of the boundary; the prompt grows.
 		harness.sessionManager.appendMessage({
 			role: "user",
-			content: [{ type: "text", text: "prior context ".repeat(220) }],
+			content: [{ type: "text", text: "prior context ".repeat(100) }],
 			timestamp: seedTimestamp,
 		});
 		harness.sessionManager.appendMessage(
@@ -815,7 +819,10 @@ describe("AgentSession compaction characterization", () => {
 			throw new Error("Expected a successful assistant tool call and its appended tool result");
 		}
 		const assembledContext = estimateContextTokens([toolCallResponse, toolResult]);
-		expect(toolCallResponse.usage.totalTokens).toBeLessThan(threshold);
+		// shouldCompact() triggers on `tokens > contextWindow - reserve`, so a call-1 response that
+		// lands exactly on the threshold still did not require compaction. Asserting a strict `<`
+		// here made the test fail whenever the estimate rounded onto the boundary.
+		expect(toolCallResponse.usage.totalTokens).toBeLessThanOrEqual(threshold);
 		expect(assembledContext.tokens).toBeGreaterThan(threshold);
 		expect(compactionEndsAtCall2).toBe(1);
 		expect(call2Context).toContain("tool result threshold summary");
@@ -886,7 +893,9 @@ describe("AgentSession compaction characterization", () => {
 			throw new Error("Expected the terminating tool result in the persisted session context");
 		}
 		const persistedContext = estimateContextTokens(harness.sessionManager.buildSessionContext().messages);
-		expect(terminatingToolCall.usage.totalTokens).toBeLessThan(threshold);
+		// Same boundary as above: the tool call alone must not have been over the compaction
+		// trigger, and the trigger is a strict `>`.
+		expect(terminatingToolCall.usage.totalTokens).toBeLessThanOrEqual(threshold);
 		expect(persistedContext.tokens).toBeGreaterThan(threshold);
 		expect(harness.faux.state.callCount).toBe(1);
 		expect(harness.eventsOfType("compaction_start").map((event) => event.reason)).toEqual(["threshold"]);
@@ -1944,7 +1953,7 @@ describe("AgentSession compaction characterization", () => {
 	it("auto-retries overflow recovery when a provider alias differs but current context is still near the limit", async () => {
 		const harness = await createHarness({
 			api: "openai-codex-responses",
-			provider: "openai-codex",
+			provider: "chatgpt-subscription",
 			models: [
 				{
 					id: "gpt-5.5",

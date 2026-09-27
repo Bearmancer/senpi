@@ -31,6 +31,40 @@ export const MEDIA_PLACEHOLDERS_CAPABILITY = "media_placeholders";
 export const QUESTION_CAPABILITY = "question";
 
 /**
+ * HOST capability (advertised in `get_protocol_info`, never sent by a client):
+ * this host honors `open_session.retain_on_disconnect`, so a session opened with
+ * that flag survives its last client's disconnect instead of being closed with it.
+ */
+export const RETAIN_ON_DISCONNECT_CAPABILITY = "retain_on_disconnect";
+
+/**
+ * HOST capability: this host accepts `open_session.context`, hands it to that session's
+ * extensions as `pi.sessionContext`, and republishes it on `list_sessions { include_workers: true }`.
+ */
+export const SESSION_CONTEXT_CAPABILITY = "session_context";
+
+/**
+ * HOST capability: this host accepts `open_session.kind`, publishes `kind` on every
+ * `list_sessions` row, hides `worker` rows unless `include_workers` is set, and keeps a
+ * worker session's lifecycle records on the connections attached to it.
+ */
+export const SESSION_KIND_CAPABILITY = "session_kind";
+
+/**
+ * HOST capability: this host honors `open_session.auto_title`, so a session can opt
+ * into or out of engine-side titling independently of `--auto-title-sessions`.
+ */
+export const AUTO_TITLE_PER_SESSION_CAPABILITY = "auto_title_per_session";
+
+/**
+ * HOST capability: this host honors `open_session.durableSessionId`, so a caller that already
+ * owns a stable record id for the conversation can CREATE the session under that id and keep
+ * one identity instead of maintaining a mapping. Ignored on resume, where the session file's
+ * header id stays authoritative.
+ */
+export const DURABLE_SESSION_ID_CAPABILITY = "durable_session_id";
+
+/**
  * Env var carrying client capabilities to a single-connection stdio RPC host
  * (comma-separated). A launcher may set it from a client handshake; a plain
  * stdio client leaves it unset and sees byte-identical default behavior.

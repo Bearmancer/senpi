@@ -282,6 +282,51 @@ describe("session selector path/delete interactions", () => {
 		expect(output).toContain("└─ Child");
 	});
 
+	it("re-resolves symlink aliases when the session list is replaced", async () => {
+		const paths = createSymlinkedSessionPaths();
+		tempDirs.push(paths.baseDir);
+		const aliasASessions = join(paths.baseDir, "alias-a", "sessions");
+		rmSync(aliasASessions);
+		const elsewhere = join(paths.baseDir, "elsewhere");
+		mkdirSync(elsewhere);
+		writeFileSync(join(elsewhere, "parent.jsonl"), "other parent\n");
+		symlinkSync(elsewhere, aliasASessions);
+
+		const listSessions = (): SessionInfo[] => [
+			makeSession({
+				id: "parent",
+				path: paths.parentAliasB,
+				name: "Parent",
+				modified: new Date("2026-01-01T00:00:00.000Z"),
+			}),
+			makeSession({
+				id: "child",
+				path: paths.childAliasB,
+				parentSessionPath: paths.parentAliasA,
+				name: "Child",
+				modified: new Date("2025-12-31T00:00:00.000Z"),
+			}),
+		];
+
+		const selector = new SessionSelectorComponent(
+			async () => listSessions(),
+			async () => [],
+			() => {},
+			() => {},
+			() => {},
+			() => {},
+			{ keybindings },
+		);
+		await flushPromises();
+		expect(stripAnsi(selector.render(120).join("\n"))).not.toContain("└─ Child");
+
+		rmSync(aliasASessions);
+		symlinkSync(join(paths.baseDir, "real", "sessions"), aliasASessions);
+		selector.getSessionList().setSessions(listSessions(), false);
+
+		expect(stripAnsi(selector.render(120).join("\n"))).toContain("└─ Child");
+	});
+
 	it("sorts threaded sessions by latest activity in their subtree", async () => {
 		const parentOne = makeSession({
 			id: "parent-one",

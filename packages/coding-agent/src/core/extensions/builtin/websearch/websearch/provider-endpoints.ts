@@ -3,6 +3,7 @@ import type { SearchProvider, SearchProviderConfig } from "./types.ts";
 const DEFAULT_PROVIDER_URLS: Record<SearchProvider, string> = {
 	exa: "https://api.exa.ai/search",
 	tavily: "https://api.tavily.com/search",
+	serpdive: "https://api.serpdive.com/v1/search",
 	brave: "https://api.search.brave.com/res/v1/web/search",
 	"duckduckgo-html": "https://html.duckduckgo.com/html/",
 	deepseek: "https://api.deepseek.com/anthropic/v1/messages",
@@ -15,6 +16,7 @@ const DEFAULT_PROVIDER_URLS: Record<SearchProvider, string> = {
 	perplexity: "https://api.perplexity.ai/search",
 	xai: "https://api.x.ai/v1/responses",
 	kimi: "https://api.kimi.com/coding/v1/search",
+	kagi: "https://kagi.com/api/v1/search",
 };
 
 export function defaultProviderUrl(provider: SearchProvider): string {

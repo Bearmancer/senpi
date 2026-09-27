@@ -4,6 +4,7 @@
  */
 
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
+import { legacyProviderIdRejection } from "@earendil-works/pi-ai";
 import chalk from "chalk";
 import { APP_NAME, CONFIG_DIR_NAME, ENV_AGENT_DIR, ENV_SESSION_DIR } from "../config.ts";
 import type { ExtensionFlag } from "../core/extensions/types.ts";
@@ -29,6 +30,7 @@ export interface Args {
 	session?: string;
 	sessionId?: string;
 	fork?: string;
+	rebind?: string;
 	sessionDir?: string;
 	models?: string[];
 	tools?: string[];
@@ -57,15 +59,41 @@ export interface Args {
 	grokNeo?: boolean;
 	/** Serve independently routed plain-RPC sessions over one host. */
 	multiSession?: boolean;
-	/** Opt non-interactive app modes (notably RPC) into engine-side session auto-titling. */
+	/**
+	 * Opt non-interactive app modes (notably RPC) into engine-side session auto-titling.
+	 * Deprecated for shared hosts: prefer per-session `open_session.auto_title`.
+	 */
 	autoTitleSessions?: boolean;
 	/** Multi-session RPC listener: stdio://, unix://, unix:///path, or a socket path. */
 	listen?: string;
+	/** Explicit session runtime for a multi-session host; `resolveSessionRuntime` owns the default. */
+	sessionRuntime?: SessionRuntimeKind;
 	messages: string[];
 	fileArgs: string[];
 	/** Unknown flags (potentially extension flags) - map of flag name to value */
 	unknownFlags: Map<string, boolean | string>;
 	diagnostics: Array<{ type: "warning" | "error"; message: string }>;
+}
+
+const SESSION_RUNTIMES = ["in-process", "worker"] as const;
+
+/** Where a multi-session host runs its sessions: in the host process, or one worker isolate each. */
+export type SessionRuntimeKind = (typeof SESSION_RUNTIMES)[number];
+
+export function isSessionRuntimeKind(value: string): value is SessionRuntimeKind {
+	return SESSION_RUNTIMES.includes(value as SessionRuntimeKind);
+}
+
+/**
+ * Session runtime of a multi-session host. A `--listen` SOCKET host is the
+ * machine-wide daemon every client shares: it runs every session IN the host
+ * process, so there is no worker isolate per session and no worker cap. stdio
+ * hosts and embedders keep the worker runtime unchanged. An explicit
+ * `--session-runtime` always wins over both defaults.
+ */
+export function resolveSessionRuntime(parsed: Pick<Args, "sessionRuntime" | "listen">): SessionRuntimeKind {
+	if (parsed.sessionRuntime) return parsed.sessionRuntime;
+	return parsed.listen !== undefined && parsed.listen !== "stdio://" ? "in-process" : "worker";
 }
 
 const VALID_THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
@@ -114,7 +142,13 @@ export function parseArgs(args: string[], options: { grokNeoEnabled?: boolean } 
 		} else if (arg === "--resume" || arg === "-r") {
 			result.resume = true;
 		} else if (arg === "--provider" && i + 1 < args.length) {
-			result.provider = args[++i];
+			const typedProvider = args[++i];
+			// A TYPED legacy provider id is rejected by name so the user learns the
+			// new id (senpi#1989), instead of a generic "Unknown provider" later.
+			// Ids read from disk are normalized instead and never rejected.
+			const rejection = typedProvider === undefined ? undefined : legacyProviderIdRejection(typedProvider);
+			if (rejection) throw new Error(rejection);
+			result.provider = typedProvider;
 		} else if (arg === "--model" && i + 1 < args.length) {
 			result.model = args[++i];
 		} else if (arg === "--api-key" && i + 1 < args.length) {
@@ -138,6 +172,8 @@ export function parseArgs(args: string[], options: { grokNeoEnabled?: boolean } 
 			result.sessionId = args[++i];
 		} else if (arg === "--fork" && i + 1 < args.length) {
 			result.fork = args[++i];
+		} else if (arg === "--rebind" && i + 1 < args.length) {
+			result.rebind = args[++i];
 		} else if (arg === "--session-dir" && i + 1 < args.length) {
 			result.sessionDir = args[++i];
 		} else if (arg === "--models" && i + 1 < args.length) {
@@ -242,6 +278,11 @@ export function parseArgs(args: string[], options: { grokNeoEnabled?: boolean } 
 			result.multiSession = true;
 		} else if (arg === "--auto-title-sessions") {
 			result.autoTitleSessions = true;
+		} else if (arg === "--session-runtime") {
+			const value = args[i + 1];
+			if (value !== undefined && !value.startsWith("--")) i++;
+			if (value !== undefined && isSessionRuntimeKind(value)) result.sessionRuntime = value;
+			else result.diagnostics.push({ type: "error", message: "--session-runtime must be in-process or worker" });
 		} else if (arg === "--listen" && result.mode === "rpc") {
 			const value = args[i + 1];
 			if (value === undefined || value.startsWith("--")) {
@@ -309,6 +350,8 @@ ${chalk.bold("Commands:")}
                                  Serve agent sessions over the Codex app-server protocol
   ${APP_NAME} app-server daemon <start|stop|status|restart> [--listen <url>]
                                  Manage the app-server daemon
+  ${APP_NAME} host <ensure|status|stop|handoff> [--launch-spec <file>]
+                                 Get, inspect or end the shared RPC daemon (one JSON line per call)
   ${APP_NAME} auth <command>            Print credentials or check provider readiness
   ${APP_NAME} <command> --help          Show help for install/remove/uninstall/update/list/config/auth
 
@@ -325,6 +368,7 @@ ${chalk.bold("Options:")}
   --session <path|id>            Use specific session file or partial UUID
   --session-id <id>              Use exact project session ID, creating it if missing
   --fork <path|id>               Fork specific session file or partial UUID into a new session
+  --rebind <path|id>             Move a session from a moved or re-cloned repository into this directory and continue it
   --session-dir <dir>            Directory for session storage and lookup
   --no-session                   Don't save session (ephemeral)
   --name, -n <name>              Set session display name
@@ -357,7 +401,8 @@ ${chalk.bold("Options:")}
   --offline                      Disable startup network operations (same as PI_OFFLINE=1)
 ${grokNeoOptionsText}  --multi-session               Serve multiple routed RPC sessions
   --listen <address>            RPC listener: stdio://, unix://, unix:///path, or a socket path
-  --auto-title-sessions         Auto-generate session titles outside interactive mode
+  --session-runtime <kind>      Multi-session host runtime: in-process (socket default) or worker
+  --auto-title-sessions         Auto-generate session titles outside interactive mode (deprecated for hosts; prefer open_session.auto_title)
   --help, -h                     Show this help
   --version, -v                  Show version number
 
@@ -368,7 +413,7 @@ ${chalk.bold("Examples:")}
   ${APP_NAME} auth print-api-key --provider openai
 
   # Print an OAuth bearer token for an external client (refreshes if expired)
-  ${APP_NAME} auth print-bearer-token --provider openai-codex
+  ${APP_NAME} auth print-bearer-token --provider chatgpt-subscription
 
   # Interactive mode
   ${APP_NAME}

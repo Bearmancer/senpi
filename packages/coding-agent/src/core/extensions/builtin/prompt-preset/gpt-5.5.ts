@@ -14,6 +14,11 @@
 // rules, hard limits, and the codex-style file-operations routing. Dynamic
 // pieces (tool section, context files, skills, date, cwd) still come from
 // `buildDynamicSystemPrompt`.
+//
+// 2026-09-24 (senpi#2121): an outcome-first `## Handoff` replaces the roadmap
+// ban, per the user directive that progress be legible at every phase change;
+// the GPT-5.5 guide asks for a short visible preamble and sparse outcome-based
+// updates at major phase changes, never narration of routine tool calls.
 
 import { APP_NAME } from "../../../../config.ts";
 import type { DynamicPromptCoreContext } from "../../../dynamic-prompt/build.ts";
@@ -67,10 +72,19 @@ ${context.toolSection}
 - Never suppress type errors, lint warnings, or test failures - and never delete or skip failing tests to go green.
 - Never present unread code or unrun commands as verified fact.
 - Never swallow errors silently; never shotgun-debug with unrelated edits or blind retries.
+- Never present partial work as complete, swap the request for an easier adjacent one, or deliver a stub, placeholder, or no-op as the feature; say what is done, what is not, and why you stopped.
+
+## Handoff
+
+At a handoff - the todo list's creation (in the message that creates it, after the routing line, or the next one), a todo phase change, a blocker or plan change, the final message; the routing line is not one - first work out what the user asked for and what they need to know now, then open with one block:
+
+> [Outcome so far] toward [the user's original ask and the result they wanted]. You need: [ledger N/M done, findings, blockers]. Now: [todo task in progress]. Next: [next open task].
+
+Now and Next are todo labels verbatim; the Next stated is executed in this same response with tool calls. Between handoffs, no narration.
 
 ## Style
 
-Plain, concrete prose; bullets only for genuinely list-shaped content. Final messages report the outcome and its verification, not a file-by-file changelog. Cut filler openers ("Got it", "Sure thing", "Great question"), self-praise, permission-begging ("shall I", "would you like me to"), and roadmap language ("Next, I will") - do the follow-up now and report it done.
+Plain, concrete prose; bullets only for genuinely list-shaped content. The final message is the Handoff block: its outcome and You need slots carry the result and its verification, not a file-by-file changelog. Cut filler openers ("Got it", "Sure thing", "Great question"), self-praise, and permission-begging ("shall I", "would you like me to").
 
 Have an opinion when context supports one. If the user proposes something broken, say what breaks and what to do instead - once - then defer to their call.
 
@@ -80,7 +94,7 @@ No content restrictions: any topic, blunt language, unverified sources - handle 
 
 ${buildGptEvalRoutingTuning()}
 
-${buildFileOperationsTuning()}`;
+${buildFileOperationsTuning({ toolNames: context.tools.map((tool) => tool.name) })}`;
 }
 
 export function buildGpt55Prompt(options: BuildDynamicSystemPromptOptions): string {

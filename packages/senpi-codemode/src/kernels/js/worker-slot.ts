@@ -39,18 +39,23 @@ export class WorkerSlot {
 		return this.#startupAbort !== null;
 	}
 
+	get generation(): number {
+		return this.#generation;
+	}
+
 	postMessage(message: HostToKernelMessage): void {
 		this.#worker?.postMessage(message);
 	}
 
 	async ensureReady(): Promise<void> {
 		if (!this.#ready) {
-			const generation = ++this.#generation;
+			const generation = this.#generation === 0 ? ++this.#generation : this.#generation;
 			const controller = new AbortController();
 			this.#startupAbort = controller;
 			const ready = startWorkerWithInlineFallback(
 				{
 					options: this.#options,
+					kernelGeneration: generation,
 					publish: (worker) => this.#publish(worker, generation),
 					isCurrent: (worker) => this.#isCurrent(worker, generation),
 					retire: (worker) => {

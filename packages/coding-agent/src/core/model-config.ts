@@ -2,6 +2,7 @@
 
 import { readFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
+import { normalizeProviderId } from "@earendil-works/pi-ai";
 import type { TLocalizedValidationError } from "typebox/error";
 import { stripJsonComments } from "../utils/json.ts";
 import { normalizePath } from "../utils/paths.ts";
@@ -13,6 +14,7 @@ import {
 	type ModelsJsonModelOverride as SchemaModelsJsonModelOverride,
 	validateModelsConfig,
 } from "./model-config-schema.ts";
+import { migrateModelsJsonProviderIds } from "./models-json-migration.ts";
 
 export type ModelsJsonModel = SchemaModelsJsonModel & { samplingParams?: Record<string, unknown> };
 export type ModelsJsonModelOverride = SchemaModelsJsonModelOverride & { samplingParams?: Record<string, unknown> };
@@ -456,15 +458,18 @@ export class ModelConfig {
 	private readonly providers: ReadonlyMap<string, ModelsJsonProvider>;
 	private readonly disabledProviders: ReadonlySet<string>;
 	private readonly error: string | undefined;
+	private readonly warnings: readonly string[];
 
 	private constructor(
 		providers: ReadonlyMap<string, ModelsJsonProvider>,
 		disabledProviders: ReadonlySet<string> = new Set(),
 		error?: string,
+		warnings: readonly string[] = [],
 	) {
 		this.providers = providers;
 		this.disabledProviders = disabledProviders;
 		this.error = error;
+		this.warnings = warnings;
 	}
 
 	private static parse(content: string, path: string): ModelConfig {
@@ -495,16 +500,19 @@ export class ModelConfig {
 						{ compat?: Record<string, unknown>; samplingParams?: Record<string, unknown> }
 					>;
 				};
-				for (const model of [...(record.models ?? []), ...Object.values(record.modelOverrides ?? {})]) {
+				// Shape errors are the validator's to report; only well-shaped entries are normalized here.
+				const modelEntries = [
+					...(Array.isArray(record.models) ? record.models : []),
+					...(typeof record.modelOverrides === "object" && record.modelOverrides !== null
+						? Object.values(record.modelOverrides)
+						: []),
+				].filter((model) => typeof model === "object" && model !== null);
+				for (const model of modelEntries) {
 					delete model.samplingParams;
 				}
-				const compatEntries = [
-					record.compat,
-					...(record.models ?? []).map((model) => model.compat),
-					...Object.values(record.modelOverrides ?? {}).map((model) => model.compat),
-				];
+				const compatEntries = [record.compat, ...modelEntries.map((model) => model.compat)];
 				for (const compat of compatEntries) {
-					if (!compat) continue;
+					if (typeof compat !== "object" || compat === null) continue;
 					if (compat.thinkingFormat === "baseten") compat.thinkingFormat = "together";
 					delete compat.chatTemplateArgs;
 				}
@@ -522,10 +530,27 @@ export class ModelConfig {
 
 		const config = parsed as ModelsJson;
 		const providers = new Map<string, ModelsJsonProvider>();
+		// Read boundary (senpi#1989): a models.json written before the rename keys
+		// its overlay by the legacy provider id. Normalize the key so the overlay
+		// still attaches; `parseAndMigrate` then rewrites the file once (senpi#2044).
 		for (const [providerId, provider] of Object.entries(config.providers)) {
-			providers.set(providerId, deepFreeze(structuredClone(provider)));
+			const canonical = normalizeProviderId(providerId);
+			// An explicit canonical entry wins over a legacy one that normalizes onto it.
+			if (canonical !== providerId && providers.has(canonical)) continue;
+			providers.set(canonical, deepFreeze(structuredClone(provider)));
 		}
-		return new ModelConfig(providers, new Set(config.disabledProviders ?? []));
+		const disabled = new Set((config.disabledProviders ?? []).map((id) => normalizeProviderId(id)));
+		return new ModelConfig(providers, disabled);
+	}
+
+	private static parseAndMigrate(content: string, path: string): ModelConfig {
+		const config = ModelConfig.parse(content, path);
+		if (config.error !== undefined) return config;
+		const migration = migrateModelsJsonProviderIds(path, content);
+		if (migration.kind !== "failed") return config;
+		return new ModelConfig(config.providers, config.disabledProviders, undefined, [
+			`models.json uses renamed provider ids (${migration.renamed.join(", ")}) and could not be updated automatically: ${migration.reason}. They still work, but update the file to the new ids.`,
+		]);
 	}
 
 	static async load(modelsJsonPath: string | undefined): Promise<ModelConfig> {
@@ -542,14 +567,14 @@ export class ModelConfig {
 				`Failed to load models.json: ${error instanceof Error ? error.message : error}\n\nFile: ${path}`,
 			);
 		}
-		return ModelConfig.parse(content, path);
+		return ModelConfig.parseAndMigrate(content, path);
 	}
 
 	static loadSync(modelsJsonPath: string | undefined): ModelConfig {
 		if (!modelsJsonPath) return new ModelConfig(new Map());
 		const path = normalizePath(modelsJsonPath);
 		try {
-			return ModelConfig.parse(readFileSync(path, "utf-8"), path);
+			return ModelConfig.parseAndMigrate(readFileSync(path, "utf-8"), path);
 		} catch (error) {
 			if ((error as NodeJS.ErrnoException).code === "ENOENT") return new ModelConfig(new Map());
 			return new ModelConfig(
@@ -574,5 +599,10 @@ export class ModelConfig {
 
 	getError(): string | undefined {
 		return this.error;
+	}
+
+	/** Non-fatal notices raised while reading models.json (e.g. renamed provider ids). */
+	getWarnings(): readonly string[] {
+		return this.warnings;
 	}
 }

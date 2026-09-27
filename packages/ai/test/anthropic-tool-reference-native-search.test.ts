@@ -111,6 +111,36 @@ describe("Anthropic native tool-search reference integrity", () => {
 		expect(allBlocks(params).some((block) => block.type === "server_tool_use")).toBe(true);
 	});
 
+	it("strips a gateway namespace whose prefix is capitalized", async () => {
+		const context: Context = {
+			messages: [
+				userMessage("find a tool"),
+				nativeSearchTurn(["Mcp__a4e6__Memory", "MCP__a4e6__lsp_symbols"]),
+				userMessage("done"),
+			],
+			tools: [makeTool("tool_search"), makeTool("memory"), makeTool("lsp_symbols")],
+		};
+
+		const params = await captureParams(context, undefined, "claude-sonnet-4-6");
+
+		expect(nativeSearchReferenceNames(params)).toEqual(["memory", "lsp_symbols"]);
+	});
+
+	it("resolves a reference under a namespace id with underscores or onto a namespaced request tool", async () => {
+		const context: Context = {
+			messages: [
+				userMessage("find a tool"),
+				nativeSearchTurn(["mcp__my_server__Memory", "mcp__a4e6__create_issue"]),
+				userMessage("done"),
+			],
+			tools: [makeTool("tool_search"), makeTool("memory"), makeTool("mcp_github_create_issue")],
+		};
+
+		const params = await captureParams(context, undefined, "claude-sonnet-4-6");
+
+		expect(nativeSearchReferenceNames(params)).toEqual(["memory", "mcp_github_create_issue"]);
+	});
+
 	it("drops a recased reference when two request tools fold onto the same name", async () => {
 		const context: Context = {
 			messages: [

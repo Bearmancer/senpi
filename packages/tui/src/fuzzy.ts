@@ -147,9 +147,14 @@ function buildAlphanumericSwapQueries(queryLower: string): string[] {
 }
 
 export function fuzzyMatch(query: string, text: string): FuzzyMatch {
-	const queryLower = query.toLowerCase();
-	const textLower = text.toLowerCase();
+	return fuzzyMatchLower(query.toLowerCase(), text.toLowerCase());
+}
 
+/**
+ * {@link fuzzyMatch} for inputs the caller has already lower-cased, so a caller matching many
+ * queries against the same large text can lower-case that text once.
+ */
+export function fuzzyMatchLower(queryLower: string, textLower: string): FuzzyMatch {
 	const direct = scoreMatch(queryLower, textLower);
 	if (direct.matches) {
 		return direct;

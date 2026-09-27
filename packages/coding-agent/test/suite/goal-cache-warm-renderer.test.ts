@@ -60,6 +60,27 @@ describe("goal cache-warm entry renderer", () => {
 		expect(text).toContain("$0.324 saved");
 	});
 
+	// code-yeongyu/senpi#831: a best-effort cache has no TTL, so the card claims neither warmth nor savings.
+	it("describes a best-effort provider cache without a TTL, warmth, or savings claim", () => {
+		for (const phase of ["scheduled", "resumed"] as const) {
+			const text = renderToText({
+				phase,
+				goalId: "goal-best-effort",
+				delayMs: 3_570_000,
+				waitedMs: 3_570_000,
+				activeMonitorCount: 1,
+				iteration: 1,
+				cache: { cachedTokens: 120_000, cacheLifetime: "best-effort" },
+			});
+			expect(text).toMatch(/~120K tokens were cached after the prior turn/);
+			expect(text).toMatch(/best-effort/);
+			expect(text).not.toContain("TTL");
+			expect(text).not.toContain("kept warm");
+			expect(text).not.toContain("stayed warm");
+			expect(text).not.toContain("saved");
+		}
+	});
+
 	it("renders the resumed wake with savings", () => {
 		const text = renderToText({
 			phase: "resumed",

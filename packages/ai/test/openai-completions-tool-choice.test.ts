@@ -230,6 +230,32 @@ describe("openai-completions tool_choice", () => {
 		expect(secondParams.tool_choice).toBeUndefined();
 	});
 
+	it("retries without tool_choice when a gateway's always-thinking model refuses the forced choice", async () => {
+		mockState.createErrors.push(
+			new HttpStatusError(
+				400,
+				`400: {"message":"This model always runs with thinking enabled, so tool_choice cannot force tool use. Use tool_choice 'auto' or 'none'.","type":"invalid_request_error","param":"tool_choice"}`,
+			),
+		);
+
+		const { compat: _compat, ...baseModel } = getModel("openai", "gpt-4o-mini")!;
+		const model = { ...baseModel, api: "openai-completions" } as const;
+		const tools: Tool[] = [
+			{ name: "todo", description: "Todo tool", parameters: Type.Object({ op: Type.String() }) },
+		];
+
+		const response = await stream(
+			model,
+			{ messages: [{ role: "user", content: "Plan the work", timestamp: Date.now() }], tools },
+			{ apiKey: "test", toolChoice: { type: "function", function: { name: "todo" } } },
+		).result();
+
+		expect(response.stopReason).toBe("stop");
+		expect(mockState.calls).toHaveLength(2);
+		expect(recordAt(mockState.calls, 0).tool_choice).toEqual({ type: "function", function: { name: "todo" } });
+		expect(recordAt(mockState.calls, 1).tool_choice).toBeUndefined();
+	});
+
 	it("omits strict when compat disables strict mode", async () => {
 		const { compat: _compat, ...baseModel } = getModel("openai", "gpt-4o-mini")!;
 		const model = {
@@ -377,13 +403,13 @@ describe("openai-completions tool_choice", () => {
 
 	it("stores z.ai effort metadata", () => {
 		for (const provider of ["zai", "zai-coding-cn"] as const) {
-			for (const modelId of ["glm-5.2", "glm-5.2-highspeed"] as const) {
+			for (const modelId of ["glm-5.3", "glm-5.3-highspeed"] as const) {
 				const model = getModel(provider, modelId)!;
 				expect(model.compat?.supportsReasoningEffort).toBe(true);
 				expect(model.thinkingLevelMap).toEqual({
-					off: "none",
+					off: null,
 					minimal: null,
-					low: null,
+					low: "low",
 					medium: null,
 					high: "high",
 					xhigh: null,
@@ -1665,10 +1691,7 @@ describe("openai-completions tool_choice", () => {
 			name: "Custom Uppercase DeepSeek Model",
 			baseUrl: "https://API.DeepSeek.COM",
 		} satisfies Model<"openai-completions">;
-		const nativeModels = [
-			getModel("deepseek", "deepseek-v4-flash")!,
-			getModel("deepseek", "deepseek-v4-pro")!,
-		] as const;
+		const nativeModels = [getModel("deepseek", "deepseek-flash")!, getModel("deepseek", "deepseek-v4-pro")!] as const;
 		const cases = [...nativeModels, customModel, customUppercaseModel] as const;
 
 		for (const model of nativeModels) {

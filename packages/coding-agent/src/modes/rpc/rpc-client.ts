@@ -32,6 +32,7 @@ import type { JsonAgentSessionEvent } from "../json-event.ts";
 import { attachJsonlLineReader, serializeJsonLine } from "./jsonl.ts";
 import type {
 	EditAssistantMessageResult,
+	EditUserMessageResult,
 	RpcAccountFailoverEvent,
 	RpcAuthAccountsChangedEvent,
 	RpcCommand,
@@ -42,6 +43,7 @@ import type {
 	RpcProviderAccount,
 	RpcResponse,
 	RpcSessionModelEntry,
+	RpcSessionParkedEvent,
 	RpcSessionReplacedEvent,
 	RpcSessionState,
 	RpcSlashCommand,
@@ -112,6 +114,10 @@ export type RpcClientEvent =
 	// `{ cancelled }`, and a replacement may be driven by another client or an
 	// extension, so this is the only channel delivering the new identity.
 	| RpcSessionReplacedEvent
+	// The host parked a retained session at its idle window. Part of the public union
+	// because it REPLACES `session_closed` for that handle: a client that treats it as
+	// a close loses the session it was told to reopen by path.
+	| RpcSessionParkedEvent
 	| { type: "bash_start" }
 	| { type: "bash_end" };
 export type RpcEventListener = (event: RpcClientEvent) => void;
@@ -216,7 +222,17 @@ export class RpcClient {
 
 		const childProcess = spawn("node", [cliPath, ...args], {
 			cwd: this.options.cwd,
-			env: { ...process.env, ...this.options.env },
+			env: {
+				...process.env,
+				// The spawned child must BE the process this client signals and reaps. An ambient
+				// SENPI_RUNTIME=bun pin makes the launcher re-exec under Bun via spawnSync, so a
+				// SIGTERM to the wrapper leaves the Bun host running: it keeps the session lease
+				// and keeps writing session state after stop() resolved. Pin the runtime to the
+				// interpreter chosen here, the same way app-server/daemon.ts does; options.env is
+				// spread last so a caller can still override the pin explicitly.
+				SENPI_RUNTIME: "node",
+				...this.options.env,
+			},
 			stdio: ["pipe", "pipe", "pipe"],
 			// Callers may be console-less on win32 (GUI hosts, detached daemons), and a
 			// console-subsystem child would then allocate a fresh visible terminal window.
@@ -377,6 +393,10 @@ export class RpcClient {
 		modelId?: string;
 		thinkingLevel?: ThinkingLevel;
 		permissionPreset?: string;
+		/** Keep the session alive when its last client disconnects; needs the host's `retain_on_disconnect`. */
+		retain_on_disconnect?: boolean;
+		/** Per-session auto-titling; needs the host's `auto_title_per_session`. */
+		auto_title?: boolean;
 	}): Promise<{ sessionId: string; state: RpcSessionState; attached?: boolean }> {
 		if (this.pendingOpenSession) throw new RpcClientOpenInFlightError();
 		this.pendingOpenSession = true;
@@ -422,6 +442,8 @@ export class RpcClient {
 			cwd: string;
 			name?: string;
 			status: "opening" | "open" | "closing" | "closed";
+			/** Live client attachments; absent from hosts older than the `retain_on_disconnect` capability. */
+			attachments?: number;
 		}>
 	> {
 		const response = await this.send({ type: "list_sessions" }, false);
@@ -433,6 +455,7 @@ export class RpcClient {
 				cwd: string;
 				name?: string;
 				status: "opening" | "open" | "closing" | "closed";
+				attachments?: number;
 			}>;
 		}>(response).sessions;
 	}
@@ -663,7 +686,7 @@ export class RpcClient {
 	}
 
 	/**
-	 * Turn OpenAI Codex fast mode (the `priority` service tier) on or off for the active model.
+	 * Turn ChatGPT Subscription fast mode (the `priority` service tier) on or off for the active model.
 	 *
 	 * The choice is remembered per model, so a later session on the same model starts the same
 	 * way. Throws when the request is refused: a non-Codex model, or an active `:priority` model
@@ -744,8 +767,21 @@ export class RpcClient {
 
 	async navigateTree(
 		targetId: string,
-		options?: { summarize?: boolean; customInstructions?: string; replaceInstructions?: boolean; label?: string },
-	): Promise<{ cancelled: boolean; editorText?: string; aborted?: boolean; summaryEntry?: unknown }> {
+		options?: {
+			intent?: "select" | "resume";
+			summarize?: boolean;
+			customInstructions?: string;
+			replaceInstructions?: boolean;
+			label?: string;
+			expectedLeafId?: string;
+		},
+	): Promise<{
+		cancelled: boolean;
+		leafId: string | null;
+		editorText?: string;
+		aborted?: boolean;
+		summaryEntry?: unknown;
+	}> {
 		const response = await this.send({ type: "navigate_tree", targetId, ...options });
 		return this.getData(response);
 	}
@@ -856,6 +892,26 @@ export class RpcClient {
 			customInstructions: options.customInstructions,
 		});
 		return this.getData<EditAssistantMessageResult>(response);
+	}
+
+	/**
+	 * Replace a user prompt without starting a turn. Address the message by entryId and pass the
+	 * separately observed leafId as expectedLeafId. Refusals reject with RpcCommandError.
+	 */
+	async editUserMessage(
+		entryId: string,
+		text: string,
+		options: { expectedLeafId?: string; summarize?: boolean; customInstructions?: string } = {},
+	): Promise<EditUserMessageResult> {
+		const response = await this.send({
+			type: "edit_user_message",
+			entryId,
+			text,
+			expectedLeafId: options.expectedLeafId,
+			summarize: options.summarize,
+			customInstructions: options.customInstructions,
+		});
+		return this.getData<EditUserMessageResult>(response);
 	}
 
 	/**
@@ -976,7 +1032,8 @@ export class RpcClient {
 					event.type === "bash_end" ||
 					event.type === "extension_ui_request" ||
 					// Connection-level, not part of the agent's event stream.
-					event.type === "session_replaced"
+					event.type === "session_replaced" ||
+					event.type === "session_parked"
 				)
 					return;
 				events.push(event);

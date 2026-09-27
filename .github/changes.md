@@ -1,5 +1,150 @@
 # changes
 
+## 2026-09-24 - Build and verify the senpi-desktop-engine binary in the native matrix (senpi#2128)
+
+### What changed
+
+- `.github/workflows/native-prebuilds.yml`: every row builds the `senpi-desktop-engine` binary (`cargo zigbuild` on the Linux rows, `cargo build --target` elsewhere) and stages it next to the `.node` files; the Stage step asserts exactly one `senpi-desktop-engine*` file and records `file_senpi_desktop_engine=` in `manifest.txt`; the non-cross rows run the desktop crate tests and a lifecycle probe (`scripts/ci/probe-desktop-engine.mjs`: `--selftest`, `capabilities` reports `fake` / `unavailable`); the win32-x64 row runs `scripts/ci/windows-interactive-desktop-smoke.ps1` (SendInput click + UI Automation read on a WinForms window). Path filters add `crates/senpi-desktop-*/**`, `packages/desktop-*/**`, and `scripts/ci/**`; `Swatinem/rust-cache` keyed per target; `timeout-minutes` 45 -> 75.
+
+### Why
+
+- The desktop engine ships as a per-platform binary; packaging must be exercised on all six targets before any native backend exists, and the Windows desktop QA job needs proof that the hosted runner has an interactive desktop.
+
+### Why an extension could not handle it
+
+- CI workflow configuration.
+
+### Expected merge conflict zones
+
+- LOW: fork-only workflow; the path filters, the build/stage steps, and `manifest.txt` fields of `native-prebuilds.yml`.
+
+## 2026-09-23 - Windows Claude Code executable job and SDK currency gate (senpi#2053)
+
+### What changed
+
+- `.github/workflows/ci.yml`: new `claude-executable-windows` job (windows-latest, Node 24 + Bun 1.4.2) runs the Claude executable path-lookup tests and the real-file npm `claude.cmd` shim test under Node and Bun, then fails if the shim test was skipped instead of passing; it is part of the `Check and test` fan-in.
+- `.github/workflows/releasability.yml`: `model-catalog-regen` runs `scripts/check-claude-code-model-support.mjs --strict` after regeneration; new nightly `claude-sdk-currency` job runs it `--sdk-currency` and reports through `report-failure`.
+
+### Why
+
+- The Windows shim resolution only exists on a real Windows host, and no existing Windows job ran the Claude executable tests (oh-my-openagent#8700). A pinned Claude Agent SDK behind the newest release is how new Claude models shipped unusable twice; the nightly gate turns that into a tracked issue without redding PR bases.
+
+### Why an extension could not handle it
+
+- CI workflow configuration.
+
+### Expected merge conflict zones
+
+- LOW: the job list and the `Check and test` needs/summary in `ci.yml`; the `report-failure` needs/env/results in `releasability.yml`.
+
+## 2026-09-17 - Run the `senpi host` named-pipe cell on the Windows RPC job (senpi#1782)
+
+### What changed
+
+- `.github/workflows/ci.yml`: the `rpc-windows` job gains one step, `bunx vitest run test/suite/host-cli-win32.test.ts`, after the socket-transport step. It is the win32 cell of the `senpi host` contract: a second `ensure` reuses the daemon on the named pipe, and `handoff` refuses with `upgrade_unsupported`.
+
+### Why
+
+- Both properties are platform-specific and cannot be observed on POSIX: the endpoint is a pipe derived from the socket path, and a named pipe can be neither renamed nor drained, so the handoff must refuse rather than attempt one. The POSIX suites skip on win32 by construction, so without this step nothing would run that cell.
+
+### Why an extension could not handle it
+
+- CI job definition; it selects which suites run on which runner.
+
+### Expected merge conflict zones
+
+- LOW: the step list of the `rpc-windows` job.
+
+## 2026-09-14 - Exercise Node worker bundles on Linux
+
+### What changed
+
+- `.github/workflows/ci.yml` runs Node bundle SDK isolation and real CLI/shared-session smoke tests serially after workspace build in the Ubuntu Node 24 job.
+
+### Why
+
+- `.github/workflows/ci.yml` previously never invoked the standalone Node bundle builder, leaving unsupported runtime imports and worker startup failures undetected (Refs #1656).
+
+### Why an extension could not handle it
+
+- `.github/workflows/ci.yml` defines test execution before any runtime extensions load.
+
+### Expected merge conflict zones
+
+- `.github/workflows/ci.yml`: workspace build and script-test steps.
+
+## 2026-09-14 - Run the grep contract suite against the native engine on linux
+
+### What changed
+
+- `.github/workflows/ci.yml`: added the `grep-native-contract` job (ubuntu-latest). It reads the toolchain channel from `rust-toolchain.toml`, caches cargo state with `Swatinem/rust-cache`, builds `senpi-grep` with `cargo build --release --locked` plus a `napi build --platform --release` addon, resolves the generated `senpi_grep.*.node` by glob, and runs `test/grep` twice in the same job - once with `SENPI_GREP_ENGINE=native` against that addon and once with `SENPI_GREP_ENGINE=rg`. The native leg writes a vitest JSON report that is asserted to contain the native contract file with every case passed and none skipped. The job joins the `check-and-test` fan-in gate and its summary; the three coding-agent shards and the Windows jobs are unchanged.
+
+### Why
+
+- `.github/workflows/ci.yml`: the shards only ever exercise the ripgrep fallback, so the native engine could regress undetected. Building the addon inside CI and running the shared contract suite under both engines is the only gate that proves engine parity on a clean machine (Refs #1678).
+
+### Why an extension could not handle it
+
+- `.github/workflows/ci.yml`: runner selection, the Rust toolchain, native addon builds and job-level required-status wiring are CI configuration evaluated long before any Senpi runtime or extension loader exists.
+
+### Expected merge conflict zones
+
+- MEDIUM: the `jobs` map and the `check-and-test` `needs` list in `.github/workflows/ci.yml` whenever upstream restructures CI.
+
+## 2026-09-14 - Enforce freshly staged release entry graphs
+
+### What changed
+
+- `.github/workflows/ci.yml` runs the codemode graph followed by the existing exclusions graph in the required workspaces/scripts job, before script suites invalidate generated output. It rebuilds the trusted canvas native binding after the lifecycle-disabled install; the codemode suite rebuilds workspace entries and compile assets itself.
+
+### Why
+
+- `.github/workflows/ci.yml` must execute the real contribution tests instead of leaving the root Bun `.ts` tests outside its Node `.mjs` glob. Native release prerequisites must be present for the graph build (Refs #1656).
+
+### Why an extension could not handle it
+
+- `.github/workflows/ci.yml` establishes build prerequisites and validation order before runtime extensions load.
+
+### Expected merge conflict zones
+
+- The `Fresh release entry graphs (codemode and exclusions)` step in `.github/workflows/ci.yml`.
+
+## 2026-09-13 - Verify split workers with the release compiler
+
+### What changed
+
+- `.github/workflows/session-worker-compile.yml` pins Bun 1.4.2, runs the parsed-argv contracts and both relocation strategies, and watches release scripts, package metadata, Bun/RPC sources and dependency locks. Ubuntu, macOS and Windows remain mandatory matrix legs.
+
+### Why
+
+- `.github/workflows/session-worker-compile.yml` must exercise the compiler version and graph inputs used by standalone releases, including the Windows embedded-worker path contract (Refs #1656).
+
+### Why an extension could not handle it
+
+- `.github/workflows/session-worker-compile.yml` configures CI before any runtime extension exists.
+
+### Expected merge conflict zones
+
+- The path filters, Bun setup and test steps in `.github/workflows/session-worker-compile.yml`.
+
+## Provision Bun for native extension importer tests (2026-09-13)
+
+### What changed
+
+- `.github/workflows/ci.yml` installs pinned Bun 1.4.2 before each coding-agent test shard while retaining Node as the Vitest runtime. A Windows job also executes native importer regressions and the relocated compiled extension suite, and participates in the required fan-in gate.
+
+### Why
+
+- `.github/workflows/ci.yml` must provide the real Bun subprocess used by native extension importer tests; Node-only runners fail with `spawnSync bun ENOENT` (Refs #1656). General Windows test jobs do not prove compiled extension loading, so this surface has an explicit Windows gate.
+
+### Why an extension could not handle it
+
+- `.github/workflows/ci.yml` provisions test dependencies before runtime extensions load.
+
+### Expected merge conflict zones
+
+- The coding-agent shard setup, compiled extension Windows job and required fan-in dependencies in `.github/workflows/ci.yml`.
+
 ## Pin Bun CI and release builds to 1.4.2 (2026-09-08)
 
 ### What changed

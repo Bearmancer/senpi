@@ -9,7 +9,9 @@ import {
 	getCursorVariantAlias,
 	type KnownProvider,
 	type Model,
+	type ModelThinkingLevel,
 	modelsAreEqual,
+	parseCursorVariantId,
 	type ThinkingSelection,
 } from "@earendil-works/pi-ai";
 import chalk from "chalk";
@@ -39,13 +41,16 @@ export const defaultModelPerProvider: Record<string, string> = {
 	"amazon-bedrock": "us.anthropic.claude-opus-4-6-v1",
 	"ant-ling": "Ring-2.6-1T",
 	anthropic: "claude-opus-4-8",
-	openai: "gpt-5.6-sol",
+	bai: "gpt-5.6-sol",
+	openai: "gpt-6-sol",
 	"azure-openai-responses": "gpt-5.4",
-	"openai-codex": "gpt-5.6-sol",
+	"chatgpt-subscription": "gpt-6-sol",
 	ollama: "qwen3.5:397b",
 	// Cursor ships no models until its chat protocol is ported; "auto" matches
 	// the Cursor agent's native model auto-selection once models exist.
 	cursor: "auto",
+	// Radius resolves its catalog after discovery; "balanced" is the selectable default.
+	radius: "balanced",
 	nvidia: "nvidia/nemotron-3-super-120b-a12b",
 	deepseek: "deepseek-v4-pro",
 	google: "gemini-3.1-pro-preview",
@@ -54,7 +59,7 @@ export const defaultModelPerProvider: Record<string, string> = {
 	openrouter: "moonshotai/kimi-k2.6",
 	"vercel-ai-gateway": "zai/glm-5.1",
 	opengateway: "moonshotai/kimi-k3",
-	xai: "grok-4.5",
+	xai: "grok-4.7",
 	groq: "openai/gpt-oss-120b",
 	cerebras: "gpt-oss-120b",
 	zai: "glm-5.3",
@@ -65,7 +70,7 @@ export const defaultModelPerProvider: Record<string, string> = {
 	moonshotai: "kimi-k2.6",
 	"moonshotai-cn": "kimi-k2.6",
 	huggingface: "moonshotai/Kimi-K2.6",
-	fireworks: "accounts/fireworks/models/kimi-k2p6",
+	fireworks: "accounts/fireworks/models/kimi-k3",
 	together: "moonshotai/Kimi-K2.6",
 	venice: "z-ai-glm-5-3",
 	baseten: "zai-org/GLM-5.2",
@@ -181,6 +186,53 @@ function legacySelection(legacyVariantId: string): ThinkingSelection | undefined
 	return { level: alias.level, source: "legacy-variant", legacyVariantId };
 }
 
+function derivedCursorVariantIds(model: Model<Api>): Readonly<Partial<Record<ModelThinkingLevel, string>>> | undefined {
+	if (
+		(model.provider !== "cursor" || model.api !== "cursor-agent") &&
+		(model.provider !== "cursor-cli-oauth" || model.api !== "cursor-cli-oauth")
+	)
+		return undefined;
+	// The CLI provider registers its own API id but shares Cursor's catalog compat schema.
+	return (model as Model<"cursor-agent">).compat?.cursorReasoning?.variantIds;
+}
+
+interface DerivedCursorVariantMatch {
+	readonly level: ModelThinkingLevel;
+	/** The catalog's own spelling; the selection descriptor allowlists exact ids only. */
+	readonly variantId: string;
+}
+
+/**
+ * Reverse lookup through variant ids a runtime-derived Cursor group observed (senpi#2038).
+ * Case-insensitive like `findExactModelReferenceMatch`, which resolved these ids before grouping.
+ */
+function derivedCursorVariantMatch(model: Model<Api>, reference: string): DerivedCursorVariantMatch | undefined {
+	const variantIds = derivedCursorVariantIds(model);
+	if (variantIds === undefined) return undefined;
+	const normalized = reference.toLowerCase();
+	for (const [level, id] of Object.entries(variantIds)) {
+		if (id?.toLowerCase() === normalized) return { level: level as ModelThinkingLevel, variantId: id };
+	}
+	return undefined;
+}
+
+function derivedResolution(model: Model<Api>, match: DerivedCursorVariantMatch): ResolvedModelReference {
+	return {
+		model,
+		thinkingLevel: match.level,
+		thinkingSelection: { level: match.level, source: "legacy-variant", legacyVariantId: match.variantId },
+	};
+}
+
+function cursorLegacySelection(model: Model<Api>, variantId: string): ThinkingSelection | undefined {
+	const alias = legacySelection(variantId);
+	if (alias) return alias;
+	const match = derivedCursorVariantMatch(model, variantId);
+	return match === undefined
+		? undefined
+		: { level: match.level, source: "legacy-variant", legacyVariantId: match.variantId };
+}
+
 function resolveLegacyCursorReference(
 	modelReference: string,
 	availableModels: readonly Model<Api>[],
@@ -191,21 +243,29 @@ function resolveLegacyCursorReference(
 	const explicitProvider = slashIndex === -1 ? undefined : trimmed.slice(0, slashIndex);
 	const legacyVariantId = slashIndex === -1 ? trimmed : trimmed.slice(slashIndex + 1);
 	const alias = getCursorVariantAlias(legacyVariantId);
-	if (!alias) return undefined;
-
-	const candidates = availableModels.filter(
-		(model) =>
-			CURSOR_PROVIDER_IDS.has(model.provider) &&
-			(!explicitProvider || model.provider.toLowerCase() === explicitProvider.toLowerCase()) &&
-			model.id === alias.targetId,
-	);
-	if (candidates.length !== 1) return undefined;
-	const thinkingSelection = legacySelection(legacyVariantId);
-	return {
-		model: candidates[0],
-		thinkingLevel: thinkingSelection?.level,
-		thinkingSelection,
-	};
+	const providerMatches = (model: Model<Api>): boolean =>
+		CURSOR_PROVIDER_IDS.has(model.provider) &&
+		(!explicitProvider || model.provider.toLowerCase() === explicitProvider.toLowerCase());
+	if (alias) {
+		const candidates = availableModels.filter((model) => providerMatches(model) && model.id === alias.targetId);
+		if (candidates.length !== 1) return undefined;
+		const thinkingSelection = legacySelection(legacyVariantId);
+		return {
+			model: candidates[0],
+			thinkingLevel: thinkingSelection?.level,
+			thinkingSelection,
+		};
+	}
+	// Unlike static aliases, derived aliases must not displace an exact raw model.
+	const exactCandidates = explicitProvider ? availableModels.filter(providerMatches) : availableModels;
+	if (findExactModelReferenceMatch(trimmed, [...exactCandidates])) return undefined;
+	// Variant ids only the runtime derivation groups resolve through the observed ids (senpi#2038).
+	const derivedCandidates = availableModels.flatMap((model) => {
+		const match = providerMatches(model) ? derivedCursorVariantMatch(model, legacyVariantId) : undefined;
+		return match === undefined ? [] : [{ model, match }];
+	});
+	if (derivedCandidates.length !== 1) return undefined;
+	return derivedResolution(derivedCandidates[0].model, derivedCandidates[0].match);
 }
 
 function cursorLegacyAliasesForModel(model: Model<Api>): string[] {
@@ -219,7 +279,25 @@ function cursorLegacyAliasesForModel(model: Model<Api>): string[] {
 		candidates.add(`${baseId}-${level}-thinking`);
 		candidates.add(`${targetId}-${level}`);
 	}
-	return [...candidates].filter((candidate) => getCursorVariantAlias(candidate)?.targetId === targetId);
+	const aliases = [...candidates].filter((candidate) => getCursorVariantAlias(candidate)?.targetId === targetId);
+	for (const derivedId of Object.values(derivedCursorVariantIds(model) ?? {})) {
+		aliases.push(derivedId);
+	}
+	return aliases;
+}
+
+function resolveDerivedCursorVariant(
+	provider: string,
+	modelId: string,
+	modelSource: { getModel(provider: string, modelId: string): Model<Api> | undefined },
+): ResolvedModelReference | undefined {
+	const parsed = parseCursorVariantId(modelId);
+	if (parsed.fast || parsed.level === undefined || parsed.baseId === "") return undefined;
+	const targetId = parsed.thinking === true ? `${parsed.baseId}-thinking` : parsed.baseId;
+	const model = modelSource.getModel(provider, targetId);
+	const match = model === undefined ? undefined : derivedCursorVariantMatch(model, modelId);
+	if (model === undefined || match === undefined) return undefined;
+	return derivedResolution(model, match);
 }
 
 export function resolveStoredModelReference(
@@ -235,6 +313,11 @@ export function resolveStoredModelReference(
 				const thinkingSelection = legacySelection(modelId);
 				return { model, thinkingLevel: thinkingSelection?.level, thinkingSelection };
 			}
+		} else {
+			const direct = modelSource.getModel(provider, modelId);
+			if (direct) return { model: direct };
+			const derived = resolveDerivedCursorVariant(provider, modelId, modelSource);
+			if (derived) return derived;
 		}
 	}
 	const direct = modelSource.getModel(provider, modelId);
@@ -505,7 +588,7 @@ export function resolveModelScopeFromModels(
 				for (const aliasId of cursorLegacyAliasesForModel(model)) {
 					if (!matches(model.provider, aliasId)) continue;
 					const projection = projections.get(id) ?? { model, aliases: [] };
-					projection.aliases.push({ id: aliasId, selection: legacySelection(aliasId) });
+					projection.aliases.push({ id: aliasId, selection: cursorLegacySelection(model, aliasId) });
 					projections.set(id, projection);
 				}
 			}

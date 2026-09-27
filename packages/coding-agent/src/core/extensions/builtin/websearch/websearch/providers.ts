@@ -4,9 +4,11 @@ import { deepseekProvider } from "./providers/deepseek.ts";
 import { duckDuckGoHtmlProvider } from "./providers/duckduckgo-html.ts";
 import { exaProvider } from "./providers/exa.ts";
 import { googleCseProvider } from "./providers/google-cse.ts";
+import { kagiProvider } from "./providers/kagi.ts";
 import { kimiProvider } from "./providers/kimi.ts";
 import { openAiResponsesProvider } from "./providers/openai-responses.ts";
 import { perplexityProvider } from "./providers/perplexity.ts";
+import { serpdiveProvider } from "./providers/serpdive.ts";
 import { serperProvider } from "./providers/serper.ts";
 import type { ProviderModule } from "./providers/shared.ts";
 import { parseObjectPayload, resolveDomainFilters } from "./providers/shared.ts";
@@ -24,6 +26,7 @@ import type {
 const PROVIDER_MODULES: Record<SearchProvider, ProviderModule> = {
 	exa: exaProvider,
 	tavily: tavilyProvider,
+	serpdive: serpdiveProvider,
 	brave: braveProvider,
 	"duckduckgo-html": duckDuckGoHtmlProvider,
 	deepseek: deepseekProvider,
@@ -36,6 +39,7 @@ const PROVIDER_MODULES: Record<SearchProvider, ProviderModule> = {
 	perplexity: perplexityProvider,
 	xai: xaiProvider,
 	kimi: kimiProvider,
+	kagi: kagiProvider,
 };
 
 export function buildSearchRequest(config: SearchProviderConfig, request: SearchRequest): BuiltSearchRequest {

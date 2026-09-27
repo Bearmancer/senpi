@@ -25,7 +25,7 @@
 // Stop Goal with mandatory-immediate stopping). Rules the earlier prompt
 // stated more than once (goal-not-green-build, final-message shape,
 // shared-workspace fact, permission rules) are stated exactly once; style
-// stays prioritization and preserve-first, never "be concise", because
+// stays prioritization and preserve-first, never a brevity adjective, because
 // GPT-5.6 over-compresses under generic brevity wording. Contracts tied to
 // tools senpi does not expose remain NOT ported - GPT-5.6 follows prompt
 // contracts closely, so naming tools that do not exist here would misroute.
@@ -37,19 +37,29 @@
 // kernel as the default multi-call surface, deep-planned parallel batching as
 // wide as the step allows, a bias toward over-calling inside that one wave,
 // in-kernel reduction, the stay-direct exceptions, subagent fan-out,
-// finest-grain todo transitions, test-first, atomic commits, and LSP symbol
-// routing. They live in `GPT56_EXECUTION_RULES` (typed rule data, like
+// finest-grain todo transitions, the test decision, atomic commits, and LSP
+// symbol routing. They live in `GPT56_EXECUTION_RULES` (typed rule data, like
 // `dynamic-prompt/verification.ts`) and each directive is interpolated once, at
 // its point of use, replacing the weaker text it supersedes rather than being
 // appended as a trailer: the old "independent calls run in the same message" /
-// "each shell command is its own bash call" pair, the mid-paragraph todo
-// mechanics, and the "default to not adding tests" rule (re-scoped into
-// test-first itself: tests at the touched seam, prose and visual work via
-// real-surface QA - the blanket version contradicted test-first, the scoped
-// version bounds it). The GPT-5.6 guide's Programmatic-Tool-Calling
+// "each shell command is its own bash call" pair and the mid-paragraph todo
+// mechanics. The GPT-5.6 guide's Programmatic-Tool-Calling
 // section drives the shape: a bounded routing contract naming the stage,
 // eligible surface, output, and what stays direct beats generic "use PTC
 // efficiently" wording, which does not route.
+//
+// 2026-09-23: `test-first` became `test-decision` and moved from Pragmatism &
+// Scope into `## Verification`. The test-first rule made a test the proof of
+// every change with a seam, so simple changes inside tested modules grew
+// change-certifying tests and the harness grew counter-rules to catch them.
+// The run proves the change; a test is added only where the repository keeps
+// tests for that behavior and a regression would otherwise pass unnoticed,
+// after the existing tests were read as the behavior of record.
+//
+// 2026-09-24 (senpi#2121): an outcome-first `## Handoff` replaces the
+// phase-change-only update line and the roadmap ban in `## Output`, per the
+// user directive that progress be legible at every phase change; per the
+// guide's "Simplify prompts first", the section is paid for by those deletions.
 
 import { APP_NAME } from "../../../../config.ts";
 import type { DynamicPromptCoreContext } from "../../../dynamic-prompt/build.ts";
@@ -57,6 +67,7 @@ import { type BuildDynamicSystemPromptOptions, buildDynamicSystemPrompt } from "
 import { buildTestDisciplineSection } from "../../../dynamic-prompt/verification.ts";
 import { buildFileOperationsTuning } from "./file-operations.ts";
 import { buildGptEvalRoutingTuning } from "./gpt-eval-routing.ts";
+import { TEST_DECISION } from "./test-decision.ts";
 
 export type Gpt56ExecutionRuleId =
 	| "eval-first-routing"
@@ -65,7 +76,7 @@ export type Gpt56ExecutionRuleId =
 	| "stay-direct-exceptions"
 	| "delegation"
 	| "todo-granularity"
-	| "test-first"
+	| "test-decision"
 	| "atomic-commits"
 	| "lsp-symbol-routing";
 
@@ -73,7 +84,7 @@ export type Gpt56ExecutionConcern =
 	| "tool-orchestration"
 	| "delegation"
 	| "todo-discipline"
-	| "test-first"
+	| "tests"
 	| "commit-discipline"
 	| "symbol-routing";
 
@@ -101,9 +112,6 @@ const DELEGATION =
 const TODO_GRANULARITY =
 	"Split the work to the finest actionable grain - one item per edit plus the check that proves it - and drive every transition the moment it happens: start it, complete it, append newly discovered steps, drop abandoned ones, never batch the updates.";
 
-const TEST_FIRST =
-	"Work test-first on behavior changes: write the one failing test at the seam the change touches, watch it fail for the right reason, then make the smallest change that turns it green. Prose, doc, and visual-only changes take review plus real-surface QA, not tests. Skip test-first also for formatting, comments, renames, or dependency bumps, and never write a test that cannot fail for the regression it names.";
-
 const ATOMIC_COMMITS =
 	"When commits are authorized, commit atomically per verified increment, in the repository's existing message convention, each commit green on its own - never one omnibus commit at the end.";
 
@@ -117,7 +125,7 @@ export const GPT56_EXECUTION_RULES = [
 	{ id: "stay-direct-exceptions", concern: "tool-orchestration", directive: STAY_DIRECT_EXCEPTIONS },
 	{ id: "delegation", concern: "delegation", directive: DELEGATION },
 	{ id: "todo-granularity", concern: "todo-discipline", directive: TODO_GRANULARITY },
-	{ id: "test-first", concern: "test-first", directive: TEST_FIRST },
+	{ id: "test-decision", concern: "tests", directive: TEST_DECISION },
 	{ id: "atomic-commits", concern: "commit-discipline", directive: ATOMIC_COMMITS },
 	{ id: "lsp-symbol-routing", concern: "symbol-routing", directive: LSP_SYMBOL_ROUTING },
 ] as const satisfies readonly Gpt56ExecutionRule[];
@@ -137,7 +145,7 @@ Implement, don't propose. Unless the user is explicitly asking a question, brain
 
 Make in-scope changes and run non-destructive validation without asking. Resolve blockers yourself with reasonable assumptions; ask only when missing information would materially change the outcome, or the action is destructive, an external write, or a material expansion of scope - one narrow question through request_user_input when it is available, then stop.
 
-If the user's plan seems flawed, say so concisely, propose the alternative, and ask which to proceed with - never silently override. Status requests are not stop signals: give the update, keep working. Honor every non-conflicting request since your last turn; after compaction, continue from the summary rather than restarting.
+If the user's plan seems flawed, say so in a sentence, propose the alternative, and ask which to proceed with - never silently override. Status requests are not stop signals: give the update, keep working. Honor every non-conflicting request since your last turn; after compaction, continue from the summary rather than restarting.
 
 The workspace is shared with the user and other agents. Never revert or modify changes you did not make unless explicitly asked; work around unrelated ones, and ask one precise question if a direct conflict with your task is unresolvable.
 
@@ -159,6 +167,8 @@ Scale the scope of checks to the change, never the rigor:
 - Multi-file or cross-cutting work: type check, related tests, build, and the Manual QA Gate below.
 
 Run the validator before reporting anything clean - "should pass" is not verification; if validation cannot run, say so and name the next best check. Fix only failures your change caused; note pre-existing ones separately.
+
+${TEST_DECISION}
 
 ${buildTestDisciplineSection()}
 
@@ -184,8 +194,6 @@ The best change is usually the smallest correct change: fewer new names, helpers
 
 Write only what the current correct path needs - no error handlers, fallbacks, retries, or validation for scenarios the current contracts exclude; validate at system boundaries only (user input, external APIs, untrusted I/O). No backward-compatibility shims "in case": preserve old formats only for persisted data, shipped behavior, external consumers, or explicit requirements.
 
-${TEST_FIRST}
-
 ${context.toolSection}
 
 ## Hard Limits
@@ -193,12 +201,19 @@ ${context.toolSection}
 - Never suppress type errors, lint warnings, or test failures - and never delete, skip, or weaken a failing test to go green.
 - Never present unread code or unrun commands as verified fact; never invent tool output, citations, or verification results.
 - Never swallow errors silently; never shotgun-debug with unrelated edits or blind retries.
+- Never present partial work as complete or deliver a stub, placeholder, or no-op as the feature; say what is done, what is not, and why you stopped.
+
+## Handoff
+
+At a handoff - the todo list's creation (in the message that creates it, after the routing line, or the next one), a todo phase change, a blocker or plan change, the final message; the routing line is not one - first work out what the user asked for and what they need to know now, then open with one block:
+
+> [Outcome so far] toward [the user's original ask and the result they wanted]. You need: [ledger N/M done, findings, blockers]. Now: [todo task in progress]. Next: [next open task].
+
+Now and Next are todo labels verbatim; the Next stated is executed in this same response with tool calls. Between handoffs, no narration.
 
 ## Output
 
-During work, update only at meaningful phase changes - a plan-changing discovery, a tradeoff decision, a blocker - one sentence each; never narrate routine reads.
-
-Final message: Lead with the conclusion, then the evidence needed to trust it - what you verified, what you could not and why, and pre-existing issues you left alone - grouped by user-facing outcome, not by file. Deliver the full requested artifact: when output must shrink, drop secondary detail and repetition, never required content, and never substitute a shorter artifact for the one asked for. Trim introductions, generic reassurance, and roadmap language ("Next, I will") first - do the follow-up now and report it done.
+Final message: the Handoff block, whose outcome leads and whose You need slot carries the evidence needed to trust it - what you verified, what you could not and why, and pre-existing issues you left alone - grouped by user-facing outcome, not by file. Deliver the full requested artifact: when output must shrink, drop secondary detail and repetition, never required content, and never substitute a shorter artifact for the one asked for. Trim introductions and generic reassurance first.
 
 Code reviews: findings first, ordered by severity with file references; then open questions and assumptions; change summary last. With no findings, say so and name residual risks or testing gaps.
 
@@ -217,7 +232,7 @@ Your STOP GOAL - the turn is over the moment ALL of these hold:
 
 Until the stop goal holds, keep going - through failed tool calls, long turns, and the temptation to hand back a draft. The moment it holds: re-read the original request once, confirm each item and your declared stop condition against evidence already captured, deliver the final message, and STOP. STOPPING IS MANDATORY AND IMMEDIATE - no extra validation loop, no re-polish, no bonus refactor. Every action past the stop goal is a defect, not diligence.
 
-${buildFileOperationsTuning()}`;
+${buildFileOperationsTuning({ toolNames: context.tools.map((tool) => tool.name) })}`;
 }
 
 export function buildGpt56Prompt(options: BuildDynamicSystemPromptOptions): string {
