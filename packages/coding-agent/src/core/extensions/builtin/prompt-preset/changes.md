@@ -1,5 +1,29 @@
 # prompt-preset Extension Changes
 
+## 2026-09-28 - GPT-6 Astra: the stated goal bounds the work (#2256)
+
+### What changed
+
+- `gpt-6-astra.ts` (shared by GPT-6 Sol / Luna), five replacements at the sentences that licensed going deeper than the goal. The preset shrinks from 2956 to 2923 words (17,501 to 17,329 rendered chars), and no rule was appended.
+  - `## Working the Task`: `; a finding that looks too simple deserves one more layer of callers or dependencies, and the root fix beats the symptom fix.` -> `, and fix the root cause rather than the symptom.` (B: the escalation clause overrode the stop rule in the same sentence; the root-cause half is kept).
+  - `## Verification`: `, where a defect found in use is yours to fix this turn` deleted (A: it contradicted "fix failures your change caused and report pre-existing ones" in the same section and the Scope paragraph, and it is the literal order behind the reported detour).
+  - `## Scope and Recovery`: `A pre-existing bug or cleanup opportunity beside your change goes in the final message while the diff stays focused.` -> `Errors, bugs, and cleanup opportunities outside the stated goal, including ones you run into along the way, go in the final message unexplored unless one blocks the goal.` (B plus a gap: the old sentence bounded the diff, not the tool calls; this is the one positive scoping principle).
+  - `eval-first-routing`: `; an extra read-only call in that wave is nearly free, while a stale assumption costs the turn` deleted (B: a rationale that read as a license for speculative reads; the batching directive itself is unchanged).
+  - `monitor-conditions`: `EVERY CONDITION YOU WOULD OTHERWISE CHECK ON` -> `... WAIT ON` (B: the caps rule made Astra subscribe even to a 100 ms test run and end the turn, which contradicted `foreground-exception`; the 2026-09-05 long-wait behavior is what "wait on" names).
+- Unchanged on purpose: the 2026-09-11 set (`unbounded-retry`, `turn-end-is-wait`, `approval-last`, the handoff stands-in clause), the Stop Goal, Hard Limits, the shared test decision, and every skill-loading sentence (`skills.ts` catalog line, `bun-runtime`, the eval description's bun-1-4 line), which are out of scope per the owner.
+
+### Why
+
+A user gave GPT-6 Astra (`low`) a clear goal and acceptance criteria; it found an unrelated page error and debugged it until told to refocus. Every emphasized or escalating instruction Astra receives was enumerated and judged keep / soften / delete (table in the PR). The five above were the ones whose wording turns a side finding into owned work or makes extra depth free. Real-model A/B at `low` (RPC surface, before vs after, n = 4-5 per arm per task, effort `low`): on the planted-error task off-goal runs fell 2/4 -> 0/4 with calls 13.0 -> 12.0; a root-cause bug fix and an 11-key multi-step task (the 09-11 early-stop shape) kept 4/4 success and 0 early stops; the rename task was unchanged (its remaining overhead is skill reads, which stay). Harness and raw events are kept outside the repo.
+
+### Why an extension could not handle it
+
+The sentences are preset core text and rule data; an extension could only append a competing rule after them.
+
+### Expected merge conflict zones
+
+- `gpt-6-astra.ts`: `EVAL_FIRST_ROUTING`, `MONITOR_CONDITIONS`, the `## Working the Task`, `## Verification`, and `## Scope and Recovery` template paragraphs, and the header comment. Fork-only file.
+
 ## 2026-09-24 - GPT cores: the routing line is not a handoff (real-surface QA)
 
 ### What changed

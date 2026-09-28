@@ -6,14 +6,118 @@
 
 ### Added
 
+- `readOwnFootprint()` and `readProcessFootprint(pid)` are exported from `@code-yeongyu/senpi`: they return how much memory a process really holds (`{ bytes, measure }`, where `measure` is `phys_footprint` on macOS, `rss_anon` on Linux, `private_usage` on Windows, or `rss` when none of those can be read) without spawning a process. ([#2261](https://github.com/code-yeongyu/senpi/issues/2261))
+
+### Changed
+
+### Fixed
+
+- A shared RPC host no longer stays in memory pressure after its memory was returned. It judged `SENPI_RPC_HOST_RSS_WARN_MB` by RSS, which keeps counting freed memory (2314 MB RSS against a 143 MB footprint after an eval kernel reset), so it kept halving idle parking and reporting `memory_pressure: true`. It now compares the process footprint, and each `host_memory_pressure` record carries `footprintMb` and `measure` beside `rssMb`. `senpi host status` still shows RSS. ([#2261](https://github.com/code-yeongyu/senpi/issues/2261))
+- Project rule discovery no longer escapes the project root on Windows. A `read`/`edit`/`write` target on a different drive, or one whose drive-letter case differs from the project root, made the rules finder walk the unrelated location and inject any `AGENTS.md`, `CLAUDE.md`, `.claude/rules`, `.cursor/rules`, or `.github/instructions` it found there as *project* rules ([#568](https://github.com/code-yeongyu/senpi/pull/568) by [@MoerAI](https://github.com/MoerAI)). POSIX behavior is unchanged.
+
+### Removed
+
+## [2026.9.28-3] - 2026-09-28
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+- GPT-6 Astra, Sol, and Luna stay on the stated goal: an unrelated error or bug they run into is reported in the final message instead of being investigated or fixed (unless it blocks the goal), and a quick check such as a short test run is run directly instead of through a monitor. Bug fixes still go to the root cause. ([#2256](https://github.com/code-yeongyu/senpi/issues/2256))
+
+### Fixed
+
+- `new Bun.WebView()` works in eval cells on Windows and Linux, and with `backend: "chrome"` on macOS. Bun builds Chrome-backed views only on the process main thread, so they are now served there for the eval kernel (also when the session runs in an RPC worker host), each kernel through its own private port: a cell cannot reach another session's views, and a kernel reset, a closed session, or a crashed or killed worker closes that kernel's views and ends Bun's Chrome once no view needs it. ([#2248](https://github.com/code-yeongyu/senpi/issues/2248))
+
+### Removed
+
+## [2026.9.28-2] - 2026-09-28
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- With Anthropic native tool search, a deferred tool whose parameters are a root union (`anyOf` with no top-level `type`, as the desktop `computer` tool has) no longer makes every request fail with `tools.N.custom.input_schema.type: Field required`: the injected schema is resolved into one object, as resident tools already were. ([#2252](https://github.com/code-yeongyu/senpi/issues/2252))
+- Submitting a bare `/skill` or `/skill:` with Enter or Alt+Enter no longer sends it to the model. The editor goes back to `/skill:` with the skill list open, or a warning says that no skill is loaded or that skill commands are disabled. Choosing the `skill:` row ("Browse available skills") in the slash picker with Enter or Tab now fills in `/skill:` and lists the skills too. ([#2249](https://github.com/code-yeongyu/senpi/issues/2249))
+
+### Removed
+
+## [2026.9.28] - 2026-09-28
+
+### Breaking Changes
+
+### Added
+
+- `/sessions` opens the session picker as an alias of `/resume`, and `/help` and the startup tips now say how to change the thinking level (`/thinking <level>`, Shift+Tab, `/efforts <level>`) and how to reopen a past session (`/resume` or `/sessions` in the TUI, `-r` or `-c` from the shell) ([#1437](https://github.com/code-yeongyu/senpi/issues/1437)).
+- `senpi models discover <provider>` fetches `<baseUrl>/models` once for an OpenAI-compatible provider in `models.json` and adds every listed model to that provider's `models` array (the previous file is kept as a timestamped backup). When the provider sets `"compat": { "supportsReasoningEffort": true }`, the `reasoning_efforts` each entry advertises become its `thinkingLevelMap` (the endpoint's own names are sent on the wire, levels it does not list are hidden) and its `default` becomes the model's new `defaultThinkingLevel`. A model's `defaultThinkingLevel` is where a session starts when you have not chosen a level for that model. ([#2196](https://github.com/code-yeongyu/senpi/issues/2196))
+- A model fallback-chain entry that keeps failing is circuit-broken. Once it fails out of its chain (a transient or 5xx failure after the retry budget, or a quota/credit failure), every session in the process on the same agent directory (including `/new` sessions and in-process subagents) skips it without sending a request, for a cooldown that starts at `fallback.circuitCooldownMs` (default 60s, `0` disables) and doubles on each consecutive failure up to `fallback.circuitMaxCooldownMs` (default 30 minutes). Billing, credit, quota, and budget exhaustion open it at once, even on the last entry, while authentication and request-shape errors never do. A provider `Retry-After` header (seconds or HTTP-date, on 429 and 503, now kept on terminal OpenAI-compatible errors) keeps it open until that time, a success closes it, and after the cooldown exactly one session probes it: the probe holds the circuit exclusively until it settles - even against a background probe-back of the same session - falls back on its first failure without same-model retries, and 429 probe-backs wait for the circuit too. The chain still sends the request when every entry is open. `/session` and `get_session_stats` gain a failure-cost report: failed requests and their share, time spent in them, and the retries after a failure in the same turn that missed the prompt cache, with their uncached input tokens. ([#2198](https://github.com/code-yeongyu/senpi/issues/2198))
+- `senpi host status` (and each `senpi host status --all` row) shows `memory_pressure`: `true` while that endpoint's host reads its memory above `SENPI_RPC_HOST_RSS_WARN_MB`, `false` otherwise, `null` when nothing answers. Multi-session hosts report the same flag in `get_protocol_info`. It is informational only: a pressured host still admits every session.
+- `senpi host gc [--agent-dir <dir>] [--json]` removes the state (directory, `endpoint.json`, socket, successor/shield siblings) of RPC host endpoints whose host is provably gone - no live generation, no live session-path claim, a socket that refuses - checked under that endpoint's ensure lock. A refused connection counts only when the entry is a socket, and a handoff successor is recorded from the moment it starts, so gc never judges an endpoint by a dead predecessor. It removes the siblings and the socket before the directory, leaves a sibling that is a directory in place (reported under `skipped`), and reports an endpoint whose removal fails as `failed` while it goes on to the others. It never signals a process, never runs on its own inside `ensure` or `status`, and reports every endpoint it keeps with the reason (`live_generation`, `live_claim`, `reachable`, `locked`, `legacy_layout`, `unknown_identity`). ([#2226](https://github.com/code-yeongyu/senpi/issues/2226))
+- `senpi host status --all` lists every RPC host endpoint under the agent directory - including ones whose host exited or crashed - without removing anything, reading up to 64 of them at once so a batch of hung hosts costs one 10 s probe, and hundreds of them cannot exhaust the file descriptors, and `senpi host status` adds `crashes`, `shard`, `claims_live`, and (with `--include-workers`) `session_rows` and `claims`. Each endpoint directory now keeps a durable `endpoint.json`, written atomically (a plain exclusive create on exFAT and other filesystems without hard links); the next `senpi host ensure` rewrites one that is torn instead of leaving the endpoint unaddressable. `senpi host shard-path --kind <p|i> --owner <id>` prints the per-session/per-thread shard socket, and `shardKey`, `shardSocketPath`, `shardSocketPathForKey` and `daemonDirectoryName` are exported from `@code-yeongyu/senpi` for clients that compute the same names. Every session on a socket host sees `host_socket` (the endpoint's resolved path, identical for every generation of that endpoint) and `host_instance` in its session context; a client-supplied value for either key is overwritten. ([#2226](https://github.com/code-yeongyu/senpi/issues/2226))
+
+### Changed
+
+- `ensureHost()` returns `release()` on `EnsuredHost` (public SDK type), and every caller must call it once its own client is attached, or right away when it attaches later: until then the host counts the calling process as attached, so a running process that never releases keeps a transient host from idle-exiting. The interactive host runtime and `senpi host ensure` release after attaching; embedders that call `ensureHost()` directly need the same call. ([#2227](https://github.com/code-yeongyu/senpi/issues/2227))
+- Upgrading from 2026.9.27-4 or older: a host that an older build started through a socket path that is not canonical (a `/tmp/...` path on macOS, or a path through a symlinked directory) keeps its registration in the directory named after that spelling. This build attaches to such a host with `pid: 0` and cannot hand it off to a new generation, and `senpi host stop` and `senpi host handoff` through this build refuse it as `unknown_owner`. Stop it with the build that started it, or let it idle out; the next ensure then registers its host in the canonical directory. Until every client on the machine runs this release, an older build's ensure and this build's ensure, handoff or gc through such a spelling take different locks and do not wait for each other, so do not run `senpi host gc` while older clients may still be starting hosts there. A socket path whose directories contain no symlink is not affected: its directory and its lock stay the same.
+- A shared RPC host's stall report now says whether the host was busy or was not running: the stderr line gains `cpu=<ms> heap=<+/-MB>` for the stalled window, and the `host_stalled` record gains `processCpuMs` and `heapDeltaMb`. CPU close to the stall length means the host's own work (or a garbage collection) held the loop; CPU close to zero means the machine did not schedule the process. ([#2211](https://github.com/code-yeongyu/senpi/issues/2211))
+
+### Fixed
+
+- `/thinking` and `/thinking <level>` now open the thinking-level selector or set the session level instead of being sent to the model as a user message; the interactive dispatch dropped by the upstream sync merge is restored with argument completions ([#1437](https://github.com/code-yeongyu/senpi/issues/1437)).
+- Submitting `/skill` or `/skill:` on its own no longer sends that text to the model: the editor goes back to `/skill:` with the skill list open, or shows a warning when no skill is loaded or skill commands are disabled. ([#2249](https://github.com/code-yeongyu/senpi/issues/2249))
+- A transient RPC host with a short idle window no longer exits between `ensureHost()` and the ensuring client's first attach. `ensureHost()` now keeps the connection that proved the host ready as an attach hold and returns `release()` on `EnsuredHost`; the interactive host runtime and `senpi host ensure` release it once attached. A slow attach (a loaded machine, a slow lock release) found the host already gone (`connect ENOENT`). ([#2227](https://github.com/code-yeongyu/senpi/issues/2227))
+- An RPC host that goes away removes its registration pointer last, after `settings.json` and its generation record, on the graceful and the crash path alike, so "no host registered" is never observable while the rest of its daemon state still exists. On Windows the crash path removed the pointer first and then the other files one by one. ([#2241](https://github.com/code-yeongyu/senpi/issues/2241))
+
+- A refused `senpi host handoff` (the new generation failed before or after it started, or never answered) no longer leaves traces behind. The endpoint's `settings.json` kept naming the killed successor, so the running host's next restart read the refused generation's settings. The successor's generation record is now released once it has exited, and `settings.json` is restored byte for byte, so `senpi host status --all` never lists the refused generation either.
+- `senpi host handoff` now holds the endpoint's ensure lock while it brings the successor up, like `senpi host ensure` and `senpi host gc`. A concurrent ensure used to probe the endpoint mid-handoff and attach to the generation that was about to drain; it now waits and attaches to the successor the handoff registered.
+- Two spellings of one RPC host socket (`/tmp/...` and `/private/tmp/...`, or a path through a symlinked directory) now share one daemon directory, not only one ensure lock. Each spelling used to keep its own directory, so an ensure through the second spelling attached without knowing which process it attached to and `senpi host stop` through it refused a host the first spelling had started. A socket spelled canonically keeps the directory it already had; a directory an older build named after another spelling is still listed and collected by `senpi host gc`.
+- Two spellings of one RPC host socket (`/tmp/...` and `/private/tmp/...`, or a path through a symlinked directory) now share one ensure lock. `senpi host gc` working through one spelling could otherwise remove a socket that a `senpi host ensure` through the other spelling had just started.
+- A socket host started with `--listen` now exits after its empty-host window even while a client keeps a connection open that only sends `observe: true` reads. Such a connection used to count as a client, so a status panel that stayed connected kept an empty host running forever.
+- Polling `senpi host status` or `senpi host status --all` no longer keeps an RPC host alive. Each poll used to count as a client attaching and restarted the host's idle window, so a panel or doctor loop polling faster than the window (15 minutes by default) kept every host it looked at running forever. Status reads now mark themselves `observe: true` on `get_protocol_info`/`list_sessions`, and a connection that only sends such reads never counts as activity.
+
+### Removed
+
+## [2026.9.27-4] - 2026-09-27
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+- The shared RPC host no longer refuses new worker sessions when its memory crosses a watermark: it has no resource caps, so every open is admitted. Memory pressure is still reported and idle sessions still park sooner. `SENPI_RPC_HOST_RSS_REFUSE_MB` is no longer read. `senpi host status` adds `host_rss_mb` (the supervisor and host processes, as `ps` shows them) beside `rss_mb` (the whole process tree, including every tool the sessions spawned), per generation too. ([#2207](https://github.com/code-yeongyu/senpi/issues/2207))
+
+### Fixed
+
+- RPC host starts and generation handoffs no longer inherit the calling session's identity, model selection, goal-store path, eval-kernel parent, or another host generation's lifecycle environment. An in-process session inside a host generation also attaches instead of handing the socket off again; an explicit `senpi host handoff` still advances exactly one generation. ([#2208](https://github.com/code-yeongyu/senpi/issues/2208))
+
+### Removed
+
+## [2026.9.27-3] - 2026-09-27
+
+### Breaking Changes
+
+### Added
+
+- Startup and working tips for the `/computer` command (stop chord, background input, look-only permissions, macOS grants), shown only where an extension registers `/computer`. ([#2204](https://github.com/code-yeongyu/senpi/issues/2204))
+- Interactive and print processes leave a record when they crash natively. Each writes a lifetime marker under `<agent dir>/process-crashes/live/` that any exit JavaScript can observe removes; the next start turns the marker of a dead process into one entry in `process-crashes/crashes.jsonl` with the process kind, uptime, and Bun and senpi versions. RPC host crash records now name their kind and versions too. ([#2194](https://github.com/code-yeongyu/senpi/issues/2194))
+- RPC `get_state` reports `lastProviderDiagnostic`, the structured provider failure family (auth, rate limit, quota, context limit, invalid request, provider unavailable) of the most recent failed turn; the failed assistant message in `message_end`, `--mode json` output and the session file carries the same `providerDiagnostic`. ([#2197](https://github.com/code-yeongyu/senpi/issues/2197))
 - The in-session `/resume` selector offers to move a session of this repository recorded at another path (a moved or re-cloned checkout) here, like `--session <id>` does, and both `/resume` and `--resume` list the sessions of this repository whose old path is gone in the current-folder view, marked "moved from <old path>". `--continue` in a project with no session of its own offers the newest moved one. A move now refuses while another senpi process still has the session open (naming its pid and directory), and concurrent moves of one session are serialized. ([#2184](https://github.com/code-yeongyu/senpi/issues/2184))
 
 ### Changed
 
 ### Fixed
 
-- Project rule discovery no longer escapes the project root on Windows. A `read`/`edit`/`write` target on a different drive, or one whose drive-letter case differs from the project root, made the rules finder walk the unrelated location and inject any `AGENTS.md`, `CLAUDE.md`, `.claude/rules`, `.cursor/rules`, or `.github/instructions` it found there as *project* rules ([#568](https://github.com/code-yeongyu/senpi/pull/568) by [@MoerAI](https://github.com/MoerAI)). POSIX behavior is unchanged.
-
+- Starting a branded install (such as omo) no longer empties an upstream pi install: `~/.pi/agent`, `~/.pi/mom` and a project's `.pi` are copied into the branded directories and left untouched. If an earlier start already moved them, the next start copies pi's settings, credentials, sessions and extensions back into a `~/.pi/agent` (and `~/.pi/mom`) that holds nothing of the user's, without overwriting any real file. ([oh-my-openagent#8039](https://github.com/code-yeongyu/oh-my-openagent/issues/8039))
+- Task children and other RPC clients no longer fail to open a session after 30 s when the shared host is busy. Once the host acknowledges an `open_session` with its `queued` record, the client waits for the answer (up to 10 minutes) instead of giving up at the generic 30 s request deadline. A loaded host was measured answering after 57 s. A timeout after the acknowledgement names the queue position. ([#2209](https://github.com/code-yeongyu/senpi/issues/2209))
+- A shared RPC host keeps opening sessions after the directory of a session it still holds is deleted (a task child's directory removed with its record, or a QA run's temp project). Every listing and open used to fail with `ENOENT`, so every new task child on the machine failed to start. An unattached session whose directory is gone is now closed with the `session_closed` reason `session_dir_removed`. ([#2206](https://github.com/code-yeongyu/senpi/issues/2206))
+- A Claude subscription (`anthropic-subscription`) turn no longer fails with "Anthropic Subscription pre-replay buffer overflow" or "result arrived before replay claim" when Claude Code is still running a turn of its own (a background task notification or a background subagent) as the message is sent. That turn's output is no longer counted against, or flushed into, the waiting turn, and the session stays open. ([#2192](https://github.com/code-yeongyu/senpi/issues/2192))
 - MCP tools are registered once per session. Before, a server whose catalog was still loading when the startup window ended had its catalog listed again and every tool registered twice, and each connect re-registered an unchanged catalog about 300ms later. ([#2177](https://github.com/code-yeongyu/senpi/issues/2177))
 
 ### Removed

@@ -6,7 +6,7 @@
  */
 
 import type { AgentMessage, ThinkingLevel } from "@earendil-works/pi-agent-core";
-import type { ImageContent, Model, ThinkingSelection } from "@earendil-works/pi-ai";
+import type { ImageContent, Model, ProviderDiagnostic, ThinkingSelection } from "@earendil-works/pi-ai";
 import type { SessionRuntimeKind } from "../../cli/args.ts";
 import type { AgentAbortSource } from "../../core/agent-abort-provenance.ts";
 import type { PromptDisposition, SessionStats } from "../../core/agent-session.ts";
@@ -15,6 +15,7 @@ import type { CompactionResult } from "../../core/compaction/index.ts";
 import type { EngineOrdinal } from "../../core/engine-build-identity.ts";
 import type { ServiceTier } from "../../core/extensions/builtin/service-tier.ts";
 import type { ContextUsage, SessionKind } from "../../core/extensions/types.ts";
+import type { ProcessFootprintMeasure } from "../../core/process-footprint.ts";
 import type { SessionEntry, SessionMessageEntry, SessionTreeNode, UsageTotals } from "../../core/session-manager.ts";
 import type { SourceInfo } from "../../core/source-info.ts";
 import type { RpcSlashCommand } from "./rpc-command-surface.ts";
@@ -234,9 +235,9 @@ export const RPC_ERROR_INVALID_SESSION_ID = "invalid_session_id";
  */
 export const RPC_ERROR_SESSION_ID_IN_USE = "session_id_in_use";
 /**
- * The host is above its RSS refuse watermark and declined to create a NEW worker session;
- * `errorData { rssMb, retry_after_ms }` says when to ask again. Existing sessions, attaches
- * to a live path and interactive opens are never refused for memory.
+ * Sent only by hosts released before senpi#2207, which declined NEW worker sessions above an RSS
+ * watermark with `errorData { rssMb, retry_after_ms }`. Current hosts never refuse an open for
+ * memory; clients keep recognizing the code while older generations may still answer.
  */
 export const RPC_ERROR_HOST_MEMORY_PRESSURE = "host_memory_pressure";
 // Message-edit and tree-navigation failures (mirror AssistantEditError.code / UserEditError.code /
@@ -276,7 +277,12 @@ export type RpcErrorCode =
 /** Every established command accepts an additive routing envelope. */
 export type RpcCommand =
 	| (RpcSessionCommand & { sessionId?: string })
-	| { id?: string; type: "get_protocol_info" }
+	| {
+			id?: string;
+			type: "get_protocol_info";
+			/** An observing read: this connection never counts as host activity (docs/rpc.md, idle exit). */
+			observe?: boolean;
+	  }
 	| {
 			id?: string;
 			type: "open_session";
@@ -340,6 +346,8 @@ export type RpcCommand =
 			 * default listing publishes interactive sessions only and carries no `context`.
 			 */
 			include_workers?: boolean;
+			/** An observing read, as on `get_protocol_info`. */
+			observe?: boolean;
 	  };
 
 // ============================================================================
@@ -442,6 +450,11 @@ export interface RpcSessionState {
 	 * fall back to generic wording instead of "Operation aborted".
 	 */
 	lastAbortSource?: AgentAbortSource;
+	/**
+	 * Structured provider failure family of the most recent failed assistant turn, when its
+	 * provider adapter supplied one (same lifetime as the agent's `errorMessage`).
+	 */
+	lastProviderDiagnostic?: ProviderDiagnostic;
 	/** Service tier the session resolved for the active model, if any. */
 	serviceTier?: ServiceTier;
 	/** True when the active model is served at the priority ("fast") tier. */
@@ -518,6 +531,11 @@ export interface RpcProtocolInfo extends RpcProtocolIdentity {
 	readonly serverVersion: string;
 	readonly capabilities: string[];
 	readonly mode: "classic" | "multi";
+	/**
+	 * Multi-session hosts only: whether this host's memory sampler currently reads its memory footprint above
+	 * `SENPI_RPC_HOST_RSS_WARN_MB` (the state `host_memory_pressure` records announce). Observability only.
+	 */
+	readonly memory_pressure?: boolean;
 }
 
 // Success responses with data
@@ -1088,6 +1106,8 @@ export type RpcSessionParkedEvent = {
  *   in-place identity event; this reason is for a handle that ended because of a replacement).
  * - `handoff_parked`: a generation handoff drained this host and put the session back on disk.
  *   The session was not ended - `open_session { sessionPath }` reopens it in the new generation.
+ * - `session_dir_removed`: no client held the session and its transcript directory was deleted,
+ *   so it could never persist again; the sweep ended it instead of letting it outlive its file.
  * - `error`: the session failed (worker death, output overflow) and the host sealed it.
  */
 export type RpcSessionClosedReason =
@@ -1096,6 +1116,7 @@ export type RpcSessionClosedReason =
 	| "host_shutdown"
 	| "replaced"
 	| "handoff_parked"
+	| "session_dir_removed"
 	| "error";
 
 /** Terminal record of a closed routing handle. `reason` is absent on older hosts and older records. */
@@ -1161,17 +1182,31 @@ export interface RpcHostStalledEvent {
 	sessionId?: string;
 	/** Tool that session was executing, when the stall happened inside one. */
 	tool?: string;
+	/**
+	 * Process CPU time spent during the stalled window, in milliseconds. Near `driftMs`: the host
+	 * was busy (JS work or a collection). Near zero: the process did not run (starved or waiting).
+	 */
+	processCpuMs?: number;
+	/** JS heap change across the stalled window, in megabytes; a large drop means a collection ran. */
+	heapDeltaMb?: number;
 }
 
 /**
- * Emitted while the host process is above its RSS warning threshold. Capacity is memory,
+ * Emitted while the host process's memory footprint is above its warning threshold. Capacity is memory,
  * never a refusal: the host reports the pressure and parks idle sessions sooner, and
  * never declines or kills a session because of it.
  */
 export interface RpcHostMemoryPressureEvent {
 	type: "host_memory_pressure";
-	/** Resident set size of the host process, in megabytes. */
+	/** Resident set size of the host process, in megabytes (what `ps` shows; it stays high after memory is returned). */
 	rssMb: number;
+	/**
+	 * Memory footprint of the host process, in megabytes: the number compared with the threshold (senpi#2261).
+	 * Hosts released before it omit this and `measure`.
+	 */
+	footprintMb?: number;
+	/** Kernel counter behind `footprintMb`; `"rss"` when the platform exposes no footprint counter. */
+	measure?: ProcessFootprintMeasure;
 	/** Live sessions the host is holding, including ones opening or closing. */
 	sessions: number;
 }

@@ -47,6 +47,10 @@ export interface EvalDetachedCellManagerOptions {
 	readonly runBudgetSeconds?: number;
 	/** Global detached-cell capacity; defaults to 15. Full capacity keeps new cells foreground. */
 	readonly maxDetachedCells?: number;
+	/** Estimated in-memory byte budget for settled-cell snapshots kept for peek/list; 0 keeps only the count cap. */
+	readonly retainedResultsBytes?: number;
+	/** Disk budget for settled-cell images spilled under `artifactsDir`; 0 keeps only the count cap. */
+	readonly retainedImagesBytes?: number;
 	readonly onStatusChange?: (entries: readonly EvalDetachedCellStatusEntry[]) => void;
 	/** Receives a full per-source liveness snapshot on every detached-cell transition; used by the goal builtin. */
 	readonly onWakeSourceState?: (state: WakeSourceState) => void;

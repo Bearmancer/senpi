@@ -20,6 +20,7 @@ import type { BashOperations } from "../../core/tools/bash.ts";
 import { QUESTION_CAPABILITY, RENDERED_COMPONENTS_CAPABILITY } from "../rpc/custom-capability.ts";
 import { type EnsuredHost, ensureHost } from "../rpc/host-ensure.ts";
 import { isTransportGoneError, RpcClient, type RpcClientEvent, RpcCommandError } from "../rpc/rpc-client.ts";
+import { attachEnsuredHost } from "./interactive-host-attach.ts";
 
 /**
  * What this TUI can render for a host: host-side components and the rich
@@ -123,9 +124,7 @@ export async function createInteractiveHostRuntime(
 				if (disposed) return;
 				disconnectQueued = false;
 				try {
-					await startHost({ socket: options.socket, agentDir: options.agentDir });
-					if (disposed) return;
-					await client.start();
+					await attachEnsuredHost(() => startHost({ socket: options.socket, agentDir: options.agentDir }), client);
 					if (disposed) return;
 					await client.openSession({ sessionPath, cwd: localRuntime.cwd });
 					if (disposed) return;
@@ -153,8 +152,7 @@ export async function createInteractiveHostRuntime(
 		});
 	};
 	try {
-		await startHost({ socket: options.socket, agentDir: options.agentDir });
-		await client.start();
+		await attachEnsuredHost(() => startHost({ socket: options.socket, agentDir: options.agentDir }), client);
 		await client.setClientInfo(80, [...HOST_CLIENT_CAPABILITIES]);
 		const startupEvents: import("../rpc/rpc-client.ts").RpcClientEvent[] = [];
 		const stopBuffering = client.onEvent((event) => startupEvents.push(event));

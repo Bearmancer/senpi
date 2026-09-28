@@ -3,6 +3,7 @@ import { kernelToolError } from "./kernel-tools-errors.js";
 import { createKernelToolPump } from "./kernel-tools-pump.js";
 import { hostDeniedError, hostToolRefusal } from "./kernel-tools-scope.js";
 import { JsWorkerRuntime } from "./worker-runtime.js";
+import { installKernelWebView } from "./worker-webview.js";
 
 // Mirrors INTERRUPT_ACK_OP and CHILD_LIFECYCLE_OP in src/bridge/reserved.ts (this worker file cannot import TypeScript).
 const INTERRUPT_ACK_OP = "interrupt-ack";
@@ -25,6 +26,7 @@ export function createWorkerCore(transport, options) {
 	let runtime = null;
 	let activeCell = null;
 	const pendingTools = new Map();
+	const pendingWebViewPorts = new Map();
 	const nestedInvokes = new Map();
 	const kernelTools = createKernelToolPump({
 		getRuntime: () => runtime,
@@ -73,6 +75,13 @@ export function createWorkerCore(transport, options) {
 		return await promise;
 	}
 
+	function requestWebViewPort() {
+		const requestId = crypto.randomUUID();
+		const promise = new Promise((resolve, reject) => pendingWebViewPorts.set(requestId, { resolve, reject }));
+		emit({ type: "webview-connect", requestId });
+		return promise;
+	}
+
 	function interruptCell(reason) {
 		if (!activeCell || !runtime) return;
 		emit({ type: "status", event: { op: INTERRUPT_ACK_OP, cellId: activeCell.cellId } });
@@ -92,8 +101,16 @@ export function createWorkerCore(transport, options) {
 			runtime?.kernelTools.setCollisionNames(message.hostToolNames ?? [], message.foreignLanguageNames ?? []);
 			return;
 		}
+		if (message.type === "webview-port") {
+			const pending = pendingWebViewPorts.get(message.requestId);
+			pendingWebViewPorts.delete(message.requestId);
+			if (message.ok) pending?.resolve(message.port);
+			else pending?.reject(errorFromBridge(message.error));
+			return;
+		}
 		if (message.type === "init") {
 			applySessionEnvironment(message.sessionEnv);
+			installKernelWebView(requestWebViewPort);
 			runtime = new JsWorkerRuntime({
 				cwd: options.cwd,
 				parallelPoolWidth: options.parallelPoolWidth,

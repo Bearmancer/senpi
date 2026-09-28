@@ -131,7 +131,11 @@ class DefaultCodemodeSessionManager implements CodemodeSessionManager {
 		if (existing) return existing;
 		const pending = this.#kernelCreations.get(language);
 		if (pending) return await pending;
-		const dispatch = (message: KernelToHostMessage): void => this.#onMessageRefs.get(language)?.(message);
+		// A bound method, never a closure in this frame: the dispatcher outlives every
+		// cell, and a closure here would capture this call's lexical environment — under
+		// JSC that keeps the creating cell's onMessage (CellHandler, output buffers,
+		// display images) alive for the whole kernel generation (#2260).
+		const dispatch = this.#dispatchTo.bind(this, language);
 		const generation = this.#generation;
 		const creation = this.#createAndStoreKernel(language, dispatch, generation);
 		this.#kernelCreations.set(language, creation);
@@ -140,6 +144,15 @@ class DefaultCodemodeSessionManager implements CodemodeSessionManager {
 		} finally {
 			if (this.#kernelCreations.get(language) === creation) this.#kernelCreations.delete(language);
 		}
+	}
+
+	releaseKernelListener(language: EvalLanguage, onMessage: (message: KernelToHostMessage) => void): void {
+		// Identity-checked: a cell settling late must not unbind a newer cell that already re-registered.
+		if (this.#onMessageRefs.get(language) === onMessage) this.#onMessageRefs.delete(language);
+	}
+
+	#dispatchTo(language: EvalLanguage, message: KernelToHostMessage): void {
+		this.#onMessageRefs.get(language)?.(message);
 	}
 
 	async complete(request: CompletionRequest, ctx: ExtensionContext): Promise<CompletionResult> {

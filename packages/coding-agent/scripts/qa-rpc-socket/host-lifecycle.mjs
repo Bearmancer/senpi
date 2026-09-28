@@ -242,6 +242,8 @@ async function ensure(qa, { idleExitMs, hostArgs = [], env = {} }) {
 		settings: JSON.parse(readFileSync(paths.settingsFile, "utf8")),
 	};
 	managedHosts.push(tracked);
+	// The scenarios model a host with no attached client and attach their own clients later.
+	ensured.release();
 	return tracked;
 }
 

@@ -12,6 +12,73 @@
 
 ### Removed
 
+## [2026.9.28-3] - 2026-09-28
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.28-2] - 2026-09-28
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.28] - 2026-09-28
+
+### Breaking Changes
+
+### Added
+
+- `parseEndpointReasoningEfforts()` maps the `reasoning_efforts` an OpenAI-compatible `/models` entry advertises onto senpi's thinking levels, and `Model` has an optional `defaultThinkingLevel`. ([#2196](https://github.com/code-yeongyu/senpi/issues/2196))
+- `isQuotaExhaustionMessage()` recognises the same account quota, budget, credit, and billing exhaustion wording the retry classifier treats as terminal. ([#2198](https://github.com/code-yeongyu/senpi/issues/2198))
+
+### Changed
+
+### Fixed
+
+- A terminal 429 or 503 error from an OpenAI-compatible (or Azure, Google, OpenRouter) provider keeps the provider's `Retry-After` (seconds or HTTP-date) as the `(retry-after-ms: N)` marker, so callers can honour it even when no retry ran. ([#2198](https://github.com/code-yeongyu/senpi/issues/2198))
+
+### Removed
+
+## [2026.9.27-4] - 2026-09-27
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.27-3] - 2026-09-27
+
+### Breaking Changes
+
+### Added
+
+- Failed assistant messages carry an optional `providerDiagnostic` (`category`: `auth` | `rate_limit` | `quota` | `context_limit` | `invalid_request` | `provider_unavailable` | `unknown`, plus `httpStatus`, allowlisted `code` and `evidence`) so SDK consumers can tell provider failure families apart without parsing `errorMessage`. The Anthropic Messages and OpenAI-compatible Chat Completions adapters mint it only from the SDK's HTTP error status and error code or an explicit SSE error envelope; contradictory evidence yields no diagnostic. `sanitizeProviderDiagnostic` and `readProviderDiagnostic` revalidate values that crossed a boundary. `errorMessage`, retries and fallback are unchanged. ([#2197](https://github.com/code-yeongyu/senpi/issues/2197))
+
+### Changed
+
+### Fixed
+
+### Removed
+
 ## [2026.9.27-2] - 2026-09-27
 
 ### Breaking Changes

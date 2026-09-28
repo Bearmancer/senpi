@@ -189,6 +189,11 @@ it("carries kind and context across a real socket host", async () => {
 			}),
 		);
 		const interactive = responseData(await client.request({ type: "open_session", cwd: host.cwd }));
+		// A socket host stamps its own endpoint and generation over every session's context.
+		const stamped = {
+			host_socket: expect.stringMatching(/\/rpc\.sock$/),
+			host_instance: responseData(await client.request({ type: "get_protocol_info" })).instanceId,
+		};
 
 		// When/Then: the wire carries both fields end to end.
 		expect(
@@ -201,7 +206,7 @@ it("carries kind and context across a real socket host", async () => {
 					}),
 				),
 			),
-		).toEqual({ kind: "worker", context: { role: "child", task_id: "t1" } });
+		).toEqual({ kind: "worker", context: { role: "child", task_id: "t1", ...stamped } });
 		expect(
 			z.array(listedSchema).parse(responseData(await client.request({ type: "list_sessions" })).sessions),
 		).toEqual([expect.objectContaining({ sessionId: interactive.sessionId, kind: "interactive" })]);
@@ -211,8 +216,8 @@ it("carries kind and context across a real socket host", async () => {
 				.parse(responseData(await client.request({ type: "list_sessions", include_workers: true })).sessions)
 				.map((row) => ({ kind: row.kind, context: row.context })),
 		).toEqual([
-			{ kind: "worker", context: { role: "child", task_id: "t1" } },
-			{ kind: "interactive", context: {} },
+			{ kind: "worker", context: { role: "child", task_id: "t1", ...stamped } },
+			{ kind: "interactive", context: stamped },
 		]);
 		const refused = await client.request({
 			type: "open_session",

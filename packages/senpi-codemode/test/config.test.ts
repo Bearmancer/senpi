@@ -2,6 +2,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
+import { resolveRetainedImagesBytes, resolveRetainedResultsBytes } from "../src/config/memory-settings.ts";
 import {
 	defaultCodemodeSettings,
 	loadCodemodeSettings,
@@ -134,6 +135,7 @@ describe("codemode settings", () => {
 				taskTools: { task: "task", output: "task_output" },
 				outputSink: { headBytes: 20480, maxColumns: 768 },
 				statusEvents: true,
+				memory: { retainedResultsMb: 32, retainedImagesMb: 256 },
 			});
 		} finally {
 			await rm(root, { recursive: true, force: true });
@@ -166,6 +168,7 @@ describe("codemode settings", () => {
 				taskTools: { task: "task", output: "task_output" },
 				outputSink: { headBytes: 20480, maxColumns: 768 },
 				statusEvents: true,
+				memory: { retainedResultsMb: 32, retainedImagesMb: 256 },
 			});
 		} finally {
 			await rm(root, { recursive: true, force: true });
@@ -404,6 +407,35 @@ describe("codemode settings", () => {
 
 		for (const value of ["0", "-5", "abc", ""]) {
 			expect(resolveForegroundWindowSeconds(settings, { SENPI_CODEMODE_FOREGROUND_SECONDS: value })).toBe(15);
+		}
+	});
+
+	it("resolves the settled-result memory and image-spill budgets from defaults, the file, and the environment", async () => {
+		const root = await mkdtemp(join(tmpdir(), "senpi-codemode-config-"));
+		try {
+			const projectDir = join(root, "project");
+			await mkdir(join(projectDir, ".senpi"), { recursive: true });
+			await writeFile(
+				join(projectDir, ".senpi", "codemode.json"),
+				JSON.stringify({ memory: { retainedResultsMb: 8, retainedImagesMb: 64 } }),
+			);
+			const loaded = await loadCodemodeSettings({ cwd: projectDir, homeDir: join(root, "home") });
+
+			expect(loaded.warnings).toEqual([]);
+			for (const [resolve, flag, fallback, fromFile] of [
+				[resolveRetainedResultsBytes, "SENPI_CODEMODE_RETAINED_RESULTS_MB", 32, 8],
+				[resolveRetainedImagesBytes, "SENPI_CODEMODE_RETAINED_IMAGES_MB", 256, 64],
+			] as const) {
+				expect(resolve(defaultCodemodeSettings, {})).toBe(fallback * 1024 * 1024);
+				expect(resolve(loaded.settings, {})).toBe(fromFile * 1024 * 1024);
+				expect(resolve(loaded.settings, { [flag]: "4" })).toBe(4 * 1024 * 1024);
+				expect(resolve(loaded.settings, { [flag]: "0" })).toBe(0);
+				for (const value of ["-1", "abc", "", "1.5"]) {
+					expect(resolve(loaded.settings, { [flag]: value })).toBe(fromFile * 1024 * 1024);
+				}
+			}
+		} finally {
+			await rm(root, { recursive: true, force: true });
 		}
 	});
 });

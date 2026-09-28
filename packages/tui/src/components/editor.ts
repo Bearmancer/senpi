@@ -18,6 +18,7 @@ import {
 	pasteMarkerId,
 	segmentWithMarkers,
 } from "../paste-markers.ts";
+import { isSlashNamespaceItem } from "../slash-command-autocomplete.ts";
 import { normalizeWarpWslShiftEnterInput } from "../terminal.ts";
 import {
 	type Component,
@@ -921,6 +922,7 @@ export class Editor implements Component, Focusable {
 			if (kb.matches(data, "tui.input.tab")) {
 				const selected = this.autocompleteList.getSelectedItem();
 				if (selected && this.autocompleteProvider) {
+					const drillsIntoNamespace = this.isSlashNamespaceSelection(selected.value);
 					this.pushUndoSnapshot();
 					this.lastAction = null;
 					const result = this.autocompleteProvider.applyCompletion(
@@ -935,6 +937,7 @@ export class Editor implements Component, Focusable {
 					this.setCursorCol(result.cursorCol);
 					this.cancelAutocomplete();
 					if (this.onChange) this.onChange(this.getText());
+					if (drillsIntoNamespace) this.tryTriggerAutocomplete();
 				}
 				return;
 			}
@@ -942,6 +945,7 @@ export class Editor implements Component, Focusable {
 			if (kb.matches(data, "tui.select.confirm")) {
 				const selected = this.autocompleteList.getSelectedItem();
 				if (selected && this.autocompleteProvider) {
+					const drillsIntoNamespace = this.isSlashNamespaceSelection(selected.value);
 					this.pushUndoSnapshot();
 					this.lastAction = null;
 					const result = this.autocompleteProvider.applyCompletion(
@@ -955,6 +959,13 @@ export class Editor implements Component, Focusable {
 					this.state.cursorLine = result.cursorLine;
 					this.setCursorCol(result.cursorCol);
 
+					if (drillsIntoNamespace) {
+						// A namespace (`skill:`) is not a command: list its commands instead of submitting.
+						this.cancelAutocomplete();
+						if (this.onChange) this.onChange(this.getText());
+						this.tryTriggerAutocomplete();
+						return;
+					}
 					if (this.autocompletePrefix.startsWith("/")) {
 						this.cancelAutocomplete();
 						// Fall through to submit
@@ -2509,6 +2520,15 @@ export class Editor implements Component, Focusable {
 
 	private tryTriggerAutocomplete(explicitTab: boolean = false): void {
 		this.requestAutocomplete({ force: false, explicitTab });
+	}
+
+	/** Ask the provider for suggestions at the cursor, as typing would (e.g. after a programmatic setText). */
+	public openAutocomplete(): void {
+		this.tryTriggerAutocomplete();
+	}
+
+	private isSlashNamespaceSelection(value: string): boolean {
+		return this.autocompletePrefix.startsWith("/") && isSlashNamespaceItem(value);
 	}
 
 	private handleTabCompletion(): void {

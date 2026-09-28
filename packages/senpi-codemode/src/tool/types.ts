@@ -166,6 +166,11 @@ export interface EvalKernel {
 
 export interface EvalKernelManager {
 	getKernel(language: EvalLanguage, onMessage: (message: KernelToHostMessage) => void): Promise<EvalKernel>;
+	/**
+	 * Drops the per-cell listener `getKernel` registered for `language` once that cell settled.
+	 * Identity-checked, so releasing a superseded listener never unbinds a newer cell's listener.
+	 */
+	releaseKernelListener?(language: EvalLanguage, onMessage: (message: KernelToHostMessage) => void): void;
 }
 
 export type ExecuteTool = (

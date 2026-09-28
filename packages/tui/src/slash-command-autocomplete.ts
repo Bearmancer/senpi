@@ -3,6 +3,14 @@ import { fuzzyFilter } from "./fuzzy.ts";
 
 const SKILL_COMMAND_PREFIX = "skill:";
 
+/**
+ * A slash item whose value ends in `:` names a command namespace (`skill:` = "Browse available
+ * skills"), not a command: choosing it drills into that namespace's list instead of submitting.
+ */
+export function isSlashNamespaceItem(value: string): boolean {
+	return value.endsWith(":");
+}
+
 type CommandItem = {
 	readonly name: string;
 	readonly label: string;

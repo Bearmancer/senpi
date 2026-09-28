@@ -48,6 +48,9 @@ export interface EditorComponent extends Component {
 	/** Insert text at current cursor position */
 	insertTextAtCursor?(text: string): void;
 
+	/** Request autocomplete suggestions at the cursor, as typing would. */
+	openAutocomplete?(): void;
+
 	/**
 	 * Get text with any markers expanded (e.g., paste markers).
 	 * Falls back to getText() if not implemented.

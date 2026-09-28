@@ -166,6 +166,9 @@ parsing a version string:
   `core.extensions` (absolute roots, deduplicated and sorted). `profile_id` is the sha256 of the canonical JSON
   of `core` with its keys in that sorted order (`extensions`, `multi_session`, `session_runtime`), so any client
   can recompute it and compare two hosts without comparing paths.
+- `memory_pressure` - multi-session hosts only: `true` while this host's memory sampler reads its memory footprint
+  above `SENPI_RPC_HOST_RSS_WARN_MB`, else `false`. Not identity and never an admission signal; `senpi host status`
+  reports it per endpoint. Classic hosts and hosts released before the field omit it.
 
 Compatibility is decided from `protocolVersion` + `capabilities`, and "is my build newer?" from `engineOrdinal`.
 A `serverVersion` string comparison is never a compatibility test: two hosts with different version strings can
@@ -306,6 +309,7 @@ directory can never read each other's state:
 <agentDir>/rpc-host-daemon/                    flat directory (shared; also a legacy host's own state)
   layout.json                                  { "layout": 2, "dir": "<sha256(canonical socket)[:16]>" }
   <sha256(canonical socket)[:16]>/             0700
+    endpoint.json                              { layout: 2, socket, created_at } - durable identity
     host.pid                                   POINTER: { layout, instance_id, generation_dir, writer }
     settings.json                              what the supervisor reads at boot
     daemon.lock  stderr.log
@@ -317,9 +321,15 @@ directory can never read each other's state:
     reservations/                              cross-generation session-path claims
 ```
 
-Directories are `0700` and every state file is `0600`. The canonical socket is the socket path on POSIX
-and the normalized lower-cased path on win32, so a client recomputes the directory name from the socket
-alone. `generation_dir` is relative to the directory holding the pointer (`generations/<instanceId>`), and
+Directories are `0700` and every state file is `0600`. The canonical socket is, on POSIX, the socket path
+with its directory resolved through its deepest existing ancestor (`realpath`; a missing tail is kept
+verbatim) - the same identity the ensure lock is keyed by - and on win32 the normalized lower-cased path, so
+a client recomputes the directory name from the socket alone and every spelling of one socket (`/tmp` vs
+`/private/tmp`, a path through a symlinked directory) shares one directory, one registration and one lock.
+A socket already spelled canonically hashes exactly as it did when the name was taken from the spelling
+itself, so an existing endpoint keeps its directory. A directory an older build named after a
+non-canonical spelling is still listed by `status --all` and collected by `gc`, but new state goes to the
+canonical directory. `generation_dir` is relative to the directory holding the pointer (`generations/<instanceId>`), and
 `instance_id` is the same id the host reports as `instanceId` in `get_protocol_info` - so a pointer that
 names a different id than the socket answers describes a generation that is no longer serving.
 
@@ -335,7 +345,20 @@ names is alive an ensure refuses (`legacy_host`) rather than starting a second h
 `ensureHost` fails with a typed `HostDaemonStateError` naming the directory it could not create or write,
 and starts no host in that case.
 
-The directory is PRUNED of what is no longer running on every registration write and on every `host status`:
+`endpoint.json` names the socket the directory serves, in the spelling its first ensure used (its name
+is the hash of that spelling's canonical form). It is
+written `0600` when the directory is created and re-asserted under the ensure lock. It is written whole to a
+temporary name and linked into place, so no reader ever sees half a file, and a valid one is never rewritten, so
+`created_at` is the endpoint's first ensure. Under the lock the ensure does replace a file that does not name a
+socket hashing to this directory (torn by a crash of an older build, or foreign): left alone, such a file would
+leave the endpoint listed as `socket: null` and kept by `gc` as `unknown_identity` forever. It is the one file a generation's release
+leaves behind: a supervisor that exits (idle, drained, or after its host child crashed) removes the pointer,
+`settings.json` and its generation directory, and without `endpoint.json` such an endpoint could not even be
+enumerated. `stderr.log` and `crashes.jsonl` stay too. The only thing that ever removes an endpoint directory
+(`endpoint.json` included) is the explicit `senpi host gc` below, and only on proof that nothing runs behind it.
+
+The directory is PRUNED of what is no longer running on every registration write and on every single-socket
+`host status` (never by `host status --all`):
 a `generations/<instanceId>/` whose record names a pid nobody is running is removed, the pointer goes with it
 while it still names one, and claims in `reservations/` whose owner is gone are removed too. A record that
 cannot be parsed is left alone - an ensure writing one right now must not be mistaken for a generation that
@@ -370,10 +393,12 @@ Everything above is reachable from one command, so a terminal, a desktop and a t
 daemon the same way instead of each re-implementing the decision:
 
 ```
-senpi host ensure  [--json] [--launch-spec <file>] [--policy upgrade|fallback|never] [--socket <path>]
-senpi host status  [--json] [--include-workers] [--socket <path>]
-senpi host stop    [--json] [--drain] [--force] [--socket <path>]
-senpi host handoff [--json] [--launch-spec <file>] [--socket <path>]
+senpi host ensure     [--json] [--launch-spec <file>] [--policy upgrade|fallback|never] [--socket <path>]
+senpi host status     [--json] [--include-workers] [--all] [--socket <path>]
+senpi host stop       [--json] [--drain] [--force] [--socket <path>]
+senpi host handoff    [--json] [--launch-spec <file>] [--socket <path>]
+senpi host shard-path --kind <p|i> --owner <id> [--root <dir>] [--json]
+senpi host gc         [--json] [--agent-dir <dir>]
 ```
 
 The contract is machine-first: EXACTLY ONE JSON line on stdout and nothing else, diagnostics on stderr,
@@ -388,32 +413,127 @@ and an exit code that classifies the outcome without parsing the line.
 | `4` | fallback: `{ action: "fallback", reason, host }` - under `--policy fallback`, no host is better than this one |
 
 The socket is `--socket`, else `SENPI_RPC_SOCKET`, else `<agentDir>/rpc/rpc.sock`. `--json` is accepted for
-symmetry with other commands; the answer is always JSON.
+symmetry with other commands; the answer is always JSON (the one exception is `shard-path` without `--json`,
+which prints the bare socket path).
 
 - `ensure` prints `{ action, socket, pid, instanceId, generation, engineVersion, engineOrdinal,
   capabilities, launchProfileId, reused, upgradeable }`. `--policy upgrade` (the default) allows a
   generation handoff, `never` only attaches or starts, and `fallback` answers exit 4 rather than attaching
   to a host this build disagrees with. `action` is `handoff` exactly when the socket was already served and
-  the process behind it changed.
+  the process behind it changed. An ensure invoked by an in-process session inside a multi-session host is
+  attach-only even when its caller requested an upgrade: a host generation never starts its own successor.
+  This is process-local state, not an environment marker, so a shell child remains free to run the explicit
+  `senpi host handoff` command.
 - `status` prints `{ reachable, socket, pid, instanceId, generation, engineVersion, capabilities,
   launchProfile, sessions: { total, interactive, worker, retained, foreign_attached, foreign_retained },
-  zombies, rss_mb, open_fds, env_keys, generations }` and exits 3 when nothing answers - with the same
+  zombies, rss_mb, host_rss_mb, open_fds, memory_pressure, env_keys, generations, crashes, shard, session_rows,
+  claims_live, claims }` and exits 3 when nothing answers - with the same
   field set, so a caller parses one shape and branches on one boolean. `sessions` is what `list_sessions`
   reports under the same flag, so `worker` stays `0` without `--include-workers`; `foreign_*` is the same
   count from the point of view of a client holding none of those sessions itself. `rss_mb`, `open_fds` and
-  `zombies` describe the daemon's whole process tree (supervisor plus host) and are `null` where the
-  platform does not publish them (`open_fds` is `/proc`-only). `generations` lists every ALIVE generation of
-  this daemon as `{ instanceId, generation, pid, engineVersion, rss_mb, sessions, current, alive }`, newest
-  ordinal last: `rss_mb` is that generation's own process tree, and `sessions` counts the session files it
+  `zombies` describe the daemon's whole process tree (supervisor, host, and every tool, kernel and server its
+  sessions spawned); `host_rss_mb` is only the supervisor and the host process, the number `ps` shows for those
+  pids (the host's memory sampler judges pressure by the host's footprint instead, see "Memory pressure"). All are `null` where the platform does not publish them
+  (`open_fds` is `/proc`-only). `generations` lists every ALIVE generation of
+  this daemon as `{ instanceId, generation, pid, engineVersion, rss_mb, host_rss_mb, sessions, current, alive }`, newest
+  ordinal last: `rss_mb` is that generation's own process tree, `host_rss_mb` only its supervisor and host processes, and `sessions` counts the session files it
   still claims in `reservations/` - the one occupancy number that is observable for a generation which no
   longer answers on the socket. Records of generations that ended are pruned by the read itself, so a status
   never lists a dead pid.
+
+  The last five fields and `memory_pressure` are additive (a client that does not know them ignores them):
+  - `memory_pressure`: whether the ANSWERING generation's memory sampler currently reads its footprint above
+    `SENPI_RPC_HOST_RSS_WARN_MB` (the state its `host_memory_pressure` records announce), read from its
+    `get_protocol_info`; `null` when nothing answers or the host predates the field. It lives in the host process
+    alone, so a draining predecessor's state is not reported, and it is observability only: a pressured endpoint
+    admits every open.
+  - `crashes`: records in the endpoint's `crashes.jsonl` - supervised host children that died rather than
+    stopped; `0` when the file is absent.
+  - `shard`: `{ kind: "p" | "i", key }` when the socket's basename is `<kind>-<16 hex>.sock` (the naming
+    contract below), else `null`.
+  - `session_rows`: under `--include-workers` only (else `[]`), every row of that same `list_sessions
+    { include_workers: true }` reply as `{ id, kind, session_path, attachments, context }`. `session_path` is
+    the host's canonical path, the key a client matches a session by; `context` is the published labels
+    including the host's own `host_socket`/`host_instance`, `null` where none were published.
+  - `claims_live`: session-path claims in `reservations/` whose owner process is still running, `0` when the
+    directory is absent.
+  - `claims`: under `--include-workers` only (else `[]`), every claim in `reservations/` whichever generation
+    wrote it, as `{ session_path, owner_pid, instance_id, generation, attached, live }` - so a path a
+    draining predecessor still holds is visible although the answering generation no longer lists it.
+    `generation` is the owner's ordinal while its generation record exists, else `null`; `attached` is `null`
+    for a claim written before that flag existed.
+- `status --all` reports every endpoint the agent directory holds state for and ignores `--socket`:
+  `{ endpoints: [<status row>, ...] }`, each row the single-socket report above plus `dir` (the endpoint's
+  daemon directory) and `identity` (what named its socket: `endpoint` = `endpoint.json`, `settings` = the
+  boot `settings.json`, `generation-settings` = a generation's own `settings.json`; each accepted only when
+  that socket hashes to the directory it was found in). A directory none of them names is still listed with
+  `socket: null` and `identity: "unknown"`, built from the directory alone - the ensure lock is keyed by a
+  longer hash of the socket's transport address and cannot be rebuilt from the 16-hex name, so it can be
+  shown but never addressed. Before layout 2 (no `layout.json`) the answer is `{ "endpoints": [] }`. Unlike
+  the single-socket form, `--all` REMOVES NOTHING: a dead generation is a row with `alive: false`, an endpoint
+  whose host exited stays listed through its `endpoint.json` with `reachable: false` and `generations: []`,
+  and reclaiming what ended is left to the explicit, evidence-gated `gc`. Every endpoint is read at
+  once, each under its own budget (10 s per read), and a socket that does not answer the identity probe is
+  not asked for its session listing, so hung hosts cost about one budget in total; rows stay in directory order. Exit `0` while at least one endpoint answers, `3` when none does or none exists.
+- `shard-path` computes a shard socket without contacting any host, so a client that does not link senpi
+  can check its own copy of the naming contract against the engine: `{ kind, key, socket }` under `--json`,
+  the socket path otherwise. `--root` defaults to `<agentDir>/rpc/shards`.
+- `gc` removes the state of endpoints whose host is PROVABLY gone, in the agent directory (`--agent-dir`, else
+  the current one; `--socket` is ignored), and answers `{ removed: [{ socket, dir, reason }], kept: [{ socket,
+  dir, reason }] }` with exit `0` whatever it found (`2` for a bad flag). It never signals a process and never
+  runs implicitly - not inside `ensure`, not inside `status`. For each endpoint whose socket is known it takes
+  that socket's ENSURE lock (`<tmp>/senpi-rpc-host-locks/<sha256(transport address)[:32]>.lock`, the one
+  `ensureHost` serializes on - not `daemon.lock`; on POSIX the address is the socket path with its directory
+  realpath-canonicalized, so every spelling of one socket shares one lock) for at most 2 s, and inside it requires all three: (a) no
+  `generations/*/host.pid` names a live process (pid live and start time matching; a live pid whose identity
+  cannot be read counts as live; the generation the pointer names is one of them), (b) no claim in
+  `reservations/` has a live owner, and (c) connecting to the socket fails with `ENOENT`, or with `ECONNREFUSED`
+  on an entry that is a socket (a regular file where the socket should be is kept as `reachable`) - and so does
+  every `<socket>.next-*` successor bind beside it. Only then does it unlink the `<socket>.next-*` /
+  `<socket>.shield-*` siblings, then the socket, then remove the endpoint directory LAST, still under the lock;
+  `reason` is `socket_refused` or `socket_absent`. A sibling that is a directory is not unlinked: it stays and
+  the removed entry lists it as `skipped: [{ path, type: "directory" }]`. Because the directory goes last, a
+  removal that fails part-way leaves the endpoint listed for the next gc. Everything else is kept with its
+  reason: `live_generation`, `live_claim`, `reachable`, `locked` (an ensure held the lock for 2 s),
+  `legacy_layout` (a flat directory without `layout.json` - a legacy host's, never touched), `unknown_identity`
+  (nothing names the socket, so its lock cannot be taken), or `failed` (reading the evidence or removing threw;
+  the entry carries `error`) - and a `failed` endpoint never stops gc from going on to the others.
+  An `unknown_identity` directory is never removed by gc; remove it by hand only after checking that no pid in
+  its `generations/*/host.pid` or `reservations/*.json` is running and that no process holds files under it.
+  An ensure that raced a gc simply re-creates `endpoint.json` under the lock after gc released it.
 - `stop` is the I1 carve-out: a plain stop needs a validated pidfile AND `foreign_attached +
   foreign_retained == 0`, or it refuses with exit 3 and prints the counts it refused on; `--force`
   overrides after printing the same counts; `--drain` (SIGUSR1) is always permitted, because it ends no
   work.
 - `handoff` forces a generation handoff from THIS binary. A host that cannot drain and a platform that
-  cannot rename answer alike: exit 3 `{ reason: "upgrade_unsupported", detail }`.
+  cannot rename answer alike: exit 3 `{ reason: "upgrade_unsupported", detail }`. The handoff runs inside the
+  endpoint's ensure lock (the one `ensure` and `gc` take), so an `ensure` arriving while the successor comes up
+  waits and then attaches to the successor, and `gc` reports the endpoint `locked` rather than judging it
+  halfway. An `ensure` waits for the lock as long as the longest holder can keep it: a probe plus either a
+  stop-and-restart or a handoff (probe, successor start, 30 s readiness). A REFUSED handoff leaves the endpoint
+  as it found it: the successor it started is killed and, once it has exited (up to 5 s), its generation record
+  and directory are released, so `status --all` never lists it; the boot `settings.json` it rewrote before
+  spawning is restored byte for byte. A cleanup that fails is reported in the refusal's `detail`.
+
+#### Shard naming contract (`shardKey`, `shardSocketPath`)
+
+A client may run many endpoints under one agent directory - omo one per parent session (`p`), the Desktop
+one per thread (`i`), under `<agentDir>/rpc/shards/`. Every client derives the socket identically:
+
+```
+key    = sha256("<kind>:<ownerId>") in hex, first 16 characters
+socket = <root>/<kind>-<key>.sock
+```
+
+`packages/coding-agent/src/modes/rpc/host-daemon-paths.ts` exports `shardKey(kind, ownerId)`,
+`shardSocketPathForKey(root, kind, key)` (no hashing) and `shardSocketPath(root, kind, ownerId)`. Fixed
+vectors every implementation must reproduce:
+
+| kind | owner | key | socket under `/r` |
+|---|---|---|---|
+| `p` | `01a0e28d-40e4-7402-bac7-8de6e76ad84c` | `6d410ba846ba1550` | `/r/p-6d410ba846ba1550.sock` |
+| `i` | `thread-0001` | `da99f196e11b1cf9` | `/r/i-da99f196e11b1cf9.sock` |
+| `p` | (empty) | `3ba7290d74188485` | `/r/p-3ba7290d74188485.sock` |
 
 #### Launch spec (`--launch-spec <file>`)
 
@@ -451,6 +571,15 @@ the ensuring process's environment. It receives an allowlist of NAMES - `PATH`, 
 spec's `env` states. Matching is case-sensitive on POSIX and case-insensitive on win32, where the OS wiring
 (`SystemRoot`, `ComSpec`, `PATHEXT`, ...) is allowed as well. Values are never inspected; `status` reports
 the granted NAMES as `env_keys` and never a value.
+
+The product-lane allowlist has an explicit transient denylist. Session context (`PI_SESSION_*`,
+`PI_GOAL_STORE_FILE`, `PI_PROVIDER`, `PI_MODEL`, `PI_REASONING_LEVEL`,
+`PI_PROMPT_CACHE_SAFE_WAIT_SECONDS`), the Python eval-kernel parent
+(`SENPI_PY_KERNEL_PARENT_PID`), and inherited `SENPI_RPC_HOST_*` generation/watch/scratch identity never
+cross into either an initial daemon or a handoff successor. Legitimate daemon configuration in the same
+namespace, such as RSS thresholds, idle windows and feature flags, remains allowed. The spawn applies the
+new generation's own instance id, generation and daemon directory after filtering, so caller overrides
+cannot replace lifecycle identity.
 
 #### Verifying a daemon build (live QA drivers)
 
@@ -533,6 +662,15 @@ auth, model, extension or resource resolution, and they are never merged into th
   `^[a-z][a-z0-9_]*$`, every value at most 16 KiB, and at most 32 KiB of JSON in total. Anything else is refused with
   `invalid_session_context: <detail>`, where the detail names the cap that was broken.
 
+A socket host also stamps its own identity into every session's context, overwriting any client-supplied
+value for the same keys, because the host is the authority: `host_socket` is the PUBLIC endpoint clients
+address (the supervisor's path for a supervised host, the bound path for a bare one), realpath-canonicalized
+through the deepest existing ancestor of its directory (so the first generation of a shard, which starts before
+`rpc/shards/` exists, and every successor stamp the same string), and stays the same across a generation handoff; `host_instance` is the answering generation's `instanceId`
+(`get_protocol_info`) and changes with every handoff. So an extension can tell which endpoint and generation
+it runs behind without an environment variable. `host_socket` is omitted where no public path exists (an
+abstract socket, a supervised win32 host); a stdio host adds neither key.
+
 One shared host therefore loads ONE extension set and still lets an extension recognize the session it was loaded for
 (`pi.sessionKind`, `pi.sessionContext` - see
 [ExtensionAPI session identity](extensions.md#pisessionkind--pisessioncontext--pisharedhostenabled)). Probe
@@ -600,16 +738,33 @@ Environment overrides beat the file, and invalid values fall through to the next
 (`transient`|`persistent`) and `SENPI_RPC_HOST_IDLE_EXIT_MS` (positive integer milliseconds).
 
 The host exits only after the window elapses with NO attached client connections and NO active turns — continuously.
-Any connection or agent turn resets the window, so a busy host never exits. The supervisor learns about turns through
+Any attached connection or agent turn resets the window, so a busy host never exits. A connection attaches with its
+first request line, unless that line is an OBSERVING read: `get_protocol_info` or `list_sessions` carrying
+`"observe": true`. A connection that only ever sends observing reads never counts and never resets the window, so a
+poller (`senpi host status [--all]`, which marks both of its reads, a doctor loop, a runtime panel) can look at every
+endpoint as often as it likes without keeping any of them alive; the first request that is anything else attaches the
+connection from then on, and `observe` on any other command is ignored. While a connection has not sent its first
+line yet the host does not exit, and the window keeps running. Hosts that predate the field ignore it, so a marked read
+works against every generation. The supervisor learns about turns through
 its observer connection to the host; while that connection is unhealthy it cannot see turns, so it treats activity as
 unknown and keeps the host open as if a turn were running — but only for one idle window, during which it keeps
 reconnecting. An observer that stays unhealthy for longer than the window stops counting as busy, and the connection
 count alone decides from there. A `persistent` host has an infinite window and so keeps its infinite benefit of the
 doubt. The exit itself is clean: the RPC host
-receives SIGTERM first, flushes pending output, removes its socket, and the supervisor then removes `host.pid` and
-`settings.json` (the stderr log stays for diagnostics). After an idle exit, the next `ensureHost()` transparently
+receives SIGTERM first, flushes pending output, removes its socket, and the supervisor then removes `settings.json`,
+its generation directory and, last, the registration pointer (`host.pid`); the stderr log stays for diagnostics. The
+crash-path cleanup the host runs when its supervisor dies uses the same order, so a missing pointer always means the
+teardown is complete. After an idle exit, the next `ensureHost()` transparently
 starts a fresh host. `get_protocol_info` over the public socket behaves exactly as before; the supervisor is
 wire-transparent.
+
+`ensureHost()` hands its caller an attach hold: the connection its readiness answer arrived on stays open and counts
+as an attached client, so the idle window cannot close between the ensure and the caller's own attach, however slow
+that attach is. Every caller must call `release()` on the returned `EnsuredHost` once its own client is
+attached, or right away when it attaches later on its own connections; the idle window starts from there. Until then
+the host counts the calling process as an attached client, so a transient host whose ensuring process is still running
+never starts its idle window: a long-lived caller that ensures and never releases keeps the host up for its whole
+lifetime. The hold never keeps the calling process alive, and the operating system ends it when that process exits.
 
 The RPC host can never outlive its supervisor. It is spawned with an extra inherited pipe on fd 3 whose write end the
 supervisor holds and never writes to; the kernel closes that end whenever the supervisor dies — including `SIGKILL`, an
@@ -715,7 +870,9 @@ What the host does enforce are lifecycle windows, and they only ever return memo
 - **Empty-host exit**: when the registry holds zero sessions AND no client is connected, continuously for
   `SENPI_RPC_HOST_EMPTY_EXIT_MS` (default 15 minutes), the host exits through its clean shutdown path (flush, socket
   removal), for stdio and `--listen` hosts alike. A connected client counts as occupancy even with no session open,
-  so the host never drops a live socket under itself. Supervised hosts stay clean either way: a supervisor reads a
+  so the host never drops a live socket under itself - except a connection whose every request so far was an
+  observing read (`"observe": true`, the same rule as the idle-exit window above), which never holds the host open.
+  A connection that has not sent its first request yet still counts. Supervised hosts stay clean either way: a supervisor reads a
   child exit of 0 without a signal as an intentional idle stop and exits 0 with the same cleanup, not as a crash.
 
 Values are positive integers; invalid values fall through to the defaults. These lifecycle windows run inside the host process,
@@ -735,26 +892,40 @@ REPORT: nothing here aborts a turn, kills a session, or refuses an `open_session
   `position` is 1-based and `in_flight` counts opens already accepted across the whole host,
   since every session shares one loop. It is addressed to the opener only, carries the request
   id under `for_request` rather than the response-id field, and is dropped if that connection
-  has disconnected. A client that later times out can report where it was queued instead of a
-  bare deadline.
+  has disconnected. The bundled `RpcClient` treats it as the host's acknowledgement: an
+  acknowledged open waits up to 10 minutes for its response instead of the 30 s request
+  deadline (a busy host was measured answering after 57 s), and a timeout after it names the
+  queue position instead of a bare deadline. A lost transport still rejects at once.
   `SENPI_RPC_LOOP_LAG_ERROR_MS` (default 5000) additionally broadcasts a `host_stalled` record
-  (`{ type, driftMs, sessionId?, tool? }`) to every connection, like the other content-free lifecycle records.
+  (`{ type, driftMs, sessionId?, tool?, processCpuMs?, heapDeltaMb? }`) to every connection, like the other content-free lifecycle records.
+  `processCpuMs` is the process CPU time spent during the stalled window and `heapDeltaMb` the JS heap change across it, so a
+  stall explains itself: CPU close to `driftMs` means the host was busy (a large heap drop in the same window points at a
+  collection), and CPU close to zero means the process did not run at all (the machine starved it, or it sat in a blocking
+  wait). The stderr line carries the same two numbers as `cpu=<ms> heap=<+/-MB>`.
 - **Stall attribution**: each routed command is dispatched inside an `AsyncLocalStorage` scope carrying its routing
   `sessionId`, and an in-process session's tool executions open a span carrying `{ sessionId, tool }` for as long as
   the tool runs. A stall is blamed on the synchronous work that finished inside the measured window, or on the tool
   still executing when it ended; when neither exists the record and the log line carry no session, because the stall
   belongs to the host itself. Worker-runtime sessions block their own isolate rather than the host loop and
   deliberately have no tool spans.
-- **Memory pressure**: a 30-second sampler reads the host's RSS. Above `SENPI_RPC_HOST_RSS_WARN_MB` (default 4096) it
-  broadcasts `host_memory_pressure` (`{ type, rssMb, sessions }`) on every sample, writes one stderr line per five
-  minutes, and HALVES the idle-eviction window above while the host stays above the threshold, so idle sessions return
-  their memory sooner. It is released as soon as RSS falls back under the threshold. Above the REFUSE watermark
-  (`SENPI_RPC_HOST_RSS_REFUSE_MB`, default twice the warning threshold) the host is CRITICAL: an `open_session` that
-  would CREATE a `kind: "worker"` session is refused with the stable code `host_memory_pressure` and
-  `errorData { rssMb, retry_after_ms }`, until the next sample reads under the watermark. Nothing else changes: every
-  session the host already holds is served, an attach to a live path succeeds, interactive opens succeed, and nothing is
-  killed. This is the one memory-driven refusal on the in-process path; there is still no occupancy cap and no kill
-  policy. It exists because unbounded growth ended in a runtime crash that took every session with it (#1905).
+- **Memory pressure**: a 30-second sampler reads the host's memory footprint: `phys_footprint` on macOS, `RssAnon` on
+  Linux, `PrivateUsage` on Windows, and RSS only where none of those can be read (`measure: "rss"`). RSS itself never
+  decides: it keeps counting memory the host already returned (after a collection or an eval kernel reset it stayed
+  at gigabytes while the footprint was back near 150 MB, senpi#2261). Above `SENPI_RPC_HOST_RSS_WARN_MB` (default 4096,
+  compared with the footprint despite its name) it broadcasts `host_memory_pressure`
+  (`{ type, rssMb, footprintMb, measure, sessions }`) on every sample, writes one stderr line per five minutes naming
+  both numbers, and HALVES the idle-eviction window above while the host stays above the threshold, so idle sessions
+  return their memory sooner. It is released as soon as the footprint falls back under the threshold. Memory never refuses an open: the
+  shared host has no resource caps, so every `open_session` is admitted whatever the host holds (#2207). Hosts released
+  before #2207 had a second admission watermark; current hosts have no such admission path.
+- **Per-endpoint pressure under sharding**: an agent directory may contain many independent hosts, so each endpoint
+  samples and reports its own memory pressure. `host_memory_pressure` describes only the host that emitted it; pressure
+  on one `p-*` or `i-*` endpoint does not gate opens on another endpoint. In `host status --all`, `rss_mb` is the
+  endpoint generation's whole process tree, `host_rss_mb` is the supervisor plus host processes, and `memory_pressure`
+  is whether the answering generation is above the threshold right now. Read them on the endpoint row (and the RSS
+  pair on its generation rows) rather than treating an aggregate agent-directory number as an admission
+  signal. The warning threshold remains observability-only: every endpoint continues to admit worker `open_session`
+  requests while pressured.
 - **Stall-proof dead-peer detection**: the socket dead-peer budget (30 s, `socket-event-fanout.ts`) counts only time
   the host loop actually SERVED. The loop-lag watchdog deposits each measured drift into a process-wide ledger
   (`loop-blocked-time.ts`) and the deadline re-arms for whatever blocked time landed inside its window, so a host that
@@ -786,7 +957,7 @@ absolute: **no blocking primitive, and no unbounded synchronous filesystem read.
   sleeps synchronously, or reads a large file synchronously inside an event handler freezes every other client's
   session on that host. Use the async API, and give genuinely CPU-bound work its own worker or child process.
 - The rule is observable rather than enforced at runtime: the stall watchdog above is what names the offender.
-  `host_stalled { driftMs, sessionId, tool }` and the matching stderr line are how a blocking call in a session or a
+  `host_stalled { driftMs, sessionId, tool, processCpuMs, heapDeltaMb }` and the matching stderr line are how a blocking call in a session or a
   tool becomes a report instead of an unexplained freeze.
 
 ### Worker ownership and flow control
@@ -877,7 +1048,7 @@ containment, or containment of arbitrary native code. They are not an extension 
 
 | Command | Params | Success data | Notes |
 | --- | --- | --- | --- |
-| `get_protocol_info` | - | `{ protocolVersion: 1, serverVersion: string, capabilities: string[], mode: "classic"\|"multi", instanceId: string, generation: number, engineVersion: string, engineOrdinal: [y, m, d, n, epoch], launch_profile: { profile_id, core } }` | Answered in BOTH modes; side-effect-free; the capability probe. Multi-session hosts include `multi_session`, `retain_on_disconnect`, `session_kind`, `session_context` and `auto_title_per_session` plus the negotiated launch capabilities. Those are HOST capabilities (a client never sends them) and are advertised only in multi-session mode, where the host owns the attachment refcount and the per-session launch profile. The identity fields are described under "Host identity" above; compatibility is decided from `protocolVersion`, `capabilities` and `engineOrdinal`, NEVER from `serverVersion`. |
+| `get_protocol_info` | - | `{ protocolVersion: 1, serverVersion: string, capabilities: string[], mode: "classic"\|"multi", instanceId: string, generation: number, engineVersion: string, engineOrdinal: [y, m, d, n, epoch], launch_profile: { profile_id, core }, memory_pressure?: boolean }` | Answered in BOTH modes; side-effect-free; the capability probe. Multi-session hosts include `multi_session`, `retain_on_disconnect`, `session_kind`, `session_context` and `auto_title_per_session` plus the negotiated launch capabilities. Those are HOST capabilities (a client never sends them) and are advertised only in multi-session mode, where the host owns the attachment refcount and the per-session launch profile. The identity fields are described under "Host identity" above; compatibility is decided from `protocolVersion`, `capabilities` and `engineOrdinal`, NEVER from `serverVersion`. |
 | `open_session` | `sessionPath?`, `cwd?`, `provider?`, `modelId?`, `thinkingLevel?`, `permissionPreset?`, `retain_on_disconnect?`, `kind?`, `context?`, `auto_title?` (all optional; paths MUST be absolute) | `{ sessionId, state: RpcSessionState, attached?: true }` | `sessionPath` = today's `--session` semantics (open-if-exists else create persisting there, `session-manager.ts:926-940`); `provider`/`modelId` applied only on create (resume restores the session's model — mirrors `SenpiSessionRuntime.ts:198-200`); params form the immutable launch profile (D8). When the path is already held by a fully-open session, the open ATTACHES to it: same routing handle, `attached: true`, one more attachment counted; the runtime is torn down only when the last attachment closes. Idle sessions past the eviction window are closed by the host itself. `retain_on_disconnect: true` (default false) makes a dropped connection DETACH from this session instead of closing it — see "Retained sessions" below. `kind` (default `interactive`) and the opaque `context` map are described under "Session kind and context" above; both are stored frozen for the session's life and never influence auth, model or resource resolution. |
 | `close_session` | `sessionId` | `{}` | Refused with `unknown_session` when the requesting connection never attached to that handle (a close releases the CALLER's attachment, and `list_sessions` publishes every handle). Otherwise aborts active work, awaits agent idle + settled persistence for up to the host grace window (default 10s), then quarantines any worker that has not exited without releasing its path reservation; its response is the LAST record tagged with that handle for the first closer — no events after (test-pinned). An admitted concurrent close joins the same teardown and receives its own successful response; output saturation rejects admission with the bounded close-overflow/resync notice described above. |
 | `list_sessions` | `include_workers?` (default false) | `{ sessions: [{ sessionId, durableSessionId, sessionPath, cwd, name, status, attachments, kind, context? }] }` | Includes `opening`/`closing` entries. Internally quarantined workers remain externally `closing` until exit. `attachments` is the session's live client attachment count; `0` on an `open` row is a retained session with no client attached. Every row carries `kind`. Rows with `kind: "worker"` are omitted unless `include_workers: true`, and `context` is published ONLY on that listing — a default listing carries no `context` at all. |
@@ -903,7 +1074,7 @@ In the response `error` field, machine-matchable:
 - `invalid_session_context: <detail>` (`open_session.context` past a documented cap: more than 32 keys, a key that does not match `^[a-z][a-z0-9_]*$`, a non-string or >16 KiB value, or more than 32 KiB of JSON in total; the detail names the cap and its byte budget)
 - `invalid_session_kind: <detail>` (`open_session.kind` other than `interactive` or `worker`)
 - `invalid_launch_profile: <detail>` (`open_session.auto_title` present but not a boolean)
-- `host_memory_pressure` (the in-process host is above `SENPI_RPC_HOST_RSS_REFUSE_MB`, default twice `SENPI_RPC_HOST_RSS_WARN_MB`, and declined to CREATE a `kind: "worker"` session; `errorData { rssMb, retry_after_ms }` says when to ask again. An attach to a live path, an interactive open, and every command on an existing session are never refused for memory - the client waits and retries, it never starts a second host or a per-child process)
+- `host_memory_pressure` (sent only by hosts released before #2207, which declined to CREATE a `kind: "worker"` session above `SENPI_RPC_HOST_RSS_REFUSE_MB`; `errorData { rssMb, retry_after_ms }` says when to ask again. Current hosts never refuse an open for memory; a client talking to an older generation waits and retries, it never starts a second host or a per-child process)
 - `media_not_found` (`get_media` for an unknown `toolCallId`, or a `contentIndex` that does not point at an image block)
 
 ### Tagging
@@ -1134,6 +1305,8 @@ Response:
 The `model` field is a full [Model](#model) object or `null`. The `sessionName` field is the display name set via `set_session_name`, or omitted if not set.
 
 `serviceTier` is the tier a request would carry right now (`"auto"`, `"flex"`, or `"priority"`), omitted when no tier applies. `fastMode` is `true` when the active model is served at the priority ("fast") tier — either because fast mode is on for this session or because the model selection itself pins `priority`. The two never disagree: whenever `fastMode` is `true`, `serviceTier` is `"priority"`.
+
+`lastProviderDiagnostic` is present after a failed turn whose provider supplied structured evidence: `{"category": "rate_limit", "httpStatus": 429, "code": "rate_limit_error", "evidence": "structured_code"}`. `category` is one of `auth`, `rate_limit`, `quota`, `context_limit`, `invalid_request`, `provider_unavailable`, `unknown`; `httpStatus` is absent for errors delivered inside a streamed response. It describes the same failure as the latest assistant `errorMessage` and is replaced or cleared with it. The failed assistant message in `message_end`, `agent_end`, `get_messages` and the session file carries the same object as `providerDiagnostic`. See [Provider failure diagnostics](sdk.md#provider-failure-diagnostics) for how it is derived.
 
 #### get_messages
 
@@ -1624,10 +1797,22 @@ Response:
       "tokens": 60000,
       "contextWindow": 200000,
       "percent": 30
+    },
+    "failures": {
+      "requests": 6,
+      "erroredRequests": 1,
+      "abortedRequests": 0,
+      "failureShare": 0.16666666666666666,
+      "failedDurationMs": 4200,
+      "postFailureRequests": 1,
+      "postFailureFullMissRequests": 1,
+      "postFailureFullMissInputTokens": 48000
     }
   }
 }
 ```
+
+`failures` reports what failed provider requests cost the session. Every assistant response is one request; `erroredRequests` and `abortedRequests` count responses that ended with stop reason `error` or `aborted`, and `failedDurationMs` sums their time from request start to the recorded response. `postFailureRequests` counts the first successful response after one or more failed ones within the same user turn (a user message resets it); `postFailureFullMissRequests` counts those that read nothing from the prompt cache on a prompt of at least 2048 tokens, and `postFailureFullMissInputTokens` sums their uncached prompt tokens (input plus cache writes). The token counts are the provider's usage report; attributing the cache miss to the preceding failure is an inference from the turn's sequence. Hosts older than this field omit it.
 
 `tokens` and `cost` include assistant messages, usage reported by tools, and compaction/branch-summary generation across the full session. `contextUsage` contains the actual current context-window estimate used for compaction and footer display.
 
@@ -2154,10 +2339,10 @@ Events are streamed to stdout as JSON lines during agent operation. Events do no
 | `loaded_surfaces_changed` | Loaded skills, extensions, or MCP inventory changed; re-read `get_commands` and `get_loaded_surfaces` |
 | `model_changed` | Active model changed (any source), with the thinking level in force afterwards |
 | `service_tier_changed` | Effective service tier or fast-mode state changed |
-| `session_closed` | Multi-session host: a routing handle ended. Optional `reason`: `client_close`, `idle_evicted`, `host_shutdown`, `replaced`, `handoff_parked`, `error` |
+| `session_closed` | Multi-session host: a routing handle ended. Optional `reason`: `client_close`, `idle_evicted`, `host_shutdown`, `replaced`, `handoff_parked`, `session_dir_removed`, `error` |
 | `session_parked` | Multi-session host: a retained session was released to disk at the idle window (`sessionId`, `sessionPath`). Replaces `session_closed` for that handle |
 | `host_stalled` | Multi-session host: the event loop was blocked past `SENPI_RPC_LOOP_LAG_ERROR_MS`, with the drift and the session/tool blamed for it |
-| `host_memory_pressure` | Multi-session host: RSS is above `SENPI_RPC_HOST_RSS_WARN_MB`, with the live session count |
+| `host_memory_pressure` | Multi-session host: the memory footprint is above `SENPI_RPC_HOST_RSS_WARN_MB`, with RSS beside it and the live session count |
 | `session_opened` | Multi-session host: a session was opened on this host (content-free lifecycle record) |
 | `session_closed` | Multi-session host: a routing handle ended, with an optional `reason` (`handoff_parked` = a generation handoff put the session back on disk; reopen it by `sessionPath`) |
 | `session_parked` | Multi-session host: a retained session's handle was released while the session itself stays on disk (`{ sessionId, sessionPath }`); reopen it with `open_session { sessionPath }` |
@@ -2180,6 +2365,7 @@ When a multi-session host ends a routing handle it may name why:
 | --- | --- |
 | `client_close` | An attached client sent `close_session` |
 | `idle_evicted` | The idle sweep ended a session that was not retained |
+| `session_dir_removed` | No client held the session and its transcript directory was deleted; the sweep ended it, whatever the idle window |
 | `host_shutdown` | The host process is exiting (SIGTERM, idle-exit, empty-host). A retained session is closed, not parked |
 | `replaced` | The routing handle ended because the live session behind it was replaced |
 | `handoff_parked` | A generation handoff drained this host; reopen with `open_session { sessionPath }` |
@@ -2208,10 +2394,13 @@ the stall cannot be attributed to a session.
 ### host_memory_pressure
 
 ```json
-{ "type": "host_memory_pressure", "rssMb": 4608, "sessions": 12 }
+{ "type": "host_memory_pressure", "rssMb": 4910, "footprintMb": 4608, "measure": "phys_footprint", "sessions": 12 }
 ```
 
 Informational. Capacity is memory, never a refusal: the host reports the pressure and parks idle sessions sooner.
+`footprintMb` is the number compared with the threshold and `measure` names its kernel counter (`phys_footprint`,
+`rss_anon`, `private_usage`, or `rss` where none is readable); `rssMb` is what `ps` shows and can stay high after
+the memory was returned. Hosts released before senpi#2261 send `rssMb` and `sessions` only.
 
 ### model_changed
 

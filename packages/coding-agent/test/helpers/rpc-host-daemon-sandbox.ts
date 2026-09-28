@@ -4,14 +4,15 @@
  *
  * The per-socket directory name is derived HERE rather than from the code under test, because that
  * is what a client does: the desktop, the CLI and the task runner all recompute it from the socket
- * path alone, so a test that asked the implementation where its files went would prove nothing.
+ * path alone - its directory realpath-resolved, since the temp dir itself may be a symlink - so a test
+ * that asked the implementation where its files went would prove nothing.
  */
 import { type ChildProcess, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { chmod, mkdir, mkdtemp, readFile, rm, stat } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, realpath, rm, stat } from "node:fs/promises";
 import { createConnection } from "node:net";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { VERSION } from "../../src/config.ts";
 import { readProcessStartTime, waitForStartTime } from "../../src/modes/app-server/daemon/process.ts";
 import { ensureHost } from "../../src/modes/rpc/host-ensure.ts";
@@ -44,7 +45,8 @@ export async function sandbox(label: string, options: { canonicalSocket?: boolea
 	const socket = options.canonicalSocket ? join(agentDir, "rpc", "rpc.sock") : join(root, "rpc.sock");
 	await mkdir(dirname(socket), { recursive: true });
 	const flatDir = join(agentDir, "rpc-host-daemon");
-	const daemonDirName = createHash("sha256").update(socket, "utf8").digest("hex").slice(0, 16);
+	const canonical = join(await realpath(dirname(socket)), basename(socket));
+	const daemonDirName = createHash("sha256").update(canonical, "utf8").digest("hex").slice(0, 16);
 	return { root, agentDir, socket, flatDir, daemonDir: join(flatDir, daemonDirName), daemonDirName };
 }
 

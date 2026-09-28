@@ -43,13 +43,13 @@ Type `/` in the editor to open command completion. Extensions can register custo
 | `/login`, `/logout` | Manage OAuth or API-key credentials |
 | [`/llama`](llama-cpp.md) | Download, load, and unload llama.cpp router models |
 | `/model` | Switch models; Ctrl+S in the picker saves the startup default |
-| `/thinking` | Switch thinking level; Ctrl+S in the picker saves the startup default |
+| `/thinking [level]` | Set the thinking level for this session (`/thinking high`), or open the picker with no argument; Ctrl+S in the picker saves it as the startup default |
 | `/scoped-models` | Enable/disable models for Ctrl+P cycling |
 | `/reasoning [on\|off]` | Show or toggle reasoning for the current model |
 | `/efforts [level]` | Show or set reasoning effort (graded models only) |
 | `/fast [on\|off]` | Toggle fast mode (ChatGPT Subscription models, persisted per model) |
 | `/settings` | Theme, message delivery, transport, and other preferences |
-| `/resume` | Pick from previous sessions |
+| `/resume`, `/sessions` | Pick from previous sessions (`/sessions` is an alias) |
 | `/new` | Start a new session |
 | `/rename [name]` | Rename the current session (`/name` is an alias) |
 | `/session` | Show session file, ID, messages, tokens, and cost |
@@ -70,6 +70,8 @@ Type `/` in the editor to open command completion. Extensions can register custo
 | `/quit`, `/exit` | Quit senpi |
 
 ### Reasoning and Fast Mode Commands
+
+**Changing the thinking level.** `/thinking <level>` sets it for this session and `/thinking` alone opens a picker. Shift+Tab cycles through the levels the model supports, and `/efforts <level>` sets the reasoning effort for graded models; both remember the level for the current model. The footer shows the active level after the model name.
 
 **`/reasoning [on|off]`** shows or toggles reasoning. Behavior adapts to the active model:
 
@@ -113,6 +115,7 @@ senpi --fork <path|id>    # Fork a session into a new session file
 
 Useful session commands:
 
+- `/resume` (or its alias `/sessions`) opens the same picker as `senpi -r` without leaving the TUI.
 - `/session` shows the current session file and ID.
 - `/tree` navigates the in-file session tree and can summarize abandoned branches. Ctrl+E on an assistant entry edits that response in place of the original (the original stays in the file on an abandoned branch; tool calls in the edited response are dropped).
 - `/fork` creates a new session from an earlier user message.

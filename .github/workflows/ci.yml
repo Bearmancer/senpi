@@ -328,6 +328,55 @@ jobs:
           done
         working-directory: packages/coding-agent
 
+  # senpi#2248: Bun builds Chrome-backed WebViews only on the process main thread, so eval cells
+  # reach them through the main-thread service. The suites need Bun and a real Chrome (preinstalled
+  # on hosted runners) and are skipped elsewhere; the JSON check fails the job if they were skipped.
+  webview-kernel:
+    name: Eval kernel WebView (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+          cache: npm
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: "1.4.2"
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Run eval kernel WebView suites (Bun)
+        shell: bash
+        run: bunx --bun vitest run test/js-kernel-webview.test.ts test/js-kernel-webview-lifecycle.test.ts test/js-kernel-webview-resilience.test.ts --reporter=default --reporter=json --outputFile=vitest-webview.json
+        working-directory: packages/senpi-codemode
+
+      - name: Require the WebView suites to have executed
+        shell: bash
+        run: |
+          node -e '
+            const r = JSON.parse(require("fs").readFileSync("vitest-webview.json", "utf8"));
+            const results = r.testResults.flatMap((file) => file.assertionResults);
+            const passed = results.filter((a) => a.status === "passed").length;
+            const failed = results.filter((a) => a.status === "failed").length;
+            const skipped = results.filter((a) => a.status !== "passed" && a.status !== "failed").length;
+            const allowedSkips = process.platform === "win32" ? 1 : 0;
+            console.log("webview suites: passed=" + passed + " failed=" + failed + " skipped=" + skipped);
+            if (passed < 10 || failed !== 0 || skipped > allowedSkips) process.exit(1);
+          '
+        working-directory: packages/senpi-codemode
+
   test-workspaces:
     name: Test (workspaces + scripts)
     runs-on: ubuntu-latest
@@ -416,6 +465,7 @@ jobs:
         rpc-windows,
         compiled-extensions-windows,
         claude-executable-windows,
+        webview-kernel,
         test-workspaces,
       ]
     if: always()
@@ -447,6 +497,7 @@ jobs:
             echo "- rpc-windows: ${{ needs.rpc-windows.result }}"
             echo "- compiled-extensions-windows: ${{ needs.compiled-extensions-windows.result }}"
             echo "- claude-executable-windows: ${{ needs.claude-executable-windows.result }}"
+            echo "- webview-kernel: ${{ needs.webview-kernel.result }}"
             echo "- test-workspaces: ${{ needs.test-workspaces.result }}"
           } >> "$GITHUB_STEP_SUMMARY"
 

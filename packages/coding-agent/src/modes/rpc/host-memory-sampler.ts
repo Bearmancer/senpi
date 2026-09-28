@@ -1,19 +1,22 @@
+import { type ProcessFootprint, type ProcessFootprintMeasure, readOwnFootprint } from "../../core/process-footprint.ts";
 import type { RpcHostMemoryPressureEvent } from "./rpc-types.ts";
 
-/** Environment override for the RSS warning threshold, in megabytes. */
+/** Environment override for the memory warning threshold (compared with the footprint), in megabytes. */
 export const HOST_RSS_WARN_MB_ENV = "SENPI_RPC_HOST_RSS_WARN_MB";
 export const DEFAULT_HOST_RSS_WARN_MB = 4096;
-/**
- * Environment override for the RSS watermark above which NEW worker sessions are refused,
- * in megabytes. Defaults to twice the warning threshold.
- */
-export const HOST_RSS_REFUSE_MB_ENV = "SENPI_RPC_HOST_RSS_REFUSE_MB";
 /** Sampling interval. Memory moves slowly; this is bookkeeping, not a hot loop. */
 export const HOST_MEMORY_SAMPLE_MS = 30_000;
 /** One stderr line per window, however many samples stay above the threshold. */
 export const HOST_MEMORY_STDERR_INTERVAL_MS = 5 * 60_000;
 
 const BYTES_PER_MEGABYTE = 1024 * 1024;
+
+/** One sample: the footprint that decides pressure, and the RSS `ps` would show beside it. */
+export interface HostMemoryReading {
+	readonly footprintMb: number;
+	readonly measure: ProcessFootprintMeasure;
+	readonly rssMb: number;
+}
 
 export interface HostMemorySamplerOptions {
 	/** Delivers one `host_memory_pressure` lifecycle record to every connection. */
@@ -27,15 +30,13 @@ export interface HostMemorySamplerOptions {
 	 * Memory a daemon cannot attribute to a session is memory nothing will return: a superseded
 	 * generation in that state is pure cost and leaves (#1893).
 	 */
-	readonly onIdlePressure?: (rssMb: number) => void;
-	/**
-	 * Raised on entry to and exit from the CRITICAL band above the refuse watermark, with the
-	 * RSS that decided it; the router refuses new worker sessions while it holds (#1905).
-	 */
-	readonly onCritical?: (critical: boolean, rssMb: number) => void;
+	readonly onIdlePressure?: (reading: HostMemoryReading) => void;
 	/** Defaults to one stderr line; tests capture it. */
 	readonly log?: (message: string) => void;
 	readonly now?: () => number;
+	/** The memory the host really holds (senpi#2261: RSS stays high after memory is returned). */
+	readonly readFootprint?: () => ProcessFootprint;
+	/** Reported beside the footprint; never decides pressure. */
 	readonly readRssBytes?: () => number;
 	readonly env?: Readonly<Record<string, string | undefined>>;
 }
@@ -47,31 +48,27 @@ function parsePositiveInteger(value: string | undefined): number | undefined {
 }
 
 /**
- * Resident-memory reporter for the shared host.
+ * Memory-footprint reporter for the shared host.
  *
  * The daemon's capacity is memory, never an occupancy cap: it never counts sessions and
  * never kills one. What it does is SAY how much memory it holds - as a lifecycle record to
  * every connection and one stderr line per five minutes - and, while it is above the
  * warning threshold, tell the router to park idle sessions at half the usual window so
- * their memory returns to the process sooner. Above the refuse watermark (default twice
- * the warning threshold) it also marks the host CRITICAL: the router then declines NEW
- * worker sessions with a retryable code while serving every session it already holds,
- * so the process degrades instead of growing into a runtime crash (#1905).
+ * their memory returns to the process sooner. It never refuses a session: a host with
+ * no resource caps admits every open whatever it holds (#2207).
  */
 export class HostMemorySampler {
 	private readonly emit: (record: RpcHostMemoryPressureEvent) => void;
 	private readonly sessions: () => number;
 	private readonly onPressure: (pressure: boolean) => void;
-	private readonly onIdlePressure?: (rssMb: number) => void;
-	private readonly onCritical?: (critical: boolean, rssMb: number) => void;
+	private readonly onIdlePressure?: (reading: HostMemoryReading) => void;
 	private readonly log: (message: string) => void;
 	private readonly now: () => number;
+	private readonly readFootprint: () => ProcessFootprint;
 	private readonly readRssBytes: () => number;
 	private readonly warnMb: number;
-	private readonly refuseMb: number;
 	private timer: ReturnType<typeof setInterval> | undefined;
 	private pressure = false;
-	private critical = false;
 	private idleReported = false;
 	private lastLoggedAt: number | undefined;
 
@@ -81,12 +78,11 @@ export class HostMemorySampler {
 		this.sessions = options.sessions;
 		this.onPressure = options.onPressure;
 		if (options.onIdlePressure) this.onIdlePressure = options.onIdlePressure;
-		if (options.onCritical) this.onCritical = options.onCritical;
 		this.log = options.log ?? ((message) => void process.stderr.write(message));
 		this.now = options.now ?? Date.now;
+		this.readFootprint = options.readFootprint ?? readOwnFootprint;
 		this.readRssBytes = options.readRssBytes ?? (() => process.memoryUsage.rss());
 		this.warnMb = parsePositiveInteger(env[HOST_RSS_WARN_MB_ENV]) ?? DEFAULT_HOST_RSS_WARN_MB;
-		this.refuseMb = parsePositiveInteger(env[HOST_RSS_REFUSE_MB_ENV]) ?? this.warnMb * 2;
 	}
 
 	start(): void {
@@ -102,15 +98,15 @@ export class HostMemorySampler {
 		this.timer = undefined;
 	}
 
-	/** One sample. Public so tests drive it on an injected clock and RSS reading. */
+	/** One sample. Public so tests drive it on an injected clock and memory readings. */
 	sample(): void {
-		const rssMb = Math.round(this.readRssBytes() / BYTES_PER_MEGABYTE);
-		const critical = rssMb > this.refuseMb;
-		if (critical !== this.critical) {
-			this.critical = critical;
-			this.onCritical?.(critical, rssMb);
-		}
-		if (rssMb <= this.warnMb) {
+		const footprint = this.readFootprint();
+		const reading: HostMemoryReading = {
+			footprintMb: Math.round(footprint.bytes / BYTES_PER_MEGABYTE),
+			measure: footprint.measure,
+			rssMb: Math.round(this.readRssBytes() / BYTES_PER_MEGABYTE),
+		};
+		if (reading.footprintMb <= this.warnMb) {
 			this.idleReported = false;
 			if (!this.pressure) return;
 			this.pressure = false;
@@ -127,13 +123,15 @@ export class HostMemorySampler {
 		if (sessions > 0) this.idleReported = false;
 		else if (!this.idleReported) {
 			this.idleReported = true;
-			this.onIdlePressure?.(rssMb);
+			this.onIdlePressure?.(reading);
 		}
-		this.emit({ type: "host_memory_pressure", rssMb, sessions });
+		const { footprintMb, measure, rssMb } = reading;
+		this.emit({ type: "host_memory_pressure", rssMb, footprintMb, measure, sessions });
 		const now = this.now();
 		if (this.lastLoggedAt !== undefined && now - this.lastLoggedAt < HOST_MEMORY_STDERR_INTERVAL_MS) return;
 		this.lastLoggedAt = now;
-		const policy = critical ? "idle parking halved, new worker sessions refused" : "idle parking halved";
-		this.log(`senpi rpc host memory pressure: rssMb=${rssMb} sessions=${sessions} (${policy})\n`);
+		this.log(
+			`senpi rpc host memory pressure: footprintMb=${footprintMb} (${measure}) rssMb=${rssMb} sessions=${sessions} (idle parking halved)\n`,
+		);
 	}
 }

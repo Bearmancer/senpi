@@ -10,14 +10,14 @@
  *     4  no host is better than this one     an unreachable socket, or a stop that would end
  *        one (fallback policy)               somebody else's work
  *
- * The refusals are the point. One machine-wide daemon holds every client's sessions, so a client
+ * The refusals are the point. One daemon holds every client's sessions on its endpoint, so a client
  * that cannot get what it wants must SAY so and leave the running host alone (I1) - never stop it,
  * never bind a second host over its socket. `decideHostAction`, `ensureHost`, `stopHost` and
  * `handoffHost` already enforce that; this module only gives their outcomes a machine-readable shape.
  */
 import { engineBuildIdentity } from "../../core/engine-build-identity.ts";
 import { daemonEnvKeys, daemonEnvOverrides, writeDaemonEnvKeys } from "./host-daemon-env.ts";
-import { createHostDaemonPaths } from "./host-daemon-paths.ts";
+import { createHostDaemonPaths, type ShardKind, shardKey, shardSocketPathForKey } from "./host-daemon-paths.ts";
 import {
 	decideHostAction,
 	HOST_PROTOCOL_VERSION,
@@ -28,10 +28,12 @@ import {
 	REQUIRED_HOST_CAPABILITIES,
 } from "./host-decision.ts";
 import { type EnsuredHost, ensureHost } from "./host-ensure.ts";
+import { gcHostEndpoints } from "./host-gc.ts";
 import { type HandoffRefusal, handoffHost } from "./host-handoff.ts";
 import type { ResolvedHostLaunchSpec } from "./host-launch-spec.ts";
 import { probeProtocolInfo } from "./host-probe.ts";
 import { hostSummary, readHostStatus, readSessionCounts } from "./host-status.ts";
+import { readAllHostStatus } from "./host-status-all.ts";
 import { stopHost } from "./host-stop.ts";
 
 export const HOST_EXIT_OK = 0;
@@ -55,9 +57,18 @@ export type HostRequest =
 			readonly spec: ResolvedHostLaunchSpec;
 			readonly policy: HostDecisionPolicy;
 	  }
-	| { readonly action: "status"; readonly target: HostTarget; readonly includeWorkers: boolean }
+	| {
+			readonly action: "status";
+			readonly target: HostTarget;
+			readonly includeWorkers: boolean;
+			/** Every endpoint under `target.agentDir` (its socket is ignored), read without pruning. */
+			readonly all?: boolean;
+	  }
 	| { readonly action: "stop"; readonly target: HostTarget; readonly drain: boolean; readonly force: boolean }
-	| { readonly action: "handoff"; readonly target: HostTarget; readonly spec: ResolvedHostLaunchSpec };
+	| { readonly action: "handoff"; readonly target: HostTarget; readonly spec: ResolvedHostLaunchSpec }
+	/** Removes endpoint state under `agentDir` only on the three-part evidence (`host-gc.ts`). */
+	| { readonly action: "gc"; readonly agentDir: string }
+	| { readonly action: "shard_path"; readonly kind: ShardKind; readonly owner: string; readonly root: string };
 
 /** One JSON line and the exit code it means. */
 export interface HostOutcome {
@@ -70,11 +81,17 @@ export async function runHostRequest(request: HostRequest): Promise<HostOutcome>
 		case "ensure":
 			return ensureOutcome(request.target, request.spec, request.policy);
 		case "status":
-			return statusOutcome(request.target, request.includeWorkers);
+			return request.all === true
+				? statusAllOutcome(request.target, request.includeWorkers)
+				: statusOutcome(request.target, request.includeWorkers);
 		case "stop":
 			return stopOutcome(request.target, request.drain, request.force);
 		case "handoff":
 			return handoffOutcome(request.target, request.spec);
+		case "shard_path":
+			return shardPathOutcome(request.kind, request.owner, request.root);
+		case "gc":
+			return { exitCode: HOST_EXIT_OK, payload: { ...(await gcHostEndpoints(request.agentDir)) } };
 		default:
 			return assertNever(request);
 	}
@@ -108,7 +125,7 @@ async function ensureOutcome(
 		if (!(error instanceof HostEnsureRefusedError)) throw error;
 		return refusal("refuse", before, { reason: error.reason, socket: target.socket });
 	}
-	const host = await probeProtocolInfo(target.socket, PROBE_TIMEOUT_MS);
+	const host = await probeProtocolInfo(target.socket, PROBE_TIMEOUT_MS).finally(ensured.release);
 	// Only a spawn grants an environment; a reuse inherited whatever the client that started it did.
 	if (!ensured.reused) await recordEnvScope(target, spec);
 	return {
@@ -137,6 +154,19 @@ function ensureAction(
 async function statusOutcome(target: HostTarget, includeWorkers: boolean): Promise<HostOutcome> {
 	const status = await readHostStatus({ socket: target.socket, agentDir: target.agentDir, includeWorkers });
 	return { exitCode: status.reachable ? HOST_EXIT_OK : HOST_EXIT_REFUSED, payload: { ...status } };
+}
+
+/** Same exit vocabulary as one socket: 0 while anything answers, 3 when nothing does (or nothing is there). */
+async function statusAllOutcome(target: HostTarget, includeWorkers: boolean): Promise<HostOutcome> {
+	const endpoints = await readAllHostStatus({ agentDir: target.agentDir, includeWorkers });
+	const reachable = endpoints.some((endpoint) => endpoint.reachable);
+	return { exitCode: reachable ? HOST_EXIT_OK : HOST_EXIT_REFUSED, payload: { endpoints } };
+}
+
+/** The naming contract answered without contacting any host, for a client that mirrors it locally. */
+function shardPathOutcome(kind: ShardKind, owner: string, root: string): HostOutcome {
+	const key = shardKey(kind, owner);
+	return { exitCode: HOST_EXIT_OK, payload: { kind, key, socket: shardSocketPathForKey(root, kind, key) } };
 }
 
 /**

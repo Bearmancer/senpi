@@ -301,7 +301,7 @@ describe("interactive host reconnect orchestration", () => {
 				},
 				onWarning: (value) => {
 					warnings.push(value);
-					warning.resolve();
+					if (warnings.length === 2) warning.resolve();
 				},
 			});
 			try {
@@ -310,7 +310,6 @@ describe("interactive host reconnect orchestration", () => {
 				const action = runtime.session.steer("after disconnect");
 				await expect(action).resolves.toBeUndefined();
 				await warning.promise;
-				await Promise.resolve();
 				expect(warnings).toHaveLength(2);
 				expect(warnings.map(({ message }) => message)).toEqual([
 					INTERACTIVE_HOST_RECONNECTING_WARNING,

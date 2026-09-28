@@ -10,7 +10,6 @@ import {
 	SESSION_KIND_CAPABILITY,
 } from "./custom-capability.ts";
 import { isHandoffBusy } from "./handoff-activity.ts";
-import { HOST_MEMORY_SAMPLE_MS } from "./host-memory-sampler.ts";
 import { protocolIdentity } from "./protocol-identity.ts";
 import { sessionAutoTitleError, sessionContextError, sessionKindError } from "./rpc-input-validation.ts";
 import type { RpcCommand, RpcResponse, RpcSessionClosedReason } from "./rpc-types.ts";
@@ -28,12 +27,23 @@ import { createRpcSessionBinding, type RpcSessionBinding } from "./session-bindi
 import type { SessionEventWriter } from "./session-event-writer.ts";
 import type { OpenRpcSession, RpcSessionLaunchProfile, RpcSessionRegistry } from "./session-registry.ts";
 import { RpcSessionRegistryError } from "./session-registry.ts";
+import { selectSweepEvictions } from "./session-sweep.ts";
 
 /** How often a draining host re-checks whether the work it is waiting for has settled. */
 const DRAIN_SWEEP_MS = 50;
 
 /** Binding factory seam, injectable so host wiring is testable without a full runtime stack. */
 export type RpcBindingFactory = typeof createRpcSessionBinding;
+
+/**
+ * What the host supplies to every `open_session`. `hostContext` is the host's own identity
+ * (`host_socket`, `host_instance`); it is merged OVER the client's context, because the host is the
+ * authority on which endpoint and generation a session runs behind.
+ */
+export type RpcHostSessionDefaults = Pick<
+	RpcSessionLaunchProfile,
+	"cwd" | "permissionPreset" | "creationModel" | "initialThinkingLevel"
+> & { readonly hostContext?: RpcSessionLaunchProfile["sessionContext"] };
 
 /**
  * Occupancy policy for the shared multi-session host. All fields are opt-in:
@@ -95,21 +105,10 @@ export class SessionCommandRouter {
 	private readonly releasedConnections = new Set<string>();
 	private readonly registry: Pick<
 		RpcSessionRegistry,
-		| "openSession"
-		| "peek"
-		| "getForCommand"
-		| "beginClose"
-		| "close"
-		| "closeMarked"
-		| "list"
-		| "size"
-		| "setWorkerAdmission"
+		"openSession" | "peek" | "getForCommand" | "beginClose" | "close" | "closeMarked" | "list" | "size"
 	>;
 	private readonly writer: SessionEventWriter;
-	private readonly defaults: Pick<
-		RpcSessionLaunchProfile,
-		"cwd" | "permissionPreset" | "creationModel" | "initialThinkingLevel"
-	>;
+	private readonly defaults: RpcHostSessionDefaults;
 	private readonly createBinding: typeof createRpcSessionBinding;
 	private readonly connectionOptions: Parameters<typeof createRpcSessionBinding>[4];
 	private readonly widths = new Map<string, Map<string, number>>();
@@ -135,18 +134,10 @@ export class SessionCommandRouter {
 	constructor(
 		registry: Pick<
 			RpcSessionRegistry,
-			| "openSession"
-			| "peek"
-			| "getForCommand"
-			| "beginClose"
-			| "close"
-			| "closeMarked"
-			| "list"
-			| "size"
-			| "setWorkerAdmission"
+			"openSession" | "peek" | "getForCommand" | "beginClose" | "close" | "closeMarked" | "list" | "size"
 		>,
 		writer: SessionEventWriter,
-		defaults: Pick<RpcSessionLaunchProfile, "cwd" | "permissionPreset" | "creationModel" | "initialThinkingLevel">,
+		defaults: RpcHostSessionDefaults,
 		createBinding: typeof createRpcSessionBinding = createRpcSessionBinding,
 		connectionOptions: Parameters<typeof createRpcSessionBinding>[4] = {},
 		idle?: RpcSessionIdlePolicy,
@@ -230,14 +221,6 @@ export class SessionCommandRouter {
 	 * HALF the configured window, which returns their memory to the process sooner.
 	 * Deliberately the only lever: the host never refuses or kills a session for memory.
 	 */
-	/**
-	 * Above the refuse watermark the host declines to CREATE worker sessions until the next
-	 * sample can clear it; everything it already holds keeps being served (#1905).
-	 */
-	setMemoryCritical(critical: boolean, rssMb: number): void {
-		this.registry.setWorkerAdmission(critical ? { rssMb, retry_after_ms: HOST_MEMORY_SAMPLE_MS } : undefined);
-	}
-
 	setMemoryPressure(pressure: boolean): void {
 		this.memoryPressure = pressure;
 	}
@@ -293,6 +276,7 @@ export class SessionCommandRouter {
 					capabilities: [...capabilities],
 					mode: "multi",
 					...protocolIdentity(),
+					memory_pressure: this.memoryPressure,
 				},
 			};
 		}
@@ -358,12 +342,9 @@ export class SessionCommandRouter {
 	}
 
 	/**
-	 * One occupancy sweep. Evicts open sessions idle longer than idleEvictionMs,
-	 * where "idle" is the COMPLETE session-owned activity contract
-	 * (`AgentSession.isSessionBusy`: agent run, bash, background terminal jobs and
-	 * other published wake sources, compaction, barrier-held session work) - busy
-	 * sessions restart their idle clock instead, so work that outlives a turn is
-	 * never killed. While the host reports memory pressure the window is HALVED, so an
+	 * One occupancy sweep. Evicts what `selectSweepEvictions` decides: open sessions idle
+	 * longer than idleEvictionMs, and unattached sessions whose transcript directory is
+	 * gone. While the host reports memory pressure the window is HALVED, so an
 	 * idle session's memory returns to the process sooner. Fires onEmptyExit once the
 	 * registry has STAYED empty for emptyExitMs with the exit permitted; any live session
 	 * or connected client resets that window. Runs on an unref'd interval and is safe to
@@ -372,19 +353,9 @@ export class SessionCommandRouter {
 	sweepIdleSessions(): void {
 		const now = this.idleNow();
 		const idleEvictionMs = this.memoryPressure ? this.idleEvictionMs / 2 : this.idleEvictionMs;
-		if (Number.isFinite(idleEvictionMs)) {
-			for (const { sessionId, status } of this.registry.list()) {
-				if (status !== "open") continue;
-				const entry = this.registry.peek(sessionId);
-				if (!entry) continue;
-				if (entry.worker?.busy || entry.runtime?.session.isSessionBusy) {
-					// Session-owned work defers eviction; the window restarts when it settles.
-					entry.lastCommandAt = now;
-					continue;
-				}
-				if (now - entry.lastCommandAt >= idleEvictionMs) void this.evictIdleSession(sessionId);
-			}
-		}
+		const verdicts = selectSweepEvictions(this.registry, now, idleEvictionMs);
+		for (const sessionId of verdicts.orphaned) void this.evictIdleSession(sessionId, "session_dir_removed");
+		for (const sessionId of verdicts.idle) void this.evictIdleSession(sessionId);
 		if (Number.isFinite(this.emptyExitMs)) {
 			if (this.registry.size === 0 && (this.canExitWhenEmpty?.() ?? true)) {
 				if (this.emptySince === undefined) this.emptySince = now;
@@ -527,7 +498,9 @@ export class SessionCommandRouter {
 							: this.defaults.creationModel,
 					initialThinkingLevel: command.thinkingLevel ?? this.defaults.initialThinkingLevel,
 					sessionKind: command.kind,
-					sessionContext: command.context,
+					sessionContext: this.defaults.hostContext
+						? { ...command.context, ...this.defaults.hostContext }
+						: command.context,
 					...(command.durableSessionId !== undefined ? { durableSessionId: command.durableSessionId } : {}),
 					...(typeof command.auto_title === "boolean" ? { autoTitle: command.auto_title } : {}),
 				},

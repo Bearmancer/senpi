@@ -3,6 +3,7 @@ import type { ExtensionContext } from "@code-yeongyu/senpi";
 import type { AgentExecuteTool } from "./bridges/agent-bridge.ts";
 import type { EvalSchemaToolInfo } from "./bridges/schema-bridge.ts";
 import { type CompletionRequest, type CompletionResult, createCompletionHandler } from "./completion/handler.ts";
+import { resolveRetainedImagesBytes, resolveRetainedResultsBytes } from "./config/memory-settings.ts";
 import {
 	defaultCodemodeSettings,
 	resolveForegroundWindowSeconds,
@@ -192,6 +193,7 @@ export default function senpiCodemode(pi: CodemodeExtensionAPI, options: SenpiCo
 			cellManager: new EvalDetachedCellManager({
 				notifier,
 				maxDetachedCells: resolveMaxDetachedCells(defaultCodemodeSettings),
+				retainedResultsBytes: resolveRetainedResultsBytes(defaultCodemodeSettings),
 				hardLimitSeconds: resolveHardLimitSeconds(defaultCodemodeSettings),
 				runBudgetSeconds: resolveRunBudgetSeconds(defaultCodemodeSettings),
 				onStatusChange: showDetachedCells,
@@ -231,6 +233,8 @@ export default function senpiCodemode(pi: CodemodeExtensionAPI, options: SenpiCo
 			artifactsDir: runtime.artifactsDir,
 			notifier,
 			maxDetachedCells: resolveMaxDetachedCells(runtime.settings),
+			retainedResultsBytes: resolveRetainedResultsBytes(runtime.settings),
+			retainedImagesBytes: resolveRetainedImagesBytes(runtime.settings),
 			hardLimitSeconds: resolveHardLimitSeconds(runtime.settings),
 			runBudgetSeconds: resolveRunBudgetSeconds(runtime.settings),
 			onStatusChange: showDetachedCells,

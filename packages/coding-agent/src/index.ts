@@ -239,6 +239,13 @@ export type {
 	ResolvedResource,
 } from "./core/package-manager.ts";
 export { DefaultPackageManager } from "./core/package-manager.ts";
+// Process memory footprint (phys_footprint / RssAnon / PrivateUsage), read without spawning
+export {
+	type ProcessFootprint,
+	type ProcessFootprintMeasure,
+	readOwnFootprint,
+	readProcessFootprint,
+} from "./core/process-footprint.ts";
 export type { ResourceCollision, ResourceDiagnostic, ResourceLoader } from "./core/resource-loader.ts";
 export { DefaultResourceLoader, loadProjectContextFiles } from "./core/resource-loader.ts";
 // SDK for programmatic usage
@@ -383,12 +390,15 @@ export {
 	type ProjectTrustStoreEntry,
 	type ProjectTrustUpdate,
 } from "./core/trust-manager.ts";
+// Main-thread Bun.WebView service for eval kernels running in worker threads
+export { connectWebViewService, type WebViewServiceConnection } from "./core/webview/webview-broker.ts";
 // Main entry point
 export { type MainOptions, main } from "./main.ts";
 // Run modes for programmatic SDK usage
 export {
 	createHostDaemonPaths,
 	DEFAULT_HOST_LAUNCH_SPEC,
+	daemonDirectoryName,
 	decideHostAction,
 	type EnsuredHost,
 	type EnsureHostOptions,
@@ -455,8 +465,12 @@ export {
 	runHostRequest,
 	runPrintMode,
 	runRpcMode,
+	type ShardKind,
 	type StopHostOptions,
 	type StopHostResult,
+	shardKey,
+	shardSocketPath,
+	shardSocketPathForKey,
 	stopHost,
 } from "./modes/index.ts";
 // UI components for extensions

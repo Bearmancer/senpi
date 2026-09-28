@@ -44,6 +44,7 @@ import { helpFlagsScope, isPlainHelpRequest, resolveHelpProjectTrust } from "./c
 import { writeHelpFlagsCache } from "./cli/help-flags-cache.ts";
 import { buildInitialMessage } from "./cli/initial-message.ts";
 import { listModels } from "./cli/list-models.ts";
+import { isModelsDiscoverCommand, runModelsDiscoverCommand } from "./cli/models-command.ts";
 import { createProjectTrustContext } from "./cli/project-trust.ts";
 import {
 	createStartupLoadingIndicator,
@@ -74,6 +75,7 @@ import {
 import { ModelRuntime } from "./core/model-runtime.ts";
 import { markMovedSessions, withMovedSessions } from "./core/moved-sessions.ts";
 import { restoreStdout, takeOverStdout } from "./core/output-guard.ts";
+import { recordProcessLifetime } from "./core/process-crash-record.ts";
 import { type AppMode, resolveProjectTrusted } from "./core/project-trust.ts";
 import { resolveResumeTarget } from "./core/resume-target.ts";
 import type { CreateAgentSessionOptions } from "./core/sdk.ts";
@@ -1029,6 +1031,11 @@ export async function main(args: string[], options?: MainOptions) {
 		return;
 	}
 
+	if (isModelsDiscoverCommand(args)) {
+		process.exitCode = await runModelsDiscoverCommand(args.slice(2));
+		return;
+	}
+
 	// Internal launch surface used by bundled/rebranded runtimes. It is deliberately
 	// not accepted by parseArgs, so existing CLI modes remain unchanged. The route and
 	// the RPC host graph behind it live in ./modes/rpc/supervisor-route.ts.
@@ -1385,6 +1392,9 @@ export async function main(args: string[], options?: MainOptions) {
 		}
 	}
 	time("readPipedStdin");
+	// An RPC process always has a parent that watches its exit; every other mode dies unobserved.
+	recordProcessLifetime(agentDir, appMode, { supervised: appMode === "rpc" });
+	time("recordProcessLifetime");
 
 	const { initialMessage, initialImages, initialTitlePrompt } = await prepareInitialMessage(
 		parsed,

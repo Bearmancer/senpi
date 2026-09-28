@@ -59,6 +59,7 @@ try {
 		_test: { readinessTimeoutMs: 60_000, launch },
 	});
 	const before = await probeHost({ socket });
+	first.release();
 	say("ensure", { pid: first.pid, reused: first.reused, instanceId: before.instanceId, generation: before.generation });
 
 	const sessionPath = join(sessionDir, "qa.jsonl");

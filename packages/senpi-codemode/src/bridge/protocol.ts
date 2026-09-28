@@ -66,6 +66,19 @@ const hostToKernelMessageSchema = Type.Union([
 	Type.Object({
 		type: Type.Literal("close"),
 	}),
+	/** JS only: the kernel's private port to the main-thread Bun.WebView service, sent in the transfer list. */
+	Type.Object({
+		type: Type.Literal("webview-port"),
+		requestId: Type.String({ minLength: 1 }),
+		ok: Type.Literal(true),
+		port: Type.Unknown(),
+	}),
+	Type.Object({
+		type: Type.Literal("webview-port"),
+		requestId: Type.String({ minLength: 1 }),
+		ok: Type.Literal(false),
+		error: bridgeErrorSchema,
+	}),
 	...kernelToolHostToKernelSchemas,
 ]);
 
@@ -106,6 +119,7 @@ const kernelToHostMessageSchema = Type.Union([
 		durationMs: Type.Integer({ minimum: 0 }),
 	}),
 	Type.Object({ type: Type.Literal("closed") }),
+	Type.Object({ type: Type.Literal("webview-connect"), requestId: Type.String({ minLength: 1 }) }),
 	...kernelToolKernelToHostSchemas,
 ]);
 

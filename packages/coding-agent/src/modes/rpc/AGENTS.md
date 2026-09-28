@@ -23,9 +23,10 @@ session-event-writer.ts, session-event-fanout.ts,
 session-extension-ui-requests.ts                            Session wiring
 session-attribution.ts    AsyncLocalStorage {sessionId, tool} the stall watchdog blames by
 loop-lag-watchdog.ts      200 ms drift probe -> stderr line + `host_stalled` record
-host-memory-sampler.ts    30 s RSS sampler -> `host_memory_pressure`; halves the idle window
+host-memory-sampler.ts    30 s footprint sampler (core/process-footprint.ts) -> `host_memory_pressure`; halves the idle window
 child-reaper.ts           Reaps exited children no live thread is left to wait on
 host-ensure.ts            ensureHost(): probe, decide, spawn through the lifecycle supervisor
+host-ensure-lock.ts       The per-endpoint ensure lock ensure, handoff and gc all take (canonical socket key)
 host-decision.ts          decideHostAction(): start|reuse|handoff|refuse|fallback (I1, I2)
 host-protocol-info.ts     get_protocol_info boundary parse (identity, ordinal, launch profile)
 host-handoff.ts, host-successor.ts, host-stop.ts, host-probe.ts, host-launch.ts
@@ -33,9 +34,15 @@ host-handoff.ts, host-successor.ts, host-stop.ts, host-probe.ts, host-launch.ts
 host-daemon-paths.ts, host-daemon-state.ts, host-daemon-registration.ts
                           Per-socket daemon directory, pointer pidfile, generations (I3)
 host-launch-spec.ts       `--launch-spec` parse + trust proof; host-daemon-env.ts = env allowlist
-host-runner.ts            The four `senpi host` requests -> { payload, exitCode }
+host-runner.ts            The `senpi host` requests -> { payload, exitCode }
 host-status.ts, host-process-metrics.ts   status report: identity, sessions, generations, tree
+host-status-rows.ts       status detail: listed session rows, reservations/ claim rows
+host-endpoints.ts, host-status-all.ts     `status --all`: enumerate endpoint dirs, report without pruning
+host-gc.ts, host-gc-evidence.ts           `host gc`: remove dead endpoint dirs on three-part evidence
 host-lifecycle.ts, supervisor-route.ts    Supervisor that owns the public socket + idle exit
+host-lifecycle-policy.ts  Cold-start / idle-exit policy resolution + the pure IdleExitDecider
+host-client-occupancy.ts, host-observe-request.ts
+                          Which public clients count for idle exit; `observe: true` reads never do
 rpc-client.ts, rpc-types.ts, custom-capability.ts, event-output-buffer.ts
 changes.md                Fork-specific RPC behavior record
 ```
@@ -57,17 +64,18 @@ changes.md                Fork-specific RPC behavior record
 
 ### Shared-daemon invariants (I1-I4)
 
-One machine-wide host holds every client's sessions, so these hold for every surface that touches it - CLI, desktop, task runner:
+One host per endpoint; a client may run many endpoints under one agent dir (omo runs one per parent session, the Desktop one per thread, under `rpc/shards/`); every invariant below holds per endpoint, for every surface that touches it - CLI, desktop, task runner:
 
 - **I1** — never terminate, signal or replace a host this process did not start. A mismatch ends in `refuse`, never in a second host bound over somebody else's endpoint. The only carve-outs are `stopHost` against a validated own-writer pidfile with zero foreign attached/retained sessions (or explicit `force`), and a drain, which ends no work.
 - **I2** — compatibility is `protocolVersion` + capabilities, never a version-string comparison. An uncomparable `engineOrdinal` is EQUAL, and a handoff needs STRICTLY greater, so an unknown-age build attaches instead of upgrading.
 - **I3** — only the owning generation writes its daemon state; everyone else reads. Clients fail CLOSED (report, or start their own private host) and never edit, unlink or delete a shared host's files, socket or pidfile. Layout 2 deliberately writes no flat `host.pid`, which is what makes pre-layout-2 clients fail closed instead of taking the daemon over.
+- **Endpoint removal** — `gcHostEndpoints` (`senpi host gc`) is the ONLY path that removes an endpoint directory (`endpoint.json` included), its socket or its `.next-*`/`.shield-*` siblings, and only on the three-part evidence read INSIDE that socket's ensure lock (`hostEnsureLockTarget`): no live generation pidfile (the pointer's generation included), no live claim owner, a socket that refuses or is absent (successor binds included). It removes siblings, then the socket, then the directory LAST (a failed removal stays listed for the next gc), leaves a directory-typed sibling in place (`skipped`), and records one endpoint's failure as `failed` without stopping the run. It never signals, never runs inside `ensure`/`status`, and never touches a layout-1 flat directory or a directory whose socket nothing names.
 - **I4** — worker sessions are invisible by default: `kind: "worker"` rows need `include_workers: true`, `context` is published on that listing only, and their `session_closed`/`session_parked` records go to attached connections only.
 
 ### The no-sync rule
 
 - The in-process runtime puts every session on ONE loop: a synchronous wait taken on the session path is an outage for every client. `execSync`, `execFileSync`, `spawnSync`, `Bun.spawnSync`, `Bun.sleepSync` and `Atomics.wait` are banned on that call graph; `test/suite/no-sync-in-session-path.test.ts` fails on any call site the checked-in ledger does not already record, and reports sync fs against the same ledger.
-- The in-process path has NO session cap. If a change makes the shared daemon refuse an `open_session` for occupancy, it is a defect, not a policy - `too_many_sessions` belongs to `worker-session-registry.ts` alone. The ONE memory-driven refusal is `host_memory_pressure` (senpi#1905): above `SENPI_RPC_HOST_RSS_REFUSE_MB` the registry declines to CREATE a `kind: "worker"` session and nothing else - attaches, interactive opens and existing sessions are served. It keys on RSS, never on a count.
+- The in-process path has NO session cap. If a change makes the shared daemon refuse an `open_session` for occupancy, it is a defect, not a policy - `too_many_sessions` belongs to `worker-session-registry.ts` alone. Memory never refuses an open either (senpi#2207): each endpoint reports its own pressure and halves idle parking, while every pressured endpoint still admits worker opens. `host status --all` exposes `rss_mb` for the endpoint process tree and `host_rss_mb` for its supervisor plus host; never turn either measurement into an admission gate.
 - The socket dead-peer budget counts loop-SERVED time (`loop-blocked-time.ts`): a host stall must never cut a live peer. A session's provider scope closes only after its disposal settles (`session-teardown.ts`), and a config-reload callback bound to a closed scope is a no-op (`session-scoped-callback.ts`).
 - Capacity is memory and threads: roughly 1 thread / 2 fds / 5-8 MB per open session, the thread coming from the `config-reload` builtin's per-session watch Worker (senpi#1794). Never claim it is flat.
 

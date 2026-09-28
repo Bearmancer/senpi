@@ -4,6 +4,12 @@ import { join } from "node:path";
 import type { Static } from "typebox";
 import { Type } from "typebox";
 import { Check } from "typebox/value";
+import {
+	type CodemodeMemorySettings,
+	codemodeMemorySettingsSchema,
+	defaultMemorySettings,
+	mergeMemorySettings,
+} from "./memory-settings.ts";
 
 export const codemodeSettingsSchema = Type.Object(
 	{
@@ -43,6 +49,7 @@ export const codemodeSettingsSchema = Type.Object(
 			),
 		),
 		statusEvents: Type.Optional(Type.Boolean()),
+		memory: Type.Optional(codemodeMemorySettingsSchema),
 	},
 	{ additionalProperties: false },
 );
@@ -87,6 +94,7 @@ export interface CodemodeSettings {
 	readonly taskTools?: CodemodeTaskTools;
 	readonly outputSink?: CodemodeOutputSink;
 	readonly statusEvents?: boolean;
+	readonly memory?: CodemodeMemorySettings;
 }
 
 export type ResolvedCodemodeSettings = CodemodeSettings & {
@@ -94,6 +102,7 @@ export type ResolvedCodemodeSettings = CodemodeSettings & {
 	readonly taskTools: CodemodeTaskTools;
 	readonly outputSink: CodemodeOutputSink;
 	readonly statusEvents: boolean;
+	readonly memory: CodemodeMemorySettings;
 };
 
 export interface LoadCodemodeSettingsOptions {
@@ -162,6 +171,7 @@ export const defaultCodemodeSettings: ResolvedCodemodeSettings = {
 		maxColumns: 768,
 	},
 	statusEvents: true,
+	memory: defaultMemorySettings,
 };
 
 const languageEnvironmentFlags = {
@@ -171,7 +181,7 @@ const languageEnvironmentFlags = {
 	jl: "SENPI_CODEMODE_JL",
 } as const;
 
-type Environment = Readonly<Record<string, string | undefined>>;
+export type Environment = Readonly<Record<string, string | undefined>>;
 
 export async function loadCodemodeSettings(options: LoadCodemodeSettingsOptions = {}): Promise<LoadedCodemodeSettings> {
 	const cwd = options.cwd ?? process.cwd();
@@ -278,6 +288,7 @@ function mergeSettings(input: CodemodeSettingsInput): ResolvedCodemodeSettings {
 			maxColumns: input.outputSink?.maxColumns ?? defaultCodemodeSettings.outputSink.maxColumns,
 		},
 		statusEvents: input.statusEvents ?? defaultCodemodeSettings.statusEvents,
+		memory: mergeMemorySettings(input.memory),
 	};
 }
 

@@ -391,7 +391,13 @@ export class SessionEventWriter {
 				};
 				break;
 			case "host_memory_pressure":
-				wire = { type: "host_memory_pressure", rssMb: record.rssMb, sessions: record.sessions };
+				wire = {
+					type: "host_memory_pressure",
+					rssMb: record.rssMb,
+					...(record.footprintMb !== undefined ? { footprintMb: record.footprintMb } : {}),
+					...(record.measure !== undefined ? { measure: record.measure } : {}),
+					sessions: record.sessions,
+				};
 				break;
 			default: {
 				const exhaustive: never = record;

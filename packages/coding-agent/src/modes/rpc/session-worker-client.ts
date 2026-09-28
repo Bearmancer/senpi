@@ -1,6 +1,7 @@
 import { fileURLToPath } from "node:url";
 import { Worker } from "node:worker_threads";
 import { isBunBinary } from "../../config.ts";
+import { createWebViewBroker } from "../../core/webview/webview-broker.ts";
 import type { CliRuntimeConfiguration } from "../../main.ts";
 import type { RpcConnectionOptions } from "./connection-handler.ts";
 import type { RpcSessionBinding } from "./session-binding.ts";
@@ -34,10 +35,15 @@ const compiledWorkerEntry =
 		: "./src/modes/rpc/session-worker.ts";
 
 export class SessionWorkerClient {
+	/** The worker's own route to the main-thread Bun.WebView service; released when the worker exits. */
+	private readonly webviewBroker = createWebViewBroker();
 	readonly worker = new Worker(
 		isBunBinary
 			? fileURLToPath(new URL(compiledWorkerEntry, import.meta.url)).replaceAll("\\", "/")
 			: new URL(import.meta.url.endsWith(".ts") ? "./session-worker.ts" : "./session-worker.js", import.meta.url),
+		this.webviewBroker
+			? { workerData: { webviewBroker: this.webviewBroker.port }, transferList: [this.webviewBroker.port] }
+			: {},
 	);
 	readonly exited: Promise<void>;
 	snapshot?: WorkerSnapshot;
@@ -69,6 +75,7 @@ export class SessionWorkerClient {
 				this.stopped = true;
 				if (this.closeTimer) clearTimeout(this.closeTimer);
 				this.requests.close(new Error("session_worker_exited"));
+				void this.webviewBroker?.dispose();
 				this.listeners.clear();
 				callbacks.exit();
 				this.publishTerminalFailure();

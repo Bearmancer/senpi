@@ -207,6 +207,31 @@ describe("eval list and busy-kernel reset refusal", () => {
 		expect(f.manager.peek("P").state).toBe("detached");
 	});
 
+	// senpi#2259: a reset frees kernel memory but settled results of every language stay peekable.
+	it("keeps every settled snapshot peekable after a successful js reset", async () => {
+		const f = fixture();
+		for (const [cellId, language] of [
+			["A", "js"],
+			["P", "py"],
+			["B", "js"],
+		] as const) {
+			const run = await f.submit(cellId, language);
+			(language === "js" ? f.js : f.py).completeDeferredRun(result(cellId, cellId));
+			await run.execution;
+		}
+		const reset = await f.submit("reset", "js", true);
+		f.js.completeDeferredRun(result("reset", "ok"));
+		expect((await reset.execution).details.isError).not.toBe(true);
+		expect(f.js.resetCount).toBe(1);
+		expect(f.manager.list().recent.map((snapshot) => [snapshot.cellId, snapshot.language])).toEqual([
+			["A", "js"],
+			["P", "py"],
+			["B", "js"],
+			["reset", "js"],
+		]);
+		expect(f.manager.peek("A").state).toBe("completed");
+	});
+
 	it("refuses reset while another cell is queued before kernel acquisition", async () => {
 		const f = fixture();
 		const waiting = f.manager.create("waiting", { language: "js", code: "1", summary: "waiting" });
