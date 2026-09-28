@@ -4,7 +4,7 @@
 
 - `packages/coding-agent/src/core/credential-pool/classify.ts`: `OAuth refresh failed for <provider>: ...` whose cause names a rejected refresh token (`invalid_grant`, `invalid_token`, `unauthorized_client`, "refresh token expired/revoked/invalid", or a 400/401/403 from the token endpoint) classifies as `failover` with an `auth_error` block. Other refresh failures (network, 5xx) keep their previous handling. Prose subscription limits (`usage limit has been reached`, `usage_limit_reached`, `hit your session|daily|weekly|usage limit`) classify like a 429 (`rate_limit` cooldown), closing #1768.
 - `packages/coding-agent/src/core/credential-pool/rotation-stream.ts`: `streamWithCredentialRotation` passes `onRotate` (emits `accounts_changed` and remembers the blocked account) and wraps `runAttempt` to emit `emitProviderAccountFailover(provider, from, to, reason)` exactly once, when the next account's attempt starts. Nothing is emitted when the request succeeds on its account, fails without rotating, or rotates after output.
-- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: subscribes to provider account events alongside the process handlers and shows `Switched <provider> account <from> -> <to>: <reason>.` as a status line.
+- The TUI notice for the event is recorded in `packages/coding-agent/src/modes/interactive/changes.md`.
 
 ### Why
 
@@ -16,7 +16,7 @@
 
 ### Expected merge conflict zones
 
-- LOW: the regex block and the first branches of `classifyCredentialFailure`; the `runCredentialFailover` options object in `streamWithCredentialRotation`; `registerSignalHandlers` in `interactive-mode.ts`.
+- LOW: the regex block and the first branches of `classifyCredentialFailure`; the `runCredentialFailover` options object in `streamWithCredentialRotation`.
 
 ## 2026-09-28 - A stored OAuth token the provider refuses is re-exchanged once before failing (senpi#2297)
 
