@@ -8,7 +8,7 @@ import {
 	getDollarInvocationSuggestions,
 	knownSkillNames,
 } from "./dollar-invocation-autocomplete.ts";
-import { getSlashCommandSuggestions } from "./slash-command-autocomplete.ts";
+import { getSlashCommandSuggestions, isSlashNamespaceItem } from "./slash-command-autocomplete.ts";
 
 const PATH_DELIMITERS = new Set([" ", "\t", '"', "'", "="]);
 
@@ -452,15 +452,17 @@ export class CombinedAutocompleteProvider implements AutocompleteProvider {
 			(beforePrefix.trim() === "" ||
 				(prefix.startsWith("/skill:") && this.isLeadingKnownSkillCommandRun(beforePrefix)));
 		if (isSlashCommand) {
-			// This is a command name completion
-			const newLine = `${beforePrefix}/${item.value} ${adjustedAfterCursor}`;
+			// This is a command name completion. A namespace (`skill:`) gets no trailing space so the
+			// editor can list that namespace's commands right after it.
+			const separator = isSlashNamespaceItem(item.value) ? "" : " ";
+			const newLine = `${beforePrefix}/${item.value}${separator}${adjustedAfterCursor}`;
 			const newLines = [...lines];
 			newLines[cursorLine] = newLine;
 
 			return {
 				lines: newLines,
 				cursorLine,
-				cursorCol: beforePrefix.length + item.value.length + 2, // +2 for "/" and space
+				cursorCol: beforePrefix.length + 1 + item.value.length + separator.length,
 			};
 		}
 

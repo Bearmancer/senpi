@@ -101,7 +101,6 @@ describe("GLM 5.2 prompt preset", () => {
 		expect(catalogModelIds).toEqual(
 			expect.arrayContaining([
 				"cloudflare-workers-ai/@cf/zai-org/glm-5.2",
-				"fireworks/accounts/fireworks/models/glm-5p2",
 				"openrouter/z-ai/glm-5.2",
 				"zai/glm-5.2",
 			]),

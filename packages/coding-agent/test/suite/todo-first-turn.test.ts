@@ -3,6 +3,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Api, Model } from "@earendil-works/pi-ai";
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
+import {
+	clearForcedToolChoiceRefusals,
+	sendWithForcedToolChoiceFallback,
+} from "@earendil-works/pi-ai/utils/tool-choice-fallback";
 import { afterEach, describe, expect, it } from "vitest";
 import {
 	FIRST_TURN_CUSTOM_TYPE,
@@ -97,6 +101,16 @@ describe("named tool_choice wire shapes", () => {
 		],
 		["openai-responses", model("gpt-5.6", "openai-responses"), true],
 		["openai-completions", model("grok-4.7", "openai-completions"), true],
+		[
+			"openai-completions with forced tool choice disabled",
+			model("kiro-opus", "openai-completions", { supportsForcedToolChoice: false }),
+			false,
+		],
+		[
+			"openai-responses with forced tool choice disabled",
+			model("kiro-opus", "openai-responses", { supportsForcedToolChoice: false }),
+			false,
+		],
 		["google-generative-ai", model("gemini-3", "google-generative-ai"), false],
 	])("supportsNamedToolChoice: %s", (_label, candidate, expected) => {
 		expect(supportsNamedToolChoice(candidate)).toBe(expected);
@@ -231,6 +245,39 @@ describe("first-turn tool_choice through the faux pi shape", () => {
 
 		// then
 		expect(payload?.tool_choice).toBeUndefined();
+	});
+
+	it("sends only the reminder to a model that refused a forced choice earlier in the process (senpi#2218)", async () => {
+		// given: the adapter retried a Kiro refusal without tool_choice and the retry was accepted
+		clearForcedToolChoiceRefusals();
+		const kiro = model("kiro-opus", "openai-completions");
+		const refusal = Object.assign(new Error("400 Kiro supports only automatic tool choice or tool_choice:none"), {
+			status: 400,
+		});
+		const params: { tool_choice?: unknown } = { tool_choice: namedToolChoicePayload(kiro.api, "todo") };
+		await sendWithForcedToolChoiceFallback({
+			target: kiro,
+			params,
+			acceptsForcedToolChoice: true,
+			isForced: (choice) => choice !== undefined,
+			send: async (params) => {
+				if (params.tool_choice !== undefined) throw refusal;
+				return "ok";
+			},
+		});
+		const faux = fauxPi();
+		await faux.startTurn();
+
+		// when
+		const refused = await faux.providerRequest(TODO_PAYLOAD, kiro);
+		const other = await faux.providerRequest(TODO_PAYLOAD, model("grok-4.7", "openai-completions"));
+		const supported = supportsNamedToolChoice(kiro);
+		clearForcedToolChoiceRefusals();
+
+		// then
+		expect(supported).toBe(false);
+		expect(refused?.tool_choice).toBeUndefined();
+		expect(other?.tool_choice).toEqual({ type: "function", function: { name: "todo" } });
 	});
 
 	it("sends only the reminder under the remind setting", async () => {

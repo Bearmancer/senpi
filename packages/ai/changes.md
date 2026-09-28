@@ -1,3 +1,21 @@
+## 2026-09-27 - OpenRouter catalog records mandatory reasoning again (senpi#1239, senpi#2163)
+
+### What changed
+
+- `packages/ai/scripts/generate-models.ts`: `fetchOpenRouterModels()` passes each model's `reasoning` metadata through `getOpenRouterThinkingLevelMap()` and spreads the result into the row, so models OpenRouter reports as `mandatory: true` get `thinkingLevelMap.off: null` plus their supported efforts. This restores the call site upstream added in badlogic/pi-mono 650e7a6 (#8614). The fork merge `c1b91ace01` kept only the import.
+
+### Why
+
+Without `off: null`, `openai-completions` sends `reasoning: { effort: "none" }` whenever no thinking level is requested. Mandatory-reasoning endpoints such as `meta/muse-spark-1.3-contributor` and `z-ai/glm-5.3` reject that with HTTP 400 `Reasoning is mandatory for this endpoint and cannot be disabled.`, and the thinking selector offers an `off` level those models cannot run. The release model regeneration (`scripts/release-artifacts.mjs`) writes the corrected rows.
+
+### Why an extension could not handle it
+
+The catalog shards ship inside this package and are written only by the generator.
+
+### Expected merge conflict zones
+
+- `packages/ai/scripts/generate-models.ts`: the `normalizedModel` literal in `fetchOpenRouterModels()`. Upstream carries the same call, so an upstream sync should resolve toward upstream's shape.
+
 ## 2026-09-24 - configuration_update follows a catalog capability flag (senpi#2094)
 
 ### What changed

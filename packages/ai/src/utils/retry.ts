@@ -1,6 +1,21 @@
 import type { AssistantMessage } from "../types.ts";
 import { FORWARDED_EMPTY_RESPONSE_ERROR, FORWARDED_EMPTY_TOOL_USE_ERROR } from "./empty-response-errors.ts";
 
+// A provider's support request id is opaque hex like `C6FD:AB660:AEB5548:6ABA4D81`.
+// It can contain `429` or `500`, which message classifiers read as HTTP statuses,
+// so every id is rendered behind this marker and removed before classification.
+export const PROVIDER_REQUEST_ID_MARKER = "request id:";
+
+const REQUEST_ID_SEGMENT = /request id: [^\s,;)]+/gi;
+
+export function formatProviderRequestId(label: string, id: string): string {
+	return `${label} ${PROVIDER_REQUEST_ID_MARKER} ${id}`;
+}
+
+export function stripProviderRequestIds(text: string): string {
+	return text.replace(REQUEST_ID_SEGMENT, PROVIDER_REQUEST_ID_MARKER);
+}
+
 function buildProviderErrorPattern(patterns: readonly string[]): RegExp {
 	return new RegExp(patterns.join("|"), "i");
 }
@@ -26,7 +41,13 @@ export const USAGE_LIMIT_EXHAUSTION = {
 	markers: ["usage_limit_reached", "usage_not_included", "usage limit has been reached"],
 } as const;
 
-const NON_RETRYABLE_PROVIDER_ERROR_PATTERN = buildProviderErrorPattern([
+/**
+ * Account quota, budget, credit, and billing exhaustion: the account cannot
+ * serve more requests until the user pays or the quota resets. Shared by the
+ * terminal classifier below and the fallback circuit breaker, so both recognise
+ * the same exhaustion wording.
+ */
+const QUOTA_EXHAUSTION_PATTERNS = [
 	// OpenCode Go/free-tier limits returned as 429 JSON error types by OpenCode's
 	// Zen API. These are subscription/account limits, not transient throttles.
 	"GoUsageLimitError",
@@ -56,6 +77,16 @@ const NON_RETRYABLE_PROVIDER_ERROR_PATTERN = buildProviderErrorPattern([
 	// stays dead until its quota resets — every same-account retry is guaranteed
 	// to fail, so the failure is terminal, not rate-limited.
 	...USAGE_LIMIT_EXHAUSTION.markers,
+] as const;
+
+const QUOTA_EXHAUSTION_PATTERN = buildProviderErrorPattern(QUOTA_EXHAUSTION_PATTERNS);
+
+export function isQuotaExhaustionMessage(errorMessage: string | undefined): boolean {
+	return errorMessage !== undefined && QUOTA_EXHAUSTION_PATTERN.test(stripProviderRequestIds(errorMessage));
+}
+
+const NON_RETRYABLE_PROVIDER_ERROR_PATTERN = buildProviderErrorPattern([
+	...QUOTA_EXHAUSTION_PATTERNS,
 
 	// Request-shape rejections: the provider refused the payload we built, not the
 	// work it describes. Gateways wrap these in whatever status they like — the
@@ -558,7 +589,8 @@ export function isRetryableErrorMessage(errorMessage: string): boolean {
  */
 export function classifyErrorMessage(errorMessage: string): "non-retryable" | "retryable" | "unknown" {
 	if (!errorMessage) return "unknown";
-	if (NON_RETRYABLE_PROVIDER_ERROR_PATTERN.test(errorMessage)) return "non-retryable";
-	if (RETRYABLE_PROVIDER_ERROR_PATTERN.test(errorMessage)) return "retryable";
+	const text = stripProviderRequestIds(errorMessage);
+	if (NON_RETRYABLE_PROVIDER_ERROR_PATTERN.test(text)) return "non-retryable";
+	if (RETRYABLE_PROVIDER_ERROR_PATTERN.test(text)) return "retryable";
 	return "unknown";
 }

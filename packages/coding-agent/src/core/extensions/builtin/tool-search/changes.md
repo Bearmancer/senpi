@@ -178,3 +178,21 @@
 
 - LOW: `engine/document.ts` shared document fields.
 - LOW: `engine/bm25.ts` field weighting, exact-match handling, filtering, and ordering.
+
+## 2026-09-28 - Injected deferred tools carry an object input_schema (senpi#2252)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/tool-search/native-search.ts`: `injectInactiveCatalogTools` passes a tool's parameters through `anthropicInputSchema`, which resolves a root union (`anyOf` with no top-level `type`) into one `type: "object"` schema with `resolveRootObjectSchema` from `@earendil-works/pi-ai/utils/tool-schema-compat`. A plain object schema is still sent unchanged.
+
+### Why
+
+- Anthropic rejects any tool whose `input_schema` lacks `type: "object"` (`tools.N.custom.input_schema.type: Field required`), which failed every request once a deferrable root-union tool (the desktop `computer` tool) was cataloged. Resident tools already get this shape in `convertTools` (#718).
+
+### Why an extension could not handle it
+
+- This is the tool-search extension's own payload transform.
+
+### Expected merge conflict zones
+
+- LOW: the `input_schema` field of `injectInactiveCatalogTools` and the helper beside `maybeDefer`.

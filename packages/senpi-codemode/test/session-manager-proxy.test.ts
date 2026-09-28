@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
+import type { KernelToHostMessage } from "../src/bridge/protocol.ts";
 import type { CompletionResult } from "../src/completion/handler.ts";
 import type { CodemodeSessionManager } from "../src/extension/session-manager.ts";
 import { SessionManagerProxy } from "../src/extension/session-manager-proxy.ts";
-import type { EvalKernel, EvalKernelRunInput, KernelInterruptHandle } from "../src/tool/types.ts";
+import type { EvalKernel, EvalKernelRunInput, EvalLanguage, KernelInterruptHandle } from "../src/tool/types.ts";
 
 class FixtureError extends Error {
 	readonly name = "FixtureError";
@@ -41,6 +42,7 @@ class FakeKernel implements EvalKernel {
 class FakeSessionManager implements CodemodeSessionManager {
 	disposeCount = 0;
 	readonly kernel = new FakeKernel();
+	readonly releasedListeners: Array<[EvalLanguage, (message: KernelToHostMessage) => void]> = [];
 	readonly #disposeFailure: Error | undefined;
 
 	constructor(disposeFailure?: Error) {
@@ -49,6 +51,10 @@ class FakeSessionManager implements CodemodeSessionManager {
 
 	async getKernel(): Promise<EvalKernel> {
 		return this.kernel;
+	}
+
+	releaseKernelListener(language: EvalLanguage, onMessage: (message: KernelToHostMessage) => void): void {
+		this.releasedListeners.push([language, onMessage]);
 	}
 
 	async complete(): Promise<CompletionResult> {
@@ -117,5 +123,19 @@ describe("session manager proxy teardown", () => {
 		expect(replaced).toBe(false);
 		expect(stale.disposeCount).toBe(1);
 		expect(reported).toEqual([failure]);
+	});
+
+	it("forwards listener release to the current manager", async () => {
+		// Given an installed manager.
+		const { proxy } = reportingProxy();
+		const current = new FakeSessionManager();
+		expect(await proxy.replace(proxy.beginReplacement(), current)).toBe(true);
+		const listener = (): void => undefined;
+
+		// When a settled cell releases its kernel listener through the proxy.
+		proxy.releaseKernelListener("js", listener);
+
+		// Then the current manager receives the identity of the released listener.
+		expect(current.releasedListeners).toEqual([["js", listener]]);
 	});
 });

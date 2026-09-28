@@ -2,6 +2,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import type { EvalDetachedCellNotification, EvalDetachedCellSnapshot } from "./detached-cell-manager.ts";
 import { interruptionStateNote, unknownInterruptionStateNote } from "./interrupt-note.ts";
+import type { EvalMemoryDetails } from "./types.ts";
 
 const NOTIFICATION_TAIL_BYTES = 512;
 
@@ -77,9 +78,17 @@ function outcomeOf(cell: EvalDetachedCellSnapshot): string {
 }
 
 function stateNoteOf(cell: EvalDetachedCellSnapshot): string {
-	if (cell.state !== "cancelled") return "Kernel state updated - variables are available to the next eval cell.";
+	if (cell.state !== "cancelled") return memoryStateNote(cell.result.details?.memory);
 	const note = interruptionStateNote(cell.language, cell.stateRetained) ?? unknownInterruptionStateNote(cell.language);
 	return cell.interruptNote === undefined ? note : `${note} ${cell.interruptNote.trim()}`;
+}
+
+export function memoryStateNote(memory: EvalMemoryDetails | undefined): string {
+	if (memory?.overCeiling === true)
+		return "Kernel memory is over its ceiling - the kernel restarts before the next eval cell and every global is lost.";
+	if (memory?.recycled === true)
+		return "The kernel was restarted before this cell ran - globals from earlier cells are gone; this cell's variables are available to the next eval cell.";
+	return "Kernel state updated - variables are available to the next eval cell.";
 }
 
 function safeCellId(cellId: string): string {

@@ -48,6 +48,7 @@ const compat = {
 	sessionAffinityFormat: "openai",
 	supportsPromptCacheKey: false,
 	supportsMaxOutputTokens: true,
+	supportsForcedToolChoice: true,
 	supportsLongCacheRetention: true,
 } satisfies Omit<
 	Required<OpenAICompletionsCompat>,

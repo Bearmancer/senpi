@@ -205,6 +205,7 @@ If your command is slow, expensive, rate-limited, or should keep using a previou
 | `api` | No | provider's `api` | Override provider's API for this model |
 | `reasoning` | No | `false` | Supports extended thinking |
 | `thinkingLevelMap` | No | omitted | Maps senpi thinking levels to provider values and marks unsupported levels (see below) |
+| `defaultThinkingLevel` | No | omitted | Level a session starts at for this model when you have not chosen one for it (see below) |
 | `input` | No | `["text"]` | Input types: `["text"]` or `["text", "image"]` |
 | `contextWindow` | No | `128000` | Context window size in tokens |
 | `maxTokens` | No | `16384` | Maximum output tokens |
@@ -402,6 +403,33 @@ Example for a model where thinking cannot be disabled:
 
 Migration: older configs that used `compat.reasoningEffortMap` should move that mapping to model-level `thinkingLevelMap`. Use `null` for levels that should not appear in the UI.
 
+### Default Thinking Level
+
+`defaultThinkingLevel` names the level a session starts at on this model when you have not picked one for it yet. A level you chose for the model earlier (remembered per model) still wins; the model default wins over the global `defaultThinkingLevel` setting, which follows the last level you picked on any model. The value is clamped to the levels the model supports.
+
+### Discovering Models From an Endpoint
+
+`senpi models discover <provider>` fetches `<baseUrl>/models` once for an OpenAI-compatible provider defined in `models.json`, using the provider's configured key and headers, and adds every listed model to the provider's `models` array. Models the endpoint does not list are kept, and so is every field of a listed model except the three reasoning fields discovery owns (below). The previous file is saved next to it as `models.json.backup-<timestamp>`, and a rewrite that would not load is refused. Comments are not preserved in the rewritten file; the backup keeps them. The command prints the listing URL with any user info removed and query values shown as `<redacted>`.
+
+Some endpoints advertise the reasoning efforts each model accepts:
+
+```json
+{ "id": "some-model", "reasoning_efforts": [{ "value": "low" }, { "value": "high", "default": true }] }
+```
+
+When the provider sets `"compat": { "supportsReasoningEffort": true }`, discovery turns that list into the model's `thinkingLevelMap` and `defaultThinkingLevel`: `none`/`off`, `minimal`, `low`, `medium`, `high`, `xhigh`, and `max` (case-insensitive) map to the senpi level of the same name, the endpoint's own spelling is what senpi sends, and every level the endpoint does not list is set to `null`. The example above becomes:
+
+```json
+{
+  "id": "some-model",
+  "reasoning": true,
+  "thinkingLevelMap": { "off": null, "minimal": null, "low": "low", "medium": null, "high": "high", "xhigh": null, "max": null },
+  "defaultThinkingLevel": "high"
+}
+```
+
+For a model whose entry advertises `reasoning_efforts`, discovery owns `reasoning`, `thinkingLevelMap`, and `defaultThinkingLevel`: it sets `reasoning` to `true` (overriding an explicit `false`), replaces the map, and replaces the default, removing a previous `defaultThinkingLevel` when the listing marks none. Values that name no senpi level are reported and not used; if none of the advertised values is usable, the model's reasoning controls are turned off (`reasoning: false`, no map, no default) instead of keeping an old map. A model whose entry has no `reasoning_efforts` field keeps its reasoning fields as they are. Without the compat flag, advertised efforts are ignored and only the model ids are added.
+
 ## Overriding Built-in Providers
 
 Route a built-in provider through a proxy without redefining models:
@@ -587,6 +615,7 @@ For providers with partial OpenAI compatibility, use the `compat` field.
 | `supportsRemoteCompactionV2` | For `openai-responses`, opt a verified proxy into native Responses remote compaction v2. Unknown custom proxies default to `false`; official OpenAI defaults to native support. |
 | `deferredToolsMode` | Use provider-specific deferred tool serialization. Currently only `"kimi"` is supported for Kimi's OpenAI-compatible Chat Completions format. |
 | `supportsLongCacheRetention` | Whether the provider accepts long cache retention when cache retention is `long`: `prompt_cache_options.ttl: "30m"` for GPT-5.6+ Responses models, `prompt_cache_retention: "24h"` for earlier OpenAI models, or `cache_control.ttl: "1h"` when `cacheControlFormat` is `anthropic`. Default: `true`. |
+| `supportsForcedToolChoice` | For `openai-completions` and `openai-responses`, whether the provider accepts a `tool_choice` that forces a tool (`required` or a named function). When `false`, a forced choice is dropped before the request is sent and the first-turn plan opener sends only its reminder. Default: `true`; a provider that refuses a forced choice with a 400 gets the request once more without it, and senpi stops forcing that model for the rest of the process. |
 | `openRouterRouting` | OpenRouter provider routing preferences. This object is sent as-is in the `provider` field of the [OpenRouter API request](https://openrouter.ai/docs/guides/routing/provider-selection). |
 | `vercelGatewayRouting` | Vercel AI Gateway routing config for provider selection (`only`, `order`) |
 

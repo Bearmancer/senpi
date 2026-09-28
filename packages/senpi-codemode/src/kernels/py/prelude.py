@@ -6,6 +6,7 @@ import asyncio  # noqa: ANYIO_OK — stdlib-only embedded kernel runner.
 import base64
 import codecs
 import contextlib
+import gc
 import inspect
 import io
 import json
@@ -17,6 +18,7 @@ import subprocess
 import sys
 import time
 import traceback
+import types
 import urllib.error
 import urllib.request
 import uuid
@@ -987,6 +989,313 @@ USER_NS.update(
     }
 )
 
+# Kernel memory (mirrors src/kernels/js/worker-memory.js; thresholds arrive on `init`, the host applies the
+# notice/ceiling policy in src/kernels/shared/kernel-memory.ts). Names present right after prelude install
+# are never reported as user globals.
+_MEMORY_BASELINE = frozenset(USER_NS)
+_MIB = 1024 * 1024
+_MEMORY_MIN_GROWTH = 64 * _MIB
+_MEMORY_GROWTH_RATIO = 0.25
+_MEMORY_NOTICE_GROWTH_RATIO = 1.25
+# A collection costs at most 1/20 of the time since the previous one.
+_MEMORY_COLLECT_RATE_FLOOR = 20
+_MEMORY_REPORTED_GLOBALS = 5
+_MEMORY_MIN_REPORTED_BYTES = _MIB
+_SIZER_SAMPLED = 1_000
+_SIZER_NODE_BUDGET = 200_000
+_SIZER_MAX_DEPTH = 64
+_SIZER_POINTER = 8
+_SIZER_LEAF_TYPES = (str, bytes, bytearray, int, float, complex, bool, type(None), range, memoryview)
+_SIZER_OPAQUE_TYPES = (types.ModuleType, type, types.FunctionType, types.BuiltinFunctionType, types.MethodType)
+
+
+class _KernelMemory:
+    """Post-cell footprint measurement, collection, and largest-globals attribution for this process."""
+
+    def __init__(self) -> None:
+        self.thresholds: dict[str, int] | None = None
+        self.last_live = 0
+        self.notice_ref = 0
+        self.collect_end = float("-inf")
+        self.collect_seconds = 0.0
+        self._reader: Callable[[], tuple[int, bool] | None] | None = None
+        self._trim: Callable[[], None] | None = None
+        self._resolved = False
+
+    def configure(self, thresholds: Any) -> None:
+        if not isinstance(thresholds, dict):
+            return
+        keys = ("gcWatermarkBytes", "noticeBytes", "ceilingBytes")
+        if all(isinstance(thresholds.get(key), int) for key in keys):
+            self.thresholds = {key: int(thresholds[key]) for key in keys}
+
+    def after_cell(self) -> dict[str, Any] | None:
+        if self.thresholds is None:
+            return None
+        reading = self._footprint()
+        if reading is None:
+            return None
+        live, approximate = reading
+        gc_ran = self._needs_collection(live)
+        if gc_ran:
+            live = self._collect(live)
+        notice = self.thresholds["noticeBytes"]
+        if gc_ran and notice > 0 and live >= notice:
+            if self.notice_ref == 0 or live >= self.notice_ref * _MEMORY_NOTICE_GROWTH_RATIO:
+                self.notice_ref = live
+        self.last_live = live
+        report: dict[str, Any] = {"liveBytes": live, "measure": "footprint"}
+        if gc_ran:
+            report["gcRan"] = True
+        if approximate:
+            report["approximate"] = True
+        if gc_ran and self._worth_naming(live):
+            named = _largest_globals(_MEMORY_REPORTED_GLOBALS)
+            if named:
+                report["globals"] = named
+        return report
+
+    def _needs_collection(self, estimate: int) -> bool:
+        assert self.thresholds is not None
+        watermark = self.thresholds["gcWatermarkBytes"]
+        notice = self.thresholds["noticeBytes"]
+        ceiling = self.thresholds["ceilingBytes"]
+        if ceiling > 0 and estimate >= ceiling:
+            return True
+        if watermark > 0 and estimate >= watermark:
+            if estimate > self.last_live + max(_MEMORY_MIN_GROWTH, self.last_live * _MEMORY_GROWTH_RATIO):
+                return True
+        if notice > 0 and estimate >= notice:
+            if self.last_live < notice or self.notice_ref == 0 or estimate >= self.notice_ref * _MEMORY_NOTICE_GROWTH_RATIO:
+                return True
+        # The JS worker's idle collection, run synchronously: a cell that only drops a global allocates
+        # nothing, so cyclic garbage and malloc's free lists would otherwise stay until the next growth.
+        if watermark == 0 or self.last_live < watermark:
+            return False
+        return time.monotonic() - self.collect_end >= _MEMORY_COLLECT_RATE_FLOOR * self.collect_seconds
+
+    def _worth_naming(self, live: int) -> bool:
+        assert self.thresholds is not None
+        notice = self.thresholds["noticeBytes"]
+        ceiling = self.thresholds["ceilingBytes"]
+        return (notice > 0 and live >= notice) or (ceiling > 0 and live >= ceiling)
+
+    def _collect(self, before: int) -> int:
+        started = time.monotonic()
+        gc.collect()
+        if self._trim is not None:
+            self._trim()
+        self.collect_end = time.monotonic()
+        self.collect_seconds = self.collect_end - started
+        reading = self._footprint()
+        live = before if reading is None else reading[0]
+        if self.thresholds is not None and live < self.thresholds["noticeBytes"] / 2:
+            self.notice_ref = 0
+        return live
+
+    def _footprint(self) -> tuple[int, bool] | None:
+        if not self._resolved:
+            self._resolved = True
+            self._reader = _footprint_reader()
+            self._trim = _malloc_trim()
+        return None if self._reader is None else self._reader()
+
+
+def _footprint_reader() -> Callable[[], tuple[int, bool]] | None:
+    """This process's footprint as src/core/process-footprint.ts reads it, or peak RSS (approximate)."""
+    import ctypes
+
+    if sys.platform == "darwin":
+        with contextlib.suppress(OSError, AttributeError):
+            libsystem = ctypes.CDLL("/usr/lib/libSystem.B.dylib")
+            rusage = libsystem.proc_pid_rusage
+            rusage.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_void_p]
+            rusage.restype = ctypes.c_int
+            buffer = (ctypes.c_uint64 * 32)()
+            pid = os.getpid()
+
+            def darwin() -> tuple[int, bool] | None:
+                # RUSAGE_INFO_V2; ri_phys_footprint is the u64 at index 9 (byte offset 72).
+                return (int(buffer[9]), False) if rusage(pid, 2, ctypes.byref(buffer)) == 0 else None
+
+            if darwin() is not None:
+                return darwin
+    if sys.platform.startswith("linux") and os.path.exists("/proc/self/status"):
+
+        def linux() -> tuple[int, bool] | None:
+            with open("/proc/self/status", encoding="ascii", errors="replace") as status:
+                for line in status:
+                    if line.startswith("RssAnon:"):
+                        return int(line.split()[1]) * 1024, False
+            return None
+
+        if linux() is not None:
+            return linux
+    if sys.platform == "win32":
+        with contextlib.suppress(OSError, AttributeError):
+            return _windows_private_usage_reader(ctypes)
+    with contextlib.suppress(ImportError):
+        import resource
+
+        # ru_maxrss is a peak (kilobytes on Linux, bytes on macOS): flagged approximate.
+        scale = 1 if sys.platform == "darwin" else 1024
+        return lambda: (int(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss) * scale, True)
+    return None
+
+
+def _windows_private_usage_reader(ctypes: Any) -> Callable[[], tuple[int, bool]] | None:
+    size_t = ctypes.c_size_t
+
+    class Counters(ctypes.Structure):
+        _fields_ = [
+            ("cb", ctypes.c_uint32),
+            ("PageFaultCount", ctypes.c_uint32),
+            *((name, size_t) for name in ("PeakWorkingSetSize", "WorkingSetSize", "QuotaPeakPagedPoolUsage")),
+            *((name, size_t) for name in ("QuotaPagedPoolUsage", "QuotaPeakNonPagedPoolUsage")),
+            *((name, size_t) for name in ("QuotaNonPagedPoolUsage", "PagefileUsage", "PeakPagefileUsage")),
+            ("PrivateUsage", size_t),
+        ]
+
+    kernel32 = ctypes.WinDLL("kernel32")
+    current = kernel32.GetCurrentProcess
+    current.restype = ctypes.c_void_p
+    query = kernel32.K32GetProcessMemoryInfo
+    query.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_uint32]
+    query.restype = ctypes.c_int
+    counters = Counters()
+    counters.cb = ctypes.sizeof(Counters)
+
+    def windows() -> tuple[int, bool] | None:
+        if query(current(), ctypes.byref(counters), counters.cb) == 0:
+            return None
+        return int(counters.PrivateUsage), False
+
+    return windows if windows() is not None else None
+
+
+def _malloc_trim() -> Callable[[], None] | None:
+    """glibc's malloc_trim(0) returns freed heap pages to the OS; other C libraries have no equivalent."""
+    if not sys.platform.startswith("linux"):
+        return None
+    import ctypes
+
+    with contextlib.suppress(OSError, AttributeError):
+        trim = ctypes.CDLL("libc.so.6").malloc_trim
+        trim.argtypes = [ctypes.c_size_t]
+        trim.restype = ctypes.c_int
+
+        def trim_heap() -> None:
+            trim(0)
+
+        return trim_heap
+    return None
+
+
+def _largest_globals(limit: int) -> list[dict[str, Any]]:
+    sizer = _GlobalSizer()
+    sized: list[dict[str, Any]] = []
+    for name, value in list(USER_NS.items()):
+        if name in _MEMORY_BASELINE or name.startswith("__") or isinstance(value, _SIZER_OPAQUE_TYPES):
+            continue
+        measured = sizer.measure(value)
+        if measured is None or measured[0] < _MEMORY_MIN_REPORTED_BYTES:
+            continue
+        entry: dict[str, Any] = {"name": name, "bytes": measured[0]}
+        if measured[1]:
+            entry["approximate"] = True
+        sized.append(entry)
+    sized.sort(key=lambda entry: entry["bytes"], reverse=True)
+    return sized[:limit]
+
+
+class _GlobalSizer:
+    """Estimated retained size of user globals: array/frame buffers from numpy and pandas, containers from
+    their length and up to 1,000 sampled elements, one shared visited set and node budget for the walk."""
+
+    def __init__(self) -> None:
+        self.seen: set[int] = set()
+        self.nodes = 0
+        self.approximate = False
+
+    def measure(self, value: Any) -> tuple[int, bool] | None:
+        self.approximate = False
+        try:
+            return int(self.size(value, 0)), self.approximate
+        except Exception:  # noqa: BROAD_EXCEPT_OK — an exotic user value (a raising __len__/__iter__) stays unsized.
+            return None
+
+    def size(self, value: Any, depth: int) -> float:
+        if id(value) in self.seen:
+            return 0
+        if depth >= _SIZER_MAX_DEPTH or self.nodes >= _SIZER_NODE_BUDGET:
+            self.approximate = True
+            return 0
+        self.seen.add(id(value))
+        self.nodes += 1
+        buffer = _buffer_bytes(value)
+        if buffer is not None:
+            return buffer
+        own = sys.getsizeof(value)
+        if isinstance(value, _SIZER_LEAF_TYPES) or isinstance(value, _SIZER_OPAQUE_TYPES):
+            return own
+        if isinstance(value, dict):
+            return own + self.sampled(len(value), iter(value.items()), depth, pairs=True)
+        if isinstance(value, (list, tuple)):
+            return own + self.spaced(value, depth)
+        if isinstance(value, (set, frozenset)) or type(value).__module__ == "collections":
+            return own + self.sampled(len(value), iter(value), depth, pairs=False)
+        attributes = _instance_dict(value)
+        return own if attributes is None else own + self.size(attributes, depth + 1)
+
+    def spaced(self, items: Any, depth: int) -> float:
+        count = len(items)
+        if count <= _SIZER_SAMPLED:
+            return sum(self.size(item, depth + 1) for item in items)
+        self.approximate = True
+        step = count / _SIZER_SAMPLED
+        total = sum(self.size(items[int(index * step)], depth + 1) for index in range(_SIZER_SAMPLED))
+        return total / _SIZER_SAMPLED * count
+
+    def sampled(self, count: int, entries: Any, depth: int, *, pairs: bool) -> float:
+        taken = []
+        for entry in entries:
+            taken.append(entry)
+            if len(taken) >= _SIZER_SAMPLED:
+                break
+        if not taken:
+            return 0
+        if len(taken) < count:
+            self.approximate = True
+        total = 0.0
+        for entry in taken:
+            if pairs:
+                total += self.size(entry[0], depth + 1) + self.size(entry[1], depth + 1)
+            else:
+                total += self.size(entry, depth + 1)
+        return total * count / len(taken)
+
+
+def _buffer_bytes(value: Any) -> int | None:
+    root = type(value).__module__.split(".", 1)[0]
+    if root == "numpy" and isinstance(getattr(value, "nbytes", None), int):
+        return int(value.nbytes)
+    if root == "pandas" and callable(getattr(value, "memory_usage", None)):
+        usage = value.memory_usage(deep=True)
+        return int(usage.sum()) if hasattr(usage, "sum") else int(usage)
+    return None
+
+
+def _instance_dict(value: Any) -> dict[str, Any] | None:
+    # object.__getattribute__ never falls back to a user __getattr__.
+    try:
+        attributes = object.__getattribute__(value, "__dict__")
+    except AttributeError:
+        return None
+    return attributes if isinstance(attributes, dict) else None
+
+
+KERNEL_MEMORY = _KernelMemory()
+
 TLA_FLAG = getattr(ast, "PyCF_ALLOW_TOP_LEVEL_AWAIT", 0x2000)
 
 
@@ -1020,21 +1329,35 @@ async def run_code(code: Any, want_value: bool) -> Any:
     return None
 
 
-def run_cell(cell_id: str, code: str) -> None:
+def apply_preludes(preludes: Any) -> None:
+    # Host-computed per cell: globals of tools deactivated since the last cell are dropped,
+    # and an active tool's snippet runs only while one of its exports is missing.
+    if not isinstance(preludes, dict):
+        return
+    for name in preludes.get("remove", []):
+        USER_NS.pop(name, None)
+    for contribution in preludes.get("install", []):
+        if any(name not in USER_NS for name in contribution.get("exports", [])):
+            exec(compile(contribution.get("python", ""), "<kernel-prelude>", "exec"), USER_NS)
+
+
+def run_cell(cell_id: str, code: str, preludes: Any = None) -> None:
     start = time.monotonic()
     stdout = io.StringIO()
     stderr = io.StringIO()
     # SIGINT must interrupt user code here; the idle baseline (set between
     # cells) ignores it so a late signal cannot kill the stdin-read loop.
     signal.signal(signal.SIGINT, signal.default_int_handler)
+    result: dict[str, Any]
     try:
         with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+            apply_preludes(preludes)
             body, expression = compile_cell(code)
             LOOP.run_until_complete(run_code(body, False))
             value = LOOP.run_until_complete(run_code(expression, True))
         text("stdout", stdout.getvalue())
         text("stderr", stderr.getvalue())
-        result: dict[str, Any] = {
+        result = {
             "type": "result",
             "cellId": cell_id,
             "ok": True,
@@ -1042,21 +1365,26 @@ def run_cell(cell_id: str, code: str) -> None:
         }
         if value is not None:
             result["valueRepr"] = repr(value)
-        emit(result)
     except BaseException as exc:  # noqa: BROAD_EXCEPT_OK — cell boundary serializes user errors and interrupts.
         text("stdout", stdout.getvalue())
         text("stderr", stderr.getvalue())
-        emit(
-            {
-                "type": "result",
-                "cellId": cell_id,
-                "ok": False,
-                "error": bridge_error(exc),
-                "durationMs": elapsed(start),
-            }
-        )
+        result = {
+            "type": "result",
+            "cellId": cell_id,
+            "ok": False,
+            "error": bridge_error(exc),
+            "durationMs": elapsed(start),
+        }
     finally:
         signal.signal(signal.SIGINT, signal.SIG_IGN)
+    try:
+        memory = KERNEL_MEMORY.after_cell()
+    except Exception as exc:  # noqa: BROAD_EXCEPT_OK — a measurement failure must not cost the cell its result.
+        memory = None
+        text("stderr", f"[senpi] kernel memory measurement failed: {exc}\n")
+    if memory is not None:
+        result["memory"] = memory
+    emit(result)
 
 
 def elapsed(start: float) -> int:
@@ -1072,10 +1400,11 @@ def handle(message: dict[str, Any]) -> bool:
             emit({"type": "init-failed", "error": {"message": "missing bridge connection"}})
             return True
         CONNECTION = connection
+        KERNEL_MEMORY.configure(message.get("memory"))
         emit({"type": "ready"})
         return True
     if message_type == "run":
-        run_cell(str(message.get("cellId", "")), str(message.get("code", "")))
+        run_cell(str(message.get("cellId", "")), str(message.get("code", "")), message.get("preludes"))
         return True
     if message_type == "close":
         emit({"type": "closed"})

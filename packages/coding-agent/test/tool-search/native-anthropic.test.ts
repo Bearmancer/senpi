@@ -112,6 +112,43 @@ describe("todo 9 generalized catalog injection", () => {
 		});
 	});
 
+	it("#2252 advertises an injected root-union schema as an object, as Anthropic requires", () => {
+		const parameters = Type.Union([
+			Type.Object(
+				{ action: Type.Literal("call"), chain: Type.Array(Type.String()) },
+				{ additionalProperties: false },
+			),
+			Type.Object({ action: Type.Literal("close") }, { additionalProperties: false }),
+		]);
+		const payload = { tools: [{ name: "tool_search", description: "search", input_schema: {} }] };
+		const out = addAnthropicNativeToolSearch("anthropic-messages", payload, {
+			...CONFIG,
+			getCatalog: () => [
+				{
+					name: "computer",
+					label: "Computer",
+					aliases: [],
+					description: "Drive the desktop",
+					keywords: [],
+					source: "extension" as const,
+					group: "desktop",
+					ownerLabel: "desktop",
+					registrationId: "desktop.ts\0computer",
+				},
+			],
+			getToolDefinition: (name) =>
+				name === "computer" ? { description: "Drive the desktop", parameters } : undefined,
+			isDeferrable: (name) => name === "computer",
+		});
+
+		const injected = named(toolsOf(out), "computer");
+		expect(injected).toMatchObject({ defer_loading: true, input_schema: { type: "object", required: ["action"] } });
+		if (injected === undefined) throw new Error("computer was not injected");
+		const inputSchema = injected.input_schema as { properties?: object; anyOf?: unknown };
+		expect(Object.keys(inputSchema.properties ?? {}).sort()).toEqual(["action", "chain"]);
+		expect(inputSchema.anyOf).toBeUndefined();
+	});
+
 	it("gates inactive MCP catalog injection on the MCP nativeToolSearch setting", () => {
 		const catalog = [
 			{

@@ -1,5 +1,190 @@
 # senpi-codemode fork changes
 
+## 2026-09-28 - Retired JS worker children are collected, not left as zombies (senpi#1962)
+
+### What changed
+
+- `packages/senpi-codemode/src/kernels/js/context-manager.ts`, `kernel-contract.ts`, `src/extension/session-manager.ts`, `src/host-sdk.ts`: after `#retireWorkerChildren()` kills a retired worker's children it calls the new optional `collectOrphanedChildren` kernel option, which the session manager wires to `collectOrphanedChildren` from `@code-yeongyu/senpi` (exact-pid `waitpid(pid, WNOHANG)`, never `waitpid(-1)`).
+
+### Why
+
+- `worker.terminate()` destroys the exit watchers of every child the worker spawned, and the host only signalled those pids, so each one stayed a zombie for the life of the process (#1962).
+
+### Why an extension could not handle it
+
+- The worker lifecycle and its child tracking belong to this package's kernel.
+
+### Expected merge conflict zones
+
+- LOW: `#retireWorkerChildren` in `context-manager.ts` and the kernel options object in `session-manager.ts`.
+
+## 2026-09-28 - JavaScript kernel interrupt deadlines are injectable (senpi#2275)
+
+### What changed
+
+- `packages/senpi-codemode/src/kernels/js/interrupt-bounds.ts`: `JavaScriptInterruptBounds` (`ackMs`, `graceMs`, `terminateDeadlineMs`) and `DEFAULT_INTERRUPT_BOUNDS`, built from the unchanged production constants (`INTERRUPT_ACK_MS` 500, `JS_INTERRUPT_GRACE_MS` 2000, `WORKER_TERMINATE_DEADLINE_MS` 3000).
+- `packages/senpi-codemode/src/kernels/js/kernel-contract.ts`, `context-manager.ts`, `worker-slot.ts`: optional `interruptBounds` on `JavaScriptKernelOptions`; the kernel passes it to `awaitCooperativeSettlement`, `retireWorker`, and `abandonedWorkerNote`. Absent, every deadline is the production default, so no shipped behavior changes.
+- Tests: `test/js-kernel-interrupt-bun.test.ts` and `test/js-kernel-cell-end-children-bun.test.ts` choose the stop path through the bounds and assert the path taken (abandoned-worker note, `stateRetained`, a fresh worker, the child's recorded `SIGKILL` exit signal) instead of wall-clock budgets.
+
+### Why
+
+- #2275: the Bun process-tree tests asserted elapsed-time budgets and depended on the 500 ms acknowledgement deadline, so on a loaded host the kernel correctly took the blocked-worker path and the cooperative assertions failed on `main`.
+
+### Why an extension could not handle it
+
+- The interrupt deadlines are private to the JavaScript kernel in this package; nothing outside it can choose them.
+
+### Expected merge conflict zones
+
+- LOW: the `#stopActive` settle/abandon branch of `context-manager.ts`, `WorkerSlot.retire`, and the `JavaScriptKernelOptions` interface (the memory lane added fields next to it).
+
+## 2026-09-28 - Python, Ruby, and Julia kernel memory: footprint report, collection, notice, ceiling restart (senpi#2261)
+
+### What changed
+
+- `packages/senpi-codemode/src/kernels/py/prelude.py`: `init` carries the memory thresholds; after each cell `run_cell` reads the process footprint in-process (darwin `proc_pid_rusage` `ri_phys_footprint`, Linux `/proc/self/status` `RssAnon`, win32 `K32GetProcessMemoryInfo` `PrivateUsage`, otherwise peak `ru_maxrss` flagged `approximate`), runs `gc.collect()` and glibc `malloc_trim(0)` under the same growth/notice/ceiling triggers as the JS worker (plus a rate-floored collection while the watermark stays live, the synchronous analog of the JS idle collection), names the five largest user globals when live memory reaches the notice or ceiling, and attaches `memory` to the result frame.
+- `packages/senpi-codemode/src/kernels/py/kernel.ts`, `kernel-contract.ts`, `transport.ts`: thresholds reach the prelude on `init`; results pass through the shared policy; an over-ceiling kernel is reset only once no cell is running or queued, and its next result is marked `recycled`.
+- `packages/senpi-codemode/src/kernels/shared/kernel-memory-host.ts` (new), `kernel-memory.ts`, `subprocess-kernel.ts`, `subprocess-contract.ts`, `src/kernels/rb/kernel.ts`, `src/kernels/jl/kernel.ts`: the host half of the ceiling protocol for process-backed kernels; Ruby and Julia results carry the interpreter footprint read by the host (`readProcessFootprint`) and restart over the ceiling; the notice advice per language (`del`, `= nil`, `= nothing`) comes from the policy.
+- `packages/senpi-codemode/src/bridge/memory-protocol.ts`: optional `approximate` on the memory report.
+- `packages/senpi-codemode/src/extension/session-manager.ts`: py/rb/jl kernels receive the resolved thresholds (and the footprint reader for rb/jl).
+
+### Why
+
+- #2261: only the JS kernel collected, reported, and capped its memory; a Python kernel holding gigabytes stayed silent until the machine ran out, and no kernel other than JS had a ceiling.
+
+### Why an extension could not handle it
+
+- The Python prelude, the kernel hosts, and the result frame belong to this package.
+
+### Expected merge conflict zones
+
+- MEDIUM: `run_cell` and the `init` handler in `prelude.py`, `#onResult`/`#spawn` in `py/kernel.ts`, `handleMessage`/`spawnProcess` in `subprocess-kernel.ts`, and `#createKernel` in `session-manager.ts`.
+
+## 2026-09-28 - JavaScript kernel memory: post-cell and idle collection, large-globals notice, ceiling restart (senpi#2261)
+
+### What changed
+
+- `packages/senpi-codemode/src/kernels/js/worker-memory.js`, `worker-heap.js`, `worker-global-sizes.js`, `worker-core.js`: the JS worker measures its own heap after each cell (Bun `bun:jsc` `heapSize()` after an eden collection; Node used heap plus external memory), runs a full collection when the heap grew past the watermark, crossed the notice line, or reached the ceiling, schedules an idle collection about a second after a cell that leaves at least the watermark live (cleared by the next `run`, `interrupt`, or `close`; delayed so collections take at most 1/20 of the time; only on Node and Bun before 1.4.3, whose own idle collections run in Workers since oven-sh/bun#43174 and #43681), and names the largest user globals when live memory reaches the notice line.
+- `packages/senpi-codemode/src/bridge/memory-protocol.ts`, `protocol.ts`, `reserved.ts`: optional `memory` thresholds on `init`, optional `memory` report on `result`, and the `memory-collected` status op for idle collections.
+- `packages/senpi-codemode/src/kernels/shared/kernel-memory.ts`, `src/kernels/js/context-manager.ts`, `kernel-contract.ts`, `worker-startup.ts`: a per-kernel policy decides the notice (25% growth hysteresis, re-armed below half the threshold) and the ceiling; the JS host restarts an over-ceiling kernel only once its queue is empty and marks the next result `recycled`.
+- `packages/senpi-codemode/src/config/memory-settings.ts`, `settings.ts`, `src/extension/session-manager.ts`: `memory.gcWatermarkMb` / `noticeMb` / `ceilingMb` settings with `SENPI_CODEMODE_MEMORY_*_MB` overrides.
+- `packages/senpi-codemode/src/tool/cell-runtime.ts`, `types.ts`, `detached-cell-notification.ts`, `src/prompt/eval-prompt.ts`: the notice is its own text content part plus `details.memory`; detached notifications say when the kernel restarts or was restarted; one prompt guideline sentence names the notice.
+
+### Why
+
+- A JS kernel's worker collected only under allocation pressure, so memory from dropped globals stayed resident until reset (2 GB footprint 60 s after deleting every global), and nothing told the model which globals held tens of gigabytes.
+
+### Why an extension could not handle it
+
+- The kernel worker, its bridge protocol, and the eval result belong to this package.
+
+### Expected merge conflict zones
+
+- MEDIUM: `worker-core.js` `runCell`/`onMessage`, the `result`/`init` schemas in `protocol.ts`, the result-settle path of `context-manager.ts`, and the `memory` settings object shared with the settled-cell cache budget.
+
+## 2026-09-28 - Kernel dispatcher no longer pins the first cell
+
+### What changed
+
+- `packages/senpi-codemode/src/extension/session-manager.ts`: the per-kernel message dispatcher passed to kernels is a bound method (`#dispatchTo`) instead of a closure created inside `getKernel`, and the manager exposes `releaseKernelListener(language, onMessage)` which identity-checks and deletes the per-cell listener from the rebind map.
+- `packages/senpi-codemode/src/extension/session-manager-proxy.ts`: the proxy forwards `releaseKernelListener` to the current generation's manager, best-effort like the rest of the proxy surface.
+- `packages/senpi-codemode/src/tool/types.ts`: `EvalKernelManager` gains the optional `releaseKernelListener` contract.
+- `packages/senpi-codemode/src/tool/run-eval-cell.ts`: each cell releases its kernel listener in the settle `finally` after the output flush; interpreter startup stderr still lands in the first cell because `getKernel` still registers the listener before kernel creation.
+- Tests: `test/session-manager-first-cell-pin.test.ts` (spawns Bun — JSC retains the closure environment, V8 does not), `test/session-manager-lifecycle.test.ts` (startup stderr routing, between-cells release, identity-checked stale release), `test/session-manager-proxy.test.ts` (release forwarding).
+
+### Why
+
+- The dispatcher closure captured the `getKernel` frame that created the kernel; under Bun/JSC that pinned the first cell's `onMessage` — its `CellHandler`, output buffers, and display images — for the whole kernel generation, and the rebind map kept the most recent settled cell's listener alive until the next cell or dispose (#2260).
+
+### Why an extension could not handle it
+
+- Kernel dispatch, listener rebinding, and cell settlement live in codemode's session manager and eval cell runtime.
+
+### Expected merge conflict zones
+
+- LOW: `getKernel`/dispose in `session-manager.ts`, the proxy kernel surface, the `EvalKernelManager` interface, and `executeCell`'s finally block in `run-eval-cell.ts` (the other eval-memory lanes touch nearby settlement code).
+
+## 2026-09-28 - Settled-cell snapshots are byte-bounded and drop delivered images
+## 2026-09-28 - Settled-cell snapshot images spill to disk under a byte budget
+
+### What changed
+
+- `packages/senpi-codemode/src/tool/settled-image-spill.ts` (new): writes each settled-cell image as a raw base64 file under `<artifactsDir>/settled-images/`, keeps only a reference (path, mimeType, length) in memory, re-reads it on demand (a missing file becomes a one-line text note), deletes the oldest files beyond a disk byte budget (never the newest cell's), and removes the directory on clear.
+- `packages/senpi-codemode/src/tool/terminal-snapshot-store.ts`: the settled-cell LRU spills image payloads through the spill, rebuilds them on `get`, deletes a snapshot's files when it is evicted or replaced, tracks an estimated in-memory byte size (text and code/output as UTF-16, inline image base64, serialized `jsonOutputs`), and evicts beyond an in-memory byte budget as well as the 32-entry count cap (always keeping the newest). `list()` serves the in-memory snapshots without reading the disk.
+- `packages/senpi-codemode/src/tool/detached-cell-manager.ts`, `packages/senpi-codemode/src/tool/detached-cell-contract.ts`: `retainedResultsBytes` / `retainedImagesBytes` options; the spill is enabled when the manager has an `artifactsDir`.
+- `packages/senpi-codemode/src/config/memory-settings.ts` (new), `packages/senpi-codemode/src/config/settings.ts`, `packages/senpi-codemode/src/index.ts`: `memory.retainedResultsMb` (default 32, env `SENPI_CODEMODE_RETAINED_RESULTS_MB`) and `memory.retainedImagesMb` (default 256, env `SENPI_CODEMODE_RETAINED_IMAGES_MB`), 0 = count cap only, wired into the detached-cell managers.
+- Tests: `test/eval-settled-snapshot-budget.test.ts`, `test/eval-list-and-reset.test.ts`, `test/config.test.ts`. QA: `scripts/qa-settled-snapshot-retention.ts`.
+
+### Why
+
+- #2259: the 32 settled results kept their base64 images in the session heap for the session lifetime (measured +83 MB host heap after 40 image cells, up to ~768 MB at the per-cell image cap). `peek` must keep returning the full result, so the payload moves to disk instead of being dropped.
+
+### Why an extension could not handle it
+
+- The settled-cell store and the eval peek path belong to this package.
+
+### Expected merge conflict zones
+
+- LOW: the fork-only detached-cell manager, snapshot store, new spill module, and the settings memory block.
+
+## 2026-09-28 - Stable JS kernel prelude source URL (#2263)
+
+### What changed
+
+- `packages/senpi-codemode/src/kernels/js/worker-runtime.js`: the loader/contribution prelude is evaluated under one stable source URL (`senpi:kernel-prelude`) instead of a per-cell `` `${cellId}:prelude` `` URL, so identical prelude text reuses the engine's eval code-cache entry instead of gaining one per cell. Tests: `test/js-kernel-prelude-source-url.test.ts` pins the shared URL via the `__senpi_import__` stack frame across two cells.
+
+### Why
+
+- Every JavaScript eval cell re-evaluated identical prelude text under a cell-unique source name, which defeated the eval code cache: ~2.6 KB of kernel heap per cell, plateauing at ~3.5 MB across 2,000 code-cache entries after ~1,000 cells (#2263).
+
+### Why an extension could not handle it
+
+- The prelude evaluation site is the kernel worker runtime owned by this package.
+
+### Expected merge conflict zones
+
+- LOW: the prelude eval site in `worker-runtime.js`; the eval-mem-fix memory lane extends the same file's run path.
+
+## 2026-09-28 - Live eval output updates stay proportional to the chunk
+
+### What changed
+
+- `packages/senpi-codemode/src/output/streaming-output-buffer.ts`: `TailBuffer` queues chunks and drops whole chunks that fall out of its window on append, trimming to the exact code-point boundary only when the window is read (same result as truncating after every append), so an append costs time and memory proportional to the chunk; a new `TailLineRing` keeps the last lines of a trailing byte window over a chunk stream in time proportional to the chunk.
+- `packages/senpi-codemode/src/output/streaming-output.ts`: re-exports `TailLineRing`.
+- `packages/senpi-codemode/src/tool/image.ts`: `EvalOutputOptions.onChunk` now receives the chunk itself instead of two whole-tail strings, and `EvalOutputCollector` exposes `cellTailText()` for the running cell state.
+- `packages/senpi-codemode/src/tool/cell-runtime.ts`: the live update text reads an eight-line `TailLineRing` instead of splitting the whole aggregate tail per chunk, and output-driven live updates are coalesced to one per 100 ms (leading update immediately, trailing update with the latest tail; the same cadence as the core bash tool's `BASH_UPDATE_THROTTLE_MS`). `state.output` is refreshed with each emitted update and by `liveResult()` (detached peek), and the final result is unchanged.
+- Tests: `test/output/tail-line-ring.test.ts` (byte-identical to the truncate-then-split reference over generated chunk sequences), `test/output/streaming-output.test.ts` (TailBuffer reference equivalence), `test/eval-cell-runtime-live-output.test.ts` (builder-level live-text equivalence per window, burst coalescing, `liveResult` current without waiting, no whole-output text reads while streaming); `test/eval-tool-output.test.ts` live-tail tests drive chunks one window apart with fake timers.
+
+### Why
+
+- Every output chunk rebuilt both retained tails and split the full aggregate tail to render a live preview, so a cell printing thousands of lines paid quadratic time and allocations (#2262). One update per chunk also produced tens of thousands of update objects carrying a fresh copy of the output tail, which raised the process memory peak whenever output streamed faster than consumers drained it.
+
+### Why an extension could not handle it
+
+- The output collector, the live update text, and the tail buffers belong to codemode.
+
+### Expected merge conflict zones
+
+- LOW: `streaming-output-buffer.ts`, the `onChunk` signature in `image.ts`, and the live-text block in `cell-runtime.ts`.
+
+## 2026-09-27 - Tool kernel preludes in the eval kernels
+
+### What changed
+
+- `packages/senpi-codemode`: installs each active tool's `kernelPrelude` in the JS and Python kernels before a cell (only when an export is missing), removes a deactivated tool's exports, and lists each prelude's documentation line in the eval prompt.
+
+### Why
+
+- Extension tools can offer eval globals with no codemode edit.
+
+### Why an extension could not handle it
+
+- The kernels and the eval prompt belong to codemode.
+
+### Expected merge conflict zones
+
+- LOW: the kernel prelude plan, the eval prompt helper list, and the eval tool options.
+
 ## 2026-09-24 - Eval language errors list the enabled kernels
 
 ### What changed

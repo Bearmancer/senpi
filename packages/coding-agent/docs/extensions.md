@@ -936,6 +936,17 @@ pi.on("thinking_level_select", async (event, ctx) => {
 
 Use this to update extension UI when `pi.setThinkingLevel()`, model changes, or built-in thinking-level controls change the active thinking level.
 
+#### tool_activated
+
+Fired after the active tool set gains tools. This covers `pi.setActiveTools()`, a `tool_search` promotion, and a by-name call that activates a deferred tool. The event is notification-only: handler return values are ignored.
+
+```typescript
+pi.on("tool_activated", async (event, ctx) => {
+  // event.toolNames - only the tools that just became active
+  if (event.toolNames.includes("my_tool")) await warmUp(ctx);
+});
+```
+
 ### Tool Events
 
 #### tool_call
@@ -1676,6 +1687,21 @@ Use `promptSnippet` to opt a custom tool into a one-line entry in `Available too
 
 **Important:** `promptGuidelines` bullets are appended flat to the `Guidelines` section with no tool name prefix. Each guideline must name the tool it refers to — avoid "Use this tool when..." because the LLM cannot tell which tool "this" means. Write "Use my_tool when..." instead.
 
+Use `kernelPrelude` to give the `eval` kernels globals that call your tool while it is active. It takes `javascript` and `python` statements, one `documentation` line for the eval prompt's helper list, and the `exports` those statements define. Each snippet runs before a cell only when one of its exports is missing, and a deactivated tool's exports are removed before the next cell. Exports must not shadow built-in kernel helpers such as `display` or `tool`.
+
+Use `permissionParser` to classify your tool's calls for the permission system. It receives the call input and the working directory and returns requests (`permission`, `patterns`, `always`), so a rule like `my_tool:read=allow` can grant one tier while another stays gated. Without it, every call is one request named after the tool. A built-in parser for the same tool name always wins.
+
+```typescript
+pi.registerTool({
+  name: "my_tool",
+  // ...
+  permissionParser: (input) => {
+    const tier = input.action === "add" ? "exec" : "read";
+    return [{ permission: "my_tool", patterns: [tier], always: [tier] }];
+  },
+});
+```
+
 See [dynamic-tools.ts](../examples/extensions/dynamic-tools.ts) for a full example.
 
 ```typescript
@@ -2126,7 +2152,7 @@ pi.setActiveTools([...new Set([...active, "my_custom_tool"])]); // Keep current 
 pi.setActiveTools(["read", "bash"]); // Switch to read-only
 ```
 
-`pi.getAllTools()` returns `name`, `description`, `parameters`, `promptGuidelines`, and `sourceInfo`.
+`pi.getAllTools()` returns `name`, `description`, `parameters`, `promptGuidelines`, `kernelPrelude`, `permissionParser`, and `sourceInfo`.
 
 Typical `sourceInfo.source` values:
 - `builtin` for built-in tools

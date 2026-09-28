@@ -5,6 +5,14 @@
 export { InteractiveMode, type InteractiveModeOptions } from "./interactive/interactive-mode.ts";
 export type { JsonAgentSessionEvent } from "./json-event.ts";
 export { type PrintModeOptions, runPrintMode } from "./print-mode.ts";
+// The shard naming contract every client computes identically; `senpi host shard-path` prints the same.
+export {
+	daemonDirectoryName,
+	type ShardKind,
+	shardKey,
+	shardSocketPath,
+	shardSocketPathForKey,
+} from "./rpc/host-daemon-paths.ts";
 // Host compatibility and upgrade decisions: protocol version + capabilities + ordinal, never a version string
 export {
 	decideHostAction,

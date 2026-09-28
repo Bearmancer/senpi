@@ -1,5 +1,25 @@
 # goal Extension Changes
 
+## 2026-09-28 - Terminal provider 401/403 blocks the goal on the first hit (senpi#2293)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/goal/terminal-provider-error.ts`: `terminalProviderAuthFailure(event)` returns `{ httpStatus: 401 | 403, provider, model }` when the turn ends with an error, `willRetry: false`, and no system-owned abort. It reads the adapter's `providerDiagnostic` first (`httpStatus` 401/403, or category `auth`); only when the message carries no diagnostic does it fall back to a leading `401`/`403` in `errorMessage`.
+- `packages/coding-agent/src/core/extensions/builtin/goal/continuation-recovery.ts`: `PROVIDER_AUTH_BLOCKED_REASON_PREFIX`, `providerAuthBlockedReason`, and `providerAuthRecoveryHint` (names `provider/model`, `/login <provider>`, the key/token for 401 or the model's plan access for 403 (the Copilot plan for `github-copilot`), and any proxy or gateway). `isMechanicalContinuationBlock` treats reasons with the prefix as mechanical.
+- `packages/coding-agent/src/core/extensions/builtin/goal/agent-end-continuation.ts`: an active goal whose turn ended with a terminal 401/403 is blocked before the system-abort and provider-recovery routing, with one warning notice.
+
+### Why
+
+Since 2026-08-24, terminal provider errors queue a guarded `providerRecovery` continuation. A rejected credential or a model the account cannot use fails identically on every continuation, so the goal burned all 8 continuations and ended with `continuation cap reached. Send any message to resume.`; the next message looped again. Reported on GitHub Copilot with kimi-k3, whose endpoint answered 403 with an empty body.
+
+### Why an extension could not handle it
+
+Agent-end routing, goal blocking, and the mechanical-block set are private to the goal builtin.
+
+### Expected merge conflict zones
+
+- LOW in `agent-end-continuation.ts` (the block after the policy-rejection check), `terminal-provider-error.ts` (new export), `continuation-recovery.ts` (`isMechanicalContinuationBlock`).
+
 ## 2026-09-25 - Turn-end todo-owed backstop for main sessions without an active goal (senpi#2121)
 
 ### What changed

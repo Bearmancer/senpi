@@ -100,6 +100,12 @@ export class SessionManagerProxy implements CodemodeSessionManager, EvalExecutio
 		return await current.getKernel(language, onMessage);
 	}
 
+	releaseKernelListener(language: EvalLanguage, onMessage: (message: KernelToHostMessage) => void): void {
+		// Best-effort like the rest of the proxy surface: a replaced or disposed
+		// generation has already cleared its listener refs, so there is nothing to release.
+		this.#current?.releaseKernelListener?.(language, onMessage);
+	}
+
 	async complete(request: CompletionRequest, ctx: ExtensionContext): Promise<CompletionResult> {
 		this.assertEvalExecutionAllowed();
 		const current = this.#current;

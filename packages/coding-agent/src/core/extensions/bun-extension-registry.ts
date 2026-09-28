@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { dirname } from "node:path";
+import { dirname, isAbsolute } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { publishRuntimeMetadata } from "./extension-runtime-module.ts";
 
@@ -97,7 +97,9 @@ function graphFor(generation: string): ExtensionGraph {
 function metadata(generation: string, filename: string) {
 	const resolvePath = (specifier: string) => {
 		const id = graphFor(generation).resolve(specifier, filename);
-		return id.startsWith(`${extensionNamespace}:`) ? decodeURIComponent(id.slice(id.indexOf("/") + 1)) : undefined;
+		if (id.startsWith(`${extensionNamespace}:`)) return decodeURIComponent(id.slice(id.indexOf("/") + 1));
+		// Files Bun loads natively (JSON, assets) resolve to their real path, not a graph id.
+		return isAbsolute(id) ? id : undefined;
 	};
 	// CommonJS code calls `require.resolve` for sibling files (jsdom locates its XHR sync
 	// worker that way), so `require` is a function object carrying Node's resolver shape.
@@ -153,9 +155,7 @@ function installRegistry(virtualModules: Readonly<Record<string, Readonly<Record
 					const parsed = splitModuleId(path);
 					if (parsed === undefined) throw new ExtensionModuleIdError(path);
 					graphFor(parsed.generation);
-					return /\.[cm]?[jt]sx?$/.test(parsed.filename)
-						? { path, namespace: extensionNamespace }
-						: { path: parsed.filename, namespace: "file" };
+					return { path, namespace: extensionNamespace };
 				});
 				builder.onLoad({ filter: /.*/, namespace: extensionNamespace }, ({ path }) => {
 					const parsed = splitModuleId(path);

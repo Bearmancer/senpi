@@ -88,7 +88,8 @@ export function bridgeError(error: Error): {
 function wrapNodeWorker(worker: Worker, mode: JavaScriptKernelMode): WorkerLike {
 	return {
 		mode,
-		postMessage: (message) => worker.postMessage(message),
+		postMessage: (message, transfer) =>
+			worker.postMessage(message, transfer === undefined ? undefined : [...transfer]),
 		onMessage(handler) {
 			const listener = (message: KernelToHostMessage): void => handler(message);
 			worker.on("message", listener);

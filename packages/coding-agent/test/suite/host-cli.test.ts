@@ -17,17 +17,24 @@ import {
 
 const STATUS_FIELDS = [
 	"capabilities",
+	"claims",
+	"claims_live",
+	"crashes",
 	"engineVersion",
 	"env_keys",
 	"generation",
 	"generations",
+	"host_rss_mb",
 	"instanceId",
 	"launchProfile",
+	"memory_pressure",
 	"open_fds",
 	"pid",
 	"reachable",
 	"rss_mb",
+	"session_rows",
 	"sessions",
+	"shard",
 	"socket",
 	"zombies",
 ];
@@ -74,7 +81,20 @@ describe.skipIf(process.platform === "win32")("senpi host ensure", () => {
 	it("gives the daemon the allowlisted environment and nothing else", async () => {
 		const qa = await hostCliSandbox("env");
 
-		const ensured = onlyJsonLine(await runHostCli(qa, ["ensure", "--json"], { MY_SECRET_TOKEN: "canary-value" }));
+		const ensured = onlyJsonLine(
+			await runHostCli(qa, ["ensure", "--json"], {
+				MY_SECRET_TOKEN: "canary-value",
+				PI_SESSION_ID: "session-2208",
+				PI_SESSION_FILE: "/tmp/session-2208.jsonl",
+				PI_SESSION_CWD: "/tmp/worktree",
+				PI_GOAL_STORE_FILE: "/tmp/goals/session-2208.json",
+				PI_PROVIDER: "fake",
+				PI_MODEL: "fake-model",
+				PI_REASONING_LEVEL: "high",
+				PI_PROMPT_CACHE_SAFE_WAIT_SECONDS: "1770",
+				SENPI_PY_KERNEL_PARENT_PID: "2208",
+			}),
+		);
 
 		const environment = daemonEnvironmentText(ensured.pid as number);
 		expect(environment).toMatch(/\bHOME=/u);
@@ -83,6 +103,19 @@ describe.skipIf(process.platform === "win32")("senpi host ensure", () => {
 		// outlives that process must never have been told it.
 		expect(environment).not.toContain("MY_SECRET_TOKEN");
 		expect(environment).not.toContain("canary-value");
+		for (const name of [
+			"PI_SESSION_ID",
+			"PI_SESSION_FILE",
+			"PI_SESSION_CWD",
+			"PI_GOAL_STORE_FILE",
+			"PI_PROVIDER",
+			"PI_MODEL",
+			"PI_REASONING_LEVEL",
+			"PI_PROMPT_CACHE_SAFE_WAIT_SECONDS",
+			"SENPI_PY_KERNEL_PARENT_PID",
+		]) {
+			expect(environment).not.toContain(`${name}=`);
+		}
 	}, 120_000);
 });
 
@@ -123,6 +156,7 @@ describe.skipIf(process.platform === "win32")("senpi host status", () => {
 			"current",
 			"engineVersion",
 			"generation",
+			"host_rss_mb",
 			"instanceId",
 			"pid",
 			"rss_mb",
@@ -140,6 +174,7 @@ describe.skipIf(process.platform === "win32")("senpi host status", () => {
 		});
 		// `number | null` by contract: a platform that cannot answer `ps` still reports the field.
 		expect(generation.rss_mb === null || typeof generation.rss_mb === "number").toBe(true);
+		expect(generation.host_rss_mb === null || typeof generation.host_rss_mb === "number").toBe(true);
 	}, 120_000);
 
 	it("answers a socket nobody serves with the same shape and a refusal code", async () => {
@@ -151,5 +186,91 @@ describe.skipIf(process.platform === "win32")("senpi host status", () => {
 		const status = onlyJsonLine(result);
 		expect(Object.keys(status).sort()).toEqual(STATUS_FIELDS);
 		expect(status).toMatchObject({ reachable: false, socket: qa.socket, pid: null, generations: [] });
+	}, 60_000);
+
+	it("lists every endpoint of the agent directory under --all, ignoring --socket", async () => {
+		const qa = await hostCliSandbox("all");
+		const ensured = onlyJsonLine(await runHostCli(qa, ["ensure", "--json"]));
+
+		const result = await runHostCli(qa, ["status", "--all", "--json"]);
+
+		expect(result.exitCode).toBe(0);
+		const { endpoints } = onlyJsonLine(result) as { endpoints: Record<string, unknown>[] };
+		expect(endpoints).toHaveLength(1);
+		expect(endpoints[0]).toMatchObject({
+			socket: qa.socket,
+			reachable: true,
+			pid: ensured.pid,
+			identity: "endpoint",
+			shard: null,
+			crashes: 0,
+			session_rows: [],
+			claims_live: 0,
+		});
+	}, 120_000);
+
+	it("answers --all on an agent directory with no endpoints with an empty list and a refusal", async () => {
+		const qa = await hostCliSandbox("all-empty");
+
+		const result = await runHostCli(qa, ["status", "--all", "--json"]);
+
+		expect(result.exitCode).toBe(3);
+		expect(onlyJsonLine(result)).toEqual({ endpoints: [] });
+	}, 60_000);
+});
+
+describe.skipIf(process.platform === "win32")("senpi host gc", () => {
+	it("keeps a running daemon, and answers an empty --agent-dir with nothing, exit 0 both times", async () => {
+		const qa = await hostCliSandbox("gc");
+		onlyJsonLine(await runHostCli(qa, ["ensure", "--json"]));
+
+		const live = await runHostCli(qa, ["gc", "--json"]);
+		const empty = await runHostCli(qa, ["gc", "--agent-dir", qa.specDir, "--json"]);
+
+		expect(live.exitCode).toBe(0);
+		expect(onlyJsonLine(live)).toEqual({
+			removed: [],
+			kept: [{ socket: qa.socket, dir: expect.any(String), reason: "live_generation" }],
+		});
+		expect(empty.exitCode).toBe(0);
+		expect(onlyJsonLine(empty)).toEqual({ removed: [], kept: [] });
+	}, 120_000);
+
+	it("refuses an unknown option with the usage exit code and no stdout", async () => {
+		const qa = await hostCliSandbox("gc-usage");
+
+		for (const flag of ["--all", "--bogus"]) {
+			const result = await runHostCli(qa, ["gc", flag]);
+
+			expect(result.exitCode).toBe(2);
+			expect(result.stdout).toBe("");
+		}
+	}, 60_000);
+});
+
+describe("senpi host shard-path", () => {
+	it("prints the naming contract's socket, as JSON under --json and bare otherwise", async () => {
+		const qa = await hostCliSandbox("shard");
+		const owner = ["--kind", "p", "--owner", "01a0e28d-40e4-7402-bac7-8de6e76ad84c", "--root", "/r"];
+
+		const json = await runHostCli(qa, ["shard-path", ...owner, "--json"]);
+		const bare = await runHostCli(qa, ["shard-path", ...owner]);
+
+		expect(json.exitCode).toBe(0);
+		expect(onlyJsonLine(json)).toEqual({
+			kind: "p",
+			key: "6d410ba846ba1550",
+			socket: "/r/p-6d410ba846ba1550.sock",
+		});
+		expect(bare).toMatchObject({ exitCode: 0, stdout: "/r/p-6d410ba846ba1550.sock\n" });
+	}, 60_000);
+
+	it("refuses a command line without --kind and --owner", async () => {
+		const qa = await hostCliSandbox("shard-usage");
+
+		const result = await runHostCli(qa, ["shard-path", "--kind", "i"]);
+
+		expect(result.exitCode).toBe(2);
+		expect(result.stdout).toBe("");
 	}, 60_000);
 });

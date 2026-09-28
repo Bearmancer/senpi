@@ -22,13 +22,29 @@
  *
  * win32 has neither a renameable named pipe nor SIGUSR1, so every entry point here refuses
  * with `upgrade_unsupported`; upgrades there apply after a drain-stop or an idle exit.
+ *
+ * A handoff changes who serves the socket, so it runs inside the endpoint's ENSURE lock, like an
+ * ensure and `host gc`: an ensure arriving meanwhile attaches to whichever generation the handoff
+ * left registered, and gc never judges the endpoint halfway through.
  */
 import { createDaemonDirectories, createHostDaemonPaths } from "./host-daemon-paths.ts";
 import { provenOwner, readHostRegistration } from "./host-daemon-registration.ts";
 import { GENERATION_HANDOFF_CAPABILITY } from "./host-decision.ts";
+import { acquireHostEnsureLock } from "./host-ensure-lock.ts";
 import type { HostLifecyclePolicyInput } from "./host-lifecycle.ts";
 import { probeProtocolInfo } from "./host-probe.ts";
-import { startSuccessor } from "./host-successor.ts";
+import { SUCCESSOR_START_BUDGET_MS, startSuccessor } from "./host-successor.ts";
+
+const HANDOFF_PROBE_TIMEOUT_MS = 10_000;
+
+/** The longest a handoff holds the ensure lock: its probe of the running host, then the successor's start. */
+export const HANDOFF_LOCK_HOLD_MS = HANDOFF_PROBE_TIMEOUT_MS + SUCCESSOR_START_BUDGET_MS;
+
+/**
+ * How long a handoff waits for the lock. The longest holder is an ensure that probes the running host
+ * and then hands it off itself (its upgrade path); 10 s of headroom for a slow runner.
+ */
+const HANDOFF_LOCK_WAIT_MS = HANDOFF_PROBE_TIMEOUT_MS + HANDOFF_LOCK_HOLD_MS + 10_000;
 
 export interface HandoffHostOptions {
 	readonly socket: string;
@@ -44,6 +60,8 @@ export interface HandoffHostOptions {
 		readonly launch?: (args: readonly string[]) => { command: string; args: readonly string[] };
 		/** Runs after the public socket identity is captured and before the successor is spawned. */
 		readonly beforeSpawn?: () => Promise<void>;
+		/** Runs once the successor is spawned and its generation recorded, before its answer is awaited. */
+		readonly afterSpawn?: (pid: number) => Promise<void>;
 		readonly platform?: NodeJS.Platform;
 	};
 }
@@ -85,14 +103,24 @@ export type HandoffResult =
  * whether an upgrade is warranted (`decideHostAction`); this performs the one it asked for.
  */
 export async function handoffHost(options: HandoffHostOptions): Promise<HandoffResult> {
-	const platform = options._test?.platform ?? process.platform;
-	if (platform === "win32") return { action: "refuse", reason: "upgrade_unsupported", upgradeable: false };
+	if (handoffUnsupported(options)) return { action: "refuse", reason: "upgrade_unsupported", upgradeable: false };
+	const release = await acquireHostEnsureLock(options.socket, HANDOFF_LOCK_WAIT_MS);
+	try {
+		return await handoffHostLocked(options);
+	} finally {
+		await release();
+	}
+}
+
+/** The handoff itself, for a caller that already holds this socket's ensure lock: an ensure's upgrade. */
+export async function handoffHostLocked(options: HandoffHostOptions): Promise<HandoffResult> {
+	if (handoffUnsupported(options)) return { action: "refuse", reason: "upgrade_unsupported", upgradeable: false };
 	const paths = createHostDaemonPaths({
 		socket: options.socket,
 		...(options.agentDir ? { agentDir: options.agentDir } : {}),
 	});
 	await createDaemonDirectories(paths);
-	const host = await probeProtocolInfo(options.socket, 10_000);
+	const host = await probeProtocolInfo(options.socket, HANDOFF_PROBE_TIMEOUT_MS);
 	if (!host) return { action: "refuse", reason: "no_host", upgradeable: false };
 	if (!host.capabilities.includes(GENERATION_HANDOFF_CAPABILITY)) {
 		return { action: "refuse", reason: "handoff_unsupported", upgradeable: false };
@@ -101,4 +129,8 @@ export async function handoffHost(options: HandoffHostOptions): Promise<HandoffR
 	const owner = await provenOwner(registered, options.socket);
 	if (!owner) return { action: "refuse", reason: "unknown_owner", upgradeable: true };
 	return startSuccessor({ options, paths, host, owner });
+}
+
+function handoffUnsupported(options: HandoffHostOptions): boolean {
+	return (options._test?.platform ?? process.platform) === "win32";
 }

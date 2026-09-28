@@ -1,5 +1,6 @@
 import type { Api, Model } from "@earendil-works/pi-ai";
 import { getAnthropicCompat } from "@earendil-works/pi-ai/utils/prompt-cache-ttl";
+import { hasRefusedForcedToolChoice } from "@earendil-works/pi-ai/utils/tool-choice-fallback";
 import type { SessionEntry } from "../../../session-manager.ts";
 import type { TodoFirstTurnPlan } from "../../../settings-shapes.ts";
 import type { ExtensionMode } from "../../types.ts";
@@ -42,19 +43,21 @@ export function shouldArmFirstTurn(input: FirstTurnGateInput): boolean {
 }
 
 /**
- * Whether the request wire can name one tool in `tool_choice`. Anthropic reads the RESOLVED
- * compat (catalog models carry no `compat`, and the resolver applies the Fable / Mythos /
- * Opus 5.5 forced-choice default), never `model.compat` directly.
+ * Whether the request wire can name one tool in `tool_choice`: the model declares it can (Anthropic
+ * reads the RESOLVED compat, since catalog models carry no `compat` and the resolver applies the
+ * Fable / Mythos / Opus 5.5 forced-choice default; OpenAI reads `compat.supportsForcedToolChoice`)
+ * and has not refused a forced choice earlier in this process (senpi#2218).
  */
 export function supportsNamedToolChoice(model: Model<Api> | undefined): boolean {
-	switch (model?.api) {
+	if (model === undefined || hasRefusedForcedToolChoice(model)) return false;
+	switch (model.api) {
 		case "anthropic-messages": {
 			const compat = getAnthropicCompat(model as Model<"anthropic-messages">);
 			return compat.supportsToolChoice !== false && compat.supportsForcedToolChoice !== false;
 		}
 		case "openai-responses":
 		case "openai-completions":
-			return true;
+			return (model as Model<"openai-completions">).compat?.supportsForcedToolChoice !== false;
 		default:
 			return false;
 	}

@@ -1,7 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { existsSync, realpathSync } from "node:fs";
-import { basename, dirname, join, resolve } from "node:path";
-import { parentPort } from "node:worker_threads";
+import { join } from "node:path";
+import { parentPort, workerData } from "node:worker_threads";
 import { runWithProviderScope } from "@earendil-works/pi-ai/node/provider-scope";
 import { isBunBinary } from "../../config.ts";
 import { WAKE_SOURCE_STATE_EVENT } from "../../core/extensions/builtin/monitor-state-event.ts";
@@ -9,12 +8,14 @@ import { takeOverStdout } from "../../core/output-guard.ts";
 import { getDefaultSessionDir } from "../../core/session-manager.ts";
 import { liveSessionWritePaths } from "../../core/session-write-reservation.ts";
 import { SettingsManager } from "../../core/settings-manager.ts";
+import { registerWebViewBroker } from "../../core/webview/webview-broker.ts";
 import { createCliRuntimeFactory } from "../../main.ts";
 import { initTheme } from "../interactive/theme/theme.ts";
 import { buildRpcSessionState } from "./connection-handler.ts";
 import { isHandoffBusy } from "./handoff-activity.ts";
 import { createRpcSessionBinding, type RpcSessionBinding } from "./session-binding.ts";
 import { SessionEventWriter } from "./session-event-writer.ts";
+import { canonicalSessionPath } from "./session-path-key.ts";
 import { type RpcSessionEntry, RpcSessionRegistry } from "./session-registry.ts";
 import { createWorkerCredit } from "./session-worker-credit.ts";
 import {
@@ -31,6 +32,7 @@ if (isBunBinary) {
 }
 
 takeOverStdout();
+registerWebViewBroker(Reflect.get(Object(workerData), "webviewBroker"));
 const port = parentPort;
 if (!port) throw new Error("Session worker requires a parent port");
 const send = (message: SessionWorkerToHost): void => port.postMessage(message);
@@ -40,13 +42,9 @@ function failWorker(error: string): never {
 	process.exit(1);
 }
 
-function canonicalPath(path: string): string {
-	const absolute = resolve(path);
-	return existsSync(absolute) ? realpathSync(absolute) : join(realpathSync(dirname(absolute)), basename(absolute));
-}
-
 const { exchange, installWriteReservation } = createWorkerCredit(send, failWorker);
-installWriteReservation(canonicalPath);
+// The host's key for the same file, so a deleted directory neither throws here nor misses (senpi#2285).
+installWriteReservation(canonicalSessionPath);
 
 class WorkerEventWriter extends SessionEventWriter {
 	constructor() {
@@ -133,10 +131,10 @@ function subscribeSession(): void {
 function snapshot(): WorkerSnapshot {
 	if (!entry?.runtime) throw new Error("Session runtime is not ready");
 	const session = entry.runtime.session;
-	const sessionPath = session.sessionFile ? canonicalPath(session.sessionFile) : undefined;
+	const sessionPath = session.sessionFile ? canonicalSessionPath(session.sessionFile) : undefined;
 	// The host releases every granted path this list omits, so it must name each writer
 	// still alive in this isolate, plus the session the runtime currently writes.
-	const live = new Set(liveSessionWritePaths().map(canonicalPath));
+	const live = new Set(liveSessionWritePaths().map(canonicalSessionPath));
 	if (sessionPath) live.add(sessionPath);
 	return {
 		state: buildRpcSessionState(session),
@@ -158,8 +156,8 @@ async function handle(message: HostToSessionWorker): Promise<void> {
 					getDefaultSessionDir(message.profile.cwd, message.configuration.agentDir),
 					`${new Date().toISOString().replace(/[:.]/g, "-")}_${randomUUID()}.jsonl`,
 				);
-			prepared = { ...message, profile: { ...message.profile, sessionPath: canonicalPath(path) } };
-			send({ type: "prepared", request: message.request, sessionPath: canonicalPath(path) });
+			prepared = { ...message, profile: { ...message.profile, sessionPath: canonicalSessionPath(path) } };
+			send({ type: "prepared", request: message.request, sessionPath: canonicalSessionPath(path) });
 			return;
 		}
 		case "commit": {

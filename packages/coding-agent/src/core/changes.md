@@ -1,3 +1,226 @@
+## 2026-09-28 - A stored OAuth token the provider refuses is re-exchanged once before failing (senpi#2297)
+
+### What changed
+
+- `packages/coding-agent/src/core/model-runtime.ts`: `stream` and `streamSimple` (single-credential and rotation lanes) send each attempt through the new private `attemptWithTokenRecovery`, which uses `credential-pool/rejected-token-retry.ts` (`retryOnceOnRejectedToken`). `prepareRequest` forwards `rejectedAccess` to auth resolution and reports the stored OAuth access it used plus the provider's `rejectedTokenStatuses`. When the first pre-output event is an error whose `providerDiagnostic.httpStatus` is one of those statuses, the attempt is re-run once with that token named as rejected; pre-commit frames of the refused attempt are held back so the caller sees one stream. `ModelRuntimeAuthOverrides` gains `rejectedAccess`.
+- `packages/coding-agent/src/core/credential-pool/rotation-events.ts`: `rotationErrorFromEvent` attaches the terminal event's `providerDiagnostic.httpStatus` as `status` on the failure it builds, so `classifyCredentialFailure` sees the HTTP status for stream-event failures (before, only message text was classified, and a bodyless 403 always fell through to `fail_request`). When a freshly re-exchanged token is refused too, `rejected-token-retry.ts` appends an account-scoped sentence, so the pool blocks that slot (`auth_error`, lifted by a new login) and fails over to a healthy sibling account within the same request.
+- `packages/coding-agent/src/core/retry-fallback/cooldown.ts`: `SelectorCooldowns` strips provider request ids before matching status words, so an id containing `429` or `5xx` digits cannot pick the cooldown.
+
+### Why
+
+- GitHub revoked Copilot tokens server-side while senpi still believed them valid; every model returned HTTP 403 until the token's own 24h expiry, in single-account sessions and on a pinned pool slot alike (senpi#2297).
+
+### Why an extension could not handle it
+
+- The retry must happen before any output reaches the session and must re-resolve auth for the same slot; both live in `ModelRuntime`, below every extension hook.
+
+### Expected merge conflict zones
+
+- MEDIUM: the `runAttempt` callbacks and single-credential tails of `stream`/`streamSimple`, and the `prepareRequest` return shape in `model-runtime.ts`.
+- LOW: `rotationErrorFromEvent` in `credential-pool/rotation-events.ts`.
+- LOW: `durationFor` in `retry-fallback/cooldown.ts`.
+
+## 2026-09-28 - models.json accepts supportsForcedToolChoice on OpenAI compat (senpi#2218)
+
+### What changed
+
+- `packages/coding-agent/src/core/model-config-schema.ts`: `OpenAICompletionsCompatSchema` and `OpenAIResponsesCompatSchema` accept an optional boolean `supportsForcedToolChoice`, matching the new `OpenAICompletionsCompat` / `OpenAIResponsesCompat` field in `packages/ai`.
+
+### Why
+
+- A provider known to accept only automatic tool choice (Kiro behind an OpenAI-compatible proxy, senpi#2218) needs a way to say so in `models.json`, so no request ever forces a tool on it.
+
+### Why an extension could not handle it
+
+- `models.json` is validated against this schema before any extension runs; an unknown compat key is rejected here.
+
+### Expected merge conflict zones
+
+- LOW: the two OpenAI compat schema objects when upstream adds compat keys.
+
+## 2026-09-28 - /sessions alias of /resume (#1437)
+
+### What changed
+
+- `packages/coding-agent/src/core/slash-commands.ts`: a `sessions` row in `BUILTIN_SLASH_COMMANDS` after `resume`, described as the `/resume` alias, so autocomplete and `/help` list it.
+
+### Why
+
+- Users arriving from OpenCode type `/sessions` to reopen a session; with no such command the text was sent to the model and they concluded the harness could not resume sessions (#1437 report thread).
+
+### Why an extension could not handle it
+
+- `slash-commands.ts` is the host builtin catalog read by `/help` and autocomplete, and the alias must open the interactive session selector that only `InteractiveMode` owns; an extension command cannot open it.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/core/slash-commands.ts`: the row after `resume` in `BUILTIN_SLASH_COMMANDS`.
+
+## 2026-09-27 - Fallback-chain entries that fail out of their chain are circuit-broken across sessions; /session reports failure cost (senpi#2198)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: the constructor binds a `FallbackCircuitAccess` (`core/retry-fallback/circuit.ts`, new) to the breaker shared per resolved agent dir (`fallbackCircuitsFor(this._agentDir)`; each `/new`, `/resume`, and `/fork` gets a fresh `ModelRuntime` from the CLI factory, so the runtime cannot be the key), with the session id as probe owner, the injected fallback clock, and live `fallback.*` settings, and hands it to `RetryFallbackController`. An accepted assistant response closes its model's circuit; a successful probe-back closes it too. `_maybeRestoreFallbackPrimary` also runs `rerouteAroundOpenCircuit()`, so every turn boundary moves a session off an entry whose circuit another session opened. `getSessionStats()` adds `failures` from `computeSessionFailureReport` (`core/session-failure-report.ts`, new).
+- `packages/coding-agent/src/core/settings-manager.ts`: `Settings.fallback` (`circuitCooldownMs`, `circuitMaxCooldownMs`) and `getFallbackCircuitSettings()`.
+- Review round (senpi#2201): `circuit.ts` admission is atomic (`admit()` returns `closed` / `open` / a `probe` token keyed by owner and circuit generation, released by token), probes never expire on a timer, a Retry-After deadline is a floor later hintless failures cannot shorten, idle circuits and empty agent-dir breakers are swept, and the default clock is monotonic. `retry-fallback/circuit-probes.ts` (new) holds a session's one probe token and `isHealthExhaustionFailure`; `controller-types.ts` (new) takes the controller's type declarations. `agent-session.ts` records billing/quota exhaustion at `agent_end` for any chain entry, accepts a probe on its first streamed delta, falls back on a probe's first transient failure (no same-model retries), hands the probe back on every other terminal path and on dispose, gates the 429 probe-back scheduler on circuit admission, and aborts a probe that never answers after the stream-start guard when that guard is disabled. `session-failure-report.ts` counts post-failure retries within one user turn only.
+- Second review round (senpi#2201): the registry keeps one entry per agent dir with an owner count; each `AgentSession` holds it through `acquireFallbackCircuits` for its lifetime and releases it on dispose, and an entry is evicted only when unheld and empty. Probe admission is per request lane (`turn` for the foreground, `probe-back:<n>` for each background probe) with a fresh generation on every acquisition, so a stale token never releases a later probe and a probe-back in flight keeps the same session's turn off the entry. Selector cooldowns and probe schedules default to the monotonic clock, and a fallback returns to an entry the breaker tracks when its circuit allows it rather than when the per-session cooldown lapses.
+- `packages/coding-agent/src/core/sdk.ts`: `createAgentSession` disposes the constructed session when its startup model-usability check refuses it (a `ModelUsabilityBudgetError` or anything else rethrown), because the caller never receives that session to dispose; before, a refused startup kept its breaker hold, session writer, and blob directory for the life of the process (third review round of senpi#2201). `agent-session.ts` also takes the breaker hold as the constructor's last step and resolves the breaker through it lazily, so a constructor that throws never leaves a hold only `dispose()` could release.
+- `packages/coding-agent/src/core/retry-fallback/controller.ts`: `tryFallback` opens the current entry's circuit for `transient` and `billing` failures under a managed chain (advance and exhaustion), claims the half-open probe of the entry it switches to, and shares `applyCandidate` with the new `rerouteAroundOpenCircuit`; `maybeRestorePrimary` waits for the primary's circuit and claims its probe; a manual model change closes that model's circuit. `core/retry-fallback/candidates.ts` (extracted from the controller) skips circuit-open entries and returns the first of them only when no closed entry is left.
+
+### Why
+
+- Fallback cooldowns lived in one `AgentSession`, never escalated, and were invisible to new sessions and in-process subagents, so a dead provider cost its full retry budget again in every session and after every revert (senpi#2198, prior art gajae-code #5965).
+
+### Why an extension could not handle it
+
+- Chain candidate selection, the turn-boundary revert, and the accepted-response signal all live inside `AgentSession`'s retry pipeline, and `SessionStats` is the core stats contract behind `/session` and `get_session_stats`.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/core/agent-session.ts`: two imports, one field, the constructor after `_fallbackNow`, the controller deps, the `succeeded` block of the assistant `message_end` handler, the probe-back `onCleared`, `_maybeRestoreFallbackPrimary`, `SessionStats`, and the `getSessionStats` return.
+- LOW: `packages/coding-agent/src/core/settings-manager.ts`: one import, one `Settings` field, one getter.
+- LOW: `packages/coding-agent/src/core/sdk.ts`: the `assertModelUsable` block near the end of `createAgentSession` is wrapped in an outer try that disposes on rethrow.
+- LOW (review round): `agent-session.ts` `agent_start`/`message_update` branches of `_processAgentEvent`, the `agent_end` retry block head and tail, the probe-back `runProbe`, `dispose`, and one `else if` arm in `_handleRetryableError` before the transient branch.
+
+## 2026-09-27 - Model-declared default thinking level (senpi#2196)
+
+### What changed
+
+- `packages/coding-agent/src/core/provider-composer.ts`: `modelFromJson` carries a models.json model's `defaultThinkingLevel` onto the runtime model (the fork-only `model-config-schema.ts` accepts it as one of the seven levels).
+- `packages/coding-agent/src/core/sdk.ts`: startup resolution uses `model.defaultThinkingLevel` after the session entry and the remembered per-model level and before `settings.defaultThinkingLevel` / `medium`; it stays a default without selection provenance and is clamped like any other level.
+- `packages/coding-agent/src/core/agent-session.ts`: `_getThinkingForModelSwitch` applies the same order when switching models.
+- `packages/coding-agent/src/core/model-config.ts`: `ModelConfig.validationError(content, path)` exposes the load-time parse and schema check so `senpi models discover` refuses to replace models.json with content that would not load.
+
+### Why
+
+- An OpenAI-compatible endpoint can declare a model's default effort (`reasoning_efforts[].default`); `senpi models discover` records it, and must validate what it writes with the same rules models.json is loaded with. The global setting tracks the last level picked on any model, so a model's own default is the better starting point for a model the user has not configured.
+
+### Why an extension could not handle it
+
+- Initial and model-switch thinking resolution happen inside session creation and `AgentSession` before any extension hook can change the level without recording it as a user choice.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/sdk.ts`: the thinking-level resolution block before `settingsManager.getDefaultThinkingLevel()`.
+- `packages/coding-agent/src/core/agent-session.ts`: `_getThinkingForModelSwitch` before the configured-default branch.
+- `packages/coding-agent/src/core/provider-composer.ts`: the `modelFromJson` object literal after `thinkingLevelMap`.
+- `packages/coding-agent/src/core/model-config.ts`: the static method before `parseAndMigrate`.
+
+## 2026-09-27 - Sessions are held against moves by other processes; SessionInfo carries the recorded repository (senpi#2184)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session-runtime.ts`: the runtime publishes a holder record for the session file it has open (`holdSessionFile`, `src/core/session-holders.ts`) in its constructor and on every `apply`, releases it in `teardownCurrent` and `dispose`, and exposes `releaseSessionHold()` for the RPC registry's replacement runtime. `switchSession` takes the hold for the target before tearing the current session down, so a session another process is moving (or has moved) fails the switch instead of being appended to at its old path.
+- `packages/coding-agent/src/core/session-manager.ts`: `SessionInfo` gains optional `repositoryIdentity` (latest `repository-identity` entry, read by the fork-only summary in `session-summary.ts`, index version 2) and `moved` (set by `src/core/moved-sessions.ts` on sessions of the current repository recorded at a path that no longer exists).
+
+### Why
+
+- A rebind copied and removed the session file with no cross-process protection, so a second process still writing the session at its old path recreated a header-less file and lost writes; the session lists had no way to recognise a moved repository's sessions (senpi#2184).
+
+### Why an extension could not handle it
+
+- Session ownership has to follow the runtime's session replacement lifecycle, and `SessionInfo` is the core listing contract consumed by the pickers.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/agent-session-runtime.ts`: the constructor tail, `teardownCurrent` after `unregisterSessionWriter`, `apply`, `switchSession` around `teardownCurrent` / `apply`, `dispose`, the module-level `holdActiveSession`, and one import.
+- `packages/coding-agent/src/core/session-manager.ts`: the `SessionInfo` interface tail and one type import.
+
+## 2026-09-27 - A provider-rejected image no longer poisons later turns (senpi#2170)
+
+### What changed
+
+- `packages/coding-agent/src/core/provider-rejected-images.ts` (new): `omitProviderRejectedImages()` scans converted history. When an assistant turn failed with a provider image rejection (`does not represent a valid image`, `invalid base64` data URL, `unsupported image`, and similar), every image that no successful response had accepted before it is replaced by `[Image omitted: the provider rejected this image (<source>) ...]`. The source is the `path` argument of the tool call that produced the image, or "an attached image". `rejectedImageSources()` returns the sources a given failed turn rejected.
+- `packages/coding-agent/src/core/messages.ts`: `convertToLlm()` applies `omitProviderRejectedImages()` right before `dropFailedAssistantTurns()`, while the failed turn is still visible.
+- `packages/coding-agent/src/core/agent-session.ts`: when an unhandled error turn rejected images, its `errorMessage` names the file(s) and says they are left out of later requests, next to the existing Cursor quota note.
+
+### Why
+
+`dropFailedAssistantTurns()` removed the failed turn but replayed the rejected image, so Codex rejected every later request, text-only ones included. Because the rejection is derived from the persisted failed turn, the recovery also holds after a restart and never rewrites session entries. Images from turns a later response accepted are kept, and other errors drop nothing.
+
+### Why an extension could not handle it
+
+The `context` hook cannot see failed assistant turns in a form that ties a rejection to the images it covered, and the terminal error text is composed inside `AgentSession`'s agent-end handling.
+
+### Expected merge conflict zones
+
+- LOW: the `return` of `convertToLlm()` in `messages.ts`.
+- LOW: the Cursor quota note block in the agent-end handler of `agent-session.ts`.
+
+## 2026-09-28 - OpenCode Go default follows the catalog after v2026.9.28-4 (senpi#2295)
+
+### What changed
+
+- `packages/coding-agent/src/core/model-resolver.ts`: the built-in `opencode-go` default is now `kimi-k3`, because the release-regenerated catalog no longer lists `kimi-k2.6`.
+
+### Why
+
+- A default that is missing from its provider catalog cannot resolve, and `model-resolver.test.ts` failed on main.
+
+### Why an extension could not handle it
+
+- Built-in default model table.
+
+### Expected merge conflict zones
+
+- LOW: the `opencode-go` row of the defaults table.
+
+## 2026-09-27 - Fireworks default follows the catalog after v2026.9.27 (senpi#2175)
+
+### What changed
+
+- `packages/coding-agent/src/core/model-resolver.ts`: the built-in `fireworks` default is now `accounts/fireworks/models/kimi-k3`, because the release-regenerated catalog no longer lists `kimi-k2p6`.
+
+### Why
+
+- A default that is missing from its provider catalog cannot resolve, and `model-resolver.test.ts` failed on main.
+
+### Why an extension could not handle it
+
+- Built-in default model table.
+
+### Expected merge conflict zones
+
+- LOW: the `fireworks` row of the defaults table.
+
+## 2026-09-27 - Tool kernel preludes, tool-owned permission parsers, and `tool_activated`
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `getAllTools()` projects each tool's `kernelPrelude` (validated by `extensions/kernel-prelude.ts`) and `permissionParser`. `setActiveToolsByName` emits `tool_activated` with only the newly active tool names, and nothing awaits the handlers.
+
+### Why
+
+- Extensions need three generic hooks so a capability can live entirely in an extension package: eval-kernel globals for their tools, permission tiers for their own tools, and a signal when a deferred tool becomes active.
+
+### Why an extension could not handle it
+
+- Tool metadata projection and active-set changes happen inside `AgentSession`.
+
+### Expected merge conflict zones
+
+- LOW: the `getAllTools()` field list and the tail of `setActiveToolsByName`.
+
+## 2026-09-27 - Session titles on endpoints that mandate reasoning (senpi#2163)
+
+### What changed
+
+- `packages/coding-agent/src/core/session-title-reasoning.ts` (new): `initialTitleReasoning()` returns the lowest supported level when the catalog says a model cannot turn reasoning off, otherwise `undefined`. `mandatoryReasoningRetryLevel()` returns `clampThinkingLevel(model, "low")` for one retry after a reasoning-free request failed with "Reasoning is mandatory".
+- `packages/coding-agent/src/core/session-title-generator.ts`: `generateSessionTitle()` sends that level and raises `maxTokens` from 64 to 1024 when reasoning is on. It retries once when a stale catalog entry hits the mandatory 400. Normal models keep the reasoning-free 64-token request.
+- `packages/coding-agent/src/core/agent-session.ts`: `_generateSessionTitle()` writes a `session_title_failed` debug line to `logs/session.log` instead of emitting the `session_title_generation` runtime error.
+
+### Why
+
+With `reasoning` unset, `openai-completions` sends the provider's disabled value (`reasoning: { effort: "none" }` on OpenRouter). Mandatory-reasoning endpoints (`meta/muse-spark-1.3-contributor`, Z.ai GLM 5.3) answered with a deterministic 400, and every session showed a runtime-error toast for a cosmetic background call. A missing title is not a runtime error, so failures stay in the session log. This supersedes senpi#1266, which only added the reactive retry.
+
+### Why an extension could not handle it
+
+Title generation is internal background work started from `AgentSession`. Extensions cannot change its request options, retry, or error reporting.
+
+### Expected merge conflict zones
+
+- LOW: the `catch` block of `_generateSessionTitle()` in `agent-session.ts`.
+
 ## 2026-09-25 - An extension-triggered turn emits `before_agent_start` with `trigger: "extension"` (senpi#2137)
 
 ### What changed

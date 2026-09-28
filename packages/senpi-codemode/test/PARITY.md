@@ -37,3 +37,16 @@ The target is Node.js 24+ and Senpi extension APIs. Bun-only worker mechanics, O
 | `test/eval/runtime-global-dispose.test.ts` | `test/js-runtime-isolation.test.ts`; `test/js-kernel.test.ts` | ported | Senpi isolates each runtime in a Node worker; closing one kernel cannot remove another kernel's globals or cwd. Same-realm ownership is not part of the target architecture. |
 | `test/eval/worker-core.test.ts` | `test/js-kernel.test.ts`; `test/js-kernel-interrupt.test.ts`; `test/js-kernel-crash-lifecycle.test.ts`; `test/js-runtime-isolation.test.ts` | covered | Protocol init/run/close, independent workers, queueing, timeout restart, crash restart, and isolation replace OMP same-realm conflict handling. |
 | `test/core/eval-workflow-helpers.integration.test.ts` | `test/py-kernel.test.ts`; `test/py-prelude-parity.test.ts`; `test/status-events.test.ts` | covered | Real-kernel parallel order/concurrency/errors, pipeline barriers, log/phase events, and local roots are covered; OMP-only `append()` is outside the documented Senpi helper surface. |
+
+## Kernel memory contract (senpi-only)
+
+The memory report, large-globals notice, and ceiling restart (senpi#2261) have no oh-my-pi counterpart; this table records how far each language implements them.
+
+| Language | Measured by | Post-cell collection | Largest-globals notice | Ceiling restart | Tests |
+| --- | --- | --- | --- | --- | --- |
+| js | worker heap | yes (synchronous + idle) | yes | yes | `test/js-kernel-memory.test.ts` |
+| py | process footprint, in the kernel | yes (`gc.collect()`, glibc `malloc_trim(0)`) | yes | yes | `test/py-kernel-memory.test.ts` |
+| rb | interpreter footprint, read by the host | no | gap: no globals list or notice | yes | `test/kernels/rb/subprocess-memory-ceiling.test.ts` |
+| jl | interpreter footprint, read by the host | no | gap: no globals list or notice | yes | `test/kernels/rb/subprocess-memory-ceiling.test.ts` |
+
+The Ruby and Julia runners report no memory of their own, so their results carry only the host-read footprint and the ceiling fields; naming their largest globals would need a runner-side sizer like the Python prelude's.

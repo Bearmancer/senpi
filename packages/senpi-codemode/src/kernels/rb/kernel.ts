@@ -2,7 +2,7 @@ import { join } from "node:path";
 import type { BridgeConnectionConfig, KernelToHostMessage } from "../../bridge/protocol.ts";
 import type { SessionEnvironment } from "../session-env.ts";
 import { type CodemodeRuntimeAssetEnvironment, requireCodemodeRuntimeAsset } from "../shared/runtime-asset.ts";
-import { SubprocessKernel, type SubprocessSpawn } from "../shared/subprocess-kernel.ts";
+import { SubprocessKernel, type SubprocessKernelMemory, type SubprocessSpawn } from "../shared/subprocess-kernel.ts";
 
 export interface RubyKernelStartOptions {
 	readonly cwd: string;
@@ -13,6 +13,8 @@ export interface RubyKernelStartOptions {
 	readonly command?: string;
 	readonly spawn?: SubprocessSpawn;
 	readonly onMessage?: (message: KernelToHostMessage) => void;
+	/** Ceiling-only memory management (no notice or globals list: the runner reports no memory). */
+	readonly memory?: SubprocessKernelMemory;
 }
 
 export interface RubyRunnerPathOptions extends CodemodeRuntimeAssetEnvironment {
@@ -38,6 +40,7 @@ export class RubyKernel extends SubprocessKernel {
 			connection: options.connection,
 			spawn: options.spawn,
 			onMessage: options.onMessage,
+			memory: options.memory && { language: "rb", ...options.memory },
 		});
 	}
 }

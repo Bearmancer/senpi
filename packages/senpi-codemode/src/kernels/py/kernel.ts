@@ -1,6 +1,8 @@
 import type { KernelInterruptHandle } from "../../tool/types.ts";
 import type { KernelToolsInvokeOptions } from "../js/kernel-tools-types.ts";
 import { rejectKernelToolsUnavailable } from "../kernel-tools-unavailable.ts";
+import { KernelMemoryHost } from "../shared/kernel-memory-host.ts";
+import { KernelPreludeTracker } from "../shared/kernel-prelude-plan.ts";
 import type { PendingRun, PythonKernelRunOptions, PythonKernelStartOptions, ResultMessage } from "./kernel-contract.ts";
 import { failedPythonResult, PythonKernelTransport } from "./transport.ts";
 
@@ -20,11 +22,14 @@ export class PythonKernel {
 	#retirement: Promise<void> | null = null;
 	#closePromise: Promise<void> | null = null;
 	#failure: Error | null = null;
+	readonly #preludes = new KernelPreludeTracker();
+	readonly #memory: KernelMemoryHost | null;
 	#generation = 0;
 	#closed = false;
 
 	private constructor(options: PythonKernelStartOptions) {
 		this.#options = options;
+		this.#memory = options.memory === undefined ? null : new KernelMemoryHost("py", options.memory);
 	}
 
 	static async start(options: PythonKernelStartOptions): Promise<PythonKernel> {
@@ -180,7 +185,10 @@ export class PythonKernel {
 		if (timeoutMs !== undefined)
 			pending.timeoutTimer = setTimeout(() => this.#timeoutRun(pending, timeoutMs), timeoutMs);
 		try {
-			this.#transport?.run(pending.input);
+			this.#transport?.run({
+				...pending.input,
+				preludePlan: this.#preludes.plan(pending.input.kernelPreludes ?? []),
+			});
 		} catch (error) {
 			const failure = error instanceof Error ? error : new Error(String(error));
 			this.#rejectRun(pending, failure);
@@ -210,6 +218,7 @@ export class PythonKernel {
 
 	async #spawn(generation: number): Promise<void> {
 		if (this.#closed || generation !== this.#generation) throw new Error("Python kernel startup was superseded");
+		this.#memory?.processReplaced();
 		this.#transport = await PythonKernelTransport.start({
 			...this.#options,
 			onMessage: (message) => {
@@ -236,11 +245,20 @@ export class PythonKernel {
 		if (this.#transport !== transport) return;
 		const pending = this.#pending.get(result.cellId);
 		if (pending) {
-			(pending.input.onMessage ?? this.#options.onMessage)?.(result);
-			this.#settleRun(pending, result);
+			const annotated = this.#memory?.annotate(result) ?? result;
+			(pending.input.onMessage ?? this.#options.onMessage)?.(annotated);
+			this.#settleRun(pending, annotated);
 		}
 		// A result frame from the live runner proves the process survived the interrupt.
 		if (pending?.resolveStateRetained) pending.resolveStateRetained(true);
+		this.#recycleOverCeilingWhenIdle();
+	}
+
+	/** An over-ceiling kernel restarts only once no cell is running or queued on it. */
+	#recycleOverCeilingWhenIdle(): void {
+		if (!this.#memory?.claimRecycle(this.#active === null && this.#queue.length === 0)) return;
+		// A failed restart is recorded in #failure and rejects the next run; a superseded one lost to close/reset.
+		void this.reset().catch(() => undefined);
 	}
 
 	#onExit(transport: PythonKernelTransport, error: Error): void {

@@ -125,7 +125,10 @@ export type ResolvedOpenAICompletionsCompat = Omit<
 	| "supportsThinkingTokenBudget"
 	| "thinkingTokenBudgetField"
 	| "veniceParameters"
+	| "supportsForcedToolChoice"
 > & {
+	/** Declared forced tool_choice support; absent means supported. */
+	supportsForcedToolChoice?: OpenAICompletionsCompat["supportsForcedToolChoice"];
 	cacheControlFormat?: OpenAICompletionsCompat["cacheControlFormat"];
 	supportsPromptCacheKey?: OpenAICompletionsCompat["supportsPromptCacheKey"];
 	toolCallFormat?: OpenAICompletionsCompat["toolCallFormat"];
@@ -290,6 +293,7 @@ export function getOpenAICompletionsCompat(model: Model<"openai-completions">): 
 		sessionAffinityFormat: model.compat.sessionAffinityFormat ?? detected.sessionAffinityFormat,
 		supportsPromptCacheKey: model.compat.supportsPromptCacheKey ?? detected.supportsPromptCacheKey,
 		supportsMaxOutputTokens: model.compat.supportsMaxOutputTokens ?? detected.supportsMaxOutputTokens,
+		supportsForcedToolChoice: model.compat.supportsForcedToolChoice,
 		vllmPriority: model.compat.vllmPriority ?? detected.vllmPriority,
 		supportsLongCacheRetention: model.compat.supportsLongCacheRetention ?? detected.supportsLongCacheRetention,
 	};

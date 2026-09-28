@@ -1,5 +1,6 @@
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import type { KernelMemoryThresholds } from "../../bridge/memory-protocol.ts";
 import {
 	type BridgeConnectionConfig,
 	decodeBridgeFrame,
@@ -9,6 +10,7 @@ import {
 	type KernelToHostMessage,
 } from "../../bridge/protocol.ts";
 import { applySessionEnvironment, type SessionEnvironment } from "../session-env.ts";
+import type { KernelPreludePlan } from "../shared/kernel-prelude-plan.ts";
 import { type CodemodeRuntimeAssetEnvironment, requireCodemodeRuntimeAsset } from "../shared/runtime-asset.ts";
 import {
 	defaultSpawn,
@@ -30,6 +32,7 @@ export interface PythonTransportRunInput {
 	readonly cellId: string;
 	readonly code: string;
 	readonly timeoutMs?: number;
+	readonly preludePlan?: KernelPreludePlan;
 }
 
 export interface PythonTransportOptions {
@@ -41,6 +44,7 @@ export interface PythonTransportOptions {
 	/** Per-session PI_* values merged into the interpreter environment at spawn. */
 	readonly sessionEnv?: SessionEnvironment;
 	readonly startupTimeoutMs: number;
+	readonly memory?: KernelMemoryThresholds;
 	readonly onMessage?: (message: KernelToHostMessage) => void;
 	readonly spawnProcess?: KernelSpawnProcess;
 	readonly isOwned: () => boolean;
@@ -115,7 +119,11 @@ export class PythonKernelTransport {
 	}
 
 	run(input: PythonTransportRunInput): void {
-		this.#write({ type: "run", cellId: input.cellId, code: input.code, timeoutMs: input.timeoutMs });
+		const preludes = input.preludePlan && {
+			install: input.preludePlan.install.map(({ exports, python }) => ({ exports: [...exports], python })),
+			remove: [...input.preludePlan.remove],
+		};
+		this.#write({ type: "run", cellId: input.cellId, code: input.code, timeoutMs: input.timeoutMs, preludes });
 	}
 
 	interrupt(reason: string): void {
@@ -182,7 +190,8 @@ export class PythonKernelTransport {
 		this.#child.stderr.on("data", onStderr);
 		this.#child.on("error", onError);
 		this.#child.on("exit", onExit);
-		this.#write({ type: "init", sessionId: this.#options.sessionId, connection: this.#options.connection });
+		const { sessionId, connection, memory } = this.#options;
+		this.#write({ type: "init", sessionId, connection, ...(memory === undefined ? {} : { memory }) });
 		await withTimeout(ready, this.#options.startupTimeoutMs, "Python kernel did not become ready");
 	}
 

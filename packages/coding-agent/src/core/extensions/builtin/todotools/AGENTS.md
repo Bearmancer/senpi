@@ -39,7 +39,7 @@ question, no user message yet on the branch, no tasks, `todo` active, not `print
 `senpi.todo-first-turn` reminder; under `force`, `before_provider_request` names `todo` in
 `tool_choice` on that run's requests until the first assistant `message_end` (or
 `agent_end` / abort / session change), only where the resolved compat allows a forced
-choice, the payload declares `todo` with no `tool_choice` of its own, and Anthropic thinking
+choice and the model has not refused one earlier in the process (senpi#2218), the payload declares `todo` with no `tool_choice` of its own, and Anthropic thinking
 is off. The decomposition mandate's single home is `TASK_MANAGEMENT_SECTION`; do not restate
 it in `TODO_TOOL_DESCRIPTION`, the tool guidelines, or a preset.
 

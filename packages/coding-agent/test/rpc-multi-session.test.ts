@@ -71,6 +71,7 @@ describe("multi-session RPC routing", () => {
 				engineVersion: VERSION,
 				engineOrdinal: engineBuildIdentityFrom({ version: VERSION }).ordinal,
 				launch_profile: { profile_id: expect.stringMatching(/^[0-9a-f]{64}$/), core: expect.anything() },
+				memory_pressure: false,
 			},
 		});
 	});

@@ -25,8 +25,9 @@ try {
 	const fake = await startFakeModelServer([{ text: "interactive-host-qa" }]);
 	writeMockModelsJson(scratch.agentDir, fake);
 	socket = join(scratch.dir, "rpc.sock");
-	await ensureHost({ socket, agentDir: scratch.agentDir });
+	const ensured = await ensureHost({ socket, agentDir: scratch.agentDir });
 	const publicSocketMode = (statSync(socket).mode & 0o777).toString(8).padStart(3, "0");
+	ensured.release();
 	if (publicSocketMode !== "600") throw new Error(`public socket mode is ${publicSocketMode}, expected 600`);
 	lines.push(`assert public-socket-mode=srw------- (${publicSocketMode})`);
 	const manager = SessionManager.create(scratch.cwd, scratch.sessionDir);

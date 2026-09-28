@@ -61,6 +61,10 @@
 					"path": "terminal-tools.md"
 				},
 				{
+					"title": "Scheduled Prompts",
+					"path": "schedule.md"
+				},
+				{
 					"title": "Skills",
 					"path": "skills.md"
 				},

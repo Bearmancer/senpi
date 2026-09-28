@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { getModel, streamSimple } from "../src/compat.ts";
 import type { AssistantMessage, Context, Model } from "../src/types.ts";
+import { fireworksMessagesModels, requireModels } from "./fireworks-catalog.ts";
+
+const messagesModels = requireModels(fireworksMessagesModels(), 2);
 
 interface AnthropicPayload {
 	messages?: Array<{
@@ -98,33 +101,26 @@ describe("Anthropic empty thinking signature compat", () => {
 	});
 
 	// Regression for #9323: Fireworks emits unsigned thinking that must survive replay.
-	it.each([
-		"accounts/fireworks/models/deepseek-v4-flash-0731",
-		"accounts/fireworks/models/deepseek-v4-flash-vision-exp",
-		"accounts/fireworks/models/deepseek-v4-pro-0813",
-		"accounts/fireworks/models/qwen3p8-max",
-		"accounts/fireworks/models/qwen3p8-2p4t-a95b",
-		"accounts/fireworks/models/kimi-k2p6",
-	] as const)("preserves unsigned thinking for Fireworks %s", async (modelId) => {
-		const model = getModel("fireworks", modelId);
-		expect(model.compat?.allowEmptySignature).toBe(true);
-		const context = makeContext("", "internal reasoning", "fireworks", modelId);
-		const assistant = context.messages[1] as AssistantMessage;
-		assistant.content.push({ type: "text", text: "answer" });
-		const payload = await capturePayload(model, context);
-		expect(payload.messages?.find((message) => message.role === "assistant")?.content).toEqual([
-			{ type: "thinking", thinking: "internal reasoning", signature: "" },
-			{ type: "text", text: "answer" },
-		]);
-	});
+	it.each(messagesModels.map((model) => [model.id, model] as const))(
+		"preserves unsigned thinking for Fireworks %s",
+		async (modelId, model) => {
+			expect(model.compat?.allowEmptySignature).toBe(true);
+			const context = makeContext("", "internal reasoning", "fireworks", modelId);
+			const assistant = context.messages[1] as AssistantMessage;
+			assistant.content.push({ type: "text", text: "answer" });
+			const payload = await capturePayload(model, context);
+			expect(payload.messages?.find((message) => message.role === "assistant")?.content).toEqual([
+				{ type: "thinking", thinking: "internal reasoning", signature: "" },
+				{ type: "text", text: "answer" },
+			]);
+		},
+	);
 
 	// Regression for #9323: opting into unsigned replay must not change cross-model conversion.
 	it("still converts cross-model Fireworks thinking to text", async () => {
-		const model = getModel("fireworks", "accounts/fireworks/models/deepseek-v4-flash-0731");
-		const payload = await capturePayload(
-			model,
-			makeContext("", "internal reasoning", "fireworks", "accounts/fireworks/models/kimi-k2p6"),
-		);
+		const [model, otherModel] = messagesModels;
+		if (!model || !otherModel) throw new Error("expected two Fireworks Messages models");
+		const payload = await capturePayload(model, makeContext("", "internal reasoning", "fireworks", otherModel.id));
 		expect(payload.messages?.find((message) => message.role === "assistant")?.content).toEqual([
 			{ type: "text", text: "internal reasoning" },
 		]);

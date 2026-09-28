@@ -105,7 +105,7 @@ import type {
 import { buildNoticeBox, type NoticeLine, type NoticeSpec } from "../../core/extensions/notice/index.ts";
 import type { QuestionRequest, QuestionResponse } from "../../core/extensions/types.ts";
 import { FooterDataProvider, type ReadonlyFooterDataProvider } from "../../core/footer-data-provider.ts";
-import { appendUncaughtCrashLog } from "../../core/hidden-stdout-log.ts";
+import { appendUncaughtCrashLog, appendUnhandledRejectionLog } from "../../core/hidden-stdout-log.ts";
 import { buildHighReasoningWarning } from "../../core/high-reasoning-warning.ts";
 import { configureHttpDispatcher, formatHttpIdleTimeoutMs } from "../../core/http-dispatcher.ts";
 import { type AppKeybinding, KeybindingsManager } from "../../core/keybindings.ts";
@@ -215,6 +215,7 @@ import {
 	type StatusIndicator,
 	WorkingStatusIndicator,
 } from "./components/status-indicator.ts";
+import { ThinkingSelectorComponent } from "./components/thinking-selector.ts";
 import { ToolExecutionComponent } from "./components/tool-execution.ts";
 import { TreeSelectorComponent } from "./components/tree-selector.ts";
 import { TrustSelectorComponent } from "./components/trust-selector.ts";
@@ -225,7 +226,11 @@ import { formatExtensionErrorHeadline, sanitizeTuiErrorMessage } from "./extensi
 import { editFileInExternalEditor, editInExternalEditor } from "./external-editor.ts";
 import { GrokChrome, type InteractiveChrome, type InteractiveFooter } from "./grok/chrome.ts";
 import type { InteractiveSession } from "./interactive-host-runtime.ts";
-import { restoreInteractiveStderr, takeOverInteractiveStderr } from "./interactive-stderr-guard.ts";
+import {
+	prepareInteractiveStderrCapture,
+	restoreInteractiveStderr,
+	takeOverInteractiveStderr,
+} from "./interactive-stderr-guard.ts";
 import { applyKeybindingsFileEdit, seedKeybindingsFile } from "./keybindings-command.ts";
 import {
 	buildResourceScopeGroups,
@@ -248,7 +253,10 @@ import {
 	ProviderErrorPresentation,
 } from "./provider-error-presentation.ts";
 import { replayAssistantTools } from "./replay-assistant-tools.ts";
+import { allScopeSessions, chooseResumePath, currentScopeSessions } from "./resume-rebind.ts";
 import { isRiskyMainModel, RISKY_MAIN_MODEL_WARNING } from "./risky-main-model-warning.ts";
+import { maybeShowRuntimeNotice } from "./runtime-notice-presenter.ts";
+import { formatSessionFailureInfo } from "./session-failure-info.ts";
 import { DEFAULT_SMOOTH_FPS, StreamingRevealController } from "./streaming-reveal.ts";
 import {
 	getAvailableThemes,
@@ -330,6 +338,10 @@ function embedStatusIndicatorInEditor(
 	if (!editor || !isWorkingStatusEditor(editor)) return false;
 	editor.setWorkingStatusIndicator(indicator);
 	return true;
+}
+
+function isBareSkillNamespace(text: string): boolean {
+	return text === "/skill" || text === "/skill:";
 }
 
 function isExpandable(obj: unknown): obj is Expandable {
@@ -967,6 +979,7 @@ export class InteractiveMode {
 	private changelogMarkdown: string | undefined = undefined;
 	private startupNoticesShown = false;
 	private anthropicSubscriptionWarningShown = false;
+	private copilotToolLimitNoticeSessionId: string | undefined = undefined;
 
 	// Status line tracking (for mutating immediately-sequential status updates)
 	private lastStatusSpacer: Spacer | undefined = undefined;
@@ -1311,6 +1324,20 @@ export class InteractiveMode {
 			};
 		}
 
+		const thinkingCommand = slashCommands.find((command) => command.name === "thinking");
+		if (thinkingCommand) {
+			thinkingCommand.getArgumentCompletions = async (prefix: string): Promise<AutocompleteItem[] | null> => {
+				// Awaited at the boundary: the shared-host proxy answers this over RPC.
+				const levels = await this.session.getAvailableThinkingLevels();
+				return createFuzzyAutocompleteItems(
+					levels,
+					prefix,
+					(level) => level,
+					(level) => ({ value: level, label: level }),
+				);
+			};
+		}
+
 		// Convert prompt templates to SlashCommand format for autocomplete
 		const templateCommands: SlashCommand[] = this.session.promptTemplates.map((cmd) => ({
 			name: cmd.name,
@@ -1579,6 +1606,7 @@ export class InteractiveMode {
 		this.ui.setFocus(this.editor);
 
 		// Start the UI before initializing extensions so session_start handlers can use interactive dialogs
+		await prepareInteractiveStderrCapture();
 		try {
 			takeOverInteractiveStderr();
 			this.ui.start();
@@ -1825,6 +1853,7 @@ export class InteractiveMode {
 
 		this.showRiskyMainModelWarning(this.session.model);
 		void this.maybeWarnAboutAnthropicSubscriptionAuth();
+		maybeShowRuntimeNotice((spec) => this.showNoticeBox(spec));
 
 		// Process initial messages
 		if (initialMessage) {
@@ -4796,6 +4825,12 @@ export class InteractiveMode {
 					await this.handleModelCommand(searchTerm);
 					return;
 				}
+				if (text === "/thinking" || text.startsWith("/thinking ")) {
+					const searchTerm = text.startsWith("/thinking ") ? text.slice(10).trim() : undefined;
+					this.editor.setText("");
+					await this.handleThinkingCommand(searchTerm);
+					return;
+				}
 				if (text === "/export" || text.startsWith("/export ")) {
 					await this.handleExportCommand(text);
 					this.editor.setText("");
@@ -4908,7 +4943,7 @@ export class InteractiveMode {
 					this.editor.setText("");
 					return;
 				}
-				if (text === "/resume") {
+				if (text === "/resume" || text === "/sessions") {
 					this.showSessionSelector();
 					this.editor.setText("");
 					return;
@@ -4916,6 +4951,10 @@ export class InteractiveMode {
 				if (text === "/quit" || text === "/exit") {
 					this.editor.setText("");
 					await this.shutdown();
+					return;
+				}
+				if (isBareSkillNamespace(text)) {
+					this.openSkillPickerForBareNamespace();
 					return;
 				}
 				if (this.isExtensionCommand(text)) {
@@ -6102,6 +6141,7 @@ export class InteractiveMode {
 		options: { updateFooter?: boolean; populateHistory?: boolean } = {},
 	): void {
 		this.providerErrors = undefined;
+		this.copilotToolLimitNoticeSessionId = undefined;
 		this.clearPendingTools();
 		// The rebuilt transcript re-derives continuity notices from persisted
 		// messages, so the tracker's suppression state must not survive the
@@ -6211,6 +6251,16 @@ export class InteractiveMode {
 	}
 
 	private maybeShowAssistantDiagnostics(message: AssistantMessage): void {
+		for (const diagnostic of message.diagnostics ?? []) {
+			if (diagnostic.type !== "github_copilot_tool_limit") continue;
+			const notice = diagnostic.details?.message;
+			const sessionId = this.sessionManager.getSessionId();
+			if (typeof notice !== "string" || this.copilotToolLimitNoticeSessionId === sessionId) continue;
+			this.copilotToolLimitNoticeSessionId = sessionId;
+			this.chatContainer.addChild(new Spacer(1));
+			this.chatContainer.addChild(new Text(theme.fg("warning", notice), 1, 0));
+		}
+
 		if (!this.settingsManager.getShowCacheMissNotices()) return;
 
 		for (const diagnostic of message.diagnostics ?? []) {
@@ -6495,17 +6545,41 @@ export class InteractiveMode {
 		// Record the crash before the terminal handoff: the banner below only reaches
 		// terminal scrollback, which is gone when the terminal is closed or is itself
 		// the thing that failed. A logging failure must never alter the crash path.
+		let logged = false;
 		try {
 			appendUncaughtCrashLog(origin, error);
+			logged = true;
 		} catch {}
 		restoreInteractiveStderr();
 		const storageMessage = storageWriteCrashMessage(error);
 		if (storageMessage !== undefined) {
 			console.error(storageMessage);
 		}
-		console.error(`${APP_NAME} exiting due to uncaughtException:`);
-		console.error(error);
+		// The full stack lives in the debug log; the restored terminal gets one readable line and
+		// where to look. Only a failed log write falls back to printing the whole error.
+		const summary = (error instanceof Error ? `${error.name}: ${error.message}` : String(error)).split("\n")[0];
+		console.error(`${APP_NAME} exiting due to uncaughtException: ${summary}`);
+		if (logged) console.error(`Details: ${getDebugLogPath()}`);
+		else console.error(error);
 		process.exit(1);
+	}
+
+	/**
+	 * An unhandled rejection is a bug, not something the user can act on, and Bun keeps the
+	 * process running after one. It goes to the debug log and never to the terminal the TUI is
+	 * drawing on (#2284).
+	 */
+	private unhandledRejection(reason: unknown): void {
+		if (isDeadTerminalError(reason)) {
+			this.emergencyTerminalExit({ origin: "dead-terminal unhandledRejection", error: reason });
+		}
+		if (isRecoverableInspectorVmImportError(reason, "unhandledRejection")) {
+			this.showWarning(INSPECTOR_VM_IMPORT_WARNING);
+			return;
+		}
+		try {
+			appendUnhandledRejectionLog(reason);
+		} catch {}
 	}
 
 	/**
@@ -6577,6 +6651,9 @@ export class InteractiveMode {
 			this.uncaughtCrash(error, origin);
 		process.prependListener("uncaughtException", uncaughtExceptionHandler);
 		this.signalCleanupHandlers.push(() => process.off("uncaughtException", uncaughtExceptionHandler));
+		const unhandledRejectionHandler = (reason: unknown) => this.unhandledRejection(reason);
+		process.prependListener("unhandledRejection", unhandledRejectionHandler);
+		this.signalCleanupHandlers.push(() => process.off("unhandledRejection", unhandledRejectionHandler));
 
 		// Surface Inspector rejections that the early bootstrap seam recovered before this
 		// handler (and the TUI warning surface) existed.
@@ -6637,6 +6714,10 @@ export class InteractiveMode {
 		this.setComposerReply();
 		const text = this.getExpandedEditorText().trim();
 		if (!text) return;
+		if (isBareSkillNamespace(text)) {
+			this.openSkillPickerForBareNamespace();
+			return;
+		}
 
 		// Queue non-command input during compaction; dispatch extension commands.
 		// This is the Alt+Enter path (bound directly to app.message.followUp), which
@@ -7136,6 +7217,25 @@ export class InteractiveMode {
 		return !!this.session.extensionRunner.getCommand(command);
 	}
 
+	/**
+	 * `/skill` and `/skill:` name the skill namespace, not a skill, so they never reach the model:
+	 * the editor is reset to `/skill:` with the skill list open, or a warning explains why it is empty.
+	 */
+	private openSkillPickerForBareNamespace(): void {
+		if (!this.settingsManager.getEnableSkillCommands()) {
+			this.showWarning("Skill commands are disabled (enableSkillCommands setting).");
+			this.editor.setText("");
+			return;
+		}
+		if (this.session.resourceLoader.getSkills().skills.length === 0) {
+			this.showWarning("No skills are loaded.");
+			this.editor.setText("");
+			return;
+		}
+		this.editor.setText("/skill:");
+		this.editor.openAutocomplete?.();
+	}
+
 	private isExtensionCommand(text: string): boolean {
 		if (!text.startsWith("/")) return false;
 
@@ -7569,6 +7669,63 @@ export class InteractiveMode {
 				},
 			);
 			return { component: selector, focus: selector.getSettingsList() };
+		});
+	}
+
+	private async handleThinkingCommand(searchTerm?: string): Promise<void> {
+		if (!searchTerm) {
+			await this.showThinkingSelector();
+			return;
+		}
+
+		// Awaited at the boundary: the shared-host proxy answers this over RPC.
+		const availableLevels = await this.session.getAvailableThinkingLevels();
+		const normalized = searchTerm.trim().toLowerCase();
+		const level = availableLevels.find((candidate) => candidate.toLowerCase() === normalized);
+		if (!level) {
+			this.showError(`Unknown thinking level "${searchTerm}". Available levels: ${availableLevels.join(", ")}.`);
+			return;
+		}
+
+		this.selectThinkingLevel(level, false);
+	}
+
+	/**
+	 * `persist: false` scopes the level to this session; `persist: true` also
+	 * records it as the model's remembered level (the Ctrl+S path of the selector).
+	 */
+	private selectThinkingLevel(level: ThinkingLevel, persist: boolean): void {
+		try {
+			if (persist) this.session.setThinkingLevel(level);
+			else this.session.setSessionThinkingLevel(level);
+			this.footer.invalidate();
+			this.updateEditorBorderColor();
+			this.showStatus(persist ? `Default thinking level: ${level}` : `Thinking level: ${level}`);
+		} catch (error) {
+			this.showError(error instanceof Error ? error.message : String(error));
+		}
+	}
+
+	private async showThinkingSelector(): Promise<void> {
+		// Awaited at the boundary: the shared-host proxy answers this over RPC.
+		const availableLevels = await this.session.getAvailableThinkingLevels();
+		this.showSelector((done) => {
+			const selectLevel = (level: ThinkingLevel, persist: boolean) => {
+				this.selectThinkingLevel(level, persist);
+				done();
+			};
+			const selector = new ThinkingSelectorComponent(
+				this.session.thinkingLevel,
+				availableLevels,
+				(level) => selectLevel(level, false),
+				() => {
+					done();
+					this.ui.requestRender();
+				},
+				(level) => selectLevel(level, true),
+				this.settingsManager.getDefaultThinkingLevel(),
+			);
+			return { component: selector, focus: selector };
 		});
 	}
 
@@ -8284,15 +8441,15 @@ export class InteractiveMode {
 	private showSessionSelector(): void {
 		this.showSelector((done) => {
 			const selector = new SessionSelectorComponent(
-				(onProgress) =>
-					SessionManager.list(this.sessionManager.getCwd(), this.sessionManager.getSessionDir(), onProgress),
-				(onProgress) =>
-					this.sessionManager.usesDefaultSessionDir()
-						? SessionManager.listAll(onProgress)
-						: SessionManager.listAll(this.sessionManager.getSessionDir(), onProgress),
+				(onProgress) => currentScopeSessions(this.sessionManager, onProgress),
+				(onProgress) => allScopeSessions(this.sessionManager, onProgress),
 				async (sessionPath) => {
 					done();
-					await this.handleResumeSession(sessionPath);
+					const target = await chooseResumePath(sessionPath, this.sessionManager, {
+						confirm: (title, message) => this.showExtensionConfirm(title, message),
+						showError: (message) => this.showError(message),
+					});
+					if (target !== undefined) await this.handleResumeSession(target);
 				},
 				() => {
 					done();
@@ -9367,6 +9524,7 @@ export class InteractiveMode {
 						: `\n${theme.fg("dim", "Cache Re-billed:")} ${detail}`;
 			}
 		}
+		info += formatSessionFailureInfo(stats.failures);
 
 		this.chatContainer.addChild(new Spacer(1));
 		this.chatContainer.addChild(new Text(info, 1, 0));

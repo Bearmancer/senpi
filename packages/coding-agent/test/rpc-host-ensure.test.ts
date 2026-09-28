@@ -126,8 +126,13 @@ describe("ensureHost", () => {
 		const qa = await scratch("start-reuse");
 		const first = await ensureFixtureHost(qa);
 		const second = await ensureFixtureHost(qa);
-		expect(first).toEqual({ pid: expect.any(Number), socket: qa.socket, reused: false });
-		expect(second).toEqual({ pid: first.pid, socket: qa.socket, reused: true });
+		expect(first).toEqual({
+			pid: expect.any(Number),
+			socket: qa.socket,
+			reused: false,
+			release: expect.any(Function),
+		});
+		expect(second).toEqual({ pid: first.pid, socket: qa.socket, reused: true, release: expect.any(Function) });
 		expect((await protocolInfo(qa.socket)).data).toMatchObject({ serverVersion: VERSION });
 	});
 
@@ -151,7 +156,7 @@ describe("ensureHost", () => {
 		const qa = await scratch("different-version");
 		const running = await startManagedFixture(qa, { serverVersion: "2026.9.16-3" });
 		const result = await ensureFixtureHost(qa);
-		expect(result).toEqual({ pid: running.pid, socket: qa.socket, reused: true });
+		expect(result).toEqual({ pid: running.pid, socket: qa.socket, reused: true, release: expect.any(Function) });
 		expect(await processMatchesPidFile(running.pidFile, readProcessStartTime)).toBe(true);
 	}, 15_000);
 
@@ -498,7 +503,7 @@ describe("generation handoff", () => {
 			_test: { launch: refuseToSpawn },
 		});
 
-		expect(result).toEqual({ pid: running.pid, socket: qa.socket, reused: true });
+		expect(result).toEqual({ pid: running.pid, socket: qa.socket, reused: true, release: expect.any(Function) });
 		if (before) expect(await socketIdentity(qa.socket)).toMatchObject({ ino: before.ino });
 		expect(await processMatchesPidFile(running.pidFile, readProcessStartTime)).toBe(true);
 	}, 20_000);
@@ -520,7 +525,7 @@ describe("generation handoff", () => {
 			_test: { launch: refuseToSpawn },
 		});
 
-		expect(result).toEqual({ pid: running.pid, socket: qa.socket, reused: true });
+		expect(result).toEqual({ pid: running.pid, socket: qa.socket, reused: true, release: expect.any(Function) });
 		if (before) expect(await socketIdentity(qa.socket)).toMatchObject({ ino: before.ino });
 	}, 20_000);
 

@@ -100,7 +100,19 @@ function replaceAccount(accounts: readonly AccountSlot[], replacement: AccountSl
 	return accounts.map((account) => (account.name === replacement.name ? replacement : account));
 }
 
-async function persistBlock(store: CredentialStore, providerId: string, account: AccountSlot): Promise<void> {
+/**
+ * Persists a block onto the stored slot. An `auth_error` is a verdict on the
+ * token that failed, so it is written only while the stored slot still holds
+ * that token. When another writer replaced the material meanwhile (a refresh in
+ * this or another process, or a re-login), nothing is written and the stored
+ * slot is returned: locking it "until re-login" would strand a valid token.
+ */
+async function persistBlock(
+	store: CredentialStore,
+	providerId: string,
+	account: AccountSlot,
+): Promise<AccountSlot | undefined> {
+	let superseded: AccountSlot | undefined;
 	await store.modify(providerId, async (current) => {
 		if (current?.type !== "oauth") return current;
 		const credential = current as AnthropicSubscriptionCredential;
@@ -113,6 +125,15 @@ async function persistBlock(store: CredentialStore, providerId: string, account:
 				},
 			};
 		}
+		const stored = (credential.accounts ?? []).find((existing) => existing.name === account.name);
+		if (
+			account.blockReason === "auth_error" &&
+			stored !== undefined &&
+			(stored.access !== account.access || stored.refresh !== account.refresh)
+		) {
+			superseded = stored;
+			return current;
+		}
 		const accounts = (credential.accounts ?? []).map((existing) =>
 			existing.name === account.name
 				? { ...existing, blockedUntil: account.blockedUntil, blockReason: account.blockReason }
@@ -120,6 +141,11 @@ async function persistBlock(store: CredentialStore, providerId: string, account:
 		);
 		return { ...credential, accounts };
 	});
+	return superseded;
+}
+
+function usable(account: AccountSlot, now: number): boolean {
+	return account.blockReason === undefined && (account.blockedUntil === undefined || account.blockedUntil <= now);
 }
 
 /**
@@ -132,9 +158,12 @@ export async function* runFailover<TEvent>(options: FailoverOptions<TEvent>): As
 	const baseBlockMs = options.baseBlockMs ?? DEFAULT_RATE_LIMIT_BLOCK_MS;
 	let accounts = clearExpiredBlocks(options.accounts, now());
 	let lastError: ClassifiedSdkError | undefined;
+	const retriedOnStoredMaterial = new Set<string>();
 
 	for (let attempt = 0; attempt < accounts.length; attempt++) {
-		const account = options.selectFn(accounts);
+		// Each attempt gets its own copy: prepareSlot refreshes the slot in place, and a concurrent
+		// attempt holding the same stored object must still report the token it actually sent.
+		const account = { ...options.selectFn(accounts) };
 		let visibleDeltaEmitted = false;
 		try {
 			const attemptStream = await options.runAttempt(account);
@@ -152,8 +181,21 @@ export async function* runFailover<TEvent>(options: FailoverOptions<TEvent>): As
 			if (!classification.retryable) throw classified;
 
 			const blocked = blockedAccount(account, classification, now(), attempt, baseBlockMs, error);
+			const superseded = await persistBlock(options.store, options.providerId, blocked);
+			if (
+				superseded &&
+				!visibleDeltaEmitted &&
+				usable(superseded, now()) &&
+				!retriedOnStoredMaterial.has(account.name)
+			) {
+				// The rejected token was already replaced in the store: retry this
+				// account once on the stored material instead of failing over.
+				retriedOnStoredMaterial.add(account.name);
+				accounts = replaceAccount(accounts, superseded);
+				attempt--;
+				continue;
+			}
 			accounts = replaceAccount(accounts, blocked);
-			await persistBlock(options.store, options.providerId, blocked);
 			const event: FailoverEvent = {
 				account: blocked,
 				classification,

@@ -1,5 +1,24 @@
 # Permission System Builtin Extension
 
+## 2026-09-27 - Tools classify their own calls with `permissionParser`
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/permission-system/parsers.ts`: `ParserRegistry.has()`, and `toolOwnedPermissionRequests()`, which reads a tool's `permissionParser` from `pi.getAllTools()`.
+- `packages/coding-agent/src/core/extensions/builtin/permission-system/index.ts`: `tool_call` uses the built-in parser when one exists, else the tool's own parser, else the single request named after the tool.
+
+### Why
+
+- An extension tool can expose read and exec tiers (for example `my_tool:exec=deny`), resolved per session from the session's own tools. A tool can never replace a built-in parser.
+
+### Why an extension could not handle it
+
+- The permission-system builtin owns parsing.
+
+### Expected merge conflict zones
+
+- LOW: the parse call at the top of the `tool_call` handler.
+
 ## Overview
 Full port of opencode's permission system to senpi-mono as a builtin extension.
 

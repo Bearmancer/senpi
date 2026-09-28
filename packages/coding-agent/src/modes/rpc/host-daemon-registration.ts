@@ -36,6 +36,8 @@ import {
 	generationPaths,
 	HOST_DAEMON_LAYOUT,
 	type HostDaemonPaths,
+	type HostGenerationPaths,
+	sameEndpoint,
 } from "./host-daemon-paths.ts";
 import { isRecord, parseJson, readFileOrUndefined, writeStateFile } from "./host-daemon-state.ts";
 import { pruneDeadGenerations } from "./host-generations.ts";
@@ -96,6 +98,28 @@ export async function writeHostRegistration(paths: HostDaemonPaths, registration
 	// and their session-path claims otherwise accumulate for the life of the agent directory, and a
 	// stale pointer among them reads as "a daemon serves this endpoint" (#1893).
 	await pruneDeadGenerations(paths);
+	const { generation, writer } = await writeGenerationRecord(paths, registration);
+	// The pointer is replaced by rename: a reader either sees the generation that owned the socket
+	// before this call or the one that owns it now, never a half-written pointer.
+	await writeStateFile(`${paths.pointerFile}.${process.pid}.tmp`, {
+		layout: HOST_DAEMON_LAYOUT,
+		instance_id: registration.instanceId,
+		generation_dir: generation.relativeDir,
+		writer,
+	});
+	await rename(`${paths.pointerFile}.${process.pid}.tmp`, paths.pointerFile);
+}
+
+/**
+ * Records ONE generation's process in its own directory without moving the pointer. A handoff writes
+ * this the moment its successor is spawned: until the rename lands the pointer must keep naming the
+ * predecessor, yet the successor is already running, and `host gc` has to see that from its own record
+ * rather than judge the endpoint by a predecessor that may have died.
+ */
+export async function writeGenerationRecord(
+	paths: HostDaemonPaths,
+	registration: HostRegistration,
+): Promise<{ generation: HostGenerationPaths; writer: HostPidFileWriter }> {
 	const generation = generationPaths(paths, registration.instanceId);
 	const writer: HostPidFileWriter = { pid: process.pid, startTime: await thisProcessStartTime() };
 	const build = engineBuildIdentity();
@@ -110,15 +134,7 @@ export async function writeHostRegistration(paths: HostDaemonPaths, registration
 		socket: registration.socket,
 		writer,
 	});
-	// The pointer is replaced by rename: a reader either sees the generation that owned the socket
-	// before this call or the one that owns it now, never a half-written pointer.
-	await writeStateFile(`${paths.pointerFile}.${process.pid}.tmp`, {
-		layout: HOST_DAEMON_LAYOUT,
-		instance_id: registration.instanceId,
-		generation_dir: generation.relativeDir,
-		writer,
-	});
-	await rename(`${paths.pointerFile}.${process.pid}.tmp`, paths.pointerFile);
+	return { generation, writer };
 }
 
 /** Drops the pointer, the generation it names and the boot settings: the host behind them is gone. */
@@ -127,8 +143,9 @@ export async function clearHostRegistration(paths: HostDaemonPaths): Promise<voi
 	if (typeof pointer?.instance_id === "string") {
 		await rm(generationPaths(paths, pointer.instance_id).dir, { recursive: true, force: true });
 	}
-	await rm(paths.pointerFile, { force: true });
 	await rm(paths.settingsFile, { force: true });
+	// Last: "no pointer" is what every reader takes as "no host here" (senpi#2241).
+	await rm(paths.pointerFile, { force: true });
 }
 
 /**
@@ -144,11 +161,11 @@ export async function releaseGeneration(
 	const record = parseDaemonPidFile((await readFileOrUndefined(generation.pidFile)) ?? "");
 	if (record !== undefined && record.pid !== owner.pid) return;
 	const pointer = parseJson(await readFileOrUndefined(paths.pointerFile));
-	if (pointer?.instance_id === owner.instanceId) {
-		await rm(paths.pointerFile, { force: true });
-		await rm(paths.settingsFile, { force: true });
-	}
+	const ownsPointer = pointer?.instance_id === owner.instanceId;
+	if (ownsPointer) await rm(paths.settingsFile, { force: true });
 	await rm(generation.dir, { recursive: true, force: true });
+	// Last: "no pointer" is what every reader takes as "no host here" (senpi#2241).
+	if (ownsPointer) await rm(paths.pointerFile, { force: true });
 }
 
 /**
@@ -171,7 +188,7 @@ export async function provenOwner(
 ): Promise<{ pid: number; processStartTime: string; instanceId: string } | undefined> {
 	const record = registered?.record;
 	if (!record || record.processStartTime === null) return undefined;
-	if (registered?.socket !== undefined && registered.socket !== socket) return undefined;
+	if (registered?.socket !== undefined && !sameEndpoint(registered.socket, socket)) return undefined;
 	const identity = { pid: record.pid, processStartTime: record.processStartTime };
 	return (await processMatchesPidFile(identity, readProcessStartTime).catch(() => false))
 		? { ...identity, instanceId: registered.instanceId }

@@ -347,6 +347,11 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 			thinkingSelection = { level: remembered, source: "explicit" };
 		}
 	}
+	// A model-declared default (senpi#2196) outranks the global setting, which tracks the last level
+	// chosen on any model; it is a default, not a user choice, so it carries no provenance.
+	if (thinkingLevel === undefined && model?.defaultThinkingLevel !== undefined) {
+		thinkingLevel = model.defaultThinkingLevel;
+	}
 	if (thinkingLevel === undefined) {
 		const configuredDefault = settingsManager.getDefaultThinkingLevel();
 		if (configuredDefault !== undefined) {
@@ -546,29 +551,36 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		? existingSession.messages.reduce((total, message) => total + estimateTokens(message), 0)
 		: 0;
 	try {
-		session.assertModelUsable(
-			undefined,
-			liveContextTokens,
-			hasExistingSession ? { includeSpeculationLead: false, admission: "resume" } : { admission: "start" },
-		);
+		try {
+			session.assertModelUsable(
+				undefined,
+				liveContextTokens,
+				hasExistingSession ? { includeSpeculationLead: false, admission: "resume" } : { admission: "start" },
+			);
+		} catch (error) {
+			if (
+				!hasExistingSession ||
+				!(error instanceof ModelUsabilityBudgetError) ||
+				!session.settingsManager.getCompactionEnabled()
+			) {
+				throw error;
+			}
+			if (error.projection.liveContextTokens > error.projection.contextWindow) {
+				const plan = planResumeSlice({
+					entries: session.sessionManager.getBranch(),
+					projection: error.projection,
+				});
+				if (!plan) throw error;
+				session.applyResumeSlice(plan);
+			} else {
+				session.admitResumeCompactionRequired(error.projection);
+			}
+		}
 	} catch (error) {
-		if (
-			!hasExistingSession ||
-			!(error instanceof ModelUsabilityBudgetError) ||
-			!session.settingsManager.getCompactionEnabled()
-		) {
-			throw error;
-		}
-		if (error.projection.liveContextTokens > error.projection.contextWindow) {
-			const plan = planResumeSlice({
-				entries: session.sessionManager.getBranch(),
-				projection: error.projection,
-			});
-			if (!plan) throw error;
-			session.applyResumeSlice(plan);
-		} else {
-			session.admitResumeCompactionRequired(error.projection);
-		}
+		// A refused startup returns no session to its caller, so nothing else would ever
+		// release what the constructed session holds (its shared fallback breaker, writer).
+		session.dispose();
+		throw error;
 	}
 	sessionRef.current = session;
 	const extensionsResult = resourceLoader.getExtensions();

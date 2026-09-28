@@ -113,6 +113,8 @@ export class SubprocessRunQueue {
 			case "kernel-tool-invoke-reply":
 				onMessage?.(message);
 				return false;
+			case "webview-connect":
+				return false;
 			default: {
 				const exhaustive: never = message;
 				return exhaustive;

@@ -19,11 +19,14 @@ function buildGettingStarted(): string {
 	const newLine = keyDisplayText("tui.input.newLine");
 	const pasteImage = keyDisplayText("app.clipboard.pasteImage");
 	const followUp = keyDisplayText("app.message.followUp");
+	const cycleThinking = keyDisplayText("app.thinking.cycle");
 
 	return [
 		`- Press \`${submit}\` to submit; use \`${newLine}\` to add a new line.`,
 		"- Type `!` to run bash, or `!!` to run bash without adding the command or output to context.",
 		"- Type `/` for commands.",
+		`- Type \`/thinking <level>\` or press \`${cycleThinking}\` to change the thinking level.`,
+		"- Type `/resume` (or `/sessions`) to reopen a past session.",
 		"- Drop files into the terminal to attach them.",
 		`- Press \`${pasteImage}\` to paste an image, with text fallback.`,
 		`- Press \`${followUp}\` to queue a follow-up message.`,

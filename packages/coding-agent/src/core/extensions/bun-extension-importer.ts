@@ -1,4 +1,4 @@
-import { readFileSync, realpathSync } from "node:fs";
+import { readFileSync, realpathSync, statSync } from "node:fs";
 import { createRequire, isBuiltin } from "node:module";
 import { dirname, extname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -43,14 +43,18 @@ export function createBunExtensionImporter(
 	};
 	const moduleId = (filename: string) =>
 		`${extensionNamespace}:${registration.generation}/${encodeURIComponent(filename)}`;
+	// Only source the graph transpiles gets a graph id. Anything else (JSON, TOML, text, native
+	// addons) keeps its real path so Bun's own loader handles it: Bun 1.3.x cannot follow a
+	// plugin's hand-back to the `file` namespace from a runtime import() or require() (#2164).
+	const fileTarget = (resolved: string): { readonly id: string; readonly path?: string } =>
+		/\.[cm]?[jt]sx?$/.test(resolved) ? { id: moduleId(resolved), path: resolved } : { id: resolved };
 	const resolveTarget = (specifier: string, filename: string): { readonly id: string; readonly path?: string } => {
 		assertActive();
 		if (Object.hasOwn(virtualModules, specifier) || isBuiltin(specifier) || specifier.startsWith("bun:"))
 			return { id: specifier };
 		if (specifier.startsWith(`${extensionNamespace}:`)) return { id: specifier };
 		const path = specifier.startsWith("file:") ? fileURLToPath(specifier) : specifier;
-		const resolved = realpathSync(Bun.resolveSync(path, dirname(filename)));
-		return { id: moduleId(resolved), path: resolved };
+		return fileTarget(realpathSync(Bun.resolveSync(path, dirname(filename))));
 	};
 	const graph = {
 		assertActive,
@@ -155,7 +159,10 @@ export function createBunExtensionImporter(
 	return {
 		async import(path: string, _options: { readonly default: true }): Promise<unknown> {
 			assertActive();
-			const id = moduleId(realpathSync(resolve(path)));
+			const absolute = realpathSync(resolve(path));
+			// A package directory loads through its main or index file, as a native import does.
+			const entry = statSync(absolute).isDirectory() ? realpathSync(Bun.resolveSync(absolute, absolute)) : absolute;
+			const { id } = fileTarget(entry);
 			const module: { readonly default?: unknown } = await import(id);
 			const factory = module.default;
 			if (typeof factory !== "function") return factory;

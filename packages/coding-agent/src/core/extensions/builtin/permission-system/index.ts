@@ -5,7 +5,7 @@ import { parsePermissionFlag, parsePermissionPresetFlag } from "./cli.ts";
 import { disabled } from "./config.ts";
 import { createEventEmitter } from "./events.ts";
 import { handleNoUI } from "./non-interactive.ts";
-import { createBuiltinParserRegistry, type ParserRegistry } from "./parsers.ts";
+import { createBuiltinParserRegistry, type ParserRegistry, toolOwnedPermissionRequests } from "./parsers.ts";
 import { showPermissionPrompt } from "./prompt.ts";
 import { PermissionService } from "./service.ts";
 import { loadPermissionSettings } from "./settings.ts";
@@ -104,7 +104,10 @@ export default function permissionSystemExtension(pi: ExtensionAPI): void {
 			return undefined;
 		}
 
-		const permissionRequests = parserRegistry.parse(event.toolName, event.input, ctx.cwd);
+		const permissionRequests = parserRegistry.has(event.toolName)
+			? parserRegistry.parse(event.toolName, event.input, ctx.cwd)
+			: (toolOwnedPermissionRequests(pi.getAllTools(), event.toolName, event.input, ctx.cwd) ??
+				parserRegistry.parse(event.toolName, event.input, ctx.cwd));
 		const sessionID = ctx.sessionManager.getSessionId();
 
 		for (const permissionRequest of permissionRequests) {

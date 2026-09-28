@@ -11,9 +11,11 @@ import { WorkerSessionRegistry } from "../../src/modes/rpc/worker-session-regist
 import { createHarness } from "./harness.ts";
 import { startWorkerHost } from "./rpc-worker-host-support.ts";
 
-vi.mock("node:worker_threads", async () => {
+vi.mock("node:worker_threads", async (importOriginal) => {
+	const actual = await importOriginal<typeof import("node:worker_threads")>();
 	const { EventEmitter } = await import("node:events");
 	return {
+		...actual,
 		Worker: class extends EventEmitter {
 			postMessage(): void {}
 			terminate(): Promise<number> {

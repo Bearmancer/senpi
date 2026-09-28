@@ -30,6 +30,7 @@ export interface Args {
 	session?: string;
 	sessionId?: string;
 	fork?: string;
+	rebind?: string;
 	sessionDir?: string;
 	models?: string[];
 	tools?: string[];
@@ -171,6 +172,8 @@ export function parseArgs(args: string[], options: { grokNeoEnabled?: boolean } 
 			result.sessionId = args[++i];
 		} else if (arg === "--fork" && i + 1 < args.length) {
 			result.fork = args[++i];
+		} else if (arg === "--rebind" && i + 1 < args.length) {
+			result.rebind = args[++i];
 		} else if (arg === "--session-dir" && i + 1 < args.length) {
 			result.sessionDir = args[++i];
 		} else if (arg === "--models" && i + 1 < args.length) {
@@ -343,12 +346,16 @@ ${chalk.bold("Commands:")}
                                  List installed extensions from settings
   ${APP_NAME} config [--no-approve]
                                  Open TUI to enable/disable package resources (Tab switches scope)
+  ${APP_NAME} models discover <provider>
+                                 Add an OpenAI-compatible provider's /models listing to models.json
   ${APP_NAME} app-server [--listen <url>]
                                  Serve agent sessions over the Codex app-server protocol
   ${APP_NAME} app-server daemon <start|stop|status|restart> [--listen <url>]
                                  Manage the app-server daemon
-  ${APP_NAME} host <ensure|status|stop|handoff> [--launch-spec <file>]
+  ${APP_NAME} host <ensure|status|stop|handoff|shard-path|gc> [--launch-spec <file>]
                                  Get, inspect or end the shared RPC daemon (one JSON line per call)
+  ${APP_NAME} schedule <list|cancel|run> [--watch] [--exec <command>]
+                                 List, cancel or fire durable scheduled prompts
   ${APP_NAME} auth <command>            Print credentials or check provider readiness
   ${APP_NAME} <command> --help          Show help for install/remove/uninstall/update/list/config/auth
 
@@ -365,6 +372,7 @@ ${chalk.bold("Options:")}
   --session <path|id>            Use specific session file or partial UUID
   --session-id <id>              Use exact project session ID, creating it if missing
   --fork <path|id>               Fork specific session file or partial UUID into a new session
+  --rebind <path|id>             Move a session from a moved or re-cloned repository into this directory and continue it
   --session-dir <dir>            Directory for session storage and lookup
   --no-session                   Don't save session (ephemeral)
   --name, -n <name>              Set session display name

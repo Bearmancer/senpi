@@ -105,6 +105,8 @@ export interface AnthropicSubscriptionSessionEntry {
 	/** Wave C seam: a divergence boundary recorded for the next continuity decision. */
 	pendingForkReason: string | null;
 	lastUsedAt: number;
+	/** Digest of the access token the resident subprocess was spawned with. */
+	credentialDigest?: string;
 }
 
 export interface CreateSessionRegistryEntryInput {

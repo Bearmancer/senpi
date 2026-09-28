@@ -188,24 +188,24 @@ async function executeCell(
 	onReady: () => void,
 ): Promise<AgentToolResult<EvalToolDetails>> {
 	let handler: CellHandler | undefined;
-	try {
-		const onMessage = (message: KernelToHostMessage): void => {
-			if (!state.active || handler === undefined) return;
-			if (message.type === "status") {
-				if (message.event.op === TIMEOUT_PAUSE_OP) {
-					execution.pause();
-					cellManager.pause(cell);
-					return;
-				}
-				if (message.event.op === TIMEOUT_RESUME_OP) {
-					execution.resume();
-					cellManager.resume(cell);
-					return;
-				}
+	const onMessage = (message: KernelToHostMessage): void => {
+		if (!state.active || handler === undefined) return;
+		if (message.type === "status") {
+			if (message.event.op === TIMEOUT_PAUSE_OP) {
+				execution.pause();
+				cellManager.pause(cell);
+				return;
 			}
-			const pending = handler.handle(message);
-			void pending.catch((error: unknown) => execution.cancel(error));
-		};
+			if (message.event.op === TIMEOUT_RESUME_OP) {
+				execution.resume();
+				cellManager.resume(cell);
+				return;
+			}
+		}
+		const pending = handler.handle(message);
+		void pending.catch((error: unknown) => execution.cancel(error));
+	};
+	try {
 		const kernel = await execution.wait(options.kernelManager.getKernel(invocation.input.language, onMessage));
 		// Computed before the handler so the cell's capability can be entered per host tool call from the
 		// worker's message loop, which runs outside the `kernelToolsStorage.run` context below (#1754).
@@ -251,6 +251,7 @@ async function executeCell(
 				kernel.run({
 					cellId: invocation.cellId,
 					code: invocation.input.code,
+					kernelPreludes: options.kernelPreludes?.(),
 					onMessage,
 					onStarted: () => {
 						cellManager.markRunning(cell);
@@ -286,6 +287,8 @@ async function executeCell(
 		bridgeAbortController.abort();
 		execution.finish();
 		if (handler) await handler.flushOutput();
+		// The cell settled: stop the kernel dispatcher from holding this cell's listener (#2260).
+		options.kernelManager.releaseKernelListener?.(invocation.input.language, onMessage);
 	}
 }
 

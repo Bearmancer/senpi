@@ -1,3 +1,5 @@
+import { stripProviderRequestIds } from "@earendil-works/pi-ai/utils/retry";
+
 /**
  * Runtime-only selector suppression. A SelectorCooldowns instance belongs to one
  * AgentSession and is deliberately never persisted to settings or session files.
@@ -38,7 +40,7 @@ export class SelectorCooldowns {
 			return retryAfterMs;
 		}
 
-		const message = errorMessage?.toLowerCase() ?? "";
+		const message = stripProviderRequestIds(errorMessage ?? "").toLowerCase();
 		if (/usage[- ]limit|quota|insufficient_quota|billing|credits[-_ ]required|credits are required/.test(message))
 			return 30 * 60_000;
 		if (/rate[ -]?limit|429|too many requests/.test(message)) return 30_000;

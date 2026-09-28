@@ -119,7 +119,7 @@ describe("buildEvalPrompt", () => {
 		// Then: the system-prompt guidance carries the batching decision rule.
 		expect(guidelines).toEqual([
 			"Prefer eval when a step's calls are independent: one cell runs them together and keeps every failure in its result; edits and result-dependent calls go one at a time, each observed before the next.",
-			"Use eval reset only when a language kernel must be wiped; reset is scoped to the selected language.",
+			"Use eval reset only when a language kernel must be wiped; reset is scoped to the selected language. A bracketed kernel memory notice in a result names the globals holding the most memory; drop the ones you no longer need.",
 		]);
 	});
 

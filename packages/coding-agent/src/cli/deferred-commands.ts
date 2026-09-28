@@ -29,6 +29,7 @@ const PACKAGE_COMMAND_ALIAS = "uninstall";
 export const CONFIG_COMMAND_ARGV = "config";
 export const APP_SERVER_COMMAND_ARGV = "app-server";
 export const HOST_COMMAND_ARGV = "host";
+export const SCHEDULE_COMMAND_ARGV = "schedule";
 
 /** True when argv[0] selects a package-manager verb, matching `parsePackageCommand()`. */
 export function isPackageCommandArgv(args: readonly string[]): boolean {
@@ -69,4 +70,14 @@ export async function dispatchHostCommand(args: readonly string[]): Promise<numb
 	if (args[0] !== HOST_COMMAND_ARGV) return undefined;
 	const { runHostCommand } = await import("./host-command.ts");
 	return await runHostCommand(args.slice(1));
+}
+
+/**
+ * `senpi schedule` fires durable scheduled prompts out of process; like `host` it answers with an
+ * exit code, and `undefined` means this argv is not a schedule command.
+ */
+export async function dispatchScheduleCommand(args: readonly string[]): Promise<number | undefined> {
+	if (args[0] !== SCHEDULE_COMMAND_ARGV) return undefined;
+	const { runScheduleCommand } = await import("./schedule-command.ts");
+	return await runScheduleCommand(args.slice(1));
 }

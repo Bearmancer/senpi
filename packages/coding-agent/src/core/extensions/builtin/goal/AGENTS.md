@@ -42,8 +42,11 @@ clean accepted user turn arms a visible 10-second grace countdown before the Goa
 Mechanically blocked Goals reactivate on accepted input, including admitted steering. A
 `length` stop gets exactly one truncation recovery, then blocks.
 
-Terminal provider errors block only when `AgentEndEvent.willRetry` is false and the abort is
-not system-owned; those blocks are mechanical, so a new user message resumes. A terminal
+A terminal (`willRetry` false, not system-owned) provider error keeps the Goal active and
+queues one guarded `providerRecovery` continuation after `agent_settled`, except a terminal
+401/403 (`terminalProviderAuthFailure`, #2293) or policy rejection (#1520): those block on the
+first hit. The auth block is mechanical (a new user message resumes after the user fixes the
+login); the policy block is not. A terminal
 *system* error preserves the active Goal: schedule the live monitor wait, or queue a guarded
 hidden `systemRecovery` continuation after `agent_settled` (staging preserves late user
 cancellation; canceling releases the single-flight latch for `/goal resume`). Intentional

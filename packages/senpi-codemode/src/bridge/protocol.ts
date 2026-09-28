@@ -2,6 +2,7 @@ import { createHash, randomBytes, randomUUID, timingSafeEqual } from "node:crypt
 import { type Static, Type } from "typebox";
 import { Value } from "typebox/value";
 import { kernelToolHostToKernelSchemas, kernelToolKernelToHostSchemas } from "./kernel-tools-protocol.ts";
+import { kernelMemoryReportSchema, kernelMemoryThresholdsSchema } from "./memory-protocol.ts";
 
 export const BRIDGE_FRAME_MAX_BYTES = 10 * 1024 * 1024;
 
@@ -31,12 +32,22 @@ const hostToKernelMessageSchema = Type.Union([
 		kernelGeneration: Type.Optional(Type.Integer({ minimum: 1 })),
 		hostToolNames: Type.Optional(Type.Array(Type.String({ minLength: 1 }))),
 		foreignLanguageNames: Type.Optional(Type.Array(Type.String({ minLength: 1 }))),
+		memory: Type.Optional(kernelMemoryThresholdsSchema),
 	}),
 	Type.Object({
 		type: Type.Literal("run"),
 		cellId: Type.String({ minLength: 1 }),
 		code: Type.String(),
 		timeoutMs: Type.Optional(Type.Integer({ minimum: 1 })),
+		/** Python only: active tool globals to install before the cell and deactivated ones to remove. */
+		preludes: Type.Optional(
+			Type.Object({
+				install: Type.Array(
+					Type.Object({ exports: Type.Array(Type.String({ minLength: 1 })), python: Type.String() }),
+				),
+				remove: Type.Array(Type.String({ minLength: 1 })),
+			}),
+		),
 	}),
 	Type.Object({
 		type: Type.Literal("tool-reply"),
@@ -56,6 +67,19 @@ const hostToKernelMessageSchema = Type.Union([
 	}),
 	Type.Object({
 		type: Type.Literal("close"),
+	}),
+	/** JS only: the kernel's private port to the main-thread Bun.WebView service, sent in the transfer list. */
+	Type.Object({
+		type: Type.Literal("webview-port"),
+		requestId: Type.String({ minLength: 1 }),
+		ok: Type.Literal(true),
+		port: Type.Unknown(),
+	}),
+	Type.Object({
+		type: Type.Literal("webview-port"),
+		requestId: Type.String({ minLength: 1 }),
+		ok: Type.Literal(false),
+		error: bridgeErrorSchema,
 	}),
 	...kernelToolHostToKernelSchemas,
 ]);
@@ -88,6 +112,7 @@ const kernelToHostMessageSchema = Type.Union([
 		ok: Type.Literal(true),
 		valueRepr: Type.Optional(Type.String()),
 		durationMs: Type.Integer({ minimum: 0 }),
+		memory: Type.Optional(kernelMemoryReportSchema),
 	}),
 	Type.Object({
 		type: Type.Literal("result"),
@@ -95,8 +120,10 @@ const kernelToHostMessageSchema = Type.Union([
 		ok: Type.Literal(false),
 		error: bridgeErrorSchema,
 		durationMs: Type.Integer({ minimum: 0 }),
+		memory: Type.Optional(kernelMemoryReportSchema),
 	}),
 	Type.Object({ type: Type.Literal("closed") }),
+	Type.Object({ type: Type.Literal("webview-connect"), requestId: Type.String({ minLength: 1 }) }),
 	...kernelToolKernelToHostSchemas,
 ]);
 

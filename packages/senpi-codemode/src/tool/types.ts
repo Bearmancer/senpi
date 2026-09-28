@@ -1,5 +1,6 @@
-import type { AgentToolResult, AgentToolUpdateCallback } from "@code-yeongyu/senpi";
+import type { AgentToolResult, AgentToolUpdateCallback, KernelPreludeContribution } from "@code-yeongyu/senpi";
 import { type TSchema, type TUnsafe, Type } from "typebox";
+import type { KernelMemoryReport } from "../bridge/memory-protocol.ts";
 import type { HostToKernelMessage, KernelToHostMessage } from "../bridge/protocol.ts";
 import {
 	DEFAULT_FOREGROUND_WINDOW_SECONDS,
@@ -141,6 +142,8 @@ export interface EvalKernelRunInput {
 	readonly timeoutMs?: number;
 	readonly onStarted?: () => void;
 	readonly onMessage?: (message: KernelToHostMessage) => void;
+	/** Globals of the tools active when the cell was submitted; kernels without preludes ignore them. */
+	readonly kernelPreludes?: readonly KernelPreludeContribution[];
 }
 
 export interface KernelInterruptHandle {
@@ -164,6 +167,11 @@ export interface EvalKernel {
 
 export interface EvalKernelManager {
 	getKernel(language: EvalLanguage, onMessage: (message: KernelToHostMessage) => void): Promise<EvalKernel>;
+	/**
+	 * Drops the per-cell listener `getKernel` registered for `language` once that cell settled.
+	 * Identity-checked, so releasing a superseded listener never unbinds a newer cell's listener.
+	 */
+	releaseKernelListener?(language: EvalLanguage, onMessage: (message: KernelToHostMessage) => void): void;
 }
 
 export type ExecuteTool = (
@@ -255,4 +263,8 @@ export interface EvalToolDetails {
 	readonly jsonOutputs?: readonly unknown[];
 	readonly notice?: string;
 	readonly meta?: TruncationMeta;
+	/** Kernel memory after the cell; its notice text is delivered as its own content part. */
+	readonly memory?: EvalMemoryDetails;
 }
+
+export type EvalMemoryDetails = Omit<KernelMemoryReport, "notice">;

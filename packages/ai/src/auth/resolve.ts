@@ -33,6 +33,12 @@ export interface AuthResolutionOverrides {
 	 * ambient env, so a slot-scoped request can never silently switch identities.
 	 */
 	slotName?: string;
+	/**
+	 * An access token the provider just refused with one of its
+	 * `OAuthAuth.rejectedTokenStatuses`. A stored OAuth credential still carrying it
+	 * is re-exchanged regardless of its expiry; one already rotated is used as is.
+	 */
+	rejectedAccess?: string;
 	signal?: AbortSignal;
 }
 
@@ -126,6 +132,7 @@ async function resolveProviderAuthWithSignal(
 				signal,
 				overrides?.minOAuthValidityMs,
 				slotName,
+				overrides?.rejectedAccess,
 			);
 		}
 		if (projected.type === "api_key" && provider.auth.apiKey) {
@@ -145,6 +152,8 @@ async function resolveProviderAuthWithSignal(
 				overrides?.env,
 				signal,
 				overrides?.minOAuthValidityMs,
+				undefined,
+				overrides?.rejectedAccess,
 			);
 		}
 		if (stored.type === "api_key" && provider.auth.apiKey) {
@@ -208,12 +217,15 @@ async function resolveStoredOAuth(
 	signal: AbortSignal,
 	minOAuthValidityMs?: number,
 	slotName?: string,
+	rejectedAccess?: string,
 ): Promise<AuthResult | undefined> {
 	const minimumValidityMs = Math.max(DEFAULT_OAUTH_MINIMUM_VALIDITY_MS, minOAuthValidityMs ?? 0);
 	const expiresSoon = (credential: OAuthCredential) => Date.now() + minimumValidityMs >= credential.expires;
+	const isStale = (credential: OAuthCredential) =>
+		expiresSoon(credential) || (rejectedAccess !== undefined && credential.access === rejectedAccess);
 	let credential = stored;
 
-	if (expiresSoon(credential)) {
+	if (isStale(credential)) {
 		let post: Credential | undefined;
 		try {
 			post = await refreshOAuthCredential({
@@ -222,7 +234,7 @@ async function resolveStoredOAuth(
 				oauth,
 				stale: credential,
 				slotName,
-				isStale: expiresSoon,
+				isStale,
 				signal,
 				owning: true,
 			});

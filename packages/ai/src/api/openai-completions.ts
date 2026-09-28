@@ -19,6 +19,7 @@ import {
 	supportsMax,
 	supportsXhigh,
 } from "../models.ts";
+import { readProviderDiagnostic } from "../provider-diagnostic.ts";
 import type {
 	AssistantMessage,
 	CacheRetention,
@@ -45,6 +46,11 @@ import type {
 } from "../types.ts";
 import { formatProviderError, normalizeProviderError } from "../utils/error-body.ts";
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
+import {
+	formatGitHubCopilotToolLimitError,
+	limitGitHubCopilotTools,
+	recordGitHubCopilotToolLimit,
+} from "../utils/github-copilot-tool-limit.ts";
 import { shortHash } from "../utils/hash.ts";
 import { headersToRecord } from "../utils/headers.ts";
 import { parseStreamingJson } from "../utils/json-parse.ts";
@@ -53,10 +59,15 @@ import {
 	getOpenAICompletionsCompat as getCompat,
 	type ResolvedOpenAICompletionsCompat,
 } from "../utils/prompt-cache-ttl.ts";
+import {
+	awaitProviderTransport,
+	iterateProviderTransport,
+	openAICompatibleProviderDiagnosticFromError,
+} from "../utils/provider-diagnostic-sources.ts";
 import { getProviderEnvValue } from "../utils/provider-env.ts";
 import { retryProviderStreamRequest } from "../utils/provider-retry.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
-import { isForcedToolChoiceUnsupportedError, omitToolChoiceParam } from "../utils/tool-choice-fallback.ts";
+import { sendWithForcedToolChoiceFallback } from "../utils/tool-choice-fallback.ts";
 import {
 	normalizeToolParametersForMoonshot,
 	normalizeToolParametersForOpenAICompat,
@@ -70,6 +81,7 @@ import {
 	resolveGrammarConstrainedSampling,
 	resolveJsonSchemaStrictSampling,
 } from "./constrained-sampling.ts";
+import { withGitHubCopilotFailureNote } from "./github-copilot-errors.ts";
 import { buildCopilotDynamicHeaders, hasCopilotVisionInput } from "./github-copilot-headers.ts";
 import { resolveOpenAIClientAuth } from "./openai-client-auth.ts";
 import { clampOpenAIPromptCacheKey } from "./openai-prompt-cache.ts";
@@ -545,6 +557,11 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 				params = nextParams as OpenAICompletionsRequestParams;
 			}
 			params = normalizeRequestToolSchemas(params, compat);
+			const limitedTools = limitGitHubCopilotTools(model.provider, params.tools, params.tool_choice);
+			if (limitedTools.omittedCount > 0) {
+				params = { ...params, tools: limitedTools.tools };
+				recordGitHubCopilotToolLimit(output, limitedTools.omittedCount);
+			}
 			const requestOptions = {
 				...(options?.signal ? { signal: options.signal } : {}),
 				...(options?.timeoutMs !== undefined ? { timeout: options.timeoutMs } : {}),
@@ -554,18 +571,23 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 				body: OpenAICompletionsRequestParams,
 				requestConfig: typeof requestOptions,
 			) => { withResponse(): Promise<{ data: AsyncIterable<ChatCompletionChunk>; response: Response }> };
-			const createStream = (body: OpenAICompletionsRequestParams) =>
-				createChatCompletion(body, requestOptions).withResponse();
+			const createStream = async (body: OpenAICompletionsRequestParams) => {
+				const { data, response } = await awaitProviderTransport(
+					() => createChatCompletion(body, requestOptions).withResponse(),
+					openAICompatibleProviderDiagnosticFromError,
+				);
+				return { data: iterateProviderTransport(data, openAICompatibleProviderDiagnosticFromError), response };
+			};
 			const createRequest = async () => {
-				try {
-					return await createStream(params);
-				} catch (error) {
-					if (isForcedToolChoiceUnsupportedError(error, isForcedOpenAICompletionsToolChoice(params.tool_choice))) {
-						params = omitToolChoiceParam(params);
-						return createStream(params);
-					}
-					throw error;
-				}
+				const sent = await sendWithForcedToolChoiceFallback({
+					target: model,
+					params,
+					acceptsForcedToolChoice: compat.supportsForcedToolChoice !== false,
+					isForced: isForcedOpenAICompletionsToolChoice,
+					send: createStream,
+				});
+				params = sent.params;
+				return sent.result;
 			};
 			const { stream: openaiStream } = await retryProviderStreamRequest(
 				async () => {
@@ -987,7 +1009,13 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 				delete (block as { streamIndex?: number }).streamIndex;
 			}
 			output.stopReason = options?.signal?.aborted ? "aborted" : "error";
-			output.errorMessage = formatProviderError(normalizeProviderError(error));
+			const providerDiagnostic = output.stopReason === "error" ? readProviderDiagnostic(error) : undefined;
+			if (providerDiagnostic !== undefined) output.providerDiagnostic = providerDiagnostic;
+			output.errorMessage = withGitHubCopilotFailureNote(
+				formatGitHubCopilotToolLimitError(output, formatProviderError(normalizeProviderError(error))),
+				model.provider,
+				error,
+			);
 			// Some providers via OpenRouter give additional information in this field.
 			// normalizeProviderError already stringifies the parsed body (error.error)
 			// into errorMessage, so only append the raw metadata when it is not already
@@ -1025,8 +1053,11 @@ export const streamSimple: StreamFunction<"openai-completions", SimpleStreamOpti
 		: model.id.includes("gpt-6-astra")
 			? "off"
 			: undefined;
+	// An explicitly mapped off value (for example an endpoint-advertised "none", senpi#2196) is how the
+	// model turns reasoning off, so only a map without one keeps the Astra off -> low fallback.
+	const hasMappedOff = typeof thinkingLevelMap?.off === "string";
 	const normalizedReasoning =
-		clampedReasoning === "off" && model.id.includes("gpt-6-astra") ? "low" : clampedReasoning;
+		clampedReasoning === "off" && model.id.includes("gpt-6-astra") && !hasMappedOff ? "low" : clampedReasoning;
 	const reasoningEffort =
 		normalizedReasoning === "off"
 			? undefined

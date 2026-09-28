@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { getModel } from "../src/compat.ts";
 import { streamAnthropic } from "../src/providers/anthropic.ts";
 import type { Context, Model } from "../src/types.ts";
+import { clearForcedToolChoiceRefusals } from "../src/utils/tool-choice-fallback.ts";
 
 interface AnthropicToolChoicePayload {
 	tools?: unknown[];
@@ -113,6 +114,7 @@ async function capturePayload(
 
 describe("Anthropic tool_choice compatibility", () => {
 	beforeEach(() => {
+		clearForcedToolChoiceRefusals();
 		mockState.createParams = undefined;
 		mockState.createCalls.length = 0;
 		mockState.createErrors.length = 0;
@@ -215,6 +217,36 @@ describe("Anthropic tool_choice compatibility", () => {
 		expect(response.stopReason).toBe("stop");
 		expect(mockState.createCalls).toHaveLength(2);
 		expect(mockState.createCalls[1]?.tool_choice).toBeUndefined();
+	});
+
+	it("remembers an unconditional refusal for the model but not one that blames thinking (senpi#2218)", async () => {
+		const forceWeather = (model: Model<"anthropic-messages">) =>
+			streamAnthropic(withPayloadCapture(model), context, {
+				apiKey: "fake-key",
+				toolChoice: { type: "tool", name: "get_weather" },
+			}).result();
+		const sonnet = getModel("anthropic", "claude-sonnet-4-6");
+		const opus = getModel("anthropic", "claude-opus-5");
+
+		mockState.createErrors.push(
+			new HttpStatusError(400, "tool_choice forces tool use is not compatible with this model"),
+		);
+		await forceWeather(sonnet);
+		mockState.createErrors.push(
+			new HttpStatusError(400, "Thinking may not be enabled when tool_choice forces tool use."),
+		);
+		await forceWeather(opus);
+		await forceWeather(sonnet);
+		await forceWeather(opus);
+
+		expect(mockState.createCalls.map((call) => call.tool_choice)).toEqual([
+			{ type: "tool", name: "get_weather" },
+			undefined,
+			{ type: "tool", name: "get_weather" },
+			undefined,
+			undefined,
+			{ type: "tool", name: "get_weather" },
+		]);
 	});
 
 	it("omits forced tool_choice when compat.supportsForcedToolChoice is false regardless of model id", async () => {

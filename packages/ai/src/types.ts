@@ -16,6 +16,7 @@ import type {
 	OpenAIResponsesCompat as BaseOpenAIResponsesCompat,
 	SessionAffinityFormat,
 } from "./openai-responses-compat.ts";
+import type { ProviderDiagnostic } from "./provider-diagnostic.ts";
 import type { AssistantMessageDiagnostic } from "./utils/diagnostics.ts";
 import type { AssistantMessageEventStream } from "./utils/event-stream.ts";
 
@@ -595,6 +596,8 @@ export interface AssistantMessage {
 	stopDetails?: AssistantStopDetails;
 	deferred?: DeferredHandle;
 	errorMessage?: string;
+	/** Structured provider failure family, minted only by a provider adapter from structured error metadata. */
+	providerDiagnostic?: ProviderDiagnostic;
 	/** Explicit owner for an abort initiated by the provider retry watchdog. */
 	abortSource?: "provider";
 	rawStopReason?: string;
@@ -830,6 +833,12 @@ export interface OpenAICompletionsCompat {
 	supportsLongCacheRetention?: boolean;
 	/** Whether the provider accepts the `max_output_tokens` parameter. Some Codex-protocol gateways reject it. Default: true. */
 	supportsMaxOutputTokens?: boolean;
+	/**
+	 * Whether the provider accepts a `tool_choice` that forces a tool (`required` or a named function).
+	 * When false the forced choice is dropped before sending. Default: true; a provider that refuses one
+	 * at runtime is remembered for the process after one retry without it.
+	 */
+	supportsForcedToolChoice?: boolean;
 	/**
 	 * vLLM scheduler priority sent as the top-level `priority` request field (lower values are
 	 * handled earlier; server default 0). Only meaningful when vLLM runs with

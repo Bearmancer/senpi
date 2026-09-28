@@ -28,6 +28,8 @@ export interface HostProtocolInfo {
 	readonly engineVersion?: string;
 	readonly engineOrdinal?: EngineOrdinal;
 	readonly launch_profile?: RpcLaunchProfile;
+	/** Whether the answering host's memory sampler reads pressure right now; absent on classic and older hosts. */
+	readonly memory_pressure?: boolean;
 }
 
 /** Parses the `data` of a `get_protocol_info` reply. Unknown or malformed identity fields are dropped, not guessed. */
@@ -49,6 +51,7 @@ export function parseHostProtocolInfo(data: unknown): HostProtocolInfo | undefin
 		...(typeof data.engineVersion === "string" && { engineVersion: data.engineVersion }),
 		...(ordinal && { engineOrdinal: ordinal }),
 		...(launchProfile && { launch_profile: launchProfile }),
+		...(typeof data.memory_pressure === "boolean" && { memory_pressure: data.memory_pressure }),
 	};
 }
 

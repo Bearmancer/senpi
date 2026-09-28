@@ -21,8 +21,10 @@ export function isRotationStreamStart(event: AssistantMessageEvent): boolean {
 	return event.type === "start";
 }
 
+/** The failure a terminal error event carries, with the adapter's structured HTTP status for classification. */
 export function rotationErrorFromEvent(event: AssistantMessageEvent): unknown {
 	if (event.type !== "error") return undefined;
-	const message = event.error.errorMessage ?? "provider stream error";
-	return new Error(message);
+	const failure = new Error(event.error.errorMessage ?? "provider stream error");
+	const status = event.error.providerDiagnostic?.httpStatus;
+	return status === undefined ? failure : Object.assign(failure, { status });
 }

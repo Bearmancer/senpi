@@ -2,19 +2,20 @@
 // over while a superseded generation beside it held gigabytes with NO session - the state nothing
 // ever named, because the sampler only reported pressure, never pressure with nothing to show for it.
 import { describe, expect, it } from "vitest";
-import { HostMemorySampler } from "../../../src/modes/rpc/host-memory-sampler.ts";
+import type { ProcessFootprint } from "../../../src/core/process-footprint.ts";
+import { type HostMemoryReading, HostMemorySampler } from "../../../src/modes/rpc/host-memory-sampler.ts";
 
 const MEGABYTE = 1024 * 1024;
 
 describe("the host memory watchdog", () => {
 	it("reports an empty host above the threshold once per pressure episode", () => {
 		const idle: number[] = [];
-		let rssMb = 9_000;
+		let footprintMb = 9_000;
 		let sessions = 0;
 		const sampler = sampleWith({
-			readRssBytes: () => rssMb * MEGABYTE,
+			readFootprint: () => ({ bytes: footprintMb * MEGABYTE, measure: "phys_footprint" }),
 			sessions: () => sessions,
-			onIdlePressure: (value) => idle.push(value),
+			onIdlePressure: (reading) => idle.push(reading.footprintMb),
 		});
 
 		sampler.sample();
@@ -24,7 +25,7 @@ describe("the host memory watchdog", () => {
 		sessions = 1;
 		sampler.sample();
 		sessions = 0;
-		rssMb = 9_100;
+		footprintMb = 9_100;
 		sampler.sample();
 
 		expect(idle).toEqual([9_000, 9_100]);
@@ -32,19 +33,19 @@ describe("the host memory watchdog", () => {
 
 	it("says nothing while the host is below the threshold or holding sessions", () => {
 		const idle: number[] = [];
-		let rssMb = 100;
+		let footprintMb = 100;
 		let sessions = 3;
 		const sampler = sampleWith({
-			readRssBytes: () => rssMb * MEGABYTE,
+			readFootprint: () => ({ bytes: footprintMb * MEGABYTE, measure: "phys_footprint" }),
 			sessions: () => sessions,
-			onIdlePressure: (value) => idle.push(value),
+			onIdlePressure: (reading) => idle.push(reading.footprintMb),
 		});
 
 		sampler.sample();
-		rssMb = 9_000;
+		footprintMb = 9_000;
 		sampler.sample();
 		sessions = 0;
-		rssMb = 100;
+		footprintMb = 100;
 		sampler.sample();
 
 		expect(idle).toEqual([]);
@@ -52,9 +53,9 @@ describe("the host memory watchdog", () => {
 });
 
 function sampleWith(options: {
-	readRssBytes: () => number;
+	readFootprint: () => ProcessFootprint;
 	sessions: () => number;
-	onIdlePressure: (rssMb: number) => void;
+	onIdlePressure: (reading: HostMemoryReading) => void;
 }): HostMemorySampler {
 	return new HostMemorySampler({
 		emit: () => {},

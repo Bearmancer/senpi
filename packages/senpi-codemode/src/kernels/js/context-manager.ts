@@ -1,7 +1,14 @@
 import type { EvalStatusEvent, HostToKernelMessage, KernelToHostMessage } from "../../bridge/protocol.ts";
-import { CHILD_LIFECYCLE_OP, INTERRUPT_ACK_OP } from "../../bridge/reserved.ts";
+import { CHILD_LIFECYCLE_OP, INTERRUPT_ACK_OP, MEMORY_COLLECTED_OP } from "../../bridge/reserved.ts";
 import type { KernelInterruptHandle } from "../../tool/types.ts";
-import { abandonedWorkerNote, awaitCooperativeSettlement, type WorkerRetirement } from "./interrupt-bounds.ts";
+import { KernelMemoryPolicy } from "../shared/kernel-memory.ts";
+import {
+	abandonedWorkerNote,
+	awaitCooperativeSettlement,
+	DEFAULT_INTERRUPT_BOUNDS,
+	type JavaScriptInterruptBounds,
+	type WorkerRetirement,
+} from "./interrupt-bounds.ts";
 import {
 	assertJavaScriptKernelOpen,
 	type JavaScriptKernelMode,
@@ -53,9 +60,13 @@ export class JavaScriptKernel {
 	#pendingToolCalls: ToolCallMessage[] = [];
 	/** Live cell children the worker reported; retired by the host when the worker itself is lost. */
 	readonly #childPids = new Set<number>();
+	readonly #memory: KernelMemoryPolicy | null;
+	readonly #interruptBounds: JavaScriptInterruptBounds;
 
 	constructor(options: JavaScriptKernelOptions) {
 		this.#options = options;
+		this.#interruptBounds = options.interruptBounds ?? DEFAULT_INTERRUPT_BOUNDS;
+		this.#memory = options.memory === undefined ? null : new KernelMemoryPolicy("js", options.memory);
 		this.#moduleLoader = new LocalModuleLoader(options);
 		this.#slot = new WorkerSlot(options, {
 			isOpen: () => this.#lifecycle === "open",
@@ -195,7 +206,7 @@ export class JavaScriptKernel {
 		this.#slot.postMessage({
 			type: "run",
 			cellId: next.input.cellId,
-			code: this.#moduleLoader.prepareCell(next.input.code),
+			code: this.#moduleLoader.prepareCell(next.input.code, next.input.kernelPreludes),
 			timeoutMs: next.input.timeoutMs,
 		});
 	}
@@ -226,12 +237,16 @@ export class JavaScriptKernel {
 			run.interruptResult = { type: "result", cellId: run.input.cellId, ok: false, error: { message }, durationMs };
 			run.interruptAck ??= Promise.withResolvers<void>();
 			this.#slot.postMessage({ type: "interrupt", reason });
-			if ((await awaitCooperativeSettlement(run)) === "settled") return { retained: run.settledByWorker };
+			if ((await awaitCooperativeSettlement(run, this.#interruptBounds)) === "settled") {
+				return { retained: run.settledByWorker };
+			}
 			if (!this.#runs.releaseActive(run)) return { retained: run.settledByWorker };
 			const retirement = await this.#terminate();
 			this.#runs.settle(run, run.interruptResult ?? stoppedResult(run.input.cellId, message));
 			void this.#recover(() => Promise.resolve());
-			return retirement === "abandoned" ? { retained: false, note: abandonedWorkerNote() } : { retained: false };
+			return retirement === "abandoned"
+				? { retained: false, note: abandonedWorkerNote(this.#interruptBounds.terminateDeadlineMs) }
+				: { retained: false };
 		} finally {
 			this.#clearToolCalls();
 		}
@@ -275,6 +290,13 @@ export class JavaScriptKernel {
 			this.#trackChildEvent(message.event);
 			return;
 		}
+		if (message.type === "status" && message.event.op === MEMORY_COLLECTED_OP) {
+			const liveBytes = message.event.liveBytes;
+			if (typeof liveBytes !== "number") return;
+			this.#memory?.observeLive(liveBytes);
+			this.#options.onMemoryCollected?.(liveBytes);
+			return;
+		}
 		(this.#runs.active?.input.onMessage ?? this.#options.onMessage)?.(message);
 		if (message.type === "tool-call") {
 			const waiter = this.#toolWaiters.shift();
@@ -291,8 +313,21 @@ export class JavaScriptKernel {
 		this.#clearTimeout();
 		this.#runs.releaseActive(active);
 		active.settledByWorker = true;
-		this.#runs.settle(active, active.interruptResult ?? message);
+		this.#runs.settle(active, active.interruptResult ?? this.#withMemoryPolicy(message));
 		this.#startNext();
+		this.#recycleOverCeilingWhenIdle();
+	}
+
+	#withMemoryPolicy(message: ResultMessage): ResultMessage {
+		if (this.#memory === null || message.memory === undefined) return message;
+		return { ...message, memory: this.#memory.annotate(message.memory) };
+	}
+
+	/** A kernel over its memory ceiling restarts only once no cell is running or queued on it. */
+	#recycleOverCeilingWhenIdle(): void {
+		if (this.#memory?.recyclePending !== true || this.#runs.active || this.#runs.hasWaiting) return;
+		this.#memory.recycleStarted();
+		void this.#restartAfterStop();
 	}
 
 	#handleCrash(error: Error): void {
@@ -338,6 +373,7 @@ export class JavaScriptKernel {
 	async #terminate(): Promise<WorkerRetirement> {
 		this.#clearTimeout();
 		this.#kernelTools.rejectAll(kernelToolError("kernel_tool_stale", "JavaScript worker reset"));
+		this.#memory?.kernelRetired();
 		const retirement = await this.#slot.retire();
 		await this.#retireWorkerChildren();
 		return retirement;
@@ -348,5 +384,7 @@ export class JavaScriptKernel {
 		const pids = [...this.#childPids];
 		this.#childPids.clear();
 		await terminateProcessTrees(pids, { graceMs: WORKER_LOSS_CHILD_GRACE_MS, ownerPid: process.pid });
+		// The worker that owned these children and their exit watchers is gone, so nothing else will wait on them.
+		await this.#options.collectOrphanedChildren?.(pids);
 	}
 }

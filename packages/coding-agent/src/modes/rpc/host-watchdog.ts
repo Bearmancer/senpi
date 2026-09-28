@@ -219,21 +219,18 @@ function captureBeforeCleanup(config: HostWatchdogConfig): Promise<void> {
 		.catch(() => undefined);
 }
 
-async function cleanupWatchdogPaths(config: HostWatchdogConfig): Promise<void> {
+/**
+ * Removes the cleanup paths one at a time, in list order, on every platform: the supervisor puts
+ * the registration pointer last (host-cleanup-paths.ts), and it must not vanish before the state
+ * it describes (senpi#2241).
+ */
+export async function cleanupWatchdogPaths(config: HostWatchdogConfig): Promise<void> {
 	const paths = [...(config.cleanupPaths ?? []), ...(config.scratchDir ? [config.scratchDir] : [])];
-	if (process.platform === "win32") {
-		for (const path of paths) {
-			try {
+	for (const path of paths) {
+		try {
+			if (process.platform === "win32")
 				rmSync(path, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
-			} catch {}
-		}
-		return;
+			else await rm(path, { recursive: true, force: true });
+		} catch {}
 	}
-	await Promise.all(
-		paths.map(async (path) => {
-			try {
-				await rm(path, { recursive: true, force: true });
-			} catch {}
-		}),
-	);
 }

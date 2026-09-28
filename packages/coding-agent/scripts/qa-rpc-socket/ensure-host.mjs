@@ -30,10 +30,12 @@ try {
 	if (started.reused || started.pid !== managed.pid) {
 		throw new Error(`unexpected first ensure: ${JSON.stringify(started)}`);
 	}
+	started.release();
 	lines.push(`assert real-cli-start pid=${started.pid} reused=false version=${VERSION}`);
 
 	const again = await ensureHost({ socket, agentDir });
 	if (!again.reused || again.pid !== started.pid) throw new Error(`unexpected second ensure: ${JSON.stringify(again)}`);
+	again.release();
 	lines.push(`assert reuse-same-host pid=${again.pid} reused=true`);
 
 	await stop(managed);
@@ -47,6 +49,7 @@ try {
 		throw new Error(`a host with a different version was not reused: ${JSON.stringify(reused)}`);
 	}
 	if (!(await alive(compatible))) throw new Error(`compatible fake ${compatible.pid} did not survive the ensure`);
+	reused.release();
 	lines.push(`assert version-mismatch-reused pid=${reused.pid} serverVersion=0.0.0-qa`);
 
 	await rm(paths.pointerFile, { force: true });
