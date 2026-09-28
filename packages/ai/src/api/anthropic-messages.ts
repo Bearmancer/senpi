@@ -42,6 +42,11 @@ import { combineAbortSignals } from "../utils/abort-signals.ts";
 import { splitDeferredTools } from "../utils/deferred-tools.ts";
 import { appendAssistantMessageDiagnostic } from "../utils/diagnostics.ts";
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
+import {
+	formatGitHubCopilotToolLimitError,
+	limitGitHubCopilotTools,
+	recordGitHubCopilotToolLimit,
+} from "../utils/github-copilot-tool-limit.ts";
 import { headersToRecord, providerHeadersToRecord } from "../utils/headers.ts";
 import { parseJsonWithRepair, parseStreamingJson } from "../utils/json-parse.ts";
 import { getPiUserAgent } from "../utils/pi-user-agent.ts";
@@ -65,12 +70,13 @@ import {
 	type ServerFallbackReceipt,
 } from "../utils/server-fallback-receipt.ts";
 import { normalizeToolCallId } from "../utils/tool-call-id.ts";
-import { isForcedToolChoiceUnsupportedError, omitToolChoiceParam } from "../utils/tool-choice-fallback.ts";
+import { sendWithForcedToolChoiceFallback } from "../utils/tool-choice-fallback.ts";
 import { resolveRootObjectSchema } from "../utils/tool-schema-compat.ts";
 import { sanitizeAnthropicToolPairs } from "./anthropic-tool-pairs.ts";
 import { demoteUnavailableToolReferences } from "./anthropic-tool-references.ts";
 import { resolveCloudflareBaseUrl } from "./cloudflare.ts";
 import { getJsonSchemaToolParameters, resolveJsonSchemaStrictSampling } from "./constrained-sampling.ts";
+import { withGitHubCopilotFailureNote } from "./github-copilot-errors.ts";
 import { buildCopilotDynamicHeaders, hasCopilotVisionInput } from "./github-copilot-headers.ts";
 import {
 	ANTHROPIC_RESERVED_BODY_KEYS,
@@ -1250,6 +1256,11 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 				) as MessageCreateParamsStreaming;
 				const payloadRequestMetadata = extractPayloadRequestMetadata(params);
 				params = payloadRequestMetadata.params;
+				const limitedTools = limitGitHubCopilotTools(model.provider, params.tools, params.tool_choice);
+				if (limitedTools.omittedCount > 0) {
+					params = { ...params, tools: limitedTools.tools };
+					recordGitHubCopilotToolLimit(output, limitedTools.omittedCount);
+				}
 				const requestOptions = {
 					...(requestSignal ? { signal: requestSignal } : {}),
 					...(options?.timeoutMs !== undefined ? { timeout: options.timeoutMs } : {}),
@@ -1261,17 +1272,14 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 						() => client.beta.messages.create({ ...body, stream: true }, requestOptions).asResponse(),
 						anthropicProviderDiagnosticFromError,
 					);
-				try {
-					const response = await send(params);
-					return { params, response };
-				} catch (error) {
-					if (isForcedToolChoiceUnsupportedError(error, isForcedAnthropicToolChoice(params.tool_choice))) {
-						params = omitToolChoiceParam(params);
-						const response = await send(params);
-						return { params, response };
-					}
-					throw error;
-				}
+				const sent = await sendWithForcedToolChoiceFallback({
+					target: model,
+					params,
+					acceptsForcedToolChoice: getAnthropicCompat(model).supportsForcedToolChoice,
+					isForced: isForcedAnthropicToolChoice,
+					send,
+				});
+				return { params: sent.params, response: sent.result };
 			};
 			let requestOutcome: { params: MessageCreateParamsStreaming; response: Response };
 			try {
@@ -1622,7 +1630,11 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 			});
 			const providerDiagnostic = output.stopReason === "error" ? readProviderDiagnostic(error) : undefined;
 			if (providerDiagnostic !== undefined) output.providerDiagnostic = providerDiagnostic;
-			output.errorMessage = errorMessage;
+			output.errorMessage = withGitHubCopilotFailureNote(
+				formatGitHubCopilotToolLimitError(output, errorMessage),
+				model.provider,
+				error,
+			);
 			stream.push({ type: "error", reason: output.stopReason, error: output });
 			stream.end();
 		}

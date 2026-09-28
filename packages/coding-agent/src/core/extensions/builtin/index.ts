@@ -37,6 +37,7 @@ import recommendedModelsExtension from "./recommended-models/index.ts";
 import redrawsExtension from "./redraws.ts";
 import repositoryIdentityExtension from "./repository-identity.ts";
 import piRulesExtension from "./rules/index.ts";
+import scheduleExtension from "./schedule/index.ts";
 import serviceTierExtension from "./service-tier.ts";
 import terminalExtension from "./terminal/index.ts";
 import todowriteExtension from "./todotools/index.ts";
@@ -103,6 +104,8 @@ export const builtinExtensions: BuiltinExtensionFactory[] = [
 	{ id: "rules", factory: piRulesExtension },
 	{ id: "goal", factory: goalExtension },
 	{ id: "loop", factory: loopExtension },
+	// Durable counterpart of `loop`: writes job files a separate `senpi schedule run` fires later.
+	{ id: "schedule", factory: scheduleExtension },
 	{ id: "cache-keepalive", factory: cacheKeepAliveExtension },
 	{ id: "ttsr", factory: ttsrExtension },
 	{ id: "btw", factory: btwExtension },

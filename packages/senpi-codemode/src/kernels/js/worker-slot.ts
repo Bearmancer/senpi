@@ -95,7 +95,9 @@ export class WorkerSlot {
 		const webViews = this.#webViews;
 		this.#worker = null;
 		this.#webViews = null;
-		const retirement = worker ? await retireWorker(worker) : "terminated";
+		const retirement = worker
+			? await retireWorker(worker, this.#options.interruptBounds?.terminateDeadlineMs)
+			: "terminated";
 		await webViews?.release();
 		return retirement;
 	}

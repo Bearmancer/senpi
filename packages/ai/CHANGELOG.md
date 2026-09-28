@@ -10,6 +10,41 @@
 
 ### Fixed
 
+- The bundled Devin model seed lists exactly the SWE-2 lanes Devin serves: `swe-2-high`, `swe-2-medium` and `swe-2-max`. `swe-2-low` and `swe-2-high-lite`, which appear only inside the Devin CLI binary and are refused with `permission_denied`, are removed, so a config naming them no longer resolves silently. ([#2306](https://github.com/code-yeongyu/senpi/issues/2306))
+### Removed
+
+## [2026.9.28-5] - 2026-09-28
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- GitHub Copilot requests now keep at most 128 serialized tools on Chat Completions, Responses, and Anthropic Messages routes while retaining any explicitly forced tool. Excess definitions are omitted deterministically with a diagnostic instead of reaching Copilot as an opaque HTTP 400, and a generic `400 Bad Request` after limiting now explains the likely tool-cap mismatch on all three routes. ([#2298](https://github.com/code-yeongyu/senpi/issues/2298))
+- GitHub Copilot OAuth login and refresh now keep the account's `GET /models` prompt, context, and output limits and apply them to available models instead of retaining larger native models.dev limits; the exact `model_max_prompt_tokens_exceeded` rejection is also classified as context overflow so the existing compact-and-retry recovery runs. ([#2299](https://github.com/code-yeongyu/senpi/issues/2299))
+- A GitHub Copilot 403 or 402 now says what happened instead of `403 status code (no body)`: quota exhaustion (402, or 429 `quota_exceeded`) is named as such, a refusal says the body was empty, and both carry the GitHub request id. GitHub Copilot declares 401/403 as token-refusal statuses so a runtime can re-exchange a revoked Copilot token, and a failed Copilot `openai-responses` request now records its HTTP status in `providerDiagnostic`. Request ids no longer influence retry classification. ([#2297](https://github.com/code-yeongyu/senpi/issues/2297))
+
+### Removed
+
+## [2026.9.28-4] - 2026-09-28
+
+### Breaking Changes
+
+### Added
+
+- `openai-completions` and `openai-responses` models accept `compat.supportsForcedToolChoice`; `false` drops a forced `tool_choice` before the request is sent. ([#2218](https://github.com/code-yeongyu/senpi/issues/2218))
+
+### Changed
+
+### Fixed
+
+- Re-logging in to an auth-blocked Claude subscription account now actually refreshes it. The login exchanged fresh tokens and reported success, but the credential-pool merge kept the stored slot for any name it already knew, so the revoked token and its `auth_error` block stayed on disk. A same-name slot with strictly newer material now replaces the stored copy; sibling accounts that rotated or were blocked during the browser round trip are still never rewound. ([#2222](https://github.com/code-yeongyu/senpi/issues/2222))
+- `openai-responses` retries once without `tool_choice` when the provider rejects a forced choice with a "not supported"-class 400 (matching `openai-completions`), and the classifier also recognises `not currently supported` and the auto-only refusal `only \`"auto"\` is supported for \`tool_choice\``. ([#2224](https://github.com/code-yeongyu/senpi/issues/2224))
+- A provider that refuses a forced `tool_choice` with only automatic tool choice allowed (Kiro: `Kiro supports only automatic tool choice or tool_choice:none`) gets the request once more without it instead of failing, and a model whose refusal was retried successfully gets no forced `tool_choice` for the rest of the process, on `openai-completions`, `openai-responses`, and `anthropic-messages`. Refusals that blame thinking are retried each time rather than remembered. ([#2218](https://github.com/code-yeongyu/senpi/issues/2218))
+
 ### Removed
 
 ## [2026.9.28-3] - 2026-09-28

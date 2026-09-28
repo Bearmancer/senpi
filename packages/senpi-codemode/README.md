@@ -107,6 +107,9 @@ Configuration is loaded in this order:
   },
   "statusEvents": true,
   "memory": {
+    "gcWatermarkMb": 256,
+    "noticeMb": 1024,
+    "ceilingMb": 8192,
     "retainedResultsMb": 32,
     "retainedImagesMb": 256
   }
@@ -127,6 +130,9 @@ Configuration is loaded in this order:
 | `outputSink.headBytes` | `20480` | Bytes retained from the beginning of a middle-truncated preview; `0` disables it. |
 | `outputSink.maxColumns` | `768` | Maximum rendered output columns; `0` disables column clamping. |
 | `statusEvents` | `true` | Enables kernel status-event forwarding and rendering. Each cell retains at most 100 status rows; after overflow, one omitted-count row precedes the latest 99 events. |
+| `memory.gcWatermarkMb` | `256` | JavaScript kernel: a finished cell whose heap reached this size and grew runs a full collection before its result; whenever at least this much stays live, an idle full collection runs about a second after the cell, so dropped globals return their memory without a reset. Python kernel: a finished cell whose process footprint reached this size and grew runs `gc.collect()` (plus glibc `malloc_trim(0)` on Linux) before its result, and while at least this much stays live the next cells collect too (at most 1/20 of the time), so `del rows` returns its memory. `0` disables. Env override: `SENPI_CODEMODE_MEMORY_GC_WATERMARK_MB`. |
+| `memory.noticeMb` | `1024` | JavaScript and Python kernels: when live memory after a collection (JS heap, Python process footprint) reaches this size (first time, or 25% more than at the last notice), the result gets one bracketed notice naming the largest globals and how to drop them (`rows = undefined`, `del rows`), plus `details.memory`. Ruby and Julia get no notice. `0` disables. Env override: `SENPI_CODEMODE_MEMORY_NOTICE_MB`. |
+| `memory.ceilingMb` | a quarter of physical memory, 2048-8192 | Every kernel (JS heap and Python footprint after a collection; Ruby and Julia interpreter footprint read by the host after each result, without a globals list): when live memory reaches this size, the result says so and the kernel restarts once no cell is running or queued on it; the next result says it was restarted (`details.memory.recycled`). `0` disables. Env override: `SENPI_CODEMODE_MEMORY_CEILING_MB`. Non-zero memory thresholds must satisfy watermark <= notice <= ceiling, otherwise all three use their defaults. |
 | `memory.retainedResultsMb` | `32` | In-memory byte budget (MiB) for the settled cells kept for `peek`/`list`, on top of the 32-cell count cap; the oldest go first and the newest is always kept. `0` keeps only the count cap. Env override: `SENPI_CODEMODE_RETAINED_RESULTS_MB` (a non-negative integer). |
 | `memory.retainedImagesMb` | `256` | Disk budget (MiB) for settled-cell images. Images of settled cells (foreground and detached) are written as base64 files under `<session artifacts>/settled-images/` instead of staying in memory, and `peek` reads them back, so it returns the full result. Beyond the budget the oldest files are deleted first; an evicted cell's files are deleted with it; the directory is removed when the session ends. A `peek` whose image file is gone returns the text plus a one-line note. `0` keeps only the count cap. Env override: `SENPI_CODEMODE_RETAINED_IMAGES_MB` (a non-negative integer). |
 

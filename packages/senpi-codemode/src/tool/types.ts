@@ -1,5 +1,6 @@
 import type { AgentToolResult, AgentToolUpdateCallback, KernelPreludeContribution } from "@code-yeongyu/senpi";
 import { type TSchema, type TUnsafe, Type } from "typebox";
+import type { KernelMemoryReport } from "../bridge/memory-protocol.ts";
 import type { HostToKernelMessage, KernelToHostMessage } from "../bridge/protocol.ts";
 import {
 	DEFAULT_FOREGROUND_WINDOW_SECONDS,
@@ -262,4 +263,8 @@ export interface EvalToolDetails {
 	readonly jsonOutputs?: readonly unknown[];
 	readonly notice?: string;
 	readonly meta?: TruncationMeta;
+	/** Kernel memory after the cell; its notice text is delivered as its own content part. */
+	readonly memory?: EvalMemoryDetails;
 }
+
+export type EvalMemoryDetails = Omit<KernelMemoryReport, "notice">;

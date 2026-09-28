@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { MessageChannel, type MessagePort } from "node:worker_threads";
 import { retireBunChrome, settleDeadBunChrome } from "./bun-chrome.ts";
 import { mainThreadWebViewClass, type NativeWebView, type NativeWebViewClass } from "./native-webview.ts";
-import { WebViewServiceClient } from "./webview-client.ts";
+import { closeQuietly, WebViewServiceClient } from "./webview-client.ts";
 
 export interface WebViewClientGrant {
 	readonly clientId: string;
@@ -19,6 +19,8 @@ export class WebViewService {
 	readonly #clients = new Map<string, WebViewServiceClient>();
 	#retiring: Promise<void> = Promise.resolve();
 	#chromeInUse = false;
+	// Views being constructed and not yet adopted by their client: Chrome must outlive them.
+	#launching = 0;
 
 	constructor(webViewClass: NativeWebViewClass) {
 		this.#webViewClass = webViewClass;
@@ -34,7 +36,7 @@ export class WebViewService {
 		const clientId = randomUUID();
 		const channel = new MessageChannel();
 		const client = new WebViewServiceClient(clientId, owner, channel.port1, {
-			createView: (options, onConsole) => this.#createView(options, onConsole),
+			createView: (options, onConsole, adopt) => this.#createView(options, onConsole, adopt),
 			onClientClosed: (closed) => void this.#drop(closed),
 		});
 		this.#clients.set(clientId, client);
@@ -42,8 +44,9 @@ export class WebViewService {
 	}
 
 	/**
-	 * Only the owner that connected a client can release it. Resolves after any Chrome retirement in
-	 * flight, including one a closed port (the client's worker died first) already started.
+	 * Only the owner that connected a client can release it. Resolves after the client's in-flight
+	 * launches settled and any Chrome retirement in flight ended, including one a closed port (the
+	 * client's worker died first) already started.
 	 */
 	async release(clientId: string, owner: object): Promise<void> {
 		const client = this.#clients.get(clientId);
@@ -57,14 +60,37 @@ export class WebViewService {
 		await this.#retiring;
 	}
 
+	/**
+	 * Launches a view and hands it to `adopt` in the same turn, so no retirement can slip between the
+	 * launch and the client's bookkeeping. A launch that fails, or whose client was released while it
+	 * was in flight, retires the Chrome it started unless another view still needs it.
+	 */
 	async #createView(
 		options: Readonly<Record<string, unknown>>,
 		onConsole: ((...args: unknown[]) => void) | undefined,
+		adopt: (view: NativeWebView) => boolean,
 	): Promise<NativeWebView> {
+		this.#launching++;
+		let view: NativeWebView;
+		try {
+			view = await this.#launch(onConsole ? { ...options, console: onConsole } : options);
+		} catch (error) {
+			this.#launching--;
+			await this.#retireIfIdle();
+			throw error;
+		}
+		this.#launching--;
+		if (adopt(view)) return view;
+		closeQuietly(view);
+		await this.#retireIfIdle();
+		throw new Error("WebView client released");
+	}
+
+	async #launch(viewOptions: Readonly<Record<string, unknown>>): Promise<NativeWebView> {
+		// No retirement is scheduled while a launch is pending, so the one awaited here is the last.
 		await this.#retiring;
 		await settleDeadBunChrome();
 		this.#chromeInUse = true;
-		const viewOptions = onConsole ? { ...options, console: onConsole } : options;
 		for (let attempt = 1; ; attempt++) {
 			try {
 				return new this.#webViewClass(viewOptions);
@@ -79,12 +105,20 @@ export class WebViewService {
 		if (this.#clients.get(client.id) !== client) return await this.#retiring;
 		this.#clients.delete(client.id);
 		client.release();
-		if (!this.#chromeInUse || this.viewCount > 0) return await this.#retiring;
+		await client.settled();
+		await this.#retireIfIdle();
+	}
+
+	/** Retires Chrome once no view uses it and no launch is pending; resolves when retirement ends. */
+	#retireIfIdle(): Promise<void> {
+		if (!this.#chromeInUse || this.#busy()) return this.#retiring;
 		this.#chromeInUse = false;
-		this.#retiring = this.#retiring.then(() =>
-			this.viewCount > 0 ? undefined : retireBunChrome(this.#webViewClass),
-		);
-		await this.#retiring;
+		this.#retiring = this.#retiring.then(() => (this.#busy() ? undefined : retireBunChrome(this.#webViewClass)));
+		return this.#retiring;
+	}
+
+	#busy(): boolean {
+		return this.viewCount > 0 || this.#launching > 0;
 	}
 }
 

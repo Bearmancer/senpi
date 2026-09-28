@@ -74,6 +74,7 @@ function entrySnapshot(entry: AnthropicSubscriptionSessionEntry, hashes: readonl
 		assistantUuidByIndex: entry.assistantUuidByIndex,
 		pendingForkReason: entry.pendingForkReason,
 		taintedReason: entry.taintedReason,
+		credentialDigest: entry.credentialDigest,
 	};
 }
 
@@ -99,6 +100,7 @@ async function createResidentAttempt(
 		crossAccountResumeSupported: auth.authLane !== "config-dir",
 		idleExpired: existing ? isIdleExpired(existing) : false,
 		invalidationReason: bindingInvalidationReason(sessionId),
+		credentialDigest: auth.credentialDigest,
 	});
 	const firstTurn =
 		existing === undefined && getBinding(sessionId) === undefined && !contextHasPriorAssistantMessage(input.context);
@@ -160,6 +162,9 @@ async function createResidentAttempt(
 			options: auth.options,
 		});
 	}
+	// Every branch above either reuses a subprocess whose token matched (delta)
+	// or spawned one with auth.options, so the entry now runs on this token.
+	entry.credentialDigest = auth.credentialDigest;
 
 	const flattenResult = flatten
 		? dedupeUltraworkBlocks(buildPromptBlocks(input.context, input.customToolNameToSdk, input.toolWatchNote))

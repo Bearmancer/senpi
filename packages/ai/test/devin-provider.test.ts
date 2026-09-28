@@ -85,11 +85,9 @@ describe("devin provider", () => {
 		expect(provider.auth.oauth?.loginLabel).toBe("Sign in with Devin");
 		const seeded = provider.getModels();
 		const ids = seeded.map((model) => model.id);
-		expect(ids[0]).toBe("swe-2-high");
-		expect(ids).toEqual(
-			expect.arrayContaining(["swe-2-low", "swe-2-max", "swe-2-high-lite", "swe-1-6", "swe-1-6-fast"]),
-		);
-		expect(ids).not.toContain("swe-2");
+		// Exactly the lanes Cascade serves: the bare uid and the CLI-binary-only
+		// `swe-2-low` / `swe-2-high-lite` strings are answered with permission_denied.
+		expect(ids).toEqual(["swe-2-high", "swe-2-medium", "swe-2-max", "swe-1-6", "swe-1-6-fast"]);
 		for (const model of seeded) {
 			expect(model.api).toBe("devin-agent");
 			expect(model.provider).toBe("devin");

@@ -834,6 +834,12 @@ export interface OpenAICompletionsCompat {
 	/** Whether the provider accepts the `max_output_tokens` parameter. Some Codex-protocol gateways reject it. Default: true. */
 	supportsMaxOutputTokens?: boolean;
 	/**
+	 * Whether the provider accepts a `tool_choice` that forces a tool (`required` or a named function).
+	 * When false the forced choice is dropped before sending. Default: true; a provider that refuses one
+	 * at runtime is remembered for the process after one retry without it.
+	 */
+	supportsForcedToolChoice?: boolean;
+	/**
 	 * vLLM scheduler priority sent as the top-level `priority` request field (lower values are
 	 * handled earlier; server default 0). Only meaningful when vLLM runs with
 	 * `--scheduling-policy priority`; useful for keeping background/batch work from stalling

@@ -4,12 +4,7 @@ import { join } from "node:path";
 import type { Static } from "typebox";
 import { Type } from "typebox";
 import { Check } from "typebox/value";
-import {
-	type CodemodeMemorySettings,
-	codemodeMemorySettingsSchema,
-	defaultMemorySettings,
-	mergeMemorySettings,
-} from "./memory-settings.ts";
+import { type CodemodeMemorySettings, memorySettingsSchema, validatedMemorySettings } from "./memory-settings.ts";
 
 export const codemodeSettingsSchema = Type.Object(
 	{
@@ -49,7 +44,7 @@ export const codemodeSettingsSchema = Type.Object(
 			),
 		),
 		statusEvents: Type.Optional(Type.Boolean()),
-		memory: Type.Optional(codemodeMemorySettingsSchema),
+		memory: Type.Optional(memorySettingsSchema),
 	},
 	{ additionalProperties: false },
 );
@@ -171,7 +166,7 @@ export const defaultCodemodeSettings: ResolvedCodemodeSettings = {
 		maxColumns: 768,
 	},
 	statusEvents: true,
-	memory: defaultMemorySettings,
+	memory: validatedMemorySettings(undefined).settings,
 };
 
 const languageEnvironmentFlags = {
@@ -262,7 +257,7 @@ async function loadSettingsFile(path: string): Promise<LoadedCodemodeSettings> {
 		};
 	}
 
-	return { settings: mergeSettings(parsed), source: path, warnings: [] };
+	return { settings: mergeSettings(parsed), source: path, warnings: validatedMemorySettings(parsed.memory).warnings };
 }
 
 function mergeSettings(input: CodemodeSettingsInput): ResolvedCodemodeSettings {
@@ -288,7 +283,7 @@ function mergeSettings(input: CodemodeSettingsInput): ResolvedCodemodeSettings {
 			maxColumns: input.outputSink?.maxColumns ?? defaultCodemodeSettings.outputSink.maxColumns,
 		},
 		statusEvents: input.statusEvents ?? defaultCodemodeSettings.statusEvents,
-		memory: mergeMemorySettings(input.memory),
+		memory: validatedMemorySettings(input.memory).settings,
 	};
 }
 

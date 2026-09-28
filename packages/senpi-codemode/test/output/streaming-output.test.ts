@@ -3,7 +3,12 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { OutputSink, resolveSessionArtifactsDir, TailBuffer } from "../../src/output/streaming-output.ts";
+import {
+	OutputSink,
+	resolveSessionArtifactsDir,
+	TailBuffer,
+	truncateTailBytes,
+} from "../../src/output/streaming-output.ts";
 
 const cleanupPaths: string[] = [];
 
@@ -43,6 +48,73 @@ describe("TailBuffer", () => {
 		// Then
 		expect(tail.text()).toBe("x");
 		expect(tail.bytes()).toBe(1);
+	});
+
+	it("replaces the window when a single append exceeds the budget", () => {
+		// Given
+		const tail = new TailBuffer(10);
+		tail.append("old-content");
+
+		// When
+		tail.append("0123456789ABCDEF");
+
+		// Then
+		expect(tail.text()).toBe("6789ABCDEF");
+		expect(tail.bytes()).toBe(10);
+	});
+
+	it("matches the truncate-per-append reference across randomized streams", () => {
+		// Given
+		let state = 0x2262 >>> 0;
+		const random = () => {
+			state = (state + 0x6d2b79f5) >>> 0;
+			let t = state;
+			t = Math.imul(t ^ (t >>> 15), t | 1);
+			t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+			return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+		};
+		const referenceTail = (chunks: readonly string[], maxBytes: number): { text: string; bytes: number } => {
+			let text = "";
+			for (const chunk of chunks) {
+				if (chunk.length === 0) continue;
+				if (maxBytes === 0) {
+					text = "";
+					continue;
+				}
+				const next =
+					Buffer.byteLength(chunk, "utf8") >= maxBytes
+						? truncateTailBytes(chunk, maxBytes)
+						: truncateTailBytes(text + chunk, maxBytes);
+				text = next.text;
+			}
+			return { text, bytes: Buffer.byteLength(text, "utf8") };
+		};
+
+		for (let round = 0; round < 12; round++) {
+			const maxBytes = [0, 5, 24, 300, 5_000][round % 5];
+			const buffer = new TailBuffer(maxBytes);
+			const chunks: string[] = [];
+
+			// When
+			for (let index = 0; index < 160; index++) {
+				const kind = random();
+				const chunk =
+					kind < 0.1
+						? ""
+						: kind < 0.3
+							? "abcdefghij".slice(0, 1 + Math.floor(random() * 10))
+							: kind < 0.45
+								? "가😀é\ud800".slice(0, 1 + Math.floor(random() * 5))
+								: `${"xy".repeat(1 + Math.floor(random() * 60))}\n`;
+				chunks.push(chunk);
+				buffer.append(chunk);
+
+				// Then
+				const reference = referenceTail(chunks, maxBytes);
+				expect(buffer.text()).toBe(reference.text);
+				expect(buffer.bytes()).toBe(reference.bytes);
+			}
+		}
 	});
 });
 

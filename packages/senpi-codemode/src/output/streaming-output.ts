@@ -2,11 +2,11 @@ import { createWriteStream, mkdirSync, type WriteStream } from "node:fs";
 import { dirname } from "node:path";
 import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, truncateTail } from "../host-sdk.ts";
 import { formatMiddleElisionMarker } from "./output-meta.ts";
-import { TailBuffer, truncateHeadBytes } from "./streaming-output-buffer.ts";
+import { TailBuffer, TailLineRing, truncateHeadBytes } from "./streaming-output-buffer.ts";
 
 export { artifactNotice, formatMiddleElisionMarker, resolveSessionArtifactsDir } from "./output-meta.ts";
 export { truncateHeadBytes, truncateTailBytes } from "./streaming-output-buffer.ts";
-export { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, TailBuffer, truncateTail };
+export { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, TailBuffer, TailLineRing, truncateTail };
 
 export const ARTIFACT_DEFAULT_HEAD_BYTES = 3 * 1024 * 1024;
 

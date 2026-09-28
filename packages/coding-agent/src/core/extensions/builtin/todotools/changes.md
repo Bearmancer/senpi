@@ -1,5 +1,23 @@
 # todotools Fork Tracker
 
+## 2026-09-28 - The first-turn opener stops forcing a model that refused a forced choice (senpi#2218)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/todotools/first-turn.ts`: `supportsNamedToolChoice` returns false for a model the provider adapters remembered as refusing a forced `tool_choice` (`hasRefusedForcedToolChoice` from `@earendil-works/pi-ai/utils/tool-choice-fallback`) and for `openai-completions` / `openai-responses` models whose compat sets `supportsForcedToolChoice: false`, so those first turns send only the reminder.
+
+### Why
+
+- Kiro behind an OpenAI-compatible proxy refuses every forced `tool_choice`, and the opener forced `todo` on every OpenAI-wire model unconditionally, so each session's first request failed (senpi#2218). The adapter now retries the refused request once; the opener must not keep forcing a model already known to refuse.
+
+### Why an extension could not handle it
+
+- This is the todotools extension itself; no core file changed.
+
+### Expected merge conflict zones
+
+- None (fork-only file).
+
 ## 2026-09-25 - The state barrel stops re-exporting unused Ask helpers (senpi#2143)
 
 ### What changed

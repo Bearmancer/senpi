@@ -1,8 +1,14 @@
 import type { AgentToolResult, AgentToolUpdateCallback, ExtensionContext } from "@code-yeongyu/senpi";
+import type { KernelMemoryReport } from "../bridge/memory-protocol.ts";
 import type { KernelToHostMessage } from "../bridge/protocol.ts";
+import { DEFAULT_MAX_BYTES, TailLineRing } from "../output/streaming-output.ts";
 import type { EvalToolCallMetric } from "./call-capture.ts";
 import { type EvalImageResizer, EvalOutputCollector, type EvalOutputResult } from "./image.ts";
-import type { EvalRuntimeInfo, EvalStatusEvent, EvalToolDetails, EvalToolInput } from "./types.ts";
+import type { EvalMemoryDetails, EvalRuntimeInfo, EvalStatusEvent, EvalToolDetails, EvalToolInput } from "./types.ts";
+
+const LIVE_UPDATE_LINES = 8;
+/** Same cadence as the core bash tool's streaming updates (BASH_UPDATE_THROTTLE_MS). */
+const LIVE_OUTPUT_UPDATE_THROTTLE_MS = 100;
 
 type KernelResult = Extract<KernelToHostMessage, { type: "result" }>;
 type DisplayMessage = Extract<KernelToHostMessage, { type: "display" }>;
@@ -40,6 +46,10 @@ export interface CellResultBuilderOptions {
 export class CellResultBuilder {
 	readonly #output: EvalOutputCollector;
 	readonly #state: CellState;
+	#memory: KernelMemoryReport | undefined;
+	readonly #liveLines = new TailLineRing({ maxBytes: DEFAULT_MAX_BYTES * 2, maxLines: LIVE_UPDATE_LINES });
+	#lastOutputUpdateAt = 0;
+	#outputUpdateTimer: ReturnType<typeof setTimeout> | undefined;
 
 	constructor(options: CellResultBuilderOptions) {
 		this.#state = options.state;
@@ -49,9 +59,9 @@ export class CellResultBuilder {
 			model: options.model,
 			...(options.artifactPath === undefined ? {} : { artifactPath: options.artifactPath }),
 			...(options.imageResizer === undefined ? {} : { imageResizer: options.imageResizer }),
-			onChunk: (_aggregate, cell) => {
-				options.state.output = cell;
-				this.emitUpdate(false);
+			onChunk: (chunk) => {
+				this.#liveLines.append(chunk);
+				this.#scheduleOutputUpdate();
 			},
 		});
 		if (options.state.status !== "queued") options.state.status = "running";
@@ -73,6 +83,7 @@ export class CellResultBuilder {
 
 	async finalize(result: KernelResult): Promise<AgentToolResult<EvalToolDetails>> {
 		this.#state.durationMs = result.durationMs;
+		this.#memory = result.memory;
 		if (result.ok) {
 			if (result.valueRepr) this.#output.push(`${result.valueRepr}\n`);
 			this.#state.status = "complete";
@@ -96,6 +107,7 @@ export class CellResultBuilder {
 	}
 
 	liveResult(): AgentToolResult<EvalToolDetails> {
+		this.#state.output = this.#output.cellTailText();
 		return {
 			content: [{ type: "text", text: this.#liveUpdateText() }],
 			details: this.#details(undefined, this.#state.status === "error"),
@@ -110,7 +122,33 @@ export class CellResultBuilder {
 		});
 	}
 
+	#scheduleOutputUpdate(): void {
+		const delay = LIVE_OUTPUT_UPDATE_THROTTLE_MS - (Date.now() - this.#lastOutputUpdateAt);
+		if (delay <= 0) {
+			this.#clearOutputUpdateTimer();
+			this.#emitOutputUpdate();
+			return;
+		}
+		this.#outputUpdateTimer ??= setTimeout(() => {
+			this.#outputUpdateTimer = undefined;
+			this.#emitOutputUpdate();
+		}, delay);
+	}
+
+	#emitOutputUpdate(): void {
+		this.#lastOutputUpdateAt = Date.now();
+		this.#state.output = this.#output.cellTailText();
+		this.emitUpdate(false);
+	}
+
+	#clearOutputUpdateTimer(): void {
+		if (this.#outputUpdateTimer === undefined) return;
+		clearTimeout(this.#outputUpdateTimer);
+		this.#outputUpdateTimer = undefined;
+	}
+
 	async #finish(isError: boolean): Promise<AgentToolResult<EvalToolDetails>> {
+		this.#clearOutputUpdateTimer();
 		const output = await this.#output.finish();
 		this.#state.output = output.output;
 		const details = this.#details(output, isError);
@@ -120,7 +158,9 @@ export class CellResultBuilder {
 			(output.images.length > 0
 				? `(displayed ${output.images.length} image${output.images.length === 1 ? "" : "s"}; no text output)`
 				: "(no output)");
-		return { content: [{ type: "text", text }, ...output.images], details };
+		const notice = this.#memory?.notice;
+		const noticePart = notice === undefined ? [] : [{ type: "text" as const, text: notice }];
+		return { content: [{ type: "text", text }, ...noticePart, ...output.images], details };
 	}
 
 	#details(output: EvalOutputResult | undefined, isError: boolean): EvalToolDetails {
@@ -159,6 +199,7 @@ export class CellResultBuilder {
 			...(output === undefined || output.jsonOutputs.length === 0 ? {} : { jsonOutputs: output.jsonOutputs }),
 			...(output?.notice === undefined ? {} : { notice: output.notice }),
 			...(output?.meta === undefined ? {} : { meta: output.meta }),
+			...(output === undefined || this.#memory === undefined ? {} : { memory: memoryDetails(this.#memory) }),
 		};
 	}
 
@@ -167,11 +208,12 @@ export class CellResultBuilder {
 			return `queued behind ${this.#state.queuedBehind.join(", ")} in the ${this.#state.input.language} kernel`;
 		}
 		const summary = this.#state.input.summary === undefined ? "" : ` ${this.#state.input.summary}`;
-		const aggregateOutput = this.#output.aggregateText();
-		const outputLines = aggregateOutput.split("\n");
-		const hasTrailingNewline = aggregateOutput.endsWith("\n");
-		if (hasTrailingNewline) outputLines.pop();
-		const output = `${outputLines.slice(-8).join("\n")}${hasTrailingNewline ? "\n" : ""}`;
+		const output = this.#liveLines.text();
 		return `1/1 cells ${this.#state.status}\n[1] ${this.#state.input.language}${summary} ${this.#state.status}${output.length === 0 ? "" : `\n${output}`}`;
 	}
+}
+
+function memoryDetails(report: KernelMemoryReport): EvalMemoryDetails {
+	const { notice: _notice, ...details } = report;
+	return details;
 }

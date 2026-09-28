@@ -12,6 +12,7 @@ import {
 	supportsMax,
 	supportsXhigh,
 } from "../models.ts";
+import { readProviderDiagnostic } from "../provider-diagnostic.ts";
 import type {
 	Api,
 	AssistantMessage,
@@ -29,12 +30,23 @@ import type {
 import { splitDeferredTools } from "../utils/deferred-tools.ts";
 import { formatProviderError, normalizeProviderError } from "../utils/error-body.ts";
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
+import {
+	formatGitHubCopilotToolLimitError,
+	limitGitHubCopilotTools,
+	recordGitHubCopilotToolLimit,
+} from "../utils/github-copilot-tool-limit.ts";
 import { headersToRecord } from "../utils/headers.ts";
 import { getPiUserAgent } from "../utils/pi-user-agent.ts";
+import {
+	awaitProviderTransport,
+	openAICompatibleProviderDiagnosticFromError,
+} from "../utils/provider-diagnostic-sources.ts";
 import { getProviderEnvValue } from "../utils/provider-env.ts";
 import { retryProviderRequest } from "../utils/provider-retry.ts";
+import { sendWithForcedToolChoiceFallback } from "../utils/tool-choice-fallback.ts";
 import { isCloudflareProvider, resolveCloudflareBaseUrl } from "./cloudflare.ts";
 import { createGrammarToolInputProperties } from "./constrained-sampling.ts";
+import { withGitHubCopilotFailureNote } from "./github-copilot-errors.ts";
 import { buildCopilotDynamicHeaders, hasCopilotVisionInput } from "./github-copilot-headers.ts";
 import { resolveOpenAIClientAuth } from "./openai-client-auth.ts";
 import { clampOpenAIPromptCacheKey } from "./openai-prompt-cache.ts";
@@ -84,6 +96,11 @@ type MutableResponsesPayload = ResponseCreateParamsStreaming & {
 
 const websocketSessionCache = new Map<string, CachedWebSocketConnection>();
 
+/** True when tool_choice forces a specific tool or mode (anything but "auto"/"none"). */
+function isForcedOpenAIResponsesToolChoice(toolChoice: MutableResponsesPayload["tool_choice"] | undefined): boolean {
+	return toolChoice !== undefined && toolChoice !== "auto" && toolChoice !== "none";
+}
+
 function detectSessionAffinityFormat(model: Pick<Model<"openai-responses">, "provider" | "baseUrl">) {
 	return model.provider === "openrouter" || model.baseUrl.includes("openrouter.ai") ? "openrouter" : "openai";
 }
@@ -119,6 +136,7 @@ function getCompat(model: Model<"openai-responses">, env?: ProviderEnv): Require
 		supportsExplicitPromptCacheMode: model.compat?.supportsExplicitPromptCacheMode ?? false,
 		supportsConfigurationUpdate: model.compat?.supportsConfigurationUpdate ?? false,
 		supportsMaxOutputTokens: model.compat?.supportsMaxOutputTokens ?? true,
+		supportsForcedToolChoice: model.compat?.supportsForcedToolChoice ?? true,
 		supportsAllowedTools: model.compat?.supportsAllowedTools ?? false,
 	};
 }
@@ -323,6 +341,11 @@ export const stream: StreamFunction<"openai-responses", OpenAIResponsesOptions> 
 
 			params = sanitizeUnsupportedNativeTools(params, compat);
 			params = applyAllowedToolsChoice(params, context, compat);
+			const limitedTools = limitGitHubCopilotTools(model.provider, params.tools, params.tool_choice);
+			if (limitedTools.omittedCount > 0) {
+				params = { ...params, tools: limitedTools.tools };
+				recordGitHubCopilotToolLimit(output, limitedTools.omittedCount);
+			}
 			const transport = options?.transport ?? "sse";
 			if (transport !== "sse" && compat.supportsWebSocket) {
 				let websocketStarted = false;
@@ -368,14 +391,28 @@ export const stream: StreamFunction<"openai-responses", OpenAIResponsesOptions> 
 				...(options?.timeoutMs !== undefined ? { timeout: options.timeoutMs } : {}),
 				maxRetries: 0,
 			};
-			const { data: openaiStream, response } = await retryProviderRequest(
-				() => client.responses.create(params, requestOptions).withResponse(),
-				{
-					maxRetries: options?.maxRetries,
-					maxRetryDelayMs: options?.maxRetryDelayMs,
-					signal: options?.signal,
-				},
-			);
+			const createRequest = async () => {
+				const sent = await sendWithForcedToolChoiceFallback({
+					target: model,
+					params,
+					acceptsForcedToolChoice: compat.supportsForcedToolChoice,
+					isForced: isForcedOpenAIResponsesToolChoice,
+					send: (body: MutableResponsesPayload) =>
+						model.provider === "github-copilot"
+							? awaitProviderTransport(
+									() => client.responses.create(body, requestOptions).withResponse(),
+									openAICompatibleProviderDiagnosticFromError,
+								)
+							: client.responses.create(body, requestOptions).withResponse(),
+				});
+				params = sent.params;
+				return sent.result;
+			};
+			const { data: openaiStream, response } = await retryProviderRequest(() => createRequest(), {
+				maxRetries: options?.maxRetries,
+				maxRetryDelayMs: options?.maxRetryDelayMs,
+				signal: options?.signal,
+			});
 			await options?.onResponse?.({ status: response.status, headers: headersToRecord(response.headers) }, model);
 			stream.push({ type: "start", partial: output });
 
@@ -406,7 +443,16 @@ export const stream: StreamFunction<"openai-responses", OpenAIResponsesOptions> 
 				delete (block as { customInput?: unknown }).customInput;
 			}
 			output.stopReason = options?.signal?.aborted ? "aborted" : "error";
-			output.errorMessage = formatOpenAIResponsesError(error);
+			const providerDiagnostic =
+				model.provider === "github-copilot" && output.stopReason === "error"
+					? (readProviderDiagnostic(error) ?? openAICompatibleProviderDiagnosticFromError(error))
+					: undefined;
+			if (providerDiagnostic !== undefined) output.providerDiagnostic = providerDiagnostic;
+			output.errorMessage = withGitHubCopilotFailureNote(
+				formatGitHubCopilotToolLimitError(output, formatOpenAIResponsesError(error)),
+				model.provider,
+				error,
+			);
 			stream.push({ type: "error", reason: output.stopReason, error: output });
 			stream.end();
 		}
@@ -475,6 +521,8 @@ export async function warmOpenAIResponsesPromptCache(
 	const nextParams = await resolved.onPayload?.(params, model);
 	if (nextParams !== undefined) params = nextParams as MutableResponsesPayload;
 	params = sanitizeUnsupportedNativeTools(params, compat);
+	const limitedTools = limitGitHubCopilotTools(model.provider, params.tools, params.tool_choice);
+	if (limitedTools.omittedCount > 0) params = { ...params, tools: limitedTools.tools };
 	const body = {
 		...params,
 		stream: false,

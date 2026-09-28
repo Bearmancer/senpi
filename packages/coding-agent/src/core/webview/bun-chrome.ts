@@ -19,6 +19,37 @@ function positivePids(texts: readonly string[]): number[] {
 	return texts.map(Number).filter((pid) => Number.isInteger(pid) && pid > 0);
 }
 
+// Bun's Chrome browsers (direct children with Bun's flags) and every process under them, in one
+// CIM listing; the listing's own PowerShell is excluded because its command line names the flag.
+const WINDOWS_CHROME_TREE = `$all = Get-CimInstance Win32_Process | Select-Object ProcessId, ParentProcessId, CommandLine
+$tree = [System.Collections.Generic.HashSet[int]]::new()
+foreach ($p in $all) { if ($p.ParentProcessId -eq ${process.pid} -and $p.ProcessId -ne $PID -and $p.CommandLine -like '*--remote-debugging-pipe*') { [void]$tree.Add([int]$p.ProcessId) } }
+do { $grew = $false; foreach ($p in $all) { if ($tree.Contains([int]$p.ParentProcessId) -and $tree.Add([int]$p.ProcessId)) { $grew = $true } } } while ($grew)
+$tree`;
+
+async function windowsBunChromeTree(): Promise<number[]> {
+	const stdout = await run("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", WINDOWS_CHROME_TREE]);
+	return positivePids(stdout.split(/\r?\n/u).map((line) => line.trim()));
+}
+
+async function windowsListedPids(): Promise<Set<number>> {
+	const stdout = await run("tasklist", ["/FO", "CSV", "/NH"]);
+	return new Set(positivePids(stdout.split(/\r?\n/u).map((line) => line.split('","')[1] ?? "")));
+}
+
+/**
+ * Windows reports a terminated process as gone to `process.kill(pid, 0)` while the process object
+ * still exists (Bun holds its child's handle until it reaps it), so the wait is on the process list.
+ */
+async function waitForWindowsRemoval(pids: readonly number[]): Promise<void> {
+	const deadline = Date.now() + EXIT_DEADLINE_MS;
+	for (;;) {
+		const listed = await windowsListedPids();
+		if (!pids.some((pid) => listed.has(pid)) || Date.now() >= deadline) return;
+		await new Promise((resolve) => setTimeout(resolve, EXIT_POLL_MS));
+	}
+}
+
 async function bunChromePids(): Promise<number[]> {
 	const pids: string[] = [];
 	for (const line of (await run("ps", ["-axo", "pid=,ppid=,command="])).split("\n")) {
@@ -76,10 +107,16 @@ export async function settleDeadBunChrome(): Promise<void> {
  * Resolves once those processes are gone (bounded), so a released kernel leaves no Chrome behind.
  */
 export async function retireBunChrome(webViewClass: NativeWebViewClass): Promise<void> {
-	// Windows has no WebKit backend, so `closeAll()` can only end Chrome, and it terminates the process
-	// before returning; listing processes there costs seconds (PowerShell), so it is skipped.
+	// Windows has no WebKit backend, so `closeAll()` can only end Chrome, but it returns while the
+	// browser and its helpers still run (measured: the whole tree alive 250 ms later, part of it after
+	// 1.25 s), and a Chrome launched meanwhile finds the profile locked ("Chrome process closed the
+	// pipe"). So the tree is listed first, ended as a whole, and awaited.
 	if (process.platform === "win32") {
+		const tree = await windowsBunChromeTree();
 		webViewClass.closeAll();
+		const running = tree.filter(alive);
+		if (running.length > 0) await run("taskkill", ["/F", ...running.flatMap((pid) => ["/PID", String(pid)])]);
+		await waitForWindowsRemoval(tree);
 		return;
 	}
 	const pids = await bunChromePids();

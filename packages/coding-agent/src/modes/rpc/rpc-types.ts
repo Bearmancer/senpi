@@ -1106,8 +1106,9 @@ export type RpcSessionParkedEvent = {
  *   in-place identity event; this reason is for a handle that ended because of a replacement).
  * - `handoff_parked`: a generation handoff drained this host and put the session back on disk.
  *   The session was not ended - `open_session { sessionPath }` reopens it in the new generation.
- * - `session_dir_removed`: no client held the session and its transcript directory was deleted,
- *   so it could never persist again; the sweep ended it instead of letting it outlive its file.
+ * - `session_dir_removed`: the session's transcript directory was deleted, so it could never persist
+ *   again. The idle sweep ends it once no client holds it; a handoff drain ends it instead of parking
+ *   it with a path nothing can reopen (senpi#2285).
  * - `error`: the session failed (worker death, output overflow) and the host sealed it.
  */
 export type RpcSessionClosedReason =

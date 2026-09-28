@@ -16,14 +16,20 @@ export interface CooperativeSettlementBounds {
 	readonly graceMs: number;
 }
 
-const DEFAULT_SETTLEMENT_BOUNDS: CooperativeSettlementBounds = {
+/** Every deadline an interrupt can hit; a kernel built with its own bounds chooses which stop path a slow cell takes. */
+export interface JavaScriptInterruptBounds extends CooperativeSettlementBounds {
+	readonly terminateDeadlineMs: number;
+}
+
+export const DEFAULT_INTERRUPT_BOUNDS: JavaScriptInterruptBounds = {
 	ackMs: INTERRUPT_ACK_MS,
 	graceMs: JS_INTERRUPT_GRACE_MS,
+	terminateDeadlineMs: WORKER_TERMINATE_DEADLINE_MS,
 };
 
 export async function awaitCooperativeSettlement(
 	run: PendingJavaScriptRun,
-	bounds = DEFAULT_SETTLEMENT_BOUNDS,
+	bounds: CooperativeSettlementBounds = DEFAULT_INTERRUPT_BOUNDS,
 ): Promise<CooperativeSettlement> {
 	if (run.settled) return "settled";
 	const settled = run.settlement.then((): "settled" => "settled");

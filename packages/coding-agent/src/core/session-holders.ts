@@ -202,6 +202,19 @@ async function liveHolders(dir: string): Promise<SessionHolder[]> {
 	return holders;
 }
 
+/**
+ * Live processes that have `sessionFile` open right now (stale records of dead or reused pids are
+ * reclaimed on the way). A caller about to start another writer uses it to wait instead of racing one.
+ */
+export async function liveSessionHolders(sessionFile: string, sessionId: string): Promise<SessionHolder[]> {
+	try {
+		return await liveHolders(holdersDir(sessionFile, sessionId));
+	} catch (error) {
+		if (errorCode(error) === "ENOENT") return [];
+		throw error;
+	}
+}
+
 async function takeMoveLock(sessionFile: string, lock: string, waitMs: number): Promise<string> {
 	const mine = identityRecord();
 	const deadline = Date.now() + waitMs;

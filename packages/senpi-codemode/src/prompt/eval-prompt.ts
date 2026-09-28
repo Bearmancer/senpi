@@ -112,7 +112,7 @@ export function buildEvalPrompt(
 		promptSnippet: "Run one incremental code cell in a persistent language kernel.",
 		promptGuidelines: [
 			style === "gpt" && context.monitor === true ? GPT_MONITOR_BATCHING_GUIDELINE : BATCHING_GUIDELINES[style],
-			"Use eval reset only when a language kernel must be wiped; reset is scoped to the selected language.",
+			"Use eval reset only when a language kernel must be wiped; reset is scoped to the selected language. A bracketed kernel memory notice in a result names the globals holding the most memory; drop the ones you no longer need.",
 		],
 	};
 }

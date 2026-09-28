@@ -2,12 +2,14 @@ import { kernelToolCallContext } from "./kernel-tools-context.js";
 import { kernelToolError } from "./kernel-tools-errors.js";
 import { createKernelToolPump } from "./kernel-tools-pump.js";
 import { hostDeniedError, hostToolRefusal } from "./kernel-tools-scope.js";
+import { createWorkerMemory } from "./worker-memory.js";
 import { JsWorkerRuntime } from "./worker-runtime.js";
 import { installKernelWebView } from "./worker-webview.js";
 
-// Mirrors INTERRUPT_ACK_OP and CHILD_LIFECYCLE_OP in src/bridge/reserved.ts (this worker file cannot import TypeScript).
+// Mirrors INTERRUPT_ACK_OP, CHILD_LIFECYCLE_OP, and MEMORY_COLLECTED_OP in src/bridge/reserved.ts (this worker file cannot import TypeScript).
 const INTERRUPT_ACK_OP = "interrupt-ack";
 const CHILD_LIFECYCLE_OP = "child";
+const MEMORY_COLLECTED_OP = "memory-collected";
 
 // Mirrors SESSION_ENVIRONMENT_KEYS in src/kernels/session-env.ts (this worker file
 // cannot import TypeScript). Keys the active session does not set must be dropped so a
@@ -24,6 +26,7 @@ const SESSION_ENVIRONMENT_KEYS = [
 
 export function createWorkerCore(transport, options) {
 	let runtime = null;
+	let memory = null;
 	let activeCell = null;
 	const pendingTools = new Map();
 	const pendingWebViewPorts = new Map();
@@ -50,12 +53,16 @@ export function createWorkerCore(transport, options) {
 				emit,
 				callTool: async (toolName, args) => await callTool(toolName, args),
 			});
-			emit({ type: "result", cellId: message.cellId, ok: true, valueRepr: valueRepr(value), durationMs: durationMs(startedAtMs) });
+			emit({ type: "result", cellId: message.cellId, ok: true, valueRepr: valueRepr(value), durationMs: durationMs(startedAtMs), ...memoryReport() });
 		} catch (error) {
-			emit({ type: "result", cellId: message.cellId, ok: false, error: bridgeError(error), durationMs: durationMs(startedAtMs) });
+			emit({ type: "result", cellId: message.cellId, ok: false, error: bridgeError(error), durationMs: durationMs(startedAtMs), ...memoryReport() });
 		} finally {
 			activeCell = null;
 		}
+	}
+
+	function memoryReport() {
+		return memory === null ? {} : { memory: memory.afterCell() };
 	}
 
 	async function callTool(toolName, args) {
@@ -96,6 +103,7 @@ export function createWorkerCore(transport, options) {
 	}
 
 	function onMessage(message) {
+		if (message.type === "run" || message.type === "interrupt" || message.type === "close") memory?.cancelIdle();
 		if (kernelTools.handle(message)) return;
 		if (message.type === "kernel-tools-names") {
 			runtime?.kernelTools.setCollisionNames(message.hostToolNames ?? [], message.foreignLanguageNames ?? []);
@@ -121,6 +129,10 @@ export function createWorkerCore(transport, options) {
 				foreignLanguageNames: message.foreignLanguageNames ?? [],
 				onChildEvent: (event) => emit({ type: "status", event: { op: CHILD_LIFECYCLE_OP, ...event } }),
 			});
+			if (message.memory) {
+				memory = createWorkerMemory(message.memory, (report) => emit({ type: "status", event: { op: MEMORY_COLLECTED_OP, ...report } }));
+				memory.captureBaseline();
+			}
 			emit({ type: "ready" });
 			return;
 		}

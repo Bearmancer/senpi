@@ -1,3 +1,47 @@
+## 2026-09-28 - One session can no longer stop a handoff drain (senpi#2285)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/session-drain.ts` (new): `selectDrainVerdicts` makes one drain pass's decisions, judging every session on its own. A session whose activity snapshot throws cannot be proven busy, so it parks (reported to stderr) instead of aborting the pass; a settled session whose transcript directory is gone is named separately.
+- `packages/coding-agent/src/modes/rpc/session-command-router.ts`: `beginDrain` arms the drain timer BEFORE the first pass, and `sweepDrain` catches a pass that fails as a whole (for example `list()` throwing), so the timer retries it and a re-entered drain (grace expiry, a second `SIGUSR1`) never throws. A gone session ends with `session_closed { reason: "session_dir_removed" }` and no `sessionPath`, and releases its connections like a parked one.
+- `packages/coding-agent/src/modes/rpc/multi-session-host.ts`: `drainForHandoff` starts the drain in a `finally` after the announcement, so a failed announcement still drains and a drain failure is no longer logged as `handoff announcement failed`.
+- `packages/coding-agent/src/modes/rpc/session-worker.ts`: the worker's reservation and prepare paths use `canonicalSessionPath` instead of a local `canonicalPath` whose `realpathSync(dirname(path))` threw for a missing directory, so the worker keys a file exactly as the host does.
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: the `session_dir_removed` reason documents that a handoff drain also sends it, instead of parking with a path nothing can reopen.
+- `test/suite/regressions/2285-drain-sweep-isolation.test.ts`, `test/suite/regressions/2285-drain-dir-removed-host.test.ts` (new).
+
+### Why
+
+On 2026.9.27 a superseded generation lived 15 hours after a handoff: the first drain pass threw `ENOENT` from `list()` for a task child whose directory had been deleted, before the drain timer was armed, so no other session was parked and every grace-expiry re-entry threw at the same spot. #2206 removed that trigger, but the pass still had no per-session isolation, the timer was still armed after it, and a gone session was parked with a path nothing can reopen.
+
+### Why an extension could not handle it
+
+The drain runs in the host's router before and after any session's extensions exist, and it decides the host's own exit.
+
+### Expected merge conflict zones
+
+- `session-command-router.ts`: `beginDrain`, `sweepDrain`, and `evictIdleSession`'s handoff branch.
+- `multi-session-host.ts`: `drainForHandoff`.
+- `session-worker.ts`: the write-reservation install and the prepare path.
+- `rpc-types.ts`: the `RpcSessionClosedReason` doc comment.
+
+## 2026-09-28 - Exact-pid collection for children whose thread is gone (senpi#1962)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/child-reaper.ts`: new `collectOrphanedChildren(pids)` reuses the reaper's syscalls to collect the listed exited children right away (WNOWAIT peek, then `waitpid(pid, WNOHANG)`), for callers that know the owning thread is gone and so need no two-tick window.
+
+### Why
+
+- The eval kernel knows exactly which pids a retired worker left behind; waiting for the reaper's 30 s window would leave them as zombies in the meantime, and single-session modes had no reaper at all (#1962).
+
+### Why an extension could not handle it
+
+- The reaper and its `bun:ffi` bindings live in this package.
+
+### Expected merge conflict zones
+
+- LOW: the tail of `child-reaper.ts`.
+
 ## 2026-09-28 - The shared host judges memory pressure by its footprint, not RSS (senpi#2261)
 
 ### What changed

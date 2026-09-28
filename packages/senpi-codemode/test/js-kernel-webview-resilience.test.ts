@@ -10,6 +10,9 @@ import {
 } from "./eval/webview-fixtures.ts";
 
 const CELL_TIMEOUT_MS = 60_000;
+// Cells run under their own timeouts (up to CELL_TIMEOUT_MS), which retire a stuck worker and its
+// Chrome; vitest must not abandon a test before that, or its kernel runs on into the next test.
+const BUDGET = { timeout: CELL_TIMEOUT_MS + 30_000 };
 
 let page: WebViewFixturePage | undefined;
 const kernels: JavaScriptKernel[] = [];
@@ -45,7 +48,7 @@ async function onlyBunChrome(): Promise<number> {
 	return pid;
 }
 
-describe.skipIf(!bunWebViewAvailable)("a misbehaving Chrome behind the main-thread WebView service", () => {
+describe.skipIf(!bunWebViewAvailable)("a misbehaving Chrome behind the main-thread WebView service", BUDGET, () => {
 	beforeAll(async () => {
 		page = await serveFixturePage();
 	});

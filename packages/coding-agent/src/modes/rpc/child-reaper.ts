@@ -164,6 +164,25 @@ export async function startHostChildReaper(log: (message: string) => void): Prom
 	return () => clearInterval(timer);
 }
 
+let orphanSyscalls: Promise<ChildReaperSyscalls | undefined> | undefined;
+
+/**
+ * Collects the exit status of the exact exited children in `pids` right away (#1962). Only for pids whose
+ * owning thread is gone, such as the children of a retired eval worker: no live thread will ever wait on them,
+ * so the reaper's two-tick window protects nothing and would only leave them as zombies until it elapses.
+ * A pid that is not an exited child of this process is left alone; `waitpid(-1)` is never called. Resolves to
+ * the pids it collected; under Node or on Windows it collects nothing.
+ */
+export async function collectOrphanedChildren(pids: readonly number[]): Promise<number[]> {
+	if (pids.length === 0) return [];
+	orphanSyscalls ??= loadChildReaperSyscalls();
+	const syscalls = await orphanSyscalls;
+	if (syscalls === undefined) return [];
+	return pids.filter(
+		(pid) => Number.isInteger(pid) && pid > 0 && syscalls.isWaitable(pid) && syscalls.reapExited(pid),
+	);
+}
+
 function runtimeName(): string {
 	return typeof (globalThis as { Bun?: unknown }).Bun === "undefined" ? "Node" : `Bun on ${process.platform}`;
 }

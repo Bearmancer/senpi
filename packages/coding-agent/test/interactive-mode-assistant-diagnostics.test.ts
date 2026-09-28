@@ -64,4 +64,43 @@ describe("InteractiveMode assistant diagnostics", () => {
 		maybeShowAssistantDiagnostics.call(disabled, message);
 		expect(disabled.chatContainer.children).toHaveLength(0);
 	});
+
+	test("shows a Copilot tool-limit notice once per session regardless of cache notice settings", () => {
+		const maybeShowAssistantDiagnostics = Reflect.get(InteractiveMode.prototype, "maybeShowAssistantDiagnostics") as (
+			this: {
+				chatContainer: Container;
+				settingsManager: { getShowCacheMissNotices(): boolean };
+				sessionManager: { getSessionId(): string };
+				copilotToolLimitNoticeSessionId?: string;
+			},
+			message: AssistantMessage,
+		) => void;
+		const copilotMessage: AssistantMessage = {
+			...message,
+			provider: "github-copilot",
+			diagnostics: [
+				{
+					type: "github_copilot_tool_limit",
+					timestamp: 1,
+					details: {
+						message:
+							"GitHub Copilot accepts at most 128 tools on endpoints without tool search; senpi omitted 2 excess tool definitions.",
+					},
+				},
+			],
+		};
+		const target = {
+			chatContainer: new Container(),
+			settingsManager: { getShowCacheMissNotices: () => false },
+			sessionManager: { getSessionId: () => "session-1" },
+			copilotToolLimitNoticeSessionId: undefined,
+		};
+
+		initTheme("dark");
+		maybeShowAssistantDiagnostics.call(target, copilotMessage);
+		maybeShowAssistantDiagnostics.call(target, copilotMessage);
+
+		const output = stripAnsi(target.chatContainer.render(120).join("\n"));
+		expect(output.match(/GitHub Copilot accepts at most 128 tools/g)).toHaveLength(1);
+	});
 });

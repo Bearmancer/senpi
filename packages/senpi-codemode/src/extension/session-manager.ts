@@ -1,11 +1,13 @@
 import { join } from "node:path";
-import type { ExtensionContext } from "@code-yeongyu/senpi";
+import { type ExtensionContext, readProcessFootprint } from "@code-yeongyu/senpi";
 import { type BridgeServerHandle, startBridgeServer } from "../bridge/http-server.ts";
 import type { KernelToHostMessage } from "../bridge/protocol.ts";
 import { isReservedToolName, runReservedTool } from "../bridges/reserved-dispatch.ts";
 import type { EvalSchemaToolInfo } from "../bridges/schema-bridge.ts";
 import type { CompletionRequest, CompletionResult } from "../completion/handler.ts";
+import { resolveKernelMemoryThresholds } from "../config/memory-settings.ts";
 import { type CodemodeSettings, defaultCodemodeSettings } from "../config/settings.ts";
+import { collectOrphanedChildren } from "../host-sdk.ts";
 import type { InterpreterAvailability } from "../interpreters/detect.ts";
 import { JuliaKernel } from "../kernels/jl/kernel.ts";
 import { JavaScriptKernel } from "../kernels/js/context-manager.ts";
@@ -230,6 +232,8 @@ class DefaultCodemodeSessionManager implements CodemodeSessionManager {
 				onMessage,
 				hostToolNames: () => this.#options.listTools?.().map((tool) => tool.name) ?? [],
 				foreignLanguageNames: () => this.#foreignKernelToolNames(),
+				memory: resolveKernelMemoryThresholds(this.#options.settings.memory),
+				collectOrphanedChildren,
 				...(this.#options.sessionEnv ? { sessionEnv: this.#options.sessionEnv } : {}),
 				...(localRoots ? { localRoots: { ...localRoots } } : {}),
 				...(this.#options.artifactsDir ? { artifactsDir: this.#options.artifactsDir } : {}),
@@ -244,34 +248,19 @@ class DefaultCodemodeSessionManager implements CodemodeSessionManager {
 			...(localRoots ? { localRoots: { ...localRoots } } : {}),
 			...(this.#options.artifactsDir ? { artifactsDir: this.#options.artifactsDir } : {}),
 		};
-		if (language === "py") {
-			return await PythonKernel.start({
-				interpreterPath: detected.path,
-				sessionId: this.#options.sessionId,
-				cwd: this.#options.cwd,
-				...(this.#options.sessionEnv ? { sessionEnv: this.#options.sessionEnv } : {}),
-				connection,
-				onMessage,
-			});
-		}
-		if (language === "rb") {
-			return RubyKernel.start({
-				command: detected.path,
-				sessionId: this.#options.sessionId,
-				cwd: this.#options.cwd,
-				...(this.#options.sessionEnv ? { sessionEnv: this.#options.sessionEnv } : {}),
-				connection,
-				onMessage,
-			});
-		}
-		return JuliaKernel.start({
-			command: detected.path,
+		const shared = {
 			sessionId: this.#options.sessionId,
 			cwd: this.#options.cwd,
 			...(this.#options.sessionEnv ? { sessionEnv: this.#options.sessionEnv } : {}),
 			connection,
 			onMessage,
-		});
+		};
+		const memory = resolveKernelMemoryThresholds(this.#options.settings.memory);
+		if (language === "py") return await PythonKernel.start({ ...shared, interpreterPath: detected.path, memory });
+		// rb/jl runners report no memory: the host reads the interpreter footprint for the ceiling only.
+		const hostMeasured = { thresholds: memory, readFootprint: readProcessFootprint };
+		if (language === "rb") return RubyKernel.start({ ...shared, command: detected.path, memory: hostMeasured });
+		return JuliaKernel.start({ ...shared, command: detected.path, memory: hostMeasured });
 	}
 
 	#foreignKernelToolNames(): string[] {

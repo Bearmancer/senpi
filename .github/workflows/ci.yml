@@ -193,6 +193,33 @@ jobs:
         run: npx vitest run test/suite/hooks-trust.test.ts test/suite/hooks-trust-storage-errors.test.ts test/suite/hooks-trust-storage-release-errors.test.ts test/suite/hooks-trust-storage-aba.test.ts
         working-directory: packages/coding-agent
 
+  # Durable scheduled prompts: rename claims, runner leases, ungated delivery locks, taskkill
+  # timeouts and cmd.exe `--exec` hooks all behave differently on Windows.
+  schedule-windows:
+    name: Scheduled prompts (Windows)
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      # schedule-cli spawns the source CLI, which resolves workspace packages through their dist.
+      - name: Build workspace package entries
+        run: npm run build
+
+      - name: Run scheduled-prompt suites
+        run: npx vitest run test/suite/schedule-runner.test.ts test/suite/schedule-extension.test.ts test/suite/schedule-cli.test.ts
+        working-directory: packages/coding-agent
+
   rpc-windows:
     name: RPC named pipes (Windows)
     runs-on: windows-latest
@@ -359,7 +386,7 @@ jobs:
 
       - name: Run eval kernel WebView suites (Bun)
         shell: bash
-        run: bunx --bun vitest run test/js-kernel-webview.test.ts test/js-kernel-webview-lifecycle.test.ts test/js-kernel-webview-resilience.test.ts --reporter=default --reporter=json --outputFile=vitest-webview.json
+        run: bunx --bun vitest run test/js-kernel-webview.test.ts test/js-kernel-webview-lifecycle.test.ts test/js-kernel-webview-resilience.test.ts test/js-kernel-webview-launch.test.ts --reporter=default --reporter=json --outputFile=vitest-webview.json
         working-directory: packages/senpi-codemode
 
       - name: Require the WebView suites to have executed
@@ -462,6 +489,7 @@ jobs:
         test-coding-agent,
         grep-native-contract,
         hooks-trust-storage-windows,
+        schedule-windows,
         rpc-windows,
         compiled-extensions-windows,
         claude-executable-windows,
@@ -494,6 +522,7 @@ jobs:
             echo "- test-coding-agent: ${{ needs.test-coding-agent.result }}"
             echo "- grep-native-contract: ${{ needs.grep-native-contract.result }}"
             echo "- hooks-trust-storage-windows: ${{ needs.hooks-trust-storage-windows.result }}"
+            echo "- schedule-windows: ${{ needs.schedule-windows.result }}"
             echo "- rpc-windows: ${{ needs.rpc-windows.result }}"
             echo "- compiled-extensions-windows: ${{ needs.compiled-extensions-windows.result }}"
             echo "- claude-executable-windows: ${{ needs.claude-executable-windows.result }}"

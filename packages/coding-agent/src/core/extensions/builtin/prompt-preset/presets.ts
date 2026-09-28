@@ -127,8 +127,9 @@ function isKimiK3Model(model: ModelWithPromptPresetMetadata): boolean {
 	return hasKimiK3Signal(model.id) || (model.name !== undefined && hasKimiK3Signal(model.name));
 }
 
+// Exactly the SWE-2 lanes Devin's Cascade serves; every other swe-2 uid is refused upstream (#2306).
 function hasSWE2Signal(value: string): boolean {
-	return /(?:^|[/@:._-])swe-2-(?:high|max|low|high-lite)(?:$|[/@:._-])/.test(normalizeModelId(value));
+	return /(?:^|[/@:._-])swe-2-(?:medium|high|max)(?:$|[/@:._])/.test(normalizeModelId(value));
 }
 
 function isSWE2Model(model: ModelWithPromptPresetMetadata): boolean {

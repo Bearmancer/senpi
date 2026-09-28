@@ -34,6 +34,11 @@ export function appendUncaughtCrashLog(origin: string, error: unknown): void {
 	appendDebugLogEntry(`uncaught crash (${origin})`, describeCrash(error));
 }
 
+/** Record a promise rejection nobody handled; the session keeps running, so this entry is its only trace. */
+export function appendUnhandledRejectionLog(reason: unknown): void {
+	appendDebugLogEntry("unhandled rejection", describeCrash(reason));
+}
+
 function describeCrash(error: unknown): string {
 	if (error instanceof Error) {
 		// `stack` already starts with "Name: message" in V8, but a caller-supplied or

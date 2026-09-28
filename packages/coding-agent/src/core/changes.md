@@ -1,3 +1,43 @@
+## 2026-09-28 - A stored OAuth token the provider refuses is re-exchanged once before failing (senpi#2297)
+
+### What changed
+
+- `packages/coding-agent/src/core/model-runtime.ts`: `stream` and `streamSimple` (single-credential and rotation lanes) send each attempt through the new private `attemptWithTokenRecovery`, which uses `credential-pool/rejected-token-retry.ts` (`retryOnceOnRejectedToken`). `prepareRequest` forwards `rejectedAccess` to auth resolution and reports the stored OAuth access it used plus the provider's `rejectedTokenStatuses`. When the first pre-output event is an error whose `providerDiagnostic.httpStatus` is one of those statuses, the attempt is re-run once with that token named as rejected; pre-commit frames of the refused attempt are held back so the caller sees one stream. `ModelRuntimeAuthOverrides` gains `rejectedAccess`.
+- `packages/coding-agent/src/core/credential-pool/rotation-events.ts`: `rotationErrorFromEvent` attaches the terminal event's `providerDiagnostic.httpStatus` as `status` on the failure it builds, so `classifyCredentialFailure` sees the HTTP status for stream-event failures (before, only message text was classified, and a bodyless 403 always fell through to `fail_request`). When a freshly re-exchanged token is refused too, `rejected-token-retry.ts` appends an account-scoped sentence, so the pool blocks that slot (`auth_error`, lifted by a new login) and fails over to a healthy sibling account within the same request.
+- `packages/coding-agent/src/core/retry-fallback/cooldown.ts`: `SelectorCooldowns` strips provider request ids before matching status words, so an id containing `429` or `5xx` digits cannot pick the cooldown.
+
+### Why
+
+- GitHub revoked Copilot tokens server-side while senpi still believed them valid; every model returned HTTP 403 until the token's own 24h expiry, in single-account sessions and on a pinned pool slot alike (senpi#2297).
+
+### Why an extension could not handle it
+
+- The retry must happen before any output reaches the session and must re-resolve auth for the same slot; both live in `ModelRuntime`, below every extension hook.
+
+### Expected merge conflict zones
+
+- MEDIUM: the `runAttempt` callbacks and single-credential tails of `stream`/`streamSimple`, and the `prepareRequest` return shape in `model-runtime.ts`.
+- LOW: `rotationErrorFromEvent` in `credential-pool/rotation-events.ts`.
+- LOW: `durationFor` in `retry-fallback/cooldown.ts`.
+
+## 2026-09-28 - models.json accepts supportsForcedToolChoice on OpenAI compat (senpi#2218)
+
+### What changed
+
+- `packages/coding-agent/src/core/model-config-schema.ts`: `OpenAICompletionsCompatSchema` and `OpenAIResponsesCompatSchema` accept an optional boolean `supportsForcedToolChoice`, matching the new `OpenAICompletionsCompat` / `OpenAIResponsesCompat` field in `packages/ai`.
+
+### Why
+
+- A provider known to accept only automatic tool choice (Kiro behind an OpenAI-compatible proxy, senpi#2218) needs a way to say so in `models.json`, so no request ever forces a tool on it.
+
+### Why an extension could not handle it
+
+- `models.json` is validated against this schema before any extension runs; an unknown compat key is rejected here.
+
+### Expected merge conflict zones
+
+- LOW: the two OpenAI compat schema objects when upstream adds compat keys.
+
 ## 2026-09-28 - /sessions alias of /resume (#1437)
 
 ### What changed
@@ -106,6 +146,24 @@ The `context` hook cannot see failed assistant turns in a form that ties a rejec
 
 - LOW: the `return` of `convertToLlm()` in `messages.ts`.
 - LOW: the Cursor quota note block in the agent-end handler of `agent-session.ts`.
+
+## 2026-09-28 - OpenCode Go default follows the catalog after v2026.9.28-4 (senpi#2295)
+
+### What changed
+
+- `packages/coding-agent/src/core/model-resolver.ts`: the built-in `opencode-go` default is now `kimi-k3`, because the release-regenerated catalog no longer lists `kimi-k2.6`.
+
+### Why
+
+- A default that is missing from its provider catalog cannot resolve, and `model-resolver.test.ts` failed on main.
+
+### Why an extension could not handle it
+
+- Built-in default model table.
+
+### Expected merge conflict zones
+
+- LOW: the `opencode-go` row of the defaults table.
 
 ## 2026-09-27 - Fireworks default follows the catalog after v2026.9.27 (senpi#2175)
 

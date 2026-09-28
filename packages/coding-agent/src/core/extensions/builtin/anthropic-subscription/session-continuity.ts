@@ -13,6 +13,8 @@ export type ContinuityEntrySnapshot = {
 	assistantUuidByIndex: ReadonlyMap<number, string>;
 	pendingForkReason: string | null;
 	taintedReason?: string | null;
+	/** Digest of the access token the resident subprocess was spawned with. */
+	credentialDigest?: string;
 };
 
 export type ContinuityBindingSnapshot = {
@@ -44,6 +46,8 @@ export type ContinuityDecisionInput = {
 	idleExpired?: boolean;
 	/** Reason the newest ledger record invalidated this session's binding, when one is pending. */
 	invalidationReason?: string;
+	/** Digest of the access token this turn's attempt authenticates with. */
+	credentialDigest?: string;
 };
 
 export type ContinuityDecision =
@@ -272,6 +276,22 @@ function decideFromState(input: ContinuityDecisionInput): ContinuityDecision {
 	const drift = identityDrift(input, entry);
 	if (drift) {
 		return { kind: "reattach", sdkSessionId: entry.sdkSessionId, from: entry.sentCount, reason: drift };
+	}
+
+	// A refresh revokes the access token the resident subprocess was spawned
+	// with; a delta sent to it fails with 401 "token has been revoked". Resume the
+	// same lineage in a subprocess that carries the current token instead.
+	if (
+		input.credentialDigest !== undefined &&
+		entry.credentialDigest !== undefined &&
+		entry.credentialDigest !== input.credentialDigest
+	) {
+		return {
+			kind: "reattach",
+			sdkSessionId: entry.sdkSessionId,
+			from: entry.sentCount,
+			reason: "credential_refreshed",
+		};
 	}
 
 	return { kind: "delta", from: entry.sentCount };

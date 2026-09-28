@@ -226,6 +226,14 @@ export interface OAuthAuth {
 	/** Selector label for the OAuth login option, e.g. "Sign in with SuperGrok or X Premium". */
 	loginLabel?: string;
 
+	/**
+	 * HTTP statuses with which the provider refuses a stored access token before its
+	 * own expiry says so (GitHub Copilot revokes its short-lived token server-side and
+	 * answers 401/403). The runtime re-exchanges that exact token once and retries the
+	 * request before surfacing the failure.
+	 */
+	rejectedTokenStatuses?: readonly number[];
+
 	login(interaction: ProviderAuthInteraction): Promise<OAuthCredential>;
 
 	/**

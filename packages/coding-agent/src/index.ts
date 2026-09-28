@@ -524,6 +524,8 @@ export {
 	Theme,
 	type ThemeColor,
 } from "./modes/interactive/theme/theme.ts";
+// Exact-pid collection of children whose owning thread is gone (#1962)
+export { collectOrphanedChildren } from "./modes/rpc/child-reaper.ts";
 // Clipboard utilities
 export { copyToClipboard } from "./utils/clipboard.ts";
 export { parseFrontmatter, stripFrontmatter } from "./utils/frontmatter.ts";

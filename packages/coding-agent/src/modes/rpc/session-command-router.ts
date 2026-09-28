@@ -9,7 +9,6 @@ import {
 	SESSION_CONTEXT_CAPABILITY,
 	SESSION_KIND_CAPABILITY,
 } from "./custom-capability.ts";
-import { isHandoffBusy } from "./handoff-activity.ts";
 import { protocolIdentity } from "./protocol-identity.ts";
 import { sessionAutoTitleError, sessionContextError, sessionKindError } from "./rpc-input-validation.ts";
 import type { RpcCommand, RpcResponse, RpcSessionClosedReason } from "./rpc-types.ts";
@@ -24,6 +23,7 @@ import {
 } from "./rpc-types.ts";
 import { runWithSessionAttribution } from "./session-attribution.ts";
 import { createRpcSessionBinding, type RpcSessionBinding } from "./session-binding.ts";
+import { readDrainVerdicts } from "./session-drain.ts";
 import type { SessionEventWriter } from "./session-event-writer.ts";
 import type { OpenRpcSession, RpcSessionLaunchProfile, RpcSessionRegistry } from "./session-registry.ts";
 import { RpcSessionRegistryError } from "./session-registry.ts";
@@ -174,37 +174,24 @@ export class SessionCommandRouter {
 	beginDrain(): void {
 		this.draining = true;
 		this.stopSweep();
+		// Armed BEFORE the first pass, so a pass that fails is retried instead of ending the drain
+		// (senpi#2285). Unref'd: a draining host must never be the reason the event loop stays open.
+		if (this.drainTimer === undefined && !this.drainExitRequested) {
+			this.drainTimer = setInterval(() => this.sweepDrain(), DRAIN_SWEEP_MS);
+			this.drainTimer.unref?.();
+		}
 		this.sweepDrain();
-		if (this.drainTimer !== undefined || this.drainExitRequested) return;
-		// Unref'd: a draining host must never be the reason the event loop stays open.
-		this.drainTimer = setInterval(() => this.sweepDrain(), DRAIN_SWEEP_MS);
-		this.drainTimer.unref?.();
 	}
 
 	/** One drain pass: park what has settled, and exit once the host holds nothing. */
 	private sweepDrain(): void {
 		// An accepted open can still be constructing a runtime or binding.
 		if (this.activeRequests.has(undefined)) return;
-		for (const { sessionId, status } of this.registry.list()) {
-			if (status !== "open") continue;
-			const entry = this.registry.peek(sessionId);
-			if (!entry || this.activeRequests.has(sessionId)) continue;
-			// Both signals are optional: a runtime that does not publish an activity
-			// snapshot cannot be proven busy, and a park that waits for a signal the
-			// runtime never emits would strand the session on the old generation.
-			const snapshot = entry.runtime?.session.activitySnapshot;
-			if (entry.worker?.handoffBusy === true || (snapshot !== undefined && isHandoffBusy(snapshot))) continue;
-			this.handoffClosed.add(sessionId);
-			this.handoffParks++;
-			void this.evictIdleSession(sessionId, "handoff_parked")
-				.catch((cause: unknown) => {
-					process.stderr.write(`senpi rpc handoff park ${sessionId} failed: ${String(cause)}\n`);
-				})
-				.finally(() => {
-					this.handoffParks--;
-					this.sweepDrain();
-				});
-		}
+		// A pass that failed as a whole is retried by the drain timer armed before it (senpi#2285).
+		const verdicts = readDrainVerdicts(this.registry, (sessionId) => this.activeRequests.has(sessionId));
+		if (!verdicts) return;
+		for (const sessionId of verdicts.gone) this.parkForHandoff(sessionId, "session_dir_removed");
+		for (const sessionId of verdicts.park) this.parkForHandoff(sessionId, "handoff_parked");
 		if (this.registry.size > 0 || this.handoffParks > 0 || this.finalizations.size > 0) return;
 		if (this.drainTimer !== undefined) {
 			clearInterval(this.drainTimer);
@@ -214,6 +201,19 @@ export class SessionCommandRouter {
 		if (this.drainExitRequested) return;
 		this.drainExitRequested = true;
 		this.onEmptyExit?.();
+	}
+
+	private parkForHandoff(sessionId: string, reason: "handoff_parked" | "session_dir_removed"): void {
+		this.handoffClosed.add(sessionId);
+		this.handoffParks++;
+		void this.evictIdleSession(sessionId, reason)
+			.catch((cause: unknown) => {
+				process.stderr.write(`senpi rpc handoff park ${sessionId} failed: ${String(cause)}\n`);
+			})
+			.finally(() => {
+				this.handoffParks--;
+				this.sweepDrain();
+			});
 	}
 
 	/**
@@ -387,18 +387,17 @@ export class SessionCommandRouter {
 		const retained = this.registry.peek(sessionId);
 		const parkedPath =
 			retained?.retainOnDisconnect === true || reason === "handoff_parked" ? retained?.sessionPath : undefined;
-		const owners =
-			reason === "handoff_parked"
-				? [...this.sessionsByConnection]
-						.filter(([, owned]) => owned.has(sessionId))
-						.map(([connection]) => connection)
-				: [];
+		// A drain releases every session's connections the same way, parked or gone (senpi#2285).
+		const handoff = reason === "handoff_parked" || (reason === "session_dir_removed" && this.draining);
+		const owners = handoff
+			? [...this.sessionsByConnection].filter(([, owned]) => owned.has(sessionId)).map(([connection]) => connection)
+			: [];
 		// A failed claim means an explicit close raced us and owns the entry now.
 		const claim = this.tryClaimClose(sessionId, { drainAttachments: true });
 		if (!claim) return;
 		const binding = this.bindings.get(sessionId);
 		binding?.cancelPendingExtensionUiRequests?.();
-		if (reason !== "handoff_parked") this.forgetSessionOwnership(sessionId);
+		if (!handoff) this.forgetSessionOwnership(sessionId);
 		if (claim.finalizer) {
 			await this.finalizeClose(sessionId, binding, () =>
 				// A drain names ITS reason on the close record. An idle sweep of a RETAINED
@@ -415,7 +414,7 @@ export class SessionCommandRouter {
 		} else {
 			await this.finalizations.get(sessionId)?.promise;
 		}
-		if (reason === "handoff_parked") {
+		if (handoff) {
 			this.forgetSessionOwnership(sessionId);
 			await this.onHandoffParked?.(owners.filter((connection) => !this.sessionsByConnection.has(connection)));
 		}

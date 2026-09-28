@@ -1,3 +1,26 @@
+## 2026-09-27 - `senpi schedule` command for durable scheduled prompts
+
+### What changed
+
+- `packages/coding-agent/src/cli/schedule-command.ts` (new): `senpi schedule list [--json]`, `cancel <id>`, and `run [--watch] [--exec <command>] [--poll-seconds <n>] [--timeout-seconds <n>] [--concurrency <n>]` over the job files of the builtin `schedule` extension (`core/extensions/builtin/schedule/`). Every runner holds a lease with a 30s heartbeat (`schedule/runners/<pid>.json`); `--watch` is woken by new jobs through a `pending/` watch and stops cleanly on SIGTERM/SIGINT. `run` prints one JSON line per event; usage errors exit 2; a failed one-shot delivery exits 1.
+- `packages/coding-agent/src/cli/schedule-watch.ts` (new): the runner process - lease, heartbeat (a failing refresh prints one `lease_error`), `pending/` watch, signal handling, event lines.
+- `packages/coding-agent/src/cli/schedule-delivery.ts` (new): the `--exec` hook and `senpi -p --session` deliveries (on POSIX each waits on an fd-3 gate until its pid is recorded in the session lock and leads its own process group; a timeout kills the group, or the tree via `taskkill /T` on Windows, and is reported only after the process exits) and the open-session deferral.
+- `packages/coding-agent/src/cli/schedule-runner.ts` (new): one runner pass - each job is delivered under its session's cross-process delivery lock - - recover occurrences whose runner died (to `failed/`, never retried), then claim and deliver due jobs concurrently across sessions and one at a time within a session, re-arming recurring jobs before delivery. Deliveries: `--exec` hook (event JSON on stdin) or `senpi -p --session` resume, which defers while `liveSessionHolders` reports another process on the session file.
+- `packages/coding-agent/src/cli/deferred-commands.ts`: `SCHEDULE_COMMAND_ARGV` plus `dispatchScheduleCommand(args)`, an exit-code dispatch shaped like `dispatchHostCommand`.
+- `packages/coding-agent/src/cli/args.ts`: one `Commands:` line in `printHelp` for `schedule`, beside `host`.
+
+### Why
+
+- `/loop` keeps its timers in the session process and refuses `--print`, so a headless run (a chat bridge that runs one `senpi -p` per message) could not schedule anything. Scheduled prompts are now files, and this command is the out-of-process runner that fires them.
+
+### Why an extension could not handle it
+
+- The runner has to outlive every session process, and CLI commands are routed before extensions load.
+
+### Expected merge conflict zones
+
+- LOW: one help line in `args.ts`; the tail of `deferred-commands.ts`.
+
 ## 2026-09-28 - `host shard-path|gc` in the help text (senpi#2245)
 
 ### What changed

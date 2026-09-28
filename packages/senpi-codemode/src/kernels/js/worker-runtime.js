@@ -13,6 +13,10 @@ import { kernelToolError } from "./kernel-tools-errors.js";
 import { createKernelToolRegistry, createToolNamespace } from "./kernel-tools-registry.js";
 
 const PREPARED_CELL_PREFIX = "/*senpi:prepared-cell*/";
+// One stable source URL for the loader/contribution prelude: a per-cell URL makes
+// every cell a distinct eval source string, so the code cache gains one entry
+// per cell for text that is identical until contributions change.
+const PRELUDE_SOURCE_URL = "senpi:kernel-prelude";
 // How long a child gets to honour SIGTERM before SIGKILL. Short, because the
 // cell has already produced its value and the caller is waiting on settle.
 const CHILD_TERMINATION_GRACE_MS = 1_000;
@@ -57,7 +61,7 @@ export class JsWorkerRuntime {
 				if (!isPlainObject(prepared) || typeof prepared.prelude !== "string" || typeof prepared.code !== "string") throw new Error("Invalid prepared JavaScript cell payload");
 				({ prelude, code: cellCode } = prepared);
 			}
-			if (prelude) indirectEval(prelude, `${cellId}:prelude`);
+			if (prelude) indirectEval(prelude, PRELUDE_SOURCE_URL);
 			const value = await awaitMaybePromise(indirectEval(bindKernelBun(wrapUserCode(cellCode)), cellId));
 			await this.#drainPendingDisplays();
 			return value;

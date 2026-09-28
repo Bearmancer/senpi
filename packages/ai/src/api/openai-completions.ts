@@ -46,6 +46,11 @@ import type {
 } from "../types.ts";
 import { formatProviderError, normalizeProviderError } from "../utils/error-body.ts";
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
+import {
+	formatGitHubCopilotToolLimitError,
+	limitGitHubCopilotTools,
+	recordGitHubCopilotToolLimit,
+} from "../utils/github-copilot-tool-limit.ts";
 import { shortHash } from "../utils/hash.ts";
 import { headersToRecord } from "../utils/headers.ts";
 import { parseStreamingJson } from "../utils/json-parse.ts";
@@ -62,7 +67,7 @@ import {
 import { getProviderEnvValue } from "../utils/provider-env.ts";
 import { retryProviderStreamRequest } from "../utils/provider-retry.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
-import { isForcedToolChoiceUnsupportedError, omitToolChoiceParam } from "../utils/tool-choice-fallback.ts";
+import { sendWithForcedToolChoiceFallback } from "../utils/tool-choice-fallback.ts";
 import {
 	normalizeToolParametersForMoonshot,
 	normalizeToolParametersForOpenAICompat,
@@ -76,6 +81,7 @@ import {
 	resolveGrammarConstrainedSampling,
 	resolveJsonSchemaStrictSampling,
 } from "./constrained-sampling.ts";
+import { withGitHubCopilotFailureNote } from "./github-copilot-errors.ts";
 import { buildCopilotDynamicHeaders, hasCopilotVisionInput } from "./github-copilot-headers.ts";
 import { resolveOpenAIClientAuth } from "./openai-client-auth.ts";
 import { clampOpenAIPromptCacheKey } from "./openai-prompt-cache.ts";
@@ -551,6 +557,11 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 				params = nextParams as OpenAICompletionsRequestParams;
 			}
 			params = normalizeRequestToolSchemas(params, compat);
+			const limitedTools = limitGitHubCopilotTools(model.provider, params.tools, params.tool_choice);
+			if (limitedTools.omittedCount > 0) {
+				params = { ...params, tools: limitedTools.tools };
+				recordGitHubCopilotToolLimit(output, limitedTools.omittedCount);
+			}
 			const requestOptions = {
 				...(options?.signal ? { signal: options.signal } : {}),
 				...(options?.timeoutMs !== undefined ? { timeout: options.timeoutMs } : {}),
@@ -568,15 +579,15 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 				return { data: iterateProviderTransport(data, openAICompatibleProviderDiagnosticFromError), response };
 			};
 			const createRequest = async () => {
-				try {
-					return await createStream(params);
-				} catch (error) {
-					if (isForcedToolChoiceUnsupportedError(error, isForcedOpenAICompletionsToolChoice(params.tool_choice))) {
-						params = omitToolChoiceParam(params);
-						return createStream(params);
-					}
-					throw error;
-				}
+				const sent = await sendWithForcedToolChoiceFallback({
+					target: model,
+					params,
+					acceptsForcedToolChoice: compat.supportsForcedToolChoice !== false,
+					isForced: isForcedOpenAICompletionsToolChoice,
+					send: createStream,
+				});
+				params = sent.params;
+				return sent.result;
 			};
 			const { stream: openaiStream } = await retryProviderStreamRequest(
 				async () => {
@@ -1000,7 +1011,11 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 			output.stopReason = options?.signal?.aborted ? "aborted" : "error";
 			const providerDiagnostic = output.stopReason === "error" ? readProviderDiagnostic(error) : undefined;
 			if (providerDiagnostic !== undefined) output.providerDiagnostic = providerDiagnostic;
-			output.errorMessage = formatProviderError(normalizeProviderError(error));
+			output.errorMessage = withGitHubCopilotFailureNote(
+				formatGitHubCopilotToolLimitError(output, formatProviderError(normalizeProviderError(error))),
+				model.provider,
+				error,
+			);
 			// Some providers via OpenRouter give additional information in this field.
 			// normalizeProviderError already stringifies the parsed body (error.error)
 			// into errorMessage, so only append the raw metadata when it is not already

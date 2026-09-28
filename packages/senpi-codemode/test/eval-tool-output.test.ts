@@ -15,6 +15,8 @@ type TextPart = Extract<ToolContent, { type: "text" }>;
 type ImagePart = Extract<ToolContent, { type: "image" }>;
 
 const temporaryDirectories: string[] = [];
+/** Output-driven live updates are coalesced to one per this window (cell-runtime.ts). */
+const OUTPUT_UPDATE_WINDOW_MS = 100;
 
 afterEach(async () => {
 	vi.clearAllMocks();
@@ -111,87 +113,107 @@ describe("eval tool output pipeline", () => {
 
 	it("streams a monotonically growing live tail attributed to the running cell", async () => {
 		// Given
-		const kernel = new FakeKernel([
-			{ type: "text", stream: "stdout", data: "first\n" },
-			{ type: "text", stream: "stdout", data: "second\n" },
-			result("live-cell", "done"),
-		]);
-		const tool = createEvalTool({
-			enabledLanguages: { js: true, py: false, rb: false, jl: false },
-			kernelManager: new FakeManager([["js", kernel]]),
-			cellTimeoutSeconds: 30,
-			executeTool: vi.fn(),
-		});
-		const updates: { readonly content: readonly ToolContent[]; readonly details: EvalToolDetails }[] = [];
-		const onUpdate: AgentToolUpdateCallback<EvalToolDetails> = (update) => {
-			updates.push(update);
-		};
+		vi.useFakeTimers();
+		try {
+			const kernel = new FakeKernel([]);
+			const started = kernel.deferNextRun();
+			const tool = createEvalTool({
+				enabledLanguages: { js: true, py: false, rb: false, jl: false },
+				kernelManager: new FakeManager([["js", kernel]]),
+				cellTimeoutSeconds: 30,
+				executeTool: vi.fn(),
+			});
+			const updates: { readonly content: readonly ToolContent[]; readonly details: EvalToolDetails }[] = [];
+			const onUpdate: AgentToolUpdateCallback<EvalToolDetails> = (update) => {
+				updates.push(update);
+			};
 
-		// When
-		const toolResult = await tool.execute(
-			"live-cell",
-			{ language: "js", code: "print('first'); print('second')", summary: "stream live tail" },
-			undefined,
-			onUpdate,
-			fakeExtensionContext(),
-		);
+			// When: each chunk arrives in its own live-update window
+			const execution = tool.execute(
+				"live-cell",
+				{ language: "js", code: "print('first'); print('second')", summary: "stream live tail" },
+				undefined,
+				onUpdate,
+				fakeExtensionContext(),
+			);
+			await started;
+			for (const data of ["first\n", "second\n"]) {
+				kernel.emit({ type: "text", stream: "stdout", data });
+				await vi.advanceTimersByTimeAsync(OUTPUT_UPDATE_WINDOW_MS);
+			}
+			kernel.completeDeferredRun(result("live-cell", "done"));
+			const toolResult = await execution;
 
-		// Then
-		const outputs = updates.flatMap((update) => {
-			const output = update.details.cells?.[0]?.output;
-			return output === undefined ? [] : [output];
-		});
-		const firstIndex = outputs.indexOf("first\n");
-		const secondIndex = outputs.indexOf("first\nsecond\n");
-		expect(firstIndex).toBeGreaterThanOrEqual(0);
-		expect(secondIndex).toBeGreaterThan(firstIndex);
+			// Then
+			const outputs = updates.flatMap((update) => {
+				const output = update.details.cells?.[0]?.output;
+				return output === undefined ? [] : [output];
+			});
+			const firstIndex = outputs.indexOf("first\n");
+			const secondIndex = outputs.indexOf("first\nsecond\n");
+			expect(firstIndex).toBeGreaterThanOrEqual(0);
+			expect(secondIndex).toBeGreaterThan(firstIndex);
 
-		const firstLiveUpdate = updates.find((update) => update.details.cells?.[0]?.output === "first\n");
-		const secondLiveUpdate = updates.find((update) => update.details.cells?.[0]?.output === "first\nsecond\n");
-		expect(firstLiveUpdate).toMatchObject({
-			content: [{ type: "text", text: "1/1 cells running\n[1] js stream live tail running\nfirst\n" }],
-			details: { cells: [{ output: "first\n", status: "running" }] },
-		});
-		expect(secondLiveUpdate).toMatchObject({
-			content: [{ type: "text", text: "1/1 cells running\n[1] js stream live tail running\nfirst\nsecond\n" }],
-			details: { cells: [{ output: "first\nsecond\n", status: "running" }] },
-		});
-		expect(updates.at(-1)?.details.cells?.[0]?.status).toBe("complete");
-		expect(textOf(toolResult)).toBe("first\nsecond\ndone");
+			const firstLiveUpdate = updates.find((update) => update.details.cells?.[0]?.output === "first\n");
+			const secondLiveUpdate = updates.find((update) => update.details.cells?.[0]?.output === "first\nsecond\n");
+			expect(firstLiveUpdate).toMatchObject({
+				content: [{ type: "text", text: "1/1 cells running\n[1] js stream live tail running\nfirst\n" }],
+				details: { cells: [{ output: "first\n", status: "running" }] },
+			});
+			expect(secondLiveUpdate).toMatchObject({
+				content: [{ type: "text", text: "1/1 cells running\n[1] js stream live tail running\nfirst\nsecond\n" }],
+				details: { cells: [{ output: "first\nsecond\n", status: "running" }] },
+			});
+			expect(updates.at(-1)?.details.cells?.[0]?.status).toBe("complete");
+			expect(textOf(toolResult)).toBe("first\nsecond\ndone");
+		} finally {
+			vi.useRealTimers();
+		}
 	});
 
 	it("keeps the live content preview bounded to the active cell's latest eight lines", async () => {
 		// Given
-		const lines = Array.from({ length: 10 }, (_, index) => `line-${index + 1}\n`);
-		const kernel = new FakeKernel([
-			...lines.map((data) => ({ type: "text" as const, stream: "stdout" as const, data })),
-			result("bounded-live-cell", ""),
-		]);
-		const tool = createEvalTool({
-			enabledLanguages: { js: true, py: false, rb: false, jl: false },
-			kernelManager: new FakeManager([["js", kernel]]),
-			cellTimeoutSeconds: 30,
-			executeTool: vi.fn(),
-		});
-		const updates: { readonly content: readonly ToolContent[]; readonly details: EvalToolDetails }[] = [];
+		vi.useFakeTimers();
+		try {
+			const lines = Array.from({ length: 10 }, (_, index) => `line-${index + 1}\n`);
+			const kernel = new FakeKernel([]);
+			const started = kernel.deferNextRun();
+			const tool = createEvalTool({
+				enabledLanguages: { js: true, py: false, rb: false, jl: false },
+				kernelManager: new FakeManager([["js", kernel]]),
+				cellTimeoutSeconds: 30,
+				executeTool: vi.fn(),
+			});
+			const updates: { readonly content: readonly ToolContent[]; readonly details: EvalToolDetails }[] = [];
 
-		// When
-		await tool.execute(
-			"bounded-live-cell",
-			{ language: "js", code: "for (let i = 1; i <= 10; i++) print(i)", summary: "bounded live tail" },
-			undefined,
-			(update) => updates.push(update),
-			fakeExtensionContext(),
-		);
+			// When: a burst of ten lines lands inside one window, then the window elapses
+			const execution = tool.execute(
+				"bounded-live-cell",
+				{ language: "js", code: "for (let i = 1; i <= 10; i++) print(i)", summary: "bounded live tail" },
+				undefined,
+				(update) => updates.push(update),
+				fakeExtensionContext(),
+			);
+			await started;
+			for (const data of lines) kernel.emit({ type: "text", stream: "stdout", data });
+			await vi.advanceTimersByTimeAsync(OUTPUT_UPDATE_WINDOW_MS);
+			kernel.completeDeferredRun(result("bounded-live-cell", ""));
+			await execution;
 
-		// Then
-		const completeLiveUpdate = updates.find((update) => update.details.cells?.[0]?.output === lines.join(""));
-		expect(completeLiveUpdate).toMatchObject({
-			content: [
-				{ type: "text", text: `1/1 cells running\n[1] js bounded live tail running\n${lines.slice(-8).join("")}` },
-			],
-			details: { cells: [{ output: lines.join(""), status: "running" }] },
-		});
+			// Then
+			const completeLiveUpdate = updates.find((update) => update.details.cells?.[0]?.output === lines.join(""));
+			expect(completeLiveUpdate).toMatchObject({
+				content: [
+					{
+						type: "text",
+						text: `1/1 cells running\n[1] js bounded live tail running\n${lines.slice(-8).join("")}`,
+					},
+				],
+				details: { cells: [{ output: lines.join(""), status: "running" }] },
+			});
+		} finally {
+			vi.useRealTimers();
+		}
 	});
 
 	it("resizes display images and appends dimension notes to text output", async () => {

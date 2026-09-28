@@ -10,9 +10,40 @@
 
 ### Fixed
 
+### Removed
+
+## [2026.9.28-5] - 2026-09-28
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.28-4] - 2026-09-28
+
+### Breaking Changes
+
+### Added
+
+- JavaScript eval kernels report their memory: a result whose kernel holds at least `memory.noticeMb` (default 1 GiB) live after a collection carries one bracketed notice naming the largest globals and how to drop them, plus `details.memory` (`liveBytes`, `gcRan`, `globals`). A kernel whose live memory reaches `memory.ceilingMb` (default a quarter of physical memory, 2-8 GiB) says so in that result and restarts once no cell is running or queued on it; the next result reports `details.memory.recycled`. Settings `memory.gcWatermarkMb`, `memory.noticeMb`, `memory.ceilingMb` and their `SENPI_CODEMODE_MEMORY_*_MB` overrides; `0` disables each. ([#2261](https://github.com/code-yeongyu/senpi/issues/2261))
+- Python eval kernels follow the same memory contract: after each cell the kernel reads its process footprint (macOS `phys_footprint`, Linux `RssAnon`, Windows `PrivateUsage`), runs `gc.collect()` plus glibc `malloc_trim(0)` when it grew past `memory.gcWatermarkMb`, and a result at `memory.noticeMb` names the largest globals (numpy `nbytes`, pandas `memory_usage(deep=True)`, sampled containers) with `del <name>` advice; at `memory.ceilingMb` the Python kernel restarts once its queue is empty and the next result reports `details.memory.recycled`. Ruby and Julia kernels get the ceiling restart from the interpreter footprint the host reads after each result (no globals list). ([#2261](https://github.com/code-yeongyu/senpi/issues/2261))
+
+### Changed
+
+### Fixed
+
+- Retiring a JavaScript eval worker (timeout, interrupt, reset, crash, or memory-ceiling restart) no longer leaves each child process the cell was still running as a zombie of the host: the host now collects them after killing them. Measured: 30 retirements that each left two children went from 60 zombies to 0. ([#1962](https://github.com/code-yeongyu/senpi/issues/1962))
 - A persistent eval kernel no longer pins its first cell's handler for the whole kernel generation. The kernel dispatcher is now a bound method of the session manager instead of a closure over the `getKernel` call that created the kernel (under Bun/JSC that closure retained the creating cell's `onMessage` — its output buffers and display images — until the kernel was reset), and every cell releases its kernel listener once it settles, so nothing keeps a settled cell's state alive. Interpreter startup stderr still reaches the cell that created the kernel; a message arriving between cells reaches no settled handler. ([#2260](https://github.com/code-yeongyu/senpi/issues/2260))
+- Memory a JavaScript eval cell no longer references returns to the machine without a reset: a finished cell whose heap grew past `memory.gcWatermarkMb` (default 256 MiB) runs a full collection, and on Node and on Bun before 1.4.3 a kernel still holding that much runs an idle collection about a second after its last cell, so `delete globalThis.rows` no longer leaves gigabytes resident until the kernel is reset (Bun 1.4.3 collects idle threads itself). ([#2261](https://github.com/code-yeongyu/senpi/issues/2261))
 
 - Settled eval cells kept for `peek`/`list` no longer pin up to ~800 MB of image data in the session's memory. Their images are written to `<session artifacts>/settled-images/` and read back on `peek`, which still returns the full result. The files are bounded by the new `memory.retainedImagesMb` setting (default 256, env `SENPI_CODEMODE_RETAINED_IMAGES_MB`), deleted with an evicted cell, and removed when the session ends. The in-memory snapshots are bounded by the new `memory.retainedResultsMb` setting (default 32, env `SENPI_CODEMODE_RETAINED_RESULTS_MB`) on top of the 32-cell count cap. ([#2259](https://github.com/code-yeongyu/senpi/issues/2259))
+
+- The JavaScript eval kernel no longer compiles a fresh code-cache entry for its loader prelude on every cell: the prelude is evaluated under one stable source URL (`senpi:kernel-prelude`) instead of a per-cell `` `${cellId}:prelude` `` URL, so identical prelude text reuses the engine's eval code cache: per-cell kernel heap growth over a 1,000-cell series drops from ~2.3 KB to ~1.1 KB (the remainder is the cell body's own per-cell source URL, kept for stack attribution and bounded by the engine's code-cache cap). Stack frames from prelude code now attribute to `senpi:kernel-prelude` for every cell. ([#2263](https://github.com/code-yeongyu/senpi/issues/2263))
 
 ### Removed
 
@@ -25,6 +56,8 @@
 ### Changed
 
 ### Fixed
+
+- Live output updates for eval cells no longer rebuild the retained output tail on every chunk. The streaming preview keeps the last eight lines of the trailing byte window, appends in time proportional to the chunk, and output-driven updates are coalesced to one per 100 ms (the core bash tool's cadence), so a cell printing 30,000 lines sends about 10 updates instead of 30,008 and finishes about 4x faster with a lower memory peak. The final result and the text of each update are unchanged. ([#2262](https://github.com/code-yeongyu/senpi/issues/2262))
 
 - `new Bun.WebView()` in a JavaScript eval cell no longer fails with `Bun.WebView with backend "chrome" is only available on the main thread` (every call on Windows and Linux, `backend: "chrome"` on macOS). Cells see a `Bun` whose `WebView` (also through `import { WebView } from "bun"`) hands Chrome-backed views to the process main thread with the same API: navigation, input, `evaluate`, screenshots, `cdp()` and its events, `console` capture, `url`/`title`/`loading`, `close()` and `await using`. The macOS default (WebKit) stays a native view in the kernel worker. `Bun.WebView.closeAll()` in a cell closes only that kernel's views. ([#2248](https://github.com/code-yeongyu/senpi/issues/2248))
 

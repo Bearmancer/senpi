@@ -7,6 +7,13 @@ export type AuthenticatedAttemptInput = {
 	accounts: readonly AccountSlot[];
 	authLane: AnthropicSubscriptionTokenInjection;
 	options: Options;
+	/**
+	 * Digest of the OAuth access token this attempt authenticates with. A
+	 * resident session spawned with a different token must not serve the turn:
+	 * a refresh revokes the previous access token, so that subprocess would
+	 * answer 401 "token has been revoked".
+	 */
+	credentialDigest?: string;
 };
 
 export interface RetainableAttempt<TEvent> {

@@ -10,9 +10,11 @@ import {
 } from "./webview-wire.ts";
 
 export interface WebViewClientHost {
+	/** Launches a view; `adopt` runs in the launch's own turn and returns false once the client is released. */
 	createView(
 		options: Readonly<Record<string, unknown>>,
 		onConsole: ((...args: unknown[]) => void) | undefined,
+		adopt: (view: NativeWebView) => boolean,
 	): Promise<NativeWebView>;
 	onClientClosed(client: WebViewServiceClient): void;
 }
@@ -21,7 +23,7 @@ function stateOf(view: NativeWebView): WebViewState {
 	return { url: view.url, title: view.title, loading: view.loading };
 }
 
-function closeQuietly(view: NativeWebView): void {
+export function closeQuietly(view: NativeWebView): void {
 	try {
 		view.close();
 	} catch {
@@ -39,6 +41,7 @@ export class WebViewServiceClient {
 	readonly #port: MessagePort;
 	readonly #host: WebViewClientHost;
 	readonly #views = new Map<string, NativeWebView>();
+	readonly #launches = new Set<Promise<NativeWebView>>();
 	#released = false;
 
 	constructor(id: string, owner: object, port: MessagePort, host: WebViewClientHost) {
@@ -53,6 +56,11 @@ export class WebViewServiceClient {
 
 	get viewCount(): number {
 		return this.#views.size;
+	}
+
+	/** Resolves once every launch this client started has been adopted or has retired its Chrome. */
+	async settled(): Promise<void> {
+		await Promise.allSettled([...this.#launches]);
 	}
 
 	release(): void {
@@ -112,15 +120,21 @@ export class WebViewServiceClient {
 		const onConsole = captureConsole
 			? (...args: unknown[]) => this.#emit(viewId, { type: "console", args })
 			: undefined;
-		const view = await this.#host.createView(options, onConsole);
-		if (this.#released) {
-			closeQuietly(view);
-			throw new Error("WebView client released");
+		const launch = this.#host.createView(options, onConsole, (view) => this.#adopt(viewId, view));
+		this.#launches.add(launch);
+		try {
+			return await launch;
+		} finally {
+			this.#launches.delete(launch);
 		}
+	}
+
+	#adopt(viewId: string, view: NativeWebView): boolean {
+		if (this.#released) return false;
 		view.onNavigated = (url, title) => this.#emit(viewId, { type: "navigated", url, title });
 		view.onNavigationFailed = (error) => this.#emit(viewId, { type: "navigation-failed", error: wireError(error) });
 		this.#views.set(viewId, view);
-		return view;
+		return true;
 	}
 
 	#view(viewId: string): NativeWebView {

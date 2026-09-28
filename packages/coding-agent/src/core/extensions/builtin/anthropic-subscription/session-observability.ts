@@ -22,6 +22,7 @@ export type ContinuityReason =
 	| "thinking_level_selected"
 	| "bound_account_token_expiring"
 	| "account_changed"
+	| "credential_refreshed"
 	| "model_changed"
 	| "toolset_changed"
 	| "system_prompt_changed"
@@ -73,6 +74,7 @@ const SANITIZED_REASONS = new Set<string>([
 	"thinking_level_selected",
 	"bound_account_token_expiring",
 	"account_changed",
+	"credential_refreshed",
 	"model_changed",
 	"toolset_changed",
 	"system_prompt_changed",

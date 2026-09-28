@@ -431,11 +431,14 @@ async function runSocketHost(options: MultiSessionHostOptions, socketPath: strin
 					generation: hostGeneration(process.env),
 					successor: superseded ? { socket: supervisorPublicSocketPath ?? socketPath } : null,
 				});
-				handoffAnnounced = true;
-				router.beginDrain();
 			})
 			.catch((cause: unknown) => {
 				hostLog(`handoff announcement failed: ${String(cause)}`);
+			})
+			// A failed announcement still drains: parking is what lets this generation exit (senpi#2285).
+			.finally(() => {
+				handoffAnnounced = true;
+				router.beginDrain();
 			});
 	};
 	/**

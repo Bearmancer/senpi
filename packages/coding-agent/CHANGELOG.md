@@ -6,14 +6,55 @@
 
 ### Added
 
+### Changed
+
+### Fixed
+
+- The Devin SWE-2 prompt preset now matches exactly the lanes Devin serves, `swe-2-medium`, `swe-2-high` and `swe-2-max`. `devin/swe-2-medium` previously got no SWE-2 preset, while the unserved `swe-2-low` and `swe-2-high-lite` ids did. ([#2306](https://github.com/code-yeongyu/senpi/issues/2306))
+- Project rule discovery no longer escapes the project root on Windows. A `read`/`edit`/`write` target on a different drive, or one whose drive-letter case differs from the project root, made the rules finder walk the unrelated location and inject any `AGENTS.md`, `CLAUDE.md`, `.claude/rules`, `.cursor/rules`, or `.github/instructions` it found there as *project* rules ([#568](https://github.com/code-yeongyu/senpi/pull/568) by [@MoerAI](https://github.com/MoerAI)). POSIX behavior is unchanged.
+### Removed
+
+## [2026.9.28-5] - 2026-09-28
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- The built-in OpenCode Go default model is now `kimi-k3`. The previous default, `kimi-k2.6`, is no longer in the OpenCode Go catalog, so OpenCode Go without an explicit model had no default that resolved. ([#2295](https://github.com/code-yeongyu/senpi/issues/2295))
+- A goal no longer retries a provider that keeps rejecting the request with HTTP 401 or 403 until `continuation cap reached`. When a 401/403 still ends the turn after the provider's own retry and credential failover, the goal stops on that first rejection and says what to do, for example `Run /login github-copilot to refresh the account, or check that kimi-k3 is enabled for your Copilot plan`. After you fix the login or the key, your next message resumes the goal. Rate limits, 5xx errors, and network failures still get one automatic recovery. ([#2293](https://github.com/code-yeongyu/senpi/issues/2293))
+- GitHub Copilot turns no longer fail with an unexplained HTTP 400 when the session exposes more than 128 tools. Senpi bounds every Copilot wire route to 128 serialized tools, preserves tool order and an explicitly forced tool, and shows once per session how many excess definitions were omitted. ([#2298](https://github.com/code-yeongyu/senpi/issues/2298))
+- GitHub Copilot requests no longer fail on every model with HTTP 403 when GitHub revokes the cached Copilot token early: the token is re-exchanged once and the request re-sent before the reply starts streaming, in single-account sessions and on pooled accounts alike, so a session recovers without `/login`. If the re-exchanged token is refused as well, that account is blocked until its next login and the request moves to another logged-in account of the same provider; stream failures now reach the credential-pool classifier with their HTTP status. ([#2297](https://github.com/code-yeongyu/senpi/issues/2297))
+- GitHub Copilot models now compact before Copilot's own prompt limit: the account's `GET /models` prompt and output limits replace the larger native limits, and Copilot's `model_max_prompt_tokens_exceeded` rejection triggers compact-and-retry instead of ending the turn. ([#2299](https://github.com/code-yeongyu/senpi/issues/2299))
+
+### Removed
+
+## [2026.9.28-4] - 2026-09-28
+
+### Breaking Changes
+
+### Added
+
+- Durable scheduled prompts that work from `--print` and other headless runs. The new `schedule_prompt` tool stores a reminder, follow-up, or recurring prompt under `<agent dir>/schedule/`, and `senpi schedule run [--watch]` fires it later, after the scheduling process has exited. By default it resumes the scheduling session with `senpi -p --session`; with `--exec <command>` it hands the job as JSON on stdin to a hook such as a chat bridge. `senpi schedule list` and `senpi schedule cancel` manage jobs. See [docs/schedule.md](docs/schedule.md).
+- `collectOrphanedChildren(pids)` is exported from `@code-yeongyu/senpi`: it collects the exit status of the listed exited children of this process whose owning thread is gone, so they do not stay as zombies. ([#1962](https://github.com/code-yeongyu/senpi/issues/1962))
 - `readOwnFootprint()` and `readProcessFootprint(pid)` are exported from `@code-yeongyu/senpi`: they return how much memory a process really holds (`{ bytes, measure }`, where `measure` is `phys_footprint` on macOS, `rss_anon` on Linux, `private_usage` on Windows, or `rss` when none of those can be read) without spawning a process. ([#2261](https://github.com/code-yeongyu/senpi/issues/2261))
 
 ### Changed
 
 ### Fixed
 
+- Error output no longer spills over the interactive TUI. An unhandled promise rejection (such as `Timeout waiting for response to prompt` from an extension's RPC client) is written to the debug log instead of being printed over the screen, and the session keeps running. Under Bun on macOS and Linux, anything else that writes straight to stderr while the TUI owns the terminal (Worker threads, child processes that inherit stderr) also goes to the debug log, and stderr is handed back when the TUI quits, crashes, is terminated, or is suspended. A fatal crash now prints one line and the debug-log path instead of a full stack. ([#2284](https://github.com/code-yeongyu/senpi/issues/2284))
+- A superseded shared RPC host generation now exits after a handoff even when one of its sessions misbehaves. One session whose directory had been deleted, or whose activity could not be read, used to abort the drain before its retry timer started, so the remaining sessions were never parked and the old generation stayed alive (15 hours on one machine). Each session is now judged on its own, a failed pass is retried, and a session whose directory is gone ends with the `session_closed` reason `session_dir_removed` instead of being parked with a path that cannot be reopened. ([#2285](https://github.com/code-yeongyu/senpi/issues/2285))
+- Claude subscription accounts no longer end up "blocked until re-login" after a token refresh. A live Claude session now resumes on the refreshed token instead of sending the next turn with the revoked one, and an authentication failure on a token that another session already replaced retries on the stored token instead of blocking a valid account, including when several sessions share one process. ([oh-my-openagent#8762](https://github.com/code-yeongyu/oh-my-openagent/issues/8762))
+- Claude subscription sessions no longer fail with "authentication failed" or end up blocked until re-login while another session is refreshing the account's token. A session that finds the credential store busy keeps its still-valid token or picks up the one the other session just refreshed, and a throttled, failing or timed-out token refresh no longer blocks the account permanently; only a rejected login does. ([#2281](https://github.com/code-yeongyu/senpi/issues/2281))
+- Interactive, print, JSON and single-session RPC modes now collect child processes left behind by a terminated worker thread, as the multi-session host already did, instead of keeping them as zombies until the process exits. ([#1962](https://github.com/code-yeongyu/senpi/issues/1962))
+- A session's first work request no longer fails on providers that refuse a forced `tool_choice`, such as Kiro behind an OpenAI-compatible proxy (`400 ... Kiro supports only automatic tool choice or tool_choice:none`). The request is sent once more without the forced `todo` choice, the model is not forced again for the rest of the process, and `compat.supportsForcedToolChoice: false` in `models.json` skips forcing from the start. ([#2218](https://github.com/code-yeongyu/senpi/issues/2218))
 - A shared RPC host no longer stays in memory pressure after its memory was returned. It judged `SENPI_RPC_HOST_RSS_WARN_MB` by RSS, which keeps counting freed memory (2314 MB RSS against a 143 MB footprint after an eval kernel reset), so it kept halving idle parking and reporting `memory_pressure: true`. It now compares the process footprint, and each `host_memory_pressure` record carries `footprintMb` and `measure` beside `rssMb`. `senpi host status` still shows RSS. ([#2261](https://github.com/code-yeongyu/senpi/issues/2261))
-- Project rule discovery no longer escapes the project root on Windows. A `read`/`edit`/`write` target on a different drive, or one whose drive-letter case differs from the project root, made the rules finder walk the unrelated location and inject any `AGENTS.md`, `CLAUDE.md`, `.claude/rules`, `.cursor/rules`, or `.github/instructions` it found there as *project* rules ([#568](https://github.com/code-yeongyu/senpi/pull/568) by [@MoerAI](https://github.com/MoerAI)). POSIX behavior is unchanged.
+- An eval kernel released while its `new Bun.WebView()` was still launching (a cell timeout, reset, closed session, or crashed worker during a slow Chrome start or Windows' relaunch retry) no longer leaves Bun's Chrome running with no view. A launch that fails or outlives its kernel now ends that Chrome unless another view still uses it, and releasing a kernel waits for its in-flight launches before it resolves. ([#2272](https://github.com/code-yeongyu/senpi/issues/2272))
+- On Windows, ending Bun's Chrome after the last eval-cell view goes now waits until the browser and its helper processes have exited. `Bun.WebView.closeAll()` returns while they still run, so the next `new Bun.WebView()` could fail with `Chrome process closed the pipe`, and the processes outlived the kernel that used them. ([#2272](https://github.com/code-yeongyu/senpi/issues/2272))
 
 ### Removed
 

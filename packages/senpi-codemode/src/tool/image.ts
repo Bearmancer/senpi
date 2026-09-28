@@ -36,7 +36,7 @@ export interface EvalOutputOptions {
 	readonly maxColumns: number;
 	readonly model: ExtensionContext["model"];
 	readonly imageResizer?: EvalImageResizer;
-	readonly onChunk: (aggregateText: string, cellText: string) => void;
+	readonly onChunk: (chunk: string) => void;
 }
 
 export interface EvalOutputResult {
@@ -82,7 +82,7 @@ export class EvalOutputCollector {
 			onChunk: (chunk) => {
 				this.#aggregateTail.append(chunk);
 				this.#cellTail.append(chunk);
-				options.onChunk(this.#aggregateTail.text(), this.#cellTail.text());
+				options.onChunk(chunk);
 			},
 		});
 	}
@@ -127,6 +127,10 @@ export class EvalOutputCollector {
 
 	aggregateText(): string {
 		return this.#aggregateTail.text();
+	}
+
+	cellTailText(): string {
+		return this.#cellTail.text();
 	}
 
 	async finish(): Promise<EvalOutputResult> {

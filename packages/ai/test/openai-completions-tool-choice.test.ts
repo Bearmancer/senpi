@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { convertMessages } from "../src/api/openai-completions.ts";
 import { getModel, stream, streamSimple } from "../src/compat.ts";
 import type { AssistantMessage, Model, SimpleStreamOptions, Tool, ToolResultMessage } from "../src/types.ts";
+import { clearForcedToolChoiceRefusals } from "../src/utils/tool-choice-fallback.ts";
 
 type MockChunk = null | {
 	id?: string;
@@ -140,8 +141,73 @@ async function captureSimpleParams(
 	return (payload ?? mockState.lastParams) as CapturedParams;
 }
 
+const KIRO_REFUSAL = "400 Kiro supports only automatic tool choice or tool_choice:none";
+const FORCED_TODO = { type: "function", function: { name: "todo" } } as const;
+
+function streamForcedTodo(model: Model<"openai-completions">) {
+	return stream(
+		model,
+		{
+			messages: [{ role: "user", content: "Plan the work", timestamp: Date.now() }],
+			tools: [{ name: "todo", description: "Todo tool", parameters: Type.Object({ op: Type.String() }) }],
+		},
+		{ apiKey: "test", toolChoice: FORCED_TODO },
+	).result();
+}
+
+describe("openai-completions forced tool_choice refusal memory (senpi#2218)", () => {
+	const kiro: Model<"openai-completions"> = { ...localOpenAICompletionsModel, id: "kiro-opus", name: "Kiro" };
+
+	beforeEach(() => {
+		clearForcedToolChoiceRefusals();
+		mockState.calls.length = 0;
+		mockState.createErrors.length = 0;
+		mockState.chunks = undefined;
+	});
+
+	it("retries a Kiro auto-only refusal once, then stops forcing that model", async () => {
+		mockState.createErrors.push(new HttpStatusError(400, KIRO_REFUSAL));
+
+		const first = await streamForcedTodo(kiro);
+		const second = await streamForcedTodo(kiro);
+
+		expect([first.stopReason, second.stopReason]).toEqual(["stop", "stop"]);
+		expect(mockState.calls.map((_, index) => recordAt(mockState.calls, index).tool_choice)).toEqual([
+			FORCED_TODO,
+			undefined,
+			undefined,
+		]);
+	});
+
+	it("keeps forcing other models and a model whose retry also failed", async () => {
+		mockState.createErrors.push(new HttpStatusError(400, KIRO_REFUSAL), new HttpStatusError(400, KIRO_REFUSAL));
+
+		const failed = await streamForcedTodo(kiro);
+		const retried = await streamForcedTodo(kiro);
+		const other = await streamForcedTodo({ ...kiro, id: "other-model" });
+
+		expect(failed.stopReason).toBe("error");
+		expect([retried.stopReason, other.stopReason]).toEqual(["stop", "stop"]);
+		expect(mockState.calls.map((_, index) => recordAt(mockState.calls, index).tool_choice)).toEqual([
+			FORCED_TODO,
+			undefined,
+			FORCED_TODO,
+			FORCED_TODO,
+		]);
+	});
+
+	it("never sends a forced choice when compat.supportsForcedToolChoice is false", async () => {
+		const response = await streamForcedTodo({ ...kiro, compat: { supportsForcedToolChoice: false } });
+
+		expect(response.stopReason).toBe("stop");
+		expect(mockState.calls).toHaveLength(1);
+		expect(recordAt(mockState.calls, 0).tool_choice).toBeUndefined();
+	});
+});
+
 describe("openai-completions tool_choice", () => {
 	beforeEach(() => {
+		clearForcedToolChoiceRefusals();
 		mockState.lastParams = undefined;
 		mockState.calls.length = 0;
 		mockState.createErrors.length = 0;
@@ -1450,7 +1516,7 @@ describe("openai-completions tool_choice", () => {
 			},
 		];
 
-		const { compat: _compat, ...baseModel } = getModel("opencode-go", "kimi-k2.6")!;
+		const { compat: _compat, ...baseModel } = getModel("opencode-go", "kimi-k2.7-code")!;
 		const model = { ...baseModel, api: "openai-completions" } as const;
 		const response = await streamSimple(
 			model,
@@ -1497,7 +1563,7 @@ describe("openai-completions tool_choice", () => {
 	});
 
 	it("replays OpenCode Go reasoning thinking blocks as reasoning_content", () => {
-		const { compat: _compat, ...baseModel } = getModel("opencode-go", "kimi-k2.6")!;
+		const { compat: _compat, ...baseModel } = getModel("opencode-go", "kimi-k2.7-code")!;
 		const model = { ...baseModel, api: "openai-completions" } as Model<"openai-completions">;
 		const messages = convertMessages(
 			model,
@@ -1507,7 +1573,7 @@ describe("openai-completions tool_choice", () => {
 						role: "assistant",
 						api: "openai-completions",
 						provider: "opencode-go",
-						model: "kimi-k2.6",
+						model: "kimi-k2.7-code",
 						content: [
 							{ type: "thinking", thinking: "think", thinkingSignature: "reasoning" },
 							{ type: "toolCall", id: "call_1", name: "read", arguments: { path: "README.md" } },
@@ -1557,8 +1623,8 @@ describe("openai-completions tool_choice", () => {
 		expect(messages[0]).not.toHaveProperty("reasoning");
 	});
 
-	it("sends thinking disabled for OpenCode Go Kimi K2.6 when thinking is off", async () => {
-		const model = getModel("opencode-go", "kimi-k2.6")!;
+	it("sends thinking disabled for OpenCode Kimi K2.6 when thinking is off", async () => {
+		const model = getModel("opencode", "kimi-k2.6")!;
 		let payload: unknown;
 
 		await streamSimple(
@@ -1579,8 +1645,8 @@ describe("openai-completions tool_choice", () => {
 		expect(params.reasoning_effort).toBeUndefined();
 	});
 
-	it("sends thinking enabled for OpenCode Go Kimi K2.6 when thinking is enabled", async () => {
-		const model = getModel("opencode-go", "kimi-k2.6")!;
+	it("sends thinking enabled for OpenCode Kimi K2.6 when thinking is enabled", async () => {
+		const model = getModel("opencode", "kimi-k2.6")!;
 		let payload: unknown;
 
 		await streamSimple(
@@ -1651,7 +1717,7 @@ describe("openai-completions tool_choice", () => {
 	});
 
 	it("sends max_tokens for OpenCode completions models", async () => {
-		const cases = [getModel("opencode-go", "kimi-k2.6")!, getModel("opencode", "kimi-k2.6")!] as const;
+		const cases = [getModel("opencode-go", "kimi-k2.7-code")!, getModel("opencode", "kimi-k2.6")!] as const;
 
 		for (const model of cases) {
 			let payload: unknown;

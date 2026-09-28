@@ -354,6 +354,8 @@ ${chalk.bold("Commands:")}
                                  Manage the app-server daemon
   ${APP_NAME} host <ensure|status|stop|handoff|shard-path|gc> [--launch-spec <file>]
                                  Get, inspect or end the shared RPC daemon (one JSON line per call)
+  ${APP_NAME} schedule <list|cancel|run> [--watch] [--exec <command>]
+                                 List, cancel or fire durable scheduled prompts
   ${APP_NAME} auth <command>            Print credentials or check provider readiness
   ${APP_NAME} <command> --help          Show help for install/remove/uninstall/update/list/config/auth
 

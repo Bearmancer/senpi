@@ -1,5 +1,6 @@
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import type { KernelMemoryThresholds } from "../../bridge/memory-protocol.ts";
 import {
 	type BridgeConnectionConfig,
 	decodeBridgeFrame,
@@ -43,6 +44,7 @@ export interface PythonTransportOptions {
 	/** Per-session PI_* values merged into the interpreter environment at spawn. */
 	readonly sessionEnv?: SessionEnvironment;
 	readonly startupTimeoutMs: number;
+	readonly memory?: KernelMemoryThresholds;
 	readonly onMessage?: (message: KernelToHostMessage) => void;
 	readonly spawnProcess?: KernelSpawnProcess;
 	readonly isOwned: () => boolean;
@@ -188,7 +190,8 @@ export class PythonKernelTransport {
 		this.#child.stderr.on("data", onStderr);
 		this.#child.on("error", onError);
 		this.#child.on("exit", onExit);
-		this.#write({ type: "init", sessionId: this.#options.sessionId, connection: this.#options.connection });
+		const { sessionId, connection, memory } = this.#options;
+		this.#write({ type: "init", sessionId, connection, ...(memory === undefined ? {} : { memory }) });
 		await withTimeout(ready, this.#options.startupTimeoutMs, "Python kernel did not become ready");
 	}
 

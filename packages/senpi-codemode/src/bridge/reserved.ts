@@ -13,3 +13,5 @@ export const TIMEOUT_RESUME_OP = "timeout-resume" as const;
 export const INTERRUPT_ACK_OP = "interrupt-ack" as const;
 /** Status op the JS worker emits when a cell child is tracked or exits, so the host can retire it if the worker is lost. */
 export const CHILD_LIFECYCLE_OP = "child" as const;
+/** Status op the JS worker emits after an idle full collection between cells, carrying the live heap it measured. */
+export const MEMORY_COLLECTED_OP = "memory-collected" as const;

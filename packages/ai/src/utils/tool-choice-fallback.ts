@@ -1,3 +1,15 @@
+import type { Api, Model } from "../types.ts";
+
+/** The wire identity a forced tool_choice refusal is remembered under. */
+export type ForcedToolChoiceTarget = Pick<Model<Api>, "api" | "provider" | "baseUrl" | "id">;
+
+/**
+ * Models that refused a forced tool_choice and then accepted the same request without one, for the
+ * life of the process. Later requests to them send no forced choice instead of paying the refused
+ * request again (senpi#2218).
+ */
+const forcedToolChoiceRefusals = new Set<string>();
+
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null;
 }
@@ -37,9 +49,18 @@ export function isForcedToolChoiceUnsupportedError(error: unknown, sentForcedToo
 
 	const message = errorMessage(error);
 	return (
-		/tool[_\s-]?choices?\b.*?(not\s+compatible|incompatible|not\s+supported|unsupported)/is.test(message) ||
-		/forces?\s+tool\s+use.*?(not\s+compatible|incompatible|not\s+supported|unsupported)/is.test(message) ||
+		/tool[_\s-]?choices?\b.*?(not\s+(?:currently\s+)?compatible|incompatible|not\s+(?:currently\s+)?supported|unsupported)/is.test(
+			message,
+		) ||
+		/forces?\s+tool\s+use.*?(not\s+(?:currently\s+)?compatible|incompatible|not\s+(?:currently\s+)?supported|unsupported)/is.test(
+			message,
+		) ||
 		/does\s+not\s+support\s+forced\s+tool[_\s-]?choices?/is.test(message) ||
+		// Auto-only tool-choice upstreams. OmniRoute serving opencode-go/muse-spark-1.3-contributor
+		// (2026-09-27): "only `\"auto\"` is supported for `tool_choice`. `\"none\"`, `\"required\"`, and named
+		// function choices are not currently supported". Kiro behind an OpenAI-compatible proxy
+		// (senpi#2218): "Kiro supports only automatic tool choice or tool_choice:none".
+		/\bonly\s+[`"]*auto(?:matic)?[`"]*\s.{0,40}?tool[_\s-]?choice/is.test(message) ||
 		// Anthropic Messages with extended thinking on: "Thinking may not be enabled when tool_choice forces tool use."
 		/thinking\s+may\s+not\s+be\s+enabled\s+when\s+tool[_\s-]?choice\s+forces\s+tool\s+use/is.test(message) ||
 		// OpenAI-compatible gateways serving always-thinking Claude models (observed on opengateway for
@@ -53,4 +74,53 @@ export function omitToolChoiceParam<TParams extends { tool_choice?: unknown }>(p
 	const nextParams = { ...params };
 	delete nextParams.tool_choice;
 	return nextParams;
+}
+
+function refusalKey(target: ForcedToolChoiceTarget): string {
+	return JSON.stringify([target.api, target.provider, target.baseUrl, target.id]);
+}
+
+/** Whether `target` refused a forced tool_choice earlier in this process. */
+export function hasRefusedForcedToolChoice(target: ForcedToolChoiceTarget): boolean {
+	return forcedToolChoiceRefusals.has(refusalKey(target));
+}
+
+/** Forgets every remembered refusal; tests isolate their models with it. */
+export function clearForcedToolChoiceRefusals(): void {
+	forcedToolChoiceRefusals.clear();
+}
+
+export type ForcedToolChoiceRequest<TParams extends { tool_choice?: unknown }, TResult> = {
+	readonly target: ForcedToolChoiceTarget;
+	readonly params: TParams;
+	/** The model's declared capability (`compat.supportsForcedToolChoice`, default true). */
+	readonly acceptsForcedToolChoice: boolean;
+	readonly isForced: (toolChoice: TParams["tool_choice"]) => boolean;
+	readonly send: (params: TParams) => Promise<TResult>;
+};
+
+/**
+ * Sends a request whose `tool_choice` may force a tool. A model declared or remembered as refusing
+ * forced choices gets the request without `tool_choice` up front. Otherwise a 400 refusing the forced
+ * choice is retried once without it, and the model is remembered once that retry is accepted, unless
+ * the refusal blamed thinking; a retry that fails too surfaces its own error and records nothing.
+ */
+export async function sendWithForcedToolChoiceFallback<TParams extends { tool_choice?: unknown }, TResult>(
+	request: ForcedToolChoiceRequest<TParams, TResult>,
+): Promise<{ readonly params: TParams; readonly result: TResult }> {
+	const forced = request.isForced(request.params.tool_choice);
+	if (forced && (!request.acceptsForcedToolChoice || hasRefusedForcedToolChoice(request.target))) {
+		const params = omitToolChoiceParam(request.params);
+		return { params, result: await request.send(params) };
+	}
+	try {
+		return { params: request.params, result: await request.send(request.params) };
+	} catch (error) {
+		if (!isForcedToolChoiceUnsupportedError(error, forced)) throw error;
+		const params = omitToolChoiceParam(request.params);
+		const result = await request.send(params);
+		// A refusal that names thinking depends on the request's thinking setting, not on the model alone.
+		if (!/thinking/i.test(errorMessage(error))) forcedToolChoiceRefusals.add(refusalKey(request.target));
+		return { params, result };
+	}
 }

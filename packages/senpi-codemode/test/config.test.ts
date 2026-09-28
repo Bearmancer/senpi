@@ -135,7 +135,7 @@ describe("codemode settings", () => {
 				taskTools: { task: "task", output: "task_output" },
 				outputSink: { headBytes: 20480, maxColumns: 768 },
 				statusEvents: true,
-				memory: { retainedResultsMb: 32, retainedImagesMb: 256 },
+				memory: defaultCodemodeSettings.memory,
 			});
 		} finally {
 			await rm(root, { recursive: true, force: true });
@@ -168,7 +168,7 @@ describe("codemode settings", () => {
 				taskTools: { task: "task", output: "task_output" },
 				outputSink: { headBytes: 20480, maxColumns: 768 },
 				statusEvents: true,
-				memory: { retainedResultsMb: 32, retainedImagesMb: 256 },
+				memory: defaultCodemodeSettings.memory,
 			});
 		} finally {
 			await rm(root, { recursive: true, force: true });
