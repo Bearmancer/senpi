@@ -1,3 +1,26 @@
+## 2026-09-29 - Edits made in ~/.pi/agent after its copy are reported and importable (omo#9173)
+
+### What changed
+
+- `packages/coding-agent/src/migrations-state.ts`: the state file keeps fields it does not own on every write, and carries `legacyPiAgentDir: { copiedAt, noticedMtimes }` through `readLegacyPiAgentDirRecord`, `writeLegacyPiAgentDirRecord` and `recordLegacyPiAgentDirCopy`. Schema version stays 1; older readers ignore the new field.
+- `packages/coding-agent/src/legacy-senpi-dir-migration.ts`: copying the global `~/.pi/agent` records the copy time and prints where config lives from now on instead of the generic "original directory is untouched" line.
+- `packages/coding-agent/src/pi-dir-restore.ts`: `restoreDir` reports whether it copied anything, and a restored `~/.pi/agent` records the copy time too.
+- `packages/coding-agent/src/legacy-pi-edits.ts` (new): finds `auth.json`, `keybindings.json`, `models.json` and `settings.json` in `~/.pi/agent` changed after the copy (a copy made before the time was recorded compares against the agent copy's preserved mtime) whose content differs from the agent dir's copy; `takeLegacyPiEditNotice` returns only changes not reported yet and records their mtimes; `importLegacyPiConfig` copies named or all edited files into the agent dir after a `.bak-<time>` backup. `~/.pi/agent` is only ever read.
+- `packages/coding-agent/src/main.ts`: interactive startup passes `legacyPiEditStartupNotice()` to `InteractiveMode` as `legacyPiEditNotice`.
+- `packages/coding-agent/src/package-manager-cli.ts`: `config import-pi [files]` routes to `runConfigImportPi` (`src/cli/config-import-pi.ts`, new), and `config --help` documents it.
+
+### Why
+
+- After the one-time copy (#8039) both directories hold plausible config, and edits to `~/.pi/agent` silently had no effect (omo#9173). `~/.pi/agent` belongs to upstream pi, so nothing may be written there; the product says what it reads instead.
+
+### Why an extension could not handle it
+
+- The copy, its state file and the startup options all run before any extension loads, and `config` is a CLI route.
+
+### Expected merge conflict zones
+
+- LOW: the `InteractiveMode` options object in `main.ts`; the top of `handleConfigCommand` and `printConfigCommandHelp` in `package-manager-cli.ts`.
+
 ## 2026-09-29 - Print mode names the usage limit behind a model fallback (omo#8296)
 
 ### What changed

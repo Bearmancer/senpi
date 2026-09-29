@@ -795,6 +795,8 @@ export interface InteractiveModeOptions {
 	uiMode?: TuiMode;
 	/** Providers that were migrated to auth.json (shows warning) */
 	migratedProviders?: string[];
+	/** Config edits made in ~/.pi/agent after its copy, which this agent dir never reads (shows warning) */
+	legacyPiEditNotice?: string;
 	/** Runtime diagnostics collected during session creation. */
 	startupDiagnostics?: Array<{ type: "info" | "warning" | "error"; message: string }>;
 	/** Warning message if session model couldn't be restored */
@@ -1826,6 +1828,7 @@ export class InteractiveMode {
 		// Show startup warnings
 		const {
 			migratedProviders,
+			legacyPiEditNotice,
 			startupDiagnostics,
 			modelFallbackMessage,
 			initialMessage,
@@ -1836,6 +1839,9 @@ export class InteractiveMode {
 
 		if (migratedProviders && migratedProviders.length > 0) {
 			this.showWarning(`Migrated credentials to auth.json: ${migratedProviders.join(", ")}`);
+		}
+		if (legacyPiEditNotice) {
+			this.showWarning(legacyPiEditNotice);
 		}
 		for (const diagnostic of startupDiagnostics ?? []) {
 			if (diagnostic.type === "warning") this.showWarning(diagnostic.message);

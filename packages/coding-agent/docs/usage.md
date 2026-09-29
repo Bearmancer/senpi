@@ -188,7 +188,10 @@ senpi update --self             # Update senpi only
 senpi update --extension <src>  # Update one package
 senpi list                      # List installed packages
 senpi config                    # Enable/disable package resources
+senpi config import-pi [file]   # Copy config edited in ~/.pi/agent into ~/.senpi/agent (backs up first)
 ```
+
+After the first start copies an upstream pi install's `~/.pi/agent` into `~/.senpi/agent`, senpi reads only `~/.senpi/agent`. When `auth.json`, `keybindings.json`, `models.json` or `settings.json` in `~/.pi/agent` changes later, the next interactive start warns once per change; `senpi config import-pi` copies the edited files over, or only the ones you name, and never writes to `~/.pi/agent`.
 
 These commands manage senpi packages and `senpi update` can update the senpi CLI installation. To uninstall senpi itself, see [Quickstart](quickstart.md#uninstall). `senpi config` and project package commands accept `--approve`/`--no-approve` to trust or ignore project-local settings for one command. `senpi update` never prompts for project trust.
 

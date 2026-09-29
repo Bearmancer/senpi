@@ -62,6 +62,27 @@ The supervisor runs before and outside any session, so no extension is loaded in
 
 - The import blocks of `host-lifecycle.ts`, `host-spawn-environment.ts` and `protocol-identity.ts`.
 
+## 2026-09-28 - SIGKILL escalation owns the writer identity it staged (senpi#1830)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-daemon-registration.ts`: `writtenByThisProcess` accepts an optional process-start-time reader; its default keeps the existing cached production probe.
+- `packages/coding-agent/src/modes/rpc/host-ensure.ts`: an `_test.readProcessStartTime` override now also proves the pidfile writer belongs to this process.
+- `packages/coding-agent/test/rpc-host-ensure.test.ts`: the SIGTERM-to-SIGKILL case stages and verifies a fixed self writer identity, then uses a liveness-aware reader for the old host.
+
+### Why
+
+Windows can time out one of the two independent `Get-CimInstance` probes for the ensuring process. A staged self writer could then disagree with the module-cached ownership probe, falsely making the test take the named-pipe `foreign_writer` refusal instead of exercising SIGKILL escalation.
+
+### Why an extension could not handle it
+
+Pidfile writer ownership is decided by `ensureHost` before it can attach to a host or load an extension.
+
+### Expected merge conflict zones
+
+- `host-daemon-registration.ts`: `writtenByThisProcess` and `thisProcessStartTime`.
+- `host-ensure.ts`: the `startedByUs` decision in `ensureHostLocked`.
+
 ## 2026-09-28 - One session can no longer stop a handoff drain (senpi#2285)
 
 ### What changed

@@ -14,6 +14,7 @@ import chalk from "chalk";
 import lockfile from "proper-lockfile";
 // BETA(omo-local-update): removable beta import - delete with src/beta/omo-local-update.ts
 import { runOmoLocalUpdateBeta } from "./beta/omo-local-update.ts";
+import { CONFIG_IMPORT_PI_ARGV, CONFIG_IMPORT_PI_USAGE, runConfigImportPi } from "./cli/config-import-pi.ts";
 import { selectConfig } from "./cli/config-selector.ts";
 import { createProjectTrustContext } from "./cli/project-trust.ts";
 import {
@@ -295,6 +296,12 @@ Options:
   -l, --local       Edit project overrides (${CONFIG_DIR_NAME}/settings.json)
   -a, --approve     Trust project-local files for this command with -l
   -na, --no-approve Ignore project-local files for this command with -l
+
+  ${CONFIG_IMPORT_PI_USAGE}
+
+Copy config files you edited in ~/.pi/agent after its one-time copy into ~/${CONFIG_DIR_NAME}/agent,
+saving each replaced file as <file>.bak-<time> first. Without file names, imports every edited file.
+~/.pi/agent itself is only read.
 `);
 }
 
@@ -828,6 +835,10 @@ export async function handleConfigCommand(
 
 	if (rest.includes("-h") || rest.includes("--help")) {
 		printConfigCommandHelp();
+		return true;
+	}
+	if (rest[0] === CONFIG_IMPORT_PI_ARGV) {
+		runConfigImportPi(rest.slice(1));
 		return true;
 	}
 
