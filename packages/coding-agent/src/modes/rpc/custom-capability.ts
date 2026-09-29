@@ -20,7 +20,6 @@ import type { RpcExtensionUIRequest } from "./rpc-types.ts";
 /** The capability string a client sends in its handshake to opt into the notice. */
 export const CUSTOM_UNSUPPORTED_CAPABILITY = "custom_unsupported";
 export const EXTENSION_EVENTS_CAPABILITY = "extension_events";
-export const RENDERED_COMPONENTS_CAPABILITY = "rendered_components";
 export const AUTO_TITLE_SESSIONS_CAPABILITY = "auto_title_sessions";
 /**
  * Opt-in: the host replaces inline image bytes inside tool results with `image_ref`
@@ -69,6 +68,13 @@ export const WARM_CAPABILITY = "warm";
  * header id stays authoritative.
  */
 export const DURABLE_SESSION_ID_CAPABILITY = "durable_session_id";
+
+/**
+ * HOST capability: this host honors `open_session.promptSurface`, building each session's prompt for
+ * the surface its opener renders on (`terminal` | `app`) instead of only the process-wide
+ * `SENPI_PROMPT_SURFACE`. A later open that names another surface rebuilds that session's prompt.
+ */
+export const PROMPT_SURFACE_CAPABILITY = "prompt_surface";
 
 /**
  * Env var carrying client capabilities to a single-connection stdio RPC host

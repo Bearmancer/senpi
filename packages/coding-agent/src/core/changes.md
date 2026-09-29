@@ -1,3 +1,229 @@
+## 2026-09-29 - The prompt surface is a per-session property (senpi#2377)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `AgentSessionConfig.promptSurface?: PromptSurface`; `_rebuildSystemPrompt` sets `surface: this._promptSurface ?? resolvePromptSurface(process.env)`, so a session built with a surface keeps it whatever the host process env says. New `setPromptSurface(surface)` rebuilds the base prompt (through `_applyToolDeclarations`) and clears the per-turn override; the next turn's `before_agent_start` hands presets the new surface.
+- `packages/coding-agent/src/core/agent-session-runtime.ts`: `AgentSessionLaunchProfile.promptSurface?`; `_launchProfile` is no longer readonly, and `setPromptSurface(surface)` stores it on the launch profile (so `new_session` / `switch_session` / `fork` replacements keep it) and forwards it to the session.
+- `packages/coding-agent/src/core/sdk.ts`, `packages/coding-agent/src/core/agent-session-services.ts`: `promptSurface?` passes through `createAgentSession` / `createAgentSessionFromServices` to the session config.
+
+### Why
+
+- A shared RPC host serves several clients from one process; a process-wide env var could not give the OmO Desktop (an app surface) and a terminal client different prompts on the same host. The surface now travels with each session's launch profile.
+
+### Why an extension could not handle it
+
+- The base prompt options and the runtime launch profile are assembled in core before any extension runs.
+
+### Expected merge conflict zones
+
+- LOW: the `AgentSessionConfig` tail and the constructor's first line in `agent-session.ts`; `AgentSessionLaunchProfile` and the `_launchProfile` field in `agent-session-runtime.ts`; the `createAgentSession` options tail in `sdk.ts` and the `createAgentSessionFromServices` call in `agent-session-services.ts`.
+
+## 2026-09-29 - The session reads SENPI_PROMPT_SURFACE into its system-prompt options (senpi#2377)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `_rebuildSystemPrompt` sets `surface: resolvePromptSurface(process.env)` on `_baseSystemPromptOptions`, the one place the base prompt options are assembled; the dynamic prompt and (through `systemPromptOptions`) the prompt-preset extension read it from there.
+- `packages/coding-agent/src/core/system-prompt.ts`: `BuildSystemPromptOptions.surface?: PromptSurface`, so extensions see the surface on `systemPromptOptions` / `ctx.getSystemPromptOptions()`. `buildSystemPrompt` ignores it.
+
+### Why
+
+- An app host (the OmO Desktop) needs prompts without the terminal routing line. The environment is read once at the option boundary rather than inside section builders, which stay pure.
+
+### Why an extension could not handle it
+
+- The base prompt options are assembled in the session before `before_agent_start`; the fallback dynamic prompt is built there, not in an extension.
+
+### Expected merge conflict zones
+
+- LOW: the `_baseSystemPromptOptions` literal in `_rebuildSystemPrompt` and the dynamic-prompt import in `agent-session.ts`; the `BuildSystemPromptOptions` interface tail in `system-prompt.ts`.
+
+## 2026-09-29 - A billing-dead fallback target no longer pins or strands the session (senpi#2376)
+
+### What changed
+
+- `packages/coding-agent/src/core/retry-fallback/controller.ts` (fork-only): a `billing` switch pins the episode only when the failure hit the chain's original model or that model's whole account; billing on a fallback target from another account leaves the episode revertable. `maybeRestorePrimary` returns to the original at a turn boundary when the current fallback is known unusable and the original is not, ahead of the original's cooldown and the `never` policy, and emits `retry_fallback_reverted` with `cause: "fallback-unusable"`. `tryFallback` and `noteHealthFailure` record what cannot serve; the candidate scan tries every spent provider's entries last for the life of that record instead of for one hop.
+- `packages/coding-agent/src/core/retry-fallback/pin.ts` (fork-only, new): `pinAfterSwitch` holds the pin-provenance rule `applyCandidate` applies (refusal pins; billing pins only when it hit the original or the original's account).
+- `packages/coding-agent/src/core/retry-fallback/unusable.ts` (fork-only, new): `UnusableEntries` records an account-scoped usage limit or billing failure per provider and a model-scoped one per entry, on the session's selector cooldowns under namespaced keys; a manual model change clears it for that model.
+- `packages/coding-agent/src/core/retry-fallback/candidates.ts` (fork-only): `CandidateFilters.spentProvider` becomes the predicate `isProviderSpent`; the second, spent-provider-permitting pass runs only when the first pass skipped a spent provider.
+- `packages/coding-agent/src/core/retry-fallback/controller-types.ts` (fork-only): `FallbackRevertCause` and the optional `cause` on `retry_fallback_reverted`.
+- `packages/coding-agent/src/core/retry-fallback/cooldown.ts` (fork-only): a reason-less `forbidden` rejection cools a selector for 60 s instead of the 5-minute default.
+- `packages/coding-agent/src/core/agent-session.ts`: the `retry_fallback_reverted` member of `AgentSessionEvent` carries the optional `cause`.
+
+### Why
+
+- Incident 2026-09-29: a transient subscription `forbidden` hopped the shipped `claude-opus-5-5` ladder onto an API-key provider with no credit. Its `credit balance is too low` answer pinned the whole episode as billing, so the session never returned to the original after the rejection stopped, and the same dead provider was retried on every rung because the account-limit skip lasted one hop. Sessions stayed on the dead provider until switched back by hand.
+
+### Why an extension could not handle it
+
+- Fallback pinning, revert and candidate selection live in the core retry controller that `agent-session.ts` drives between turns; no hook sees or can veto them.
+
+### Expected merge conflict zones
+
+- LOW: the `retry_fallback_reverted` line of the `AgentSessionEvent` union in `packages/coding-agent/src/core/agent-session.ts`.
+
+## 2026-09-29 - Legacy `.pi` project resources follow project trust
+
+### What changed
+
+- `packages/coding-agent/src/core/package-manager.ts`: `addAutoDiscoveredResources` discovers the legacy `<cwd>/.pi` project directories (extensions, skills, prompts, themes, hooks) only when the project is trusted, the same guard the config-dir blocks already use.
+- `packages/coding-agent/src/core/trust-manager.ts`: `hasTrustRequiringProjectResources` checks the same trust-requiring entries under the legacy `<cwd>/.pi` directory as under the config dir, so a project whose only project resources are in `.pi/` asks for a trust decision.
+
+### Why
+
+- Project trust gating guarded only the config-dir (`.senpi`) blocks; the legacy `.pi` discovery added earlier sat outside that guard, and the trust check did not look at `.pi`, so `.pi` project resources loaded whatever the trust decision was.
+
+### Why an extension could not handle it
+
+- Project resource discovery and the launch-time trust decision run in the host before any extension is bound; an extension cannot withhold resources the loader already discovered.
+
+### Expected merge conflict zones
+
+- LOW: the `if (projectTrusted && resolve(legacyProjectBaseDir) !== resolve(projectBaseDir))` condition in `addAutoDiscoveredResources` in `packages/coding-agent/src/core/package-manager.ts`.
+- LOW: the config-dir check at the top of `hasTrustRequiringProjectResources` and the new `LEGACY_PROJECT_CONFIG_DIR_NAME` constant in `packages/coding-agent/src/core/trust-manager.ts`.
+
+## 2026-09-29 - The package resolution memo key carries the project trust state (senpi#2371)
+
+### What changed
+
+- `packages/coding-agent/src/core/resource-loader.ts`: `resolvePackagePaths()` passes `projectTrusted: this.settingsManager.isProjectTrusted()` into `resolvedPathsMemoKey`.
+- `packages/coding-agent/src/core/resolved-paths-memo.ts` (fork-only): `ResolvedPathsMemoKeyInput` gains a required `projectTrusted: boolean`. Refresh, eviction and the promise memo are unchanged.
+
+### Why
+
+- `DefaultPackageManager.resolve()` reads `isProjectTrusted()` directly (project `.agents/skills` and project-scope resources are skipped while untrusted), but the senpi#1844 key did not include it. At startup without a cached decision, `reload()` resolves once in the untrusted pre-trust pass and again after the trust decision. With no project settings file both passes produced the same key, so the trusted pass reused the untrusted result and a project trusted through `trust.json` lost its `.agents/skills` for the whole session (missing from `/skill:` and from the system prompt). The same key let an untrusted open of a folder reuse a trusted open's result in the same process, so the untrusted open loaded that project's skills, extensions, prompt templates, themes and hooks without trust.
+
+### Why an extension could not handle it
+
+- Package resolution and its memo run inside the host resource loader before any extension is bound.
+
+### Expected merge conflict zones
+
+- LOW: the `resolvedPathsMemoKey({...})` argument object in `resolvePackagePaths()` in `packages/coding-agent/src/core/resource-loader.ts` (one added line).
+
+## 2026-09-29 - A refused delivery write, a part-written async header and a release's header write never leave a session stuck
+
+### What changed
+
+- `packages/coding-agent/src/core/external-admission.ts` (fork-only): `observeRefused(message, error)` settles a delivery whose entry the session file refused: it leaves `pending` (so its start stops counting as busy and the next delivery starts) and is recorded in a `failed` map with the error, listed by `list()` as `failed: [{ delivery_id, error }]` only while non-empty. `admit` answers `already_admitted` for a failed id. `observePersisted` (now called for every written message) and `observeRefused` record whether the file's last write succeeded, and `observeRunSettled` clears the map at the end of a run only when it did: a failed delivery is admissible again once the run that refused it has settled, so its redelivery starts or joins a later run, whose start (`takeRefusedOut`) has dropped the refused copy from the model context, and it is never queued into the refusing run (where the model would hold it twice).
+- `packages/coding-agent/src/core/agent-session.ts`: the message-end write path calls `externalAdmission.observeRefused` when the session manager refuses the write, and `observePersisted` after every written message, not only custom ones; `_emitAgentSettled` calls `externalAdmission.observeRunSettled()` once the run is marked inactive, before the `agent_settled` and `agent_idle` edges whose drain may redeliver.
+- `packages/coding-agent/src/core/session-manager.ts`: `_writeHeaderAsync` removes the file it created exclusively when any step after the open fails (a part-way `writeFile`, the close, a tail `appendFile`), through `discardFailedFirstFlushAsync`, and rethrows; the handle is closed exactly once.
+- `packages/coding-agent/src/core/session-write-recovery.ts` (fork-only): `discardFailedFirstFlushAsync(path, handle, error)`, the asynchronous twin of `discardFailedFirstFlush`, sharing its error reporting (`AggregateError` when the cleanup fails too).
+- Tests: `test/session-manager-header-write.test.ts` gains an assistant appended while the header write closes (lands once, in order; pins the header-write step-aside in `_persist`) and a part-way ENOSPC header write (no file left, next write persists every entry memory holds). `test/suite/external-admission-refused-write.test.ts` (new, real host, real `chmod 0444`), including a file that recovers mid-run: the retry inside the refusing run is `already_admitted`, the one after it settles starts, and the model context and the file each hold the delivery once.
+
+### Why
+
+Found in the todo-25 merge gate review of the session-gateway plan (senpi#2328), all three present since senpi#2365. A refused delivery write skipped `observePersisted`, so the delivery stayed `pending` with lane `start` and every later delivery was queued behind a turn that never ran. A part-way failure of the async header write left the half-written file, so every later first flush failed with `EEXIST` while entries appended during the failed write stayed in memory only. The step-aside (`if (this.headerWrite) return;`) had no test that fails without it.
+
+### Why an extension could not handle it
+
+The admission ledger and the transcript write path are the session runtime's; the header write is the session manager's.
+
+### Expected merge conflict zones
+
+- `agent-session.ts`: the `message_end` persistence `try/catch` in `_processAgentEvent`.
+- `session-manager.ts`: `_writeHeaderAsync` and the `session-write-recovery.ts` / `fs/promises` imports.
+
+## 2026-09-29 - A failed session append leaves nothing an entry can chain onto
+
+### What changed
+
+- `packages/coding-agent/src/core/session-manager.ts`: `_appendEntry` writes the entry (`_persist`) before it commits it to `fileEntries`, `byId`, the leaf, the entry count and the usage totals, so a write that throws (EACCES, ENOSPC, a removed directory) leaves memory exactly as the file has it and the caller gets the error. `_persist` takes the not-yet-committed entry: an append to a flushed file that fails marks the tail as possibly torn and the next append first cuts the file back to its last complete line; a first flush that fails part-way removes the file it created exclusively, so the next flush can create it again. `appendSessionInfo` updates the name cache after the entry is written, and `branchWithSummary` no longer moves the leaf before its entry is written. A successful append writes the same bytes as before.
+- `packages/coding-agent/src/core/session-write-recovery.ts` (new, fork-only): `truncateToLastCompleteLine` and `discardFailedFirstFlush`. `discardFailedFirstFlush` also closes the half-written file, so a failing close no longer skips the removal or the write error; cleanup failures are thrown beside the write error in an `AggregateError`.
+- `packages/coding-agent/src/core/transcript-write-failures.ts` (new, fork-only): `TranscriptWriteFailures`, the refused message writes of the session: the first error of a run to report once (`startRun` / `takeReport`), and the refused message objects to drop from the model context (`takeRefusedOut`).
+- `packages/coding-agent/src/core/agent-session.ts`: a message-end write the session manager refused no longer rejects the queued event work where nobody observes it. It is logged (`transcript_write_failed` with `role`), published as the new `transcript_write_failed` session event (`role`, `errorMessage`; RPC forwards it, which is how an RPC client learns about it after the prompt was accepted), the rest of the message-end handling runs, and the run's owner reports the first such error once: a run a `prompt` owns (`_promptOwnsRun`, from `_promptAgent` start until its event queue settles) has its `prompt` throw it after the queue settles, and any other run (retry, queued follow-up, compaction continuation) emits `continuation_error` right when the write fails. The continuation path never waits for the event queue, so it holds its session-work token no longer than before (waiting there delayed the next TTSR recovery generation). The next `_promptAgent` start, when nothing is streaming, drops exactly the refused message objects from `agent.state.messages`, so the next turn's model context equals a reload of the file.
+- `packages/coding-agent/src/core/session-log.ts`: `role` joins the allowed data keys, so the `transcript_write_failed` line keeps it.
+
+### Why
+
+- `_appendEntry` pushed the entry into memory and only then wrote it. When the write threw, the entry stayed in memory as the leaf, and the next successful append was written with a `parentId` the file never received, so on reload the transcript lost everything after the break. Found while making `release_session` answer `release_failed` (the aborted reply and the stop-state stayed memory-only after a refused write); a refused rename followed by a written `session_released` entry reopened as a one-entry branch with no messages. Inside a turn the throw rejected one queued `_processAgentEvent`, which the next event's handler absorbed, so the prompt resolved as if the turn had been saved.
+
+### Why an extension could not handle it
+
+- Entry ordering, the leaf and the JSONL writes are private to `SessionManager`, and the agent event queue is private to `AgentSession`.
+
+### Expected merge conflict zones
+
+- MEDIUM: `_persist` and `_appendEntry` in `session-manager.ts` (restructured, plus `_commitEntry` split out of `_appendEntry`; upstream still writes after committing); one line each in `appendSessionInfo` and `branchWithSummary`.
+- LOW: the `message_end` persistence block in `_processAgentEvent` (wrapped in a try/catch), the run-start and post-queue checks in `_promptAgent`, the `AgentSessionEvent` union (one new member) and one line before the continuation run in `_continueAgentAfterCurrentRun` in `agent-session.ts`; the `ALLOWED_DATA_KEY` pattern in `session-log.ts`.
+
+## 2026-09-29 - Session file rewrites are atomic, so a failed migration keeps the original
+
+### What changed
+
+- `packages/coding-agent/src/core/session-manager.ts`: `_rewriteFile` no longer opens the session file with `"w"` and writes it in place; it hands the serialized entries (a lazy generator, `_serializedFileEntries`, so resident strings are materialized one entry at a time as before) to `replaceFileAtomically`. Every caller keeps its behavior: the version migration on open (`setSessionFile`, `_loadEntries`), the empty-file header write, the caller-id create, and `createBranchedSession`.
+- `packages/coding-agent/src/core/session-file-replace.ts` (new, fork-only): `replaceFileAtomically(path, chunks)` writes a hidden temp file in the target's directory (`.<name>.<uuid>.tmp`, invisible to `.jsonl` discovery), applies the existing file's mode, fsyncs it, renames it over the target (libuv uses `MOVEFILE_REPLACE_EXISTING` on Windows), then fsyncs the directory (skipped on Windows; `EINVAL`/`ENOTSUP`/`EOPNOTSUPP`/`EISDIR` from a filesystem without directory fsync are tolerated because the rename already happened). A symlinked session file keeps its link: the replacement lands on the resolved file. On a failure before the rename the temp file is removed and the error is rethrown; if the removal also fails both errors surface as one `AggregateError`. When the directory refuses the temp file (`EACCES`/`EPERM`/`EROFS` on its exclusive open), the file is rewritten in place exactly as before, so a writable session file in a read-only directory still migrates on open.
+- `packages/coding-agent/test/suite/no-sync-in-session-path.ledger.json`: the transcript-rewrite `writeFileSync` entry moves from `session-manager.ts _rewriteFile` to `session-file-replace.ts writeDurably` (same count), plus one entry for the read-only-directory fallback `rewriteInPlace`.
+
+### Why
+
+- Opening an old-version session runs the version migration, which rewrote the whole transcript in place. An `ENOSPC` or `EIO` part-way through truncated the user's existing transcript (found by the session-gateway todo-25 gate review, note N3). Every other session write is an append; this was the one path that could destroy history that was already on disk.
+
+### Why an extension could not handle it
+
+- The rewrite runs inside `SessionManager` construction and branching, before any extension is loaded.
+
+### Expected merge conflict zones
+
+- LOW: the body of `_rewriteFile` plus the new `_serializedFileEntries` generator right after it, and one import line in `session-manager.ts`.
+
+## 2026-09-29 - A listener that unsubscribes during an emit no longer hides that event from the next listener
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `_emit` iterates a copy of `_eventListeners`. `unsubscribe()` splices the live array, so a listener that removed itself inside an emit shifted the next listener into the slot the loop had already passed, and that listener never saw the event. Every listener registered when the emit starts now receives it.
+
+### Why
+
+- A self-removing `agent_start` or `agent_idle` listener placed just before the control endpoint's subscription swallowed the endpoint's idle wake (a held delivery waited for the next edge), and one placed before a manual continue's listener pushed `.` acceptance back to the end of the turn (session gateway, todo 27). `ExternalAdmission`'s listener `Set`s and the control feed's `Map` are unaffected: deleting the current entry of a `Set` or `Map` during `for...of` does not skip the next one.
+
+### Why an extension could not handle it
+
+- The listener list and its emit loop are private to `AgentSession`; the skipped listener is the one that cannot see the event.
+
+### Expected merge conflict zones
+
+- LOW: the loop header in `_emit`.
+
+## 2026-09-29 - `ExternalAdmission.close()`: admission ends when a host hands the session over
+
+### What changed
+
+- `packages/coding-agent/src/core/external-admission.ts`: `close(reason)` makes every later `admit()` throw `reason` and change nothing; `reopen()` undoes it. Additive: two methods, one field, and a first-line guard in `admit`; nothing else in the class changed.
+
+### Why
+
+`release_session` (modes/rpc) hands a session to another writer. A drain pass that was already running when the release claimed the session could still admit a delivery until the runtime was disposed, so its entry, the reply and a stop-state landed after `session_released`. The release now closes admission in the same synchronous step as its claim; the delivery stays with its sender, which redelivers it to the new owner.
+
+### Why an extension could not handle it
+
+The drain is the extension; it cannot know the host is about to tear its session down.
+
+### Expected merge conflict zones
+
+- The field list, the method after `onEmitted`, and the first line of `admit` in `external-admission.ts`.
+
+## 2026-09-29 - Atomic external-message admission, its ledger, and a durable header on demand
+
+### What changed
+
+- `packages/coding-agent/src/core/external-admission.ts` (new): `ExternalAdmission` - `admit({ delivery_id, text, deliverAs, expected_turn_id? })` decides and acts in one synchronous call: `already_admitted` when this runtime holds the id (either queue, or a started turn not yet written) or already wrote it; `held_draft` while the composer holds a draft/attachment (nothing enqueued); `turn_conflict` when `expected_turn_id` is stale, or a mid-turn steer names none; `started` when idle (one `sendCustomMessage(..., { triggerTurn: true })`); mid-turn `steered` (one `agent.steer`) or `queued` (one `agent.followUp`). The message is a `session_control_delivery` custom message whose `details.delivery_id` is written to the transcript entry. `list()` is the process-lifetime ledger `{ pending, emitted }`; `gate()` is the read-only `{ can_admit, hold_reason?, editor_revision, turn_epoch }`; `onEmitted` fires when a delivery's entry is persisted.
+- `packages/coding-agent/src/core/agent-session.ts`: owns `externalAdmission` (busy = a run is active or a prompt claimed its start); `_promptAgent` advances `turn_epoch` when a run begins; the custom-message `message_end` persistence reports the entry to the ledger; `clearQueue()` drops queued deliveries from it; `bindCore` binds `sessionControl` (`session-control-actions.ts`, new); `setControlEndpointHost(host)` lets the interactive mode provide `registerControlEndpoint`.
+- `packages/coding-agent/src/core/agent-session.ts` (manual continue): a bare `.` reports acceptance (`promptDisposition("handled")` + `preflightResult(true)`, unchanged values) once the runtime took the continuation - after its turn's `agent_start`, or at once when it was queued into a running turn - instead of after the whole continued turn, so the admission hold and the TUI's submission ticket end like an ordinary prompt's and a mid-turn follow-up delivery is `queued`, not `held_draft`. A continuation that never starts reports at the end, as before.
+- `packages/coding-agent/src/core/session-manager.ts`: `persistHeaderNow(): Promise<void>` writes the buffered header (and anything buffered behind it) asynchronously through an exclusive create (`fs/promises` `open("wx")`), then sets `flushed`, after which every entry appends immediately. While that write runs, `_persist` leaves the file to it (the `!flushed` branch returns early) and the write appends every entry persisted meanwhile - including while its handle closes - before it sets the flag in the same synchronous step as its last check, so the session path gains no synchronous filesystem call (`test/suite/no-sync-in-session-path.test.ts`). `isTranscriptFlushed()`; `async discardHeaderOnlyFile()` waits for a pending header write, then removes a file that holds only the header and model/thinking setup entries and returns to buffering (so a later entry cannot recreate a header-less file).
+
+### Why
+
+Session gateway: a delivery from another session must be applied exactly once per process (the drain retries on every edge), must never jump ahead of or into the user's draft, and must leave a durable, greppable proof on disk (`delivery_id` in the session JSONL). A registered session's id must be on disk before it is visible, because reopening a missing file mints a new id.
+
+### Why an extension could not handle it
+
+Whether the runtime already holds a message in its steering or follow-up queue, when a run begins, and when the transcript entry is written are all internal to `AgentSession` and `SessionManager`; `pi.sendMessage` gives an extension neither the answer nor atomicity.
+
+### Expected merge conflict zones
+
+- `agent-session.ts`: the `_pendingCustomMessages` field block, the `_isAgentRunActive = true` line in `_promptAgent`, the custom branch of `message_end` persistence in `_processAgentEvent`, `clearQueue()`, the end of the `bindCore` actions literal, and `setControlEndpointHost` beside `get sessionName`.
+- `session-manager.ts`: the methods before `_persist` and its `!this.flushed` branch; `SETUP_ONLY_ENTRY_TYPES` before the class.
+
 ## 2026-09-29 - A rejected request re-asks the compaction owner before its retry (senpi#2329)
 
 ### What changed
@@ -15,6 +241,24 @@
 ### Expected merge conflict zones
 
 - LOW: the first line of `_runAutoCompaction` and `_runPrePromptCompaction` in `agent-session.ts`.
+
+## 2026-09-29 - Surface-neutral unknown-command message (senpi#2348)
+
+### What changed
+
+- `packages/coding-agent/src/core/unknown-command.ts` (fork-only): the `UnknownCommandError` message is `Unknown command /foo. Did you mean /food?` with no surface advice; each surface appends its own confirm step. New export `UNKNOWN_COMMAND_CONFIRM_HINT` for protocol clients (RPC, app-server).
+
+### Why
+
+- The TUI confirms with a second Enter and protocol clients with `unknownCommandAsText`; one hardcoded "start the message with a space" line was wrong for both.
+
+### Why an extension could not handle it
+
+- The message belongs to the core typed error.
+
+### Expected merge conflict zones
+
+- None: fork-only file.
 
 ## 2026-09-29 - Together's default model is Kimi K3 (senpi#2321)
 
@@ -73,6 +317,48 @@
 
 - MEDIUM: step 4 of `findInitialModel` and the fallback tail of `restoreModelFromSession` in `model-resolver.ts`, plus the `anthropic-subscription` row in `defaultModelPerProvider`; upstream edits to that table land beside it.
 - LOW: the environment return of `getProviderAuthStatus` in `model-runtime.ts`; the `AuthStatus` type in `provider-composer.ts`.
+
+## 2026-09-29 - The resource loader no longer carries `sharedHostEnabled` (senpi#2328)
+
+### What changed
+
+- `packages/coding-agent/src/core/resource-loader.ts`: `DefaultResourceLoaderOptions.sharedHostEnabled` and the private `sharedHostEnabled` field of `DefaultResourceLoader` are removed. The constructor builds the extension session profile from `sessionKind` and `sessionContext` only, because `pi.sharedHostEnabled` is removed from the extension API (`src/core/extensions/changes.md`, same date).
+
+### Why
+
+- The option only fed `pi.sharedHostEnabled`, which could be `true` only inside the removed interactive shared-host join (senpi#2328).
+
+### Why an extension could not handle it
+
+- The resource loader constructs the extension runtime before any extension loads.
+
+### Expected merge conflict zones
+
+- LOW: `DefaultResourceLoaderOptions`, the field list, and the `extensionSession` assignment in the `DefaultResourceLoader` constructor.
+
+## 2026-09-29 - The retired `experimental.sharedHost` setting is removed from the settings file (senpi#2328)
+
+### What changed
+
+- `packages/coding-agent/src/core/settings-manager.ts`: `ExperimentalSettings`, `Settings.experimental` and `getExperimentalSharedHost()` are removed. `loadFromStorage` runs `removeRetiredSettingsKeys` on the raw parsed object of each scope before `migrateSettings`, so the key is ignored in memory for both scopes; when it was present in the GLOBAL scope, `writeRawScopedSettings` rewrites that file. A project file is never rewritten, and a file without the key is never written.
+- `packages/coding-agent/src/core/settings-retired-keys.ts` (new): `removeRetiredSettingsKeys(raw)` deletes `experimental.sharedHost` and drops `experimental` once empty. `writeRawScopedSettings(storage, scope)` re-parses the content seen under the storage lock, removes the retired keys, and writes `JSON.stringify(raw, null, 2)` without `migrateSettings()`, so every other key keeps its parsed value exactly (legacy `queueMode`, `retry.maxDelayMs`, provider ids stay in their legacy shape). A global `settings.jsonc` loses its comments in that one write. A failed write never fails the load; after it fails for a settings file, no later `SettingsManager` in the process retries it, and it is recorded once in the brand debug log.
+- `packages/coding-agent/src/core/settings-json.ts` (new): `parseSettingsJson` moves here unchanged and `settings-manager.ts` re-exports it, so `settings-retired-keys.ts` parses without a runtime import of `settings-manager.ts` (no import cycle).
+- `packages/coding-agent/src/core/hidden-stdout-log.ts`: `appendDebugLogEntry` is exported so settings loading can record the failed rewrite.
+- `packages/coding-agent/src/core/resource-loader.ts`: the `sharedHostEnabled` fallback no longer reads the removed setting (`options.sharedHostEnabled ?? false`); the option itself is removed with the extension API field separately.
+- `packages/coding-agent/src/core/shared-host-policy.ts`: deleted.
+
+### Why
+
+- The interactive shared-host join is removed (senpi#2328), so the setting controls nothing. Leaving it in users' files would keep a dead key forever; the normal save path (`persistScopedSettings`) re-runs every migration before serializing and would rewrite unrelated legacy fields, so the removal needs its own raw write.
+
+### Why an extension could not handle it
+
+- Settings parsing, migration and persistence are owned by `SettingsManager` and run before extensions load.
+
+### Expected merge conflict zones
+
+- LOW: the tail of `SettingsManager.loadFromStorage`, the `Settings` interface, and the getter block around `getDefaultTools` in `settings-manager.ts`.
+- LOW: the `sharedHostEnabled` assignment in the `DefaultResourceLoader` constructor.
 
 ## 2026-09-29 - A usage limit skips the rest of a spent account and names itself in the fallback notice (omo#8296)
 
@@ -1214,6 +1500,24 @@ The provider id is resolved inside the package before any extension loads, and t
 
 - LOW: `DEFAULT_FALLBACK_CHAINS` and `resolveFallbackChains` in
   `packages/coding-agent/src/core/retry-fallback/settings.ts`.
+
+## 2026-09-20 - Preserve initial model provenance through services (#1560)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session-services.ts` accepts the SDK's existing provenance type and forwards it unchanged.
+
+### Why
+
+- `packages/coding-agent/src/core/agent-session-services.ts` dropped explicit/scoped provenance, leaving `session_start` without the resolved selection source.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/agent-session-services.ts` constructs the session before extension startup handlers run.
+
+### Expected merge conflict zones
+
+- LOW: the options interface and SDK forwarding object in `packages/coding-agent/src/core/agent-session-services.ts`.
 
 ## 2026-09-20 - Skill assets embedded in a compiled binary are read without a descriptor (senpi#1852)
 

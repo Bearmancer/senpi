@@ -19,8 +19,8 @@ export interface CandidateFilters {
 	isSuppressed(base: string): boolean;
 	isAuthAvailable(provider: string): boolean;
 	isCircuitOpen(base: string): boolean;
-	/** The provider whose account-wide usage limit ended the attempt: its entries are tried last. */
-	spentProvider?: string;
+	/** Providers whose account-wide usage limit or billing failure this session saw: their entries are tried last. */
+	isProviderSpent?(provider: string): boolean;
 	skip(candidate: string, skipReason: string): void;
 }
 
@@ -36,18 +36,23 @@ export function firstUsableCandidate(
 	current: { model: Model<Api>; thinkingLevel?: ThinkingLevel },
 	filters: CandidateFilters,
 ): UsableCandidate | undefined {
-	const elsewhere =
-		filters.spentProvider === undefined
-			? undefined
-			: scanCandidates(entries, current, filters, filters.spentProvider);
-	return elsewhere ?? scanCandidates(entries, current, filters, undefined);
+	const isSpent = filters.isProviderSpent;
+	if (!isSpent) return scanCandidates(entries, current, filters, () => false);
+	let avoided = false;
+	const elsewhere = scanCandidates(entries, current, filters, (provider) => {
+		const spent = isSpent(provider);
+		avoided ||= spent;
+		return spent;
+	});
+	if (elsewhere || !avoided) return elsewhere;
+	return scanCandidates(entries, current, filters, () => false);
 }
 
 function scanCandidates(
 	entries: readonly string[],
 	current: { model: Model<Api>; thinkingLevel?: ThinkingLevel },
 	filters: CandidateFilters,
-	avoidProvider: string | undefined,
+	avoidProvider: (provider: string) => boolean,
 ): UsableCandidate | undefined {
 	let probe: UsableCandidate | undefined;
 	for (const raw of candidatesAfter(entries, formatSelector(current.model, current.thinkingLevel))) {
@@ -60,7 +65,7 @@ function scanCandidates(
 			filters.skip(raw, "self");
 			continue;
 		}
-		if (selector.provider === avoidProvider) {
+		if (avoidProvider(selector.provider)) {
 			filters.skip(raw, "account-limit");
 			continue;
 		}

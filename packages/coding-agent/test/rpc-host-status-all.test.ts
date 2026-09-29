@@ -69,13 +69,20 @@ describe("endpoint enumeration from disk", () => {
 			socket: byGeneration,
 			dir: join(flat, daemonDirectoryName(byGeneration)),
 			identity: "generation-settings",
+			endpoint_kind: "rpc_host",
 		});
 		expect(endpoints).toContainEqual({
 			socket: bySettings,
 			dir: join(flat, daemonDirectoryName(bySettings)),
 			identity: "settings",
+			endpoint_kind: "rpc_host",
 		});
-		expect(endpoints).toContainEqual({ socket: null, dir: join(flat, "0123456789abcdef"), identity: "unknown" });
+		expect(endpoints).toContainEqual({
+			socket: null,
+			dir: join(flat, "0123456789abcdef"),
+			identity: "unknown",
+			endpoint_kind: "rpc_host",
+		});
 		const all = await statusAll(qa);
 		expect(all.exitCode).toBe(3);
 		expect(all.endpoints).toHaveLength(3);
@@ -106,11 +113,23 @@ describe.skipIf(process.platform === "win32")("host status --all against real ho
 			identity: "endpoint",
 			shard: { kind: "p", key: SHARD_KEY },
 			crashes: 0,
+			endpoint_kind: "rpc_host",
+			alive: true,
+			reason: null,
 		});
-		expect(endpointRow(endpoints, qa.legacy)).toMatchObject({ reachable: true, identity: "endpoint", shard: null });
+		expect(endpointRow(endpoints, qa.legacy)).toMatchObject({
+			reachable: true,
+			identity: "endpoint",
+			shard: null,
+			endpoint_kind: "rpc_host",
+			alive: true,
+			reason: null,
+		});
 		const identityFile = createHostDaemonPaths({ socket: qa.shard, agentDir: qa.agentDir }).endpointFile;
 		expect(JSON.parse(await readFile(identityFile, "utf8"))).toEqual({
 			layout: 2,
+			registry_version: 1,
+			endpoint_kind: "rpc_host",
 			socket: qa.shard,
 			created_at: expect.any(String),
 		});
@@ -205,6 +224,8 @@ describe.skipIf(process.platform === "win32")("host status --all against real ho
 				id: sessionId,
 				kind: "worker",
 				session_path: sessionPath,
+				cwd: qa.cwd,
+				name: null,
 				attachments: 1,
 				context: { tree_key: "tree-7", host_socket: canonicalSocket(qa.legacy), host_instance: instanceId },
 			},

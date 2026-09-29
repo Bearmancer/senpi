@@ -1,3 +1,25 @@
+## 2026-09-29 - turn/start refuses an unknown command with structured data (senpi#2348)
+
+### What changed
+
+- `packages/coding-agent/src/modes/app-server/threads/turns.ts`: when the prompt is refused as an unknown command before the turn is announced, `startTurn` discards the turn (no `turn/started`, no user item, no turn-log entry) and rejects with `unknownCommandTurnError`. A preflight failure now completes the turn from the prompt's settle path instead of the preflight callback, so the refusal can be recognized first. `params.unknownCommandAsText` is forwarded to `session.prompt`.
+- `packages/coding-agent/src/modes/app-server/threads/unknown-command-refusal.ts` (new): JSON-RPC `-32602` with `data: { errorCode: "unknown_command", command, suggestions, reason }`.
+- `packages/coding-agent/src/modes/app-server/threads/turn-log.ts`: `discardTurn`.
+- `packages/coding-agent/src/modes/app-server/threads/turn-runtime.ts`: `TurnEngineSession.prompt` options gain `unknownCommandAsText`.
+- `packages/coding-agent/src/modes/app-server/turn-adapter.ts`, `protocol/turn.ts`: `turn/start` accepts the senpi extension field `unknownCommandAsText`.
+
+### Why
+
+- App-server clients got a generic `-32603`, a started-then-failed turn, and no way to confirm the text.
+
+### Why an extension could not handle it
+
+- Turn lifecycle and the JSON-RPC error envelope are owned by the app-server turn engine.
+
+### Expected merge conflict zones
+
+- None expected: app-server is fork-only.
+
 ## 2026-09-28 - app-server loads `--extension` sources into every thread (omo#9117)
 
 ### What changed

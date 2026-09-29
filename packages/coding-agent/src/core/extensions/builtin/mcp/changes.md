@@ -1,5 +1,24 @@
 # mcp Extension Changes
 
+## 2026-09-29 - list_changed re-registers a non-shared connection's current listing (#2188)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/service-tools-changed.ts`: before a list_changed refresh re-registers, a non-shared connection re-collects its catalog with `collectServerCatalogForCache`, stores it on `entry.cachedCatalog`, and writes it to the on-disk catalog cache, as a shared lease's `catalog()` already does. Until the first refresh has recorded names, the removal diff starts from the catalog the session last registered.
+
+### Why
+
+- Registration reads `entry.cachedCatalog`, and on a non-shared connection only the startup connect filled it. A list_changed re-listed the server only to diff names and then re-registered the startup catalog, so added tools never registered and removed tools were registered again on top of their tombstones.
+- The first refresh had no recorded names to diff against, so a change that arrived inside the coalescing window of the connect's own relist tombstoned nothing.
+
+### Why an extension could not handle it
+
+- The list_changed refresh and the connection's catalog cache are internal to the MCP builtin.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/service-tools-changed.ts`: `refreshMcpToolsOnListChanged` between the startup-claim early return and the tombstone loop, and its imports.
+
 ## 2026-09-29 - Skill-declared servers expand ${VAR} by the skill's trust (#2345)
 
 ### What changed

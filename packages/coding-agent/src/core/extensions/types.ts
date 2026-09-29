@@ -90,10 +90,12 @@ import type {
 import type { ReadClassifier } from "../tools/read-classifiers.ts";
 import type { McpServerDeclaration } from "./builtin/mcp/config-schema.ts";
 import type { ExtensionKernelTools } from "./kernel-tools-context.ts";
+import type { SessionControlActions, SessionControlWakeEvent } from "./session-control-types.ts";
 
 export type { ExecOptions, ExecResult } from "../exec.ts";
 export type { AppKeybinding, KeybindingsManager } from "../keybindings.ts";
 export type { BuildSystemPromptOptions } from "../system-prompt.ts";
+export * from "./session-control-types.ts";
 export type { AgentToolResult, AgentToolUpdateCallback, ToolExecutionMode };
 
 export type ServiceTier = "auto" | "flex" | "priority";
@@ -1668,6 +1670,7 @@ export type ExtensionEvent =
 	| AgentStartEvent
 	| AgentEndEvent
 	| AgentSettledEvent
+	| SessionControlWakeEvent
 	| UIPromptStartEvent
 	| UIPromptEndEvent
 	| TurnStartEvent
@@ -1881,14 +1884,12 @@ export const EMPTY_SESSION_CONTEXT: SessionContext = Object.freeze({});
 
 /** The per-session facts an extension factory may branch on at registration time. */
 export interface ExtensionSessionProfile {
-	readonly sharedHostEnabled: boolean;
 	readonly sessionKind: SessionKind;
 	readonly sessionContext: SessionContext;
 }
 
 /** The profile a classic launch (and any caller that names none) loads extensions with. */
 export const DEFAULT_EXTENSION_SESSION_PROFILE: ExtensionSessionProfile = Object.freeze({
-	sharedHostEnabled: false,
 	sessionKind: "interactive",
 	sessionContext: EMPTY_SESSION_CONTEXT,
 });
@@ -1911,8 +1912,6 @@ export interface ExtensionAPI {
 
 	/** Absolute cwd of the session this extension instance was loaded for. */
 	readonly cwd: string;
-	/** Effective shared-host capability for registration-time extension decisions. */
-	readonly sharedHostEnabled: boolean;
 	/**
 	 * Visibility class of the session this extension instance was loaded for
 	 * (`open_session.kind`). `interactive` for classic launches and every open that
@@ -1971,6 +1970,7 @@ export interface ExtensionAPI {
 	on(event: "agent_start", handler: ExtensionHandler<AgentStartEvent>): void;
 	on(event: "agent_end", handler: ExtensionHandler<AgentEndEvent>): void;
 	on(event: "agent_settled", handler: ExtensionHandler<AgentSettledEvent>): void;
+	on(event: "session_control_wake", handler: ExtensionHandler<SessionControlWakeEvent>): void;
 	on(event: "ui_prompt_start", handler: ExtensionHandler<UIPromptStartEvent>): void;
 	on(event: "ui_prompt_end", handler: ExtensionHandler<UIPromptEndEvent>): void;
 	on(event: "turn_start", handler: ExtensionHandler<TurnStartEvent>): void;
@@ -2025,7 +2025,7 @@ export interface ExtensionAPI {
 	// Command, Shortcut, Flag Registration
 	// =========================================================================
 
-	/** Register a custom command. */
+	/** Register a custom command. Submit any text (`sendUserMessage`) inside the handler: text sent after it returns is not held behind the user's input. */
 	registerCommand(name: string, options: Omit<RegisteredCommand, "name" | "sourceInfo">): void;
 
 	/** Register a keyboard shortcut. */
@@ -2090,6 +2090,7 @@ export interface ExtensionAPI {
 	 * Send a user message to the agent. Always triggers a turn.
 	 * When the agent is streaming, use deliverAs to specify how to queue the message.
 	 * Set expandPromptTemplates to dispatch extension commands and expand skill commands and prompt templates.
+	 * From a command handler, send before the handler returns: text sent after it returned is not held behind the user's input.
 	 */
 	sendUserMessage(
 		content: string | (TextContent | ImageContent)[],
@@ -2262,6 +2263,9 @@ export interface ExtensionAPI {
 
 	/** Shared event bus for extension communication. */
 	events: EventBus;
+
+	/** Session control: external-message admission, its ledger, the durable header and the control endpoint. */
+	readonly session: SessionControlActions;
 }
 
 export type ExtensionRpcRequestHandler = (data: unknown) => unknown | Promise<unknown>;
@@ -2573,6 +2577,8 @@ export interface ExtensionActions {
 	setSessionModel: SetModelHandler;
 	setSessionThinkingLevel: SetThinkingLevelHandler;
 	setSessionFastMode: SetSessionFastModeHandler;
+	/** Bound by `AgentSession`; a runtime bound without it keeps the pre-bind stub. */
+	sessionControl?: SessionControlActions;
 }
 
 /**

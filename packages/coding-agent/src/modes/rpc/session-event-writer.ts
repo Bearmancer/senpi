@@ -10,14 +10,10 @@ import type {
 	RpcSessionClosedReason,
 	RpcSessionParkedEvent,
 } from "./rpc-types.ts";
-import {
-	RENDERED_COMPONENT_RECORD,
-	SessionEventFanout,
-	type SessionEventWriterConnection,
-} from "./session-event-fanout.ts";
+import { SessionEventFanout, type SessionEventWriterConnection } from "./session-event-fanout.ts";
 import type { SocketEventSinkActor } from "./socket-event-fanout.ts";
 
-export { RENDERED_COMPONENT_RECORD, type SessionEventWriterConnection } from "./session-event-fanout.ts";
+export type { SessionEventWriterConnection } from "./session-event-fanout.ts";
 
 /** Await every actor's drain; a failed actor is a cut peer, not a writer failure. */
 const settleActors = (actors: readonly SocketEventSinkActor[]): Promise<void> =>
@@ -198,10 +194,6 @@ export class SessionEventWriter {
 		return this.fanout.getConnectionCapabilities(id);
 	}
 
-	hasCapableConnection(sessionId: string): boolean {
-		return this.fanout.hasCapableConnection(sessionId);
-	}
-
 	/**
 	 * Records a session's visibility class. A worker session is machine-driven work that
 	 * only its attached connections track, so its lifecycle records are delivered to them
@@ -240,8 +232,7 @@ export class SessionEventWriter {
 			(record.type === "extension_ui_request" &&
 				["select", "confirm", "input", "editor"].includes(String(record.method)));
 		const tagged = { ...value, sessionId } as RpcRecord;
-		const { [RENDERED_COMPONENT_RECORD]: _rendered, ...wireTagged } = tagged;
-		const line = serializeJsonLine(wireTagged);
+		const line = serializeJsonLine(tagged);
 		if (this.fanout.isEmpty() && this.exceedsStdioCapacity(line)) {
 			this.closeSession(
 				sessionId,
@@ -255,21 +246,15 @@ export class SessionEventWriter {
 			);
 			return false;
 		}
-		const targets = this.fanout.targets(
-			sessionId,
-			targetId,
-			isTargeted,
-			record[RENDERED_COMPONENT_RECORD] === true,
-			record.type,
-		);
+		const targets = this.fanout.targets(sessionId, targetId, isTargeted, record.type);
 		// A record is only walked and re-serialized when a target asked for placeholders;
 		// otherwise this is byte-for-byte today's path, with serializeJsonLine called once.
 		const hasPlaceholderTarget = targets.some((target) =>
 			this.fanout.connectionHas(target, MEDIA_PLACEHOLDERS_CAPABILITY),
 		);
-		const redacted = hasPlaceholderTarget ? omitInlineMedia(wireTagged) : wireTagged;
-		const placeholderLine = redacted === wireTagged ? undefined : serializeJsonLine(redacted);
-		if (!isTargeted) this.fanout.rememberSnapshot(sessionId, tagged, line, placeholderLine, wireTagged);
+		const redacted = hasPlaceholderTarget ? omitInlineMedia(tagged) : tagged;
+		const placeholderLine = redacted === tagged ? undefined : serializeJsonLine(redacted);
+		if (!isTargeted) this.fanout.rememberSnapshot(sessionId, tagged, line, placeholderLine, tagged);
 		for (const target of targets) {
 			if (target !== undefined && !this.fanout.get(target)) continue;
 			const registered = target === undefined ? undefined : this.fanout.get(target);
@@ -281,9 +266,9 @@ export class SessionEventWriter {
 					wants ? placeholderLine : line,
 					keyed ? MESSAGE_KEY : undefined,
 					undefined,
-					keyed ? serializeJsonLine(demoteToDeltaOnly(wireTagged)) : undefined,
+					keyed ? serializeJsonLine(demoteToDeltaOnly(tagged)) : undefined,
 				);
-			} else this.appendSessionRecord(sessionId, wants ? (redacted as RpcRecord) : wireTagged, target);
+			} else this.appendSessionRecord(sessionId, wants ? (redacted as RpcRecord) : tagged, target);
 		}
 		this.requestFlush();
 		return true;
@@ -307,7 +292,7 @@ export class SessionEventWriter {
 	/** Registered actors this session's records are delivered to, plus the caller's own. */
 	private sessionActors(sessionId: string): SocketEventSinkActor[] {
 		const targets = new Set([
-			...this.fanout.targets(sessionId, this.currentConnection(), false, false, undefined),
+			...this.fanout.targets(sessionId, this.currentConnection(), false, undefined),
 			this.currentConnection(),
 		]);
 		return [...targets].flatMap((target) => {
@@ -452,10 +437,23 @@ export class SessionEventWriter {
 	 * no close response to answer.
 	 */
 	parkSession(sessionId: string, sessionPath: string): void {
+		this.sealWithLifecycle(sessionId, { type: "session_parked", sessionId, sessionPath });
+	}
+
+	/**
+	 * Seal a session `release_session` handed to a runtime outside this host and publish
+	 * `session_closed { reason: "released", sessionPath }`. Unlike a park the file must NOT be reopened
+	 * here - another process now writes it. Delivered like a park; the releasing caller's own answer is
+	 * the `release_session` response, so there is no close response either.
+	 */
+	releaseSession(sessionId: string, sessionPath: string): void {
+		this.sealWithLifecycle(sessionId, { type: "session_closed", sessionId, reason: "released", sessionPath });
+	}
+
+	private sealWithLifecycle(sessionId: string, lifecycle: RpcSessionParkedEvent | RpcSessionClosedEvent): void {
 		if (this.sealedSessions.has(sessionId)) return;
 		this.sealedSessions.add(sessionId);
 		this.fanout.forgetSession(sessionId);
-		const lifecycle: RpcSessionParkedEvent = { type: "session_parked", sessionId, sessionPath };
 		if (this.fanout.isEmpty()) this.appendSessionRecord(sessionId, lifecycle);
 		else if (this.workerSessions.has(sessionId))
 			this.fanout.deliverToSession(sessionId, serializeJsonLine(lifecycle));

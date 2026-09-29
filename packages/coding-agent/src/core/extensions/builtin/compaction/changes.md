@@ -1,3 +1,27 @@
+## 2026-09-29 - ChatGPT subscription remote compaction goes through responses-v2 and replays on its own lane (senpi#2378)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/compaction/openai-remote.ts`: `runOpenAiRemoteCompaction` routes the `chatgpt-subscription` / `openai-codex-responses` lane through responses-v2 and returns after that one attempt, so the lane never calls the retired `/codex/responses/compact` route and never falls through to a second remote request. The v2 checkpoint's replay origin is the same canonical origin later turns present: the request-local `x-codex-beta-features: remote_compaction_v2` header is no longer part of the tenant fingerprint, which made the replay hook refuse every v2 checkpoint (on the `openai` lane too). The remote timeout is chosen per lane.
+- `packages/coding-agent/src/core/extensions/builtin/compaction/openai-remote-responses-v2.ts`: `supportsOpenAiResponsesRemoteCompactionV2` is true for the subscription lane; the v2 run accepts either lane's model, records the lane's own identity (`openAiRemoteCompactionIdentity`) instead of a hard-coded `openai-responses`, and sends the subscription lane's request with `maxRetries: 0` through the provider-turn transport (the model runtime), so it uses the same auth, env and proxy handling as a normal turn.
+- `packages/coding-agent/src/core/extensions/builtin/compaction/openai-remote-timeout.ts`: `openAiRemoteCompactionTimeoutMs(model)` keeps 15 s for `openai-responses` and gives the subscription lane `CHATGPT_SUBSCRIPTION_REMOTE_COMPACTION_TIMEOUT_MS` = 90 s. A live subscription-lane v2 compaction on this branch measured 17,740 ms at 16,735 context tokens; 90 s is about a 5x margin over that, leaving headroom for larger contexts (the lane's window is 400k) and slower links, while a timeout still falls back to the local summary.
+- `packages/coding-agent/src/core/extensions/builtin/compaction/openai-remote-dependencies.ts`: `OpenAiResponsesStreamRunner` accepts either remote-compaction model.
+
+### Why
+
+- The ChatGPT backend no longer serves `/codex/responses/compact` (404), so every compaction on this lane fell back to the local summary after one or two failed requests. The backend serves responses-v2 (`input` plus `{"type":"compaction_trigger"}` with `x-codex-beta-features: remote_compaction_v2`).
+- A real v2 compaction on this lane takes longer than 15 s (17.7 s measured live at 16.7k tokens).
+- A v2 checkpoint stored `api: "openai-responses"` and a fingerprint including the v2 beta header, so the next turn's replay check refused it and the model saw only the placeholder summary.
+- A failed or timed-out attempt stores nothing and the compaction takes the local summary; a later refusal after an account or model switch is tracked in senpi#2382.
+
+### Why an extension could not handle it
+
+- Remote compaction routing, checkpoint provenance and replay are this builtin's own policy.
+
+### Expected merge conflict zones
+
+- LOW: the responses-v2 branch of `runOpenAiRemoteCompaction` in `openai-remote.ts`; `runOpenAiResponsesV2Compaction` options and details in `openai-remote-responses-v2.ts`; the timeout constants in `openai-remote-timeout.ts`.
+
 ## 2026-09-29 - senpi owns the overflow of a failed cold-seed on the anthropic-subscription lane (senpi#2329)
 
 ### What changed

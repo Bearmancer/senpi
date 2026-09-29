@@ -8,12 +8,15 @@ export function submitsCommandAsText(text: string, details: EditorSubmitDetails 
 
 export interface UnknownCommandFeedbackTarget {
 	readonly editor: { getText(): string; setText(text: string): void };
+	armConfirmation(text: string): void;
+	readonly confirmHint: string;
 	showWarning(message: string): void;
 }
 
 /**
  * Turn an unknown-command rejection into editor feedback: the submitted text goes back into an empty
- * editor and the rejection message is shown as a warning. Returns `false` for any other error.
+ * editor, the rejection is shown with the confirm hint, and submitting the same text again sends it as
+ * a message. Returns `false` for any other error.
  */
 export function reportUnknownCommand(
 	error: unknown,
@@ -22,6 +25,7 @@ export function reportUnknownCommand(
 ): boolean {
 	if (!(error instanceof UnknownCommandError)) return false;
 	if (target.editor.getText().trim() === "") target.editor.setText(submittedText);
-	target.showWarning(error.message);
+	target.armConfirmation(submittedText);
+	target.showWarning(`${error.message}\n${target.confirmHint}`);
 	return true;
 }

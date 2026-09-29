@@ -15,7 +15,11 @@ import type { AgentSessionRuntime } from "../src/core/agent-session-runtime.ts";
 import { AuthStorage } from "../src/core/auth-storage.ts";
 import { SessionManager } from "../src/core/session-manager.ts";
 import { SettingsManager } from "../src/core/settings-manager.ts";
-import { UnknownCommandError, unknownCommandErrorFromWire } from "../src/core/unknown-command.ts";
+import {
+	UNKNOWN_COMMAND_CONFIRM_HINT,
+	UnknownCommandError,
+	unknownCommandErrorFromWire,
+} from "../src/core/unknown-command.ts";
 import { runRpcMode } from "../src/modes/rpc/rpc-mode.ts";
 import { createAuthenticatedModelRegistry, createModelRegistry, getModelRuntime } from "./model-runtime-test-utils.ts";
 import { createTestResourceLoader } from "./utilities.ts";
@@ -283,12 +287,11 @@ describe("RPC prompt response semantics", () => {
 			expect(response).toMatchObject({
 				success: false,
 				errorCode: "unknown_command",
-				error: "Unknown command /ulw-exec. Start the message with a space to send it as text.",
 				errorData: { command: "ulw-exec", suggestions: [], reason: "unknown" },
 			});
 			const rebuilt = unknownCommandErrorFromWire(response?.errorData);
 			expect(rebuilt).toBeInstanceOf(UnknownCommandError);
-			expect(rebuilt?.message).toBe(response?.error);
+			expect(response?.error).toBe(`${rebuilt?.message} ${UNKNOWN_COMMAND_CONFIRM_HINT}`);
 			expect(parseOutputLines(rpcIo.outputLines).some((record) => record.type === "agent_start")).toBe(false);
 		} finally {
 			await cleanup();
@@ -305,7 +308,7 @@ describe("RPC prompt response semantics", () => {
 			expect(getPromptResponses(rpcIo.outputLines, "u2")[0]).toMatchObject({
 				success: false,
 				errorCode: "unknown_command",
-				error: "/model is an interactive command and cannot be sent as a prompt.",
+				error: `/model is an interactive command and cannot be sent as a prompt. ${UNKNOWN_COMMAND_CONFIRM_HINT}`,
 				errorData: { command: "model", reason: "interactive_only" },
 			});
 		} finally {

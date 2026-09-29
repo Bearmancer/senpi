@@ -1,5 +1,42 @@
 # changes — senpi-monorepo root
 
+## Publish the real @code-yeongyu/senpi manifest, senpi#2360 (2026-09-29)
+
+### What changed
+
+- `package.json`: `check` no longer runs `check:shrinkwrap`; the `check:shrinkwrap` and `shrinkwrap:coding-agent` scripts are removed and `refresh-lock` no longer regenerates `publish-deps.lock.json`.
+
+### Why
+
+- The published senpi package declares its real dependencies now, so the publish-staging manifest that the shrinkwrap generator produced has no consumer (see `scripts/changes.md`).
+
+### Why an extension could not handle it
+
+- Repository scripts.
+
+### Expected merge conflict zones
+
+- LOW: the `check` chain and `refresh-lock` in the root `package.json` `scripts` block.
+
+## bun.lock workspace ranges follow the manifests after a release, senpi#2352 (2026-09-29)
+
+### What changed
+
+- `package.json`: `check` runs the new `check:bun-lock` (`node scripts/regenerate-bun-lock-isolated.mjs --check`), and `version:patch`, `version:minor` and `version:major` refresh bun.lock through `scripts/regenerate-bun-lock-isolated.mjs` instead of an in-place `bun install --lockfile-only`.
+- `bun.lock`: regenerated once; twenty stale workspace dependency ranges (`^2026.9.28-7`, and `^2026.9.28-3` in the leaf `evals`, `server` and `sqlite-node` workspaces) now match their manifests.
+
+### Why
+
+- Bun 1.4.2 does not reach a fixed point in one seeded `--lockfile-only` pass after a version bump: it rewrites each workspace `version` but keeps the old ranges the workspaces declare on each other. Release v2026.9.29 shipped that lock and a fresh `bun install` rewrote it. Nothing in `check` or CI ran the existing `--check` mode, so the drift was invisible.
+
+### Why an extension could not handle it
+
+- Repository lockfile maintenance and validation scripts.
+
+### Expected merge conflict zones
+
+- LOW: the `check` chain and the `version:*` lines in the root `package.json` `scripts` block.
+
 ## Remove the desktop computer-use stack, now owned by omo (2026-09-28)
 
 ### What changed

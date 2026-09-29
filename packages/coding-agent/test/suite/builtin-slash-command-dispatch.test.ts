@@ -53,6 +53,7 @@ function createSubmitHarness(): SubmitHarness {
 		onInputCallback,
 		showError,
 		showSessionSelector,
+		sessionControlHost: undefined,
 	};
 	const context = stubbed(known);
 	(InteractiveMode.prototype as unknown as SubmitHandlerOwner).setupEditorSubmitHandler.call(context);

@@ -238,6 +238,12 @@ export class RpcSessionRegistry {
 			// no attach may revoke it for the clients that already rely on it.
 			if (options?.retainOnDisconnect) entry.retainOnDisconnect = true;
 			if (!entry.durableSessionId) throw new RpcSessionRegistryError("session_path_in_use");
+			// The surface follows the client that renders the replies: an attach that names one moves
+			// the live session to it; an attach without one keeps what the session has.
+			if (profile.promptSurface !== undefined && profile.promptSurface !== entry.profile.promptSurface) {
+				entry.profile = frozenProfile({ ...entry.profile, promptSurface: profile.promptSurface });
+				entry.runtime?.setPromptSurface(profile.promptSurface);
+			}
 			entry.lastCommandAt = this.now();
 			if (wasParked) {
 				entry.lifecycleMutex = entry.lifecycleMutex.then(() =>

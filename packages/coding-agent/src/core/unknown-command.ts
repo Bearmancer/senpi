@@ -41,8 +41,11 @@ function formatUnknownCommandMessage(
 		return `/${command} is an interactive command and cannot be sent as a prompt.`;
 	}
 	const hint = suggestions.length === 0 ? "" : ` Did you mean ${suggestions.map((name) => `/${name}`).join(", ")}?`;
-	return `Unknown command /${command}.${hint} Start the message with a space to send it as text.`;
+	return `Unknown command /${command}.${hint}`;
 }
+
+/** How a protocol client confirms that a refused unknown command should be sent as text. */
+export const UNKNOWN_COMMAND_CONFIRM_HINT = 'Resend with "unknownCommandAsText": true to send it as text.';
 
 /** Rebuild the typed rejection from an RPC `unknown_command` failure's `errorData`, if it is well formed. */
 export function unknownCommandErrorFromWire(data: unknown): UnknownCommandError | undefined {

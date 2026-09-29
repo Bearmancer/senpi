@@ -59,8 +59,11 @@ export async function socketSiblings(socket: string): Promise<readonly string[]>
 	return entries.filter((entry) => entry.startsWith(`${name}.next-`) || entry.startsWith(`${name}.shield-`));
 }
 
-/** EVERY generation, not only the pointer's: a predecessor draining after a handoff is still serving. */
-async function anyGenerationLive(paths: HostDaemonDirectory): Promise<boolean> {
+/**
+ * EVERY generation, not only the pointer's: a predecessor draining after a handoff is still serving.
+ * Also the "dead" half of `classifyEndpointLiveness`, so the verdict and gc never disagree about it.
+ */
+export async function anyGenerationLive(paths: HostDaemonDirectory): Promise<boolean> {
 	for (const instanceId of await readdir(paths.generationsDir).catch(() => [] as string[])) {
 		const record = generationRecord(await readFileOrUndefined(generationPaths(paths, instanceId).pidFile));
 		if (record !== undefined && (await recordIsLive(record))) return true;

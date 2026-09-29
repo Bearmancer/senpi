@@ -240,9 +240,7 @@ async function runSocketHost(options: MultiSessionHostOptions, socketPath: strin
 		options,
 		writer,
 		[
-			...parseClientCapabilities(envValue("RPC_CLIENT_CAPABILITIES")).filter(
-				(capability) => capability !== "rendered_components",
-			),
+			...parseClientCapabilities(envValue("RPC_CLIENT_CAPABILITIES")),
 			// A socket host installs the SIGUSR1 drain below, so it can be handed off to a newer
 			// generation instead of being killed. A host that does not advertise this is never
 			// signalled - SIGUSR1 would simply terminate it, sessions and all.

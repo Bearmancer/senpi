@@ -1,7 +1,5 @@
 # RPC Mode
 
-Shared-host clients may advertise the `rendered_components` capability to receive factory-rendered widget, header, and footer records. In a shared session, component rendering uses the minimum width reported by currently attached connections, defaulting to 80 when none report a width; disconnected connections no longer contribute.
-
 When the last client disconnects from a retained in-process session, extensions receive
 `session_parked`; the first reattachment to that still-open session emits
 `session_resumed`. File-monitor polling and prompt-cache keepalive pause between these
@@ -83,7 +81,7 @@ media even if it names the capability. `get_media` is answered in both modes.
 
 ## Multi-session mode (D1 wire protocol)
 
-Multi-session mode lets one `senpi --mode rpc` process serve several independent conversations concurrently over the same stdio JSONL stream. Classic single-session mode is byte-identical to today; the only additive classic-mode behavior is that `get_protocol_info` is answered.
+Multi-session mode lets one `senpi --mode rpc` process serve several independent conversations concurrently over the same stdio JSONL stream. Classic single-session mode is unchanged except for two additive behaviors: `get_protocol_info` is answered, and a resolved `extension_ui_response` is acknowledged under its frame `id` (see [Extension UI Responses](#extension-ui-responses-stdin)).
 
 ### Starting multi-session mode
 
@@ -91,7 +89,7 @@ Multi-session mode lets one `senpi --mode rpc` process serve several independent
 # Shared JSONL over stdio (legacy multi-session host)
 senpi --mode rpc --multi-session [options]
 
-# One shared host over a local socket; each accepted connection has its own JSONL feed
+# One multi-session host over a local socket; each accepted connection has its own JSONL feed
 senpi --mode rpc --listen unix:///tmp/senpi-rpc.sock [options]
 senpi --mode rpc --listen /tmp/senpi-rpc.sock [options]
 ```
@@ -106,7 +104,7 @@ process-global session registry.
 
 - `in-process` - every session runs IN the host process, sharing its event loop. No worker isolate is allocated and
   no session cap applies (capacity is memory, never a refusal). This is the DEFAULT for a `--listen` socket host,
-  i.e. for the shared host clients attach to.
+  i.e. for the multi-session host clients attach to.
 - `worker` - every session owns a worker isolate, bounded by the worker capacity below. This is the DEFAULT for a
   stdio host (`--multi-session` without `--listen`, and `--listen stdio://`) and for embedders, and stays available
   for socket hosts that pass the flag explicitly.
@@ -202,7 +200,7 @@ upgraded, but its extension set does NOT cover what the running host loaded, so 
 extensions) or `profile_mismatch_attached` (the launch profiles differ, or one of them is unknown - a client
 without a launch spec can prove nothing about extensions and therefore never initiates a handoff).
 
-Four invariants govern every client of a shared host, and every client is expected to keep all four. The first two
+Four invariants govern every client of a multi-session host, and every client is expected to keep all four. The first two
 are what this decision encodes; the other two are what a client must not undo elsewhere:
 
 - **I1 - never terminate, signal or replace a host this process did not start.** A missing capability or a
@@ -222,8 +220,8 @@ are what this decision encodes; the other two are what a client must not undo el
   STRICTLY greater, such a pair attaches instead of upgrading.
 - **I3 - only the generation that owns the daemon state writes it; every other client reads.** A running host's
   pidfile, settings, reservations and socket belong to that generation. A client that cannot use what it finds
-  fails CLOSED - it reports the refusal, or starts its own private host on its own endpoint - and never edits a
-  shared host's state files, unlinks its socket, or removes its pidfile to "clean up". A handoff is the one
+  fails CLOSED - it reports the refusal, or starts its own private host on its own endpoint - and never edits
+  another generation's state files, unlinks its socket, or removes its pidfile to "clean up". A handoff is the one
   exception and it still writes only its OWN generation directory before repointing the pointer (see
   [Daemon state directory](#daemon-state-directory-layout-2)); the drained predecessor keeps its registration until
   it exits, because it is still serving.
@@ -309,7 +307,8 @@ directory can never read each other's state:
 <agentDir>/rpc-host-daemon/                    flat directory (shared; also a legacy host's own state)
   layout.json                                  { "layout": 2, "dir": "<sha256(canonical socket)[:16]>" }
   <sha256(canonical socket)[:16]>/             0700
-    endpoint.json                              { layout: 2, socket, created_at } - durable identity
+    endpoint.json                              { layout: 2, registry_version: 1, endpoint_kind, socket,
+                                                 created_at } - durable identity
     host.pid                                   POINTER: { layout, instance_id, generation_dir, writer }
     settings.json                              what the supervisor reads at boot
     daemon.lock  stderr.log
@@ -349,7 +348,10 @@ and starts no host in that case.
 is the hash of that spelling's canonical form). It is
 written `0600` when the directory is created and re-asserted under the ensure lock. It is written whole to a
 temporary name and linked into place, so no reader ever sees half a file, and a valid one is never rewritten, so
-`created_at` is the endpoint's first ensure. Under the lock the ensure does replace a file that does not name a
+`created_at` is the endpoint's first ensure. `endpoint_kind` is `rpc_host` for a multi-session host and `tui`
+for an interactive terminal's control endpoint; the first writer's kind stands like the rest of the record. A
+record written before `registry_version`/`endpoint_kind` existed (`{ layout, socket, created_at }`) reads as
+`rpc_host` and is never rewritten to add them. Under the lock the ensure does replace a file that does not name a
 socket hashing to this directory (torn by a crash of an older build, or foreign): left alone, such a file would
 leave the endpoint listed as `socket: null` and kept by `gc` as `unknown_identity` forever. It is the one file a generation's release
 leaves behind: a supervisor that exits (idle, drained, or after its host child crashed) removes the pointer,
@@ -452,7 +454,7 @@ which prints the bare socket path).
   - `shard`: `{ kind: "p" | "i", key }` when the socket's basename is `<kind>-<16 hex>.sock` (the naming
     contract below), else `null`.
   - `session_rows`: under `--include-workers` only (else `[]`), every row of that same `list_sessions
-    { include_workers: true }` reply as `{ id, kind, session_path, attachments, context }`. `session_path` is
+    { include_workers: true }` reply as `{ id, kind, session_path, cwd, name, attachments, context }`. `session_path` is
     the host's canonical path, the key a client matches a session by; `context` is the published labels
     including the host's own `host_socket`/`host_instance`, `null` where none were published.
   - `claims_live`: session-path claims in `reservations/` whose owner process is still running, `0` when the
@@ -466,7 +468,20 @@ which prints the bare socket path).
   `{ endpoints: [<status row>, ...] }`, each row the single-socket report above plus `dir` (the endpoint's
   daemon directory) and `identity` (what named its socket: `endpoint` = `endpoint.json`, `settings` = the
   boot `settings.json`, `generation-settings` = a generation's own `settings.json`; each accepted only when
-  that socket hashes to the directory it was found in). A directory none of them names is still listed with
+  that socket hashes to the directory it was found in), `endpoint_kind` (`rpc_host` | `tui`, from
+  `endpoint.json`; `rpc_host` for a legacy record or any other source), `alive`, `reason` and `owner`. `alive` is `true`
+  exactly when the endpoint is routable - its socket ITSELF answered `get_protocol_info` naming an instance its
+  directory recorded under `generations/` (a socket that answers without naming one is not routable, whatever
+  generation the directory last recorded; the row's `instanceId` may still show that recorded id) - and `reason`
+  is then `null`; otherwise `reason` is `live_unresponsive`
+  (a recorded process is still running, or something answered that the directory did not record: a
+  suspended terminal, a host past its budget) or `dead` (nothing answered and every recorded process is
+  gone, or its pid now names a process with another start time - the same test `gc` applies to
+  generations). A `tui` row is probed for at most 1.5 s whatever budget the hosts get, so a stopped
+  terminal is reported `live_unresponsive` without stalling the listing. A `tui` endpoint is sent
+  `get_protocol_info` and `list_sessions` only - the two commands both endpoint kinds answer - and its row
+  carries `owner: { pid, cwd, session: { id, path, name } | null }`: the terminal's recorded pid and the one
+  session it lists (`cwd`/`session` are `null` when it did not answer). `owner` is `null` on a host row. A directory none of them names is still listed with
   `socket: null` and `identity: "unknown"`, built from the directory alone - the ensure lock is keyed by a
   longer hash of the socket's transport address and cannot be rebuilt from the 16-hex name, so it can be
   shown but never addressed. Before layout 2 (no `layout.json`) the answer is `{ "endpoints": [] }`. Unlike
@@ -501,6 +516,17 @@ which prints the bare socket path).
   An `unknown_identity` directory is never removed by gc; remove it by hand only after checking that no pid in
   its `generations/*/host.pid` or `reservations/*.json` is running and that no process holds files under it.
   An ensure that raced a gc simply re-creates `endpoint.json` under the lock after gc released it.
+  The library call `gcHostEndpoints(agentDir, { kinds: ["tui"] })` narrows a run to endpoints of those
+  `endpoint_kind`s (a terminal reaping dead `tui` endpoints at its own startup): every other endpoint, and
+  the legacy flat directory unless `rpc_host` is listed, is neither judged nor reported, and the ones it
+  judges face the same three-part evidence. `classifyEndpointLiveness(entry)` returns the `alive`/`reason`
+  verdict above for one `listHostEndpoints` entry, probing it once under its kind's budget; it reads only.
+- `ensure`, `handoff` and `stop` never act on a terminal control endpoint: a `--socket` whose directory's
+  `endpoint.json` says `endpoint_kind: "tui"`, or whose name is a terminal socket's (`t-<16hex>.sock`, which a
+  terminal that exited leaves unrecorded), is refused with exit 3 `{ action: "refuse", reason:
+  "unsupported_endpoint_kind", socket, endpoint_kind: "tui", host: null }` from disk alone, before any
+  connection - whatever `--policy`, `--drain` or `--force` says. A terminal owns its endpoint; `gc` reaps a dead
+  one on the same evidence as a host's.
 - `stop` is the I1 carve-out: a plain stop needs a validated pidfile AND `foreign_attached +
   foreign_retained == 0`, or it refuses with exit 3 and prints the counts it refused on; `--force`
   overrides after printing the same counts; `--drain` (SIGUSR1) is always permitted, because it ends no
@@ -593,7 +619,7 @@ sessions:
 | `node scripts/qa-rpc-socket/inprocess-daemon-qa.mjs` | Two COMPILED binaries of the tree differing only in build epoch; `host ensure --json` run from the older one; per-session `context` isolation (each session's extension sees only its own); `list_sessions` with and without `include_workers`; 50 sessions with the measured thread cost and no refusal; a retained session re-attached across a dropped connection; 200 bash calls leaving zero zombies; and a generation handoff by the newer binary while a client stays connected. |
 | `node scripts/qa-rpc-socket/generation-handoff.mjs` | The handoff alone, against the source supervisor: `ensureHost` -> generation 0, `handoffHost` -> generation 1 on a new pid, `session_path_in_use` naming the owner while the held session is parking, `session_closed { reason: "handoff_parked" }`, the predecessor exiting, the transcript reopening intact in the new generation, and `stopHost({ drain: true })` draining to exit. |
 
-Both exit non-zero if a daemon, a fixture host or the sandbox survives the run: a shared host outliving its QA is
+Both exit non-zero if a daemon, a fixture host or the sandbox survives the run: a host outliving its QA is
 exactly the failure they exist to catch.
 
 ### Child reaping on a socket host (`SENPI_RPC_HOST_REAPER`)
@@ -634,17 +660,14 @@ requests (select, confirm, input, and editor) are requester-only; other extensio
 attached connections. To observe a foreign session, open it by its existing
 `sessionPath`; the host attaches that connection during `open_session`.
 
-### Client information and rendered components
+### Client information
 
-Clients may send `set_client_info` with `{ sessionId, width, capabilities? }`. Advertising `rendered_components` registers
-that connection to receive factory-rendered `setWidget`, `setHeader`, and `setFooter` records. Those records are filtered
-per connection; array/undefined widget records and dialog requests retain their existing delivery semantics. Width is
-shared per session using the minimum of attached clients, and a closed or dropped connection no longer contributes its
-width or capability registration. Snapshot replay preserves rendered-component provenance and applies the same capability
-filter to late joiners; a client that registers `rendered_components` while a snapshot is active receives its retained
-factory-rendered records. On a shared socket host, `rendered_components` is registration-only: it is never inherited from the host environment and must be sent in `set_client_info` for each client connection. Registration applies to the sessions attached by that connection; closing one session removes only that session's width and capability association, while socket disposal removes all associations. Clients must re-register `width` and `capabilities` after every reconnect. When the last
-capable connection leaves a still-attached binding, live component renderers and footer data providers are disposed but
-their factories are retained; a later capable connection recreates and re-renders them.
+Clients may send `set_client_info` with `{ sessionId?, width, capabilities? }`. `capabilities` registers the connection's
+opt-in client capabilities (see [Client capabilities](#client-capabilities)); a name the host does not know is ignored,
+never refused. Registration belongs to the connection that sent it: socket disposal removes it, and clients must
+re-register `capabilities` after every reconnect. `width` is accepted for compatibility and has no effect: the host
+renders no extension components, so a component factory passed to `setWidget`, `setHeader`, or `setFooter` never
+reaches the wire.
 
 ### Session kind and context (`open_session`)
 
@@ -671,9 +694,9 @@ through the deepest existing ancestor of its directory (so the first generation 
 it runs behind without an environment variable. `host_socket` is omitted where no public path exists (an
 abstract socket, a supervised win32 host); a stdio host adds neither key.
 
-One shared host therefore loads ONE extension set and still lets an extension recognize the session it was loaded for
+One multi-session host therefore loads ONE extension set and still lets an extension recognize the session it was loaded for
 (`pi.sessionKind`, `pi.sessionContext` - see
-[ExtensionAPI session identity](extensions.md#pisessionkind--pisessioncontext--pisharedhostenabled)). Probe
+[ExtensionAPI session identity](extensions.md#pisessionkind--pisessioncontext)). Probe
 `session_kind` and `session_context` in `get_protocol_info` capabilities before relying on either: an older host
 ignores both fields and lists every session.
 
@@ -724,27 +747,39 @@ context - inside a provider scope of their own, then drops them.
 Probe `warm` in `get_protocol_info` capabilities before sending it: an older host answers an unknown command with an
 error.
 
+### Prompt surface
+
+Where a session's replies render decides its system prompt. `terminal` is the classic prompt; `app` (a host that
+shows replies as chat, such as the OmO Desktop) keeps the same intent routing and stop-condition rules but asks for no
+visible `I read this as ...` routing line, and tells the agent that tool and hook feedback (comment-checker findings,
+language-server availability, internal notices) is for it to act on, not to report unless it changes the result.
+
+A multi-session host decides the surface per session: `open_session.promptSurface: "terminal" | "app"` builds that
+session's prompt for the named surface, so one host serves a terminal client and an app client at once. An omitted field
+uses the host process's `SENPI_PROMPT_SURFACE` (`app` selects the app surface; unset or any other value is `terminal`),
+which remains the only switch for a single-process `--mode rpc` client. A later `open_session` that attaches to a live
+session with another `promptSurface` rebuilds that session's prompt; an attach without the field keeps the current
+surface, and `new_session` / `switch_session` / `fork` inside the session keep it too. Probe `prompt_surface` in
+`get_protocol_info` before sending the field; an older host ignores it. Any value other than `terminal` or `app` is
+refused with `invalid_launch_profile`.
+
 ### Session auto-titling
 
-Auto-generated session titles are on by default only for interactive launches. A shared host decides titling per
+Auto-generated session titles are on by default only for interactive launches. A multi-session host decides titling per
 `open_session`: `auto_title: true` titles that session, `auto_title: false` leaves it untitled, and an omitted field
 keeps the host-wide default (`--auto-title-sessions` or the `auto_title_sessions` client capability). Probe
 `auto_title_per_session` in `get_protocol_info` before relying on the field; an older host ignores it. A non-boolean is
 refused with `invalid_launch_profile`. Sessions resumed with existing context messages are never retitled.
 
 `--auto-title-sessions` still opts every session on that host into titling when `auto_title` is omitted. It is
-deprecated for shared hosts — prefer per-session `open_session.auto_title` so two clients on one daemon do not collide
+deprecated for multi-session hosts — prefer per-session `open_session.auto_title` so two clients on one daemon do not collide
 over a launch-profile flag:
 
 ```bash
 senpi --mode rpc --multi-session --auto-title-sessions
 ```
 
-Startup: `senpi --mode rpc --multi-session` → NO default session is constructed (no default `AgentSessionRuntime`, no default extension/watcher load). Classic `senpi --mode rpc` is byte-identical to today. Mode is fixed at process start; there is no runtime transition.
-
-### Interactive sessions and shared-host opt-out
-
-Interactive launches use the shared RPC host by default when a persisted session is available. A cold start takes approximately 1.3 seconds on the first launch; warm attachment to an existing compatible host is fast. To use the local runtime directly for a launch, set `SENPI_DISABLE_SHARED_HOST=1`. This uses the same local fallback runtime and does not change RPC socket behavior for other clients.
+Startup: `senpi --mode rpc --multi-session` → NO default session is constructed (no default `AgentSessionRuntime`, no default extension/watcher load). Classic `senpi --mode rpc` is unchanged except that `get_protocol_info` is answered and a resolved `extension_ui_response` is acknowledged under its frame `id` (see [Extension UI Responses](#extension-ui-responses-stdin)). Mode is fixed at process start; there is no runtime transition.
 
 ### Session replacement
 
@@ -760,7 +795,7 @@ When `new_session`, `switch_session`, or `fork` swaps the live session - includi
 
 The command response reports only `{ cancelled }`, so this event is the only push channel carrying the new identity. The identity is `durableSessionId`, never `sessionId`: top-level `sessionId` is reserved for the per-connection routing handle that multi-session hosts tag every record with, and that tag is applied last, so reusing the key would overwrite the identity the event exists to deliver. Classic mode emits the event untagged.
 
-### Shared host lifecycle (cold start + idle exit)
+### Multi-session host lifecycle (cold start + idle exit)
 
 The lifecycle supervisor is also available to bundled/rebranded runtimes through the hidden internal launch route `--internal-rpc-host-supervisor`. This route is wire-invisible and intended only for desktop launchers: it receives the public socket, ownership directory, and the runtime command/arguments to wrap, then runs the same `host-lifecycle.ts` implementation used by `ensureHost()`. Normal CLI modes do not use or advertise this route. Compiled standalone binaries also re-enter themselves through this route automatically: a bun executable always boots its embedded entrypoint, so the script-path re-entry used under a JS runtime would be parsed as CLI arguments (`Unknown option: --socket`) and the host could never start.
 
@@ -859,7 +894,7 @@ A client may react to `host_superseded` early, but the old generation retains ea
 `session_path_in_use` on the successor remains a retryable response until parking releases that claim. A client
 that ignores the announcement still receives the terminal record and connection close.
 
-### Shared host occupancy (idle eviction, retention, empty-host exit)
+### Multi-session host occupancy (idle eviction, retention, empty-host exit)
 
 **The daemon does not cap sessions.** On the in-process runtime - the default for a `--listen` socket host, i.e. the
 shared daemon clients attach to - there is no session limit, no admission counter, and no eviction of a live session
@@ -922,6 +957,165 @@ What the host does enforce are lifecycle windows, and they only ever return memo
 Values are positive integers; invalid values fall through to the defaults. These lifecycle windows run inside the host process,
 so they hold even for embedders and hand-started hosts that have no supervisor.
 
+### Interactive sessions expose a control endpoint
+
+An interactive terminal session is its own process with its own local session; nothing joins it to a host. Another
+local session reaches it only through a control endpoint, and only when an extension of that terminal registers
+one with `pi.session.registerControlEndpoint({ inboxDir, drain, isSessionReferenced? })` (see
+[pi.session](extensions.md#pisession)). OmO's thread component registers one at startup; a plain `senpi` with no
+registrant opens no socket and writes no registry directory.
+
+- **Platform.** POSIX terminals only. On win32 the registration answers
+  `{ status: "unsupported", reason: "unsupported_platform" }` and registers nothing. On a multi-session host the
+  same call binds nothing - the host's public socket is the endpoint - see "Waking a host session (`wake`)".
+- **Socket and auth.** The endpoint listens on `<agentDir>/rpc/tui/t-<16hex>.sock` (16 hex of the SHA-256 of a
+  fresh instance id). When that path is longer than a Unix socket path allows, it moves to
+  `/tmp/senpi-rpc-<8hex>/tui/`, which must be a private directory of this user. The directory is 0700 and the
+  socket 0600. A 32-byte secret is written 0600 beside the socket, and every connection must send it first, the
+  handshake every RPC socket shares; a wrong secret is disconnected before a line is read. After that it is
+  ordinary RPC framing: one LF-terminated JSON object per request, one response carrying its `id`.
+- **Registration order.** Registering first writes the session header (so the session id is durable), reaps dead
+  `tui` endpoints (`senpi host gc` scoped to `kinds: ["tui"]`), binds the socket and only then writes the
+  registry directory under the ensure lock, generation record before `endpoint.json`. A listed endpoint is one
+  that answers; a failed step undoes the earlier ones and answers `{ status: "failed", reason }`.
+- **`endpoint_kind`.** The registry record is `{ layout: 2, registry_version: 1, endpoint_kind: "tui", socket,
+  created_at }` (see "Daemon state directory (layout 2)"). `senpi host status --all` lists the terminal with
+  `endpoint_kind: "tui"`, `owner` and `alive`, probing it for at most 1.5 s. `senpi host gc` reaps a dead one on
+  the same evidence as a host. `ensure`, `handoff` and `stop` refuse it with `unsupported_endpoint_kind` (exit 3)
+  before connecting, because a terminal endpoint is owned by its terminal process.
+- **Commands.** The command set is read-mostly. Anything not listed below is answered `unsupported` as data. No
+  command can prompt, steer, queue a follow-up, open a session, run a command or change a model.
+  - `get_protocol_info`: `mode: "tui"`, `capabilities: ["tui_control"]`, `generation: 0` and the endpoint's
+    `instanceId`.
+  - `list_sessions`: exactly one row, `kind: "interactive"`, `surface: "tui"`, `attachments: 1`.
+  - `get_state`: the RPC session state plus `turn_epoch`, `blocking_question`, `compacting`,
+    `editor_has_draft` and `state_version`.
+  - `get_messages`.
+  - `set_session_name { name }`: a blank name is refused.
+  - `subscribe { cursor? }`: a feed of `session_control_event { seq, kind, data }` records, where `kind` is
+    `state`, `report` (an assistant message's text), `question` (pending question ids) or `completion` (the
+    session went idle, with `turn_epoch`). Resubscribing with the last `seq` replays what the 256-record ring
+    still holds after it.
+  - `wake { delivery_ids? }`: one drain pass, answered `{ admitted: [{ delivery_id, kind }] }`.
+  - `extension_ui_response`: answers only a question this session asked and still waits on
+    (`unknown_request` / `invalid_response` otherwise). `uiRequestId` names the question (a pending
+    question id from the `question` feed); without it, `id` does. The reply carries the frame's `id`,
+    as on a host (see "Extension UI Responses").
+  - `prompt`, `steer` and `follow_up` are `unsupported`.
+- **Admission.** A message from another session enters only through the registrant's drain, which calls
+  `pi.session.admitExternalMessage({ delivery_id, text, deliverAs, expected_turn_id? })`. One synchronous call
+  decides and acts:
+  - `started`: the session was idle, and the delivery starts a turn.
+  - `queued`: the session is mid-turn and `deliverAs: "followUp"`; the delivery goes on the follow-up queue once.
+  - `steered`: the session is mid-turn, the steer names the current `turn_epoch`, and it goes on the steering
+    queue once.
+  - `turn_conflict`: the epoch is stale, or a steer names none.
+  - `held_draft`: the user is composing, or their submitted input has not reached the runtime yet (a buffered
+    submission, a command that may still submit text). Nothing is enqueued; retry on the next wake.
+  - `already_admitted`: this process already holds or already wrote that `delivery_id`, or the session file refused
+    its entry and it is not admissible again yet (see `failed` below).
+
+  The delivery becomes a `custom` transcript entry, `customType: "session_control_delivery"`, whose `details`
+  carry the `delivery_id`. `listAdmittedDeliveries()` reports `pending` (held by the runtime) and `emitted`
+  (entry written) for the life of the process. When the session file refuses a delivery's entry (`EACCES`,
+  `ENOSPC`), the delivery is settled as `failed: [{ delivery_id, error }]` (listed only while non-empty): it is no
+  longer held, so it blocks no later delivery and no release, and it stays with its sender. It becomes admissible
+  again once the run that refused it has settled and the file's last write succeeded: the redelivery then starts or
+  joins a later run, whose start drops the refused copy from the model context (so the model holds it once, as the
+  file does), and it never loops against a file that still refuses writes.
+- **Wake.** The drain runs on edges only, never on a timer, as the extension event `session_control_wake`. The
+  edges are: the session went idle (`idle`), the user's last submission reached the runtime (`submission`),
+  the editor was cleared without a submission (`draft_cleared`), a `wake` command (`command`), an entry created
+  or deleted in `inboxDir` (`inbox`), an admitted delivery reaching the transcript (`emitted`), and the
+  terminal continuing after a stop (`continue`). One pass runs at a time; edges that arrive during a pass merge
+  into exactly one more pass. A first `inbox` pass runs right after registration.
+- **Exit.** A clean exit unregisters the endpoint. A session whose file holds only its header is deleted, unless
+  `isSessionReferenced()` answers `true`.
+
+A session that lives on a multi-session host is taken over by a terminal with `release_session` (see "Handing a
+session over (`release_session`)"); a terminal's own session is never handed over through its endpoint.
+
+### Endpoint kinds: hosts and terminals
+
+An agent directory's endpoint registry (`rpc-host-daemon/<16hex>/endpoint.json`) names two kinds of endpoint.
+`rpc_host` is a multi-session host, everything in this section. `tui` is ONE interactive terminal whose extension
+registered a control endpoint (see "Interactive sessions expose a control endpoint" above). Both kinds appear in
+`senpi host status --all` and are reaped by `senpi host gc` on the same evidence; only a host is ever ensured,
+handed off, drained or stopped (see "The `senpi host` command").
+
+### Waking a host session (`wake`)
+
+`wake { sessionId, delivery_ids? }` is session-scoped like `prompt`, and has the contract of a terminal endpoint's
+`wake`, so a sender wakes every recipient kind with one command. An extension on a host session registers the
+same way it does in a terminal - `pi.session.registerControlEndpoint({ inboxDir, drain })` - and on a host that
+registration binds nothing: the host's public socket is the endpoint (`registered.socket` is its `host_socket`).
+The drain then runs on the session's `session_control_wake` edges - `agent_idle`, an admitted delivery reaching
+the transcript, an entry created or deleted in `inboxDir`, and this command - one pass at a time, edges that
+arrive during a pass coalescing into one more. `wake` answers `{ admitted: [{ delivery_id, kind }] }`, the outcome
+of the pass that covered it (`delivery_ids` appear on that pass's event). With no drain registered it still
+emits `session_control_wake` into the session's extensions and answers `{ admitted: [] }`. A host without a
+public socket (stdio) answers a registration `{ status: "unsupported", reason: "unsupported_mode" }`: nothing
+outside its parent could reach it. `pi.session.admitExternalMessage` and `listAdmittedDeliveries` work on host
+sessions exactly as in a terminal.
+
+### Handing a session over (`release_session`)
+
+`release_session { sessionId, reason: "takeover", interrupt?, force? }` hands a session to a runtime outside the
+host - `omo daemon adopt` resumes it in a local terminal with `senpi --session <session_path>` (a path; `--resume`
+is the picker). It is a teardown, not a transfer: nothing is replayed. The host appends one `custom` entry
+`session_released` (`{ reason, interrupted, attachments, host_instance, released_at }`, a bookkeeping entry the
+model never sees) to the transcript - writing the header first if the file was still buffered - then drains
+every attachment, disposes the runtime, releases the path reservation (in-process and the cross-generation claim
+in `reservations/`) and answers `{ released: true, session_path, attachments, dropped }`. From then on `list_sessions`
+no longer lists it and the handle answers `unknown_session`.
+
+- It hands over only a QUIET session: no agent run, no `prompt` still in preflight (its command already answered,
+  its run not started), no queued user steer/follow-up (`queued`: still owed a turn even after the stream it was
+  aimed at ended), no admitted delivery not yet written, no bash, compaction or barrier-held session work
+  (the fields the handoff park judges by), and no other request for that session in flight on any connection.
+  Otherwise it is refused, changing nothing: `turn_active` when a turn is running or about to start (`busy`
+  contains `turn`, `prompt`, `queued` or `delivery`), `session_busy` for other work (`bash`, `compaction`, `session_work`,
+  `activity`, `request`); `errorData { attachments, busy: [...] }` names every signal. The refused work runs to
+  its end on the host, which keeps the path.
+- With `interrupt: true` a busy session first has its queues emptied, then its run and any bash aborted (a turn
+  that a pending prompt starts meanwhile is aborted too), and external admission closed; the release waits up to
+  10 s for the run to go idle, for the other requests and prompts to settle - the cancelled bash is recorded then,
+  before the release - and checks again. Still busy answers the same refusal with `errorData.interrupted: true`
+  and `errorData.dropped`; otherwise the entry records `interrupted: true`. Every refusal after the interrupt
+  (still busy, `attached` because a client attached while it waited, `unknown_session`, `session_closing`)
+  reopens admission on the session the host keeps and carries `interrupted: true` and `dropped` in `errorData`,
+  since the queues were already emptied.
+- A refusal whose `busy` names `queued` also carries `errorData.retry_with: { interrupt: true }` and a `hint`:
+  queued user input is owed a turn even when none is running (an aborted run leaves it queued), and only an
+  interrupt release takes it out and hands it back in `dropped.user_messages`.
+- Nothing queued vanishes silently. `dropped: { deliveries, user_messages }` (always present; empty without
+  `interrupt`) lists what the interrupt took out of the queues: `deliveries` are the ids of admitted deliveries
+  that were never written - they are no longer in the session's ledger and not on disk, so their sender delivers
+  them again to the next owner - and `user_messages` is the user's queued steer and follow-up text in enqueue
+  order. The host only hands them back; what the adopting client does with them is its own decision (for example,
+  resubmit them in order as queued prompts).
+- The final check, closing external admission and the close claim run in one synchronous step: a command for the
+  session routed after it finds the session closing (`session_closing`); a drain pass still running admits
+  nothing more (`pi.session.admitExternalMessage` throws, the delivery stays with its sender); and work started
+  before it is seen by the check. Nothing is written to the file after `session_released`.
+- A session whose file was never written first waits for its header write, before that final check, so the
+  `session_released` entry has a file to land in. A prompt or delivery routed right after such a release is not
+  answered `session_closing`: either its whole turn runs and lands before `session_released`, or it is still
+  running at the final check, which then answers `turn_active`. A header write that fails answers `release_failed`
+  with `errorData.detail`, and the session stays hosted. A session whose file exists awaits nothing here.
+- While clients are attached (`attachments > 0` - e.g. a Desktop thread) it is refused with `attached` and
+  `errorData { attachments }`; with `force: true` those clients receive
+  `session_closed { sessionId, reason: "released", sessionPath }`, which tells them the file is now written
+  elsewhere and must NOT be reopened on this host.
+- A draining host answers `host_draining`; a worker-isolate session or one with no file answers
+  `release_unsupported`.
+- A hand-over that fails after it began - the header or the `session_released` entry cannot be written
+  (`EACCES`, `ENOSPC`, a removed directory), or the teardown throws - answers `release_failed` with
+  `errorData { detail }` (the error message), plus `interrupted: true` and `dropped` after an interrupt. When
+  the entry could not be written the session stays on this host as it was: admission reopened, no
+  `session_released` entry on disk or in memory, and a later release can be retried. A teardown that fails
+  after it claimed the session leaves it closing.
+
 ### Host self-observation (event-loop stalls and memory pressure)
 
 Every in-process session shares the host's event loop, so a session that blocks it freezes every other session and the
@@ -960,7 +1154,7 @@ REPORT: nothing here aborts a turn, kills a session, or refuses an `open_session
   (`{ type, rssMb, footprintMb, measure, sessions }`) on every sample, writes one stderr line per five minutes naming
   both numbers, and HALVES the idle-eviction window above while the host stays above the threshold, so idle sessions
   return their memory sooner. It is released as soon as the footprint falls back under the threshold. Memory never refuses an open: the
-  shared host has no resource caps, so every `open_session` is admitted whatever the host holds (#2207). Hosts released
+  host has no resource caps, so every `open_session` is admitted whatever the host holds (#2207). Hosts released
   before #2207 had a second admission watermark; current hosts have no such admission path.
 - **Per-endpoint pressure under sharding**: an agent directory may contain many independent hosts, so each endpoint
   samples and reports its own memory pressure. `host_memory_pressure` describes only the host that emitted it; pressure
@@ -1037,8 +1231,7 @@ they do not each reset that budget. Interrupt requests have a five-second deadli
 by count and bytes without imposing a new timeout on long-running commands. The desktop's 60-second open/readmission
 window is a separate client-side wait: the host normally reports its earlier 30-second failure within that window,
 but a slow transport can delay delivery. Neither timeout proves worker exit or permits concurrent reopening.
-Display updates coalesce to one pending update and one latest value; UI cancellation and close have separate control
-messages. IPC output and snapshots are limited to 16 MiB per record, with one acknowledged record at a time. Over a
+UI cancellation coalesces to one pending request, and close has its own control message. IPC output and snapshots are limited to 16 MiB per record, with one acknowledged record at a time. Over a
 socket host, credit returns as soon as every destination of that session has ACCEPTED the record into its own bounded
 queue (64 MiB per connection), not when the peer's kernel has drained it: a client that is merely busy cannot withhold
 the producing worker's credit. On the shared stdio lane credit still waits for stdout backpressure. A five-second credit
@@ -1052,7 +1245,7 @@ instead of destroying it, so a peer that resumes reading within a 5-second grace
 that notice, and everything already written to it, before EOF. A peer that is still silent when the grace expires has
 its socket destroyed. A cut peer must reconnect and resynchronize, while the session keeps running and its other
 destinations keep receiving output. A failed or cut connection never withholds a session's credit and never fails the
-shared host writer; only the stdio lane can. Because credit no longer paces a session against its slowest reader, a
+host writer; only the stdio lane can. Because credit no longer paces a session against its slowest reader, a
 session that outruns a peer fills that peer's 64 MiB queue instead of slowing down, and that peer is then cut on
 overflow. The default stdio
 queue is bounded at 64 MiB or 4096 records, with reserved terminal-failure records and one control-overflow notice.
@@ -1068,7 +1261,7 @@ told to resynchronize, and a newly affected or reconnected peer receives its own
 episode. Clients receiving a notice must stop issuing closes, drain output, and resynchronize unacknowledged requests; the notice is not a successful close acknowledgment. Admission resumes as capacity becomes available.
 Canonical reservations and worker capacity remain held until native exit, including after close-output overflow.
 
-The classic handler, extension UI bridge, renderer callbacks and provider scope run inside the owning worker; only
+The classic handler, extension UI bridge and provider scope run inside the owning worker; only
 plain data crosses IPC. Inline `main()` extension factories cannot be cloned and are rejected in shared mode: use
 file-backed extensions. Classic single-session RPC remains in-process. Standalone Bun builds must embed
 `src/modes/rpc/session-worker.ts` as an explicit entrypoint. Bun 1.4.2 supports `--compile --splitting`
@@ -1092,10 +1285,12 @@ containment, or containment of arbitrary native code. They are not an extension 
 
 | Command | Params | Success data | Notes |
 | --- | --- | --- | --- |
-| `get_protocol_info` | - | `{ protocolVersion: 1, serverVersion: string, capabilities: string[], mode: "classic"\|"multi", instanceId: string, generation: number, engineVersion: string, engineOrdinal: [y, m, d, n, epoch], launch_profile: { profile_id, core }, memory_pressure?: boolean }` | Answered in BOTH modes; side-effect-free; the capability probe. Multi-session hosts include `multi_session`, `retain_on_disconnect`, `session_kind`, `session_context` and `auto_title_per_session` plus the negotiated launch capabilities. Those are HOST capabilities (a client never sends them) and are advertised only in multi-session mode, where the host owns the attachment refcount and the per-session launch profile. The identity fields are described under "Host identity" above; compatibility is decided from `protocolVersion`, `capabilities` and `engineOrdinal`, NEVER from `serverVersion`. |
-| `open_session` | `sessionPath?`, `cwd?`, `provider?`, `modelId?`, `thinkingLevel?`, `permissionPreset?`, `retain_on_disconnect?`, `kind?`, `context?`, `auto_title?` (all optional; paths MUST be absolute) | `{ sessionId, state: RpcSessionState, attached?: true }` | `sessionPath` = today's `--session` semantics (open-if-exists else create persisting there, `session-manager.ts:926-940`); `provider`/`modelId` applied only on create (resume restores the session's model — mirrors `SenpiSessionRuntime.ts:198-200`); params form the immutable launch profile (D8). When the path is already held by a fully-open session, the open ATTACHES to it: same routing handle, `attached: true`, one more attachment counted; the runtime is torn down only when the last attachment closes. Idle sessions past the eviction window are closed by the host itself. `retain_on_disconnect: true` (default false) makes a dropped connection DETACH from this session instead of closing it — see "Retained sessions" below. `kind` (default `interactive`) and the opaque `context` map are described under "Session kind and context" above; both are stored frozen for the session's life and never influence auth, model or resource resolution. |
+| `get_protocol_info` | - | `{ protocolVersion: 1, serverVersion: string, capabilities: string[], mode: "classic"\|"multi", instanceId: string, generation: number, engineVersion: string, engineOrdinal: [y, m, d, n, epoch], launch_profile: { profile_id, core }, memory_pressure?: boolean }` | Answered in BOTH modes; side-effect-free; the capability probe. Multi-session hosts include `multi_session`, `retain_on_disconnect`, `session_kind`, `session_context`, `auto_title_per_session`, `durable_session_id` and `prompt_surface` plus the negotiated launch capabilities. Those are HOST capabilities (a client never sends them) and are advertised only in multi-session mode, where the host owns the attachment refcount and the per-session launch profile. The identity fields are described under "Host identity" above; compatibility is decided from `protocolVersion`, `capabilities` and `engineOrdinal`, NEVER from `serverVersion`. |
+| `open_session` | `sessionPath?`, `cwd?`, `provider?`, `modelId?`, `thinkingLevel?`, `permissionPreset?`, `retain_on_disconnect?`, `kind?`, `context?`, `auto_title?`, `durableSessionId?`, `promptSurface?` (all optional; paths MUST be absolute) | `{ sessionId, state: RpcSessionState, attached?: true }` | `sessionPath` = today's `--session` semantics (open-if-exists else create persisting there, `session-manager.ts:926-940`); `provider`/`modelId` applied only on create (resume restores the session's model — mirrors `SenpiSessionRuntime.ts:198-200`); params form the immutable launch profile (D8). When the path is already held by a fully-open session, the open ATTACHES to it: same routing handle, `attached: true`, one more attachment counted; the runtime is torn down only when the last attachment closes. Idle sessions past the eviction window are closed by the host itself. `retain_on_disconnect: true` (default false) makes a dropped connection DETACH from this session instead of closing it — see "Retained sessions" below. `kind` (default `interactive`) and the opaque `context` map are described under "Session kind and context" above; both are stored frozen for the session's life and never influence auth, model or resource resolution. |
 | `close_session` | `sessionId` | `{}` | Refused with `unknown_session` when the requesting connection never attached to that handle (a close releases the CALLER's attachment, and `list_sessions` publishes every handle). Otherwise aborts active work, awaits agent idle + settled persistence for up to the host grace window (default 10s), then quarantines any worker that has not exited without releasing its path reservation; its response is the LAST record tagged with that handle for the first closer — no events after (test-pinned). An admitted concurrent close joins the same teardown and receives its own successful response; output saturation rejects admission with the bounded close-overflow/resync notice described above. |
 | `list_sessions` | `include_workers?` (default false) | `{ sessions: [{ sessionId, durableSessionId, sessionPath, cwd, name, status, attachments, kind, context? }] }` | Includes `opening`/`closing` entries. Internally quarantined workers remain externally `closing` until exit. `attachments` is the session's live client attachment count; `0` on an `open` row is a retained session with no client attached. Every row carries `kind`. Rows with `kind: "worker"` are omitted unless `include_workers: true`, and `context` is published ONLY on that listing — a default listing carries no `context` at all. |
+| `release_session` | `sessionId`, `reason: "takeover"`, `interrupt?`, `force?` | `{ released: true, session_path, attachments }` | Hands the session to a runtime outside this host. See "Handing a session over (`release_session`)" below. |
+| `wake` | `sessionId`, `delivery_ids?` | `{ admitted: [{ delivery_id, kind }] }` | Runs the session's registered inbox drain once. See "Waking a host session (`wake`)" below. |
 | `warm` | `cwd?`, `kind?`, `context?` (as on `open_session`; `cwd` MUST be absolute) | `{ state: "warmed" \| "already_warm" \| "unsupported" }` | Loads what the next matching `open_session` needs without opening a session; never listed, never an attachment, idempotent per profile. See "Warming a host" above. Advertised as the `warm` capability by in-process hosts only. |
 | every existing command | + `sessionId` (REQUIRED in multi mode) | unchanged | Routed to that session. |
 
@@ -1113,12 +1308,18 @@ In the response `error` field, machine-matchable:
 - `session_reservation_limit` (this worker already holds 64 live session paths; the open or session replacement was refused without disturbing the existing session)
 - `missing_session_id` (session-scoped command without `sessionId` in multi mode)
 - `multi_session_disabled` (`open_session` in classic mode)
-- `host_draining` (`open_session` on a connection whose generation is parking for a handoff; the successor already owns the public path, so re-resolve it and open there rather than retrying this connection)
+- `host_draining` (`open_session` or `release_session` on a connection whose generation is parking for a handoff; the successor already owns the public path, so re-resolve it and open or release there rather than retrying this connection)
+- `turn_active` (`release_session` while a turn runs or is about to start - a prompt in preflight, an admitted delivery not yet written - without `interrupt: true`; `errorData { attachments, busy }`)
+- `session_busy` (`release_session` while other session work runs - bash, compaction, barrier-held work, another request for the session - without `interrupt: true`; `errorData { attachments, busy }`)
+- `attached` (`release_session` while clients are attached, without `force: true`; `errorData { attachments }` names how many)
+- `invalid_release_reason` (`release_session` with a `reason` other than `takeover`)
+- `release_unsupported` (`release_session` for a session this host cannot hand over; `errorData.detail` is `worker_runtime` - a worker isolate owns the runtime - or `no_session_file`)
+- `release_failed` (`release_session` whose hand-over failed after it began - the release entry could not be written or the teardown threw; `errorData.detail` is the error message, plus `interrupted`/`dropped` after an interrupt)
 - `invalid_path` (relative `sessionPath`/`cwd`)
 - `open_failed: <detail>`
 - `invalid_session_context: <detail>` (`open_session.context` past a documented cap: more than 32 keys, a key that does not match `^[a-z][a-z0-9_]*$`, a non-string or >16 KiB value, or more than 32 KiB of JSON in total; the detail names the cap and its byte budget)
 - `invalid_session_kind: <detail>` (`open_session.kind` other than `interactive` or `worker`)
-- `invalid_launch_profile: <detail>` (`open_session.auto_title` present but not a boolean)
+- `invalid_launch_profile: <detail>` (`open_session.auto_title` present but not a boolean, or `open_session.promptSurface` other than `terminal` or `app`)
 - `host_memory_pressure` (sent only by hosts released before #2207, which declined to CREATE a `kind: "worker"` session above `SENPI_RPC_HOST_RSS_REFUSE_MB`; `errorData { rssMb, retry_after_ms }` says when to ask again. Current hosts never refuse an open for memory; a client talking to an older generation waits and retries, it never starts a second host or a per-child process)
 - `warm_failed: <detail>` (`warm` could not load its profile, for example a `cwd` that does not exist; not remembered, so a retry loads again)
 - `media_not_found` (`get_media` for an unknown `toolCallId`, or a `contentIndex` that does not point at an image block)
@@ -1204,8 +1405,8 @@ template, or loaded `skill:<name>` is refused before the model sees it. The fail
 `errorCode: "unknown_command"` and `errorData: {"command", "suggestions", "reason"}`: `command` and
 `suggestions` (up to three close names) omit the leading `/`, and `reason` is `"unknown"` or
 `"interactive_only"` for a TUI builtin such as `/model`. A message that starts with whitespace
-(`" /foo bar"`) is sent as text, as in the TUI; set `"unknownCommandAsText": true` to send such text to the
-model unchanged without the leading space:
+(`" /foo bar"`) is sent as text, as in the TUI. The failure message names the confirm step; resend the
+same message with `"unknownCommandAsText": true` to send it to the model unchanged:
 
 ```json
 {"type": "prompt", "message": "/etc is where the config lives", "unknownCommandAsText": true}
@@ -2237,6 +2438,53 @@ Response:
 
 The current session name is available via `get_state` in the `sessionName` field. To set the initial name when starting RPC mode, pass `--name <name>` or `-n <name>` to the `senpi --mode rpc` process.
 
+#### wake
+
+Runs the session's registered inbox drain once (multi-session hosts: session-scoped; terminal control endpoints: the endpoint's one session). See "Waking a host session (`wake`)".
+
+```json
+{"type": "wake", "sessionId": "rpc-1", "delivery_ids": ["d2"]}
+```
+
+Response:
+```json
+{
+  "type": "response",
+  "command": "wake",
+  "success": true,
+  "data": { "admitted": [{ "delivery_id": "d2", "kind": "started" }] }
+}
+```
+
+`kind` is the admission outcome (`started`, `queued`, `steered`, `already_admitted`, `held_draft`, `turn_conflict`); `admitted` is `[]` when no drain is registered.
+
+#### release_session
+
+Multi-session hosts only. Hands the session to a runtime outside the host; see "Handing a session over (`release_session`)".
+
+```json
+{"type": "release_session", "sessionId": "rpc-1", "reason": "takeover"}
+```
+
+Response:
+```json
+{
+  "type": "response",
+  "command": "release_session",
+  "success": true,
+  "data": {
+    "released": true,
+    "session_path": "/path/to/session.jsonl",
+    "attachments": 0,
+    "dropped": { "deliveries": [], "user_messages": [] }
+  }
+}
+```
+
+`dropped` is non-empty only after `"interrupt": true` took queued input out of the session: redeliver the ids in `deliveries` to the next owner, and hand `user_messages` to the adopting client, which decides what to do with them (for example, resubmit them in order as queued prompts).
+
+Refusals carry `error` = `turn_active` or `session_busy` with `errorData.busy` (pass `"interrupt": true` to abort the work first), `attached` with `errorData.attachments` (pass `"force": true`), `invalid_release_reason`, `release_unsupported`, `release_failed` (`errorData.detail`; the session stays hosted when its entry could not be written), `host_draining`, `session_closing` or `unknown_session`.
+
 ### Commands
 
 #### get_commands
@@ -2392,6 +2640,7 @@ Events are streamed to stdout as JSON lines during agent operation. Events do no
 | `summarization_retry_attempt_start` | Retried summarization request starts |
 | `summarization_retry_finished` | Summarization retry loop completes |
 | `extension_error` | Extension threw an error |
+| `transcript_write_failed` | The session file refused a message of the running turn (`role`, `errorMessage`) |
 | `extension_event` | Capability-gated extension-owned event (`extension_events` clients only) |
 | `commands_changed` | Ordered command/skill candidate snapshot changed |
 | `command_invocation` | Accepted extension-command or prompt-template invocation metadata |
@@ -2429,6 +2678,7 @@ When a multi-session host ends a routing handle it may name why:
 | `host_shutdown` | The host process is exiting (SIGTERM, idle-exit, empty-host). A retained session is closed, not parked |
 | `replaced` | The routing handle ended because the live session behind it was replaced |
 | `handoff_parked` | A generation handoff drained this host; reopen with `open_session { sessionPath }` |
+| `released` | `release_session` handed the session to a runtime outside this host. Carries `sessionPath`, the file that runtime now writes: do NOT reopen it here |
 | `error` | The session failed (worker death, output overflow) and the host sealed it |
 
 The field is absent on older hosts and on older records. Decoders must not require it. A retained session that hits the
@@ -2897,6 +3147,22 @@ Emitted without a request id when the loaded skill, extension, or MCP inventory 
 {"type": "loaded_surfaces_changed"}
 ```
 
+### transcript_write_failed
+
+Emitted when the session file refuses to save a message of the running turn (permission denied, a full disk, a removed
+session directory). The message is not in the transcript and will not be in a reloaded session. The next prompt that starts a run while the
+session is idle leaves it out of the model context too; a steer or follow-up queued (`streamingBehavior`) during the
+refused run still sends it to the model on its turn. A prompt accepted with `success: true` reports this failure only
+through this event.
+
+```json
+{
+  "type": "transcript_write_failed",
+  "role": "assistant",
+  "errorMessage": "EACCES: permission denied, open '/path/to/session.jsonl'"
+}
+```
+
 ### extension_error
 
 Emitted when an extension throws an error.
@@ -2948,13 +3214,14 @@ Extensions can request user interaction via `ctx.ui.select()`, `ctx.ui.confirm()
 There are two categories of extension UI methods:
 
 - **Dialog methods** (`select`, `confirm`, `input`, `editor`, `question`): emit an `extension_ui_request` on stdout and block until the client sends back an `extension_ui_response` on stdin with the matching `id`.
-- **Fire-and-forget methods** (`notify`, `setStatus`, `setWidget`, `setHeader`, `setFooter`, `setTitle`, `set_editor_text`): emit an `extension_ui_request` on stdout but do not expect a response. The client can display the information or ignore it.
+- **Fire-and-forget methods** (`notify`, `setStatus`, `setWidget`, `setTitle`, `set_editor_text`): emit an `extension_ui_request` on stdout but do not expect a response. The client can display the information or ignore it.
 
 If a dialog method includes a `timeout` field, the agent-side will auto-resolve with a default value when the timeout expires. The host owns the timer and clients mirror the `remainingMs` value from each request or update event.
 
 Some `ExtensionUIContext` methods are not supported or degraded in RPC mode because they require direct TUI access:
 - `custom()` returns `undefined`
-- `setWorkingMessage()`, `setWorkingIndicator()`, `setEditorComponent()`, `setToolsExpanded()` are no-ops. `setFooter()` and `setHeader()` render factory components for clients advertising `rendered_components`.
+- `setWorkingMessage()`, `setWorkingIndicator()`, `setEditorComponent()`, `setToolsExpanded()`, `setHeader()`, and `setFooter()` are no-ops
+- `setWidget()` forwards string-array widgets only; a component factory emits nothing
 - `getEditorText()` returns `""`
 - `getToolsExpanded()` returns `false`
 - `pasteToEditor()` delegates to `setEditorText()` (no paste/collapse handling)
@@ -3081,22 +3348,7 @@ Set or clear a widget (block of text lines) displayed above or below the editor.
 }
 ```
 
-Send `widgetLines: undefined` (or omit it) to clear the widget. The `widgetPlacement` field is `"aboveEditor"` (default) or `"belowEditor"`. Component factories are rendered by the host using the attached client's terminal width.
-
-#### setHeader / setFooter
-
-Set or clear the extension header or footer using rendered text lines. Clients that do not understand these additive methods ignore them.
-
-```json
-{
-  "type": "extension_ui_request",
-  "id": "uuid-10",
-  "method": "setHeader",
-  "widgetLines": ["Header line"]
-}
-```
-
-Omit `widgetLines` to restore the built-in surface. Attached clients send `set_client_info` with their terminal width after attach and on resize; hosts default to width 80 when no width is supplied.
+Send `widgetLines: undefined` (or omit it) to clear the widget. The `widgetPlacement` field is `"aboveEditor"` (default) or `"belowEditor"`. Only string-array widgets are sent; a component factory needs a terminal to render into and produces no record.
 
 #### setTitle
 
@@ -3182,7 +3434,33 @@ Clients without the `question` capability get a sequential fallback: one `select
 
 ### Extension UI Responses (stdin)
 
-Responses are sent for dialog methods only (`select`, `confirm`, `input`, `editor`). The `id` must match the request.
+Responses are sent for dialog methods only (`select`, `confirm`, `input`, `editor`, `question`).
+
+A response carries two ids:
+
+- `uiRequestId` names the `extension_ui_request` being answered (its `id`).
+- `id` is the response frame's own correlation id; the reply echoes it.
+
+Without `uiRequestId`, `id` names the request too. That short form is what the examples below use and
+what every older client sends; it keeps working unchanged.
+
+Every response a multi-session host or a terminal control endpoint settles gets exactly one reply,
+carrying the frame's `id`:
+
+```json
+{"id": "answer-1", "type": "response", "command": "extension_ui_response", "success": true}
+```
+
+`success: true` means the answer resolved a pending request. A refusal carries the same `id` and an
+`error`: on a host `question_incomplete` (a `question` answer with neither answers nor a comment),
+`question_already_resolved` (a late answer) or `unknown_extension_ui_request` (no request of that
+session has that id); on a terminal `unknown_request` or `invalid_response`. A single-session stdio
+connection answers every response it resolves the same way, and ignores one that matches none of its
+requests. A client may still fire and forget: the reply is an ordinary `response` record.
+
+```json
+{"type": "extension_ui_response", "id": "answer-1", "uiRequestId": "uuid-1", "value": "Allow"}
+```
 
 #### Value response (select, input, editor)
 

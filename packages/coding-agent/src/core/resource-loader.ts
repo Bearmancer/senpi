@@ -331,7 +331,6 @@ export interface DefaultResourceLoaderOptions {
 	cwd: string;
 	agentDir: string;
 	settingsManager?: SettingsManager;
-	sharedHostEnabled?: boolean;
 	/** Visibility class of the session these resources are loaded for; defaults to `interactive`. */
 	sessionKind?: SessionKind;
 	/** Opaque labels the session was opened with; defaults to `{}`. */
@@ -373,7 +372,6 @@ export class DefaultResourceLoader implements ResourceLoader {
 	private cwd: string;
 	private agentDir: string;
 	private settingsManager: SettingsManager;
-	private sharedHostEnabled: boolean;
 	/** The per-session facts every extension of this session is loaded with. */
 	private extensionSession: ExtensionSessionProfile;
 	private eventBus: EventBus;
@@ -438,9 +436,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 		this.cwd = resolvePath(options.cwd);
 		this.agentDir = resolvePath(options.agentDir);
 		this.settingsManager = options.settingsManager ?? SettingsManager.create(this.cwd, this.agentDir);
-		this.sharedHostEnabled = options.sharedHostEnabled ?? this.settingsManager.getExperimentalSharedHost();
 		this.extensionSession = {
-			sharedHostEnabled: this.sharedHostEnabled,
 			sessionKind: options.sessionKind ?? "interactive",
 			sessionContext: options.sessionContext ?? EMPTY_SESSION_CONTEXT,
 		};
@@ -832,6 +828,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 			resolvedPathsMemoKey({
 				agentDir: this.agentDir,
 				cwd: this.cwd,
+				projectTrusted: this.settingsManager.isProjectTrusted(),
 				globalSettings: this.settingsManager.getGlobalSettings(),
 				projectSettings: this.settingsManager.getProjectSettings(),
 				additionalExtensionPaths: this.additionalExtensionPaths,

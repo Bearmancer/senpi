@@ -38,7 +38,7 @@ export interface PromptPresetSettings {
 
 type SettingsWithPromptPreset = Settings & { promptPreset?: string };
 
-const VALID_PRESETS: ReadonlySet<string> = new Set<PromptPresetName>([
+export const VALID_PRESETS: ReadonlySet<string> = new Set<PromptPresetName>([
 	"auto",
 	"claude-fable-5",
 	"claude-fable-5-1",

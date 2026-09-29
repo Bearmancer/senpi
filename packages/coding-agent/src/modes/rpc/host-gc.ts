@@ -22,10 +22,15 @@
  * instead of leaving a socket nothing names. A sibling that is a directory is not a socket's leftover
  * and not gc's to delete; it stays, and is reported under `skipped`. One endpoint's failure is recorded
  * and the run goes on to the next.
+ *
+ * `kinds` narrows a run to endpoints of those `endpoint_kind`s - a TUI reaping dead `tui` endpoints at
+ * its own startup - and every other endpoint is neither judged nor reported; the evidence rule for the
+ * ones it does judge is the same three-part rule. The flat legacy directory is a host's, so it is only
+ * reported when `rpc_host` is among the kinds.
  */
 import { lstat, rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { HOST_DAEMON_LAYOUT, hostDaemonDirectoryPaths } from "./host-daemon-paths.ts";
+import { type EndpointKind, HOST_DAEMON_LAYOUT, hostDaemonDirectoryPaths } from "./host-daemon-paths.ts";
 import { parseJson, readFileOrUndefined } from "./host-daemon-state.ts";
 import { listHostEndpoints } from "./host-endpoints.ts";
 import { acquireHostEnsureLock } from "./host-ensure-lock.ts";
@@ -55,6 +60,8 @@ export interface HostGcResult {
 }
 
 export interface HostGcOptions {
+	/** Only endpoints of these kinds; every kind when absent. */
+	readonly kinds?: readonly EndpointKind[];
 	readonly _test?: {
 		/** Runs inside an endpoint's ensure lock, before any evidence is read. */
 		readonly afterLockAcquired?: (socket: string) => Promise<void>;
@@ -67,9 +74,11 @@ const GC_LOCK_WAIT_MS = 2_000;
 export async function gcHostEndpoints(agentDir: string, options: HostGcOptions = {}): Promise<HostGcResult> {
 	const removed: HostGcEntry<SocketSilence>[] = [];
 	const kept: HostGcEntry<HostGcKeptReason>[] = [];
-	const legacy = await legacyFlatDirectory(agentDir);
+	const wanted = (kind: EndpointKind): boolean => options.kinds === undefined || options.kinds.includes(kind);
+	const legacy = wanted("rpc_host") ? await legacyFlatDirectory(agentDir) : undefined;
 	if (legacy !== undefined) kept.push({ socket: null, dir: legacy, reason: "legacy_layout" });
 	for (const endpoint of await listHostEndpoints(agentDir)) {
+		if (!wanted(endpoint.endpoint_kind)) continue;
 		if (endpoint.socket === null) {
 			kept.push({ socket: null, dir: endpoint.dir, reason: "unknown_identity" });
 			continue;

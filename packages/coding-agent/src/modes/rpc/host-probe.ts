@@ -17,6 +17,7 @@ import {
 	sendSocketHandshake,
 	socketSecretPath,
 } from "./socket-transport.ts";
+import { socketNeedsHandshake } from "./tui-socket.ts";
 
 /** Default probe budget: long enough for a host under load, short enough to keep an ensure moving. */
 export const DEFAULT_PROBE_TIMEOUT_MS = 10_000;
@@ -117,7 +118,7 @@ async function connectAndAsk(
 	keep = false,
 ): Promise<ProbeOutcome> {
 	let secret: Buffer | undefined;
-	if (process.platform === "win32") {
+	if (socketNeedsHandshake(socketPath)) {
 		try {
 			secret = await readSocketSecret(socketSecretPath(socketPath));
 		} catch {

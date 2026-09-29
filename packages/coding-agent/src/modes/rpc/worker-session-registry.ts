@@ -1,5 +1,6 @@
 import { isAbsolute } from "node:path";
 import { ProviderScope } from "@earendil-works/pi-ai/node/provider-scope";
+import type { PromptSurface } from "../../core/dynamic-prompt/types.ts";
 import { assertValidSessionId } from "../../core/session-manager.ts";
 import type { CliRuntimeConfiguration } from "../../main.ts";
 import {
@@ -79,7 +80,7 @@ export class WorkerSessionRegistry {
 		if (profile.sessionPath) {
 			const key = this.knownReservationKey(profile.sessionPath);
 			const owner = key ? this.reservations.owner(key) : undefined;
-			if (key && owner) return this.attach(owner, key, options);
+			if (key && owner) return this.attach(owner, key, options, profile.promptSurface);
 		}
 		if (this.size >= SESSION_WORKER_LIMITS.workers) throw new Error("too_many_sessions");
 		const handle = `rpc-${++this.serial}`;
@@ -125,7 +126,7 @@ export class WorkerSessionRegistry {
 			const path = await worker.prepare(this.options.configuration, profile);
 			const owner = this.reservations.owner(path);
 			if (owner) {
-				const attached = this.attach(owner, path, options);
+				const attached = await this.attach(owner, path, options, profile.promptSurface);
 				entry.state = "quarantined";
 				worker.quarantine();
 				return attached;
@@ -253,10 +254,20 @@ export class WorkerSessionRegistry {
 		return undefined;
 	}
 
-	private attach(owner: string, path: string, options?: RpcSessionOpenOptions): OpenRpcSession {
+	private async attach(
+		owner: string,
+		path: string,
+		options?: RpcSessionOpenOptions,
+		promptSurface?: PromptSurface,
+	): Promise<OpenRpcSession> {
 		const entry = this.entries.get(owner);
 		if (entry?.state !== "open" || !entry.worker?.bindingReady || entry.worker.snapshot?.sessionPath !== path)
 			throw new RpcSessionRegistryError("session_path_in_use");
+		// Same rule as RpcSessionRegistry: an attach that names a surface moves the live session to it.
+		if (promptSurface !== undefined && promptSurface !== entry.profile.promptSurface) {
+			entry.profile = frozenProfile({ ...entry.profile, promptSurface });
+			await entry.worker.setPromptSurface(promptSurface);
+		}
 		const result = this.openResult(owner, entry);
 		entry.attachments++;
 		// Retention is a property of the live session: any attach may ask for it, and

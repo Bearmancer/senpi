@@ -1,3 +1,85 @@
+## 2026-09-29 - Published packages ship no sourcemaps (senpi#2362)
+
+### What changed
+
+- `scripts/senpi-publish-pack-checks.mjs`: the senpi pack gate and every published alias package check reject any `*.map` in the tarball.
+- `scripts/prepare-senpi-bundled-workspaces.mjs`: the vendored client/protocol copy skips `*.map`.
+
+### Why
+
+- The maps reference workspace `src/` files that are never published, so they cannot resolve for consumers; they were 17.9 MiB of the senpi tarball alone.
+
+### Why an extension could not handle it
+
+- Publish tooling.
+
+### Expected merge conflict zones
+
+- LOW: `assertPublishedWorkspacePackFiles`, `assertSenpiPackedWorkspaceFiles`, `copyVendoredTypeWorkspaces`.
+
+## 2026-09-29 - Publish the real @code-yeongyu/senpi dependency manifest instead of a flattened bundle (senpi#2360)
+
+### What changed
+
+- `scripts/prepare-senpi-publish-manifest.mjs`: `stagePublishManifest` writes the source dependency list (vendored `pi-client`/`pi-protocol` removed, fork workspaces rewritten to their exact `npm:@code-yeongyu/senpi-*` aliases), deletes `bundleDependencies`/`bundledDependencies`, and rejects local specs and unpublished fork packages. The staged-`node_modules` listing, platform-constrained filter and optional-family promotion are gone.
+- `scripts/prepare-senpi-bundled-workspaces.mjs`: only vendors client/protocol under `vendor/` and stages the manifest; the workspace/runtime-closure copies into `packages/coding-agent/node_modules` are removed.
+- `scripts/senpi-publish-pack-checks.mjs` (new): the senpi pack gate (no `node_modules`, no `npm-shrinkwrap.json`, no bundle fields, fork deps through aliases, vendored files present) and per-alias-package loader-file checks (agent-core tree-sitter assets, pty `native/index.js` and warned-optional prebuild, codemode sources) moved from the bundled copies to the packages that now ship them.
+- `scripts/publish.mjs`: validates each package against those checks; `materializeMissingPublishRuntime` is no longer called.
+- Removed: `scripts/prepare-senpi-publish-dependencies.mjs`, `scripts/prepare-senpi-publish-placements.mjs`, `scripts/materialize-publish-runtime.mjs`, `scripts/generate-coding-agent-shrinkwrap.mjs`, `scripts/unpublished-bundled-workspaces.mjs` (no-op since the desktop workspaces left the bundle) and their tests.
+- `scripts/registry-packages.mjs`, `scripts/release-packages.mjs`, `scripts/local-release.mjs`: comments no longer describe the removed bundle; no behavior change.
+- `scripts/check-lockfile-commit.mjs`: the lockfile-commit hint points at the coding-agent install-lock instead of the removed shrinkwrap.
+- `scripts/release.mjs`, `scripts/release-artifacts.mjs`: no shrinkwrap step and no stale-bundle-overlay `npm ci`; root `package.json` drops `check:shrinkwrap`/`shrinkwrap:coding-agent` and the shrinkwrap step of `refresh-lock`.
+
+### Why
+
+- Every fork workspace is published under its own name at the lockstep version, so the bundle no longer protects installs from the old ETARGET on registry-absent workspace specs. It only cost space and time: bun installs every declared dependency from the registry and keeps the bundled copy too (700 MiB, 11.1 s cold), and npm unpacks a 27k-file tarball (137 s).
+
+### Why an extension could not handle it
+
+- Release and publish tooling.
+
+### Expected merge conflict zones
+
+- MEDIUM: `stagePublishManifest` and `prepareSenpiBundledWorkspaces`; `validatePack` in `publish.mjs`.
+
+## 2026-09-29 - The bundle names its build for the runtime snapshot (#2358)
+
+### What changed
+
+- `scripts/build-coding-agent-bundle.mjs`: after both esbuild passes, writes `dist/bundle/runtime-manifest.json` with `buildId` (the first 16 hex digits of a SHA-256 over every emitted file's path and bytes) and `externals` (`collectExternalPackages`: the non-builtin package names the bundle imports at runtime).
+
+### Why
+
+- The CLI keys its runtime snapshot by build and verifies that the snapshot resolves the bundle's externals exactly as the install does (#2358).
+
+### Why an extension could not handle it
+
+- The manifest describes the build output itself.
+
+### Expected merge conflict zones
+
+- LOW: the end of `buildBundle()` after `validateExternalImports`.
+
+## 2026-09-29 - bun.lock regeneration converges and matches every workspace manifest (senpi#2352)
+
+### What changed
+
+- `scripts/bun-lock-workspace-specifiers.mjs` (new): parses bun.lock, lists every workspace dependency specifier that differs from its manifest, and rewrites the stale ones that can only resolve to the local workspace.
+- `scripts/regenerate-bun-lock-isolated.mjs`: repairs those specifiers in the seeded island lock before Bun runs, runs `bun install --lockfile-only` twice and fails unless the second pass changes nothing, then fails on any remaining manifest mismatch. `--check` names the stale specifiers.
+- `scripts/release-artifacts.mjs`: `runPackageLockRefresh` refreshes bun.lock with `node scripts/regenerate-bun-lock-isolated.mjs` instead of an in-place `bun install --lockfile-only`.
+
+### Why
+
+- One seeded Bun 1.4.2 pass after a version bump keeps the previous workspace ranges; a second pass fixes only the workspaces something depends on, and leaf workspaces keep the stale range forever. Release v2026.9.29 committed such a lock, so a fresh clone's `bun install` dirtied it.
+
+### Why an extension could not handle it
+
+- Release and lockfile tooling.
+
+### Expected merge conflict zones
+
+- LOW: `runPackageLockRefresh` in `release-artifacts.mjs`; `regenerateBunLock` in `regenerate-bun-lock-isolated.mjs`.
+
 ## 2026-09-28 - Drop the desktop packages from build, bundle and release tooling (senpi#2128)
 
 ### What changed

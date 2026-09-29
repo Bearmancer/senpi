@@ -1,5 +1,50 @@
 # prompt-preset Extension Changes
 
+## 2026-09-30 - App surface: every core's claim audit covers an unrun check with the evidence that did run (senpi#2377)
+
+### What changed
+
+- `claude-fable-5.ts`, `claude-fable-5-1.ts`, `claude-opus-5.ts`, `claude-opus-5-5.ts`, `claude-sonnet-5-5.ts`, `kimi-k3.ts`: on `app` the core's own claim audit drops "flag the unverified explicitly" and renders `APP_UNRUN_CHECK_RULE` (from `dynamic-prompt/verification.ts`) in its place; the Intent Gate's tool-feedback sentence is removed. Sonnet 5.5 keeps "If no real check can run here, say which one you did not run": with no evidence at all, naming it is what the rule asks for.
+- `grok-4.5.ts`, `grok-4.6.ts`, `grok-4.7.ts`: `APP_UNRUN_CHECK_RULE` follows the verification paragraph on `app`; Grok 4.5's final-message slot "what you could not verify and why" reads "anything left unverified that no other evidence covers"; the Intent Gate feedback sentence is removed.
+- `gpt-5.5.ts`, `gpt-5.6.ts`, `gpt-6-astra.ts`: "if validation cannot run, say so and name the next best check" / "Say plainly what you could not run and why" become `GPT_APP_UNRUN_CHECK_RULE` on `app`; the final-message slot ("what you could not and why" / "what you could not verify and why") becomes `GPT_APP_UNVERIFIED_SLOT`. Astra keeps `GPT6_ASTRA_RULES` as the terminal wording and derives `finalMessageShape` in `SURFACE_DIRECTIVE`. `gpt-surface.ts`: `GPT_APP_FEEDBACK` is replaced by `GPT_APP_UNRUN_CHECK_RULE` and `GPT_APP_UNVERIFIED_SLOT`.
+- `test/suite/prompt-presets-app-surface.test.ts`: for the dynamic prompt and every preset name, the app prompt contains none of "flag the unverified explicitly", "could not verify/run", "cannot run, say so", "what you could not and why"; contains "covered by the evidence that did run" exactly once and "tool and hook feedback" exactly once, never inside the Intent Gate. RED on main: 30 of 30 app prompts failed.
+
+### Why
+
+- See `dynamic-prompt/changes.md` (2026-09-30): on the app surface the claim audit, not the Intent Gate, decides whether an unavailable check reaches the user, so each core's audit carries the rule and the feedback guidance lives there alone.
+
+### Why an extension could not handle it
+
+- This is the prompt-preset extension itself; the claim-audit wording lives inside each core.
+
+### Expected merge conflict zones
+
+- Fork-only files. The claim-audit and final-message sentences of each core, the `INTENT_GATE_LEAD.app` strings, and `SURFACE_DIRECTIVE` in `gpt-6-astra.ts`.
+
+## 2026-09-29 - App prompt surface for every preset (senpi#2377)
+
+### What changed
+
+- Every preset renders a `surface: "app"` variant (`SENPI_PROMPT_SURFACE=app`, see `dynamic-prompt/changes.md`); `terminal` renders are byte-identical to before. Shared-core presets (claude-opus-4-x, deepseek, glm, gpt-5 through 5.4, kimi-k2-x) take the shared intent gate and handoff app wording.
+- `claude-fable-5.ts`, `claude-fable-5-1.ts`, `claude-opus-5.ts`, `claude-opus-5-5.ts`, `claude-sonnet-5-5.ts`, `kimi-k3.ts`, `grok-4.5.ts`, `grok-4.6.ts`, `grok-4.7.ts`: the Intent Gate lead is an `INTENT_GATE_LEAD: Record<PromptSurface, string>` whose `terminal` entry is the old text verbatim; the `app` entry keeps each core's stop-condition and scaffolding rules in its own wording, drops the routing line, and adds the core's tool-and-hook-feedback sentence. `buildHandoffSection` receives `surface: context.surface`. `kimi-k3.ts`: "Before the routing line, reread ..." reads "Before you act, reread ..." on `app`.
+- `gpt-5.5.ts`, `gpt-5.6.ts`, `gpt-6-astra.ts`: same `INTENT_GATE_LEAD` shape; the inline handoff moments come from `GPT_HANDOFF_MOMENTS` and the feedback sentence from `GPT_APP_FEEDBACK` in the new `gpt-surface.ts`. Astra keeps `GPT6_ASTRA_RULES` as the terminal wording and derives its `app` steering and handoff-report directives from it (`SURFACE_DIRECTIVE`), dropping "rather than another routing line" and the routing-line moment.
+- `claude-fable-5.ts`, `grok-4.6.ts`, `gpt-5.6.ts`, `gpt-6-astra.ts`: "your declared stop condition" (context-limit line, Stop Goal) reads "your stop condition" on `app`, so no app prompt asks for a declared, i.e. written-out, condition.
+- `kimi-k2-6.ts`, `kimi-k2-code.ts`: the "The intent gate routing line is required every turn." sentence is omitted on `app`.
+- `presets.ts` `withDefaults` and `index.ts` `eventOptionsToBuilderInput` carry `surface` from the session's system-prompt options; `settings.ts` exports `VALID_PRESETS` so the surface suite iterates every preset name.
+- `test/suite/prompt-presets-app-surface.test.ts` (new): for the dynamic prompt and every `VALID_PRESETS` name, `app` has no "I read this as" / "routing line" and has the feedback guidance; `terminal` (omitted and explicit) keeps the routing line; `resolvePromptSurface` accepts only `app`; a harness session with `SENPI_PROMPT_SURFACE=app` renders the app prompt for a preset model and the fallback prompt.
+
+### Why
+
+- The routing line is a terminal contract; an app host renders replies as chat, where the line and relayed tool notices read as harness chatter (omo-desktop-app#1313). Per-core wording keeps each model's dialect; one `app` entry per core replaces the lead at its source instead of appending a counter-rule.
+
+### Why an extension could not handle it
+
+- This is the prompt-preset extension itself; the lead text lives inside each core.
+
+### Expected merge conflict zones
+
+- Fork-only files. The `INTENT_GATE_LEAD` declarations above each `build*Core`, and the handoff call sites.
+
 ## 2026-09-29 - Claude Sonnet 5.5 preset (senpi#2321)
 
 ### What changed

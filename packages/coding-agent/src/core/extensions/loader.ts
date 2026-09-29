@@ -30,6 +30,7 @@ import { createEventBus, type EventBus, EXTENSION_RPC_EVENT_CHANNEL, type Extens
 import type { ExecOptions } from "../exec.ts";
 import { execCommand } from "../exec.ts";
 import { readPiManifest } from "../pi-manifest.ts";
+import { unboundSessionControlActions } from "../session-control-actions.ts";
 import { createSyntheticSourceInfo } from "../source-info.ts";
 import { time } from "../timings.ts";
 import { type ReadClassifier, registerReadClassifier } from "../tools/read-classifiers.ts";
@@ -59,6 +60,7 @@ import type {
 	RegisteredCommand,
 	RegisteredMcpServerDeclaration,
 	SessionContext,
+	SessionControlActions,
 	SessionKind,
 	ToolDefinition,
 } from "./types.ts";
@@ -66,14 +68,12 @@ import { DEFAULT_EXTENSION_SESSION_PROFILE, EMPTY_SESSION_CONTEXT } from "./type
 
 /** Per-session extension inputs a caller may name; every absent one takes its classic default. */
 export interface ExtensionSessionOptions {
-	sharedHostEnabled?: boolean;
 	sessionKind?: SessionKind;
 	sessionContext?: SessionContext;
 }
 
 function sessionProfile(options: ExtensionSessionOptions | undefined): ExtensionSessionProfile {
 	return {
-		sharedHostEnabled: options?.sharedHostEnabled ?? false,
 		sessionKind: options?.sessionKind ?? "interactive",
 		sessionContext: options?.sessionContext ?? EMPTY_SESSION_CONTEXT,
 	};
@@ -274,6 +274,7 @@ export function createExtensionRuntime(): ExtensionRuntime {
 		setSessionModel: () => Promise.reject(new Error("Extension runtime not initialized")),
 		setSessionThinkingLevel: notInitialized,
 		setSessionFastMode: notInitialized,
+		sessionControl: unboundSessionControlActions(),
 		flagValues: new Map(),
 		pendingProviderRegistrations: [],
 		pendingNativeProviderRegistrations: [],
@@ -324,6 +325,12 @@ export function createExtensionRuntime(): ExtensionRuntime {
 	};
 
 	return runtime;
+}
+
+const unboundSessionControl = unboundSessionControlActions();
+
+function sessionControlOf(runtime: ExtensionRuntime): SessionControlActions {
+	return runtime.sessionControl ?? unboundSessionControl;
 }
 
 /**
@@ -379,7 +386,6 @@ function createExtensionAPI(
 
 	const api = {
 		cwd,
-		sharedHostEnabled: session.sharedHostEnabled,
 		sessionKind: session.sessionKind,
 		sessionContext: session.sessionContext,
 
@@ -633,6 +639,29 @@ function createExtensionAPI(
 		unregisterProvider(name: string) {
 			assertActive();
 			applyRuntimeChange(() => runtime.unregisterProvider(name, extension.path));
+		},
+
+		session: {
+			registerControlEndpoint(options) {
+				runtime.assertActive();
+				return sessionControlOf(runtime).registerControlEndpoint(options);
+			},
+			admissionGate() {
+				runtime.assertActive();
+				return sessionControlOf(runtime).admissionGate();
+			},
+			admitExternalMessage(input) {
+				runtime.assertActive();
+				return sessionControlOf(runtime).admitExternalMessage(input);
+			},
+			listAdmittedDeliveries() {
+				runtime.assertActive();
+				return sessionControlOf(runtime).listAdmittedDeliveries();
+			},
+			persistHeaderNow() {
+				runtime.assertActive();
+				return sessionControlOf(runtime).persistHeaderNow();
+			},
 		},
 
 		rpc: {

@@ -18,6 +18,8 @@ export interface ActiveFallbackState {
 }
 
 export type FallbackReason = "transient" | "refusal" | "hard-error" | "billing";
+/** Absent: the original recovered after its cooldown. `fallback-unusable`: the fallback itself could not serve. */
+export type FallbackRevertCause = "fallback-unusable";
 export type CircuitFailure = { errorMessage?: string; retryAfterMs?: number };
 
 export interface FallbackSettings {
@@ -50,7 +52,7 @@ export interface RetryFallbackControllerDeps {
 					reason: FallbackReason;
 					limit?: UsageLimitScope;
 			  }
-			| { type: "retry_fallback_reverted"; from: string; to: string },
+			| { type: "retry_fallback_reverted"; from: string; to: string; cause?: FallbackRevertCause },
 	): void;
 	getCurrentSelector(): { model: Model<Api>; thinkingLevel?: ThinkingLevel } | undefined;
 	isAuthAvailable(provider: string): boolean;

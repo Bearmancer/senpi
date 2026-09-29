@@ -1,3 +1,18 @@
+import type { OpenAiRemoteCompactionModel } from "./openai-remote-model.ts";
+
+const OPENAI_REMOTE_COMPACTION_TIMEOUT_MS = 15_000;
+/**
+ * A live subscription-lane v2 compaction took 17.7 s at 16.7k context tokens (senpi#2378). 90 s is about
+ * 5x that, headroom for larger contexts; a timeout still falls back to the local summary.
+ */
+export const CHATGPT_SUBSCRIPTION_REMOTE_COMPACTION_TIMEOUT_MS = 90_000;
+
+export function openAiRemoteCompactionTimeoutMs(model: OpenAiRemoteCompactionModel): number {
+	return model.api === "openai-codex-responses"
+		? CHATGPT_SUBSCRIPTION_REMOTE_COMPACTION_TIMEOUT_MS
+		: OPENAI_REMOTE_COMPACTION_TIMEOUT_MS;
+}
+
 export async function runWithRemoteTimeout<T>(options: {
 	signal: AbortSignal;
 	timeoutMs: number;

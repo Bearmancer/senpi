@@ -8,6 +8,8 @@ export { type PrintModeOptions, runPrintMode } from "./print-mode.ts";
 // The shard naming contract every client computes identically; `senpi host shard-path` prints the same.
 export {
 	daemonDirectoryName,
+	ENDPOINT_REGISTRY_VERSION,
+	type EndpointKind,
 	type ShardKind,
 	shardKey,
 	shardSocketPath,
@@ -29,6 +31,15 @@ export {
 	parseHostProtocolInfo,
 	REQUIRED_HOST_CAPABILITIES,
 } from "./rpc/host-decision.ts";
+// The one endpoint registry: which endpoints an agent directory holds, whether each can be reached,
+// and the evidence-gated removal of the ones that provably ended.
+export {
+	classifyEndpointLiveness,
+	type EndpointLiveness,
+	endpointProbeTimeoutMs,
+	TUI_PROBE_TIMEOUT_MS,
+} from "./rpc/host-endpoint-liveness.ts";
+export { type HostEndpointEntry, type HostEndpointIdentitySource, listHostEndpoints } from "./rpc/host-endpoints.ts";
 export {
 	createHostDaemonPaths,
 	type EnsuredHost,
@@ -38,6 +49,7 @@ export {
 	type HostUpgradePolicy,
 	PINNED_HOST_CLIENT_CAPABILITIES,
 } from "./rpc/host-ensure.ts";
+export { gcHostEndpoints, type HostGcOptions, type HostGcResult } from "./rpc/host-gc.ts";
 // Replacing a running daemon without ending its work: the drain-based generation handoff,
 // the identity probe every decision starts from, and the two ways a generation is ended.
 export {
@@ -77,6 +89,7 @@ export {
 	type HostStatusReport,
 	readHostStatus,
 } from "./rpc/host-status.ts";
+export { type HostEndpointStatus, readAllHostStatus } from "./rpc/host-status-all.ts";
 export { type StopHostOptions, type StopHostResult, stopHost } from "./rpc/host-stop.ts";
 export {
 	isTransportGoneError,

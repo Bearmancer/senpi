@@ -1,5 +1,6 @@
 import type { ExtensionAPI } from "../../types.ts";
-import { collectToolCatalog, mcpRegistrationIdentity } from "./catalog.ts";
+import { cachedToolsToCatalogEntries, collectToolCatalog, mcpRegistrationIdentity } from "./catalog.ts";
+import { collectServerCatalogForCache, writeMcpCachedServer } from "./catalog-cache.ts";
 import type { ResolvedMcpConfig } from "./config-schema.ts";
 import { mapMcpCatalogNames } from "./expose/register.ts";
 import {
@@ -59,6 +60,7 @@ export async function refreshMcpToolsOnListChanged(
 	if (server?.config === undefined || entry.connection.state !== "connected") return;
 	// The startup connect that still owns registration registers its refreshed catalog itself.
 	if (connectOnly && entry.startupCatalogClaim?.ownsRegistration() === true) return;
+	const registeredCatalog = entry.cachedCatalog;
 	if (entry.connection instanceof SharedMcpLease) {
 		entry.cachedCatalog = await entry.connection.catalog();
 	}
@@ -67,8 +69,28 @@ export async function refreshMcpToolsOnListChanged(
 		outputGuard: config.settings.outputGuard,
 	});
 	const newNames = mapMcpCatalogNames(catalog).map(({ name }) => name);
-	const diff = diffMcpToolNames(entry.knownToolNames ?? newNames, newNames);
+	// Before the first refresh, the registered names are the catalog the startup pass registered.
+	const knownNames =
+		entry.knownToolNames ??
+		(registeredCatalog === undefined
+			? newNames
+			: mapMcpCatalogNames(
+					cachedToolsToCatalogEntries(
+						entry.name,
+						registeredCatalog,
+						entry.connection,
+						server.config.requestTimeoutMs,
+						async () => {},
+					),
+				).map(({ name }) => name));
+	const diff = diffMcpToolNames(knownNames, newNames);
 	if (!connectOnly || mcpRegistrationIdentity(catalog, entry.cachedCatalog) !== entry.registeredIdentity) {
+		// Registration reads entry.cachedCatalog. A shared lease refreshed it above; nothing else
+		// refreshes a non-shared connection's catalog after its startup connect (#2188).
+		if (!(entry.connection instanceof SharedMcpLease)) {
+			entry.cachedCatalog = await collectServerCatalogForCache(entry.connection, server.config, entry.configHash);
+			await writeMcpCachedServer(entry.agentDir, entry.name, entry.cachedCatalog);
+		}
 		// Tombstone removed tools BEFORE re-registration so the subsequent
 		// setActiveTools (which excludes them) leaves the tombstones inactive.
 		for (const removed of diff.removed) pi.registerTool(buildMcpTombstoneDefinition(removed, entry.name));

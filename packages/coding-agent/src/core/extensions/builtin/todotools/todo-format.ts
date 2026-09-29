@@ -62,7 +62,7 @@ export const HANDOFF_CUES: Readonly<Record<HandoffMoment, string>> = {
 	"phase-closed":
 		"Handoff due: a phase closed. Before your next tool call, write the Ask / For you / Now / Next block.",
 	"all-closed":
-		"Handoff due: every task is closed. Your final message is the Ask / For you / Now: none / Next: none block; any other report an instruction asks for (a self-review, a checklist, a summary) goes inside For you.",
+		"Handoff due: every task is closed. Your final message is the Ask / For you / Now / Next block, with Now and Next saying no task remains; any other report an instruction asks for (a self-review, a checklist, a summary) goes inside For you.",
 };
 
 /** The cue line appended to a todo result, or nothing when no handoff moment was reached. */

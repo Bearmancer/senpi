@@ -1,4 +1,6 @@
-export function buildStyleSection(): string {
+import type { PromptSurface } from "./types.ts";
+
+export function buildStyleSection(options: { surface?: PromptSurface } = {}): string {
 	return `## Style
 
 Smallest correct change wins: no refactors beside a focused fix, no helpers or abstractions for hypothetical needs, no defensive checks inside trusted code. Trust framework guarantees; validate only at system boundaries. Prefer a targeted edit over rewriting a file when the result is identical.
@@ -9,5 +11,5 @@ Have an opinion - agree or disagree plainly, and why - and raise only real probl
 
 Plain, literal language; no "it depends" hedging when you have context to judge; formatting only where it clarifies genuinely list-shaped content; ASCII unless the file already uses Unicode. The final message opens with the Handoff block; its For you slot is for a reader who did not watch the work: the outcome in complete sentences, then how it was verified, keeping every required fact and dropping only detail that does not change what the reader does next.
 
-Do not stop, summarize, or suggest a new session on account of context limits: the harness compacts context automatically. Continue until your declared stop condition holds.`;
+Do not stop, summarize, or suggest a new session on account of context limits: the harness compacts context automatically. Continue until ${options.surface === "app" ? "your stop condition" : "your declared stop condition"} holds.`;
 }

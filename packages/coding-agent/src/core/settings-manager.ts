@@ -22,7 +22,6 @@ import lockfile from "proper-lockfile";
 import { CONFIG_DIR_NAME, getAgentDir } from "../config.ts";
 import { findNearestParentConfigDir } from "../nearest-parent-config.ts";
 import { normalizePath, resolvePath } from "../utils/paths.ts";
-import { stripBom } from "../utils/text.ts";
 import { envValue } from "./brand.ts";
 import type { CompactionModelSelector, CompactionSettings } from "./compaction-settings-access.ts";
 import {
@@ -55,7 +54,9 @@ import {
 	resolveHintPolicySettings,
 	resolveRetryFallbackSettings,
 } from "./retry-fallback/settings.ts";
+import { parseSettingsJson } from "./settings-json.ts";
 import { withoutOverride } from "./settings-overrides.ts";
+import { removeRetiredSettingsKeys, writeRawScopedSettings } from "./settings-retired-keys.ts";
 import {
 	ASK_USER_DEFAULT_TIMEOUT_MINUTES,
 	ASK_USER_MAX_TIMEOUT_MINUTES,
@@ -153,10 +154,6 @@ export type PackageSource =
 			hooks?: string[];
 	  };
 
-export interface ExperimentalSettings {
-	sharedHost?: boolean;
-}
-
 export interface Settings {
 	providers?: Record<string, ProviderConcurrencySettings>;
 	lastChangelogVersion?: string;
@@ -229,7 +226,6 @@ export interface Settings {
 	tuiMode?: TuiMode; // default: "regular"
 	fullscreenExitOutput?: FullscreenExitOutput; // default: "transcript"; no effect in regular TUI mode
 	fullscreenScrollbar?: ScrollViewScrollbar; // default: "auto"; no effect in regular TUI mode
-	experimental?: ExperimentalSettings;
 	fullscreenCopyOnSelect?: boolean; // default: true; no effect in regular TUI mode
 }
 
@@ -299,84 +295,7 @@ export interface SettingsSourceSelection {
 
 export type SettingsSourceListener = (source: SettingsSourceSelection) => void;
 
-/** Parse JSON or JSONC without changing comment-like text inside strings. */
-export function parseSettingsJson(content: string): Record<string, unknown> {
-	content = stripBom(content);
-	const withoutComments: string[] = [];
-	let inString = false;
-	let escaped = false;
-
-	for (let index = 0; index < content.length; index += 1) {
-		const char = content[index];
-		const next = content[index + 1];
-		if (inString) {
-			withoutComments.push(char);
-			if (escaped) escaped = false;
-			else if (char === "\\") escaped = true;
-			else if (char === '"') inString = false;
-			continue;
-		}
-		if (char === '"') {
-			inString = true;
-			withoutComments.push(char);
-			continue;
-		}
-		if (char === "/" && next === "/") {
-			withoutComments.push(" ", " ");
-			index += 2;
-			while (index < content.length && content[index] !== "\n" && content[index] !== "\r") {
-				withoutComments.push(" ");
-				index += 1;
-			}
-			if (index < content.length) withoutComments.push(content[index]);
-			continue;
-		}
-		if (char === "/" && next === "*") {
-			withoutComments.push(" ", " ");
-			index += 2;
-			let closed = false;
-			for (; index < content.length; index += 1) {
-				if (content[index] === "*" && content[index + 1] === "/") {
-					withoutComments.push(" ", " ");
-					index += 1;
-					closed = true;
-					break;
-				}
-				withoutComments.push(content[index] === "\n" || content[index] === "\r" ? content[index] : " ");
-			}
-			if (!closed) throw new SyntaxError("Unterminated block comment in settings");
-			continue;
-		}
-		withoutComments.push(char);
-	}
-
-	const normalized = withoutComments;
-	inString = false;
-	escaped = false;
-	for (let index = 0; index < normalized.length; index += 1) {
-		const char = normalized[index];
-		if (inString) {
-			if (escaped) escaped = false;
-			else if (char === "\\") escaped = true;
-			else if (char === '"') inString = false;
-			continue;
-		}
-		if (char === '"') {
-			inString = true;
-			continue;
-		}
-		if (char !== ",") continue;
-		let nextIndex = index + 1;
-		while (nextIndex < normalized.length && /\s/.test(normalized[nextIndex])) nextIndex += 1;
-		if (normalized[nextIndex] === "}" || normalized[nextIndex] === "]") normalized[index] = " ";
-	}
-
-	const parsed: unknown = JSON.parse(normalized.join(""));
-	if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-		throw new TypeError("Settings must contain a JSON object");
-	}
-	return parsed as Record<string, unknown>;
-}
+export { parseSettingsJson };
 
 const SELF_WRITE_TTL_MS = 15_000;
 const MAX_SELF_WRITES_PER_PATH = 8;
@@ -740,7 +659,10 @@ export class SettingsManager {
 		if (!content) {
 			return {};
 		}
-		return SettingsManager.migrateSettings(parseSettingsJson(content));
+		const raw = parseSettingsJson(content);
+		// A project file belongs to the user's repository: its retired keys are ignored, never rewritten.
+		if (removeRetiredSettingsKeys(raw) && scope === "global") writeRawScopedSettings(storage, scope);
+		return SettingsManager.migrateSettings(raw);
 	}
 
 	private static tryLoadFromStorage(
@@ -2242,10 +2164,6 @@ export class SettingsManager {
 	getDefaultTools(): string[] | undefined {
 		const tools = this.settings.defaultTools;
 		return tools ? [...tools] : undefined;
-	}
-
-	getExperimentalSharedHost(): boolean {
-		return this.settings.experimental?.sharedHost === true;
 	}
 
 	setEnabledModels(patterns: string[] | undefined): void {

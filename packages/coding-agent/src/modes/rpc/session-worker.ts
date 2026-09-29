@@ -22,7 +22,6 @@ import {
 	type HostToSessionWorker,
 	SESSION_WORKER_LIMITS,
 	type SessionWorkerToHost,
-	type WorkerDisplay,
 	type WorkerSnapshot,
 } from "./session-worker-protocol.ts";
 
@@ -87,28 +86,9 @@ let prepared: Extract<HostToSessionWorker, { type: "prepare" }> | undefined;
 let registry: RpcSessionRegistry | undefined;
 let entry: RpcSessionEntry | undefined;
 let binding: RpcSessionBinding | undefined;
-let display: WorkerDisplay = { revision: 0, width: 80, rendered: false, capabilities: [] };
 let closing = false;
 let unsubscribe: (() => void) | undefined;
 let unsubscribeWake: (() => void) | undefined;
-
-function applyDisplay(next: WorkerDisplay): boolean {
-	if (next.revision < display.revision) return false;
-	display = next;
-	return true;
-}
-
-function updateDisplay(message: (signal: SharedArrayBuffer) => SessionWorkerToHost): void {
-	const signal = new SharedArrayBuffer(24);
-	exchange(message, "session_worker_display_denied", signal);
-	const values = new Float64Array(signal);
-	applyDisplay({
-		...display,
-		width: values[1],
-		revision: values[2],
-		rendered: Atomics.load(new Int32Array(signal), 1) === 1,
-	});
-}
 
 function publishSnapshot(settled = false): void {
 	const value = snapshot();
@@ -176,23 +156,17 @@ async function handle(message: HostToSessionWorker): Promise<void> {
 		}
 		case "bind": {
 			if (!entry || binding) throw new Error("Invalid session binding");
-			display = message.display;
 			const bindingEntry = entry;
 			const createBinding = () =>
 				createRpcSessionBinding(message.sessionId, bindingEntry, writer, () => send({ type: "request_close" }), {
-					capabilities: display.capabilities,
-					sharedWidth: {
-						getWidth: () => display.width,
-						setWidth: (connection, width) =>
-							updateDisplay((signal) => ({ type: "width", connection, width, signal })),
-						onChange: () => binding?.rerenderComponents?.(),
-						clearWidth: () => {},
+					capabilities: message.capabilities,
+					clientInfo: {
 						connectionId: () => writer.currentConnection(),
-						hasRenderedComponents: () => display.rendered,
-						setCapabilities: (connection, capabilities) => {
-							updateDisplay((signal) => ({ type: "capabilities", connection, capabilities, signal }));
-							binding?.rerenderComponents?.();
-						},
+						setCapabilities: (connection, capabilities) =>
+							exchange(
+								(signal) => ({ type: "capabilities", connection, capabilities, signal }),
+								"session_worker_capabilities_denied",
+							),
 					},
 				});
 			binding = await (message.connection === undefined
@@ -216,7 +190,6 @@ async function handle(message: HostToSessionWorker): Promise<void> {
 					String(message.command.type),
 				);
 			if (!binding || (closing && !privileged)) throw new Error("session_closing");
-			applyDisplay(message.display);
 			const activeBinding = binding;
 			await (message.connection === undefined
 				? activeBinding.handle(message.command)
@@ -225,9 +198,10 @@ async function handle(message: HostToSessionWorker): Promise<void> {
 			send({ type: "result", request: message.request });
 			return;
 		}
-		case "display":
-			if (applyDisplay(message.display)) binding?.rerenderComponents?.();
-			send({ type: "control_done", control: "display" });
+		case "prompt_surface":
+			if (!entry?.runtime) throw new Error("session_closing");
+			entry.runtime.setPromptSurface(message.surface);
+			send({ type: "result", request: message.request });
 			return;
 		case "cancel_ui":
 			binding?.cancelPendingExtensionUiRequests?.();

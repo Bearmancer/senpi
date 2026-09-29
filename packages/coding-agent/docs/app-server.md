@@ -355,6 +355,11 @@ Response:
 {"id":12,"error":{"code":-32600,"message":"Thread not found: missing-thread"}}
 ```
 
+Input whose first token looks like a command that nothing handles (`/foo bar`; `/tmp/a.txt` is a path) is refused
+before any turn starts: no `turn/started` or user item is emitted, and the request fails with code `-32602` and
+`data: {"errorCode": "unknown_command", "command", "suggestions", "reason"}` (the same fields as RPC `prompt`).
+To send such text as a message, repeat the request with the senpi extension field `"unknownCommandAsText": true`.
+
 ### turn/steer
 
 Queue steering text for an active turn. The live no-token example documents the current error response when the thread

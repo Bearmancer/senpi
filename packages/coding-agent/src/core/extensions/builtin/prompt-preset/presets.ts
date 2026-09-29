@@ -453,6 +453,7 @@ function withDefaults(options: Partial<BuildDynamicSystemPromptOptions> = {}): B
 		promptGuidelines: options.promptGuidelines ?? [],
 		contextFiles: options.contextFiles ?? [],
 		skills: options.skills ?? [],
+		surface: options.surface ?? "terminal",
 	};
 }
 

@@ -7,7 +7,7 @@
  */
 
 import { existsSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 import { createInterface } from "node:readline";
 import { type ImageContent, modelsAreEqual } from "@earendil-works/pi-ai";
 import { setCapabilityOverrides } from "@earendil-works/pi-tui";
@@ -53,7 +53,14 @@ import {
 	shouldShowStartupLoadingIndicator,
 } from "./cli/startup-loading-indicator.ts";
 import { shouldRunFirstTimeSetup, showFirstTimeSetup, showStartupSelector } from "./cli/startup-ui.ts";
-import { APP_NAME, DISPLAY_VERSION, ENV_SESSION_DIR, expandTildePath, getAgentDir, getPackageDir } from "./config.ts";
+import {
+	APP_NAME,
+	DISPLAY_VERSION,
+	ENV_SESSION_DIR,
+	expandTildePath,
+	getAgentDir,
+	getInstallPackageDir,
+} from "./config.ts";
 import { type CreateAgentSessionRuntimeFactory, createAgentSessionRuntime } from "./core/agent-session-runtime.ts";
 import {
 	type AgentSessionRuntimeDiagnostic,
@@ -90,7 +97,6 @@ import { assertValidSessionId, SessionManager } from "./core/session-manager.ts"
 import { classifySessionRepository, readSessionCwd, rebindSessionFile } from "./core/session-rebind.ts";
 import { collectSettingsDiagnosticsWithContext } from "./core/settings-diagnostics.ts";
 import { SettingsManager } from "./core/settings-manager.ts";
-import { shouldJoinSharedHost } from "./core/shared-host-policy.ts";
 import { printTimings, recordTiming, resetTimings, time } from "./core/timings.ts";
 import { hasTrustRequiringProjectResources, ProjectTrustStore } from "./core/trust-manager.ts";
 import { builtInExtensions } from "./extensions/index.ts";
@@ -898,10 +904,6 @@ export function createCliRuntimeFactory(
 					}
 				: undefined,
 			resourceLoaderOptions: {
-				sharedHostEnabled: shouldJoinSharedHost(appMode, {
-					enableEnv: isTruthyEnvFlag(envValue("ENABLE_SHARED_HOST")),
-					settingEnabled: runtimeSettingsManager.getExperimentalSharedHost(),
-				}),
 				// Per-session identity reaches the extensions this session loads and stops
 				// there: it is deliberately NOT merged into `parsed`, so it can never move
 				// a model, an auth decision or a CLI flag.
@@ -1012,6 +1014,7 @@ export function createCliRuntimeFactory(
 			sessionManager,
 			sessionStartEvent,
 			model: sessionOptions.model,
+			initialModelProvenance: sessionOptions.initialModelProvenance,
 			thinkingLevel: sessionOptions.thinkingLevel,
 			thinkingSelection: sessionOptions.thinkingSelection,
 			scopedModels: sessionOptions.scopedModels,
@@ -1026,6 +1029,7 @@ export function createCliRuntimeFactory(
 				parseClientCapabilities(envValue("RPC_CLIENT_CAPABILITIES")),
 				launchProfile?.autoTitle,
 			),
+			promptSurface: launchProfile?.promptSurface,
 		});
 		markSwitch("createSession");
 		const cliThinkingOverride = runtimeParsed.thinking !== undefined || cliThinkingFromModel;
@@ -1076,7 +1080,7 @@ export async function main(args: string[], options?: MainOptions) {
 	}
 
 	if (process.platform === "win32") {
-		cleanupWindowsSelfUpdateQuarantine(getPackageDir());
+		cleanupWindowsSelfUpdateQuarantine(getInstallPackageDir());
 	}
 
 	const cwd = process.cwd();
@@ -1377,29 +1381,7 @@ export async function main(args: string[], options?: MainOptions) {
 		startupLoadingIndicator.stop();
 	});
 	time("createAgentSessionRuntime");
-	let selectedRuntime = runtime;
-	if (isTruthyEnvFlag(envValue("DISABLE_SHARED_HOST"))) {
-		console.error(
-			chalk.yellow(
-				"DISABLE_SHARED_HOST is obsolete: the shared session host is now off by default. Enable the experimental.sharedHost setting (or set the brand-prefixed ENABLE_SHARED_HOST=1 env flag) to opt in.",
-			),
-		);
-	}
-	if (
-		shouldJoinSharedHost(appMode, {
-			enableEnv: isTruthyEnvFlag(envValue("ENABLE_SHARED_HOST")),
-			settingEnabled: runtime.services.settingsManager.getExperimentalSharedHost(),
-		})
-	) {
-		const socket = envValue("RPC_SOCKET") ?? resolve(agentDir, "rpc", "rpc.sock");
-		const { createInteractiveHostRuntime } = await import("./modes/interactive/interactive-host-runtime.ts");
-		selectedRuntime = await createInteractiveHostRuntime(runtime, {
-			socket,
-			agentDir,
-			onWarning: (warning) => console.error(chalk.yellow(warning.message)),
-		});
-	}
-	const { services, session, modelFallbackMessage } = selectedRuntime;
+	const { services, session, modelFallbackMessage } = runtime;
 	const { settingsManager, modelRuntime, resourceLoader } = services;
 	setCapabilityOverrides(settingsManager.getTerminalCapabilityOverrides());
 	applyHttpProxySettings(settingsManager.getGlobalSettings().httpProxy);
@@ -1500,7 +1482,7 @@ export async function main(args: string[], options?: MainOptions) {
 		// Keep the TUI graph out of headless RPC children. This is intentionally at the
 		// mode seam: interactive startup still loads the same module before first use.
 		const { InteractiveMode } = await import("./modes/interactive/interactive-mode.ts");
-		const interactiveMode = new InteractiveMode(selectedRuntime, {
+		const interactiveMode = new InteractiveMode(runtime, {
 			migratedProviders,
 			legacyPiEditNotice: legacyPiEditStartupNotice(),
 			modelFallbackMessage,

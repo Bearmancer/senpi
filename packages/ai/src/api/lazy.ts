@@ -1,5 +1,6 @@
 import type { Api, AssistantMessage, AssistantMessageEvent, Model, ProviderStreams } from "../types.ts";
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
+import { describeReplacedInstall } from "../utils/provider-failure-description.ts";
 
 function createSetupErrorMessage(model: Model<Api>, error: unknown): AssistantMessage {
 	return {
@@ -17,7 +18,7 @@ function createSetupErrorMessage(model: Model<Api>, error: unknown): AssistantMe
 			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
 		},
 		stopReason: "error",
-		errorMessage: error instanceof Error ? error.message : String(error),
+		errorMessage: describeReplacedInstall(error) ?? (error instanceof Error ? error.message : String(error)),
 		timestamp: Date.now(),
 	};
 }

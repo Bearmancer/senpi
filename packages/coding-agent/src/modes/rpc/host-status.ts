@@ -97,6 +97,23 @@ export async function readHostStatus(
 	options: HostStatusOptions,
 	read: HostStatusReadOptions = {},
 ): Promise<HostStatusReport> {
+	return (await probeHostStatus(options, read)).report;
+}
+
+/**
+ * The report plus what the socket itself said, which the report blends with the directory: `answered`
+ * is the raw `get_protocol_info` answer (`undefined` when nothing answered) - the report's `instanceId`
+ * falls back to the RECORDED generation, so only this says whether the socket named an instance - and
+ * `listing` is every row `list_sessions` returned, whether or not the report publishes them.
+ */
+export async function probeHostStatus(
+	options: HostStatusOptions,
+	read: HostStatusReadOptions = {},
+): Promise<{
+	readonly report: HostStatusReport;
+	readonly answered: HostProtocolInfo | undefined;
+	readonly listing: readonly HostSessionRow[];
+}> {
 	const paths = createHostDaemonPaths({
 		socket: options.socket,
 		...(options.agentDir ? { agentDir: options.agentDir } : {}),
@@ -114,9 +131,10 @@ export async function readHostStatus(
 	const metrics = current ? await readHostProcessMetrics(current.pid) : UNOBSERVED_METRICS;
 	// A socket that did not answer who it is will not answer what it holds: asking again would only
 	// spend a second budget on a hung endpoint.
-	const listing = host === undefined ? [] : await readSessionListing(options.socket, includeWorkers, timeoutMs);
+	const listing: readonly HostSessionRow[] =
+		host === undefined ? [] : await readSessionListing(options.socket, includeWorkers, timeoutMs);
 	const claims = await readClaimRows(paths, generations);
-	return {
+	const report: HostStatusReport = {
 		reachable: host !== undefined,
 		socket: options.socket,
 		pid: current?.pid ?? null,
@@ -139,6 +157,7 @@ export async function readHostStatus(
 		claims_live: claims.filter((claim) => claim.live).length,
 		claims: includeWorkers ? claims : [],
 	};
+	return { report, answered: host, listing };
 }
 
 /**

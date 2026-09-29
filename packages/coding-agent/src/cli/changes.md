@@ -1,3 +1,21 @@
+## 2026-09-29 - Help-flag extension loading drops `sharedHostEnabled` (senpi#2328)
+
+### What changed
+
+- `packages/coding-agent/src/cli/help-extension-flags.ts`: `resolveHelpExtensionFlags` no longer passes `sharedHostEnabled: false` to `DefaultResourceLoader`; the option is removed (`src/core/changes.md`, same date).
+
+### Why
+
+- `pi.sharedHostEnabled` is removed from the extension API with the interactive shared-host join (senpi#2328).
+
+### Why an extension could not handle it
+
+- The help path constructs the resource loader before any extension loads.
+
+### Expected merge conflict zones
+
+- LOW: the `DefaultResourceLoader` options literal in `help-extension-flags.ts`.
+
 ## 2026-09-28 - `app-server --extension` in the help text (omo#9117)
 
 ### What changed

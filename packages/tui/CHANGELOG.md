@@ -6,6 +6,42 @@
 
 ### Added
 
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.29-4] - 2026-09-29
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.29-3] - 2026-09-29
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.29-2] - 2026-09-29
+
+### Breaking Changes
+
+### Added
+
 - `AutocompleteItem.awaitsArguments` marks a slash row whose command declares an argument hint; `getSlashCommandSuggestions` sets it from `argumentHint`. `EditorComponent.onSubmit` gains an optional `EditorSubmitDetails` argument whose `rawText` is the submission before trimming.
 
 ### Changed

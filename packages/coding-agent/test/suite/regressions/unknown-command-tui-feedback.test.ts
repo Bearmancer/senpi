@@ -36,6 +36,7 @@ type SubmitContext = {
 	takeSubmissionImages(text: string): unknown[];
 	beginUserEcho(text: string): string | undefined;
 	optimisticUserEchoes: { promptOptions(): object; reject: ReturnType<typeof vi.fn> };
+	refusedUnknownCommandText?: string | undefined;
 	reportUnknownCommandRejection?: (error: unknown, text: string) => boolean;
 };
 
@@ -97,7 +98,9 @@ describe("unknown command feedback in the interactive editor", () => {
 
 		expect(context.optimisticUserEchoes.reject).toHaveBeenCalledWith("echo-1");
 		expect(context.editor.text).toBe("/ulw-exec plan");
-		expect(context.showWarning).toHaveBeenCalledWith(rejection.message);
+		expect(context.showWarning).toHaveBeenCalledWith(
+			expect.stringMatching(/^Unknown command \/ulw-exec\. Did you mean \/skill:ulw-execute\?\n/),
+		);
 		expect(context.showError).not.toHaveBeenCalled();
 	});
 
@@ -109,7 +112,7 @@ describe("unknown command feedback in the interactive editor", () => {
 
 		expect(handled).toBe(true);
 		expect(context.editor.text).toBe("new draft");
-		expect(context.showWarning).toHaveBeenCalledWith(rejection.message);
+		expect(context.showWarning).toHaveBeenCalledWith(expect.stringContaining(rejection.message));
 	});
 
 	it("reports other errors as unhandled", () => {
@@ -146,5 +149,51 @@ describe("unknown command feedback in the interactive editor", () => {
 				unknownCommandAsText: true,
 			}),
 		).toEqual(expect.objectContaining({ unknownCommandAsText: true }));
+	});
+
+	it("sends the refused text as a message when the same text is submitted again", async () => {
+		const context = createContext({ streaming: false });
+		prototype.reportUnknownCommandRejection.call(context, rejection, "/ulw-exec plan");
+
+		await context.defaultEditor.onSubmit?.("/ulw-exec plan", { rawText: "/ulw-exec plan" });
+
+		expect(context.pendingUserInputs[0]?.unknownCommandAsText).toBe(true);
+	});
+
+	it("confirms a refused steering prompt with a second submission of the same text", async () => {
+		let rejectNext = true;
+		const context = createContext({
+			streaming: true,
+			prompt: async () => {
+				if (!rejectNext) return;
+				rejectNext = false;
+				throw rejection;
+			},
+		});
+
+		await context.defaultEditor.onSubmit?.("/ulw-exec plan", { rawText: "/ulw-exec plan" });
+		await context.defaultEditor.onSubmit?.("/ulw-exec plan", { rawText: "/ulw-exec plan" });
+
+		expect(context.session.prompt).toHaveBeenLastCalledWith(
+			"/ulw-exec plan",
+			expect.objectContaining({ unknownCommandAsText: true }),
+		);
+	});
+
+	it("checks the command again after the text changes or the confirmation is cancelled", async () => {
+		const context = createContext({ streaming: false });
+		prototype.reportUnknownCommandRejection.call(context, rejection, "/ulw-exec plan");
+		await context.defaultEditor.onSubmit?.("/ulw-exec plans", { rawText: "/ulw-exec plans" });
+		await context.defaultEditor.onSubmit?.("/ulw-exec plan", { rawText: "/ulw-exec plan" });
+
+		prototype.reportUnknownCommandRejection.call(context, rejection, "/ulw-exec plan");
+		context.refusedUnknownCommandText = undefined;
+		await context.defaultEditor.onSubmit?.("/ulw-exec plan", { rawText: "/ulw-exec plan" });
+
+		expect(context.pendingUserInputs.map((input) => input.unknownCommandAsText)).toEqual([
+			undefined,
+			undefined,
+			undefined,
+		]);
 	});
 });

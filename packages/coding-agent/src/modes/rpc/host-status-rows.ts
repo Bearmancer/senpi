@@ -17,6 +17,8 @@ export interface HostSessionRow {
 	readonly id: string;
 	readonly kind: string;
 	readonly session_path: string | null;
+	readonly cwd: string | null;
+	readonly name: string | null;
 	readonly attachments: number;
 	/** The labels published on a worker listing; `null` when the host published none. */
 	readonly context: Readonly<Record<string, string>> | null;
@@ -43,6 +45,8 @@ export function parseSessionRows(reply: unknown): readonly HostSessionRow[] {
 				id: typeof entry.sessionId === "string" ? entry.sessionId : "",
 				kind: typeof entry.kind === "string" ? entry.kind : "interactive",
 				session_path: typeof entry.sessionPath === "string" ? entry.sessionPath : null,
+				cwd: typeof entry.cwd === "string" ? entry.cwd : null,
+				name: typeof entry.name === "string" ? entry.name : null,
 				attachments: typeof entry.attachments === "number" ? entry.attachments : 0,
 				context: stringRecord(entry.context),
 			},

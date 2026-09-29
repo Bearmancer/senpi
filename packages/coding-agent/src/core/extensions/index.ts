@@ -24,6 +24,7 @@ export type {
 	SwitchSessionHandler,
 } from "./runner.ts";
 export { ExtensionRunner } from "./runner.ts";
+export * from "./session-control-types.ts";
 export type {
 	AfterProviderResponseEvent,
 	AgentEndEvent,

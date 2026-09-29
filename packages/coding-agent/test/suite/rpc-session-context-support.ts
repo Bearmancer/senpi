@@ -43,6 +43,7 @@ interface OpenFields {
 	readonly kind?: "interactive" | "worker";
 	readonly context?: Record<string, string>;
 	readonly auto_title?: boolean;
+	readonly promptSurface?: "terminal" | "app";
 }
 
 /**
@@ -199,6 +200,12 @@ export async function contextHost(
 			const outcome = z.object({ success: z.boolean(), error: z.string().optional() }).parse(record);
 			if (outcome.success) throw new Error("open_session unexpectedly succeeded");
 			return outcome.error ?? "";
+		},
+		/** The system prompt the session's runtime currently holds. */
+		systemPrompt(sessionId: string): string {
+			const prompt = registry.peek(sessionId)?.runtime?.session.systemPrompt;
+			if (prompt === undefined) throw new Error(`no runtime for ${sessionId}`);
+			return prompt;
 		},
 		/** The identity the session's own extension instance saw at registration time. */
 		async probe(connection: string, sessionId: string): Promise<z.infer<typeof identitySchema>> {

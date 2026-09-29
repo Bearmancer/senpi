@@ -2,8 +2,6 @@ import { expect, it, vi } from "vitest";
 import { SESSION_WORKER_LIMITS } from "../../src/modes/rpc/session-worker-protocol.ts";
 import { SessionWorkerRequests } from "../../src/modes/rpc/session-worker-requests.ts";
 
-const display = { revision: 0, width: 80, rendered: false, capabilities: [] };
-
 it("reserves bounded interrupt slots even when normal worker requests are exhausted", async () => {
 	const sent: Array<{ request: number }> = [];
 	const requests = new SessionWorkerRequests(
@@ -14,12 +12,12 @@ it("reserves bounded interrupt slots even when normal worker requests are exhaus
 	);
 	const pending = [];
 	for (let i = 0; i < SESSION_WORKER_LIMITS.requests; i++)
-		pending.push(requests.request({ type: "command", command: { type: "get_state" }, display }));
+		pending.push(requests.request({ type: "command", command: { type: "get_state" } }));
 	const results = Promise.allSettled(pending);
-	await expect(requests.request({ type: "command", command: { type: "get_state" }, display })).rejects.toThrow(
+	await expect(requests.request({ type: "command", command: { type: "get_state" } })).rejects.toThrow(
 		"session_worker_request_limit",
 	);
-	const interrupt = requests.request({ type: "command", command: { type: "abort" }, display });
+	const interrupt = requests.request({ type: "command", command: { type: "abort" } });
 	const last = sent.at(-1);
 	if (!last) throw new Error("Interrupt was not dispatched");
 	requests.receive({ type: "result", request: last.request });
@@ -43,7 +41,6 @@ it("does not dispatch a request beyond the worker byte budget", async () => {
 		requests.request({
 			type: "command",
 			command: { type: "prompt", message: "x".repeat(SESSION_WORKER_LIMITS.requestBytes) },
-			display,
 		}),
 	).rejects.toThrow("session_worker_request_limit");
 	expect(dispatched).toBe(0);
@@ -67,7 +64,7 @@ it("does not reset the opening deadline between commit and bind", async () => {
 		if (!first) throw new Error("Commit was not dispatched");
 		requests.receive({ type: "result", request: first.request });
 		await commit;
-		const bind = requests.request({ type: "bind", sessionId: "fixture", display });
+		const bind = requests.request({ type: "bind", sessionId: "fixture", capabilities: [] });
 		const drained = Promise.allSettled([bind]);
 		await vi.advanceTimersByTimeAsync(1000);
 		expect(timeouts).toBe(1);
@@ -88,8 +85,8 @@ it("times out interrupts without imposing that timeout on normal commands", asyn
 			timeouts++;
 		},
 	);
-	const normal = requests.request({ type: "command", command: { type: "prompt" }, display });
-	const interrupt = requests.request({ type: "command", command: { type: "abort" }, display });
+	const normal = requests.request({ type: "command", command: { type: "prompt" } });
+	const interrupt = requests.request({ type: "command", command: { type: "abort" } });
 	const results = Promise.allSettled([normal, interrupt]);
 	try {
 		await vi.advanceTimersByTimeAsync(SESSION_WORKER_LIMITS.controlMs);

@@ -16,10 +16,10 @@ export const WORKSPACE_PACKAGES = [
 	"packages/tui/package.json",
 ];
 
-// Bundled runtime workspaces that ship inside the senpi tarball but do NOT ride the fork's CalVer
-// lockstep: they keep upstream's own release version. The install-lock generator must still treat
-// them as internal (resolving their dependency closure from the local workspace manifest, never
-// fetching upstream registry metadata) so the closure matches the bundled copy; they are exempt
+// Runtime workspaces that senpi depends on but that do NOT ride the fork's CalVer lockstep: they
+// keep upstream's own release version. The install-lock generator must still treat them as internal
+// (resolving their dependency closure from the local workspace manifest, never fetching upstream
+// registry metadata) so the closure matches the in-tree copy; they are exempt
 // from the lockstep version check because their version is not the fork CalVer. chord is here
 // because it is byte-for-byte upstream apart from packaging metadata, so it keeps `@earendil-works/chord`'s
 // own published identity instead of a fork alias (issue #1632).

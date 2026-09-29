@@ -2,12 +2,20 @@
 import "./valid-cwd.ts";
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync, realpathSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { processBunRuntimeOptions, resolveBunReexec } from "./bun-runtime.ts";
 import { enableStartupCompileCache } from "./compile-cache.ts";
-import { APP_NAME, DISPLAY_VERSION, getPackageDir, isBundledNode } from "./config.ts";
+import {
+	APP_NAME,
+	DISPLAY_VERSION,
+	findNodePackageDir,
+	getAgentDir,
+	getInstallPackageDir,
+	isBundledNode,
+} from "./config.ts";
 import { hasInheritedInspectorOption, releaseInheritedInspectorForChild } from "./inspector-policy.ts";
+import { prepareRuntimeSnapshot } from "./runtime-snapshot/enter.ts";
 import { handleBootstrapSelfUpdate } from "./self-update-bootstrap.ts";
 
 // Upstream's `cli/setup.ts` helper is deliberately not used here: this launcher only decides the
@@ -155,7 +163,7 @@ if (isRootCommand(args) && args.some((arg) => arg === "--help" || arg === "-h"))
 	}
 }
 
-if (isMissingBundledWorkspaceDependencies(getPackageDir())) {
+if (isMissingBundledWorkspaceDependencies(getInstallPackageDir())) {
 	if (await handleBootstrapSelfUpdate(args)) {
 		process.exit();
 	}
@@ -168,5 +176,15 @@ if (requiresIsolatedProcess()) {
 	// `process.exitCode` and any `process.exit()` of its own, so importing it here IS the run - there
 	// is no result to forward. It has to be a dynamic import: a static one would evaluate the whole
 	// engine graph before the `--version` and bootstrap-repair paths above, which answer without it.
-	await import("./cli-main.ts");
+	// A bundled install hands the run to its runtime snapshot's own copy of this entry instead, so
+	// an upgrade that rewrites the install cannot remove chunks this session imports later (#2358).
+	const entryPath = fileURLToPath(import.meta.url);
+	const snapshot = isBundledNode
+		? prepareRuntimeSnapshot(entryPath, findNodePackageDir(dirname(entryPath)), getAgentDir())
+		: undefined;
+	if (snapshot?.kind === "hand-off") {
+		await import(snapshot.entryUrl);
+	} else {
+		await import("./cli-main.ts");
+	}
 }

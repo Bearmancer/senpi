@@ -10,6 +10,7 @@ import { AuthStorage } from "./auth-storage.ts";
 import { estimateTokens } from "./compaction/compaction.ts";
 import { createSessionCursorExecBridge } from "./cursor-exec-bridge-session.ts";
 import { DEFAULT_THINKING_LEVEL } from "./defaults.ts";
+import type { PromptSurface } from "./dynamic-prompt/types.ts";
 import { ModelUsabilityBudgetError } from "./extensions/builtin/compaction/model-usability-budget.ts";
 import { planResumeSlice } from "./extensions/builtin/compaction/resume-slice.ts";
 import { type ServiceTier, supportsServiceTier } from "./extensions/builtin/service-tier.ts";
@@ -123,6 +124,8 @@ export interface CreateAgentSessionOptions {
 	sessionStartEvent?: SessionStartEvent;
 	/** Generate a session title after the first successful turn. */
 	autoTitleSessions?: boolean;
+	/** Where this session's replies render; omitted means `SENPI_PROMPT_SURFACE` decides. */
+	promptSurface?: PromptSurface;
 }
 
 /** Result from createAgentSession */
@@ -546,6 +549,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		extensionRunnerRef,
 		sessionStartEvent,
 		autoTitleSessions: options.autoTitleSessions,
+		promptSurface: options.promptSurface,
 	});
 	const liveContextTokens = hasExistingSession
 		? existingSession.messages.reduce((total, message) => total + estimateTokens(message), 0)

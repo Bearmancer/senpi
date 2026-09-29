@@ -90,11 +90,7 @@ import { resolvePath } from "../utils/paths.ts";
 import { sleep } from "../utils/sleep.ts";
 import { normalizeToolResultImages } from "../utils/tool-result-images.ts";
 import { AgentAbortProvenance, type AgentAbortSource } from "./agent-abort-provenance.ts";
-import {
-	AgentSettledDelivery,
-	type DeferredAgentSettledAction,
-	type DeferredTurnClaim,
-} from "./agent-settled-delivery.ts";
+import { AgentSettledDelivery, type DeferredAgentSettledAction, DeferredTurnClaim } from "./agent-settled-delivery.ts";
 import { formatNoApiKeyFoundMessage, formatNoModelSelectedMessage } from "./auth-guidance.ts";
 import { type BashResult, executeBashWithOperations } from "./bash-executor.ts";
 import { envValue } from "./brand.ts";
@@ -119,7 +115,12 @@ import type { CompactionModelSelector } from "./compaction-settings-access.ts";
 import { admitCursorHistory, cursorAdmissionBudgetBytes } from "./cursor-history-admission.ts";
 import { DEFAULT_THINKING_LEVEL } from "./defaults.ts";
 import { resolveDiscoveredResourcePaths } from "./discovered-resource-scope.ts";
-import { type BuildDynamicSystemPromptOptions, buildDynamicSystemPrompt } from "./dynamic-prompt/index.ts";
+import {
+	type BuildDynamicSystemPromptOptions,
+	buildDynamicSystemPrompt,
+	type PromptSurface,
+	resolvePromptSurface,
+} from "./dynamic-prompt/index.ts";
 import {
 	AssistantEditError,
 	assertExpectedLeaf,
@@ -216,6 +217,7 @@ import type {
 	ModelSelectSource,
 } from "./extensions/types.ts";
 import { normalizeToolExposure, RUNTIME_EXTENSION_PATH } from "./extensions/types.ts";
+import { ExternalAdmission } from "./external-admission.ts";
 import { shouldWarnHighReasoning } from "./high-reasoning-warning.ts";
 import {
 	isManualContinueSubmission,
@@ -255,6 +257,7 @@ import { createFallbackLogger } from "./retry-fallback/log.ts";
 import { ProbeBackScheduler } from "./retry-fallback/probe-scheduler.ts";
 import { validateFallbackChains } from "./retry-fallback/validate.ts";
 import { isSessionBusySnapshot, type SessionActivitySnapshot, WakeSourceTracker } from "./session-activity.ts";
+import { type ControlEndpointHost, createSessionControlActions } from "./session-control-actions.ts";
 import { computeSessionFailureReport, type SessionFailureReport } from "./session-failure-report.ts";
 import { createSessionLogger, type SessionLogger } from "./session-log.ts";
 import type { BranchSummaryEntry, CompactionEntry, SessionEntry, SessionManager } from "./session-manager.ts";
@@ -290,6 +293,7 @@ import { type BashOperations, createLocalBashOperations } from "./tools/bash.ts"
 import { composeFilesystemPolicies } from "./tools/filesystem-policy.ts";
 import { createAllToolDefinitions } from "./tools/index.ts";
 import { createToolDefinitionFromAgentTool } from "./tools/tool-definition-wrapper.ts";
+import { TranscriptWriteFailures } from "./transcript-write-failures.ts";
 import { commandShapedName, findUnknownCommand } from "./unknown-command.ts";
 import { addUsageToTotals, createUsageTotals } from "./usage-totals.ts";
 
@@ -355,6 +359,8 @@ export type AgentSessionEvent =
 			notice: string;
 	  }
 	| { type: "continuation_error"; errorMessage: string }
+	/** The session file refused a message of the running turn; the message is not in the transcript. */
+	| { type: "transcript_write_failed"; role: AgentMessage["role"]; errorMessage: string }
 	| {
 			type: "skill_invocation";
 			skills: readonly {
@@ -473,7 +479,13 @@ export type AgentSessionEvent =
 			limit?: "model" | "account";
 	  }
 	| { type: "retry_fallback_succeeded"; model: string; chainKey: string }
-	| { type: "retry_fallback_reverted"; from: string; to: string }
+	| {
+			type: "retry_fallback_reverted";
+			from: string;
+			to: string;
+			/** `fallback-unusable`: the fallback could not serve (billing or an account limit), so the session returned early. */
+			cause?: "fallback-unusable";
+	  }
 	| { type: "retry_fallback_exhausted"; chainKey: string; lastError: string }
 	| {
 			type: "server_fallback_aborted";
@@ -593,6 +605,8 @@ export interface AgentSessionConfig {
 	/** Session start event metadata emitted when extensions bind to this runtime. */
 	sessionStartEvent?: SessionStartEvent;
 	autoTitleSessions?: boolean;
+	/** Where this session's replies render; omitted means `SENPI_PROMPT_SURFACE` decides. */
+	promptSurface?: PromptSurface;
 }
 
 type SessionModelEntry = {
@@ -959,6 +973,18 @@ export class AgentSession {
 	/** Messages queued to be included with the next user prompt as context ("asides"). */
 	private _pendingNextTurnMessages: CustomMessage[] = [];
 	private _pendingCustomMessages: CustomMessage[] = [];
+	/** Deliveries from other sessions: admitted once into the queues below, tracked until their entry is written. */
+	readonly externalAdmission = new ExternalAdmission({
+		isBusy: () => this._isAgentRunActive || this._promptStartPending,
+		enqueue: (message, lane) => (lane === "steer" ? this.agent.steer(message) : this.agent.followUp(message)),
+		start: (message) =>
+			this.sendCustomMessage(message, { triggerTurn: true }).catch((error: unknown) => {
+				this._sessionLogger.warn("external_delivery_start_failed", {
+					error: error instanceof Error ? error.message : String(error),
+				});
+			}),
+	});
+	private _controlEndpointHost: ControlEndpointHost | undefined;
 	// Queues held while the first post-compaction response is classified. Agent
 	// core otherwise drains steering immediately before AgentSession can consume
 	// the stale-usage exemption and schedule the continuation itself.
@@ -983,6 +1009,11 @@ export class AgentSession {
 	private _autoCompactionSessionOverride: boolean | undefined;
 	private _compactionSkippedTooSmall = false;
 	private _requiredCompactionAdmissionError: RequiredCompactionError | undefined;
+	// Message writes the session file refused. Queued event work cannot throw to the prompt, so a
+	// prompt-owned run's prompt throws the first one once the queue settles; any other run reports it
+	// as a continuation error when it happens.
+	private readonly _transcriptWriteFailures = new TranscriptWriteFailures();
+	private _promptOwnsRun = false;
 	// Preserve provenance across agent-core's conversion of our admission error
 	// into an assistant error message. Matching provider text alone is not proof
 	// that AgentSession initiated required-compaction recovery.
@@ -1126,8 +1157,10 @@ export class AgentSession {
 		appendSystemPrompt?: string;
 	};
 	private _systemPromptOverride?: string;
+	private _promptSurface: PromptSurface | undefined;
 
 	constructor(config: AgentSessionConfig) {
+		this._promptSurface = config.promptSurface;
 		this.agent = config.agent;
 		this.sessionManager = config.sessionManager;
 		this.settingsManager = config.settingsManager;
@@ -1664,7 +1697,7 @@ export class AgentSession {
 
 	private _emit(event: AgentSessionEvent): void {
 		this._logSessionEvent(event);
-		for (const l of this._eventListeners) {
+		for (const l of [...this._eventListeners]) {
 			l(event);
 		}
 	}
@@ -1953,6 +1986,8 @@ export class AgentSession {
 			return;
 		}
 		this._isAgentRunActive = false;
+		// Before the settle and idle edges: the drain they wake may redeliver what this run's file refused.
+		this.externalAdmission.observeRunSettled();
 		let deferredActions: DeferredAgentSettledAction[] = [];
 		let deferredTurnClaims: DeferredTurnClaim[] = [];
 		this._agentSettledDelivery.begin(this._userAbortGeneration);
@@ -2008,8 +2043,18 @@ export class AgentSession {
 		deferredTurnClaim?: DeferredTurnClaim,
 	): Promise<void> {
 		deferredTurnClaim?.resolve("started");
+		if (!this._isAgentRunActive) this.externalAdmission.beginTurn();
 		this._isAgentRunActive = true;
 		this._requiredCompactionAdmissionError = undefined;
+		this._transcriptWriteFailures.startRun();
+		this._promptOwnsRun = true;
+		if (!this.agent.state.isStreaming) {
+			const withoutRefused = this._transcriptWriteFailures.takeRefusedOut(this.agent.state.messages);
+			if (withoutRefused) {
+				this.agent.state.messages = withoutRefused;
+				this._incrementMessageRevision();
+			}
+		}
 		this.agent.abortServerSideFallback =
 			this.settingsManager.getAbortServerSideFallback() && this._retryFallback.hasConfiguredChain();
 		try {
@@ -2018,8 +2063,10 @@ export class AgentSession {
 			// blocking Agent core. Wait for this run's queued recovery decision
 			// before reporting prompt completion to the caller.
 			await this._agentEventQueue;
+			this._promptOwnsRun = false;
 			const requiredCompactionError = this._requiredCompactionAdmissionError;
 			this._requiredCompactionAdmissionError = undefined;
+			const transcriptWriteFailure = this._transcriptWriteFailures.takeReport();
 			if (requiredCompactionError) {
 				this._sessionLogger.warn("prompt_rejected", {
 					stage: "admission",
@@ -2027,7 +2074,9 @@ export class AgentSession {
 				});
 				throw requiredCompactionError;
 			}
+			if (transcriptWriteFailure) throw transcriptWriteFailure.error;
 		} catch (error) {
+			this._promptOwnsRun = false;
 			if (
 				error instanceof Error &&
 				error.message ===
@@ -2466,24 +2515,37 @@ export class AgentSession {
 
 		// Handle session persistence
 		if (event.type === "message_end") {
-			// Check if this is a custom message from extensions
-			if (event.message.role === "custom") {
-				// Persist as CustomMessageEntry
-				this.sessionManager.appendCustomMessageEntry(
-					event.message.customType,
-					event.message.content,
-					event.message.display,
-					event.message.details,
-				);
-				this._incrementMessageRevision();
-			} else if (
-				event.message.role === "user" ||
-				event.message.role === "assistant" ||
-				event.message.role === "toolResult"
-			) {
-				// Regular LLM message - persist as SessionMessageEntry
-				this._emitEntryAppended(this.sessionManager.appendMessage(event.message));
-				this._incrementMessageRevision();
+			try {
+				// Check if this is a custom message from extensions
+				if (event.message.role === "custom") {
+					// Persist as CustomMessageEntry
+					this.sessionManager.appendCustomMessageEntry(
+						event.message.customType,
+						event.message.content,
+						event.message.display,
+						event.message.details,
+					);
+					this._incrementMessageRevision();
+					this.externalAdmission.observePersisted(event.message);
+				} else if (
+					event.message.role === "user" ||
+					event.message.role === "assistant" ||
+					event.message.role === "toolResult"
+				) {
+					// Regular LLM message - persist as SessionMessageEntry
+					this._emitEntryAppended(this.sessionManager.appendMessage(event.message));
+					this._incrementMessageRevision();
+					this.externalAdmission.observePersisted(event.message);
+				}
+			} catch (error) {
+				// The session manager kept nothing, so the turn goes on; the run's owner reports it.
+				const errorMessage = error instanceof Error ? error.message : String(error);
+				// A refused delivery is settled, not left held: a held start would queue every later delivery.
+				this.externalAdmission.observeRefused(event.message, errorMessage);
+				this._sessionLogger.warn("transcript_write_failed", { role: event.message.role, error: errorMessage });
+				this._transcriptWriteFailures.record(event.message, error);
+				this._emit({ type: "transcript_write_failed", role: event.message.role, errorMessage });
+				if (!this._promptOwnsRun) this._reportContinuationTranscriptFailure();
 			}
 			// Other message types (bashExecution, compactionSummary, branchSummary) are persisted elsewhere
 
@@ -3243,6 +3305,18 @@ export class AgentSession {
 		return !this._isAgentRunActive;
 	}
 
+	/**
+	 * Rebuilds the prompt for another surface (a later `open_session.promptSurface`). The next
+	 * turn's `before_agent_start` hands presets the new surface through `systemPromptOptions`.
+	 */
+	setPromptSurface(surface: PromptSurface): void {
+		const current = this._baseSystemPromptOptions.surface;
+		this._promptSurface = surface;
+		if (current === surface) return;
+		this._systemPromptOverride = undefined;
+		this._applyToolDeclarations(this.getActiveToolNames());
+	}
+
 	/** Current effective system prompt (includes any per-turn extension modifications) */
 	get systemPrompt(): string {
 		return this.agent.state.systemPrompt;
@@ -3652,6 +3726,11 @@ export class AgentSession {
 		this._resourceLoader.emitExtensionEvent?.(channel, data);
 	}
 
+	/** Installed by the interactive mode before it binds extensions; `pi.session.registerControlEndpoint` needs one. */
+	setControlEndpointHost(host: ControlEndpointHost | undefined): void {
+		this._controlEndpointHost = host;
+	}
+
 	/** Current session display name, if set */
 	get sessionName(): string | undefined {
 		return this.sessionManager.getSessionName();
@@ -3776,6 +3855,7 @@ export class AgentSession {
 			selectedTools: validToolNames,
 			toolSnippets,
 			promptGuidelines,
+			surface: this._promptSurface ?? resolvePromptSurface(process.env),
 			customPrompt: loaderSystemPrompt,
 			appendSystemPrompt: loaderAppendSystemPrompt.length > 0 ? loaderAppendSystemPrompt.join("\n\n") : undefined,
 		};
@@ -3864,6 +3944,33 @@ export class AgentSession {
 	 * @throws Error if no model selected or no API key available (when not streaming)
 	 */
 	async prompt(text: string, options?: PromptOptions): Promise<void> {
+		// Held synchronously, before any await: an external delivery never overtakes this input.
+		const hold = this.externalAdmission.beginInput({
+			command: this._isExtensionCommandText(text, options),
+			submittedByCommand: options?.source === "extension",
+		});
+		try {
+			await this._prompt(text, {
+				...options,
+				promptDisposition: (disposition) => {
+					hold.accepted();
+					options?.promptDisposition?.(disposition);
+				},
+			});
+		} finally {
+			hold.end();
+		}
+	}
+
+	private _isExtensionCommandText(text: string, options?: PromptOptions): boolean {
+		if (!(options?.expandPromptTemplates ?? true) || !text.startsWith("/")) return false;
+		const spaceIndex = text.indexOf(" ");
+		return (
+			this._extensionRunner.getCommand(spaceIndex === -1 ? text.slice(1) : text.slice(1, spaceIndex)) !== undefined
+		);
+	}
+
+	private async _prompt(text: string, options: PromptOptions): Promise<void> {
 		const throwIfCancelled = (): void => {
 			if (!options?.signal?.aborted) return;
 			const error = new Error("Prompt cancelled before acceptance");
@@ -4009,19 +4116,42 @@ export class AgentSession {
 					hasImages: (options?.images?.length ?? 0) > 0,
 				})
 			) {
-				await this.sendCustomMessage(
-					{
-						customType: MANUAL_CONTINUE_CUSTOM_TYPE,
-						content: MANUAL_CONTINUE_DIRECTIVE,
-						display: false,
-					},
-					{
-						triggerTurn: true,
-						deliverAs: options?.streamingBehavior === "followUp" ? "followUp" : "steer",
-					},
-				);
-				promptDisposition?.("handled");
-				preflightResult?.(true);
+				// Report acceptance once the runtime took the continuation - its turn started (as
+				// subscribers see it: after that turn's agent_start) or it was queued into a running
+				// turn - like an ordinary prompt, not after the whole continued turn.
+				let accepted = false;
+				const reportAccepted = (): void => {
+					if (accepted) return;
+					accepted = true;
+					promptDisposition?.("handled");
+					preflightResult?.(true);
+				};
+				let turnStarted = false;
+				const turnClaim = new DeferredTurnClaim();
+				void turnClaim.disposition.then((disposition) => {
+					if (disposition === "delegated") reportAccepted();
+					else if (disposition === "started") turnStarted = true;
+				});
+				const unsubscribe = this.subscribe((event) => {
+					if (event.type === "agent_start" && turnStarted) reportAccepted();
+				});
+				try {
+					await this.sendCustomMessage(
+						{
+							customType: MANUAL_CONTINUE_CUSTOM_TYPE,
+							content: MANUAL_CONTINUE_DIRECTIVE,
+							display: false,
+						},
+						{
+							triggerTurn: true,
+							deliverAs: options?.streamingBehavior === "followUp" ? "followUp" : "steer",
+						},
+						turnClaim,
+					);
+				} finally {
+					unsubscribe();
+				}
+				reportAccepted();
 				return;
 			}
 
@@ -4977,6 +5107,7 @@ export class AgentSession {
 		this._postCompactionDeferredSteeringMessages = [];
 		this._postCompactionDeferredFollowUpMessages = [];
 		this.agent.clearAllQueues();
+		this.externalAdmission.dropQueued();
 		this._emitQueueUpdate();
 		const cleared = { steering, followUp } as ClearedQueue;
 		Object.defineProperty(cleared, "ordered", {
@@ -7362,6 +7493,7 @@ export class AgentSession {
 
 			await this._revalidateScheduledContinuationAdmission();
 			if (this.agent.state.isStreaming) return "taken-over";
+			if (!this._promptOwnsRun) this._transcriptWriteFailures.startRun();
 
 			await runBoundedRetryContinuation({
 				continueRun: async () => {
@@ -7414,6 +7546,14 @@ export class AgentSession {
 		if (this.pendingMessageCount > 0 || this.agent.hasQueuedMessages()) {
 			this._scheduleContinuationAfterCurrentEvent();
 		}
+	}
+
+	/** A continuation run has no prompt to reject, so a message write it lost is reported like a failed continuation. */
+	private _reportContinuationTranscriptFailure(): void {
+		const failure = this._transcriptWriteFailures.takeReport();
+		if (!failure) return;
+		const message = failure.error instanceof Error ? failure.error.message : String(failure.error);
+		this._emit({ type: "continuation_error", errorMessage: `The session file did not save this run: ${message}` });
 	}
 
 	private _scheduleContinuationAfterCurrentEvent(
@@ -7860,6 +8000,11 @@ export class AgentSession {
 				},
 				setSessionThinkingLevel: (level) => this.setSessionThinkingLevel(level),
 				setSessionFastMode: (enabled) => this.setSessionFastMode(enabled),
+				sessionControl: createSessionControlActions({
+					admission: this.externalAdmission,
+					sessionManager: this.sessionManager,
+					host: () => this._controlEndpointHost,
+				}),
 			},
 			{
 				getModel: () => this.model,

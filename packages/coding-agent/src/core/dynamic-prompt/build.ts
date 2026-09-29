@@ -7,14 +7,24 @@ import { buildPoliciesSection } from "./policies.ts";
 import { buildStyleSection } from "./style.ts";
 import { categorizeTools } from "./tool-categorization.ts";
 import { buildToolSection } from "./tool-section.ts";
-import type { AvailableTool } from "./types.ts";
+import type { AvailableTool, PromptSurface } from "./types.ts";
 import { buildVerificationSection } from "./verification.ts";
 import { buildWorkingTaskSection } from "./working-task.ts";
 import { buildWorkstationSection, type WorkstationDialect } from "./workstation.ts";
 
+export type { PromptSurface } from "./types.ts";
+
+export const PROMPT_SURFACE_ENV_VAR = "SENPI_PROMPT_SURFACE";
+
+/** `SENPI_PROMPT_SURFACE=app` selects the app surface; unset or any other value is the terminal. */
+export function resolvePromptSurface(env: Readonly<Record<string, string | undefined>>): PromptSurface {
+	return env[PROMPT_SURFACE_ENV_VAR] === "app" ? "app" : "terminal";
+}
+
 /** Context handed to a `corePrompt` override so it can reuse the dynamic pieces. */
 export interface DynamicPromptCoreContext {
 	tools: AvailableTool[];
+	surface: PromptSurface;
 	/** Rendered "## Available Tools" (+ "## Tool Guidelines") section. */
 	toolSection: string;
 }
@@ -44,6 +54,11 @@ export interface BuildDynamicSystemPromptOptions {
 	 * (maximum emphasis).
 	 */
 	workstationDialect?: WorkstationDialect;
+	/**
+	 * Where replies render. `app` (a chat UI host) drops the visible routing line and keeps
+	 * tool and hook feedback with the agent; omitted means `terminal`.
+	 */
+	surface?: PromptSurface;
 }
 
 function buildContextFilesSection(contextFiles: Array<{ path: string; content: string }>): string {
@@ -72,24 +87,25 @@ export function buildDynamicSystemPrompt(options: BuildDynamicSystemPromptOption
 		promptGuidelines: options.promptGuidelines,
 	});
 
+	const surface = options.surface ?? "terminal";
 	const sections = options.corePrompt
-		? [options.corePrompt({ tools, toolSection })]
+		? [options.corePrompt({ tools, toolSection, surface })]
 		: [
 				buildIdentitySection(),
 				"",
-				buildIntentGate({ tools }),
+				buildIntentGate({ tools, surface }),
 				"",
 				buildWorkingTaskSection(),
 				"",
-				buildVerificationSection(),
+				buildVerificationSection({ surface }),
 				"",
 				toolSection,
 				"",
 				buildPoliciesSection(),
 				"",
-				buildHandoffSection(),
+				buildHandoffSection({ surface }),
 				"",
-				buildStyleSection(),
+				buildStyleSection({ surface }),
 			];
 
 	const tuning = options.tuningSection?.trim();
