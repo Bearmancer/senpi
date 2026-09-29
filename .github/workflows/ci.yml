@@ -445,6 +445,7 @@ jobs:
         run: |
           bun test scripts/node-bundle-provider-isolation.test.ts
           bun test scripts/node-bundle-smoke.test.ts
+          bun test scripts/node-bundle-cursor-exec.test.ts
 
       - name: Script tests
         run: npm run test:scripts

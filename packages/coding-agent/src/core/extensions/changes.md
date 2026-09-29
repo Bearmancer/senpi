@@ -1,5 +1,26 @@
 # Core Extensions Changes
 
+## 2026-09-29 - Turns requested during `session_start` dispatch start after every handler (senpi#1972)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/runner.ts`: `bindCore` routes `sendMessage(..., { triggerTurn: true })` and `sendUserMessage` through a `SessionStartTurnGate`, and `emit` runs a `session_start` dispatch inside that gate (the former `emit` body is now the private `dispatchEmit`; `emit` itself is not `async`, so every other event resolves on exactly the microtask it did before — an extra `async` hop there delayed `agent_end` settlement enough to break `post-compaction-tool-continuation-deadlock`). A turn an extension requests while `session_start` handlers are still being dispatched starts right after the last handler returns, in request order; a synchronous throw from starting it is reported through `emitError` with `RUNTIME_EXTENSION_PATH`. Messages without `triggerTurn`, and turns requested from any other event, go through unchanged and immediately.
+- `packages/coding-agent/src/core/extensions/session-start-turn-gate.ts` (new, fork-only): the gate.
+
+### Why
+
+- Handlers run one after another in registration order, and some extensions start a turn from their own `session_start` handler (terminal monitor restore, goal continuation, loop runs). That turn reached the provider before later handlers had set up their per-session state. The Claude subscription provider restores its continuity binding in its `session_start` handler and is registered after those extensions, so the first resumed turn found no binding and re-sent the whole conversation as `flatten / registry_miss` while a valid binding sat on disk (senpi#1972, oh-my-openagent#8424 finding 3).
+- Holding the turn removes the order dependency itself: nothing is reordered, ordinary event dispatch and `message_end` rewrite ordering are untouched, and it covers every extension, not just that provider.
+- It cannot deadlock a handler: `sendMessage` / `sendUserMessage` are fire-and-forget, so no handler awaits the turn it requested. The held turn still starts inside `AgentSession.bindExtensions` before its binding-phase prompt readiness is cleared, so the senpi goal-resume exemption (b5ec70f266) sees the same state as before.
+
+### Why an extension could not handle it
+
+- The order problem sits between extensions: the extension that starts the turn cannot know which later handler the turn depends on, and a handler cannot run before the ones registered ahead of it. Only the runner sees the whole dispatch.
+
+### Expected merge conflict zones
+
+- LOW: the `sendMessage` / `sendUserMessage` lines in `bindCore`, the `sessionStartTurns` field next to `shutdownHandler`, and the two-line `emit` wrapper above `dispatchEmit`. An upstream edit inside the old `emit` body now lands in `dispatchEmit`.
+
 ## 2026-09-27 - `kernelPrelude`, `permissionParser`, and the `tool_activated` event on the extension API
 
 ### What changed

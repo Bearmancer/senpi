@@ -511,7 +511,9 @@ class ModelsImpl implements MutableModels {
 				}
 			} else {
 				const resolution = await resolveProviderAuth(provider, this.credentials, this.authContext, { signal });
-				if (resolution) return { source: resolution.source, type: "api_key" };
+				if (resolution) {
+					return { source: resolution.source, type: "api_key", ...(resolution.ambient ? { ambient: true } : {}) };
+				}
 			}
 		}
 		if (!oauth?.check) return undefined;

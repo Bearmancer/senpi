@@ -1,5 +1,29 @@
 # mcp Extension Changes
 
+## 2026-09-29 - Skill-declared servers expand ${VAR} by the skill's trust (#2345)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/skill-server.ts` (new; `resolveSkillMcpServer` moved here from `config.ts`): a skill-declared stdio server from a trusted source (user, temporary or system scope, or project scope while the project is trusted) is interpolated with the same `interpolateValue` as trusted `mcp.json`; an untrusted project's stdio server stays literal and returns one warning naming the skill and the variables; a remote server from any skill keeps `url`/`headers` literal and drops a bearer-attaching `bearerTokenEnv` (setting `auth: false`), with one warning each. A server asking for command substitution is skipped with a warning instead of throwing.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/config.ts`: exports `normalizeServer`, `interpolateValue` and `hashConfig` for `skill-server.ts`.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/skills.ts`: `SkillLike.sourceInfo.scope` and `SkillServerRegistration` (first declaring skill's name and scope) travel with each declaration.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/service.ts`: `attachSkillMcpServers` takes `SkillServerRegistration`s, derives trust from the scope plus the session's project trust, and returns each trust warning once per session.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/index.ts`: passes the parsed declarations straight through.
+
+### Why
+
+- Skill servers skipped `${VAR}` expansion, so the documented `"env": { "EXA_API_KEY": "${EXA_API_KEY}" }` spawned the child with the literal placeholder. A stdio child sees only the SDK's allowlisted environment plus `env` (`transport-sdk.ts`), so expansion decides which parent variables a skill-chosen command receives: user-owned skills get what trusted `mcp.json` gets, an untrusted project's skill gets nothing. Remote servers never expand, and `bearerTokenEnv` from a skill is dropped, because both would send a parent variable to a URL the skill chose.
+
+### Why an extension could not handle it
+
+- Skill server resolution and registration are internal to the MCP builtin.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/service.ts`: `attachSkillMcpServers` signature and loop, the `#skillServerWarnings` field, the `attachSession` prologue.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/config.ts`: the removed `resolveSkillMcpServer` and the `export` keywords.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/skills.ts`: `SkillLike` and the declaration record.
+
 ## 2026-09-27 - Register a raced startup catalog exactly once (#2177)
 
 ### What changed

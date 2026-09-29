@@ -348,9 +348,9 @@ ${chalk.bold("Commands:")}
                                  Open TUI to enable/disable package resources (Tab switches scope)
   ${APP_NAME} models discover <provider>
                                  Add an OpenAI-compatible provider's /models listing to models.json
-  ${APP_NAME} app-server [--listen <url>]
+  ${APP_NAME} app-server [--listen <url>] [--extension <path>]...
                                  Serve agent sessions over the Codex app-server protocol
-  ${APP_NAME} app-server daemon <start|stop|status|restart> [--listen <url>]
+  ${APP_NAME} app-server daemon <start|stop|status|restart> [--listen <url>] [--extension <path>]...
                                  Manage the app-server daemon
   ${APP_NAME} host <ensure|status|stop|handoff|shard-path|gc> [--launch-spec <file>]
                                  Get, inspect or end the shared RPC daemon (one JSON line per call)

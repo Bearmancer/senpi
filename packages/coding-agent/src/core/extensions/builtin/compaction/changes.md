@@ -1,3 +1,21 @@
+## 2026-09-29 - senpi owns the overflow of a failed cold-seed on the anthropic-subscription lane (senpi#2329)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/compaction/lane-policy.ts`: `ownsCompaction(context, "overflow")` returns true on the SDK-native lane when the newest assistant on the branch since the latest compaction carries the `claude_sdk_oauth_cold_seed_overflow` marker. `LaneContext` gains an optional `sessionManager` branch reader (the real `ExtensionContext` already provides it). Threshold, pre-prompt and every unmarked overflow stay SDK-owned.
+
+### Why
+
+- A cold-seed re-sends senpi's own, never-compacted history as one message the SDK cannot compact, so only senpi can recover its overflow; rejecting it as `external-owner` killed the session (oh-my-openagent#7975).
+
+### Why an extension could not handle it
+
+- Ownership is this builtin's own policy.
+
+### Expected merge conflict zones
+
+- LOW: `ownsCompaction` and the `LaneContext` interface in `lane-policy.ts`.
+
 ## 2026-09-25 - Todo snapshots carry the captured ask (senpi#2121)
 
 ### What changed

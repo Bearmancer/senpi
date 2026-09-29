@@ -124,6 +124,49 @@ describe("vendored websearch provider-aware native routing", () => {
 		expect(authProviders).toEqual(["quotio-openai"]);
 	});
 
+	it("#given a Copilot Business account #when native search routes through its credential #then it uses the account's own API host, not the catalog host (#8662)", async () => {
+		// given
+		const activeModel = nativeModel(
+			"github-copilot",
+			"gpt-5.5",
+			"openai-responses",
+			"https://api.individual.githubcopilot.com",
+		);
+		const modelRegistry = ModelRegistry.inMemory(AuthStorage.inMemory());
+		vi.spyOn(modelRegistry, "getApiKeyAndHeaders").mockResolvedValue({
+			ok: true,
+			apiKey: "tid=biz;proxy-ep=proxy.business.githubcopilot.com",
+			baseUrl: "https://api.business.githubcopilot.com",
+		});
+		vi.spyOn(modelRegistry, "getAvailable").mockReturnValue([]);
+		const requested: string[] = [];
+		vi.stubGlobal(
+			"fetch",
+			vi.fn<typeof fetch>(async (input) => {
+				requested.push(input instanceof Request ? input.url : String(input));
+				return new Response("{}", { status: 200 });
+			}),
+		);
+		const tool = createWebSearchTool(() => ({
+			ok: true,
+			config: { strategy: "priority", fallback: false, auto: true, providers: [] },
+			source: "test",
+		}));
+
+		// when
+		await tool.execute(
+			"copilot-business-native",
+			{ query: "q" },
+			undefined,
+			undefined,
+			toolContext(activeModel, modelRegistry),
+		);
+
+		// then
+		expect(requested.length).toBeGreaterThan(0);
+		expect(requested.every((url) => url.startsWith("https://api.business.githubcopilot.com/"))).toBe(true);
+	});
+
 	it("#given an active z-ai model and z-ai candidates #when native routes are discovered #then keeps the matching z-ai/native route first", async () => {
 		// given
 		const activeModel = nativeModel("z-ai", "glm-5.2", "openai-completions", "https://api.z.ai/api/paas/v4");

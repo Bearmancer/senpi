@@ -10,6 +10,55 @@
 
 ### Fixed
 
+### Removed
+
+## [2026.9.29] - 2026-09-29
+
+### Breaking Changes
+
+### Added
+
+- Claude Sonnet 5.5 (`claude-sonnet-5-5`) is in the catalog for `anthropic` (1M context, 128k output, $2 / $10 per MTok, cache reads $0.20, effort low through max) and for Bedrock (`global.anthropic.claude-sonnet-5-5`), OpenRouter, Vercel AI Gateway, Venice and OpenCode. Like Claude Opus 5.5 it runs adaptive thinking only, so a thinking-off turn pins `effort: low` instead of sending `thinking.type=disabled`, and `tool_choice` `any` / `tool` are never sent to it. ([#2321](https://github.com/code-yeongyu/senpi/issues/2321))
+
+### Changed
+
+- Anthropic OAuth requests identify as the latest published Claude Code instead of a version fixed at build time: the bundled floor is now 2.1.284 (Claude Sonnet 5.5 needs it), and the host refreshes the version in the background from Anthropic's `latest` release channel and the `@anthropic-ai/claude-code` npm dist-tag at most every six hours, cached under the agent directory. No request waits on the lookup and an offline host advertises the floor. `PI_CLAUDE_CODE_VERSION=X.Y.Z` pins the advertised version. ([#2321](https://github.com/code-yeongyu/senpi/issues/2321))
+
+### Fixed
+
+- Cursor tool calls run once in the npm package. The bundle's Cursor provider carried its own copy of the marker that tells the agent loop a call was already executed, so every tool Cursor ran was run a second time under the same id and a replayed stale write could revert a file the model had already fixed. The same split also kept the Cursor conversation cache from being released when a session closed, and kept the context ceiling Cursor reports from reaching the running session until a restart. ([#2334](https://github.com/code-yeongyu/senpi/issues/2334))
+- `isContextOverflow` classifies the `anthropic-subscription` refusal "The conversation is too long to resend (about N tokens, limit M). Compacting it and retrying." as a context overflow, so overflow recovery compacts and retries it. ([code-yeongyu/senpi#2329](https://github.com/code-yeongyu/senpi/issues/2329))
+
+- A `claude_code_version_too_old` rejection on an Anthropic OAuth request now raises the advertised version to the one Anthropic names and retries the request once, so a model released after the last senpi build works the first time it is asked for. If the retry still fails, the error names the version senpi advertised and how to pin a newer one. ([#2321](https://github.com/code-yeongyu/senpi/issues/2321))
+
+- `AuthResult` and `AuthCheck` carry `ambient: true` when Amazon Bedrock or Google Vertex auth came only from a shared cloud credential chain (AWS profile/keys/roles in the environment, Application Default Credentials), so callers can rank those providers below ones the user configured. ([#2327](https://github.com/code-yeongyu/senpi/issues/2327))
+
+### Removed
+
+## [2026.9.28-7] - 2026-09-28
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.28-6] - 2026-09-28
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- GitHub Copilot Business and Enterprise accounts no longer have requests sent to the individual host (`421 Misdirected Request`): the API host now comes from the token exchange's own `endpoints.api` (bound to that token), then the token's `proxy-ep`, then the GitHub Enterprise domain, with the individual host only as a last resort. This covers login and refresh (`/models`, model policies), inference, and a Copilot token passed as a key (`COPILOT_GITHUB_TOKEN` or an explicit `apiKey`). A 421 now says the request reached another plan's host and includes the GitHub request id. ([#2309](https://github.com/code-yeongyu/senpi/issues/2309))
+
 - The bundled Devin model seed lists exactly the SWE-2 lanes Devin serves: `swe-2-high`, `swe-2-medium` and `swe-2-max`. `swe-2-low` and `swe-2-high-lite`, which appear only inside the Devin CLI binary and are refused with `permission_denied`, are removed, so a config naming them no longer resolves silently. ([#2306](https://github.com/code-yeongyu/senpi/issues/2306))
 ### Removed
 

@@ -4,11 +4,93 @@
 
 ### Breaking Changes
 
+- Security: an MCP remote server declared by a skill (an `mcp.json` next to SKILL.md or a `mcp:` frontmatter block) no longer sends `bearerTokenEnv`. senpi ignores the field, sends no `Authorization` header and warns once, because the skill chooses the server's URL and could otherwise make senpi send any of your environment variables to it. To restore auth, declare that server in your own `mcp.json` (the global `<agentDir>/mcp.json`, `~/.senpi/agent/mcp.json` by default, or a trusted project's `.senpi/mcp.json`), where `bearerTokenEnv` keeps working. `${VAR}` in a skill remote server's `url` or `headers` also stays literal, with a warning. See [Environment variables in skill servers](docs/mcp.md#environment-variables-in-skill-servers). ([#2345](https://github.com/code-yeongyu/senpi/issues/2345))
+
+### Added
+
+- `websearch.json` accepts `nativeModel`, the model the session's hosted web search runs on, for example `"nativeModel": "claude-haiku-4-5"`. It must be served by the same provider, endpoint and credential as the session model; any other value is ignored and `/websearch status` warns about it. When the chosen model fails or finds nothing, the same search retries on the session model before moving to the next search provider. See [Web Search](docs/web-search.md). ([#2340](https://github.com/code-yeongyu/senpi/issues/2340))
+
+- `web_search` can use a self-hosted SearXNG instance: add `{ "provider": "searxng", "baseUrl": "http://localhost:8888" }` to `websearch.json`. A plain `http://` address is accepted for hosts on your own network only. See [Web Search](docs/web-search.md). ([#2339](https://github.com/code-yeongyu/senpi/issues/2339))
+
+### Changed
+
+- New default: hosted web search now runs on the provider's cheaper search model, on the same login and endpoint as your session, whenever your model list shows that model at a lower price than the session model (Claude routes: `claude-haiku-4-5`; OpenAI Responses routes: `gpt-5.6-luna`; xAI: `grok-4.3`; DeepSeek: `deepseek-v4-flash`). Before, every hosted search ran on the session model itself. If the cheaper model fails or finds nothing, the same search retries on the session model. To restore the old behavior, set `"nativeModel": "session"` in `websearch.json`. The routing attempts line and `/websearch status` now name the model that served each search. ([#2340](https://github.com/code-yeongyu/senpi/issues/2340))
+
+- Without a `websearch.json`, `web_search` no longer depends on DuckDuckGo alone: your search queries may now go to DuckDuckGo and Exa's hosted search service (no key and no session id is sent), then to Startpage, Mojeek, Ecosia and Google's results page, in that order. To keep searches away from these services, list only the providers you want in `websearch.json`; for DuckDuckGo only, use `{ "providers": [{ "provider": "duckduckgo-html" }] }`. When an engine answers with a bot check instead of results, the search says so and moves on to the next engine, and an engine that blocks a search (bot check, HTTP 429 or 403, network error) is skipped for 1 minute, doubling up to 15 minutes while it keeps blocking; skipped engines are listed in the routing line. The default still costs nothing: no key, no paid API, no other model. ([#2339](https://github.com/code-yeongyu/senpi/issues/2339))
+
+### Fixed
+
+- A stdio MCP server carried by a skill you installed now expands `${VAR}` in its `command`, `args`, `env` and `cwd` the way your own `mcp.json` does, so the documented `"env": { "EXA_API_KEY": "${EXA_API_KEY}" }` reaches the server as your key instead of the literal placeholder. A skill of an untrusted project keeps the placeholder and warns once, naming the skill and the variable. ([#2345](https://github.com/code-yeongyu/senpi/issues/2345))
+
+- `web_search` through OpenAI's hosted search (the `openai` and `codex` providers, native OpenAI routes) and xAI no longer lists URLs the model wrote in its answer as sources. Only pages the search returned count, so an answer that never searched is a failed attempt and the next provider is tried instead of an invented link being reported as a result. ([#2337](https://github.com/code-yeongyu/senpi/issues/2337))
+
+### Removed
+
+## [2026.9.29] - 2026-09-29
+
+### Breaking Changes
+
+### Added
+
+- Claude Sonnet 5.5 gets its own system prompt preset, `claude-sonnet-5-5`, selected automatically for every Sonnet 5.5 id (`claude-sonnet-5-5`, `claude-sonnet-5.5`, Bedrock and Vertex spellings) and available as `promptPreset: "claude-sonnet-5-5"`. It is the Opus 5.5 core with the deltas Anthropic's Sonnet 5.5 guide documents for coding agents: it keeps working instead of pausing to confirm a plan, asking a question it could answer itself, or stopping after one part of a multipart task; it adds tests, docs or supporting files only where asked or where the repository keeps them and mentions the rest at the end; and before reporting a change done it runs a real check that exercises it, installing missing declared dependencies with the project's own package manager instead of skipping the check. Sonnet 5 stays on the default prompt. ([#2321](https://github.com/code-yeongyu/senpi/issues/2321))
+
+### Changed
+
+- Claude subscription sessions (`anthropic-subscription`) run Claude Code 2.1.284, the first release that knows Claude Sonnet 5.5: the bundled `@anthropic-ai/claude-agent-sdk` moves from 0.3.280 to 0.3.284. The engine's own Anthropic OAuth requests now advertise the latest published Claude Code (refreshed in the background, floor 2.1.284) instead of a build-time constant, and `PI_CLAUDE_CODE_VERSION=X.Y.Z` pins it. ([#2321](https://github.com/code-yeongyu/senpi/issues/2321))
+
+### Fixed
+
+- A resumed Claude conversation no longer re-sends its whole history when an extension starts the first turn. A terminal monitor that fires on restore, a goal continuation or a loop run can start a turn while the session is still starting up, and that turn used to reach Claude before the saved resume point was read back, so it went out as `Session continuity lost - resent the full conversation (registry_miss)`. Turns that extensions request while a session is starting now begin once every extension has finished starting up. ([#1972](https://github.com/code-yeongyu/senpi/issues/1972))
+
+- The Together provider's default model is Kimi K3. Together no longer lists Kimi K2.6, so a `together/` session with no model set picked an id the catalog had dropped. ([#2321](https://github.com/code-yeongyu/senpi/issues/2321))
+
+- `session.log` lines keep their `sessionId`, so the continuity and close lines of concurrent Claude subscription sessions can be told apart again. The logger's key allowlist had dropped the field. ([code-yeongyu/oh-my-openagent#8759](https://github.com/code-yeongyu/oh-my-openagent/issues/8759))
+
+- A Claude conversation no longer re-sends its whole history when the resume point it asks for is gone. If Claude Code answers that the message it should branch from no longer exists, or a retry has lost its newest checkpoint, the session now branches from the newest earlier point that Claude Code still has for that conversation and sends only what came after it. Only when no such point exists does it fall back to a full re-send. ([#1973](https://github.com/code-yeongyu/senpi/issues/1973))
+
+- Resuming a Claude conversation whose sent history was rolled back or diverged no longer forks at an assistant message the current history no longer contains. The resume decision now anchors the fork at the newest assistant boundary inside the shared history and re-sends that point's remainder, and when no such boundary exists it rebuilds from the transcript instead of resuming a lineage that keeps an unrelated old-branch assistant ([#1974](https://github.com/code-yeongyu/senpi/issues/1974)).
+
+- AWS credentials in the environment (`AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY`, `AWS_PROFILE`, an ECS or web-identity role) no longer make Amazon Bedrock the startup model when you have logged in to or configured another provider; the same holds for Google Vertex through Application Default Credentials. Those providers stay in `/model`, listed after the providers you configured, and still become the default when nothing else is available or you pick them. A Claude subscription login now has its own default model (`claude-opus-4-8`). ([#2327](https://github.com/code-yeongyu/senpi/issues/2327))
+
+- On `anthropic-subscription`, changing the thinking level while the model is streaming no longer kills the turn with "query ended before the active turn completed"; the new level applies from the next request. A turn whose every attempt failed is no longer reported as "Session continuity lost - resent the full conversation": nothing was re-sent, and session.log records it as `failed` instead of `flatten`. Continuity and close lines in session.log now carry the session id. ([code-yeongyu/oh-my-openagent#8759](https://github.com/code-yeongyu/oh-my-openagent/issues/8759))
+
+- An `anthropic-subscription` session no longer dies at "Prompt is too long" after its resident Claude Code session is lost. The conversation re-send that follows is now measured before it is sent; when it cannot fit, the turn reports "The conversation is too long to resend (about N tokens, limit M). Compacting it and retrying." and, as when the API rejects the re-send as too long, senpi compacts its own history once and retries, also after a restart. A resident turn's overflow is still left to the Claude Agent SDK. ([#2329](https://github.com/code-yeongyu/senpi/issues/2329), [code-yeongyu/oh-my-openagent#7975](https://github.com/code-yeongyu/oh-my-openagent/issues/7975))
+
+- A usage limit that binds the whole account (a Claude session or weekly limit, a Codex usage limit, an empty balance) now falls back to a model on another provider first; models of the same provider are tried only when no other provider in the chain can serve. A limit that names one model (a Fable-only weekly cap, Copilot premium models) still moves to the next model on the same provider. The fallback notice now says which model or account hit its usage limit instead of `(transient)`. ([code-yeongyu/oh-my-openagent#8296](https://github.com/code-yeongyu/oh-my-openagent/issues/8296))
+
+### Removed
+
+## [2026.9.28-7] - 2026-09-28
+
+### Breaking Changes
+
+### Added
+
+- `senpi app-server` and `senpi app-server daemon start|restart` accept `--extension <path>` (repeatable) and load those extensions into every thread, so a launcher that ships its plugin beside the engine gets the plugin's tools and `extension_event`s in app-server sessions. The daemon records the list and `restart` keeps it. ([code-yeongyu/oh-my-openagent#9117](https://github.com/code-yeongyu/oh-my-openagent/issues/9117))
+
+- A multi-session RPC host answers a new `warm` command: it loads what the next `open_session` for a cwd, kind and context needs (the extension graph and the runtimes those extensions load) without opening a session. Nothing is listed, the connection never counts as an attachment, and the host still idles out on schedule, so a client that starts one host per session no longer pays the first-session cost on every session. Hosts advertise it as the `warm` capability. ([#2314](https://github.com/code-yeongyu/senpi/issues/2314))
+
+### Changed
+
+- The `/computer` introduction tip now says computer use is experimental. The tip ids, their `/computer` gating and the other tips are unchanged. ([#2315](https://github.com/code-yeongyu/senpi/issues/2315))
+
+### Fixed
+
+### Removed
+
+## [2026.9.28-6] - 2026-09-28
+
+### Breaking Changes
+
 ### Added
 
 ### Changed
 
+- The RPC host supervisor no longer loads the CLI parser or the provider model catalog, which it never uses. Each supervisor process now uses about 12 MB less physical memory; hosts, sessions and the supervisor's behaviour are unchanged. This matters when one host runs per session ([code-yeongyu/oh-my-openagent#9110](https://github.com/code-yeongyu/oh-my-openagent/pull/9110)).
+
 ### Fixed
+
+- `/btw` and native web search on a GitHub Copilot Business or Enterprise account now use the account's own API host, like the session's chat requests, instead of the individual host that answers `421 Misdirected Request`. ([#2309](https://github.com/code-yeongyu/senpi/issues/2309))
 
 - The Devin SWE-2 prompt preset now matches exactly the lanes Devin serves, `swe-2-medium`, `swe-2-high` and `swe-2-max`. `devin/swe-2-medium` previously got no SWE-2 preset, while the unserved `swe-2-low` and `swe-2-high-lite` ids did. ([#2306](https://github.com/code-yeongyu/senpi/issues/2306))
 - Project rule discovery no longer escapes the project root on Windows. A `read`/`edit`/`write` target on a different drive, or one whose drive-letter case differs from the project root, made the rules finder walk the unrelated location and inject any `AGENTS.md`, `CLAUDE.md`, `.claude/rules`, `.cursor/rules`, or `.github/instructions` it found there as *project* rules ([#568](https://github.com/code-yeongyu/senpi/pull/568) by [@MoerAI](https://github.com/MoerAI)). POSIX behavior is unchanged.

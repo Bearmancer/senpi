@@ -111,6 +111,8 @@ export type AuthStatus = {
 		| "models_json_command"
 		| HeaderAuthStatusSource;
 	label?: string;
+	/** Environment auth that came only from a shared cloud credential chain (`AuthCheck.ambient`). */
+	ambient?: true;
 };
 
 export const clearApiKeyCache = clearConfigValueCache;

@@ -680,6 +680,50 @@ ignores both fields and lists every session.
 Default-invisible worker sessions are invariant **I4** above: a client that does not pass `include_workers: true`
 sees the daemon exactly as it saw a host serving only that client.
 
+### Warming a host (`warm`)
+
+A fresh host pays a one-time cost on its FIRST session: the extension module graph compiles, and the extensions'
+factories load whatever they load for that session's kind and context (a task engine for a `child` role, for
+example). Every later open on that host reuses it. A client that starts one host per session pays it on every session
+unless it warms the host first.
+
+#### warm
+
+Loads what the next `open_session` with the same `cwd`, `kind` and `context` needs, without opening a session:
+
+```json
+{"id": "w1", "type": "warm", "cwd": "/abs/project", "kind": "worker", "context": {"role": "child"}}
+```
+
+```json
+{"id": "w1", "type": "response", "command": "warm", "success": true, "data": {"state": "warmed"}}
+```
+
+Every field is optional and means what it means on `open_session`: `cwd` defaults to the host's cwd and must be
+absolute, and `kind` and `context` are validated with the same caps and refused with the same codes
+(`invalid_path`, `invalid_session_kind`, `invalid_session_context`). A socket host stamps its own identity into the
+context exactly as it does for an open, so the extensions see what they will see in the real session. The host builds
+that session's cwd-bound services - settings, resources, extensions with their factories run for this kind and
+context - inside a provider scope of their own, then drops them.
+
+- No session is created: nothing appears in `list_sessions` (with or without `include_workers`), no `AgentSession`
+  exists, and no extension receives `session_start`.
+- `warm` never attaches its connection, whether or not it carries `observe: true`: a connection that has only sent
+  observing reads and warms is an observer, so a host that only received `warm` idles out on its normal deadline
+  (`SENPI_RPC_HOST_IDLE_EXIT_MS` under a supervisor, `SENPI_RPC_HOST_EMPTY_EXIT_MS` for the host itself). A warm still
+  loading neither holds that window open nor holds a drain.
+- It takes no session lock and no open barrier, so it never waits for a live turn and a live turn never waits for
+  it. It does share the host's one loop: loading an extension graph is the same work an open does.
+- It is idempotent per profile: `data.state` is `warmed` when this call (or a concurrent warm of the same profile it
+  joined) did the loading, and `already_warm` when an earlier warm had, in which case nothing runs again. A failed
+  load (`warm_failed: <detail>`, for example a `cwd` that does not exist) is not remembered, so it can be retried.
+- A host whose sessions run in worker isolates (`--session-runtime worker`) has nothing it can warm from the host
+  process: it answers `state: "unsupported"` and does not advertise the capability. A draining generation refuses with
+  `host_draining`.
+
+Probe `warm` in `get_protocol_info` capabilities before sending it: an older host answers an unknown command with an
+error.
+
 ### Session auto-titling
 
 Auto-generated session titles are on by default only for interactive launches. A shared host decides titling per
@@ -740,7 +784,7 @@ Environment overrides beat the file, and invalid values fall through to the next
 The host exits only after the window elapses with NO attached client connections and NO active turns — continuously.
 Any attached connection or agent turn resets the window, so a busy host never exits. A connection attaches with its
 first request line, unless that line is an OBSERVING read: `get_protocol_info` or `list_sessions` carrying
-`"observe": true`. A connection that only ever sends observing reads never counts and never resets the window, so a
+`"observe": true`, or a `warm` (marked or not - see "Warming a host"). A connection that only ever sends observing reads never counts and never resets the window, so a
 poller (`senpi host status [--all]`, which marks both of its reads, a doctor loop, a runtime panel) can look at every
 endpoint as often as it likes without keeping any of them alive; the first request that is anything else attaches the
 connection from then on, and `observe` on any other command is ignored. While a connection has not sent its first
@@ -871,7 +915,7 @@ What the host does enforce are lifecycle windows, and they only ever return memo
   `SENPI_RPC_HOST_EMPTY_EXIT_MS` (default 15 minutes), the host exits through its clean shutdown path (flush, socket
   removal), for stdio and `--listen` hosts alike. A connected client counts as occupancy even with no session open,
   so the host never drops a live socket under itself - except a connection whose every request so far was an
-  observing read (`"observe": true`, the same rule as the idle-exit window above), which never holds the host open.
+  observing read (`"observe": true`, the same rule as the idle-exit window above) or a `warm`, which never holds the host open.
   A connection that has not sent its first request yet still counts. Supervised hosts stay clean either way: a supervisor reads a
   child exit of 0 without a signal as an intentional idle stop and exits 0 with the same cleanup, not as a crash.
 
@@ -1052,6 +1096,7 @@ containment, or containment of arbitrary native code. They are not an extension 
 | `open_session` | `sessionPath?`, `cwd?`, `provider?`, `modelId?`, `thinkingLevel?`, `permissionPreset?`, `retain_on_disconnect?`, `kind?`, `context?`, `auto_title?` (all optional; paths MUST be absolute) | `{ sessionId, state: RpcSessionState, attached?: true }` | `sessionPath` = today's `--session` semantics (open-if-exists else create persisting there, `session-manager.ts:926-940`); `provider`/`modelId` applied only on create (resume restores the session's model — mirrors `SenpiSessionRuntime.ts:198-200`); params form the immutable launch profile (D8). When the path is already held by a fully-open session, the open ATTACHES to it: same routing handle, `attached: true`, one more attachment counted; the runtime is torn down only when the last attachment closes. Idle sessions past the eviction window are closed by the host itself. `retain_on_disconnect: true` (default false) makes a dropped connection DETACH from this session instead of closing it — see "Retained sessions" below. `kind` (default `interactive`) and the opaque `context` map are described under "Session kind and context" above; both are stored frozen for the session's life and never influence auth, model or resource resolution. |
 | `close_session` | `sessionId` | `{}` | Refused with `unknown_session` when the requesting connection never attached to that handle (a close releases the CALLER's attachment, and `list_sessions` publishes every handle). Otherwise aborts active work, awaits agent idle + settled persistence for up to the host grace window (default 10s), then quarantines any worker that has not exited without releasing its path reservation; its response is the LAST record tagged with that handle for the first closer — no events after (test-pinned). An admitted concurrent close joins the same teardown and receives its own successful response; output saturation rejects admission with the bounded close-overflow/resync notice described above. |
 | `list_sessions` | `include_workers?` (default false) | `{ sessions: [{ sessionId, durableSessionId, sessionPath, cwd, name, status, attachments, kind, context? }] }` | Includes `opening`/`closing` entries. Internally quarantined workers remain externally `closing` until exit. `attachments` is the session's live client attachment count; `0` on an `open` row is a retained session with no client attached. Every row carries `kind`. Rows with `kind: "worker"` are omitted unless `include_workers: true`, and `context` is published ONLY on that listing — a default listing carries no `context` at all. |
+| `warm` | `cwd?`, `kind?`, `context?` (as on `open_session`; `cwd` MUST be absolute) | `{ state: "warmed" \| "already_warm" \| "unsupported" }` | Loads what the next matching `open_session` needs without opening a session; never listed, never an attachment, idempotent per profile. See "Warming a host" above. Advertised as the `warm` capability by in-process hosts only. |
 | every existing command | + `sessionId` (REQUIRED in multi mode) | unchanged | Routed to that session. |
 
 ### Identities (D6)
@@ -1075,6 +1120,7 @@ In the response `error` field, machine-matchable:
 - `invalid_session_kind: <detail>` (`open_session.kind` other than `interactive` or `worker`)
 - `invalid_launch_profile: <detail>` (`open_session.auto_title` present but not a boolean)
 - `host_memory_pressure` (sent only by hosts released before #2207, which declined to CREATE a `kind: "worker"` session above `SENPI_RPC_HOST_RSS_REFUSE_MB`; `errorData { rssMb, retry_after_ms }` says when to ask again. Current hosts never refuse an open for memory; a client talking to an older generation waits and retries, it never starts a second host or a per-child process)
+- `warm_failed: <detail>` (`warm` could not load its profile, for example a `cwd` that does not exist; not remembered, so a retry loads again)
 - `media_not_found` (`get_media` for an unknown `toolCallId`, or a `contentIndex` that does not point at an image block)
 
 ### Tagging

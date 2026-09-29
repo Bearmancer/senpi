@@ -2,6 +2,7 @@ import { ENV_SESSION_DIR, getAgentDir } from "../../config.ts";
 import { getMcpService } from "../../core/extensions/builtin/mcp/service.ts";
 import { DefaultResourceLoader } from "../../core/resource-loader.ts";
 import { type CreateAgentSessionOptions, createAgentSession } from "../../core/sdk.ts";
+import { SettingsManager } from "../../core/settings-manager.ts";
 import type { RpcNotification } from "./rpc/envelope.ts";
 import { createRegistry, type MethodRegistry, registerExtensionRequestMethod } from "./rpc/registry.ts";
 import { registerFuzzyFileSearchMethods } from "./search/fuzzy-search-methods.ts";
@@ -34,7 +35,16 @@ export type AppServerRuntime = {
 	readonly dispose: () => void;
 };
 
-export function createAppServerRuntime(requestShutdown: (reason: string) => void): AppServerRuntime {
+export interface AppServerRuntimeOptions {
+	/** Resolved `--extension` sources, loaded into every thread session and every skills/list loader. */
+	readonly extensionPaths?: readonly string[];
+}
+
+export function createAppServerRuntime(
+	requestShutdown: (reason: string) => void,
+	runtimeOptions: AppServerRuntimeOptions = {},
+): AppServerRuntime {
+	const additionalExtensionPaths = [...(runtimeOptions.extensionPaths ?? [])];
 	const notifications = new NotificationRouter();
 	const registry = createRegistry();
 	const fuzzySearch = new FuzzyFileSearchService({
@@ -66,15 +76,22 @@ export function createAppServerRuntime(requestShutdown: (reason: string) => void
 	threads = new ThreadRegistry({
 		agentDir: getAgentDir(),
 		sessionDir: process.env[ENV_SESSION_DIR],
-		createSession: (options) =>
-			createBoundAppServerSession(options, approvals, notifications, requestShutdown, userInput, (threadId) => {
-				try {
-					return threads.getLoadedThread(threadId).activeTurn?.turnId ?? "turn-user-input";
-				} catch (error) {
-					if (error instanceof ThreadNotFoundError) return "turn-user-input";
-					throw error;
-				}
-			}),
+		createSession: async (options) =>
+			createBoundAppServerSession(
+				await withExtensionPaths(options, additionalExtensionPaths),
+				approvals,
+				notifications,
+				requestShutdown,
+				userInput,
+				(threadId) => {
+					try {
+						return threads.getLoadedThread(threadId).activeTurn?.turnId ?? "turn-user-input";
+					} catch (error) {
+						if (error instanceof ThreadNotFoundError) return "turn-user-input";
+						throw error;
+					}
+				},
+			),
 		mcpWireStatusAdapter: processMcpWireStatusAdapter,
 	});
 	registerExtensionRequestMethod(registry, (threadId) => threads.getLoadedThread(threadId).session);
@@ -97,7 +114,7 @@ export function createAppServerRuntime(requestShutdown: (reason: string) => void
 		serverCwd: process.cwd(),
 		threads,
 		resourceLoaderFactory: async (cwd) => {
-			const loader = new DefaultResourceLoader({ cwd, agentDir: getAgentDir() });
+			const loader = new DefaultResourceLoader({ cwd, agentDir: getAgentDir(), additionalExtensionPaths });
 			await loader.reload();
 			return loader;
 		},
@@ -136,6 +153,23 @@ export function createAppServerRuntime(requestShutdown: (reason: string) => void
 			lifecycle?.dispose();
 		},
 	};
+}
+
+/**
+ * A session's default resource loader only discovers settings and agent-dir extensions, so explicit
+ * paths need a loader of their own, built the way `createAgentSession` builds its default one.
+ */
+async function withExtensionPaths(
+	options: CreateAgentSessionOptions,
+	additionalExtensionPaths: string[],
+): Promise<CreateAgentSessionOptions> {
+	if (additionalExtensionPaths.length === 0 || options.resourceLoader) return options;
+	const cwd = options.cwd ?? options.sessionManager?.getCwd() ?? process.cwd();
+	const agentDir = options.agentDir ?? getAgentDir();
+	const settingsManager = options.settingsManager ?? SettingsManager.create(cwd, agentDir);
+	const resourceLoader = new DefaultResourceLoader({ cwd, agentDir, settingsManager, additionalExtensionPaths });
+	await resourceLoader.reload();
+	return { ...options, settingsManager, resourceLoader };
 }
 
 async function createBoundAppServerSession(

@@ -16,6 +16,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { parseFrontmatter } from "../../../../utils/frontmatter.ts";
+import type { SourceScope } from "../../../source-info.ts";
 import type { RawConfig } from "./config-schema.ts";
 
 type RawServer = NonNullable<RawConfig["mcpServers"]>[string];
@@ -24,11 +25,18 @@ export interface SkillLike {
 	readonly name: string;
 	readonly filePath: string;
 	readonly baseDir: string;
+	readonly sourceInfo?: { readonly scope: SourceScope };
 }
 
-interface SkillServerDecl {
+/** A declared server as registered: the first declaring skill's config and where that skill came from. */
+export interface SkillServerRegistration {
 	raw: RawServer & { includeTools?: string[] };
 	sourcePath: string;
+	skillName: string;
+	scope: SourceScope | undefined;
+}
+
+interface SkillServerDecl extends SkillServerRegistration {
 	/** skill name -> includeTools globs declared by that skill (default all). */
 	includeToolsBySkill: Map<string, string[]>;
 }
@@ -48,7 +56,13 @@ export function parseSkillMcpDeclarations(skills: readonly SkillLike[]): SkillMc
 			const globs = normalizeGlobs(raw.includeTools);
 			const existing = servers.get(name);
 			if (existing === undefined) {
-				servers.set(name, { includeToolsBySkill: new Map([[skill.name, globs]]), raw, sourcePath });
+				servers.set(name, {
+					includeToolsBySkill: new Map([[skill.name, globs]]),
+					raw,
+					scope: skill.sourceInfo?.scope,
+					skillName: skill.name,
+					sourcePath,
+				});
 				continue;
 			}
 			// Same server from multiple skills: first config wins, includeTools

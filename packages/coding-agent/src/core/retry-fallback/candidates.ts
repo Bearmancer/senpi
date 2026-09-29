@@ -19,6 +19,8 @@ export interface CandidateFilters {
 	isSuppressed(base: string): boolean;
 	isAuthAvailable(provider: string): boolean;
 	isCircuitOpen(base: string): boolean;
+	/** The provider whose account-wide usage limit ended the attempt: its entries are tried last. */
+	spentProvider?: string;
 	skip(candidate: string, skipReason: string): void;
 }
 
@@ -34,6 +36,19 @@ export function firstUsableCandidate(
 	current: { model: Model<Api>; thinkingLevel?: ThinkingLevel },
 	filters: CandidateFilters,
 ): UsableCandidate | undefined {
+	const elsewhere =
+		filters.spentProvider === undefined
+			? undefined
+			: scanCandidates(entries, current, filters, filters.spentProvider);
+	return elsewhere ?? scanCandidates(entries, current, filters, undefined);
+}
+
+function scanCandidates(
+	entries: readonly string[],
+	current: { model: Model<Api>; thinkingLevel?: ThinkingLevel },
+	filters: CandidateFilters,
+	avoidProvider: string | undefined,
+): UsableCandidate | undefined {
 	let probe: UsableCandidate | undefined;
 	for (const raw of candidatesAfter(entries, formatSelector(current.model, current.thinkingLevel))) {
 		const selector = parseFallbackSelector(raw, filters.registry);
@@ -43,6 +58,10 @@ export function firstUsableCandidate(
 		}
 		if (selector.provider === current.model.provider && selector.id === current.model.id) {
 			filters.skip(raw, "self");
+			continue;
+		}
+		if (selector.provider === avoidProvider) {
+			filters.skip(raw, "account-limit");
 			continue;
 		}
 		const base = baseSelector(selector);

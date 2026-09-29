@@ -3,6 +3,7 @@ import type { Api, Model } from "@earendil-works/pi-ai";
 import type { FallbackCircuitAccess } from "./circuit.ts";
 import type { SelectorCooldowns } from "./cooldown.ts";
 import type { FallbackLogger } from "./log.ts";
+import type { UsageLimitScope } from "./usage-limit.ts";
 
 export interface ActiveFallbackState {
 	chainKey: string;
@@ -47,6 +48,7 @@ export interface RetryFallbackControllerDeps {
 					to: string;
 					chainKey: string;
 					reason: FallbackReason;
+					limit?: UsageLimitScope;
 			  }
 			| { type: "retry_fallback_reverted"; from: string; to: string },
 	): void;

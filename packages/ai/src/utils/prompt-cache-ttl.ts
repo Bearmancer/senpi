@@ -54,9 +54,10 @@ export function isAnthropicApiBaseUrl(baseUrl: string): boolean {
 
 /**
  * Families that reject forced tool use (`tool_choice` `any` / `tool` return 400): every Fable and
- * Mythos release, and Claude Opus 5.5 (`claude-opus-5-5`; gateways may spell it `claude-opus-5.5`).
+ * Mythos release, Claude Opus 5.5 and Claude Sonnet 5.5 (`claude-opus-5-5`, `claude-sonnet-5-5`;
+ * gateways may spell them with a dot).
  */
-const FORCED_TOOL_CHOICE_REJECTING_MODEL_ID = /^claude-(?:(?:fable|mythos)(?:-|$)|opus-5[.-]5(?:[.-]|$))/i;
+const FORCED_TOOL_CHOICE_REJECTING_MODEL_ID = /^claude-(?:(?:fable|mythos)(?:-|$)|(?:opus|sonnet)-5[.-]5(?:[.-]|$))/i;
 
 /**
  * Default for `supportsToolReferences`: first-party Anthropic models except

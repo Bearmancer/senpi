@@ -57,6 +57,12 @@ export const SESSION_KIND_CAPABILITY = "session_kind";
 export const AUTO_TITLE_PER_SESSION_CAPABILITY = "auto_title_per_session";
 
 /**
+ * HOST capability: this host answers `warm` (senpi#2314) - it loads what the next `open_session` for a
+ * cwd, kind and context needs without opening a session. Advertised only by an in-process runtime.
+ */
+export const WARM_CAPABILITY = "warm";
+
+/**
  * HOST capability: this host honors `open_session.durableSessionId`, so a caller that already
  * owns a stable record id for the conversation can CREATE the session under that id and keep
  * one identity instead of maintaining a mapping. Ignored on resume, where the session file's

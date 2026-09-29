@@ -162,12 +162,9 @@ export function createMcpExtension(service: McpService, sessionOwned = true): Ex
 				if (skills.length > 0) {
 					skillsByName = new Map(skills.map((skill) => [skill.name, skill]));
 					skillDecls = parseSkillMcpDeclarations(skills);
-					const declared = new Map(
-						[...skillDecls.servers].map(([name, decl]) => [name, { raw: decl.raw, sourcePath: decl.sourcePath }]),
-					);
 					const warnings = [
 						...skillDecls.warnings,
-						...(declared.size > 0 ? await service.attachSkillMcpServers(declared) : []),
+						...(skillDecls.servers.size > 0 ? await service.attachSkillMcpServers(skillDecls.servers) : []),
 					];
 					for (const warning of warnings) createMcpLogger("skills").warn(warning);
 				}

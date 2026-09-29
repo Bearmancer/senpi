@@ -1,3 +1,100 @@
+## 2026-09-29 - A rejected request re-asks the compaction owner before its retry (senpi#2329)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `_runAutoCompaction` and `_runPrePromptCompaction` no longer return early on `_isCompactionDelegated()` for an `overflow` whose request failed and will be retried (`willRetry`); the owning extension is consulted again. Threshold and pre-prompt routes, and an overflow classified on a completed turn, keep the sticky short-circuit (#1174).
+
+### Why
+
+- An `external-owner` rejection records `_delegatedCompactionKey`, and every later route returned before asking the owner, overflow included. Whether the owner can recover an overflow depends on the request that failed: on the `anthropic-subscription` lane a cold-seed re-sends senpi's own history as one message the SDK cannot compact, and the lane policy now claims that overflow. With the short-circuit in place an earlier threshold rejection kept that recovery from ever running, so the session died at "Prompt is too long" (oh-my-openagent#7975).
+
+### Why an extension could not handle it
+
+- The short-circuit sits in front of `session_before_compact`; no extension hook runs before it.
+
+### Expected merge conflict zones
+
+- LOW: the first line of `_runAutoCompaction` and `_runPrePromptCompaction` in `agent-session.ts`.
+
+## 2026-09-29 - Together's default model is Kimi K3 (senpi#2321)
+
+### What changed
+
+- `packages/coding-agent/src/core/model-resolver.ts`: `defaultModelPerProvider.together` moves from `moonshotai/Kimi-K2.6` to `moonshotai/Kimi-K3`.
+
+### Why
+
+- models.dev retired Together's Kimi K2.6 and K2.7 Code rows in the 2026-09-29 catalog regeneration (`packages/ai/changes.md`), so `test/model-resolver.test.ts` ("every bundled provider default resolves in its catalog") failed on the old default. Kimi K3 is the Moonshot model Together still lists. Hugging Face and Baseten keep K2.6.
+
+### Why an extension could not handle it
+
+- Bundled provider defaults.
+
+### Expected merge conflict zones
+
+- LOW: one line in `defaultModelPerProvider`.
+
+## 2026-09-29 - The model runtime installs the Claude Code version cache (senpi#2321)
+
+### What changed
+
+- `packages/coding-agent/src/core/model-runtime.ts`: `ModelRuntime.create` and `createSync` call `installClaudeCodeVersionFileStore` (from `@earendil-works/pi-ai/utils/claude-code-version-cache`) with `<dirname(models.json)>/claude-code-version.json` and `offline: envValue("OFFLINE") !== undefined`, so every host with a models.json (CLI, SDK, RPC, app-server, daemon, session worker) shares one on-disk Claude Code version cache and one background lookup per six hours. An in-memory runtime (`modelsPath: null`, tests) keeps pi-ai's bundled floor.
+
+### Why
+
+- pi-ai's resolver is browser-safe and holds no filesystem; the host decides where the cache lives, and `ModelRuntime.create` is the one place every mode passes through with the agent directory resolved.
+
+### Why an extension could not handle it
+
+- Extensions load after the runtime exists and cannot reach pi-ai's module state before the first request.
+
+### Expected merge conflict zones
+
+- LOW: the import block and the two `create` entry points in `model-runtime.ts`.
+
+## 2026-09-29 - Ambient cloud credentials never make their provider the automatic default (senpi#2327)
+
+### What changed
+
+- `packages/coding-agent/src/core/provider-default-selection.ts` (new): `isAmbientOnlyProvider`, `createAmbientProviderCheck`, and `selectProviderDefault(available, providerDefaults, source)`. Selection considers models from providers whose auth status is not `ambient` first; ambient-only providers only when nothing else is available. Within that group the first available `providerDefaults` entry wins (`provider-default`), else the group's first model (`first-available`).
+- `packages/coding-agent/src/core/model-resolver.ts`: `findInitialModel` step 4 and the `restoreModelFromSession` fallback call `selectProviderDefault` instead of walking `defaultModelPerProvider` in key order over every available model. `defaultModelPerProvider` gains `anthropic-subscription: claude-opus-4-8` (same default as `anthropic`), so a Claude subscription login has a provider default at all.
+- `packages/coding-agent/src/core/model-runtime.ts`: `getProviderAuthStatus` returns `ambient: true` for environment auth whose `AuthCheck` is ambient.
+- `packages/coding-agent/src/core/provider-composer.ts`: `AuthStatus` gains optional `ambient?: true`.
+
+### Why
+
+- With AWS keys in the environment (kept for S3, deploys, ...) and no saved default, the key-order walk picked `amazon-bedrock` (2nd key) over every later provider, and a Claude subscription never matched the walk because it had no table entry. The session started on Bedrock even for users logged in elsewhere; the recommended-models switch hides it only outside app-server mode and only when a ladder model is available (senpi#2327).
+
+### Why an extension could not handle it
+
+- Initial model selection runs in core before extensions bind (see the recommended-models note: the resolver reads provider defaults first), and restore fallback happens inside `restoreModelFromSession`.
+
+### Expected merge conflict zones
+
+- MEDIUM: step 4 of `findInitialModel` and the fallback tail of `restoreModelFromSession` in `model-resolver.ts`, plus the `anthropic-subscription` row in `defaultModelPerProvider`; upstream edits to that table land beside it.
+- LOW: the environment return of `getProviderAuthStatus` in `model-runtime.ts`; the `AuthStatus` type in `provider-composer.ts`.
+
+## 2026-09-29 - A usage limit skips the rest of a spent account and names itself in the fallback notice (omo#8296)
+
+### What changed
+
+- `packages/coding-agent/src/core/retry-fallback/usage-limit.ts` (new): `usageLimitScope(errorMessage)` reads a failure as a usage limit (quota exhaustion, billing, or subscription limit prose such as "You've hit your session limit") and scopes it: `model` when the message names a model, a model family, or premium models; `account` otherwise. `usageLimitCause(from, limit)` renders the notice clause.
+- `packages/coding-agent/src/core/retry-fallback/candidates.ts`: `CandidateFilters.spentProvider` moves that provider's entries to the end of the scan: `firstUsableCandidate` first looks for a usable entry on any other provider (skip reason `account-limit`), and only then rescans with the spent provider included.
+- `packages/coding-agent/src/core/retry-fallback/controller.ts`: `tryFallback` scopes `failure.errorMessage`; an account-wide limit passes the failed model's provider as `spentProvider`, so the chain reaches another provider before spending a request on a sibling model of the spent account. A chain with no other usable provider still hops to the sibling rather than stopping. `retry_fallback_applied` and the `fallback_applied` log line carry `limit` when a usage limit caused the switch.
+- `packages/coding-agent/src/core/retry-fallback/controller-types.ts`, `packages/coding-agent/src/core/agent-session.ts`: the `retry_fallback_applied` event type gains optional `limit?: "model" | "account"`.
+
+### Why
+
+- A Claude session or weekly limit, a Codex usage limit, or an empty balance binds the whole account: the next model on the same provider fails the same way, so the chain burned a request on it before reaching another provider. A model-scoped limit (a Fable-only weekly cap, Copilot premium models) still moves to the next model on the same provider. The notice said `(transient)` or `(hard-error)` and never that a limit caused the switch (omo#8296).
+
+### Why an extension could not handle it
+
+- Candidate selection and the `retry_fallback_applied` event live inside `RetryFallbackController`, which no extension hook reaches.
+
+### Expected merge conflict zones
+
+- LOW: the `retry_fallback_applied` member of the `AgentSessionEvent` union in `agent-session.ts`.
+
 ## 2026-09-28 - A stored OAuth token the provider refuses is re-exchanged once before failing (senpi#2297)
 
 ### What changed

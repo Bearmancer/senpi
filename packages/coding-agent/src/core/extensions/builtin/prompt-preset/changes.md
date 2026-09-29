@@ -1,5 +1,26 @@
 # prompt-preset Extension Changes
 
+## 2026-09-29 - Claude Sonnet 5.5 preset (senpi#2321)
+
+### What changed
+
+- `claude-sonnet-5-5.ts` (new): the `claude-opus-5-5` core with the Sonnet 5.5 guide's coding-agent deltas applied at the sentence they replace, one home per rule (prompt-engineering A/B/C pass, no rule appended): `## Style` names the three early stops the guide documents at low and medium effort (confirming a plan the request already settles, asking a self-answerable question, stopping after one part of a multipart task) in place of the Opus 5.5 "unattended run" endings; `## Scope` widens the tests-only clause to tests, docs and supporting files and carries the guide's mention-at-the-end remedy; `## Verification` folds the guide's "a check that failed to start does not count; install declared deps with the project's own package manager; name the unrun check" into the existing "run the validator" sentence; the Opus 5.5 time-as-cost delegation sentence is dropped (undocumented for Sonnet). Unchanged: Intent Gate and its stop condition, explore-before-acting, the claim audit, the Handoff block, no reasoning-in-text lines.
+- `presets.ts`: `CLAUDE_SONNET_55_MARKERS` (`sonnet-5-5`, `sonnet-5.5`) resolve to `claude-sonnet-5-5` after the Opus matchers; Sonnet 5 and Sonnet 4.x keep the default dynamic prompt. `settings.ts`: the name joins `PromptPresetName` and `VALID_PRESETS`.
+- `test/suite/prompt-presets-claude-sonnet-5-5.test.ts` (new): id shapes (dashed, dotted, dated, Bedrock, Vertex, display name), non-matches (Sonnet 5, Opus 5.5, `sonnet-55`), forced preset, catalog sweep.
+
+### Why
+
+- Anthropic's Sonnet 5.5 guide (2026-09-28) says Sonnet 5 prompts carry over and documents three low/medium-effort early stops, supporting-file over-delivery, and reporting a change done without a runnable check. Each maps onto a sentence the Opus 5.5 core already has, so the delta is a replacement, not growth.
+
+### Why an extension could not handle it
+
+- Preset dispatch lives in this builtin.
+
+### Expected merge conflict zones
+
+- LOW: the Claude matcher block and the `buildPreset` switch in `presets.ts`; `claude-sonnet-5-5.ts` is fork-only.
+
+
 ## 2026-09-28 - GPT-6 Astra: the stated goal bounds the work (#2256)
 
 ### What changed

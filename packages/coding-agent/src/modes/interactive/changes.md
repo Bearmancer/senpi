@@ -1,3 +1,39 @@
+## 2026-09-29 - `/model` lists ambient-only providers after configured ones (senpi#2327)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/components/model-selector.ts`: `sortModels` orders models from providers the user configured before providers available only through ambient cloud credentials (`createAmbientProviderCheck`), after the current model and favorites and before the provider/id order.
+
+### Why
+
+- Bedrock's many models sorted second by provider name, so AWS keys in the environment made them lead `/model` for users who never set Bedrock up (senpi#2327).
+
+### Why an extension could not handle it
+
+- Sorting is private to `ModelSelectorComponent`.
+
+### Expected merge conflict zones
+
+- LOW: the comparator in `sortModels`.
+
+## 2026-09-29 - The model-fallback notice says which model or account hit its usage limit (omo#8296)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: the `retry_fallback_applied` notice body uses `usageLimitCause` when the event carries `limit`: "<from> hit its usage limit; the turn continues on <to>." or "the <provider> account hit its usage limit, so its other models were skipped; the turn continues on <to>." Other switches keep "Retry switched models (<reason>)".
+
+### Why
+
+- A user whose model ran out of its usage limit saw a generic "(transient)" switch and could not tell a limit from a network blip (omo#8296).
+
+### Why an extension could not handle it
+
+- The notice is rendered by the interactive mode's own event switch.
+
+### Expected merge conflict zones
+
+- LOW: the `retry_fallback_applied` case in `interactive-mode.ts`.
+
 ## 2026-09-28 - Show Copilot tool-limit omissions once per session (senpi#2298)
 
 ### What changed
@@ -93,6 +129,24 @@
 ### Expected merge conflict zones
 
 - LOW: the end of the Cost block in `handleSessionCommand` and one import in `interactive-mode.ts`.
+
+## 2026-09-28 - The /computer introduction tip says computer use is experimental (senpi#2315)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/tips/catalog/computer-tips.ts`: the `computer.what-it-is` tip now opens with "Experimental:". The ids, the `requiresCommand: "computer"` gating and the other four tips are unchanged.
+
+### Why
+
+- OmO 5.1.0 ships computer use as experimental support, and every user-facing surface has to say so.
+
+### Why an extension could not handle it
+
+- The tip catalog is host-owned and has no extension registration API (see the senpi#2204 entry).
+
+### Expected merge conflict zones
+
+- LOW: the `computer.what-it-is` render string in `computer-tips.ts`.
 
 ## 2026-09-27 - Tips for the /computer command (senpi#2204)
 

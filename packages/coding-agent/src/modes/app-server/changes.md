@@ -1,3 +1,24 @@
+## 2026-09-28 - app-server loads `--extension` sources into every thread (omo#9117)
+
+### What changed
+
+- `packages/coding-agent/src/modes/app-server/cli-args.ts`: `app-server` and every `app-server daemon` verb accept repeated `--extension <path>`.
+- `packages/coding-agent/src/modes/app-server/extension-paths.ts`: local paths resolve against the invoking cwd, the same rule as the global `--extension` flag.
+- `packages/coding-agent/src/modes/app-server/runtime.ts`: `createAppServerRuntime` takes `extensionPaths`; thread create/resume/fork build a `DefaultResourceLoader` with them, and `skills/list` loaders see them too.
+- `packages/coding-agent/src/modes/app-server/daemon.ts`, `daemon/spawn.ts`, `daemon/probe.ts`: the daemon child is launched with the extensions and `settings.json` records them; `restart` reuses the recorded list unless the command names new ones. `spawnDaemon` moved to `daemon/spawn.ts` unchanged apart from the launch intent.
+
+### Why
+
+A product launcher that ships its plugin beside the engine (omo) loads it with `--extension`. `app-server` rejected the flag, and the global prefix form never reaches app-server dispatch, so app-server threads ran without the plugin's tools and events.
+
+### Why an extension could not handle it
+
+Extension loading is decided before any extension runs; the app-server builds each thread session itself.
+
+### Expected merge conflict zones
+
+- LOW: `createAppServerRuntime` signature and the `createSession` wiring in `runtime.ts`; argument loops in `cli-args.ts`.
+
 ## 2026-09-22 - normalize legacy provider ids on account payloads (senpi#1989)
 
 ### What changed

@@ -1,3 +1,23 @@
+## 2026-09-29 - claude-agent-sdk 0.3.284 (senpi#2321)
+
+### What changed
+
+- `packages/coding-agent/package.json`: `@anthropic-ai/claude-agent-sdk` 0.3.280 -> 0.3.284 (Claude Code 2.1.280 -> 2.1.284). `bun.lock`, `package-lock.json`, `install-lock/package-lock.json` and `publish-deps.lock.json` regenerated with `bun run refresh-lock`; the platform packages relocked with `scripts/generate-claude-agent-sdk-platform-lock.mjs`.
+- `packages/coding-agent/docs/environment-variables.md`: `PI_CLAUDE_CODE_VERSION`. `docs/settings.md`: `promptPreset` lists `claude-sonnet-5-5`.
+- `test/suite/regressions/2033-claude-code-version-currency.test.ts`: the currency invariant keeps reading the `claudeCodeVersion` declaration in `packages/ai/src/api/anthropic-messages.ts` (now the floor of the advertised version) and requires it to equal the installed SDK's `claudeCodeVersion`.
+
+### Why
+
+- Claude Code 2.1.284 is the first release whose binary knows `claude-sonnet-5-5`; the subscription lane runs the bundled binary.
+
+### Why an extension could not handle it
+
+- Dependency pin.
+
+### Expected merge conflict zones
+
+- LOW: the pin line and the lock files.
+
 ## 2026-09-26 - Run on Bun when installed and tell Node.js users once how to switch (senpi#2157)
 
 ### What changed

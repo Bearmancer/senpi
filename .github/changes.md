@@ -1,5 +1,23 @@
 # changes
 
+## 2026-09-29 - Node bundle CI step runs the Cursor exec regression file (senpi#2334)
+
+### What changed
+
+- `.github/workflows/ci.yml`: the `Node bundle isolation and RPC smoke` step also runs `scripts/node-bundle-cursor-exec.test.ts`, which drives the built CLI under Node and Bun with an exec-channel provider and checks the tool call runs once.
+
+### Why
+
+- The double execution only exists in the built bundle, where `chunks/cursor-agent.js` carries its own module copies; source-level tests cannot see it.
+
+### Why an extension could not handle it
+
+- CI workflow.
+
+### Expected merge conflict zones
+
+- LOW: the `Node bundle isolation and RPC smoke` step in `ci.yml`.
+
 ## 2026-09-28 - WebView CI step runs the orphaned-launch regression file (senpi#2272)
 
 ### What changed

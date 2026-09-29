@@ -1,4 +1,4 @@
-import type { KnownProvider, Model } from "@earendil-works/pi-ai";
+import type { Model } from "@earendil-works/pi-ai";
 import { getModels } from "@earendil-works/pi-ai/compat";
 import { getBuiltinModels, getBuiltinProviders } from "@earendil-works/pi-ai/providers/all";
 import { describe, expect, test, vi } from "vitest";
@@ -711,14 +711,16 @@ describe("default model selection", () => {
 	});
 
 	test("every bundled provider default resolves in its catalog", () => {
-		for (const provider of Object.keys(defaultModelPerProvider) as KnownProvider[]) {
+		for (const provider of Object.keys(defaultModelPerProvider)) {
 			// radius/ollama are dynamic catalogs; cursor is authentication-only until
 			// its chat protocol is ported.
 			if (provider === "radius" || provider === "ollama" || provider === "cursor") continue;
 			const defaultModelId = defaultModelPerProvider[provider];
+			// The anthropic-subscription builtin extension serves the bundled anthropic catalog.
+			const catalogProvider = provider === "anthropic-subscription" ? "anthropic" : provider;
 			// `KnownProvider` deliberately retains the legacy `openai-codex` id, which is no longer a
 			// catalog key, so the catalog lookup takes its own narrower parameter type.
-			const modelIds = getModels(provider as Parameters<typeof getModels>[0]).map((model) => model.id);
+			const modelIds = getModels(catalogProvider as Parameters<typeof getModels>[0]).map((model) => model.id);
 			expect(modelIds.length, `${provider} should expose a bundled catalog`).toBeGreaterThan(0);
 			expect(modelIds, `${provider} should include its default ${defaultModelId}`).toContain(defaultModelId);
 		}

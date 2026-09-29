@@ -22,10 +22,10 @@ function installedSdkClaudeCodeVersion(): string {
 	return manifest.claudeCodeVersion;
 }
 
-function engineClaudeCodeVersion(): string {
+function engineClaudeCodeVersionFloor(): string {
 	const source = readFileSync(join(repoRoot, "packages", "ai", "src", "api", "anthropic-messages.ts"), "utf8");
 	const match = /const claudeCodeVersion = "(\d+\.\d+\.\d+)";/.exec(source);
-	if (!match) throw new Error("anthropic-messages.ts has no claudeCodeVersion declaration");
+	if (!match?.[1]) throw new Error("anthropic-messages.ts has no claudeCodeVersion declaration");
 	return match[1];
 }
 
@@ -48,8 +48,8 @@ function bothInstalled(versions: { bundled?: string; onPath?: string }, override
 }
 
 describe("regression #2033: the engine runs and advertises a current Claude Code", () => {
-	it("advertises the Claude Code version the pinned claude-agent-sdk ships", () => {
-		expect(engineClaudeCodeVersion()).toBe(installedSdkClaudeCodeVersion());
+	it("floors the advertised Claude Code version at the one the pinned claude-agent-sdk ships", () => {
+		expect(engineClaudeCodeVersionFloor()).toBe(installedSdkClaudeCodeVersion());
 	});
 
 	it("uses a newer claude on PATH instead of the bundled binary", () => {

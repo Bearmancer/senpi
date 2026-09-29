@@ -86,6 +86,7 @@ export {
 import { hostCrashCleanupPaths } from "./host-cleanup-paths.ts";
 import { createHostDaemonPaths, generationPaths, HOST_DAEMON_DIR_ENV } from "./host-daemon-paths.ts";
 import { releaseGeneration } from "./host-daemon-registration.ts";
+import { HOST_INSTANCE_ID_ENV } from "./host-identity-env.ts";
 import { watchForSupersession } from "./host-supersession.ts";
 import {
 	HOST_CLEANUP_PATHS_ENV,
@@ -96,7 +97,6 @@ import {
 } from "./host-watchdog.ts";
 import { attachJsonlLineReader, MAX_RPC_LINE_CHARACTERS } from "./jsonl.ts";
 import { activeTurnsForIdleDecision, createObserverLink } from "./observer-link.ts";
-import { HOST_INSTANCE_ID_ENV } from "./protocol-identity.ts";
 import {
 	MAX_SOCKET_PATH_BYTES,
 	PUBLIC_SOCKET_IDENTITY_FILE,

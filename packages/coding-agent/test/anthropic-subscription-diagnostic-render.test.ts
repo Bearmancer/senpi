@@ -193,6 +193,22 @@ describe("Continuity notice rendering", () => {
 		expect(notice).toContain("tainted_compaction");
 	});
 
+	it("stays silent for a failed-attempt diagnostic, which re-sent nothing", () => {
+		const tracker = new ContinuityNoticeTracker();
+
+		expect(
+			tracker.noticeFor(
+				diagnosticMessage([
+					{
+						type: "claude_sdk_oauth_session_continuity",
+						timestamp: 1,
+						details: { kind: "failed", reason: "query_failed" },
+					},
+				]),
+			),
+		).toBeUndefined();
+	});
+
 	it("stays silent for a healthy delta diagnostic", () => {
 		const tracker = new ContinuityNoticeTracker();
 

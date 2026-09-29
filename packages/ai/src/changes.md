@@ -1,3 +1,109 @@
+## 2026-09-29 - Cursor exec calls run once in the release bundle; bundle copies share module state (senpi#2334)
+
+### What changed
+
+- `packages/ai/src/utils/block-symbols.ts`: every block marker (`kStreamingPartialJson`, `kStreamingBlockIndex`, `kStreamingLastParseLen`, `kStreamingEnvelopeId`, `kStreamingBlockKind`, `kCursorExecResolved`) is a registry symbol (`Symbol.for("provider.block.<name>")`), so a block stamped by one copy of the module is recognized by another.
+- `packages/ai/src/utils/process-singleton.ts` (new, browser-safe): `processSingleton(key, create)` keeps one value per process under `Symbol.for(key)` on `globalThis`.
+- `packages/ai/src/session-resources.ts`: the cleanup registry is `processSingleton("@earendil-works/pi-ai:session-resource-cleanups")`.
+- `packages/ai/src/cursor/context-limit-store.ts`: the observed limits, installed port and hydration flag live in `processSingleton("@earendil-works/pi-ai:cursor-context-limits")`.
+- `packages/ai/src/utils/cursor-context-limit.ts`: the file persistence port, with its `savingEnabled` flag, is `processSingleton("@earendil-works/pi-ai:cursor-context-limit-file")`, so every copy installs the same port.
+- `packages/ai/test/bundle-module-copies.test.ts` (new): loads two copies of each module (`vi.resetModules`) and checks the marker, the cleanup registry and the context-limit store are shared.
+
+### Why
+
+- The release bundle emits `chunks/cursor-agent.js` as a self-contained file (`splitting: false`), so it carries its own copy of every module it imports while the agent loop and the coding agent use the main graph's copy. With module-private `Symbol()` markers the loop never saw `kCursorExecResolved` on a block Cursor's exec channel had already executed and ran every exec-bridged tool call a second time under the same id, which replayed stale writes. The same split kept the Cursor conversation-cache cleanup out of the registry `AgentSession.dispose` runs, and kept an observed Cursor context ceiling from reaching the running session until a restart.
+
+### Why an extension could not handle it
+
+- The markers, the cleanup registry and the context-limit store are module state inside `pi-ai`; which copy a caller gets is decided by the release bundle, not by anything an extension controls.
+
+### Expected merge conflict zones
+
+- LOW: the `sessionResourceCleanups` declaration in `session-resources.ts` if upstream touches the registry.
+
+## 2026-09-29 - The anthropic-subscription cold-seed refusal is a context overflow (senpi#2329)
+
+### What changed
+
+- `packages/ai/src/utils/overflow.ts`: `OVERFLOW_PATTERNS` gains `/^The conversation is too long to resend \(about \d+ tokens, limit \d+\)/` and the provider list comment names it, so `isContextOverflow` classifies the refusal the `anthropic-subscription` lane raises before re-sending a conversation that cannot fit ("The conversation is too long to resend (about N tokens, limit M). Compacting it and retrying.").
+
+### Why
+
+- The refusal must reach the same overflow recovery an API rejection does: senpi compacts its own history once and retries (oh-my-openagent#7975). Its wording is plain for the user, so it no longer matches the provider patterns.
+
+### Why an extension could not handle it
+
+- `isContextOverflow` is the shared classifier that core overflow recovery consults before any extension hook runs; only a core pattern can make the provider's own refusal count as an overflow.
+
+### Expected merge conflict zones
+
+- LOW: the head of `OVERFLOW_PATTERNS` in `packages/ai/src/utils/overflow.ts` and its provider list comment.
+
+## 2026-09-29 - Claude Code fingerprint follows the latest release; Sonnet 5.5 request shaping (senpi#2321)
+
+### What changed
+
+- `packages/ai/src/utils/claude-code-version.ts` (new, browser-safe): `createClaudeCodeVersionResolver` (higher of the floor, a host-installed `ClaudeCodeVersionStore` cache and the latest published Claude Code from Anthropic's `latest` release channel and the npm dist-tag; one background refresh per six hours, never blocks, `offline` serves the cache only), `raise()` for a version a rejection names, `getClaudeCodeVersion(floor, env)` honoring `PI_CLAUDE_CODE_VERSION`, `isClaudeCodeVersionTooOldError`, `requiredClaudeCodeVersionFromError`, `recoverClaudeCodeVersion`, `claudeCodeVersionTooOldHint`.
+- `packages/ai/src/utils/claude-code-version-cache.ts` (new, Node): `installClaudeCodeVersionFileStore()` installs the file cache at `<agent dir>/claude-code-version.json` (same agent-dir resolution as the cursor stores, atomic tmp+rename, one failed write disables saving) and passes `PI_OFFLINE` through as `offline`.
+- `packages/ai/src/api/anthropic-messages.ts`: the `claudeCodeVersion` constant stays (2.1.284) as the bundled floor and the byte-for-byte declaration a downstream installer rewrites (`scripts/node-bundle-smoke.test.ts`); `createClient` reads `getClaudeCodeVersion(claudeCodeVersion, env)` per request for the OAuth `user-agent` and returns the advertised version. `stream` keeps an `openClient` closure; a `claude_code_version_too_old` 400 raises the version (the one the error names, else a refresh) and reopens the client for one retry; a second rejection, or a pinned version, appends the hint naming the advertised version and the pin variable. `DISABLED_THINKING_REJECTING_MODEL_MARKERS` adds `sonnet-5-5` / `sonnet-5.5`.
+- `packages/ai/src/api/bedrock-converse-stream.ts`: `rejectsDisabledThinking` adds the same markers.
+- `packages/ai/src/utils/prompt-cache-ttl.ts`: `FORCED_TOOL_CHOICE_REJECTING_MODEL_ID` covers `claude-sonnet-5[.-]5`.
+- `packages/ai/test/claude-code-version.test.ts` (new): resolver, fetch, error parsing. `packages/ai/test/anthropic-oauth-claude-code-version.test.ts`: floor 2.1.284, exact pin, retry once with the named version, hint on the second failure, no retry when pinned. `packages/ai/test/anthropic-sonnet-5-5.test.ts` (new): catalog row and request shape.
+
+### Why
+
+- The fingerprint had gone stale twice (2.1.75 -> 2.1.251 -> 2.1.280), each time a 400 for OAuth users of a new model until a release. Claude Sonnet 5.5 (2026-09-28) requires Claude Code 2.1.284: the 2.1.283 binary does not contain the model id, 2.1.284 does. The Models API and live requests show Sonnet 5.5 rejects `thinking.type=disabled` and forced `tool_choice` exactly like Opus 5.5.
+
+### Why an extension could not handle it
+
+- The user-agent is set inside `createClient` and the rejection is caught inside the request retry loop; neither is reachable from an extension.
+
+### Expected merge conflict zones
+
+- MEDIUM: `createClient`'s OAuth branch and the `stream` request setup in `api/anthropic-messages.ts`; upstream still carries a constant there. LOW: the marker lists.
+
+## 2026-09-29 - Auth resolution marks shared cloud credential chains as ambient (senpi#2327)
+
+### What changed
+
+- `packages/ai/src/auth/types.ts`: `AuthResult` and `AuthCheck` gain optional `ambient?: true`, set when auth came only from a shared cloud credential chain (AWS profile/keys/roles, Google ADC) rather than a credential configured for that provider.
+- `packages/ai/src/providers/amazon-bedrock.ts`: `resolve` marks the environment `AWS_PROFILE`, `AWS_ACCESS_KEY_ID`+`AWS_SECRET_ACCESS_KEY`, ECS task role and web-identity branches `ambient: true`. A stored credential (key or chosen profile) and `AWS_BEARER_TOKEN_BEDROCK` (Bedrock-only) stay unmarked.
+- `packages/ai/src/providers/google-vertex.ts`: `resolve` marks Application Default Credentials without a stored credential `ambient: true`; an API key or a stored credential stays unmarked.
+- `packages/ai/src/models.ts`: `checkProviderAuth` carries `ambient` from the resolution into the `AuthCheck` it returns.
+
+### Why
+
+- AWS keys and ADC exist for many tools. With them in the environment, Bedrock was indistinguishable from a provider the user logged in to, and the coding agent made it the startup model over the user's own login (senpi#2327).
+
+### Why an extension could not handle it
+
+- The provenance is known only inside each provider's `resolve` and must travel through `Models.checkAuth`; no extension sees either.
+
+### Expected merge conflict zones
+
+- LOW: the `AuthResult`/`AuthCheck` interfaces in `auth/types.ts`; the ambient branches of the Bedrock and Vertex `resolve`; the api-key fallback line of `checkProviderAuth` in `models.ts`.
+
+## 2026-09-28 - Copilot requests use the account's own API host (senpi#2309)
+
+### What changed
+
+- `packages/ai/src/api/github-copilot-endpoint.ts` (new): `resolveGitHubCopilotBaseUrl` picks the host from the token response's `endpoints.api` stored for that exact token (`copilotApiEndpoint: { tid, url }`, matched by the token's `tid`), then the token's `proxy-ep`, then the GHE domain, then `GITHUB_COPILOT_INDIVIDUAL_BASE_URL`. `parseGitHubCopilotApiEndpoint` accepts only https URLs without credentials.
+- `packages/ai/src/auth/oauth/github-copilot.ts`: the token exchange stores `copilotApiEndpoint`; `/models`, model-policy updates and `toAuth` resolve through the new helper; the Individual picker fallback compares against the shared constant.
+- `packages/ai/src/providers/github-copilot.ts`: the api-key lane (`COPILOT_GITHUB_TOKEN`, explicit keys) returns the token's `proxy-ep` host as `auth.baseUrl`.
+- `packages/ai/src/api/github-copilot-errors.ts`: a Copilot 421 gets a note naming the wrong-host cause, the fix, and the GitHub request id.
+
+### Why
+
+- Business and Enterprise accounts are served from their own host; a request on the individual host is refused with `421 Misdirected Request` (omo#8662). The token response's `endpoints.api` was discarded, a token without `proxy-ep` fell back to the individual host even at refresh, and a token passed as a key never derived a host at all.
+
+### Why an extension could not handle it
+
+- The host is decided inside the bundled OAuth flow and the provider's auth resolution before any extension sees the request.
+
+### Expected merge conflict zones
+
+- LOW: `refreshGitHubCopilotAccessToken`'s return, the `getGitHubCopilotBaseUrl` call sites and `toAuth` in `auth/oauth/github-copilot.ts`; the `apiKey` line in `providers/github-copilot.ts`; the 421 branch in `api/github-copilot-errors.ts`.
+
 ## 2026-09-28 - Copilot account model limits drive compaction and output budgets (senpi#2299)
 
 ### What changed

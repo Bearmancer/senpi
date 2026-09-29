@@ -1,3 +1,22 @@
+## 2026-09-29 - Claude Sonnet 5.5 catalog rows (senpi#2321)
+
+### What changed
+
+- `packages/ai/scripts/generate-models.ts`: `ANTHROPIC_ALLOWED_FALLBACK_MODELS["claude-sonnet-5-5"] = ["claude-sonnet-5"]` (the live `allowed_fallback_models`), `supportsAnthropicMidConvoEffort` matches `claude-sonnet-5[.-]5`, `isAnthropicAdaptiveOnlyModel` adds `sonnet-5-5` / `sonnet-5.5`.
+- Regenerated provider data: `anthropic.json` `claude-sonnet-5-5`, `amazon-bedrock.json` `global.anthropic.claude-sonnet-5-5`, `openrouter.json` `anthropic/claude-sonnet-5.5` (+ `:batch`), `vercel-ai-gateway.json`, `venice.json` (`claude-sonnet-5-5`, plus `claude-opus-5-5-fast` and `xiaomi-mimo-v2-6-flash` that models.dev now lists), `opencode.json`. Drift that rode along: `together.json` dropped `moonshotai/Kimi-K2.6` and `Kimi-K2.7-Code` (retired upstream; `test/together-models.test.ts` now pins `Kimi-K3`), `mistral.json` dropped `magistral-small`, OpenRouter DeepSeek and Cloudflare rows refreshed metadata.
+
+### Why
+
+- Claude Sonnet 5.5 shipped on 2026-09-28 with the Opus 5.5 request contract (adaptive-only thinking, effort low..max, no forced tool choice) and a server-side fallback allowlist of `claude-sonnet-5`.
+
+### Why an extension could not handle it
+
+- Generated catalog data.
+
+### Expected merge conflict zones
+
+- LOW: the three Anthropic helpers in `generate-models.ts`; generated JSON regenerates.
+
 ## 2026-09-27 - OpenRouter catalog records mandatory reasoning again (senpi#1239, senpi#2163)
 
 ### What changed

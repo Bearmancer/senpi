@@ -35,6 +35,9 @@ senpi app-server --listen stdio://
 `unix:///abs/path` in the `--listen` grammar for local-control socket addresses, but this document does not cover
 daemon lifecycle or control-socket management.
 
+Load extensions into every thread with repeated `--extension <path>`, the same sources the global flag accepts.
+`senpi app-server daemon start` passes them to the daemon and records them, so `restart` keeps them.
+
 ## Protocol Overview
 
 App Server mode speaks JSON-RPC-shaped messages without a `jsonrpc` field. A request has `id`, `method`, and optional

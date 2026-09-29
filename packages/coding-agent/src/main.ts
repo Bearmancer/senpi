@@ -100,6 +100,7 @@ import { initTheme, stopThemeWatcher } from "./modes/interactive/theme/theme.ts"
 import { runPrintMode } from "./modes/print-mode.ts";
 import { startHostChildReaper } from "./modes/rpc/child-reaper.ts";
 import { AUTO_TITLE_SESSIONS_CAPABILITY, parseClientCapabilities } from "./modes/rpc/custom-capability.ts";
+import type { PreparableRuntimeFactory, PrepareRuntimeOptions } from "./modes/rpc/host-warm.ts";
 import { dispatchInternalSupervisor } from "./modes/rpc/supervisor-route.ts";
 import { isLocalPath, normalizePath, resolvePath } from "./utils/paths.ts";
 import { cleanupWindowsSelfUpdateQuarantine } from "./utils/windows-self-update.ts";
@@ -818,7 +819,7 @@ export function createCliRuntimeFactory(
 		 */
 		modelRuntime?: ModelRuntime;
 	} = {},
-): CreateAgentSessionRuntimeFactory {
+): PreparableRuntimeFactory {
 	const { parsed, cwd, agentDir, appMode } = configuration;
 	const extensionFactories = local.extensionFactories ?? builtInExtensions;
 	const startupSettingsManager = local.startupSettingsManager ?? SettingsManager.create(cwd, agentDir);
@@ -837,19 +838,18 @@ export function createCliRuntimeFactory(
 	const resolvedSkillPaths = resolveCliPaths(cwd, parsed.skills);
 	const resolvedPromptTemplatePaths = resolveCliPaths(cwd, parsed.promptTemplates);
 	const resolvedThemePaths = resolveCliPaths(cwd, parsed.themes);
-	return async ({
+	// The cwd-bound services one session needs, built alone: the runtime factory below builds them
+	// before its session, and a multi-session host's `warm` builds and drops them (senpi#2314).
+	const createServices = async ({
 		cwd,
 		agentDir,
-		sessionManager,
-		sessionStartEvent,
 		projectTrustContext,
 		launchProfile,
 		mcpRegistry,
+		isInitialRuntime,
+	}: Omit<Parameters<CreateAgentSessionRuntimeFactory>[0], "sessionManager" | "sessionStartEvent"> & {
+		isInitialRuntime: boolean;
 	}) => {
-		const isInitialRuntime = sessionStartEvent === undefined;
-		const markSwitch = (label: string): void => {
-			if (sessionStartEvent?.reason === "resume") time(label, "switch");
-		};
 		const projectTrustDiagnostics: AgentSessionRuntimeDiagnostic[] = [];
 		const cachedProjectTrust = projectTrustByCwd.get(cwd);
 		const hasTrustRequiringResources = hasTrustRequiringProjectResources(cwd);
@@ -919,6 +919,29 @@ export function createCliRuntimeFactory(
 				appendSystemPrompt: parsed.appendSystemPrompt,
 				extensionFactories,
 			},
+		});
+		return { services, projectTrustDiagnostics };
+	};
+	const createRuntime: CreateAgentSessionRuntimeFactory = async ({
+		cwd,
+		agentDir,
+		sessionManager,
+		sessionStartEvent,
+		projectTrustContext,
+		launchProfile,
+		mcpRegistry,
+	}) => {
+		const isInitialRuntime = sessionStartEvent === undefined;
+		const markSwitch = (label: string): void => {
+			if (sessionStartEvent?.reason === "resume") time(label, "switch");
+		};
+		const { services, projectTrustDiagnostics } = await createServices({
+			cwd,
+			agentDir,
+			...(projectTrustContext !== undefined ? { projectTrustContext } : {}),
+			...(launchProfile !== undefined ? { launchProfile } : {}),
+			...(mcpRegistry !== undefined ? { mcpRegistry } : {}),
+			isInitialRuntime,
 		});
 		markSwitch("services");
 		const { settingsManager, modelRuntime, resourceLoader } = services;
@@ -1015,6 +1038,12 @@ export function createCliRuntimeFactory(
 			diagnostics,
 		};
 	};
+	// A host open creates its session with no start event, so a warm prepares exactly that open.
+	return Object.assign(createRuntime, {
+		prepare: async (options: PrepareRuntimeOptions): Promise<void> => {
+			await createServices({ ...options, isInitialRuntime: true });
+		},
+	});
 }
 
 export async function main(args: string[], options?: MainOptions) {

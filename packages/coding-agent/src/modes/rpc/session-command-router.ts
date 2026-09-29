@@ -8,7 +8,9 @@ import {
 	RETAIN_ON_DISCONNECT_CAPABILITY,
 	SESSION_CONTEXT_CAPABILITY,
 	SESSION_KIND_CAPABILITY,
+	WARM_CAPABILITY,
 } from "./custom-capability.ts";
+import { answerWarm } from "./host-warm.ts";
 import { protocolIdentity } from "./protocol-identity.ts";
 import { sessionAutoTitleError, sessionContextError, sessionKindError } from "./rpc-input-validation.ts";
 import type { RpcCommand, RpcResponse, RpcSessionClosedReason } from "./rpc-types.ts";
@@ -105,7 +107,7 @@ export class SessionCommandRouter {
 	private readonly releasedConnections = new Set<string>();
 	private readonly registry: Pick<
 		RpcSessionRegistry,
-		"openSession" | "peek" | "getForCommand" | "beginClose" | "close" | "closeMarked" | "list" | "size"
+		"openSession" | "peek" | "getForCommand" | "beginClose" | "close" | "closeMarked" | "list" | "size" | "warm"
 	>;
 	private readonly writer: SessionEventWriter;
 	private readonly defaults: RpcHostSessionDefaults;
@@ -134,7 +136,7 @@ export class SessionCommandRouter {
 	constructor(
 		registry: Pick<
 			RpcSessionRegistry,
-			"openSession" | "peek" | "getForCommand" | "beginClose" | "close" | "closeMarked" | "list" | "size"
+			"openSession" | "peek" | "getForCommand" | "beginClose" | "close" | "closeMarked" | "list" | "size" | "warm"
 		>,
 		writer: SessionEventWriter,
 		defaults: RpcHostSessionDefaults,
@@ -237,6 +239,14 @@ export class SessionCommandRouter {
 			return Promise.resolve(undefined);
 		if (this.draining && command.type === "open_session")
 			return Promise.resolve(error(command.id, command.type, "host_draining"));
+		// A warm holds no session and no path, so it stays out of the accounting a drain waits on (senpi#2314).
+		if (command.type === "warm")
+			return answerWarm(command, {
+				draining: this.draining,
+				warm: this.registry.warm,
+				cwd: this.defaults.cwd,
+				hostContext: this.defaults.hostContext,
+			});
 		this.activeRequests.set(sessionId, (this.activeRequests.get(sessionId) ?? 0) + 1);
 		return runWithSessionAttribution({ sessionId }, () => this.dispatch(command)).finally(() => {
 			const remaining = (this.activeRequests.get(sessionId) ?? 1) - 1;
@@ -246,7 +256,7 @@ export class SessionCommandRouter {
 		});
 	}
 
-	private async dispatch(command: RpcCommand): Promise<RpcResponse | undefined> {
+	private async dispatch(command: Exclude<RpcCommand, { type: "warm" }>): Promise<RpcResponse | undefined> {
 		if (command.type === "get_protocol_info") {
 			const capabilities = new Set([
 				"multi_session",
@@ -263,6 +273,8 @@ export class SessionCommandRouter {
 				// Only a multi-session host can refuse a duplicate durable id, because only it
 				// sees every live session's identity.
 				DURABLE_SESSION_ID_CAPABILITY,
+				// Only an in-process runtime shares the loop a warm loads into (senpi#2314).
+				...(this.registry.warm ? [WARM_CAPABILITY] : []),
 				...(this.connectionOptions?.capabilities ?? []),
 			]);
 			return {

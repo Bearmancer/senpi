@@ -122,6 +122,7 @@ import {
 } from "../../core/model-resolver.ts";
 import { CredentialSynchronizationError } from "../../core/model-runtime.ts";
 import type { ResourceDiagnostic } from "../../core/resource-loader.ts";
+import { usageLimitCause } from "../../core/retry-fallback/usage-limit.ts";
 import { formatMissingSessionCwdPrompt, MissingSessionCwdError } from "../../core/session-cwd.ts";
 import { createSessionLogger, type SessionLogger } from "../../core/session-log.ts";
 import { type SessionEntry, SessionManager, sessionEntryToContextMessages } from "../../core/session-manager.ts";
@@ -5595,7 +5596,7 @@ export class InteractiveMode {
 				this.showNoticeBox({
 					title: `⇄ Model fallback · ${event.from} → ${event.to}`,
 					tone: "warning",
-					why: `Retry switched models (${event.reason}); the turn continues on ${event.to}.`,
+					why: `${usageLimitCause(event.from, event.limit) ?? `Retry switched models (${event.reason})`}; the turn continues on ${event.to}.`,
 				});
 				this.setExtensionStatus(FALLBACK_STATUS_KEY, `fallback: ${event.to}`);
 				// Provider/model failover ends any external-owner delegation episode:

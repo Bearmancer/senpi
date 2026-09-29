@@ -240,6 +240,8 @@ export const RPC_ERROR_SESSION_ID_IN_USE = "session_id_in_use";
  * memory; clients keep recognizing the code while older generations may still answer.
  */
 export const RPC_ERROR_HOST_MEMORY_PRESSURE = "host_memory_pressure";
+/** `warm` could not load the profile it was asked for (missing cwd, an extension that failed to load). */
+export const RPC_ERROR_WARM_FAILED = "warm_failed";
 // Message-edit and tree-navigation failures (mirror AssistantEditError.code / UserEditError.code /
 // SessionStreamingError.code). Every code lives in the one shared RpcErrorCode union below: the
 // failure response is a single catch-all member, so a command's codes are a documented SUBSET
@@ -267,6 +269,7 @@ export type RpcErrorCode =
 	| typeof RPC_ERROR_INVALID_SESSION_ID
 	| typeof RPC_ERROR_SESSION_ID_IN_USE
 	| typeof RPC_ERROR_HOST_MEMORY_PRESSURE
+	| typeof RPC_ERROR_WARM_FAILED
 	| typeof RPC_ERROR_STREAMING
 	| typeof RPC_ERROR_ENTRY_NOT_FOUND
 	| typeof RPC_ERROR_NOT_ASSISTANT
@@ -348,6 +351,19 @@ export type RpcCommand =
 			include_workers?: boolean;
 			/** An observing read, as on `get_protocol_info`. */
 			observe?: boolean;
+	  }
+	| {
+			id?: string;
+			type: "warm";
+			/**
+			 * Load what the next `open_session` with these inputs needs - the extension module graph and
+			 * the runtimes its extensions load for this kind and context - WITHOUT opening a session
+			 * (senpi#2314). Never listed, never an attachment, idempotent per profile. `cwd`, `kind` and
+			 * `context` mean what they mean on `open_session`. Requires the host capability `warm`.
+			 */
+			cwd?: string;
+			kind?: SessionKind;
+			context?: Record<string, string>;
 	  };
 
 // ============================================================================
@@ -379,6 +395,7 @@ export interface RpcAuthStatus {
 		| "models_json_headers"
 		| "extension_headers";
 	label?: string;
+	ambient?: true;
 }
 
 /** Account-slot metadata safe to send to desktop clients. */
@@ -555,6 +572,14 @@ export type RpcResponse =
 			data: { sessionId: string; state: RpcSessionState; attached?: boolean };
 	  }
 	| { id?: string; type: "response"; command: "close_session"; success: true; data: Record<string, never> }
+	| {
+			id?: string;
+			type: "response";
+			command: "warm";
+			success: true;
+			/** `unsupported`: this host's session runtime cannot be warmed from the host process (worker isolates). */
+			data: { state: "warmed" | "already_warm" | "unsupported" };
+	  }
 	| {
 			id?: string;
 			type: "response";

@@ -17,6 +17,7 @@ import type {
 	FallbackReason,
 	RetryFallbackControllerDeps,
 } from "./controller-types.ts";
+import { type UsageLimitScope, usageLimitScope } from "./usage-limit.ts";
 
 export type { ActiveFallbackState, RetryFallbackControllerDeps } from "./controller-types.ts";
 
@@ -201,14 +202,15 @@ export class RetryFallbackController {
 		// here; billing/quota exhaustion is recorded at the failure itself (see
 		// noteHealthFailure) so the final chain entry opens too.
 		if (current && reason === "transient") this.noteHealthFailure(current.model, current.thinkingLevel, failure);
-		const candidate = this.nextCandidate(false, true);
+		const limit = usageLimitScope(failure.errorMessage);
+		const candidate = this.nextCandidate(false, true, limit === "account" ? current?.model.provider : undefined);
 		if (!current || !candidate) return false;
 		const currentBase = formatSelector(current.model);
 		if (reason === "transient" || reason === "hard-error" || reason === "billing") {
 			this.deps.cooldowns.note(currentBase, failure);
 			this.deps.logger.info("cooldown_noted", { selector: currentBase, errorMessage: failure.errorMessage });
 		}
-		await this.applyCandidate(current, candidate, reason);
+		await this.applyCandidate(current, candidate, reason, limit);
 		return true;
 	}
 
@@ -216,6 +218,7 @@ export class RetryFallbackController {
 		current: { model: Model<Api>; thinkingLevel?: ThinkingLevel },
 		candidate: { chainKey: string } & UsableCandidate,
 		reason: FallbackReason,
+		limit?: UsageLimitScope,
 	): Promise<void> {
 		const thinking = this.selectThinking(candidate.selector, candidate.model, current.thinkingLevel);
 		this.probes.admit(baseSelector(candidate.selector));
@@ -235,8 +238,9 @@ export class RetryFallbackController {
 			pinnedByBilling,
 			pinned: pinnedByRefusal || pinnedByBilling,
 		};
-		this.deps.logger.info("fallback_applied", { from, to, chainKey: candidate.chainKey, reason });
-		this.deps.emit({ type: "retry_fallback_applied", from, to, chainKey: candidate.chainKey, reason });
+		const scope = limit === undefined ? {} : { limit };
+		this.deps.logger.info("fallback_applied", { from, to, chainKey: candidate.chainKey, reason, ...scope });
+		this.deps.emit({ type: "retry_fallback_applied", from, to, chainKey: candidate.chainKey, reason, ...scope });
 	}
 
 	/** The chain governing `current`, when fallback is enabled; a model's own chain wins over an active one. */
@@ -247,7 +251,11 @@ export class RetryFallbackController {
 		return chainKey && chains[chainKey] ? chainKey : undefined;
 	}
 
-	private nextCandidate(reserve = true, logDecision = reserve): ({ chainKey: string } & UsableCandidate) | undefined {
+	private nextCandidate(
+		reserve = true,
+		logDecision = reserve,
+		spentProvider?: string,
+	): ({ chainKey: string } & UsableCandidate) | undefined {
 		const current = this.deps.getCurrentSelector();
 		if (!this.deps.getSettings().modelFallback || !current) return undefined;
 		// Models without an explicitly configured chain do not enter an implicit fallback lane.
@@ -263,6 +271,7 @@ export class RetryFallbackController {
 			isSuppressed: (base) => this.deps.cooldowns.isSuppressed(base),
 			isAuthAvailable: (provider) => this.deps.isAuthAvailable(provider),
 			isCircuitOpen: (base) => this.deps.circuits?.isOpen(base) ?? false,
+			spentProvider,
 			skip: (raw, skipReason) => this.skip(raw, skipReason),
 		});
 		if (candidate) {

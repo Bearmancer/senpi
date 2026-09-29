@@ -1,3 +1,94 @@
+## 2026-09-29 - a cold-seed that cannot fit is refused before dispatch and marked for senpi-owned recovery (senpi#2329)
+
+### What changed
+
+- `cold-seed-budget.ts` (new): `estimateColdSeedTokens` measures a cold-seed request as UTF-8 bytes / 4 over the system prompt, the tool schemas and the flattened blocks (a lower bound for Claude's tokenizer; images and Claude Code's own preamble are left out). `coldSeedOverflow` returns a `ColdSeedOverflowError` ("The conversation is too long to resend (about N tokens, limit M). Compacting it and retrying.", classified as a context overflow by `packages/ai/src/utils/overflow.ts`) when that lower bound already exceeds `model.contextWindow`. `markColdSeedOverflow` appends the `claude_sdk_oauth_cold_seed_overflow` diagnostic to a failed cold-seed turn whose error is a context overflow; `isColdSeedOverflowMessage` reads it back.
+- `session-stream.ts`: `createResidentAttempt` reports each attempt's shape through the new `onDispatchShape` callback and, for a flatten/bootstrap that cannot fit, closes the freshly created resident entry and throws before any SDK submission.
+- `stream.ts`: tracks whether the last resident attempt was a cold-seed and marks the failed output with `markColdSeedOverflow`, for a pre-dispatch refusal and for an API rejection alike.
+
+### Why
+
+- A cold-seed re-sends the whole senpi branch as one `<conversation_history>` user message. Senpi stands compaction down on this lane, so that branch was never compacted, and the Claude Agent SDK cannot compact a single exchange: the request failed with "Prompt is too long" and nothing recovered it (oh-my-openagent#7975). The marker is persisted with the message, so the compaction lane policy can tell senpi's own flattened history from the SDK's resident transcript, also after a restart.
+
+### Why an extension could not handle it
+
+- The dispatch shape and the failed output are internal to this provider stream.
+
+### Expected merge conflict zones
+
+- MEDIUM: the flatten block computation near the end of `createResidentAttempt` in `session-stream.ts` (also touched by continuity work on #1972-#1974).
+- LOW: the `residentSessionMessages` call and the catch block in `stream.ts`.
+
+## 2026-09-29 - A rejected or missing resume checkpoint falls back to an earlier verified boundary (senpi#1973)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/session-continuity.ts`: `retryCheckpointDecision` forks at the newest mapped boundary inside the proven pre-turn prefix (`newestBoundaryWithin(..., binding.sentCount)`) when `lastAssistantUuid` is gone, instead of flattening with `timeout_retry`. The legacy `decideFromBinding` branch no longer flattens on a missing `lastAssistantUuid` before the senpi#1974 boundary search runs; with no boundary inside the shared prefix it still flattens, keeping `registry_miss` for that shape.
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/session-checkpoint-recovery.ts` (new): `earlierVerifiedCheckpoint` picks the newest mapped boundary strictly below the rejected one that lies inside the hash-proven prefix and appears in the SDK transcript of the SAME session as a top-level assistant; `reattachRecoveringCheckpoint` reattaches and, when Claude Code rejects the fork point with `No message found with message.uuid`, forks at that earlier boundary with `atUuid` and `from` taken from the same boundary. At most 3 recoveries; every retry strictly lowers the index. Each recovery logs `claude_sdk_oauth_checkpoint_recovered` with the two indices only.
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/session-stream.ts`: `createResidentAttempt` reattaches through `reattachRecoveringCheckpoint`; `from` comes from the boundary that actually attached. Any failure the recovery does not absorb still reaches `onResumeFallback` and cold-seeds with `resume_initialization_failed`.
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/session-turn-attempt.ts`: exports `RESUME_MESSAGE_MISSING` so both paths recognize the same Claude Code wording.
+
+### Why
+
+- The first rejected or missing checkpoint re-sent the whole conversation although an earlier boundary was recoverable: a same-turn retry whose pre-turn UUID had just been dropped (senpi#1958 keeps the earlier ones mapped for exactly this), a detached binding without its newest assistant, and a fork point Claude Code no longer holds (oh-my-openagent#8424 finding 4 measured one such re-send at 905,874 B with no cache read).
+
+### Why an extension could not handle it
+
+- The continuity decision and the resident reattach are internal to this builtin; no hook sees the binding or the reattach failure.
+
+### Expected merge conflict zones
+
+- LOW: `session-checkpoint-recovery.ts` is new.
+- MEDIUM: the `boundary` block at the tail of `retryCheckpointDecision` and the flatten line after the senpi#1974 search in `decideFromBinding`.
+- MEDIUM: the `reattachRecoveringCheckpoint` call inside the reattach/fork branch of `createResidentAttempt`.
+- Fail-closed, by design: the config-dir lane, a missing `cwd`, an unreadable transcript, a transcript carrying another session id, a candidate held only as a subagent message, and any boundary outside the proven prefix. The persisted sidecar still stores one checkpoint; nothing invents an older mapping across a restart.
+
+## 2026-09-29 - A detached-binding fork names one boundary for atUuid and from (senpi#1974)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/session-continuity.ts`: `ContinuityBindingSnapshot` gains the optional `assistantUuidByIndex` entries field (same `readonly (readonly [number, string])[]` shape the runtime `ContinuityBinding` in `session-reattach.ts` already carries, so `admitRestoredBinding`'s structural passthrough needs no other edit). The legacy `decideFromBinding` branch (no `sentPrefixHash`) no longer pairs `atUuid: binding.lastAssistantUuid` with `from: shared`: a new `newestBoundaryWithin(entries, cap)` helper returns the newest mapped boundary with `index >= 1 && index <= shared` — the same strictly-before-the-divergence cap `boundaryBefore` gives the live entry path — and the fork uses that entry's uuid AND index. When no mapped boundary lies inside the shared prefix the decision fails closed to `flatten` with the same reason (`history_rolled_back` / `sent_stream_diverged`). The `sentPrefixHash` branch, `forkOrFlatten`, `retryCheckpointDecision` and the `!lastAssistantUuid` flatten are untouched (the latter belongs to senpi#1973).
+- `packages/coding-agent/test/anthropic-subscription-continuity-legacy-fork-pairing.test.ts`: new file (the decision test file is at the 250-pure-LOC ceiling) with the two issue fixtures: a diverged binding whose map carries `[2, a2], [4, a4]` must fork at `a2`/`from 2` (previously `a4` with `from 2`), and a map of only `[4, a4]` must flatten.
+- `packages/coding-agent/test/anthropic-subscription-continuity-retry-checkpoint.test.ts`: one assertion was REALIGNED, not deleted. "ignores a checkpoint whose pre-turn prefix no longer matches" had pinned the defective contract (`fork` at `uuid-a2`, whose index sits outside the shared prefix, with `from` unpinned); its binding now carries `assistantUuidByIndex [[1, uuid-a1], [2, uuid-a2]]` and the assertion pins the safe pairing `fork / history_rolled_back / atUuid uuid-a1 / from 1` - strictly more than before.
+- `packages/coding-agent/test/anthropic-subscription-restart-binding-drift.test.ts`: "lets a sent-stream divergence dominate the drift reason" (oh-my-openagent#7884) was the second pin of the same defect - its map-less binding forked at `uuid-a2` outside the shared prefix, and its `not.toBe("flatten")` guard failed once that shape fails closed. Its binding also carries `[[1, uuid-a1], [2, uuid-a2]]` now; both original assertions are untouched and the divergence still dominates the drift reason on the fork path.
+
+### Why
+
+- `lastAssistantUuid` maps the assistant committed at `binding.sentCount`, but `from` was the common-prefix length, which can be strictly smaller. `session-stream.ts` then built the reattach binding with `assistantUuidByIndex.filter(([index]) => index <= decision.from)` and `lastAssistantUuid: decision.atUuid`, so the SDK forked after an assistant from OUTSIDE the shared prefix while senpi re-sent the application history from `shared` - the new branch retained an unrelated old-branch assistant and appended replacement user history after it (offline SDK-lineage demonstration: oh-my-openagent#8424 finding 6).
+- Every producer that reaches this branch already carries the map: persisted sidecar bindings always have `sentPrefixHash` (schema v1 requires it) and take the other branch, while every in-memory binding is built by `bindingFromEntry`, which copies the live entry's full map. So the search fails closed only where the pairing was unsafe, and the flatten fallback is the recovery gap senpi#1973 owns for the no-boundary shape.
+
+### Why an extension could not handle it
+
+- The continuity decision table is internal to this builtin; no extension hook sees the binding snapshot or chooses the fork point.
+
+### Expected merge conflict zones
+
+- LOW: the `assistantUuidByIndex` field in `ContinuityBindingSnapshot` and the `newestBoundaryWithin` helper next to `boundaryBefore`.
+- MEDIUM: the legacy fork block at the tail of `decideFromBinding` - the senpi#1973 lane rebases onto this merge and must keep the boundary search.
+- MEDIUM: the realigned assertion in `anthropic-subscription-continuity-retry-checkpoint.test.ts` conflicts with any edit to that case.
+
+## 2026-09-29 - a thinking-level change never kills a streaming turn, and a failed turn is not reported as a re-send (oh-my-openagent#8759)
+
+### What changed
+
+- `session-registry-wiring.ts`: `thinking_level_select` leaves the resident query alone while a turn is in flight (`entry.activeTurn`). Reasoning options are part of `toolsetHash`, so the next admission after the turn settles sees the drift and reattaches with the new level. An idle session still keeps its binding and closes as before.
+- `session-stream.ts` / `session-observability.ts`: the terminal observation of a turn whose every attempt failed is the new kind `failed` instead of `flatten`. The interactive notice renders only `flatten` and `disabled`, so a failed turn no longer shows "Session continuity lost - resent the full conversation (query_failed)".
+- `session-observability.ts` / `stream.ts`: `claude_sdk_oauth_session_continuity` and `claude_sdk_oauth_session_close` session.log lines carry `sessionId` (the senpi session id). `stageContinuityDecision` and `emitContinuityObservation` take the session id as a parameter.
+
+### Why
+
+- Closing the live query mid-stream ends the SDK iterator, so the pump failed the active turn with "Anthropic Subscription query ended before the active turn completed". Measured on a scripted session: a level change 1.5 s into a streaming answer discarded 690 generated tokens and the user lost the turn; one reporter saw 10 of 12 such failures follow a `thinking_level_selected` close.
+- A failed attempt re-sends nothing: the retry checkpoint forks at the pre-turn boundary on the next attempt (measured: five 429s, then `fork / timeout_retry` with a full cache read). Labelling the failure `flatten` inflated flatten counts in session.log (243 of 254 in one reporter's day) and showed a false "resent the full conversation" notice.
+- Without a session id, continuity and close lines from several concurrent sessions could not be attributed.
+
+### Why an extension could not handle it
+
+- The query lifecycle, the observation vocabulary and the session.log events are internal to this builtin.
+
+### Expected merge conflict zones
+
+- LOW: the `thinking_level_select` handler in `session-registry-wiring.ts`; the terminal `catch` of `residentSessionMessages`; the signatures of `stageContinuityDecision` / `emitContinuityObservation` and the close log line in `session-observability.ts`.
+
 ## 2026-09-28 - refresh-lock contention and token-endpoint hiccups are never an authentication verdict (senpi#2281)
 
 ### What changed

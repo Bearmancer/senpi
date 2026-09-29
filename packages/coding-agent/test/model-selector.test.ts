@@ -58,6 +58,40 @@ describe("model selector", () => {
 		selector.dispose();
 	});
 
+	// #2327: models available only through ambient cloud credentials (AWS env, Google ADC) stay
+	// listed but never lead the list ahead of providers the user configured.
+	it("lists ambient-only providers after configured providers", async () => {
+		harness = await createHarness({
+			models: [{ id: "configured-model", name: "Configured Model", reasoning: true }],
+		});
+		const runtime = harness.session.modelRuntime;
+		const configured = harness.getModel("configured-model")!;
+		const cloud = { ...configured, provider: "amazon-bedrock", id: "cloud-model", name: "Cloud Model" };
+		vi.spyOn(runtime, "refresh").mockResolvedValue({ aborted: false, errors: new Map() });
+		vi.spyOn(runtime, "getAvailableSnapshot").mockReturnValue([cloud, configured]);
+		const actualStatus = runtime.getProviderAuthStatus.bind(runtime);
+		vi.spyOn(runtime, "getProviderAuthStatus").mockImplementation((provider) =>
+			provider === "amazon-bedrock"
+				? { configured: true, source: "environment", label: "AWS access keys", ambient: true }
+				: actualStatus(provider),
+		);
+		const selector = new ModelSelectorComponent(
+			createFakeTui(),
+			undefined,
+			harness.settingsManager,
+			runtime,
+			[],
+			() => {},
+			() => {},
+		);
+
+		const listedIds = stripAnsi(selector.render(120).join("\n"))
+			.split("\n")
+			.flatMap((line) => /(\S+-model) \[/.exec(line)?.[1] ?? []);
+		expect(listedIds).toEqual(["configured-model", "cloud-model"]);
+		selector.dispose();
+	});
+
 	// Upstream #9149 made the selector's separate "set as default" chord follow app.models.save.
 	// The fork has no separate chord: confirming a model already persists it as the default, so a
 	// rebound app.models.save must neither select nor save here, while confirm still does both.

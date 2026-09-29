@@ -281,6 +281,7 @@ const ANTHROPIC_ALLOWED_FALLBACK_MODELS = {
 	"claude-fable-5": ["claude-opus-4-8", "claude-opus-5"],
 	"claude-opus-5-5": ["claude-opus-4-8", "claude-opus-5"],
 	"claude-opus-5": ["claude-opus-4-8"],
+	"claude-sonnet-5-5": ["claude-sonnet-5"],
 } satisfies Record<string, string[]>;
 
 const DEEPSEEK_V4_THINKING_LEVEL_MAP = {
@@ -760,14 +761,21 @@ function supportsAnthropicMidConvoEffort(modelId: string): boolean {
 	const id = modelId.toLowerCase().replace(/^~?anthropic\//, "");
 	return (
 		/^claude-opus-5(?:[.-]5)?(?:-\d{8})?$/.test(id) ||
+		/^claude-sonnet-5[.-]5(?:-\d{8})?$/.test(id) ||
 		/^claude-(?:fable|mythos)-5(?:[.-]1)(?:-\d{8})?$/.test(id)
 	);
 }
 
-// Opus 5.5 rejects `thinking: {type: "disabled"}` and `{type: "enabled"}` alike (400: `"thinking.type.disabled"
-// is not supported for this model`); only adaptive thinking is accepted.
+// Opus 5.5 and Sonnet 5.5 reject `thinking: {type: "disabled"}` and `{type: "enabled"}` alike (400:
+// `"thinking.type.disabled" is not supported for this model`); only adaptive thinking is accepted.
 function isAnthropicAdaptiveOnlyModel(modelId: string): boolean {
-	return modelId.includes("fable-5") || modelId.includes("opus-5-5") || modelId.includes("opus-5.5");
+	return (
+		modelId.includes("fable-5") ||
+		modelId.includes("opus-5-5") ||
+		modelId.includes("opus-5.5") ||
+		modelId.includes("sonnet-5-5") ||
+		modelId.includes("sonnet-5.5")
+	);
 }
 
 function isAnthropicAdaptiveThinkingModel(modelId: string): boolean {

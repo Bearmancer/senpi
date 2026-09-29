@@ -4,7 +4,6 @@ import { ProviderScope, runWithProviderScope } from "@earendil-works/pi-ai/node/
 import {
 	type AgentSessionLaunchProfile,
 	AgentSessionRuntime,
-	type CreateAgentSessionRuntimeFactory,
 	createAgentSessionRuntime,
 } from "../../core/agent-session-runtime.ts";
 import type { HostMcpRegistry } from "../../core/extensions/builtin/mcp/host-registry.ts";
@@ -12,6 +11,7 @@ import type { SessionContext, SessionKind, SessionStartEvent } from "../../core/
 import { EMPTY_SESSION_CONTEXT } from "../../core/extensions/types.ts";
 import { assertValidSessionId, SessionManager } from "../../core/session-manager.ts";
 import { SESSION_PATH_RETRY_AFTER_MS, type SessionPathReservations } from "./host-reservations.ts";
+import { createRegistryWarm, type HostWarm, type PreparableRuntimeFactory } from "./host-warm.ts";
 import { canonicalSessionPath } from "./session-path-key.ts";
 import { beginSessionClose, closeMarkedSession, closeSession, type SessionTeardownHost } from "./session-teardown.ts";
 import type { SessionWorkerClient } from "./session-worker-client.ts";
@@ -91,7 +91,8 @@ export class RpcSessionRegistryError extends Error {
 
 export interface RpcSessionRegistryOptions {
 	agentDir: string;
-	createRuntime: CreateAgentSessionRuntimeFactory;
+	/** A factory with `prepare` also gives the registry `warm` (senpi#2314). */
+	createRuntime: PreparableRuntimeFactory;
 	mcpRegistry?: HostMcpRegistry;
 	/** Injectable clock (defaults to Date.now) so idle bookkeeping is testable. */
 	now?: () => number;
@@ -162,8 +163,15 @@ export class RpcSessionRegistry {
 	private readonly options: RpcSessionRegistryOptions;
 	private readonly now: () => number;
 	readonly closeGraceMs: number;
+	/** Present only when the runtime factory can build a session's services alone (`host-warm.ts`). */
+	readonly warm?: HostWarm;
 
 	constructor(options: RpcSessionRegistryOptions) {
+		if (options.createRuntime.prepare)
+			this.warm = createRegistryWarm(options.createRuntime.prepare, {
+				agentDir: options.agentDir,
+				...(options.mcpRegistry !== undefined ? { mcpRegistry: options.mcpRegistry } : {}),
+			});
 		this.options =
 			options.mcpRegistry === undefined
 				? options

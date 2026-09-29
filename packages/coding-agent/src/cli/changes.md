@@ -1,3 +1,21 @@
+## 2026-09-28 - `app-server --extension` in the help text (omo#9117)
+
+### What changed
+
+- `packages/coding-agent/src/cli/args.ts`: the `app-server` and `app-server daemon` lines of `printHelp` list `[--extension <path>]...`.
+
+### Why
+
+- `app-server` now loads `--extension` sources into every thread (`src/modes/app-server/changes.md`, same date); the command list should show the flag.
+
+### Why an extension could not handle it
+
+- The command list is printed by the CLI parser before any extension loads.
+
+### Expected merge conflict zones
+
+- LOW: the two `app-server` help lines in `args.ts`.
+
 ## 2026-09-27 - `senpi schedule` command for durable scheduled prompts
 
 ### What changed

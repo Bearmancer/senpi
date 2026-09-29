@@ -8,6 +8,7 @@ import { buildClaudeOpus47Prompt } from "./claude-opus-4-7.ts";
 import { buildClaudeOpus48Prompt } from "./claude-opus-4-8.ts";
 import { buildClaudeOpus5Prompt } from "./claude-opus-5.ts";
 import { buildClaudeOpus55Prompt } from "./claude-opus-5-5.ts";
+import { buildClaudeSonnet55Prompt } from "./claude-sonnet-5-5.ts";
 import { buildDeepseekV41FlashPrompt } from "./deepseek-v4-1-flash.ts";
 import { buildDeepseekV4FlashPrompt } from "./deepseek-v4-flash.ts";
 import { buildDeepseekV4Flash0731Prompt } from "./deepseek-v4-flash-0731.ts";
@@ -270,6 +271,14 @@ function isClaudeOpus5Model(modelId: string): boolean {
 	return normalizeModelId(modelId).includes("opus-5");
 }
 
+// Sonnet 5 keeps the default dynamic prompt; only the 5.5 release has a tuned core.
+const CLAUDE_SONNET_55_MARKERS = ["sonnet-5-5", "sonnet-5.5"] as const;
+
+function isClaudeSonnet55Model(modelId: string): boolean {
+	const normalized = normalizeModelId(modelId);
+	return CLAUDE_SONNET_55_MARKERS.some((marker) => normalized.includes(marker));
+}
+
 type ClaudeOpusVersion = "claude-opus-4-8" | "claude-opus-4-7" | "claude-opus-4-6" | "claude-opus-4-5";
 
 function extractClaudeOpusVersion(modelId: string): ClaudeOpusVersion | undefined {
@@ -334,6 +343,9 @@ export function resolvePresetName(
 	}
 	if (isClaudeOpus5Model(model.id)) {
 		return "claude-opus-5";
+	}
+	if (isClaudeSonnet55Model(model.id)) {
+		return "claude-sonnet-5-5";
 	}
 	const claudeVersion = extractClaudeOpusVersion(model.id);
 	if (claudeVersion) {
@@ -418,6 +430,8 @@ function buildPreset(name: ResolvedPresetName, options: BuildDynamicSystemPrompt
 			return { name, prompt: buildClaudeFable5Prompt(options) };
 		case "claude-opus-5-5":
 			return { name, prompt: buildClaudeOpus55Prompt(options) };
+		case "claude-sonnet-5-5":
+			return { name, prompt: buildClaudeSonnet55Prompt(options) };
 		case "claude-opus-5":
 			return { name, prompt: buildClaudeOpus5Prompt(options) };
 		case "claude-opus-4-8":

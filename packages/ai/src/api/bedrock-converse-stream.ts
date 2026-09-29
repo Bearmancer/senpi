@@ -794,7 +794,13 @@ function rejectsDisabledThinking(model: Model<"bedrock-converse-stream">): boole
 	if (model.thinkingLevelMap?.off === null) return true;
 	const candidates = getModelMatchCandidates(model.id, model.name);
 	return candidates.some(
-		(s) => s.includes("fable-5") || s.includes("mythos-5") || s.includes("opus-5-5") || s.includes("opus-5.5"),
+		(s) =>
+			s.includes("fable-5") ||
+			s.includes("mythos-5") ||
+			s.includes("opus-5-5") ||
+			s.includes("opus-5.5") ||
+			s.includes("sonnet-5-5") ||
+			s.includes("sonnet-5.5"),
 	);
 }
 
