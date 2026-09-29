@@ -6,7 +6,11 @@
 
 - Security: an MCP remote server declared by a skill (an `mcp.json` next to SKILL.md or a `mcp:` frontmatter block) no longer sends `bearerTokenEnv`. senpi ignores the field, sends no `Authorization` header and warns once, because the skill chooses the server's URL and could otherwise make senpi send any of your environment variables to it. To restore auth, declare that server in your own `mcp.json` (the global `<agentDir>/mcp.json`, `~/.senpi/agent/mcp.json` by default, or a trusted project's `.senpi/mcp.json`), where `bearerTokenEnv` keeps working. `${VAR}` in a skill remote server's `url` or `headers` also stays literal, with a warning. See [Environment variables in skill servers](docs/mcp.md#environment-variables-in-skill-servers). ([#2345](https://github.com/code-yeongyu/senpi/issues/2345))
 
+- Interactive and RPC prompts whose first token looks like a command (`/name`, no second `/`) and that no extension command, prompt template, or loaded `skill:<name>` handles are now refused with the exported `UnknownCommandError` instead of being sent to the model. The check runs after extension `input` handlers and skill/template expansion, so input rewrites such as bare skill aliases keep working; extension-sourced prompts and text that starts with whitespace (` /foo`) are exempt, and `unknownCommandAsText: true` (prompt option and RPC `prompt` field) sends the text unchanged. RPC answers with `errorCode: "unknown_command"` and `errorData: { command, suggestions, reason }`; a TUI builtin such as `/model` sent as a prompt gets `reason: "interactive_only"`.
+
 ### Added
+
+- Skills read an `argument-hint` frontmatter field (`Skill.argumentHint`), and extension commands registered with `argumentHint` now pass it to the slash picker, so choosing `/skill:<name>` or such a command with Enter fills in `/name ` and waits for the arguments.
 
 - `websearch.json` accepts `nativeModel`, the model the session's hosted web search runs on, for example `"nativeModel": "claude-haiku-4-5"`. It must be served by the same provider, endpoint and credential as the session model; any other value is ignored and `/websearch status` warns about it. When the chosen model fails or finds nothing, the same search retries on the session model before moving to the next search provider. See [Web Search](docs/web-search.md). ([#2340](https://github.com/code-yeongyu/senpi/issues/2340))
 
@@ -14,17 +18,21 @@
 
 ### Changed
 
+- In the TUI, an unknown command no longer reaches the model: the submitted text goes back into the editor with a warning such as `Unknown command /ulw-exec. Did you mean /skill:ulw-execute? Start the message with a space to send it as text.` Starting the message with a space sends it as ordinary text.
+
 - New default: hosted web search now runs on the provider's cheaper search model, on the same login and endpoint as your session, whenever your model list shows that model at a lower price than the session model (Claude routes: `claude-haiku-4-5`; OpenAI Responses routes: `gpt-5.6-luna`; xAI: `grok-4.3`; DeepSeek: `deepseek-v4-flash`). Before, every hosted search ran on the session model itself. If the cheaper model fails or finds nothing, the same search retries on the session model. To restore the old behavior, set `"nativeModel": "session"` in `websearch.json`. The routing attempts line and `/websearch status` now name the model that served each search. ([#2340](https://github.com/code-yeongyu/senpi/issues/2340))
 
 - Without a `websearch.json`, `web_search` no longer depends on DuckDuckGo alone: your search queries may now go to DuckDuckGo and Exa's hosted search service (no key and no session id is sent), then to Startpage, Mojeek, Ecosia and Google's results page, in that order. To keep searches away from these services, list only the providers you want in `websearch.json`; for DuckDuckGo only, use `{ "providers": [{ "provider": "duckduckgo-html" }] }`. When an engine answers with a bot check instead of results, the search says so and moves on to the next engine, and an engine that blocks a search (bot check, HTTP 429 or 403, network error) is skipped for 1 minute, doubling up to 15 minutes while it keeps blocking; skipped engines are listed in the routing line. The default still costs nothing: no key, no paid API, no other model. ([#2339](https://github.com/code-yeongyu/senpi/issues/2339))
 
 ### Fixed
 
+- Project rule discovery no longer escapes the project root on Windows. A `read`/`edit`/`write` target on a different drive, or one whose drive-letter case differs from the project root, made the rules finder walk the unrelated location and inject any `AGENTS.md`, `CLAUDE.md`, `.claude/rules`, `.cursor/rules`, or `.github/instructions` it found there as *project* rules ([#568](https://github.com/code-yeongyu/senpi/pull/568) by [@MoerAI](https://github.com/MoerAI)). POSIX behavior is unchanged.
+
 - A stdio MCP server carried by a skill you installed now expands `${VAR}` in its `command`, `args`, `env` and `cwd` the way your own `mcp.json` does, so the documented `"env": { "EXA_API_KEY": "${EXA_API_KEY}" }` reaches the server as your key instead of the literal placeholder. A skill of an untrusted project keeps the placeholder and warns once, naming the skill and the variable. ([#2345](https://github.com/code-yeongyu/senpi/issues/2345))
 
 - `web_search` through OpenAI's hosted search (the `openai` and `codex` providers, native OpenAI routes) and xAI no longer lists URLs the model wrote in its answer as sources. Only pages the search returned count, so an answer that never searched is a failed attempt and the next provider is tried instead of an invented link being reported as a result. ([#2337](https://github.com/code-yeongyu/senpi/issues/2337))
 
-- Project rule discovery no longer escapes the project root on Windows. A `read`/`edit`/`write` target on a different drive, or one whose drive-letter case differs from the project root, made the rules finder walk the unrelated location and inject any `AGENTS.md`, `CLAUDE.md`, `.claude/rules`, `.cursor/rules`, or `.github/instructions` it found there as *project* rules ([#568](https://github.com/code-yeongyu/senpi/pull/568) by [@MoerAI](https://github.com/MoerAI)). POSIX behavior is unchanged.
+- Anthropic Subscription custom-tool schemas now preserve JSON-Schema field descriptions, so Claude receives guidance such as eval's required `summary` field instead of making a wasted corrective call. ([#2145](https://github.com/code-yeongyu/senpi/issues/2145))
 
 ### Removed
 

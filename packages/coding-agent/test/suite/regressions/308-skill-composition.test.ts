@@ -9,9 +9,11 @@ import {
 	type AgentSessionEvent,
 	MAX_SKILL_EXPANSIONS_PER_PROMPT,
 	MAX_SKILL_INVOCATION_TOKENS_PER_PROMPT,
+	type PromptOptions,
 	parseSkillInvocationTokens,
 } from "../../../src/core/agent-session.ts";
 import { createSyntheticSourceInfo } from "../../../src/core/source-info.ts";
+import { UnknownCommandError } from "../../../src/core/unknown-command.ts";
 import type { ResourceLoader } from "../../../src/index.ts";
 import { createTestResourceLoader } from "../../utilities.ts";
 import { createHarness, getMessageText, getUserTexts, type Harness } from "../harness.ts";
@@ -67,7 +69,7 @@ function createSkillResourceLoader(
 	};
 }
 
-async function promptAndCapture(harness: Harness, text: string): Promise<string> {
+async function promptAndCapture(harness: Harness, text: string, options?: PromptOptions): Promise<string> {
 	let captured = "";
 	harness.setResponses([
 		(context) => {
@@ -78,7 +80,7 @@ async function promptAndCapture(harness: Harness, text: string): Promise<string>
 		},
 	]);
 
-	await harness.session.prompt(text);
+	await harness.session.prompt(text, options);
 	return captured;
 }
 
@@ -314,7 +316,10 @@ describe("#308 skill composition", () => {
 		expect(await promptAndCapture(harness, "/skill:first /skill:missing /skill:second keep this literal")).toBe(
 			`${skillBlock(skills[0]!, tempDir)}\n\n${userRequest("/skill:missing /skill:second keep this literal")}`,
 		);
-		expect(await promptAndCapture(harness, "/skill:missing keep this literal")).toBe(
+		await expect(harness.session.prompt("/skill:missing keep this literal")).rejects.toBeInstanceOf(
+			UnknownCommandError,
+		);
+		expect(await promptAndCapture(harness, "/skill:missing keep this literal", { unknownCommandAsText: true })).toBe(
 			"/skill:missing keep this literal",
 		);
 	});

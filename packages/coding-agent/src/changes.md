@@ -129,6 +129,24 @@ omo imports senpi only through the package root (its `senpi-barrel.ts` resolves 
 - `packages/coding-agent/src/index.ts`: the run-mode export list from `./modes/index.ts`.
 - `packages/coding-agent/src/modes/index.ts`: the export block above the host-decision exports.
 
+## 2026-09-28 - Export UnknownCommandError (omo #9042)
+
+### What changed
+
+- `packages/coding-agent/src/index.ts` exports `UnknownCommandError` and `UnknownCommandReason` from `./core/unknown-command.ts`.
+
+### Why
+
+- SDK callers of `AgentSession.prompt()` need to recognize the typed refusal of unknown commands.
+
+### Why an extension could not handle it
+
+- The package entry point is the only public export surface.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/index.ts`: the line after the `./core/trust-manager.ts` export.
+
 ## 2026-09-27 - `senpi models discover <provider>` dispatch (senpi#2196)
 
 ### What changed

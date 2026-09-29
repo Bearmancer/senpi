@@ -15,6 +15,7 @@ import type { AgentSessionRuntime } from "../src/core/agent-session-runtime.ts";
 import { AuthStorage } from "../src/core/auth-storage.ts";
 import { SessionManager } from "../src/core/session-manager.ts";
 import { SettingsManager } from "../src/core/settings-manager.ts";
+import { UnknownCommandError, unknownCommandErrorFromWire } from "../src/core/unknown-command.ts";
 import { runRpcMode } from "../src/modes/rpc/rpc-mode.ts";
 import { createAuthenticatedModelRegistry, createModelRegistry, getModelRuntime } from "./model-runtime-test-utils.ts";
 import { createTestResourceLoader } from "./utilities.ts";
@@ -265,6 +266,61 @@ describe("RPC prompt response semantics", () => {
 					success: true,
 				});
 			});
+		} finally {
+			await cleanup();
+		}
+	});
+
+	// omo #9042 B: command-shaped prompt text that no command handles is refused before the model.
+	it("refuses an unknown command with a typed unknown_command failure", async () => {
+		const { lineHandler, cleanup } = await startRpcMode({ withAuth: true });
+
+		try {
+			lineHandler(JSON.stringify({ id: "u1", type: "prompt", message: "/ulw-exec plan" }));
+
+			await vi.waitFor(() => expect(getPromptResponses(rpcIo.outputLines, "u1")).toHaveLength(1));
+			const [response] = getPromptResponses(rpcIo.outputLines, "u1");
+			expect(response).toMatchObject({
+				success: false,
+				errorCode: "unknown_command",
+				error: "Unknown command /ulw-exec. Start the message with a space to send it as text.",
+				errorData: { command: "ulw-exec", suggestions: [], reason: "unknown" },
+			});
+			const rebuilt = unknownCommandErrorFromWire(response?.errorData);
+			expect(rebuilt).toBeInstanceOf(UnknownCommandError);
+			expect(rebuilt?.message).toBe(response?.error);
+			expect(parseOutputLines(rpcIo.outputLines).some((record) => record.type === "agent_start")).toBe(false);
+		} finally {
+			await cleanup();
+		}
+	});
+
+	it("refuses an interactive-only builtin sent as a prompt", async () => {
+		const { lineHandler, cleanup } = await startRpcMode({ withAuth: true });
+
+		try {
+			lineHandler(JSON.stringify({ id: "u2", type: "prompt", message: "/model claude" }));
+
+			await vi.waitFor(() => expect(getPromptResponses(rpcIo.outputLines, "u2")).toHaveLength(1));
+			expect(getPromptResponses(rpcIo.outputLines, "u2")[0]).toMatchObject({
+				success: false,
+				errorCode: "unknown_command",
+				error: "/model is an interactive command and cannot be sent as a prompt.",
+				errorData: { command: "model", reason: "interactive_only" },
+			});
+		} finally {
+			await cleanup();
+		}
+	});
+
+	it("sends unknown command text when the prompt opts in", async () => {
+		const { lineHandler, cleanup } = await startRpcMode({ withAuth: true });
+
+		try {
+			lineHandler(JSON.stringify({ id: "u3", type: "prompt", message: "/foo bar", unknownCommandAsText: true }));
+
+			await vi.waitFor(() => expect(getPromptResponses(rpcIo.outputLines, "u3")).toHaveLength(1));
+			expect(getPromptResponses(rpcIo.outputLines, "u3")[0]).toMatchObject({ success: true });
 		} finally {
 			await cleanup();
 		}

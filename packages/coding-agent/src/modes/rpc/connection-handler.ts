@@ -58,6 +58,7 @@ import type {
 import { FooterDataProvider } from "../../core/footer-data-provider.ts";
 import { getSupportedThinkingLevels } from "../../core/thinking-levels.ts";
 import { ProjectTrustStore } from "../../core/trust-manager.ts";
+import { UnknownCommandError } from "../../core/unknown-command.ts";
 import { type Theme, theme } from "../interactive/theme/theme.ts";
 import { ConnectionQuestionBridge, degradeQuestion, sessionQuestionBridges } from "./connection-question-bridge.ts";
 import {
@@ -90,7 +91,7 @@ import type {
 	RpcSessionState,
 	RpcSkillInvocationEvent,
 } from "./rpc-types.ts";
-import { RPC_ERROR_MEDIA_NOT_FOUND } from "./rpc-types.ts";
+import { RPC_ERROR_MEDIA_NOT_FOUND, RPC_ERROR_UNKNOWN_COMMAND } from "./rpc-types.ts";
 import { RENDERED_COMPONENT_RECORD } from "./session-event-writer.ts";
 import { SessionExtensionUiRequests } from "./session-extension-ui-requests.ts";
 import { createLiveComponentRenderer, type LiveComponentRenderer } from "./widget-line-renderer.ts";
@@ -1118,6 +1119,7 @@ export function createRpcConnectionHandler(
 						thinkingLevel: command.thinkingLevel,
 						sessionTitlePrompt: command.sessionTitlePrompt,
 						expandPromptTemplates: command.expandPromptTemplates,
+						unknownCommandAsText: command.unknownCommandAsText,
 						source: "rpc",
 						promptDisposition: (nextDisposition) => {
 							disposition = nextDisposition;
@@ -1130,9 +1132,19 @@ export function createRpcConnectionHandler(
 						},
 					})
 					.catch((e) => {
-						if (!preflightSucceeded) {
-							output(error(id, "prompt", e.message));
+						if (preflightSucceeded) return;
+						if (e instanceof UnknownCommandError) {
+							const { command: name, suggestions, reason } = e;
+							output(
+								error(id, "prompt", e.message, RPC_ERROR_UNKNOWN_COMMAND, {
+									command: name,
+									suggestions,
+									reason,
+								}),
+							);
+							return;
 						}
+						output(error(id, "prompt", e.message));
 					});
 				return undefined;
 			}

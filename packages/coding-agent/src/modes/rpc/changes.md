@@ -171,6 +171,27 @@ The canonicalization runs inside `ensureHost`/`stopHost`/`handoffHost`/`host gc`
 
 - `packages/coding-agent/src/modes/rpc/host-daemon-paths.ts`: `canonicalEndpointPath`'s abstract-socket line.
 
+## 2026-09-28 - unknown_command prompt refusal (omo #9042)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: the `prompt` command accepts `unknownCommandAsText`; new `RPC_ERROR_UNKNOWN_COMMAND` (`"unknown_command"`) in `RpcErrorCode`.
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts` (fork-only): forwards `unknownCommandAsText` and answers an `UnknownCommandError` with `errorCode: "unknown_command"` and `errorData: { command, suggestions, reason }`.
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts`: `prompt()` sends `unknownCommandAsText` and rethrows an `unknown_command` failure as `UnknownCommandError` (other failures stay plain `Error`).
+- `packages/coding-agent/docs/rpc.md` documents the field and error.
+
+### Why
+
+- RPC clients and the shared-host TUI proxy need a typed refusal to restore the editor instead of showing a generic error.
+
+### Why an extension could not handle it
+
+- Wire command shapes and error codes are owned by the RPC mode.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: the `prompt` command member and the error-code block. `packages/coding-agent/src/modes/rpc/rpc-client.ts`: `PromptOptions`, the `prompt()` payload and failure branch, and the imports.
+
 ## 2026-09-28 - A successor that fails before it was spawned also restores the boot settings
 
 ### What changed

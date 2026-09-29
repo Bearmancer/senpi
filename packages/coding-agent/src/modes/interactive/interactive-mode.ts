@@ -19,6 +19,7 @@ import type {
 	AutocompleteItem,
 	AutocompleteProvider,
 	EditorComponent,
+	EditorSubmitDetails,
 	Keybinding,
 	KeyId,
 	MarkdownTheme,
@@ -134,6 +135,7 @@ import { formatTimings, resetTimings, time } from "../../core/timings.ts";
 import { withBuiltInRenderers } from "../../core/tools/renderers/index.ts";
 import type { TruncationResult } from "../../core/tools/truncate.ts";
 import { hasTrustRequiringProjectResources, ProjectTrustStore } from "../../core/trust-manager.ts";
+import { UnknownCommandError } from "../../core/unknown-command.ts";
 import { getUsageCostBreakdown } from "../../core/usage-totals.ts";
 import {
 	consumeEarlyInspectorVmImportRecoveries,
@@ -286,6 +288,7 @@ import { ToolArgsRevealController } from "./tool-args-reveal.ts";
 import { readToolProgress } from "./tool-progress.ts";
 import { ToolResultRevealController } from "./tool-result-reveal.ts";
 import { createInteractiveTui, createInteractiveTuiReference } from "./tui-renderer.ts";
+import { reportUnknownCommand, submitsCommandAsText } from "./unknown-command-feedback.ts";
 import { formatDisplayVersion } from "./version-label.ts";
 import {
 	blendWorkingStatusShimmerRgbColor,
@@ -699,6 +702,8 @@ interface InteractiveUserInput {
 	images?: ImageContent[];
 	/** `undefined` for a submission that paints no echo, such as the manual-continue shortcut. */
 	pendingEchoId: string | undefined;
+	/** Typed after leading whitespace: send `/...` text to the model even when no command handles it. */
+	unknownCommandAsText?: boolean;
 }
 
 /** Local copy of pi-tui's image-marker pattern so submission scanning never mutates a shared /g regex. */
@@ -1354,6 +1359,7 @@ export class InteractiveMode {
 			.map((cmd) => ({
 				name: cmd.invocationName,
 				description: this.prefixAutocompleteDescription(cmd.description, cmd.sourceInfo),
+				...(cmd.argumentHint && { argumentHint: cmd.argumentHint }),
 				getArgumentCompletions: cmd.getArgumentCompletions,
 			}));
 
@@ -1367,6 +1373,7 @@ export class InteractiveMode {
 				skillCommandList.push({
 					name: commandName,
 					description: this.prefixAutocompleteDescription(skill.description, skill.sourceInfo),
+					...(skill.argumentHint && { argumentHint: skill.argumentHint }),
 				});
 			}
 		}
@@ -1888,6 +1895,8 @@ export class InteractiveMode {
 			} catch (error: unknown) {
 				this.optimisticUserEchoes.reject(userInput.pendingEchoId);
 				this.clearStatusIndicator("working");
+				if (error instanceof UnknownCommandError && this.reportUnknownCommandRejection(error, userInput.text))
+					continue;
 				const errorMessage = error instanceof Error ? error.message : "Unknown error occurred";
 				this.showError(errorMessage);
 			}
@@ -4781,7 +4790,7 @@ export class InteractiveMode {
 	}
 
 	private setupEditorSubmitHandler(): void {
-		this.defaultEditor.onSubmit = async (text: string) => {
+		this.defaultEditor.onSubmit = async (text: string, details?: EditorSubmitDetails) => {
 			try {
 				// Capture-then-clear BEFORE any branch: handleFollowUp's non-streaming
 				// path pre-resolves images and hands off here, but slash / extension /
@@ -4794,6 +4803,7 @@ export class InteractiveMode {
 				this.hideShortcutOverlay();
 				this.lastEditorText = "";
 				text = text.trim();
+				const unknownCommandAsText = submitsCommandAsText(text, details);
 				if (!text) {
 					// Enter on an empty editor opens the pending async question; it needs
 					// no chord, so it works under every terminal and keymap.
@@ -5002,7 +5012,7 @@ export class InteractiveMode {
 						this.editor.setText("");
 						await this.session.prompt(text);
 					} else {
-						this.queueCompactionSubmission(text, "steer");
+						this.queueCompactionSubmission(text, "steer", unknownCommandAsText);
 					}
 					return;
 				}
@@ -5023,10 +5033,12 @@ export class InteractiveMode {
 						await this.session.prompt(text, {
 							streamingBehavior: "steer",
 							...(images.length > 0 ? { images } : {}),
+							...(unknownCommandAsText ? { unknownCommandAsText } : {}),
 							...this.optimisticUserEchoes.promptOptions(pendingEchoId),
 						});
 					} catch (error) {
 						this.optimisticUserEchoes.reject(pendingEchoId);
+						if (error instanceof UnknownCommandError && this.reportUnknownCommandRejection(error, text)) return;
 						throw error;
 					}
 					this.updatePendingMessagesDisplay();
@@ -5040,8 +5052,12 @@ export class InteractiveMode {
 
 				const images = preResolvedImages ?? this.takeSubmissionImages(text);
 				const pendingEchoId = this.beginUserEcho(text, images);
-				const submission: InteractiveUserInput =
-					images.length > 0 ? { text, images, pendingEchoId } : { text, pendingEchoId };
+				const submission: InteractiveUserInput = {
+					text,
+					pendingEchoId,
+					...(images.length > 0 ? { images } : {}),
+					...(unknownCommandAsText ? { unknownCommandAsText } : {}),
+				};
 				if (this.onInputCallback) {
 					this.onInputCallback(submission);
 				} else {
@@ -6387,6 +6403,7 @@ export class InteractiveMode {
 	private buildMainLoopPromptOptions(userInput: InteractiveUserInput): {
 		streamingBehavior: "steer";
 		images?: InteractiveUserInput["images"];
+		unknownCommandAsText?: true;
 		preflightResult: (success: boolean) => void;
 		promptDisposition: (disposition: "handled" | "queued" | "started") => void;
 	} {
@@ -6394,6 +6411,7 @@ export class InteractiveMode {
 		return {
 			streamingBehavior: "steer",
 			...(userInput.images ? { images: userInput.images } : {}),
+			...(userInput.unknownCommandAsText ? { unknownCommandAsText: true } : {}),
 			preflightResult: echoOptions.preflightResult,
 			promptDisposition: (disposition) => {
 				echoOptions.promptDisposition(disposition);
@@ -6713,8 +6731,10 @@ export class InteractiveMode {
 
 	private async handleFollowUp(): Promise<void> {
 		this.setComposerReply();
-		const text = this.getExpandedEditorText().trim();
+		const rawText = this.getExpandedEditorText();
+		const text = rawText.trim();
 		if (!text) return;
+		const unknownCommandAsText = submitsCommandAsText(text, { rawText });
 		if (isBareSkillNamespace(text)) {
 			this.openSkillPickerForBareNamespace();
 			return;
@@ -6735,7 +6755,7 @@ export class InteractiveMode {
 				this.editor.setText("");
 				await this.session.prompt(text);
 			} else {
-				this.queueCompactionSubmission(text, "followUp");
+				this.queueCompactionSubmission(text, "followUp", unknownCommandAsText);
 			}
 			return;
 		}
@@ -6764,10 +6784,12 @@ export class InteractiveMode {
 				await this.session.prompt(text, {
 					streamingBehavior: "followUp",
 					...(images.length > 0 ? { images } : {}),
+					...(unknownCommandAsText ? { unknownCommandAsText } : {}),
 					...this.optimisticUserEchoes.promptOptions(pendingEchoId),
 				});
 			} catch (error) {
 				this.optimisticUserEchoes.reject(pendingEchoId);
+				if (error instanceof UnknownCommandError && this.reportUnknownCommandRejection(error, text)) return;
 				throw error;
 			}
 			this.updatePendingMessagesDisplay();
@@ -6781,7 +6803,7 @@ export class InteractiveMode {
 			// widened main-loop channel.
 			this.preResolvedSubmissionImages = images.length > 0 ? images : undefined;
 			this.editor.setText("");
-			this.editor.onSubmit(text);
+			this.editor.onSubmit(text, { rawText });
 		}
 	}
 
@@ -7168,13 +7190,27 @@ export class InteractiveMode {
 		return allQueued.length;
 	}
 
-	private queueCompactionMessage(text: string, mode: "steer" | "followUp", droppedImageCount = 0): void {
+	/** Restore an unknown-command submission to the editor with a warning; `false` for any other error. */
+	private reportUnknownCommandRejection(error: unknown, submittedText: string): boolean {
+		return reportUnknownCommand(error, submittedText, {
+			editor: this.editor,
+			showWarning: (message) => this.showWarning(message),
+		});
+	}
+
+	private queueCompactionMessage(
+		text: string,
+		mode: "steer" | "followUp",
+		droppedImageCount = 0,
+		unknownCommandAsText = false,
+	): void {
 		// No optimistic echo here: compaction-queued input is waiting state and must
 		// render only in the pending-messages display until it is actually delivered.
 		this.compactionQueuedMessages.push({
 			text,
 			mode,
 			enqueueOrder: this.session.reserveQueuedInputOrder(),
+			...(unknownCommandAsText ? { unknownCommandAsText } : {}),
 		});
 		this.getSessionLogger().debug("compaction_queue_enqueue", {
 			mode,
@@ -7198,15 +7234,15 @@ export class InteractiveMode {
 	 * literal marker has no payload behind it and would ship an unreadable
 	 * `[Image #N]` string to the model once the queue drains.
 	 */
-	private queueCompactionSubmission(text: string, mode: "steer" | "followUp"): void {
+	private queueCompactionSubmission(text: string, mode: "steer" | "followUp", unknownCommandAsText = false): void {
 		const images = this.takeSubmissionImages(text);
 		if (images.length === 0) {
-			this.queueCompactionMessage(text, mode);
+			this.queueCompactionMessage(text, mode, 0, unknownCommandAsText);
 			return;
 		}
 		const queued = text.replace(IMAGE_MARKER_PATTERN, "").trim();
 		if (queued) {
-			this.queueCompactionMessage(queued, mode, images.length);
+			this.queueCompactionMessage(queued, mode, images.length, unknownCommandAsText);
 			return;
 		}
 		this.showStatus(
@@ -7305,6 +7341,7 @@ export class InteractiveMode {
 									: undefined;
 								return session.prompt(message.text, {
 									streamingBehavior: message.mode,
+									...(message.unknownCommandAsText ? { unknownCommandAsText: true } : {}),
 									preflightResult: (success) => {
 										echoOptions?.preflightResult(success);
 										preflightResult(success);
@@ -7322,7 +7359,15 @@ export class InteractiveMode {
 									`Queued prompt failed after acceptance: ${error instanceof Error ? error.message : String(error)}`,
 								);
 							},
-						),
+						).catch((error: unknown) => {
+							// A rejected unknown command is consumed here, so it cannot block the queue behind it.
+							if (
+								error instanceof UnknownCommandError &&
+								this.reportUnknownCommandRejection(error, message.text)
+							)
+								return "handled" as const;
+							throw error;
+						}),
 					deliverQueued: (message) => {
 						if (message.enqueueOrder === undefined) {
 							return message.mode === "followUp" ? session.followUp(message.text) : session.steer(message.text);

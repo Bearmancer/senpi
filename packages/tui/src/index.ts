@@ -69,7 +69,7 @@ export {
 	VStack,
 } from "./components/v-stack.ts";
 // Editor component interface (for custom editors)
-export type { EditorComponent } from "./editor-component.ts";
+export type { EditorComponent, EditorSubmitDetails } from "./editor-component.ts";
 // Fuzzy matching
 export { type FuzzyMatch, fuzzyFilter, fuzzyMatch, fuzzyMatchLower } from "./fuzzy.ts";
 // Atomic image markers (ids only - never image bytes)

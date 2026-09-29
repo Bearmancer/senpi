@@ -10,6 +10,8 @@
 
 ### Fixed
 
+- Rejected OpenAI Responses WebSocket requests now show the provider's HTTP status and error message instead of `Error Code undefined: undefined` ([#2235](https://github.com/code-yeongyu/senpi/issues/2235)).
+
 ### Removed
 
 ## [2026.9.29] - 2026-09-29

@@ -231,6 +231,11 @@ export interface AutocompleteItem {
 	value: string;
 	label: string;
 	description?: string;
+	/**
+	 * The command declares an argument hint: confirming the row completes `/name ` and waits for
+	 * arguments instead of submitting.
+	 */
+	awaitsArguments?: boolean;
 }
 
 type Awaitable<T> = T | Promise<T>;

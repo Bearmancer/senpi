@@ -1197,6 +1197,20 @@ Queued prompts cannot include `thinkingLevel`; wait for the current turn to comp
 desktop skill tokens (`$skill:name`), and prompt templates (`/template`) are expanded before
 sending/queueing. Bare inline dollar text remains literal.
 
+**Unknown commands**: When the message's first token looks like a command (`/name`, letters, digits,
+`:`, `_`, `-`; a second `/` as in `/tmp/a.txt` makes it a path) and neither extension `input`
+handlers nor expansion changed the text, a name that is not a registered extension command, prompt
+template, or loaded `skill:<name>` is refused before the model sees it. The failure carries
+`errorCode: "unknown_command"` and `errorData: {"command", "suggestions", "reason"}`: `command` and
+`suggestions` (up to three close names) omit the leading `/`, and `reason` is `"unknown"` or
+`"interactive_only"` for a TUI builtin such as `/model`. A message that starts with whitespace
+(`" /foo bar"`) is sent as text, as in the TUI; set `"unknownCommandAsText": true` to send such text to the
+model unchanged without the leading space:
+
+```json
+{"type": "prompt", "message": "/etc is where the config lives", "unknownCommandAsText": true}
+```
+
 Response:
 ```json
 {"id": "req-1", "type": "response", "command": "prompt", "success": true, "data": { "disposition": "started" }}

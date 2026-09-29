@@ -835,6 +835,7 @@ export function createRemoteSessionProxy(
 							...(options?.expandPromptTemplates !== undefined
 								? { expandPromptTemplates: options.expandPromptTemplates }
 								: {}),
+							...(options?.unknownCommandAsText ? { unknownCommandAsText: true } : {}),
 							...(options?.promptDisposition ? { promptDisposition: options.promptDisposition } : {}),
 							...(options?.preflightResult ? { preflightResult: options.preflightResult } : {}),
 						});
@@ -1192,6 +1193,8 @@ export function createRemoteSessionProxy(
 						client.prompt(content, {
 							streamingBehavior: options?.deliverAs,
 							expandPromptTemplates: options?.expandPromptTemplates,
+							// Extension input is exempt from the unknown-command check; the host sees it as rpc.
+							unknownCommandAsText: true,
 						}),
 					);
 				const text = content
@@ -1204,6 +1207,7 @@ export function createRemoteSessionProxy(
 						images,
 						streamingBehavior: options?.deliverAs,
 						expandPromptTemplates: options?.expandPromptTemplates,
+						unknownCommandAsText: true,
 					}),
 				);
 			};

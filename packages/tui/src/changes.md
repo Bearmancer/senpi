@@ -1,5 +1,27 @@
 # TUI delta rendering fork changes
 
+## 2026-09-28 - Picker rows that take arguments wait for them (omo #9042)
+
+### What changed
+
+- `packages/tui/src/autocomplete.ts`: `AutocompleteItem` gains the optional `awaitsArguments` flag.
+- `packages/tui/src/slash-command-autocomplete.ts` (fork-only): `getSlashCommandSuggestions` sets `awaitsArguments` on every row whose command declares an `argumentHint`; the hint still leads the description.
+- `packages/tui/src/components/editor.ts`: the editor keeps the provider items behind the open list (`autocompleteItems`). Confirming a `/` row whose item has `awaitsArguments` applies the completion (`/name `), closes the picker, and returns without submitting; other `/` rows still fall through to submit. `submitValue()` passes `{ rawText }` (the text before trimming) as the second `onSubmit` argument.
+- `packages/tui/src/editor-component.ts`: new `EditorSubmitDetails` and the optional second `onSubmit` parameter. `packages/tui/src/index.ts` exports the type.
+
+### Why
+
+- Enter on `/skill:ulw-execute` or `/model` in the picker submitted the bare command before the user could type its arguments. The leading-space escape for the coding-agent unknown-command check needs the untrimmed submission, which `onSubmit` never saw.
+
+### Why an extension could not handle it
+
+- The confirm key and the submission trimming live inside `Editor.handleInput`/`submitValue`; an extension editor would have to fork the whole component.
+
+### Expected merge conflict zones
+
+- `packages/tui/src/components/editor.ts`: the `tui.select.confirm` branch, `applyAutocompleteSuggestions`, `clearAutocompleteUi`, and `submitValue`.
+- `packages/tui/src/autocomplete.ts`: the `AutocompleteItem` interface. `packages/tui/src/editor-component.ts`: the `onSubmit` declaration. `packages/tui/src/index.ts`: the `./editor-component.ts` export line.
+
 ## 2026-09-24 - Fuzzy matching over pre-lowered text (senpi#2087)
 
 ### What changed

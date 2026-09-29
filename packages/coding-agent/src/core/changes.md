@@ -153,6 +153,28 @@
 
 - LOW: `packages/coding-agent/src/core/slash-commands.ts`: the row after `resume` in `BUILTIN_SLASH_COMMANDS`.
 
+## 2026-09-28 - Unknown commands are refused before the model; skills declare argument hints (omo #9042)
+
+### What changed
+
+- `packages/coding-agent/src/core/unknown-command.ts` (fork-only): `UnknownCommandError` (`command`, `suggestions`, `reason`), `commandShapedName`, `findUnknownCommand`, and `unknownCommandErrorFromWire` for the RPC client.
+- `packages/coding-agent/src/core/agent-session.ts`: `PromptOptions.unknownCommandAsText`. In `prompt()`, after the `input` event and skill/template expansion, text that expansion left unchanged, from a source other than `extension`, without the opt-out, and not starting with whitespace, goes through `_rejectUnknownCommand`, which throws when the leading `/name` token names no extension command, prompt template, or loaded `skill:<name>` (TUI builtins get `reason: "interactive_only"`). The throw sits inside the prompt's try block, so the input disposition is `rejected`, `preflightResult(false)` fires, and no user message is built or persisted.
+- `packages/coding-agent/src/core/skills.ts`: `Skill.argumentHint` from the `argument-hint` frontmatter string (trimmed, omitted when empty); `SkillFrontmatter` declares the field.
+
+### Why
+
+- Text such as `/ulw-exec plan` that no command handles went to the model as a user message, spending a turn on a typo. The check must run after the input transforms because extensions (the omo plugin) rewrite bare skill aliases such as `/ulw-execute plan` into `/skill:ulw-execute plan` there.
+- The slash picker needs to know which skills take arguments.
+
+### Why an extension could not handle it
+
+- An `input` handler runs before expansion and cannot see whether a later handler, a template, or a skill will resolve the text, and extension handler order is not a contract. Only the session knows the full command catalog after expansion. Skill frontmatter is parsed in core.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/agent-session.ts`: `PromptOptions`, the expansion block in `prompt()`, the new `_rejectUnknownCommand` above `_expandSkillCommand`, and the imports.
+- `packages/coding-agent/src/core/skills.ts`: `SkillFrontmatter`, `Skill`, and the returned skill object in `loadSkillFromFile`.
+
 ## 2026-09-27 - Fallback-chain entries that fail out of their chain are circuit-broken across sessions; /session reports failure cost (senpi#2198)
 
 ### What changed
