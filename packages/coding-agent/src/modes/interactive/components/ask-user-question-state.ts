@@ -95,7 +95,9 @@ export class AskUserQuestionState {
 
 	jumpToQuestion(index: number): void {
 		this.focus = "options";
-		this.activeIndex = index;
+		// A stale caller index must never leave the overlay without an active question.
+		const whole = Number.isFinite(index) ? Math.trunc(index) : 0;
+		this.activeIndex = Math.min(Math.max(0, whole), this.request.questions.length - 1);
 		this.highlightIndex = 0;
 		this.clearTransient();
 	}

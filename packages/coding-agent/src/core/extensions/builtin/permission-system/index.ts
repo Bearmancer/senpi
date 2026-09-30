@@ -68,7 +68,7 @@ export default function permissionSystemExtension(pi: ExtensionAPI): void {
 		type: "string",
 	});
 	pi.registerFlag("permission-preset", {
-		description: "Set permission preset (full-access, workspace, read-only, or ask)",
+		description: "Set permission preset (full-access, workspace, accept-edits, read-only, or ask)",
 		type: "string",
 	});
 
@@ -82,7 +82,7 @@ export default function permissionSystemExtension(pi: ExtensionAPI): void {
 
 		if (typeof permissionPresetFlag === "string" && !cliPreset) {
 			throw new Error(
-				`Invalid --permission-preset "${permissionPresetFlag}". Expected one of: full-access, workspace, read-only, ask.`,
+				`Invalid --permission-preset "${permissionPresetFlag}". Expected one of: full-access, workspace, accept-edits, read-only, ask.`,
 			);
 		}
 
