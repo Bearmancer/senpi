@@ -16,6 +16,26 @@
 
 - `interactive-mode.ts`: the startup warning block after fallback-chain warnings, and the `high_reasoning_warning` case of the session event switch.
 
+## 2026-09-30 - Ask-user navigation stays in range; a fully answered widget click submits (omo#9268)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/components/ask-user-question-state.ts`: `jumpToQuestion()` normalizes any requested index (negative, fractional, NaN, past the end) into the available question range before it becomes the active question.
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: `clickPendingQuestion()` submits the draft when every question already has an answer, instead of expanding the overlay at index -1.
+- `packages/coding-agent/src/modes/interactive/components/ask-user-async-widget.ts`: `buildAnsweredResponse()` builds that submission from the draft (a draft comment makes it `comment-submitted`, matching the overlay's submit rule).
+
+### Why
+
+- omo#9268 exposed an undefined-question dereference in the overlay. A stale or computed index must never leave the overlay without an active question, and a widget click with nothing left to answer must not navigate to a question that does not exist.
+
+### Why an extension could not handle it
+
+- The overlay's active index and the collapsed widget's click routing are host-owned interactive state; extensions only receive the final `QuestionResponse`.
+
+### Expected merge conflict zones
+
+- LOW: `jumpToQuestion()` in `ask-user-question-state.ts`, `clickPendingQuestion()` in `interactive-mode.ts`, and the response builders in `ask-user-async-widget.ts`.
+
 ## 2026-09-30 - Control endpoint: a question answer settles by the host's rule, so its comment reaches the model (senpi#2407)
 
 ### What changed

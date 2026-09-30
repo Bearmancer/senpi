@@ -167,6 +167,7 @@ import { matchesAskUserAnswerKey } from "./components/ask-user-answer-key.ts";
 import {
 	ASK_USER_WIDGET_KEY,
 	AskUserAsyncWidget,
+	buildAnsweredResponse,
 	buildCommentResponse,
 	buildTimedOutResponse,
 	unansweredIds,
@@ -3954,6 +3955,11 @@ export class InteractiveMode {
 	private clickPendingQuestion(state: AsyncQuestionState, option: number | "own-answer"): void {
 		const unanswered = unansweredIds(state.request, state.draft);
 		const index = state.request.questions.findIndex((question) => question.id === unanswered[0]);
+		// Nothing left to answer: the click submits the draft instead of re-answering a question.
+		if (index < 0) {
+			state.finish(buildAnsweredResponse(state.request, state.draft));
+			return;
+		}
 		if (!this.expandPendingQuestion(state.request.requestId, index)) return;
 		if (option === "own-answer") this.askUserQuestion!.openOwnAnswer();
 		else this.askUserQuestion!.clickOption(option, true);

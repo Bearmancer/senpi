@@ -4512,3 +4512,20 @@ wire shape, multi-session tagging, and payload validation responsibilities.
 - LOW: the `RpcSessionState` interface near `lastAbortSource`; the `buildRpcSessionState` return literal.
 
 - Covered production paths: `packages/coding-agent/src/modes/rpc/rpc-types.ts`, `packages/coding-agent/src/modes/rpc/connection-handler.ts`.
+## 2026-09-30 - Advertise edit-only project preset (senpi#2430)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/session-command-router.ts`: get_protocol_info advertises permission_preset_accept_edits from the permission-system extension.
+
+### Why
+
+Desktop selects accept-edits only after the host advertises support; older hosts receive ask instead.
+
+### Why an extension could not handle it
+
+The host capability probe runs before any session extension loads. This is only an advertisement; permission policy stays in the builtin.
+
+### Expected merge conflict zones
+
+The additive host capability list and its RPC test expectation.

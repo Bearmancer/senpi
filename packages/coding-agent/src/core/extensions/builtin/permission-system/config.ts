@@ -4,6 +4,7 @@ import { Wildcard } from "./wildcard.ts";
 
 export const EDIT_TOOLS = ["edit", "write", "apply_patch", "multiedit"];
 export const DEFAULT_PERMISSION_PRESET: PermissionPresetName = "full-access";
+export const ACCEPT_EDITS_PERMISSION_PRESET_CAPABILITY = "permission_preset_accept_edits";
 
 const PERMISSION_PRESET_RULES: Record<PermissionPresetName, Ruleset> = {
 	"full-access": [{ permission: "*", pattern: "*", action: "allow" }],
@@ -14,6 +15,15 @@ const PERMISSION_PRESET_RULES: Record<PermissionPresetName, Ruleset> = {
 		{ permission: "grep", pattern: "*", action: "allow" },
 		{ permission: "edit", pattern: "*", action: "allow" },
 		{ permission: "bash", pattern: "*", action: "allow" },
+		{ permission: "external_directory", pattern: "*", action: "ask" },
+	],
+	"accept-edits": [
+		{ permission: "*", pattern: "*", action: "ask" },
+		{ permission: "read", pattern: "*", action: "allow" },
+		{ permission: "list", pattern: "*", action: "allow" },
+		{ permission: "grep", pattern: "*", action: "allow" },
+		{ permission: "edit", pattern: "*", action: "allow" },
+		{ permission: "bash", pattern: "*", action: "ask" },
 		{ permission: "external_directory", pattern: "*", action: "ask" },
 	],
 	"read-only": [

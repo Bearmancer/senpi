@@ -86,7 +86,14 @@ export class FallbackCircuitBreaker {
 			hinted,
 			previous && previous.retryFloorUntil > request.now ? previous.retryFloorUntil : 0,
 		);
-		const openUntil = Math.max(request.now + cooldownMs, retryFloorUntil);
+		// A provider Retry-After lengthens the wait up to the ceiling, never past it. A longer
+		// hint (a weekly window, or a gateway replaying a stale wait) still gets its single
+		// half-open probe once the ceiling elapses, so a recovered entry is re-checked instead
+		// of refused for the whole hint; a failed probe re-opens with the fresh hint (senpi#2446).
+		const openUntil = Math.max(
+			request.now + cooldownMs,
+			Math.min(retryFloorUntil, request.now + request.maxCooldownMs),
+		);
 		this.circuits.set(selector, {
 			openUntil,
 			retryFloorUntil,
