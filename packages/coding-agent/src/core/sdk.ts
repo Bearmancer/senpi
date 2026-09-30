@@ -355,11 +355,13 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 	if (thinkingLevel === undefined && model?.defaultThinkingLevel !== undefined) {
 		thinkingLevel = model.defaultThinkingLevel;
 	}
+	let thinkingFromGlobalDefault = false;
 	if (thinkingLevel === undefined) {
 		const configuredDefault = settingsManager.getDefaultThinkingLevel();
 		if (configuredDefault !== undefined) {
 			thinkingLevel = configuredDefault;
 			thinkingSelection = { level: configuredDefault, source: "explicit" };
+			thinkingFromGlobalDefault = true;
 		} else {
 			thinkingLevel = DEFAULT_THINKING_LEVEL;
 		}
@@ -372,8 +374,14 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 	} else {
 		thinkingLevel = clampThinkingLevelToModel(thinkingLevel, model);
 	}
-	// senpi#2395: an explicit request the clamp changed keeps the requested level and the reason.
-	thinkingSelection = clampThinkingSelection(thinkingSelection, requestedThinkingLevel, thinkingLevel, model);
+	// senpi#2395: an explicit request the clamp changed keeps the requested level and the reason. The global
+	// default is a default, not a request, so its clamp records no requested level and shows no warning.
+	thinkingSelection = clampThinkingSelection(
+		thinkingSelection,
+		thinkingFromGlobalDefault ? thinkingLevel : requestedThinkingLevel,
+		thinkingLevel,
+		model,
+	);
 
 	const defaultActiveToolNames: ToolName[] = ["read", "bash", "edit", "write", "grep"];
 	const configuredDefaultToolNames = settingsManager.getDefaultTools();

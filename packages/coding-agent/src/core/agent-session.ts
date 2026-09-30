@@ -6062,18 +6062,21 @@ export class AgentSession {
 		}
 		// senpi#2196: the model's own default outranks the global last-used level and carries no provenance.
 		requestedLevel ??= model.defaultThinkingLevel;
+		let fromGlobalDefault = false;
 		if (requestedLevel === undefined) {
 			const configuredDefault = this.settingsManager.getDefaultThinkingLevel();
 			if (configuredDefault !== undefined) {
 				requestedLevel = configuredDefault;
 				selection = { level: configuredDefault, source: "explicit" };
+				fromGlobalDefault = true;
 			}
 		}
 		requestedLevel ??= DEFAULT_THINKING_LEVEL;
 		const level = this._clampThinkingLevel(requestedLevel, getSupportedThinkingLevels(model) as ThinkingLevel[]);
 		return {
 			level,
-			selection: clampThinkingSelection(selection, requestedLevel, level, model),
+			// senpi#2395: the global default is a default, not a request, so its clamp records and warns nothing.
+			selection: clampThinkingSelection(selection, fromGlobalDefault ? level : requestedLevel, level, model),
 		};
 	}
 

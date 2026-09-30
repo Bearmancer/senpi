@@ -43,7 +43,11 @@ describe("explicit thinking level clamps stay visible (#2395)", () => {
 		for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 	});
 
-	async function startSession(modelId: string, thinkingLevel?: ThinkingLevel): Promise<AgentSession> {
+	async function startSession(
+		modelId: string,
+		thinkingLevel?: ThinkingLevel,
+		settings?: Parameters<typeof SettingsManager.inMemory>[0],
+	): Promise<AgentSession> {
 		const root = mkdtempSync(join(tmpdir(), "senpi-2395-clamp-"));
 		roots.push(root);
 		const agentDir = join(root, "agent");
@@ -54,7 +58,7 @@ describe("explicit thinking level clamps stay visible (#2395)", () => {
 			cwd: root,
 			agentDir,
 			modelRegistry,
-			settingsManager: SettingsManager.inMemory(),
+			settingsManager: SettingsManager.inMemory(settings),
 			model,
 			thinkingLevel,
 		});
@@ -105,6 +109,45 @@ describe("explicit thinking level clamps stay visible (#2395)", () => {
 		expect(session.thinkingLevel).toBe("off");
 		expect(session.thinkingSelection).toBeUndefined();
 		expect(session.startupThinkingClamp).toBeUndefined();
+	});
+
+	it("does not treat the global default thinking level as a clamp request at startup", async () => {
+		const session = await startSession("plain-model", undefined, { defaultThinkingLevel: "high" });
+
+		expect(session.thinkingLevel).toBe("off");
+		expect(session.thinkingSelection).toEqual({ level: "off", source: "explicit" });
+		expect(session.startupThinkingClamp).toBeUndefined();
+	});
+
+	it("does not warn when a model switch clamps the global default thinking level", async () => {
+		const session = await startSession("reasoning-model", undefined, { defaultThinkingLevel: "high" });
+		const events = clampEvents(session);
+
+		await session.setModel(session.modelRegistry.find(PROVIDER, "plain-model") as Model<Api>);
+
+		expect(session.thinkingLevel).toBe("off");
+		expect(session.thinkingSelection).toEqual({ level: "off", source: "explicit" });
+		expect(events).toEqual([]);
+	});
+
+	it("still warns when a model switch clamps a remembered per-model level", async () => {
+		const session = await startSession("reasoning-model", undefined, {
+			modelThinkingLevels: { [`${PROVIDER}/plain-model`]: "high" },
+		});
+		const events = clampEvents(session);
+
+		await session.setModel(session.modelRegistry.find(PROVIDER, "plain-model") as Model<Api>);
+
+		expect(events).toEqual([
+			{
+				type: "thinking_level_clamped",
+				provider: PROVIDER,
+				modelId: "plain-model",
+				requestedLevel: "high",
+				appliedLevel: "off",
+				reason: "model-not-reasoning",
+			},
+		]);
 	});
 
 	it("warns once per clamped request after startup", async () => {

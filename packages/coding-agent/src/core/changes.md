@@ -3,8 +3,8 @@
 ### What changed
 
 - `packages/coding-agent/src/core/thinking-levels.ts`: `clampThinkingSelection()` applies the effective level to an explicit selection and, when it differs from the requested level, keeps `requested` and a `clampReason` (`model-not-reasoning` or `level-unsupported`) on it. `getThinkingClampNotice()` and `formatThinkingClampWarning()` describe a clamp for the user.
-- `packages/coding-agent/src/core/sdk.ts`: the startup clamp in `createAgentSession` goes through `clampThinkingSelection()` instead of overwriting the selection's level.
-- `packages/coding-agent/src/core/agent-session.ts`: `_setThinkingLevel` and `_getThinkingForModelSwitch` record clamps the same way, and a changed requested level counts as a selection change. `thinking_level_clamped` is emitted once per model and requested level, and `startupThinkingClamp` exposes a clamp applied at creation so the starting mode can show it once.
+- `packages/coding-agent/src/core/sdk.ts`: the startup clamp in `createAgentSession` goes through `clampThinkingSelection()` instead of overwriting the selection's level. A level that comes only from the global `defaultThinkingLevel` is applied as a default: no requested level, no reason, no notice.
+- `packages/coding-agent/src/core/agent-session.ts`: `_setThinkingLevel` and `_getThinkingForModelSwitch` record clamps the same way (the global-default fallback on a model switch stays a default), and a changed requested level counts as a selection change. `thinking_level_clamped` is emitted once per model and requested level, and `startupThinkingClamp` exposes a clamp applied at creation so the starting mode can show it once.
 
 ### Why
 
