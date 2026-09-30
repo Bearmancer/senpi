@@ -4,8 +4,14 @@ import { TOOL_NAMES } from "./family.ts";
 import { parseAskUserAnswerFrame } from "./format.ts";
 import { ASK_USER_SETTLEMENT_ENTRY } from "./notify.ts";
 import { getPendingQuestions } from "./registry.ts";
-import { type AskUserVariant, DEFAULT_ASK_USER_TIMEOUT_MS, type QuestionRequest, toCanonical } from "./schema.ts";
-import { startQuestion } from "./tool.ts";
+import {
+	type AskUserVariant,
+	DEFAULT_ASK_USER_TIMEOUT_MS,
+	type QuestionRequest,
+	type QuestionResponse,
+	toCanonical,
+} from "./schema.ts";
+import { deliverAnswer, startQuestion } from "./tool.ts";
 
 export const ASK_USER_RESUMED_ENTRY = "ask-user:resumed";
 
@@ -73,7 +79,7 @@ function findDanglingQuestions(entries: readonly SessionEntry[]): DanglingQuesti
 			if (!variant || settled.has(block.id)) continue;
 			const call = { toolCallId: block.id, variant, args: block.arguments };
 			const request = requestFromCall(call, DEFAULT_ASK_USER_TIMEOUT_MS);
-			if (results.has(block.id) && (request.waitForAnswer || !accepted.has(block.id))) continue;
+			if (results.has(block.id) && (request?.waitForAnswer === true || !accepted.has(block.id))) continue;
 			if (resumed.has(block.id)) continue;
 			dangling.push(call);
 		}
@@ -81,20 +87,33 @@ function findDanglingQuestions(entries: readonly SessionEntry[]): DanglingQuesti
 	return dangling;
 }
 
-function requestFromCall(dangling: DanglingQuestion, timeoutMs: number): QuestionRequest {
+/** The restorable request, or undefined when the recorded arguments no longer form a valid question set. */
+function requestFromCall(dangling: DanglingQuestion, timeoutMs: number): QuestionRequest | undefined {
 	try {
 		return toCanonical(dangling.variant, dangling.args, {
 			requestId: dangling.toolCallId,
 			timeoutMs,
 		});
 	} catch {
-		return {
-			requestId: dangling.toolCallId,
-			questions: [],
-			waitForAnswer: false,
-			timeoutMs,
-		};
+		return undefined;
 	}
+}
+
+/**
+ * A call that cannot be restored never reaches the UI: it settles as
+ * orphaned-after-restart, like a restored question whose UI is gone, so the
+ * model learns it was lost and can ask again.
+ */
+function settleUnrestorable(
+	pi: Pick<ExtensionAPI, "appendEntry" | "sendUserMessage" | "events">,
+	ctx: ExtensionContext,
+	dangling: DanglingQuestion,
+	timeoutMs: number,
+): void {
+	const lost: QuestionRequest = { requestId: dangling.toolCallId, questions: [], waitForAnswer: false, timeoutMs };
+	const response: QuestionResponse = { status: "orphaned-after-restart", answers: {}, unanswered: [] };
+	pi.appendEntry(ASK_USER_SETTLEMENT_ENTRY, { requestId: lost.requestId, status: response.status });
+	deliverAnswer(pi, ctx, lost, response, dangling.variant);
 }
 
 export async function resumeDanglingQuestion(
@@ -112,6 +131,10 @@ export async function resumeDanglingQuestion(
 		pending.add(dangling.toolCallId);
 		pi.appendEntry(ASK_USER_RESUMED_ENTRY, { toolCallId: dangling.toolCallId });
 		const request = requestFromCall(dangling, timeoutMs);
+		if (!request) {
+			settleUnrestorable(pi, ctx, dangling, timeoutMs);
+			continue;
+		}
 		// The runtime registration owns delivery, including after another reload.
 		void startQuestion(pi, ctx, request, ctx.signal, { timedOut: false, unavailable: false }, dangling.variant, {
 			resuming: true,

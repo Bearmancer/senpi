@@ -42,6 +42,17 @@ export function unansweredIds(request: QuestionRequest, draft: QuestionDraft): s
 	return request.questions.filter((question) => !hasAnswer(draft.answers?.[question.id])).map((q) => q.id);
 }
 
+/** Response for a draft that already answers every question, submitted from the collapsed widget. */
+export function buildAnsweredResponse(request: QuestionRequest, draft: QuestionDraft): QuestionResponse {
+	const comment = draft.comment?.trim();
+	return {
+		status: comment ? "comment-submitted" : "answered",
+		answers: draft.answers ?? {},
+		...(comment ? { comment: draft.comment } : {}),
+		unanswered: unansweredIds(request, draft),
+	};
+}
+
 /** Response for composer text typed while the question is pending: the text is the comment. */
 export function buildCommentResponse(
 	request: QuestionRequest,

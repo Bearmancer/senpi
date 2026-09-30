@@ -30,6 +30,7 @@ export function parsePermissionPresetName(value: string): PermissionPresetName |
 	switch (value) {
 		case "full-access":
 		case "workspace":
+		case "accept-edits":
 		case "read-only":
 		case "ask":
 			return value;

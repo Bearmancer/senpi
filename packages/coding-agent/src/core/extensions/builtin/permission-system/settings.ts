@@ -63,7 +63,7 @@ function parseSettingsPreset(value: unknown, scope: "global" | "project"): Permi
 	const preset = parsePermissionPresetName(value);
 	if (!preset) {
 		throw new Error(
-			`Invalid ${scope} permissionPreset "${value}". Expected one of: full-access, workspace, read-only, ask.`,
+			`Invalid ${scope} permissionPreset "${value}". Expected one of: full-access, workspace, accept-edits, read-only, ask.`,
 		);
 	}
 	return preset;

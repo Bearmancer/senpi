@@ -1,6 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { rmSync } from "node:fs";
 import type { Api, Model } from "@earendil-works/pi-ai";
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import {
@@ -16,25 +14,9 @@ import {
 	supportsNamedToolChoice,
 } from "../../src/core/extensions/builtin/todotools/first-turn.ts";
 import todotoolsExtension from "../../src/core/extensions/builtin/todotools/index.ts";
-import type { ExtensionAPI, ExtensionContext } from "../../src/core/extensions/types.ts";
 import type { SessionEntry } from "../../src/core/session-manager.ts";
 import { createHarness, type Harness } from "./harness.ts";
-
-function model(id: string, api: Api = "anthropic-messages", compat?: Record<string, unknown>): Model<Api> {
-	return {
-		id,
-		name: id,
-		api,
-		provider: api === "anthropic-messages" ? "anthropic" : "openai",
-		baseUrl: "https://example.com/v1",
-		reasoning: true,
-		input: ["text"],
-		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-		contextWindow: 200_000,
-		maxTokens: 32_000,
-		...(compat ? { compat } : {}),
-	} as Model<Api>;
-}
+import { fauxTodotoolsPi, model, TODO_PAYLOAD } from "./todo-first-turn-harness.ts";
 
 const USER_ENTRY: SessionEntry = {
 	type: "message",
@@ -117,8 +99,6 @@ describe("named tool_choice wire shapes", () => {
 	});
 });
 
-type Handler = (event: Record<string, unknown>, ctx: ExtensionContext) => unknown;
-
 const tempDirs: string[] = [];
 const harnesses: Harness[] = [];
 
@@ -127,58 +107,10 @@ afterEach(() => {
 	for (const harness of harnesses.splice(0)) harness.cleanup();
 });
 
-function fauxPi(options: { setting?: string } = {}) {
-	const handlers = new Map<string, Handler[]>();
-	const pi = {
-		registerTool: () => {},
-		registerCommand: () => {},
-		appendEntry: () => {},
-		getActiveTools: () => ["read", "todo"],
-		on: (event: string, handler: Handler) => handlers.set(event, [...(handlers.get(event) ?? []), handler]),
-	} as unknown as ExtensionAPI;
-	todotoolsExtension(pi);
-	const root = mkdtempSync(join(tmpdir(), "todo-first-turn-"));
-	tempDirs.push(root);
-	const agentDir = join(root, "agent");
-	mkdirSync(agentDir);
-	if (options.setting) {
-		writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ todo: { firstTurnPlan: options.setting } }));
-	}
-	const ctx = {
-		cwd: root,
-		agentDir,
-		mode: "tui",
-		model: model("claude-opus-5"),
-		isProjectTrusted: () => false,
-		sessionManager: { getBranch: () => [] },
-		ui: { setWidget: () => {} },
-	} as unknown as ExtensionContext;
-	const emit = async (event: string, payload: Record<string, unknown> = {}) => {
-		let result: unknown;
-		for (const handler of handlers.get(event) ?? []) result = await handler({ type: event, ...payload }, ctx);
-		return result;
-	};
-	const startTurn = () =>
-		emit("before_agent_start", {
-			prompt: "add retries to fetchUser",
-			trigger: "prompt",
-			systemPrompt: "base",
-		}) as Promise<{
-			message?: { customType: string };
-		}>;
-	const providerRequest = (payload: Record<string, unknown>, requestModel: Model<Api> = model("claude-opus-5")) =>
-		emit("before_provider_request", { payload, model: requestModel }) as Promise<
-			{ tool_choice?: unknown } | undefined
-		>;
-	return { emit, startTurn, providerRequest };
-}
-
-const TODO_PAYLOAD = { tools: [{ name: "read" }, { name: "todo" }] };
-
 describe("first-turn tool_choice through the faux pi shape", () => {
 	it("forces the todo tool on the armed first request", async () => {
 		// given
-		const faux = fauxPi();
+		const faux = fauxTodotoolsPi(tempDirs);
 		const start = await faux.startTurn();
 
 		// when
@@ -191,7 +123,7 @@ describe("first-turn tool_choice through the faux pi shape", () => {
 
 	it("leaves tool_choice absent when the model rejects forced tool choice", async () => {
 		// given
-		const faux = fauxPi();
+		const faux = fauxTodotoolsPi(tempDirs);
 		await faux.startTurn();
 
 		// when
@@ -206,7 +138,7 @@ describe("first-turn tool_choice through the faux pi shape", () => {
 
 	it("leaves the payload alone without a todo tool, with its own tool_choice, or with Anthropic thinking", async () => {
 		// given
-		const faux = fauxPi();
+		const faux = fauxTodotoolsPi(tempDirs);
 		await faux.startTurn();
 
 		// when
@@ -222,7 +154,7 @@ describe("first-turn tool_choice through the faux pi shape", () => {
 
 	it("does not force the second request after the first assistant message ends", async () => {
 		// given
-		const faux = fauxPi();
+		const faux = fauxTodotoolsPi(tempDirs);
 		await faux.startTurn();
 		await faux.providerRequest(TODO_PAYLOAD);
 
@@ -236,7 +168,7 @@ describe("first-turn tool_choice through the faux pi shape", () => {
 
 	it("clears the pending force on agent_end without an assistant message", async () => {
 		// given
-		const faux = fauxPi();
+		const faux = fauxTodotoolsPi(tempDirs);
 		await faux.startTurn();
 
 		// when
@@ -265,7 +197,7 @@ describe("first-turn tool_choice through the faux pi shape", () => {
 				return "ok";
 			},
 		});
-		const faux = fauxPi();
+		const faux = fauxTodotoolsPi(tempDirs);
 		await faux.startTurn();
 
 		// when
@@ -282,7 +214,7 @@ describe("first-turn tool_choice through the faux pi shape", () => {
 
 	it("sends only the reminder under the remind setting", async () => {
 		// given
-		const faux = fauxPi({ setting: "remind" });
+		const faux = fauxTodotoolsPi(tempDirs, { setting: "remind" });
 
 		// when
 		const start = await faux.startTurn();

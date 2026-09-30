@@ -52,7 +52,7 @@ function result(
  * triggers a turn, which is what wakes the model after a timeout. A cancelled
  * question stays silent: it was dismissed, superseded, or aborted.
  */
-function deliverAnswer(
+export function deliverAnswer(
 	pi: Pick<ExtensionAPI, "sendUserMessage" | "events">,
 	ctx: ExtensionContext,
 	request: QuestionRequest,

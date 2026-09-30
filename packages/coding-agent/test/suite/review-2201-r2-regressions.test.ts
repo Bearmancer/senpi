@@ -66,7 +66,7 @@ it("sweeps expired idle selectors but keeps cooldowns and live probes", () => {
 	breaker.open(primary, { now: 0, ...window });
 	breaker.open(fallback, { now: 0, ...window });
 	breaker.admit(fallback, 1000, "owner");
-	breaker.open("faux/cooling", { now: 0, ...window, retryAfterMs: 10_000 });
+	breaker.open("faux/cooling", { now: 0, cooldownMs: 1000, maxCooldownMs: 30_000, retryAfterMs: 10_000 });
 	breaker.sweep(4000);
 	expect(breaker.size).toBe(2);
 	expect(breaker.isOpen(fallback, 4000, "sibling")).toBe(true);
