@@ -22,6 +22,8 @@
 
 - An answer sent to a terminal session's pending question through its control endpoint now reaches the model with its text. A text-only answer (`answers: {}` plus a `comment`, which relaying clients send) used to arrive as an empty `[Answer to question <id>]`; the terminal now settles every answer by the same rule as a multi-session host, so both surfaces deliver the same message, and a frame with neither answers nor a comment is refused `question_incomplete` instead of resolving empty. ([#2407](https://github.com/code-yeongyu/senpi/issues/2407))
 
+- Project rule discovery no longer escapes the project root on Windows. A `read`/`edit`/`write` target on a different drive, or one whose drive-letter case differs from the project root, made the rules finder walk the unrelated location and inject any `AGENTS.md`, `CLAUDE.md`, `.claude/rules`, `.cursor/rules`, or `.github/instructions` it found there as *project* rules ([#568](https://github.com/code-yeongyu/senpi/pull/568) by [@MoerAI](https://github.com/MoerAI)). POSIX behavior is unchanged.
+
 ### Removed
 
 ## [2026.9.29-5] - 2026-09-29
@@ -41,8 +43,6 @@
 - The high-reasoning warning that fires for GPT-5.6 Sol and GPT-6 Sol at `xhigh` / `max` now also covers GPT-6.1 Sol, including `-fast`, `-pro`, gateway-prefixed and Venice's dotless `gpt-61-sol` ids. ([#2390](https://github.com/code-yeongyu/senpi/issues/2390))
 
 ### Fixed
-
-- Project rule discovery no longer escapes the project root on Windows. A `read`/`edit`/`write` target on a different drive, or one whose drive-letter case differs from the project root, made the rules finder walk the unrelated location and inject any `AGENTS.md`, `CLAUDE.md`, `.claude/rules`, `.cursor/rules`, or `.github/instructions` it found there as *project* rules ([#568](https://github.com/code-yeongyu/senpi/pull/568) by [@MoerAI](https://github.com/MoerAI)). POSIX behavior is unchanged.
 
 - With `SENPI_PROMPT_SURFACE=app` (or `open_session.promptSurface: "app"`), replies no longer end with a note about a check or tool that could not run, such as an unavailable language-server hook, when the tests or other checks that did run already back the result. Terminal prompts are unchanged. ([#2377](https://github.com/code-yeongyu/senpi/issues/2377))
 
