@@ -1,3 +1,82 @@
+## 2026-09-30 - GPT-6.1 Sol under Venice's dotless id, plus the Copilot and OpenCode rows models.dev now lists (senpi#2390)
+
+### What changed
+
+- `packages/ai/scripts/generate-models.ts`: `GPT_6_FAMILY_DEFAULT_CONTEXT_WINDOWS` gains the marker `gpt-61-sol` (Venice spells every point release without the dot: `openai-gpt-56-sol`, `openai-gpt-61-sol`), and `applyGpt6ThinkingLevels` forces `off: null` through the new `isGpt61SolId` for both spellings.
+- `packages/ai/src/providers/data/` regenerated with `--strict` now that models.dev lists the model: +1 `github-copilot.json` (`gpt-6.1-sol`, 2/10/0.1/2.5 + tier, 400k budget, ladder low..max), +1 `opencode.json` (`gpt-6.1-sol`, 2/10/0.2/2.5 as models.dev prices it), +1 `venice.json` (`openai-gpt-61-sol`, 2.5/12.5/0.125/3.125, now the 400k budget instead of the 1,050,000 total that landed above the 922k input cap). Incidental drift: OpenRouter DeepSeek V4 Pro 0813 and `~z-ai/glm-latest` / `z-ai/glm-5.2` prices. No id removed.
+- `test/openai-input-cap-catalog.test.ts`: the deliberate 400k pairing covers `gpt-61-sol`, and the Venice, OpenCode and Copilot rows are pinned to 400,000 / 128,000.
+
+### Why
+
+The release job regenerates the catalog before `npm run check`; a dry run on the merged head showed the Venice row would ship with `contextWindow: 1050000` because the `gpt-6.1-sol` substring markers never see the dotless id. A prompt budget above the documented input cap lets a session run into `context_too_large` instead of compacting.
+
+### Why an extension could not handle it
+
+The catalog shards ship inside this package.
+
+### Expected merge conflict zones
+
+- `packages/ai/scripts/generate-models.ts`: the GPT-6 family context-window table and `applyGpt6ThinkingLevels`.
+- `packages/ai/src/providers/data/*.json` + `.manifest.json`: regenerate rather than merge.
+
+## 2026-09-30 - GPT-6.1 Sol catalog rows and Fast variant (senpi#2390)
+
+### What changed
+
+- `packages/ai/scripts/generate-models.ts`: `gpt-6.1-sol` joins every OpenAI id table that carries `gpt-6-sol` (tool search + additional tools on `openai` and `chatgpt-subscription`, short-context cap, long-context pricing tiers, Fast/Priority `-fast` variants on both first-party providers) and, unlike GPT-6 Sol, `CHATGPT_SUBSCRIPTION_CONFIGURATION_UPDATE_MODEL_IDS` (openai/codex's `models.json` flags `gpt-6.1-sol` `supports_reasoning_effort_updates: true`, as it does `gpt-6-astra`). It stays out of `OPENAI_RESPONSES_NONE_REASONING_MODELS` and `applyGpt6ThinkingLevels` forces `off: null` for it as for Astra, because the model page documents `low`/`medium`/`high`/`xhigh`/`max` only. `OPENAI_GPT_6_STANDARD_COSTS["gpt-6.1-sol"]` is 2/10/0.1/2.5 per MTok (the cached-input rate halves versus GPT-6 Sol); the flagship and family context-window tables carry `gpt-6.1-sol` at the 400,000 Sol budget, listed before `gpt-6-sol` since the family lookup matches by substring. Hand-added rows land in the `openai` fallback list and the `chatgpt-subscription` list.
+- `packages/ai/src/providers/data/` regenerated with `--strict`: +2 rows each on `openai.json` and `chatgpt-subscription.json` (base + `-fast`), +1 on `azure-openai-responses.json`, +4 on `openrouter.json` (`openai/gpt-6.1-sol`, `-pro`, both `:batch`), +2 on `vercel-ai-gateway.json` (`openai/gpt-6.1-sol`, `openai/gpt-6.1-sol-fast`; Vercel also added two `inclusionai/ling-3.1-flash` rows). Incidental upstream drift: OpenRouter DeepSeek V4 Pro prices refreshed and `~openai/gpt-sol-latest` now resolves to GPT-6.1 Sol (0.1 cache reads, no `none`). No model id was removed. models.dev, GitHub Copilot, OpenCode Zen and OpenGateway do not list the model yet.
+- Tests: `test/gpt-6-family-catalog.test.ts` adds `gpt-6.1-sol` with `supportsNone: false` (first-party rows, pricing tiers, `off` vetoed on catalog and map-less rows, `-fast` variant, family-wide budget); `test/openai-input-cap-catalog.test.ts` exempts the deliberate `gpt-6.1-sol @ 400,000` pairing and pins the OpenRouter and Vercel rows; `test/openai-config-update.test.ts` pins the `chatgpt-subscription` flag set as `gpt-6-astra`, `gpt-6-astra-fast`, `gpt-6.1-sol`, `gpt-6.1-sol-fast`.
+
+### Why
+
+OpenAI released GPT-6.1 Sol on 2026-09-29 (developers.openai.com/api/docs/models/gpt-6.1-sol): near-Astra quality at GPT-6 Sol's price, and Codex made it the default catalog model. Without rows the id was unselectable on every lane, and the `gpt-6-sol` substring matchers did not cover it. Ultrafast is deliberately absent: OpenAI's Ultrafast pricing table lists `gpt-6-astra` only and the announcement says GPT-6.1 Sol Ultrafast follows "in the coming days"; senpi carries no `ultrafast` service tier yet (the openai SDK's `service_tier` union stops at `priority`), so that is its own change when it ships.
+
+### Why an extension could not handle it
+
+The catalog shards ship inside this package; nothing loaded at runtime can add a first-party row or change what the generator wrote.
+
+### Expected merge conflict zones
+
+- `packages/ai/scripts/generate-models.ts`: the OpenAI id tables near the top, `OPENAI_GPT_6_STANDARD_COSTS`, `applyGpt6ThinkingLevels`, the hand-added `openai` and `chatgpt-subscription` row lists.
+- `packages/ai/src/providers/data/*.json` + `.manifest.json`: regenerate rather than merge.
+
+## 2026-09-29 - Published tarball excludes sourcemaps (senpi#2362)
+
+### What changed
+
+- `packages/ai/package.json`: `files` excludes `dist/**/*.map`.
+
+### Why
+
+- The maps point at `src/`, which is not published, so they cannot resolve for consumers and only add install size.
+
+### Why an extension could not handle it
+
+- Package publish metadata.
+
+### Expected merge conflict zones
+
+- LOW: the `files` list in `package.json`.
+
+## 2026-09-29 - Claude Sonnet 5.5 catalog rows (senpi#2321)
+
+### What changed
+
+- `packages/ai/scripts/generate-models.ts`: `ANTHROPIC_ALLOWED_FALLBACK_MODELS["claude-sonnet-5-5"] = ["claude-sonnet-5"]` (the live `allowed_fallback_models`), `supportsAnthropicMidConvoEffort` matches `claude-sonnet-5[.-]5`, `isAnthropicAdaptiveOnlyModel` adds `sonnet-5-5` / `sonnet-5.5`.
+- Regenerated provider data: `anthropic.json` `claude-sonnet-5-5`, `amazon-bedrock.json` `global.anthropic.claude-sonnet-5-5`, `openrouter.json` `anthropic/claude-sonnet-5.5` (+ `:batch`), `vercel-ai-gateway.json`, `venice.json` (`claude-sonnet-5-5`, plus `claude-opus-5-5-fast` and `xiaomi-mimo-v2-6-flash` that models.dev now lists), `opencode.json`. Drift that rode along: `together.json` dropped `moonshotai/Kimi-K2.6` and `Kimi-K2.7-Code` (retired upstream; `test/together-models.test.ts` now pins `Kimi-K3`), `mistral.json` dropped `magistral-small`, OpenRouter DeepSeek and Cloudflare rows refreshed metadata.
+
+### Why
+
+- Claude Sonnet 5.5 shipped on 2026-09-28 with the Opus 5.5 request contract (adaptive-only thinking, effort low..max, no forced tool choice) and a server-side fallback allowlist of `claude-sonnet-5`.
+
+### Why an extension could not handle it
+
+- Generated catalog data.
+
+### Expected merge conflict zones
+
+- LOW: the three Anthropic helpers in `generate-models.ts`; generated JSON regenerates.
+
 ## 2026-09-27 - OpenRouter catalog records mandatory reasoning again (senpi#1239, senpi#2163)
 
 ### What changed

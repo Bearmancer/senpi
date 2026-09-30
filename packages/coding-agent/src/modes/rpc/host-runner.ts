@@ -14,6 +14,10 @@
  * that cannot get what it wants must SAY so and leave the running host alone (I1) - never stop it,
  * never bind a second host over its socket. `decideHostAction`, `ensureHost`, `stopHost` and
  * `handoffHost` already enforce that; this module only gives their outcomes a machine-readable shape.
+ *
+ * A terminal control endpoint (`endpoint_kind: "tui"`) is owned by its terminal process and is never
+ * ensured, handed off, drained or stopped by a host operator: `ensure`, `handoff` and `stop` against
+ * one refuse with `unsupported_endpoint_kind` (exit 3) from disk alone, before any connection.
  */
 import { engineBuildIdentity } from "../../core/engine-build-identity.ts";
 import { daemonEnvKeys, daemonEnvOverrides, writeDaemonEnvKeys } from "./host-daemon-env.ts";
@@ -27,6 +31,7 @@ import {
 	type HostProtocolInfo,
 	REQUIRED_HOST_CAPABILITIES,
 } from "./host-decision.ts";
+import { endpointKindOfSocket } from "./host-endpoints.ts";
 import { type EnsuredHost, ensureHost } from "./host-ensure.ts";
 import { gcHostEndpoints } from "./host-gc.ts";
 import { type HandoffRefusal, handoffHost } from "./host-handoff.ts";
@@ -77,6 +82,12 @@ export interface HostOutcome {
 }
 
 export async function runHostRequest(request: HostRequest): Promise<HostOutcome> {
+	if (request.action === "ensure" || request.action === "handoff" || request.action === "stop") {
+		const { socket, agentDir } = request.target;
+		if ((await endpointKindOfSocket(socket, agentDir)) === "tui") {
+			return refusal("refuse", undefined, { reason: "unsupported_endpoint_kind", socket, endpoint_kind: "tui" });
+		}
+	}
 	switch (request.action) {
 		case "ensure":
 			return ensureOutcome(request.target, request.spec, request.policy);

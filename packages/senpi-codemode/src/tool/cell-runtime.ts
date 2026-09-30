@@ -1,6 +1,7 @@
 import type { AgentToolResult, AgentToolUpdateCallback, ExtensionContext } from "@code-yeongyu/senpi";
 import type { KernelMemoryReport } from "../bridge/memory-protocol.ts";
 import type { KernelToHostMessage } from "../bridge/protocol.ts";
+import { formatModelTruncationNotice } from "../output/output-meta.ts";
 import { DEFAULT_MAX_BYTES, TailLineRing } from "../output/streaming-output.ts";
 import type { EvalToolCallMetric } from "./call-capture.ts";
 import { type EvalImageResizer, EvalOutputCollector, type EvalOutputResult } from "./image.ts";
@@ -85,7 +86,7 @@ export class CellResultBuilder {
 		this.#state.durationMs = result.durationMs;
 		this.#memory = result.memory;
 		if (result.ok) {
-			if (result.valueRepr) this.#output.push(`${result.valueRepr}\n`);
+			if (result.valueRepr) this.#output.pushValue(`${result.valueRepr}\n`);
 			this.#state.status = "complete";
 		} else {
 			this.#state.error = result.error.message;
@@ -153,11 +154,12 @@ export class CellResultBuilder {
 		this.#state.output = output.output;
 		const details = this.#details(output, isError);
 		this.emitUpdate(isError);
-		const text =
+		const shown =
 			output.output ||
 			(output.images.length > 0
 				? `(displayed ${output.images.length} image${output.images.length === 1 ? "" : "s"}; no text output)`
 				: "(no output)");
+		const text = output.meta === undefined ? shown : `${shown}\n${formatModelTruncationNotice(output.meta)}`;
 		const notice = this.#memory?.notice;
 		const noticePart = notice === undefined ? [] : [{ type: "text" as const, text: notice }];
 		return { content: [{ type: "text", text }, ...noticePart, ...output.images], details };

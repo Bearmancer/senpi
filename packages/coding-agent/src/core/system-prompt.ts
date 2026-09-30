@@ -3,6 +3,7 @@
  */
 
 import { getDocsPath, getExamplesPath, getReadmePath } from "../config.ts";
+import type { PromptSurface } from "./dynamic-prompt/types.ts";
 import { formatSkillsForPrompt, type Skill } from "./skills.ts";
 
 export interface BuildSystemPromptOptions {
@@ -22,6 +23,8 @@ export interface BuildSystemPromptOptions {
 	contextFiles?: Array<{ path: string; content: string }>;
 	/** Pre-loaded skills. */
 	skills?: Skill[];
+	/** Where replies render (`SENPI_PROMPT_SURFACE`); read by the dynamic prompt and presets. */
+	surface?: PromptSurface;
 }
 
 /** Contributions include eval-only tools even when the selected model-facing list does not. */

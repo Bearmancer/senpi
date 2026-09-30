@@ -263,9 +263,22 @@ describe("ensureHost", () => {
 
 	it("escalates to SIGKILL when our own dead host ignores SIGTERM", async () => {
 		const qa = await scratch("sigkill");
-		const old = await startManagedProcess(qa, { writer: "self", ignoreTerm: true });
+		const writerStartTime = "sigkill-test-self";
+		const old = await startManagedProcess(qa, {
+			writer: "self",
+			ignoreTerm: true,
+			selfWriterStartTime: writerStartTime,
+		});
+		expect((await readHostRegistration(daemonPaths(qa)))?.writer).toEqual({
+			pid: process.pid,
+			startTime: writerStartTime,
+		});
+		const readStagedStartTime = async (pid: number): Promise<string | undefined> => {
+			if (pid === process.pid) return writerStartTime;
+			return processIsLive(pid) ? readProcessStartTime(pid) : undefined;
+		};
 		const startedAt = Date.now();
-		const result = await ensureFixtureHost(qa, { stopTimeoutMs: 200 });
+		const result = await ensureFixtureHost(qa, { stopTimeoutMs: 200, readProcessStartTime: readStagedStartTime });
 		expect(result.pid).not.toBe(old.pid);
 		expect(Date.now() - startedAt).toBeLessThan(8_000);
 		await expectGone(old.pidFile);
@@ -810,11 +823,19 @@ async function startManagedFixture(
  * A managed host that does NOT answer on the socket: the shape a wedged or dead host leaves behind,
  * where the only thing standing between an ensure and a signal is the pidfile's writer.
  */
-async function startManagedProcess(qa: Qa, options: { writer: Writer; ignoreTerm?: boolean }): Promise<Managed> {
+async function startManagedProcess(
+	qa: Qa,
+	options: { writer: Writer; ignoreTerm?: boolean; selfWriterStartTime?: string },
+): Promise<Managed> {
 	const script = options.ignoreTerm
 		? "process.on('SIGTERM', () => {}); setInterval(() => {}, 1000)"
 		: "setInterval(() => {}, 1000)";
-	return register(qa, spawn(process.execPath, ["-e", script], { detached: true, stdio: "ignore" }), options.writer);
+	return register(
+		qa,
+		spawn(process.execPath, ["-e", script], { detached: true, stdio: "ignore" }),
+		options.writer,
+		options.selfWriterStartTime,
+	);
 }
 
 /**
@@ -881,7 +902,7 @@ async function startBusySocketHost(qa: Qa, writer: Writer): Promise<Managed> {
 	return register(qa, child, writer);
 }
 
-async function register(qa: Qa, child: ChildProcess, writer: Writer): Promise<Managed> {
+async function register(qa: Qa, child: ChildProcess, writer: Writer, selfWriterStartTime?: string): Promise<Managed> {
 	children.push(child);
 	if (child.pid === undefined) throw new Error("managed host did not spawn");
 	// waitForStartTime returns undefined when every identity probe inside the budget is starved
@@ -893,13 +914,23 @@ async function register(qa: Qa, child: ChildProcess, writer: Writer): Promise<Ma
 		if (!processIsLive(child.pid)) throw new Error("managed host died before publishing its identity");
 		throw new Error(`managed host ${child.pid} is live but its identity probe was starved for 10 s`);
 	}
-	await writeRegistration(qa, { pid: child.pid, processStartTime }, await writerRecord(writer, child.pid));
+	await writeRegistration(
+		qa,
+		{ pid: child.pid, processStartTime },
+		await writerRecord(writer, child.pid, selfWriterStartTime),
+	);
 	await writeFile(daemonPaths(qa).settingsFile, `${JSON.stringify({ socket: qa.socket })}\n`, { mode: 0o600 });
 	return { pid: child.pid, pidFile: { pid: child.pid, processStartTime } };
 }
 
-async function writerRecord(writer: Writer, hostPid: number): Promise<{ pid: number; startTime: string | null }> {
-	if (writer === "self") return { pid: process.pid, startTime: (await readProcessStartTime(process.pid)) ?? null };
+async function writerRecord(
+	writer: Writer,
+	hostPid: number,
+	selfWriterStartTime?: string,
+): Promise<{ pid: number; startTime: string | null }> {
+	if (writer === "self") {
+		return { pid: process.pid, startTime: selfWriterStartTime ?? (await readProcessStartTime(process.pid)) ?? null };
+	}
 	// A recycled pid carries this process's number with somebody else's start time.
 	if (writer === "recycled-pid") return { pid: process.pid, startTime: "1970-01-01T00:00:00.000Z" };
 	return { pid: hostPid, startTime: (await readProcessStartTime(hostPid)) ?? null };

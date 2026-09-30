@@ -3,6 +3,7 @@ import type { Api, Model } from "@earendil-works/pi-ai";
 import type { FallbackCircuitAccess } from "./circuit.ts";
 import type { SelectorCooldowns } from "./cooldown.ts";
 import type { FallbackLogger } from "./log.ts";
+import type { UsageLimitScope } from "./usage-limit.ts";
 
 export interface ActiveFallbackState {
 	chainKey: string;
@@ -17,6 +18,8 @@ export interface ActiveFallbackState {
 }
 
 export type FallbackReason = "transient" | "refusal" | "hard-error" | "billing";
+/** Absent: the original recovered after its cooldown. `fallback-unusable`: the fallback itself could not serve. */
+export type FallbackRevertCause = "fallback-unusable";
 export type CircuitFailure = { errorMessage?: string; retryAfterMs?: number };
 
 export interface FallbackSettings {
@@ -47,8 +50,9 @@ export interface RetryFallbackControllerDeps {
 					to: string;
 					chainKey: string;
 					reason: FallbackReason;
+					limit?: UsageLimitScope;
 			  }
-			| { type: "retry_fallback_reverted"; from: string; to: string },
+			| { type: "retry_fallback_reverted"; from: string; to: string; cause?: FallbackRevertCause },
 	): void;
 	getCurrentSelector(): { model: Model<Api>; thinkingLevel?: ThinkingLevel } | undefined;
 	isAuthAvailable(provider: string): boolean;

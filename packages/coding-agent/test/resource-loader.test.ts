@@ -259,8 +259,8 @@ export default function(pi) {
 			const loader = new DefaultResourceLoader({ cwd, agentDir });
 			await loader.reload({
 				resolveProjectTrust: async ({ extensionsResult }) => {
+					// The pre-trust pass loads user extensions only: the project's .pi extension waits for trust.
 					expect(nonBuiltinExtensions(extensionsResult.extensions).map((extension) => extension.path)).toEqual([
-						join(cwd, ".pi", "extensions", "project.ts"),
 						join(userExtDir, "user.ts"),
 					]);
 					return true;

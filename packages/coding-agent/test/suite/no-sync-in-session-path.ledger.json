@@ -130,27 +130,6 @@
 			"note": "rendered HTML export (session-scale, MB on long sessions)"
 		},
 		{
-			"file": "src/core/footer-data-provider.ts",
-			"api": "readFileSync",
-			"symbol": "findGitPaths",
-			"count": 2,
-			"note": "`.git` file/`commondir` pointer (bytes)"
-		},
-		{
-			"file": "src/core/footer-data-provider.ts",
-			"api": "readFileSync",
-			"symbol": "readBranchFromHead",
-			"count": 1,
-			"note": "`.git/HEAD` (bytes); the sync and async branch readers now share this one read, the git probe itself is async"
-		},
-		{
-			"file": "src/core/footer-data-provider.ts",
-			"api": "readFileSync",
-			"symbol": "setupGitWatcher",
-			"count": 2,
-			"note": "`.git/HEAD` re-read on a watcher event (bytes)"
-		},
-		{
 			"file": "src/core/model-config.ts",
 			"api": "readFileSync",
 			"symbol": "loadSync",
@@ -170,6 +149,20 @@
 			"symbol": "migrateModelsJsonProviderIds",
 			"count": 2,
 			"note": "one-shot legacy provider-id migration (senpi#2044): the backup copy and the temp file renamed over models.json (KB-scale each). Runs only while the file still carries a legacy id, so at most once per file"
+		},
+		{
+			"file": "src/core/session-file-replace.ts",
+			"api": "writeFileSync",
+			"symbol": "rewriteInPlace",
+			"count": 1,
+			"note": "DELIBERATE transcript path: the pre-atomic in-place whole-transcript rewrite (session-scale), taken only when the session directory refuses the temp file (EACCES/EPERM/EROFS)"
+		},
+		{
+			"file": "src/core/session-file-replace.ts",
+			"api": "writeFileSync",
+			"symbol": "writeDurably",
+			"count": 1,
+			"note": "DELIBERATE transcript path: whole transcript written to a temp file and renamed over the session file (session-scale, MB on long sessions), reached from SessionManager._rewriteFile on open-time migration, empty-file init, caller-id create, and branched-session create"
 		},
 		{
 			"file": "src/core/session-holders.ts",
@@ -223,13 +216,6 @@
 		{
 			"file": "src/core/session-manager.ts",
 			"api": "writeFileSync",
-			"symbol": "_rewriteFile",
-			"count": 1,
-			"note": "DELIBERATE transcript path: whole transcript rewritten after an in-place edit (session-scale, MB on long sessions)"
-		},
-		{
-			"file": "src/core/session-manager.ts",
-			"api": "writeFileSync",
 			"symbol": "forkFrom",
 			"count": 1,
 			"note": "DELIBERATE transcript path: forked transcript written once (session-scale)"
@@ -263,6 +249,13 @@
 			"note": "settings.json read+write under the sync file lock (KB-scale)"
 		},
 		{
+			"file": "src/core/hidden-stdout-log.ts",
+			"api": "fs.appendFileSync",
+			"symbol": "appendDebugLogEntry",
+			"count": 1,
+			"note": "one debug-log line (bytes), reached from settings loading only when rewriting the global settings file to drop a retired key fails; recorded once per settings file per process"
+		},
+		{
 			"file": "src/core/trust-manager.ts",
 			"api": "readFileSync",
 			"symbol": "readTrustFile",
@@ -282,13 +275,6 @@
 			"symbol": "getBuiltinThemes",
 			"count": 4,
 			"note": "four bundled theme JSON files (KB-scale, startup)"
-		},
-		{
-			"file": "src/modes/interactive/theme/theme.ts",
-			"api": "fs.readFileSync",
-			"symbol": "loadThemeFromPath",
-			"count": 1,
-			"note": "one theme JSON file (KB-scale)"
 		},
 		{
 			"file": "src/modes/interactive/theme/theme.ts",

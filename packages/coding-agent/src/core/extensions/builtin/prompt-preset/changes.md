@@ -1,5 +1,132 @@
 # prompt-preset Extension Changes
 
+## 2026-09-30 - Chat surface for every core (senpi#2398)
+
+### What changed
+
+- Every `INTENT_GATE_LEAD` table (Claude Fable 5 / 5.1, Opus 5 / 5.5, Sonnet 5.5, Grok 4.5 / 4.6 / 4.7, Kimi K3, GPT-5.5 / 5.6 / 6 Astra) is keyed by `TerminalOrApp` and looked up through `terminalOrApp(context.surface)`, and every `context.surface === "app"` branch reads `!== "terminal"`, so `chat` gets the app wording. `kimi-k2-6.ts` / `kimi-k2-code.ts`: the "routing line is required every turn" sentence renders only on `terminal`.
+- Final-message rules on `chat` say the final message is the answer itself instead of opening with the Handoff block: Claude cores and Kimi K3 through `CHAT_FINAL_MESSAGE`, Opus 5 / 5.5 and Sonnet 5.5 as "When you finish, your reply is the answer itself:", Grok 4.5 as "the final message is the answer itself, leading with the outcome", GPT-5.5 / 5.6 without the You need slot.
+- `gpt-5.5.ts`, `gpt-5.6.ts`: the inline `## Handoff` section is `CHAT_REPLIES_SECTION` on `chat`. `gpt-6-astra.ts`: `SURFACE_DIRECTIVE` gains a `chat` entry (app steering, `CHAT_REPLY_RULE` in place of the handoff paragraph, the final-message shape without the handoff block). `gpt-surface.ts`: `GPT_HANDOFF_MOMENTS` is keyed by `TerminalOrApp`.
+- `test/suite/prompt-presets-app-surface.test.ts`: the app assertions run for `app` and `chat`; for every prompt, `chat` carries no `> Ask:`, `For you`, `Now: [`, `You need` or "handoff block" while `app` still carries a handoff slot; `resolvePromptSurface` accepts `chat`; a harness session with `SENPI_PROMPT_SURFACE=chat` renders the chat prompt. RED on main: 96 of 337 tests in the targeted files failed.
+
+### Why
+
+- See `dynamic-prompt/changes.md` (2026-09-30, senpi#2398).
+
+### Why an extension could not handle it
+
+- These are the preset cores themselves.
+
+### Expected merge conflict zones
+
+- The `INTENT_GATE_LEAD` tables and final-message sentences in each core; `SURFACE_DIRECTIVE` in `gpt-6-astra.ts`.
+
+## 2026-09-30 - App surface: every core's claim audit covers an unrun check with the evidence that did run (senpi#2377)
+
+### What changed
+
+- `claude-fable-5.ts`, `claude-fable-5-1.ts`, `claude-opus-5.ts`, `claude-opus-5-5.ts`, `claude-sonnet-5-5.ts`, `kimi-k3.ts`: on `app` the core's own claim audit drops "flag the unverified explicitly" and renders `APP_UNRUN_CHECK_RULE` (from `dynamic-prompt/verification.ts`) in its place; the Intent Gate's tool-feedback sentence is removed. Sonnet 5.5 keeps "If no real check can run here, say which one you did not run": with no evidence at all, naming it is what the rule asks for.
+- `grok-4.5.ts`, `grok-4.6.ts`, `grok-4.7.ts`: `APP_UNRUN_CHECK_RULE` follows the verification paragraph on `app`; Grok 4.5's final-message slot "what you could not verify and why" reads "anything left unverified that no other evidence covers"; the Intent Gate feedback sentence is removed.
+- `gpt-5.5.ts`, `gpt-5.6.ts`, `gpt-6-astra.ts`: "if validation cannot run, say so and name the next best check" / "Say plainly what you could not run and why" become `GPT_APP_UNRUN_CHECK_RULE` on `app`; the final-message slot ("what you could not and why" / "what you could not verify and why") becomes `GPT_APP_UNVERIFIED_SLOT`. Astra keeps `GPT6_ASTRA_RULES` as the terminal wording and derives `finalMessageShape` in `SURFACE_DIRECTIVE`. `gpt-surface.ts`: `GPT_APP_FEEDBACK` is replaced by `GPT_APP_UNRUN_CHECK_RULE` and `GPT_APP_UNVERIFIED_SLOT`.
+- `test/suite/prompt-presets-app-surface.test.ts`: for the dynamic prompt and every preset name, the app prompt contains none of "flag the unverified explicitly", "could not verify/run", "cannot run, say so", "what you could not and why"; contains "covered by the evidence that did run" exactly once and "tool and hook feedback" exactly once, never inside the Intent Gate. RED on main: 30 of 30 app prompts failed.
+
+### Why
+
+- See `dynamic-prompt/changes.md` (2026-09-30): on the app surface the claim audit, not the Intent Gate, decides whether an unavailable check reaches the user, so each core's audit carries the rule and the feedback guidance lives there alone.
+
+### Why an extension could not handle it
+
+- This is the prompt-preset extension itself; the claim-audit wording lives inside each core.
+
+### Expected merge conflict zones
+
+- Fork-only files. The claim-audit and final-message sentences of each core, the `INTENT_GATE_LEAD.app` strings, and `SURFACE_DIRECTIVE` in `gpt-6-astra.ts`.
+
+## 2026-09-30 - Venice's dotless gpt-61-sol resolves to the GPT-6 family preset (senpi#2390)
+
+### What changed
+
+- `presets.ts` `hasGpt6FamilySignal`: the point-release group also accepts one digit glued to the 6 (`gpt[._-]?6(?:[._-]\d+|\d)?[._-](astra|sol|luna)`), so `openai-gpt-61-sol` renders the `gpt-6-astra` preset. Bare `gpt-61` and `gpt-611-sol` stay unmatched (single digit only).
+- `test/suite/prompt-presets-gpt-6-family.test.ts`: the Venice id joins the shape matrix (RED on the previous regex), and the non-family list gains `gpt-61` and `gpt-611-sol`; the catalog sweep matcher is widened the same way.
+
+### Why
+
+Venice publishes `openai-gpt-61-sol` (as it does `openai-gpt-56-sol`); without this the row ran on the generic prompt while every other GPT-6.1 Sol row used the family preset.
+
+### Why an extension could not handle it
+
+Preset matching is this extension.
+
+### Expected merge conflict zones
+
+- `presets.ts`: the GPT-6 matcher block near the top.
+
+## 2026-09-30 - GPT-6.1 Sol resolves to the GPT-6 family preset; two writing rules from codex's 6.1 Sol template (senpi#2390)
+
+### What changed
+
+- `presets.ts` `hasGpt6FamilySignal`: the tier marker accepts an optional point release (`gpt[._-]?6(?:[._-]\d+)?[._-](astra|sol|luna)`), so `gpt-6.1-sol`, `gpt-6.1-sol-fast`, `openai/gpt-6.1-sol`, `GPT-6.1-Sol` and the display name "GPT-6.1 Sol" render the `gpt-6-astra` preset. Bare `gpt-6.1`, `gpt-6-mini` and near-miss words stay unmatched.
+- `gpt-6-astra.ts`: new rule `no-reflexive-apology` (concern `writing-style`, rendered once in `## Writing` after `direct-statements`): "Apologize or fault yourself only for an avoidable mistake of your own, and then plainly: acknowledge it, correct it, move on. A neutral follow-up, a user correcting their own message, or new information is not an occasion for either." `direct-statements` adds "what something is not" to the announcements to skip. The rendered prompt grows from 2,925 to 2,968 words; nothing else in the core moves. Both rules render for every GPT-6 tier: the builder never sees the model, `promptPreset: "gpt-6-astra"` is one byte-stable prompt, and OpenAI's GPT-6 guide shares its practices across the family.
+- `test/suite/prompt-presets-gpt-6-family.test.ts`: 6.1 Sol id shapes (base, `-fast` on the Codex lane, OpenRouter, Vercel `-fast`, display-name cased id), display-name resolution, byte-identical render against Astra, the apply_patch gate agreement, and the catalog sweep (matcher widened the same way). `test/suite/prompt-presets-gpt-6-astra.test.ts`: `no-reflexive-apology` pinned to `writing-style` / `Writing`.
+
+### Why
+
+OpenAI released GPT-6.1 Sol on 2026-09-29. openai/codex ships it the Astra template plus exactly two edits no other tier received: the paragraph against reflexive apologies and self-blame, and "what something is not" in the negation-avoid list. Those are OpenAI's only first-party, trace-derived signals about this model, and this preset addressed neither prior (category C, missing context). Everything else in codex's 6.1 Sol template was mapped section by section against this core and is either already carried (permission-as-final-step, steering, initiative, writing style, technical communication, PR descriptions, batching rules, skills precedence, no tool messaging) or left out on purpose (commentary channel, file-link syntax, apps, plugins). No senpi trace of 6.1 Sol exists yet, so no Astra-observed rule was removed on its account. The apology rule is positive-framed and 40 words against codex's 55.
+
+### Why an extension could not handle it
+
+Preset matching and the GPT-6 core are this extension; a user extension could only re-implement the whole dispatch.
+
+### Expected merge conflict zones
+
+- `presets.ts`: the GPT-6 matcher block near the top.
+- `gpt-6-astra.ts`: the `Gpt6AstraRuleId` union, the `DIRECT_STATEMENTS` / `NO_REFLEXIVE_APOLOGY` constants, `GPT6_ASTRA_RULES`, and the `## Writing` line of the core.
+
+## 2026-09-29 - App prompt surface for every preset (senpi#2377)
+
+### What changed
+
+- Every preset renders a `surface: "app"` variant (`SENPI_PROMPT_SURFACE=app`, see `dynamic-prompt/changes.md`); `terminal` renders are byte-identical to before. Shared-core presets (claude-opus-4-x, deepseek, glm, gpt-5 through 5.4, kimi-k2-x) take the shared intent gate and handoff app wording.
+- `claude-fable-5.ts`, `claude-fable-5-1.ts`, `claude-opus-5.ts`, `claude-opus-5-5.ts`, `claude-sonnet-5-5.ts`, `kimi-k3.ts`, `grok-4.5.ts`, `grok-4.6.ts`, `grok-4.7.ts`: the Intent Gate lead is an `INTENT_GATE_LEAD: Record<PromptSurface, string>` whose `terminal` entry is the old text verbatim; the `app` entry keeps each core's stop-condition and scaffolding rules in its own wording, drops the routing line, and adds the core's tool-and-hook-feedback sentence. `buildHandoffSection` receives `surface: context.surface`. `kimi-k3.ts`: "Before the routing line, reread ..." reads "Before you act, reread ..." on `app`.
+- `gpt-5.5.ts`, `gpt-5.6.ts`, `gpt-6-astra.ts`: same `INTENT_GATE_LEAD` shape; the inline handoff moments come from `GPT_HANDOFF_MOMENTS` and the feedback sentence from `GPT_APP_FEEDBACK` in the new `gpt-surface.ts`. Astra keeps `GPT6_ASTRA_RULES` as the terminal wording and derives its `app` steering and handoff-report directives from it (`SURFACE_DIRECTIVE`), dropping "rather than another routing line" and the routing-line moment.
+- `claude-fable-5.ts`, `grok-4.6.ts`, `gpt-5.6.ts`, `gpt-6-astra.ts`: "your declared stop condition" (context-limit line, Stop Goal) reads "your stop condition" on `app`, so no app prompt asks for a declared, i.e. written-out, condition.
+- `kimi-k2-6.ts`, `kimi-k2-code.ts`: the "The intent gate routing line is required every turn." sentence is omitted on `app`.
+- `presets.ts` `withDefaults` and `index.ts` `eventOptionsToBuilderInput` carry `surface` from the session's system-prompt options; `settings.ts` exports `VALID_PRESETS` so the surface suite iterates every preset name.
+- `test/suite/prompt-presets-app-surface.test.ts` (new): for the dynamic prompt and every `VALID_PRESETS` name, `app` has no "I read this as" / "routing line" and has the feedback guidance; `terminal` (omitted and explicit) keeps the routing line; `resolvePromptSurface` accepts only `app`; a harness session with `SENPI_PROMPT_SURFACE=app` renders the app prompt for a preset model and the fallback prompt.
+
+### Why
+
+- The routing line is a terminal contract; an app host renders replies as chat, where the line and relayed tool notices read as harness chatter (omo-desktop-app#1313). Per-core wording keeps each model's dialect; one `app` entry per core replaces the lead at its source instead of appending a counter-rule.
+
+### Why an extension could not handle it
+
+- This is the prompt-preset extension itself; the lead text lives inside each core.
+
+### Expected merge conflict zones
+
+- Fork-only files. The `INTENT_GATE_LEAD` declarations above each `build*Core`, and the handoff call sites.
+
+## 2026-09-29 - Claude Sonnet 5.5 preset (senpi#2321)
+
+### What changed
+
+- `claude-sonnet-5-5.ts` (new): the `claude-opus-5-5` core with the Sonnet 5.5 guide's coding-agent deltas applied at the sentence they replace, one home per rule (prompt-engineering A/B/C pass, no rule appended): `## Style` names the three early stops the guide documents at low and medium effort (confirming a plan the request already settles, asking a self-answerable question, stopping after one part of a multipart task) in place of the Opus 5.5 "unattended run" endings; `## Scope` widens the tests-only clause to tests, docs and supporting files and carries the guide's mention-at-the-end remedy; `## Verification` folds the guide's "a check that failed to start does not count; install declared deps with the project's own package manager; name the unrun check" into the existing "run the validator" sentence; the Opus 5.5 time-as-cost delegation sentence is dropped (undocumented for Sonnet). Unchanged: Intent Gate and its stop condition, explore-before-acting, the claim audit, the Handoff block, no reasoning-in-text lines.
+- `presets.ts`: `CLAUDE_SONNET_55_MARKERS` (`sonnet-5-5`, `sonnet-5.5`) resolve to `claude-sonnet-5-5` after the Opus matchers; Sonnet 5 and Sonnet 4.x keep the default dynamic prompt. `settings.ts`: the name joins `PromptPresetName` and `VALID_PRESETS`.
+- `test/suite/prompt-presets-claude-sonnet-5-5.test.ts` (new): id shapes (dashed, dotted, dated, Bedrock, Vertex, display name), non-matches (Sonnet 5, Opus 5.5, `sonnet-55`), forced preset, catalog sweep.
+
+### Why
+
+- Anthropic's Sonnet 5.5 guide (2026-09-28) says Sonnet 5 prompts carry over and documents three low/medium-effort early stops, supporting-file over-delivery, and reporting a change done without a runnable check. Each maps onto a sentence the Opus 5.5 core already has, so the delta is a replacement, not growth.
+
+### Why an extension could not handle it
+
+- Preset dispatch lives in this builtin.
+
+### Expected merge conflict zones
+
+- LOW: the Claude matcher block and the `buildPreset` switch in `presets.ts`; `claude-sonnet-5-5.ts` is fork-only.
+
+
 ## 2026-09-28 - GPT-6 Astra: the stated goal bounds the work (#2256)
 
 ### What changed

@@ -511,7 +511,9 @@ class ModelsImpl implements MutableModels {
 				}
 			} else {
 				const resolution = await resolveProviderAuth(provider, this.credentials, this.authContext, { signal });
-				if (resolution) return { source: resolution.source, type: "api_key" };
+				if (resolution) {
+					return { source: resolution.source, type: "api_key", ...(resolution.ambient ? { ambient: true } : {}) };
+				}
 			}
 		}
 		if (!oauth?.check) return undefined;
@@ -971,10 +973,16 @@ const GPT_6_ASTRA_THINKING_LEVEL_MAP: ThinkingLevelMap = {
 	max: "max",
 };
 
+/** GPT-6 tiers that document no `none` effort, so a map-less row must not offer `off`. */
+const GPT_6_NO_NONE_EFFORT_MODEL_IDS = ["gpt-6-astra", "gpt-6.1-sol"];
+
 /** Infer documented OpenAI reasoning controls only when generated metadata is absent. */
 export function inferOpenAIThinkingLevelMap<TApi extends Api>(model: Model<TApi>): ThinkingLevelMap | undefined {
 	if (model.thinkingLevelMap !== undefined) return model.thinkingLevelMap;
-	if (OPENAI_THINKING_APIS.includes(model.api) && matchesModelFamily(model.id, "gpt-6-astra")) {
+	if (
+		OPENAI_THINKING_APIS.includes(model.api) &&
+		GPT_6_NO_NONE_EFFORT_MODEL_IDS.some((id) => matchesModelFamily(model.id, id))
+	) {
 		return GPT_6_ASTRA_THINKING_LEVEL_MAP;
 	}
 	return undefined;
@@ -1037,6 +1045,7 @@ const XHIGH_MODEL_IDS = [
 	"gpt-5.6-sol",
 	"gpt-5.6-terra",
 	"gpt-6-astra",
+	"gpt-6.1-sol",
 	"gpt-6-sol",
 	"gpt-6-luna",
 	"deepseek-v4-pro",
@@ -1108,7 +1117,7 @@ const OPENAI_MAX_APIS: Api[] = [
 ];
 
 /** Model families that accept native `max` effort on OpenAI-compatible APIs. */
-const OPENAI_MAX_MODEL_IDS = ["gpt-5.6-sol", "gpt-6-astra", "gpt-6-sol", "gpt-6-luna"];
+const OPENAI_MAX_MODEL_IDS = ["gpt-5.6-sol", "gpt-6-astra", "gpt-6.1-sol", "gpt-6-sol", "gpt-6-luna"];
 
 const MAX_MODEL_IDS = [
 	"opus-4-6",

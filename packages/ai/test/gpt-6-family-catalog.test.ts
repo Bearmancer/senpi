@@ -11,13 +11,18 @@ import type { Api, Model } from "../src/types.ts";
  * with a 922,000-token input cap, 128,000 output tokens, text + image input,
  * and the >272k long-context multipliers (2x input/cache, 1.5x output).
  *
+ * GPT-6.1 Sol (developers.openai.com/api/docs/models/gpt-6.1-sol, 2026-09-29) keeps
+ * Sol's window, output limit and input/output prices, halves cached input to 0.1,
+ * and documents low/medium/high/xhigh/max only: like Astra, it has no `none`.
+ *
  * Published list prices per MTok: Sol 2 / 10 (cache read 0.2, write 2.5),
- * Luna 0.1 / 0.5 (cache read 0.01, write 0.125).
+ * 6.1 Sol 2 / 10 (cache read 0.1, write 2.5), Luna 0.1 / 0.5 (cache read 0.01,
+ * write 0.125).
  *
  * Project defaults for the prompt budget (`contextWindow` is the prompt budget,
- * not the documented window): Luna ships the full 922,000 input cap, Sol ships
- * 400,000, Astra keeps 600,000. Like Astra, each tier's number is stamped on
- * every provider catalog so the budget does not change with the route.
+ * not the documented window): Luna ships the full 922,000 input cap, Sol and
+ * 6.1 Sol ship 400,000, Astra keeps 600,000. Like Astra, each tier's number is
+ * stamped on every provider catalog so the budget does not change with the route.
  */
 const SOL_CONTEXT_WINDOW = 400_000;
 const LUNA_CONTEXT_WINDOW = 922_000;
@@ -26,6 +31,7 @@ const EXPECTED = {
 	"gpt-6-sol": {
 		name: "GPT-6 Sol",
 		contextWindow: SOL_CONTEXT_WINDOW,
+		supportsNone: true,
 		cost: {
 			input: 2,
 			output: 10,
@@ -34,9 +40,22 @@ const EXPECTED = {
 			tiers: [{ inputTokensAbove: 272000, input: 4, output: 15, cacheRead: 0.4, cacheWrite: 5 }],
 		},
 	},
+	"gpt-6.1-sol": {
+		name: "GPT-6.1 Sol",
+		contextWindow: SOL_CONTEXT_WINDOW,
+		supportsNone: false,
+		cost: {
+			input: 2,
+			output: 10,
+			cacheRead: 0.1,
+			cacheWrite: 2.5,
+			tiers: [{ inputTokensAbove: 272000, input: 4, output: 15, cacheRead: 0.2, cacheWrite: 5 }],
+		},
+	},
 	"gpt-6-luna": {
 		name: "GPT-6 Luna",
 		contextWindow: LUNA_CONTEXT_WINDOW,
+		supportsNone: true,
 		cost: {
 			input: 0.1,
 			output: 0.5,
@@ -69,9 +88,9 @@ for (const provider of ["openai", "chatgpt-subscription"] as const) {
 				});
 			});
 
-			it("exposes the documented reasoning efforts, with off available and minimal absent", () => {
+			it("exposes the documented reasoning efforts, with minimal absent and off only where none is documented", () => {
 				const model = getModel(provider, id)!;
-				// Unlike Astra, Sol and Luna accept `none`; like Astra, the GPT-6 ladder has no `minimal`.
+				// Sol and Luna accept `none`; Astra and 6.1 Sol do not; the GPT-6 ladder has no `minimal` anywhere.
 				expect(model.thinkingLevelMap).toMatchObject({
 					minimal: null,
 					low: "low",
@@ -80,10 +99,13 @@ for (const provider of ["openai", "chatgpt-subscription"] as const) {
 					xhigh: "xhigh",
 					max: "max",
 				});
-				if (provider === "openai") {
+				if (!EXPECTED[id].supportsNone) {
+					expect(model.thinkingLevelMap?.off).toBeNull();
+				} else if (provider === "openai") {
 					expect(model.thinkingLevelMap?.off).toBe("none");
 				}
-				expect(getSupportedThinkingLevels(model)).toEqual(["off", "low", "medium", "high", "xhigh", "max"]);
+				const ladder = ["low", "medium", "high", "xhigh", "max"];
+				expect(getSupportedThinkingLevels(model)).toEqual(EXPECTED[id].supportsNone ? ["off", ...ladder] : ladder);
 				expect(supportsXhigh(model)).toBe(true);
 				expect(supportsMax(model)).toBe(true);
 			});
@@ -112,8 +134,9 @@ for (const provider of ["openai", "chatgpt-subscription"] as const) {
 
 // A map-less model exercises the id-based inference in models.ts
 // (XHIGH_MODEL_IDS / OPENAI_MAX_MODEL_IDS / OPENAI_MAX_APIS) directly, so a
-// custom provider that ships the bare id still surfaces xhigh and max, and -
-// unlike Astra - keeps `off` selectable because the tier documents `none`.
+// custom provider that ships the bare id still surfaces xhigh and max, and keeps
+// `off` selectable exactly where the tier documents `none` (Sol, Luna) while a
+// map-less 6.1 Sol takes the Astra-shaped map that vetoes it.
 function maplessModel(id: FamilyId, api: Api): Model<Api> {
 	return {
 		id,
@@ -129,7 +152,7 @@ function maplessModel(id: FamilyId, api: Api): Model<Api> {
 	};
 }
 
-describe("GPT-6 Sol/Luna effort inference without a thinking-level map", () => {
+describe("GPT-6 Sol/6.1 Sol/Luna effort inference without a thinking-level map", () => {
 	for (const id of FAMILY_IDS) {
 		for (const api of [
 			"openai-responses",
@@ -137,12 +160,16 @@ describe("GPT-6 Sol/Luna effort inference without a thinking-level map", () => {
 			"azure-openai-responses",
 			"openai-completions",
 		] as const) {
-			it(`infers xhigh and max and keeps off for a map-less ${id} on ${api}`, () => {
+			it(`infers xhigh and max and ${EXPECTED[id].supportsNone ? "keeps" : "vetoes"} off for a map-less ${id} on ${api}`, () => {
 				const model = maplessModel(id, api);
 				expect(supportsXhigh(model)).toBe(true);
 				expect(supportsMax(model)).toBe(true);
 				const levels = getSupportedThinkingLevels(model);
-				expect(levels).toContain("off");
+				if (EXPECTED[id].supportsNone) {
+					expect(levels).toContain("off");
+				} else {
+					expect(levels).not.toContain("off");
+				}
 				expect(levels).toContain("xhigh");
 				expect(levels).toContain("max");
 			});
@@ -177,7 +204,7 @@ function collectFamilyEntries(marker: FamilyId): FamilyEntry[] {
 	return entries;
 }
 
-describe("GPT-6 Sol/Luna series catalog context window", () => {
+describe("GPT-6 Sol/6.1 Sol/Luna series catalog context window", () => {
 	for (const id of FAMILY_IDS) {
 		it(`declares ${EXPECTED[id].contextWindow} for every ${id} entry in every provider catalog`, () => {
 			const entries = collectFamilyEntries(id);

@@ -511,6 +511,22 @@ do not emit them either. These extension events are distinct from the RPC wire
 `session_parked` record used when idle eviction or generation handoff releases a
 retained runtime.
 
+#### session_control_wake
+
+Fires when a control endpoint registered with [`pi.session.registerControlEndpoint`](#pisession) may have inbox
+work: `reason` is the edge a held delivery cares about most, `reasons` lists every edge the pass covers, and
+`delivery_ids` is present only for a `wake` command that named some. Edges: `idle`, `submission` (the user's last
+submission reached the runtime), `draft_cleared`, `command` (a `wake` over the endpoint), `inbox` (an entry
+created or deleted in `inboxDir`), `emitted` (an admitted delivery reached the transcript) and `continue` (the
+terminal continued after a stop). The event runs just before the registrant's `drain` on the same pass; one pass
+runs at a time, and edges during a pass merge into one more.
+
+```typescript
+pi.on("session_control_wake", (event) => {
+  if (event.reasons.includes("submission")) retryHeldDeliveries();
+});
+```
+
 #### session_before_switch
 
 Fired before starting a new session (`/new`) or switching sessions (`/resume`).
@@ -1599,7 +1615,7 @@ export default function (pi: ExtensionAPI) {
 
 ## ExtensionAPI Methods
 
-### pi.sessionKind / pi.sessionContext / pi.sharedHostEnabled
+### pi.sessionKind / pi.sessionContext
 
 Read-only facts about the session this extension instance was loaded for, available at factory time so an extension
 can decide what to register before it registers anything:
@@ -1607,7 +1623,6 @@ can decide what to register before it registers anything:
 | Property | Type | Value |
 |---|---|---|
 | `pi.cwd` | `string` | Absolute working directory of this session |
-| `pi.sharedHostEnabled` | `boolean` | Whether this session runs on a shared RPC host |
 | `pi.sessionKind` | `"interactive" \| "worker"` | Visibility class the opener chose (`open_session.kind`); `interactive` for classic launches and any open that omits it |
 | `pi.sessionContext` | `Readonly<Record<string, string>>` | Opaque labels the opener attached (`open_session.context`), or `{}` |
 
@@ -1627,6 +1642,37 @@ or any other host decision, and it is republished only on `list_sessions { inclu
 enforced at the RPC boundary (at most 32 keys matching `^[a-z][a-z0-9_]*$`, each value at most 16 KiB, at most 32 KiB
 of JSON in total), so an extension receives an already-validated map. Both values are frozen for the session's life;
 there is no setter. See [Session kind and context](rpc.md#session-kind-and-context-open_session) for the wire side.
+
+### pi.session
+
+The session's control surface: how a message another local session sent is admitted into this one, and how the
+session is exposed to those senders. Nothing here keeps a queue of its own; an admitted delivery waits in the
+runtime's steering or follow-up queue like the user's queued input. The protocol side is
+[Interactive sessions expose a control endpoint](rpc.md#interactive-sessions-expose-a-control-endpoint).
+
+| Method | Returns | Behaviour |
+|---|---|---|
+| `registerControlEndpoint({ inboxDir, drain, isSessionReferenced? })` | `Promise<SessionControlRegistration>` | POSIX interactive session: binds the `tui` control endpoint and answers `{ status: "registered", socket, dispose }`. On a multi-session host with a public socket it binds nothing and `socket` is the host's. Otherwise `{ status: "unsupported", reason: "unsupported_platform" \| "unsupported_mode" }`, or `{ status: "failed", reason }` when a registration step failed. `drain(event)` runs on every [`session_control_wake`](#session_control_wake) edge and answers `{ admitted: [{ delivery_id, kind }] }`. `inboxDir` is created 0700 and its entry creations and deletions wake the drain. At clean exit a header-only session file is removed unless `isSessionReferenced()` answers `true`. |
+| `admissionGate()` | `{ can_admit, hold_reason?, editor_revision, turn_epoch }` | Read-only pre-check; `hold_reason` is `draft` while the user composes or their submission is still on its way into the runtime. |
+| `admitExternalMessage({ delivery_id, text, deliverAs, expected_turn_id? })` | `{ kind, turn_epoch }` | Decides and acts in one synchronous call. `kind` is `started`, `queued`, `steered`, `turn_conflict` (stale epoch, or a steer without one), `held_draft` (nothing enqueued; retry on the next wake) or `already_admitted` (also for a delivery whose entry the file refused, until the run that refused it has settled and the file's last write succeeded). The delivery becomes a `custom` entry `session_control_delivery` whose `details.delivery_id` proves it was applied. Throws once a host started handing the session over (`release_session`). |
+| `listAdmittedDeliveries()` | `{ pending, emitted, failed? }` | The process-lifetime ledger: `pending` is held by the runtime, `emitted` has its transcript entry written, `failed` (present only when non-empty, `[{ delivery_id, error }]`) had its entry refused by the session file: no longer held, still with its sender, admissible again once the run that refused it has settled and the file's last write succeeded. |
+| `persistHeaderNow()` | `Promise<void>` | Writes the session header now, so the session id is durable before anything exposes it. |
+
+```typescript
+export default function ({ pi }) {
+  pi.on("session_start", async () => {
+    await pi.session.registerControlEndpoint({
+      inboxDir: inboxPath,
+      drain: async () => ({
+        admitted: readInbox().map((d) => ({
+          delivery_id: d.id,
+          kind: pi.session.admitExternalMessage({ delivery_id: d.id, text: d.text, deliverAs: "followUp" }).kind,
+        })),
+      }),
+    });
+  });
+}
+```
 
 ### pi.on(event, handler)
 
@@ -1884,7 +1930,7 @@ pi.sendMessage({
   - `"steer"` (default) - Queues the message while streaming. Delivered after the current assistant turn finishes executing its tool calls, before the next LLM call.
   - `"followUp"` - Waits for agent to finish. Delivered only when agent has no more tool calls.
   - `"nextTurn"` - Queued for next user prompt. Does not interrupt or trigger anything.
-- `triggerTurn: true` - If agent is idle, trigger an LLM response immediately. Only applies to `"steer"` and `"followUp"` modes (ignored for `"nextTurn"`).
+- `triggerTurn: true` - If agent is idle, trigger an LLM response immediately. Only applies to `"steer"` and `"followUp"` modes (ignored for `"nextTurn"`). Requested from a `session_start` handler, the turn starts once every extension's `session_start` handler has returned.
 
 ### pi.sendUserMessage(content, options?)
 
@@ -1914,7 +1960,9 @@ pi.sendUserMessage("/review src/index.ts", { expandPromptTemplates: true });
   - `"followUp"` - Waits for agent to finish all tools
 - `expandPromptTemplates` - Dispatch extension commands and expand skill commands and prompt templates. Defaults to `false`.
 
-When not streaming, the message is sent immediately and triggers a new turn. When streaming without `deliverAs`, throws an error.
+When not streaming, the message is sent immediately and triggers a new turn; from a `session_start` handler, that turn starts once every extension's `session_start` handler has returned. When streaming without `deliverAs`, throws an error.
+
+From a command handler, send the text before the handler returns: messages another session delivers are held behind the user's own input only until the command's handler settles, so text sent after that (a detached timer, a background task) can land behind a delivered message.
 
 See [send-user-message.ts](../examples/extensions/send-user-message.ts) for a complete example.
 
@@ -2207,7 +2255,7 @@ pi.events.emit("my:event", { ... });
 
 Senpi's default-on `config-reload` builtin watches configured global surfaces and trusted project-local `.senpi` surfaces. A real content change requests the normal full session reload when the agent is idle; busy or compacting sessions defer it until a safe idle edge. When an extension vetoes the reload through `session_before_reload` (for example while subagents it owns are still running), the change also defers quietly: one `Hot-reload deferred: <reason>` notice per distinct veto reason, silent retries on later idle edges plus a periodic veto recheck, and the usual `Hot-reloading:`/`Hot-reloaded:` notifications only once the veto clears and the reload actually runs. Parseable built-in files (`settings.json`, `models.json`, and `keybindings.json`) are validated before reload, so a rejected edit keeps the running configuration active.
 
-> **Cost on a shared host:** the watcher runs per session. Each session's `config-reload` instance lazily spawns one
+> **Cost on a multi-session host:** the watcher runs per session. Each session's `config-reload` instance lazily spawns one
 > `node:worker_threads` Worker for recursive filesystem watching, so a host serving N sessions carries about N extra
 > OS threads and ~5 MB per session ([senpi#1794](https://github.com/code-yeongyu/senpi/issues/1794)). It is the
 > dominant per-session cost of a shared RPC daemon ([RPC: session runtime](rpc.md#session-runtime---session-runtime-in-processworker));

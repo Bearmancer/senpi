@@ -5,6 +5,8 @@ export type CompactionQueuedMessage = {
 	readonly enqueueOrder?: number;
 	/** TUI-local render record; never enters AgentSession or persistence. */
 	readonly pendingEchoId?: string;
+	/** Typed after leading whitespace: deliver `/...` text even when no command handles it. */
+	readonly unknownCommandAsText?: boolean;
 };
 
 export type PromptDisposition = "handled" | "queued" | "started";

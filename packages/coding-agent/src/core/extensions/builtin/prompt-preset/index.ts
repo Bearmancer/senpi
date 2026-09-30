@@ -18,6 +18,7 @@ interface SystemPromptOptionsLike {
 	promptGuidelines?: string[];
 	contextFiles?: Array<{ path: string; content: string }>;
 	skills?: BuildDynamicSystemPromptOptions["skills"];
+	surface?: BuildDynamicSystemPromptOptions["surface"];
 	/** User override from --system-prompt / SDK loader; outranks any preset. */
 	customPrompt?: string;
 	/** User appends from --append-system-prompt, pre-joined; reapplied after a preset. */
@@ -36,6 +37,7 @@ function eventOptionsToBuilderInput(
 		promptGuidelines: options.promptGuidelines,
 		contextFiles: options.contextFiles,
 		skills: options.skills,
+		surface: options.surface,
 	};
 }
 

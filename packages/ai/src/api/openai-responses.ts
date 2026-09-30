@@ -231,11 +231,19 @@ function allowedReference(tool: OpenAITool): AllowedToolReference {
 	return { type: tool.type };
 }
 
+function resolveDeferredToolsMode(
+	compat: Required<OpenAIResponsesCompat>,
+): "additional-tools" | "tool-search" | undefined {
+	if (compat.supportsAdditionalTools) return "additional-tools";
+	return compat.supportsToolSearch ? "tool-search" : undefined;
+}
+
 /**
  * senpi#2095: `tools` carries every tool declared this session, so removing a tool never rewrites the
  * cached prefix; the callable subset rides `tool_choice: allowed_tools` instead. Hosted tools a payload
  * hook added stay callable, and deferred tools (declared by transcript items rather than `tools`) are
- * referenced by name. An empty subset forbids tool calls. An explicit `tool_choice` always wins.
+ * referenced by name. A declared tool a payload hook removed from `tools` is not referenced (senpi#2234).
+ * An empty subset forbids tool calls. An explicit `tool_choice` always wins.
  */
 function applyAllowedToolsChoice<TParams extends ResponseCreateParamsStreaming>(
 	params: TParams,
@@ -259,8 +267,9 @@ function applyAllowedToolsChoice<TParams extends ResponseCreateParamsStreaming>(
 		}
 		allowed.push(allowedReference(tool));
 	}
+	const deferredTools = splitDeferredTools(context, resolveDeferredToolsMode(compat) !== undefined).deferred;
 	for (const tool of declaredTools) {
-		if (namedInTools.has(tool.name) || !active.has(tool.name)) continue;
+		if (namedInTools.has(tool.name) || !active.has(tool.name) || !deferredTools.has(tool.name)) continue;
 		const [converted] = convertResponsesTools([tool], {
 			supportsStrictMode: compat.supportsStrictMode,
 			supportsOpenAIGrammarTools: compat.supportsOpenAIGrammarTools,
@@ -607,11 +616,7 @@ function buildParams(
 		compat.supportsOpenAIGrammarTools,
 	),
 ) {
-	const deferredToolsMode = compat.supportsAdditionalTools
-		? "additional-tools"
-		: compat.supportsToolSearch
-			? "tool-search"
-			: undefined;
+	const deferredToolsMode = resolveDeferredToolsMode(compat);
 	const toolPlacement = splitDeferredTools(context, deferredToolsMode !== undefined);
 	const requestedReasoningEffort = options?.reasoningEffort ?? (options?.reasoningSummary ? "medium" : undefined);
 	const thinkingLevelMap = inferOpenAIThinkingLevelMap(model);

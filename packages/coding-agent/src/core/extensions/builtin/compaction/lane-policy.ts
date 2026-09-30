@@ -17,8 +17,10 @@
 
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { AssistantMessageDiagnostic } from "@earendil-works/pi-ai";
+import type { SessionEntry } from "../../../session-manager.ts";
 import type { CompactionReason } from "../../types.ts";
 import { ANTHROPIC_SUBSCRIPTION_PROVIDER_ID } from "../anthropic-subscription/account-management.ts";
+import { isColdSeedOverflowMessage } from "../anthropic-subscription/cold-seed-budget.ts";
 import type { AnthropicSubscriptionProviderSettings } from "../anthropic-subscription/settings.ts";
 import { loadAnthropicSubscriptionProviderSettingsFromDisk } from "../anthropic-subscription/settings.ts";
 
@@ -54,6 +56,8 @@ export interface LaneContext {
 	 * stand-down no longer applies even with a resident SDK session.
 	 */
 	getCompactionSettings?: () => { model?: string };
+	/** Branch reader (present on the real ExtensionContext) used to find a failed cold-seed turn. */
+	sessionManager?: { getBranch(): readonly SessionEntry[] };
 }
 
 export interface CompactionLanePolicy {
@@ -68,6 +72,23 @@ export interface CompactBoundaryEntry {
 	sdkSessionId: string;
 	uuid: string;
 	compactMetadata: Record<string, unknown>;
+}
+
+/**
+ * A cold-seed re-sends senpi's own history as one message the SDK cannot compact,
+ * so an overflow of that request is senpi's to recover. Only the newest assistant
+ * since the latest compaction counts: an already-compacted failure is settled.
+ */
+function lastTurnIsColdSeedOverflow(context: LaneContext): boolean {
+	const branch = context.sessionManager?.getBranch() ?? [];
+	for (let index = branch.length - 1; index >= 0; index -= 1) {
+		const entry = branch[index];
+		if (entry?.type === "compaction") return false;
+		if (entry?.type === "message" && entry.message.role === "assistant") {
+			return isColdSeedOverflowMessage(entry.message);
+		}
+	}
+	return false;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -123,7 +144,8 @@ export function createCompactionLanePolicy(
 		ownsCompaction(context: LaneContext, reason: CompactionReason): boolean {
 			// Manual is senpi-owned everywhere: it is the user's explicit recovery path,
 			// including on an SDK-native lane whose automatic routes stay SDK-owned.
-			return reason === "manual" || !disablesSenpiCompaction(context);
+			if (reason === "manual" || !disablesSenpiCompaction(context)) return true;
+			return reason === "overflow" && lastTurnIsColdSeedOverflow(context);
 		},
 	};
 }

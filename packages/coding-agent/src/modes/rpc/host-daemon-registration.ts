@@ -219,9 +219,18 @@ export async function legacyHostIsLive(
  * proven ours reads as foreign, so the worst case of an unreadable identity is a refusal rather
  * than a signal sent to another owner's host.
  */
-export async function writtenByThisProcess(writer: HostPidFileWriter | undefined): Promise<boolean> {
+export async function writtenByThisProcess(
+	writer: HostPidFileWriter | undefined,
+	readStartTime?: (pid: number) => Promise<string | undefined>,
+): Promise<boolean> {
 	if (writer === undefined || writer.pid !== process.pid || writer.startTime === null) return false;
-	return writer.startTime === (await thisProcessStartTime());
+	const startTime = readStartTime
+		? await readStartTime(process.pid).then(
+				(value) => value ?? null,
+				() => null,
+			)
+		: await thisProcessStartTime();
+	return writer.startTime === startTime;
 }
 
 let selfStartTime: Promise<string | null> | undefined;

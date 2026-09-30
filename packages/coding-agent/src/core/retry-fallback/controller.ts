@@ -17,6 +17,9 @@ import type {
 	FallbackReason,
 	RetryFallbackControllerDeps,
 } from "./controller-types.ts";
+import { pinAfterSwitch } from "./pin.ts";
+import { UnusableEntries } from "./unusable.ts";
+import { type UsageLimitScope, usageLimitScope } from "./usage-limit.ts";
 
 export type { ActiveFallbackState, RetryFallbackControllerDeps } from "./controller-types.ts";
 
@@ -25,6 +28,7 @@ export class RetryFallbackController {
 	private readonly triedSelectors = new Set<string>();
 	private state: ActiveFallbackState | undefined;
 	private lastExhaustedChainKey: string | undefined;
+	private readonly unusable: UnusableEntries;
 	readonly probes: CircuitProbes;
 	// Content-keyed memo of canonicalizeFallbackChains. Provider-error handling calls
 	// canTryFallback/nextCandidate several times per error; without this each call
@@ -38,6 +42,7 @@ export class RetryFallbackController {
 	constructor(deps: RetryFallbackControllerDeps) {
 		this.deps = deps;
 		this.probes = new CircuitProbes(deps.circuits);
+		this.unusable = new UnusableEntries(deps.cooldowns);
 	}
 
 	get activeState(): Readonly<ActiveFallbackState> | undefined {
@@ -86,26 +91,23 @@ export class RetryFallbackController {
 	}
 
 	/**
-	 * Revert to the chain's original model at a turn boundary. Only fires for
-	 * unpinned state under the cooldown-expiry policy once the original selector
-	 * is no longer suppressed and is still usable; pinned (refusal) state and the
-	 * "never" policy always hold the fallback model.
+	 * Revert to the chain's original model at a turn boundary. Fires for unpinned
+	 * state under the cooldown-expiry policy once the original selector is no longer
+	 * suppressed and is still usable; pinned state and the "never" policy hold the
+	 * fallback model. One exception outranks both the cooldown and the policy: a
+	 * fallback that is itself known unusable (billing or an account limit) while the
+	 * original is not is never where the session rests (senpi#2376).
 	 */
 	async maybeRestorePrimary(revertPolicy: "cooldown-expiry" | "never"): Promise<boolean> {
 		const state = this.state;
-		if (!state || state.pinned || revertPolicy !== "cooldown-expiry") return false;
-		// An entry the breaker tracks recovers on the circuit's clock; the per-session
-		// cooldown only governs entries the breaker never opened (hard errors, breaker off).
-		const suppressed = this.probes.governs(state.originalSelector)
-			? this.probes.isOpen(state.originalSelector)
-			: this.deps.cooldowns.isSuppressed(state.originalSelector);
-		if (suppressed) return false;
+		const current = this.deps.getCurrentSelector();
+		if (!state || state.pinned || !current) return false;
 		const selector = parseFallbackSelector(state.originalSelector, this.deps.registry);
 		if (!selector || !this.deps.isAuthAvailable(selector.provider)) return false;
 		const model = this.deps.registry.find(selector.provider, selector.id);
-		const current = this.deps.getCurrentSelector();
-		if (!model || !current) return false;
-		if (this.probes.admit(state.originalSelector) === "open") return false;
+		if (!model) return false;
+		const stranded = this.unusable.isUnusable(current.model) && !this.unusable.isUnusable(model);
+		if (!stranded && !this.originalRecovered(state.originalSelector, revertPolicy)) return false;
 		// User override wins: only restore the original thinking level when the
 		// current level still equals the level the fallback switch applied. A manual
 		// setThinkingLevel clears lastAppliedThinkingLevel (see noteManualThinkingLevel).
@@ -116,9 +118,21 @@ export class RetryFallbackController {
 		await this.switchOrRelease(model, thinking, "fallback-revert");
 		const from = formatSelector(current.model);
 		this.state = undefined;
-		this.deps.logger.info("fallback_reverted", { from, to: state.originalSelector });
-		this.deps.emit({ type: "retry_fallback_reverted", from, to: state.originalSelector });
+		const cause = stranded ? ({ cause: "fallback-unusable" } as const) : {};
+		const trigger = stranded ? { trigger: "fallback-unusable" } : {};
+		this.deps.logger.info("fallback_reverted", { from, to: state.originalSelector, ...trigger });
+		this.deps.emit({ type: "retry_fallback_reverted", from, to: state.originalSelector, ...cause });
 		return true;
+	}
+
+	private originalRecovered(originalSelector: string, revertPolicy: "cooldown-expiry" | "never"): boolean {
+		if (revertPolicy !== "cooldown-expiry") return false;
+		// An entry the breaker tracks recovers on the circuit's clock; the per-session
+		// cooldown only governs entries the breaker never opened (hard errors, breaker off).
+		const suppressed = this.probes.governs(originalSelector)
+			? this.probes.isOpen(originalSelector)
+			: this.deps.cooldowns.isSuppressed(originalSelector);
+		return !suppressed && this.probes.admit(originalSelector) !== "open";
 	}
 
 	/**
@@ -160,6 +174,7 @@ export class RetryFallbackController {
 		}
 		this.state = undefined;
 		this.deps.cooldowns.clear(formatSelector(model));
+		this.unusable.clear(model);
 		this.probes.release();
 		this.deps.circuits?.close(formatSelector(model));
 	}
@@ -171,6 +186,7 @@ export class RetryFallbackController {
 	 */
 	noteHealthFailure(model: Model<Api>, thinkingLevel: ThinkingLevel | undefined, failure: CircuitFailure): void {
 		if (!this.managedChainKey({ model, thinkingLevel })) return;
+		this.unusable.note(model, failure);
 		this.probes.noteFailure(formatSelector(model), failure);
 	}
 
@@ -201,6 +217,8 @@ export class RetryFallbackController {
 		// here; billing/quota exhaustion is recorded at the failure itself (see
 		// noteHealthFailure) so the final chain entry opens too.
 		if (current && reason === "transient") this.noteHealthFailure(current.model, current.thinkingLevel, failure);
+		const limit = usageLimitScope(failure.errorMessage);
+		if (current) this.unusable.note(current.model, failure);
 		const candidate = this.nextCandidate(false, true);
 		if (!current || !candidate) return false;
 		const currentBase = formatSelector(current.model);
@@ -208,7 +226,7 @@ export class RetryFallbackController {
 			this.deps.cooldowns.note(currentBase, failure);
 			this.deps.logger.info("cooldown_noted", { selector: currentBase, errorMessage: failure.errorMessage });
 		}
-		await this.applyCandidate(current, candidate, reason);
+		await this.applyCandidate(current, candidate, reason, limit);
 		return true;
 	}
 
@@ -216,6 +234,7 @@ export class RetryFallbackController {
 		current: { model: Model<Api>; thinkingLevel?: ThinkingLevel },
 		candidate: { chainKey: string } & UsableCandidate,
 		reason: FallbackReason,
+		limit?: UsageLimitScope,
 	): Promise<void> {
 		const thinking = this.selectThinking(candidate.selector, candidate.model, current.thinkingLevel);
 		this.probes.admit(baseSelector(candidate.selector));
@@ -224,19 +243,15 @@ export class RetryFallbackController {
 		const from = formatSelector(current.model);
 		const to = formatSelector(candidate.model);
 		const prior = this.state;
-		const pinnedByRefusal = prior?.pinnedByRefusal === true || reason === "refusal";
-		const pinnedByBilling = prior?.pinnedByBilling === true || reason === "billing";
 		this.state = {
 			chainKey: candidate.chainKey,
-			originalSelector: prior?.originalSelector ?? from,
 			originalThinkingLevel: prior?.originalThinkingLevel ?? current.thinkingLevel,
 			lastAppliedThinkingLevel: thinking,
-			pinnedByRefusal,
-			pinnedByBilling,
-			pinned: pinnedByRefusal || pinnedByBilling,
+			...pinAfterSwitch(prior, { from, fromProvider: current.model.provider, reason, limit }),
 		};
-		this.deps.logger.info("fallback_applied", { from, to, chainKey: candidate.chainKey, reason });
-		this.deps.emit({ type: "retry_fallback_applied", from, to, chainKey: candidate.chainKey, reason });
+		const scope = limit === undefined ? {} : { limit };
+		this.deps.logger.info("fallback_applied", { from, to, chainKey: candidate.chainKey, reason, ...scope });
+		this.deps.emit({ type: "retry_fallback_applied", from, to, chainKey: candidate.chainKey, reason, ...scope });
 	}
 
 	/** The chain governing `current`, when fallback is enabled; a model's own chain wins over an active one. */
@@ -263,6 +278,7 @@ export class RetryFallbackController {
 			isSuppressed: (base) => this.deps.cooldowns.isSuppressed(base),
 			isAuthAvailable: (provider) => this.deps.isAuthAvailable(provider),
 			isCircuitOpen: (base) => this.deps.circuits?.isOpen(base) ?? false,
+			isProviderSpent: (provider) => this.unusable.isProviderSpent(provider),
 			skip: (raw, skipReason) => this.skip(raw, skipReason),
 		});
 		if (candidate) {

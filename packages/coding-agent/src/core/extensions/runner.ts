@@ -26,6 +26,7 @@ import { goalFilePath } from "./builtin/goal/persistence.ts";
 import { goalStoreRef } from "./builtin/goal/store-ref.ts";
 import { kernelToolsStorage } from "./kernel-tools-context.ts";
 import { drainPendingProviderRegistrations } from "./loader.ts";
+import { SessionStartTurnGate } from "./session-start-turn-gate.ts";
 import type {
 	BeforeAgentStartEvent,
 	BeforeAgentStartEventResult,
@@ -88,6 +89,7 @@ import type {
 	UserBashEvent,
 	UserBashEventResult,
 } from "./types.ts";
+import { RUNTIME_EXTENSION_PATH } from "./types.ts";
 
 // Extension shortcuts compete with canonical keybinding ids from keybindings.json.
 // Only editor-global shortcuts are reserved here. Picker-specific bindings are not.
@@ -469,6 +471,13 @@ export class ExtensionRunner {
 	private reloadHandler: ReloadHandler | undefined;
 	private reloadRequestPromise: Promise<void> | undefined;
 	private shutdownHandler: ShutdownHandler = () => {};
+	private readonly sessionStartTurns = new SessionStartTurnGate((error) =>
+		this.emitError({
+			extensionPath: RUNTIME_EXTENSION_PATH,
+			event: "session_start",
+			error: error instanceof Error ? error.message : String(error),
+		}),
+	);
 	private shortcutDiagnostics: ResourceDiagnostic[] = [];
 	private commandDiagnostics: ResourceDiagnostic[] = [];
 	private staleMessage: string | undefined;
@@ -504,8 +513,12 @@ export class ExtensionRunner {
 		},
 	): void {
 		// Copy actions into the shared runtime (all extension APIs reference this)
-		this.runtime.sendMessage = actions.sendMessage;
-		this.runtime.sendUserMessage = actions.sendUserMessage;
+		this.runtime.sendMessage = (message, options) => {
+			if (options?.triggerTurn === true) this.sessionStartTurns.admit(() => actions.sendMessage(message, options));
+			else actions.sendMessage(message, options);
+		};
+		this.runtime.sendUserMessage = (content, options) =>
+			this.sessionStartTurns.admit(() => actions.sendUserMessage(content, options));
 		this.runtime.appendEntry = actions.appendEntry;
 		this.runtime.setSessionName = actions.setSessionName;
 		this.runtime.getSessionName = actions.getSessionName;
@@ -524,6 +537,7 @@ export class ExtensionRunner {
 		this.runtime.setSessionModel = actions.setSessionModel;
 		this.runtime.setSessionThinkingLevel = actions.setSessionThinkingLevel;
 		this.runtime.setSessionFastMode = actions.setSessionFastMode;
+		if (actions.sessionControl) this.runtime.sessionControl = actions.sessionControl;
 
 		// Context actions (required)
 		this.getModel = contextActions.getModel;
@@ -1453,7 +1467,14 @@ export class ExtensionRunner {
 		}
 	}
 
-	async emit<TEvent extends RunnerEmitEvent>(event: TEvent): Promise<RunnerEmitResult<TEvent>> {
+	emit<TEvent extends RunnerEmitEvent>(event: TEvent): Promise<RunnerEmitResult<TEvent>> {
+		// Not async: other events keep the exact microtask timing of a direct dispatch.
+		// Turns requested from any session_start handler start after the last one returns (senpi#1972).
+		if (event.type === "session_start") return this.sessionStartTurns.dispatch(() => this.dispatchEmit(event));
+		return this.dispatchEmit(event);
+	}
+
+	private async dispatchEmit<TEvent extends RunnerEmitEvent>(event: TEvent): Promise<RunnerEmitResult<TEvent>> {
 		let result: SessionBeforeEventResult | undefined;
 		// session_shutdown is the one host-bounded event: a hung handler must not hold
 		// Ctrl+C / quit / reload / new / resume hostage. Every other event still awaits

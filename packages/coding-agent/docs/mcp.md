@@ -48,7 +48,10 @@ Argument array for `command`. Default `[]`.
 
 ### `env`
 Extra environment variables for the child process. Values support `${VAR}`
-expansion from the trusted parent environment.
+expansion from the trusted parent environment. The child does not inherit your
+whole environment: it sees only `HOME`, `LOGNAME`, `PATH`, `SHELL`, `TERM`
+and `USER` (on Windows, the system path and profile variables) plus `env`,
+so pass every variable the server reads through `env`.
 
 ### `cwd`
 Working directory for the child process. Default: the session cwd.
@@ -202,6 +205,9 @@ same fields as [`mcpServers.<name>`](#server-fields-mcpserversname), plus
 ```
 
 The `mcpServers` wrapper is optional — a bare server-name map works too.
+When you installed the skill, `${EXA_API_KEY}` expands from your environment
+exactly as it would in your own `mcp.json`; see
+[Environment variables in skill servers](#environment-variables-in-skill-servers).
 
 **Frontmatter `mcp:` block** in SKILL.md:
 
@@ -234,6 +240,27 @@ Semantics:
   warning; the skill itself still loads.
 - There is no unload signal: tools revealed by a skill stay active until the
   session ends.
+
+### Environment variables in skill servers
+
+`${VAR}` expansion follows the trust of the skill that declares the server,
+the same line senpi draws for `mcp.json` files:
+
+- **Skills you own** (your user skills directory, packages you installed, and
+  the skills of a project you trusted): stdio `command`, `args`, `env` and
+  `cwd` expand exactly like your own `mcp.json`, including `${VAR:-default}`
+  and the refusal of command substitution (a server asking for `$(...)` or a
+  leading `!` is skipped with a warning).
+- **Skills of an untrusted project**: nothing expands. The placeholder stays
+  literal and senpi warns once, naming the skill and the variable; trust the
+  project or declare the server in your own `mcp.json` to expand it. A cloned
+  repository must not be able to hand `AWS_SECRET_ACCESS_KEY` to a command it
+  chose.
+- **Remote servers from any skill**: `url` and `headers` never expand, and
+  `bearerTokenEnv` is ignored, so no `Authorization` header is sent. Expanding
+  them would send your secrets to a server the skill picked. senpi warns once
+  per server; declare the server in your own `mcp.json`, where variables and
+  `bearerTokenEnv` keep working.
 
 ## Resources and prompts
 
@@ -277,7 +304,10 @@ Semantics:
 ## Security notes
 
 - Config values never pass through a shell; `${VAR}` expansion only reads the
-  trusted parent environment.
+  trusted parent environment, and only for trusted sources: your own and a
+  trusted project's config, and stdio servers of skills you own. Skill remote
+  servers never expand variables or send `bearerTokenEnv` (see
+  [Environment variables in skill servers](#environment-variables-in-skill-servers)).
 - Project-level and imported configs require project trust before servers
   spawn; untrusted entries are listed but inert.
 - Tokens are stored `0600` and never logged; server log streams and tool

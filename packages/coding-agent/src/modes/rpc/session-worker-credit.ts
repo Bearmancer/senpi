@@ -15,7 +15,7 @@ export interface WorkerCredit {
  * Synchronous host credit for a session worker.
  *
  * Every exchange blocks the worker thread on its own wait signal, so the host answers
- * before the worker touches a writer, publishes output, or resizes a display.
+ * before the worker touches a writer, publishes output, or registers client capabilities.
  */
 export function createWorkerCredit(
 	send: (message: SessionWorkerToHost) => void,

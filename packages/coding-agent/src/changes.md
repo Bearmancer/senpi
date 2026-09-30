@@ -1,3 +1,195 @@
+## 2026-09-30 - A runtime snapshot holds its own dependencies, and shared hosts run from it (#2408, #2409)
+
+### What changed
+
+- `packages/coding-agent/src/cli.ts`: the bundled launch awaits `prepareRuntimeSnapshot()`, which is async now because the snapshot's files are copied with a bounded number of copies in flight.
+- `packages/coding-agent/src/runtime-snapshot/` (fork-only): `layout.ts` copies the whole package (except `node_modules`) and every package the install's dependency graph reaches into the snapshot instead of linking back to the install. Each name goes where the package itself resolves it (nested or hoisted); a package that resolves another copy of a name gets that copy nested under itself. Type declarations and source maps are left out. `file-copier.ts` (new) copies each file as a copy-on-write clone, then a hardlink where the filesystem cannot clone, then a plain copy, eight at a time. `registry.ts` gains `withBuildLock()`: one builder per snapshot, a dead builder's lock and staging directories are taken over, and launches of snapshots that already exist never wait on a build. `enter.ts` claims an existing snapshot under the runtime lock, and builds a missing one under the build lock before claiming it.
+
+### Why
+
+- An update that changes the package layout (`bundledDependencies` on or off) deletes the directories the snapshot's links named, so a running session's PTY tools and `eval` failed with `ENOENT` (#2408). Measured on the published releases: 223 of 232 links dangled after 2026.9.29-3 was replaced by 2026.9.29-4.
+- A clone never shares the install's file, so an in-place rewrite of the install cannot reach the snapshot; a hardlink does share it and is only taken where no clone is possible (package managers replace files rather than rewriting them).
+- Cost, measured on macOS with the 2026.9.29-4 dependency closure (14.4k files, 382 MiB logical, all clones): the first launch after an update builds the snapshot once; later launches are unchanged.
+
+### Why an extension could not handle it
+
+- The snapshot is built by the CLI entry before the engine graph loads.
+
+### Expected merge conflict zones
+
+- LOW: the `prepareRuntimeSnapshot` call in `cli.ts` (one added `await`).
+
+## 2026-09-29 - The CLI runtime factory passes the launch profile's prompt surface (senpi#2377)
+
+### What changed
+
+- `packages/coding-agent/src/main.ts`: `createCliRuntimeFactory`'s `createRuntime` passes `promptSurface: launchProfile?.promptSurface` to `createAgentSessionFromServices`.
+
+### Why
+
+- `open_session.promptSurface` reaches the session through the launch profile, the same path `kind`, `context` and `auto_title` take.
+
+### Why an extension could not handle it
+
+- The runtime factory builds the session before extensions bind.
+
+### Expected merge conflict zones
+
+- LOW: the `createAgentSessionFromServices` call in `createRuntime`.
+
+## 2026-09-29 - Print mode names why a fallback returned early (senpi#2376)
+
+### What changed
+
+- `packages/coding-agent/src/modes/print-mode.ts`: the `Model fallback reverted` stderr line appends `(<from> cannot serve right now)` when `retry_fallback_reverted` carries `cause: "fallback-unusable"`.
+
+### Why
+
+- The session now returns from a billing-dead fallback before the original's cooldown lapses; the line must not read like an ordinary cooldown revert.
+
+### Why an extension could not handle it
+
+- Print mode's event-to-stderr writer is core output, not an extension surface.
+
+### Expected merge conflict zones
+
+- LOW: the `retry_fallback_reverted` branch in `packages/coding-agent/src/modes/print-mode.ts`.
+
+## 2026-09-29 - A running session keeps its own build when the install is replaced (#2358)
+
+### What changed
+
+- `packages/coding-agent/src/cli.ts`: after the `--version`, help and bootstrap-repair paths, a bundled launch calls `prepareRuntimeSnapshot()` (`src/runtime-snapshot/`, new) and, on a hand-off, imports the snapshot's own `dist/bundle/cli.js` instead of `./cli-main`. That copy of `cli.ts` sees it already runs from a snapshot, claims it and imports its own `cli-main`. The bootstrap-repair check reads `getInstallPackageDir()`.
+- `packages/coding-agent/src/config.ts`: new `getInstallPackageDir()`, which equals `getPackageDir()` except inside a runtime snapshot, where it returns the install the snapshot was taken from (`runtime-snapshot.json`). `detectInstallMethod()` classifies the install path mapped through `resolveInstallPath(__dirname, ...)`, and `getInferredNpmInstall`, both pnpm global-root regexes, `isSelfUpdatePathWritable` and `isManagedByGlobalPackageManager` read `getInstallPackageDir()`.
+- `packages/coding-agent/src/main.ts` and `packages/coding-agent/src/package-manager-cli.ts`: the Windows self-update quarantine cleanup and the managed-install release check read `getInstallPackageDir()`.
+- `packages/coding-agent/src/runtime-snapshot/` (new, fork-only): `enter.ts` decides the hand-off, `layout.ts` builds `<agentDir>/runtime/<buildId>-<installHash>/` (copies `dist/bundle` and `package.json`, links every other package and `dist` entry, and builds a `node_modules` that is the union of the install's resolution path, so nested and hoisted dependencies resolve to the install's own copies, verified against the manifest's externals), `registry.ts` owns the directory lock, per-pid claims and pruning (a snapshot with no live claim and no use for 10 minutes is removed), and `marker.ts` reads the marker.
+
+### Why
+
+- `bun install -g` and `npm i -g` delete and rewrite the package directory. A session started before that died at its next lazy chunk import (`Cannot find module './anthropic-messages-<hash>.js'`, or `ENOENT reading` under Bun), and every later request failed the same way until restart (#2358). Bun rewrites every global package on any `bun install -g`, so each omo update hit every open session. Preloading the lazy chunks instead measured +53 to +66 MB RSS and 114 to 566 ms per process and still missed the 16 name-stable lazy files, workers and disk assets. The snapshot costs a one-time 32 to 144 ms copy of 158 files per build and about nothing per launch.
+- Any snapshot failure (read-only agent dir, unknown layout, lock busy for 5 s) runs in place, exactly as before: the snapshot only adds upgrade resilience and must never be why startup fails.
+
+### Why an extension could not handle it
+
+- The decision has to happen in the entry before the engine graph loads, and install-method detection is core config.
+
+### Expected merge conflict zones
+
+- MEDIUM: the final `cli-main` import in `cli.ts`; LOW: `getPackageDir()` call sites in `config.ts` near `detectInstallMethod`, `getInferredNpmInstall`, the pnpm global-root regexes and the self-update checks; the Windows quarantine call in `main.ts`; `getActiveManagedInstallRoot` and `prepareWindowsNpmSelfUpdate` in `package-manager-cli.ts`.
+
+## 2026-09-29 - The session control types are public (session gateway)
+
+### What changed
+
+- `packages/coding-agent/src/index.ts`: `export * from "./core/extensions/session-control-types.ts"` - `SessionControlActions`, `RegisterControlEndpointOptions`, `SessionControlRegistration`, `SessionControlWakeEvent`, the admission input/result/gate/ledger types and `SESSION_CONTROL_DELIVERY_TYPE`. See `src/core/extensions/changes.md` (2026-09-29).
+
+### Why
+
+- omo's thread component registers the endpoint and drains its inbox through `pi.session`, typed from the package root.
+
+### Why an extension could not handle it
+
+- Package exports are the package's own surface.
+
+### Expected merge conflict zones
+
+- LOW: the line after the `./core/extensions/index.ts` export block in `src/index.ts`.
+
+## 2026-09-29 - The endpoint registry helpers are public (session gateway)
+
+### What changed
+
+- `packages/coding-agent/src/modes/index.ts` and `packages/coding-agent/src/index.ts`: export `classifyEndpointLiveness`, `EndpointLiveness`, `endpointProbeTimeoutMs`, `TUI_PROBE_TIMEOUT_MS`, `ENDPOINT_REGISTRY_VERSION`, `EndpointKind`, `listHostEndpoints`, `HostEndpointEntry`, `HostEndpointIdentitySource`, `gcHostEndpoints`, `HostGcOptions`, `HostGcResult`, `readAllHostStatus` and `HostEndpointStatus`. See `src/modes/rpc/changes.md` (2026-09-29).
+
+### Why
+
+- omo and the Desktop read the one endpoint registry (`endpoint_kind`, liveness verdict, `tui`-only gc) through the library as well as through `senpi host status --all`.
+
+### Why an extension could not handle it
+
+- Package exports are the package's own surface.
+
+### Expected merge conflict zones
+
+- LOW: the `./modes/index.ts` export block in `src/index.ts` and the rpc export block in `src/modes/index.ts`.
+
+## 2026-09-29 - Edits made in ~/.pi/agent after its copy are reported and importable (omo#9173)
+
+### What changed
+
+- `packages/coding-agent/src/migrations-state.ts`: the state file keeps fields it does not own on every write, and carries `legacyPiAgentDir: { copiedAt, noticedMtimes }` through `readLegacyPiAgentDirRecord`, `writeLegacyPiAgentDirRecord` and `recordLegacyPiAgentDirCopy`. Schema version stays 1; older readers ignore the new field.
+- `packages/coding-agent/src/legacy-senpi-dir-migration.ts`: copying the global `~/.pi/agent` records the copy time and prints where config lives from now on instead of the generic "original directory is untouched" line.
+- `packages/coding-agent/src/pi-dir-restore.ts`: `restoreDir` reports whether it copied anything, and a restored `~/.pi/agent` records the copy time too.
+- `packages/coding-agent/src/legacy-pi-edits.ts` (new): finds `auth.json`, `keybindings.json`, `models.json` and `settings.json` in `~/.pi/agent` changed after the copy (a copy made before the time was recorded compares against the agent copy's preserved mtime) whose content differs from the agent dir's copy; `takeLegacyPiEditNotice` returns only changes not reported yet and records their mtimes; `importLegacyPiConfig` copies named or all edited files into the agent dir after a `.bak-<time>` backup. `~/.pi/agent` is only ever read.
+- `packages/coding-agent/src/main.ts`: interactive startup passes `legacyPiEditStartupNotice()` to `InteractiveMode` as `legacyPiEditNotice`.
+- `packages/coding-agent/src/package-manager-cli.ts`: `config import-pi [files]` routes to `runConfigImportPi` (`src/cli/config-import-pi.ts`, new), and `config --help` documents it.
+
+### Why
+
+- After the one-time copy (#8039) both directories hold plausible config, and edits to `~/.pi/agent` silently had no effect (omo#9173). `~/.pi/agent` belongs to upstream pi, so nothing may be written there; the product says what it reads instead.
+
+### Why an extension could not handle it
+
+- The copy, its state file and the startup options all run before any extension loads, and `config` is a CLI route.
+
+### Expected merge conflict zones
+
+- LOW: the `InteractiveMode` options object in `main.ts`; the top of `handleConfigCommand` and `printConfigCommandHelp` in `package-manager-cli.ts`.
+
+## 2026-09-29 - Interactive launches never join a shared RPC host (senpi#2328)
+
+### What changed
+
+- `packages/coding-agent/src/main.ts`: the interactive runtime is always the local `createAgentSessionRuntime` result. Removed: the `shouldJoinSharedHost` decision, the `experimental.sharedHost` setting and brand-prefixed `ENABLE_SHARED_HOST` opt-in, the obsolete `DISABLE_SHARED_HOST` stderr notice, the dynamic import of `createInteractiveHostRuntime` and the `selectedRuntime` swap, and the `sharedHostEnabled` value the runtime factory passed in `resourceLoaderOptions`. The env names are no longer read anywhere and print nothing. This supersedes the 2026-09-09 "Forward shared-host policy to extension loading" entry below and every earlier entry that routed an interactive launch through the shared host.
+
+### Why
+
+- One host event loop serving every interactive session let one session's work stall all the others (senpi#2328). An interactive session is isolated by running in its own process; the multi-session RPC host keeps serving its own clients.
+
+### Why an extension could not handle it
+
+- Runtime selection happens in `main()` before any extension loads.
+
+### Expected merge conflict zones
+
+- LOW: the `resourceLoaderOptions` literal in `createCliRuntimeFactory` and the lines between `createAgentSessionRuntime` and the `services` destructuring in `main()`.
+
+## 2026-09-29 - Print mode names the usage limit behind a model fallback (omo#8296)
+
+### What changed
+
+- `packages/coding-agent/src/modes/print-mode.ts`: the stderr line for `retry_fallback_applied` prints `usageLimitCause(from, limit)` in place of the bare reason when a usage limit caused the switch, e.g. `Model fallback: a/x -> b/y (a/x hit its usage limit)`. Other switches print the reason as before.
+
+### Why
+
+- Headless runs and task children log this line; "(transient)" hid that the model had run out of its usage limit (omo#8296).
+
+### Why an extension could not handle it
+
+- The line is written by print mode's own session subscription.
+
+### Expected merge conflict zones
+
+- LOW: the `retry_fallback_applied` branch in `print-mode.ts`.
+
+## 2026-09-28 - `createCliRuntimeFactory` can build a session's services alone (senpi#2314)
+
+### What changed
+
+- `packages/coding-agent/src/main.ts`: the services half of `createCliRuntimeFactory` (project trust, settings, resource loader with the launch profile's kind and context, extension factories) is a `createServices` closure the runtime factory calls first. The returned factory also carries `prepare(options)`, which builds those services for a host open (no start event) and drops them. The return type is `PreparableRuntimeFactory`.
+
+### Why
+
+A multi-session host's `warm` command (senpi#2314) must load exactly what the next `open_session` loads - the same resource paths, trust decision and extension factories - without creating an `AgentSession` or firing `session_start`. Only the factory knows those inputs, so it builds them for both paths.
+
+### Why an extension could not handle it
+
+Extensions are what gets loaded; the loading itself is the CLI runtime factory's.
+
+### Expected merge conflict zones
+
+- The body of `createCliRuntimeFactory` between its setup and `createAgentSessionFromServices`, and its return.
+
 ## 2026-09-27 - `senpi schedule` route for durable scheduled prompts
 
 ### What changed
@@ -92,6 +284,24 @@ omo imports senpi only through the package root (its `senpi-barrel.ts` resolves 
 
 - `packages/coding-agent/src/index.ts`: the run-mode export list from `./modes/index.ts`.
 - `packages/coding-agent/src/modes/index.ts`: the export block above the host-decision exports.
+
+## 2026-09-28 - Export UnknownCommandError (omo #9042)
+
+### What changed
+
+- `packages/coding-agent/src/index.ts` exports `UnknownCommandError` and `UnknownCommandReason` from `./core/unknown-command.ts`.
+
+### Why
+
+- SDK callers of `AgentSession.prompt()` need to recognize the typed refusal of unknown commands.
+
+### Why an extension could not handle it
+
+- The package entry point is the only public export surface.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/index.ts`: the line after the `./core/trust-manager.ts` export.
 
 ## 2026-09-27 - `senpi models discover <provider>` dispatch (senpi#2196)
 
@@ -452,6 +662,24 @@ omo imports senpi only through the package root (its `senpi-barrel.ts` resolves 
 ### Expected merge conflict zones
 
 - LOW: the statements around `writeHelpFlagsCache` in `main.ts`.
+
+## 2026-09-20 - Forward initial CLI model provenance (#1560)
+
+### What changed
+
+- `packages/coding-agent/src/main.ts` forwards the resolved `initialModelProvenance` to session creation.
+
+### Why
+
+- `packages/coding-agent/src/main.ts` resolved explicit and scoped models but discarded their provenance before extensions received `session_start`.
+
+### Why an extension could not handle it
+
+- The metadata is lost in `packages/coding-agent/src/main.ts` before an extension can observe the startup event.
+
+### Expected merge conflict zones
+
+- LOW: the `createAgentSessionFromServices` options in `packages/coding-agent/src/main.ts`.
 
 ## 2026-09-19 - The in-process daemon shares one model runtime across its sessions (senpi#1844)
 

@@ -16,6 +16,7 @@ type CommandItem = {
 	readonly label: string;
 	readonly description?: string;
 	readonly searchText: string;
+	readonly awaitsArguments: boolean;
 };
 
 type RankedCommandItem = AutocompleteItem & {
@@ -68,6 +69,7 @@ export function getSlashCommandSuggestions(
 				label: name,
 				description: fullDesc || undefined,
 				searchText: isSkill && !explicitSkillNamespace ? skillName : name,
+				awaitsArguments: hint !== undefined,
 			},
 		];
 	});
@@ -83,6 +85,7 @@ export function getSlashCommandSuggestions(
 			label: SKILL_COMMAND_PREFIX,
 			description: "Browse available skills",
 			searchText: SKILL_COMMAND_PREFIX,
+			awaitsArguments: false,
 		});
 	}
 
@@ -91,6 +94,7 @@ export function getSlashCommandSuggestions(
 			value: item.name,
 			label: item.label,
 			...(item.description && { description: item.description }),
+			...(item.awaitsArguments && { awaitsArguments: true }),
 			index,
 		}))
 		.sort((left, right) => compareSlashCommandSuggestion(normalizedPrefix, left, right))

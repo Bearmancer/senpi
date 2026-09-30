@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
-import { chmodSync, existsSync, mkdirSync, rmSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { isBuiltin } from "node:module";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -141,6 +142,37 @@ export function validateExternalImports(metafiles) {
 	}
 }
 
+/** Package names the bundle imports at runtime, so a relocated copy can resolve them the same way. */
+export function collectExternalPackages(metafiles) {
+	const names = new Set();
+	for (const metafile of metafiles) {
+		for (const input of Object.values(metafile.inputs)) {
+			for (const imported of input.imports) {
+				if (!imported.external || isBuiltin(imported.path) || imported.path.startsWith("bun:")) continue;
+				const segments = imported.path.split("/");
+				names.add(imported.path.startsWith("@") ? segments.slice(0, 2).join("/") : segments[0]);
+			}
+		}
+	}
+	return Array.from(names).sort();
+}
+
+/**
+ * `runtime-manifest.json` names this exact build (a content hash of every emitted file) for the
+ * CLI's runtime snapshot (`packages/coding-agent/src/runtime-snapshot/`), which keeps a running
+ * session on its own build when a package manager rewrites the install (#2358).
+ */
+function writeRuntimeManifest(metafiles) {
+	const hash = createHash("sha256");
+	for (const file of readdirSync(bundleDir, { recursive: true }).map(String).sort()) {
+		const path = join(bundleDir, file);
+		if (!statSync(path).isFile()) continue;
+		hash.update(file.replaceAll("\\", "/")).update("\0").update(readFileSync(path));
+	}
+	const manifest = { buildId: hash.digest("hex").slice(0, 16), externals: collectExternalPackages(metafiles) };
+	writeFileSync(join(bundleDir, "runtime-manifest.json"), `${JSON.stringify(manifest)}\n`);
+}
+
 function findContainingOutput(metafile, inputSuffix) {
 	const normalizedSuffix = inputSuffix.replaceAll("\\", "/");
 	for (const [outputPath, output] of Object.entries(metafile.outputs)) {
@@ -237,6 +269,7 @@ async function buildBundle() {
 	validateExternalImports([mainResult.metafile, lazyResult.metafile]);
 	chmodSync(join(bundleDir, "cli.js"), 0o755);
 	chmodSync(join(bundleDir, "rpc-entry.js"), 0o755);
+	writeRuntimeManifest([mainResult.metafile, lazyResult.metafile]);
 
 	const files = new Set([...Object.keys(mainResult.metafile.outputs), ...Object.keys(lazyResult.metafile.outputs)]).size;
 	const mib = outputBytes([mainResult.metafile, lazyResult.metafile]) / (1024 * 1024);

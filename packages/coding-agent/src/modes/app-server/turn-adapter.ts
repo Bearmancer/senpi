@@ -26,6 +26,7 @@ export function turnStartParams(request: RpcRequest): TurnStartParams {
 		threadId: requiredStringParam(params.threadId, "threadId"),
 		clientUserMessageId: optionalNullableStringParam(params.clientUserMessageId, "clientUserMessageId"),
 		input: userInputArrayParam(params.input),
+		...(params.unknownCommandAsText === true ? { unknownCommandAsText: true } : {}),
 	};
 }
 

@@ -12,9 +12,10 @@ import type { AgentAbortSource } from "../../core/agent-abort-provenance.ts";
 import type { PromptDisposition, SessionStats } from "../../core/agent-session.ts";
 import type { BashResult } from "../../core/bash-executor.ts";
 import type { CompactionResult } from "../../core/compaction/index.ts";
+import type { PromptSurface } from "../../core/dynamic-prompt/types.ts";
 import type { EngineOrdinal } from "../../core/engine-build-identity.ts";
 import type { ServiceTier } from "../../core/extensions/builtin/service-tier.ts";
-import type { ContextUsage, SessionKind } from "../../core/extensions/types.ts";
+import type { ContextUsage, SessionControlAdmission, SessionKind } from "../../core/extensions/types.ts";
 import type { ProcessFootprintMeasure } from "../../core/process-footprint.ts";
 import type { SessionEntry, SessionMessageEntry, SessionTreeNode, UsageTotals } from "../../core/session-manager.ts";
 import type { SourceInfo } from "../../core/source-info.ts";
@@ -39,6 +40,7 @@ type RpcSessionCommand =
 			thinkingLevel?: ThinkingLevel;
 			sessionTitlePrompt?: string | false;
 			expandPromptTemplates?: boolean;
+			unknownCommandAsText?: boolean;
 	  }
 	| {
 			id?: string;
@@ -63,6 +65,12 @@ type RpcSessionCommand =
 	| { id?: string; type: "get_follow_up_messages" }
 	| { id?: string; type: "abort_branch_summary" }
 	| { id?: string; type: "new_session"; parentSession?: string }
+	/**
+	 * Runs the session's inbox drain once and answers what it admitted - the same contract as a
+	 * terminal control endpoint's `wake`. `delivery_ids` names the deliveries the caller just queued;
+	 * a session whose extension registered no control endpoint answers `admitted: []`.
+	 */
+	| { id?: string; type: "wake"; delivery_ids?: string[] }
 
 	// State
 	| { id?: string; type: "get_state" }
@@ -240,6 +248,8 @@ export const RPC_ERROR_SESSION_ID_IN_USE = "session_id_in_use";
  * memory; clients keep recognizing the code while older generations may still answer.
  */
 export const RPC_ERROR_HOST_MEMORY_PRESSURE = "host_memory_pressure";
+/** `warm` could not load the profile it was asked for (missing cwd, an extension that failed to load). */
+export const RPC_ERROR_WARM_FAILED = "warm_failed";
 // Message-edit and tree-navigation failures (mirror AssistantEditError.code / UserEditError.code /
 // SessionStreamingError.code). Every code lives in the one shared RpcErrorCode union below: the
 // failure response is a single catch-all member, so a command's codes are a documented SUBSET
@@ -250,6 +260,30 @@ export const RPC_ERROR_NOT_ASSISTANT = "not_assistant";
 export const RPC_ERROR_NOT_USER = "not_user";
 export const RPC_ERROR_EMPTY_TEXT = "empty";
 export const RPC_ERROR_STALE_LEAF = "stale_leaf";
+/** `prompt` text was command-shaped but no command handles it; mirrors `UnknownCommandError`. */
+export const RPC_ERROR_UNKNOWN_COMMAND = "unknown_command";
+/**
+ * `release_session` while a turn runs or is about to start (a prompt in preflight, an admitted delivery
+ * not yet written), without `interrupt: true`; `errorData.busy` names the signals.
+ */
+export const RPC_ERROR_TURN_ACTIVE = "turn_active";
+/** `release_session` while other session work runs (bash, compaction, another request for the session); `errorData.busy` names it. */
+export const RPC_ERROR_SESSION_BUSY = "session_busy";
+/** `release_session` while clients are attached, without `force: true`; `errorData.attachments` names how many. */
+export const RPC_ERROR_ATTACHED = "attached";
+/** `release_session` with a `reason` other than `takeover`. */
+export const RPC_ERROR_INVALID_RELEASE_REASON = "invalid_release_reason";
+/** `release_session` for a session this host cannot hand over: `errorData.detail` is `worker_runtime` or `no_session_file`. */
+export const RPC_ERROR_RELEASE_UNSUPPORTED = "release_unsupported";
+/**
+ * `release_session` whose hand-over failed after it began (writing the `session_released` entry or the
+ * teardown threw): `errorData.detail` is the error message, plus `interrupted`/`dropped` after an interrupt.
+ * When the entry could not be written the session stays on this host, admission open and no entry left in
+ * memory; a teardown that fails after it claimed the session leaves it closing.
+ */
+export const RPC_ERROR_RELEASE_FAILED = "release_failed";
+/** A draining host parks every session itself; `release_session` and `open_session` are refused meanwhile. */
+export const RPC_ERROR_HOST_DRAINING = "host_draining";
 
 export type RpcErrorCode =
 	| typeof RPC_ERROR_UNKNOWN_SESSION
@@ -267,12 +301,21 @@ export type RpcErrorCode =
 	| typeof RPC_ERROR_INVALID_SESSION_ID
 	| typeof RPC_ERROR_SESSION_ID_IN_USE
 	| typeof RPC_ERROR_HOST_MEMORY_PRESSURE
+	| typeof RPC_ERROR_WARM_FAILED
 	| typeof RPC_ERROR_STREAMING
 	| typeof RPC_ERROR_ENTRY_NOT_FOUND
 	| typeof RPC_ERROR_NOT_ASSISTANT
 	| typeof RPC_ERROR_NOT_USER
 	| typeof RPC_ERROR_EMPTY_TEXT
-	| typeof RPC_ERROR_STALE_LEAF;
+	| typeof RPC_ERROR_UNKNOWN_COMMAND
+	| typeof RPC_ERROR_STALE_LEAF
+	| typeof RPC_ERROR_TURN_ACTIVE
+	| typeof RPC_ERROR_SESSION_BUSY
+	| typeof RPC_ERROR_ATTACHED
+	| typeof RPC_ERROR_INVALID_RELEASE_REASON
+	| typeof RPC_ERROR_RELEASE_UNSUPPORTED
+	| typeof RPC_ERROR_RELEASE_FAILED
+	| typeof RPC_ERROR_HOST_DRAINING;
 
 /** Every established command accepts an additive routing envelope. */
 export type RpcCommand =
@@ -336,8 +379,33 @@ export type RpcCommand =
 			 * with `session_id_in_use` when a live session already holds it.
 			 */
 			durableSessionId?: string;
+			/**
+			 * Where THIS session's replies render (default: the host's `SENPI_PROMPT_SURFACE`). `app` builds
+			 * a prompt with no visible routing line that keeps tool and hook feedback with the agent;
+			 * `terminal` is the classic prompt; `chat` (a chat bridge) is `app` with no handoff block, ledger
+			 * lines, or todo handoff cues, and needs `prompt_surface_chat`. A later open that attaches with
+			 * another value rebuilds the session's prompt; an attach without it keeps the current surface.
+			 * Requires the host capability `prompt_surface`. Any other value is refused with `invalid_launch_profile`.
+			 */
+			promptSurface?: PromptSurface;
 	  }
 	| { id?: string; type: "close_session"; sessionId: string }
+	| {
+			id?: string;
+			/**
+			 * Hands the session over to a runtime outside this host (`omo daemon adopt` resumes it in a local
+			 * terminal with `--session <session_path>`): records `session_released` in the transcript, tears
+			 * the session down without replaying anything, and frees its path reservation, so the next
+			 * writer of the file is the one the caller starts. Refused with `turn_active` mid-turn unless
+			 * `interrupt` (the turn is aborted first), and with `attached` while clients hold it unless
+			 * `force` (they receive `session_closed { reason: "released" }`).
+			 */
+			type: "release_session";
+			sessionId: string;
+			reason: "takeover";
+			interrupt?: boolean;
+			force?: boolean;
+	  }
 	| {
 			id?: string;
 			type: "list_sessions";
@@ -348,6 +416,19 @@ export type RpcCommand =
 			include_workers?: boolean;
 			/** An observing read, as on `get_protocol_info`. */
 			observe?: boolean;
+	  }
+	| {
+			id?: string;
+			type: "warm";
+			/**
+			 * Load what the next `open_session` with these inputs needs - the extension module graph and
+			 * the runtimes its extensions load for this kind and context - WITHOUT opening a session
+			 * (senpi#2314). Never listed, never an attachment, idempotent per profile. `cwd`, `kind` and
+			 * `context` mean what they mean on `open_session`. Requires the host capability `warm`.
+			 */
+			cwd?: string;
+			kind?: SessionKind;
+			context?: Record<string, string>;
 	  };
 
 // ============================================================================
@@ -379,6 +460,7 @@ export interface RpcAuthStatus {
 		| "models_json_headers"
 		| "extension_headers";
 	label?: string;
+	ambient?: true;
 }
 
 /** Account-slot metadata safe to send to desktop clients. */
@@ -555,6 +637,38 @@ export type RpcResponse =
 			data: { sessionId: string; state: RpcSessionState; attached?: boolean };
 	  }
 	| { id?: string; type: "response"; command: "close_session"; success: true; data: Record<string, never> }
+	| {
+			id?: string;
+			type: "response";
+			command: "release_session";
+			success: true;
+			/**
+			 * `attachments`: clients that were still attached (non-zero only with `force`). `dropped`: what an
+			 * `interrupt` took out of the queues - delivery ids their sender must redeliver to the next owner,
+			 * and the user's queued steer/follow-up text in enqueue order, for the adopting client to handle.
+			 */
+			data: {
+				released: true;
+				session_path: string;
+				attachments: number;
+				dropped: { deliveries: readonly string[]; user_messages: readonly string[] };
+			};
+	  }
+	| {
+			id?: string;
+			type: "response";
+			command: "wake";
+			success: true;
+			data: { admitted: readonly SessionControlAdmission[] };
+	  }
+	| {
+			id?: string;
+			type: "response";
+			command: "warm";
+			success: true;
+			/** `unsupported`: this host's session runtime cannot be warmed from the host process (worker isolates). */
+			data: { state: "warmed" | "already_warm" | "unsupported" };
+	  }
 	| {
 			id?: string;
 			type: "response";
@@ -922,12 +1036,6 @@ export type RpcExtensionUIRequest =
 			widgetLines: string[] | undefined;
 			widgetPlacement?: "aboveEditor" | "belowEditor";
 	  }
-	| {
-			type: "extension_ui_request";
-			id: string;
-			method: "setHeader" | "setFooter";
-			widgetLines: string[] | undefined;
-	  }
 	| { type: "extension_ui_request"; id: string; method: "setTitle"; title: string }
 	| { type: "extension_ui_request"; id: string; method: "set_editor_text"; text: string }
 	// Additive (task 13/14): emitted ONLY when the client advertised the
@@ -947,12 +1055,16 @@ export type RpcExtensionEvent = {
 // Extension UI Commands (stdin)
 // ============================================================================
 
-/** Response to an extension UI request */
+/**
+ * Response to an extension UI request. `id` is this frame's correlation id, echoed by its reply;
+ * `uiRequestId` names the request answered, and without it `id` does (the short form).
+ */
+type RpcExtensionUIResponseFrame = { type: "extension_ui_response"; id: string; uiRequestId?: string };
 export type RpcExtensionUIResponse =
-	| { type: "extension_ui_response"; id: string; value: string }
-	| { type: "extension_ui_response"; id: string; confirmed: boolean }
-	| { type: "extension_ui_response"; id: string; cancelled: true }
-	| { type: "extension_ui_response"; id: string; answers: RpcQuestionAnswers; comment?: string };
+	| (RpcExtensionUIResponseFrame & { value: string })
+	| (RpcExtensionUIResponseFrame & { confirmed: boolean })
+	| (RpcExtensionUIResponseFrame & { cancelled: true })
+	| (RpcExtensionUIResponseFrame & { answers: RpcQuestionAnswers; comment?: string });
 
 /** Inbound draft updates for an open `question` request. */
 export type RpcExtensionUIProgress = {
@@ -1110,6 +1222,8 @@ export type RpcSessionParkedEvent = {
  *   again. The idle sweep ends it once no client holds it; a handoff drain ends it instead of parking
  *   it with a path nothing can reopen (senpi#2285).
  * - `error`: the session failed (worker death, output overflow) and the host sealed it.
+ * - `released`: `release_session` handed the session to a runtime outside this host. `sessionPath` is
+ *   the file that runtime now writes: do NOT reopen it on this host, which would make a second writer.
  */
 export type RpcSessionClosedReason =
 	| "client_close"
@@ -1118,6 +1232,7 @@ export type RpcSessionClosedReason =
 	| "replaced"
 	| "handoff_parked"
 	| "session_dir_removed"
+	| "released"
 	| "error";
 
 /** Terminal record of a closed routing handle. `reason` is absent on older hosts and older records. */

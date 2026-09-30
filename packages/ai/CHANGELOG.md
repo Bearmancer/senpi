@@ -8,7 +8,121 @@
 
 ### Changed
 
+- The `anthropic-subscription` (Claude SDK) lane now reports the prompt-cache TTL Claude Code actually uses: 1 hour on a Claude subscription, 5 minutes when `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_BASE_URL` or a Bedrock/Vertex/Foundry switch puts Claude Code on API, gateway or cloud billing. `CLAUDE_CODE_PROMPT_CACHE_TTL`, `FORCE_PROMPT_CACHING_5M` and `ENABLE_PROMPT_CACHING_1H` are honored the way Claude Code honors them. Cache-aware waits sized from the TTL (the prompt-cache safe-wait budget) grow accordingly on a subscription. ([code-yeongyu/oh-my-openagent#8759](https://github.com/code-yeongyu/oh-my-openagent/issues/8759))
+
 ### Fixed
+
+### Removed
+
+## [2026.9.29-5] - 2026-09-29
+
+### Breaking Changes
+
+### Added
+
+- GPT-6.1 Sol (`gpt-6.1-sol`, released 2026-09-29) joins the catalog on OpenAI, ChatGPT Subscription, Azure OpenAI, GitHub Copilot, OpenCode Zen, OpenRouter (`openai/gpt-6.1-sol`, `-pro`, `:batch`), Venice (`openai-gpt-61-sol`) and Vercel AI Gateway, with `-fast` Fast-tier (`service_tier: priority`, 2x list price at request time) variants on OpenAI and ChatGPT Subscription. It carries its published prices (\$2/\$10 per 1M tokens with \$0.10 cache reads and \$2.50 cache writes, doubling input and 1.5x output past 272k), 128k output, text and image input, tool search, additional tools and mid-session `configuration_update` support on both first-party lanes, and the documented effort ladder `low`/`medium`/`high`/`xhigh`/`max` — `none` and `minimal` are not offered, so `off` is not selectable and a map-less `gpt-6.1-sol` row from a custom provider is inferred the same way. Its project prompt budget is 400k, like GPT-6 Sol. Ultrafast is not added: OpenAI does not offer it for GPT-6.1 Sol yet. ([#2390](https://github.com/code-yeongyu/senpi/issues/2390))
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.29-4] - 2026-09-29
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- `classifyErrorMessage` / `isRetryableAssistantError` treat an Anthropic `forbidden` error whose message is only `Request not allowed` as retryable; `permission_error` and forbidden rejections that carry a reason stay terminal. ([#2376](https://github.com/code-yeongyu/senpi/issues/2376))
+
+### Removed
+
+## [2026.9.29-3] - 2026-09-29
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- A provider module that disappeared because the installed package was replaced while the session was running now ends the turn once with `The installed package changed while this session was running, so <file> can no longer be loaded. Restart and resume this session to continue.`, instead of the same `Cannot find module` failure on every retry and fallback model. ([#2358](https://github.com/code-yeongyu/senpi/issues/2358))
+
+### Removed
+
+## [2026.9.29-2] - 2026-09-29
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- Cursor tool calls run once in the npm package. The bundle's Cursor provider carried its own copy of the marker that tells the agent loop a call was already executed, so every tool Cursor ran was run a second time under the same id and a replayed stale write could revert a file the model had already fixed. The same split also kept the Cursor conversation cache from being released when a session closed, and kept the context ceiling Cursor reports from reaching the running session until a restart. ([#2334](https://github.com/code-yeongyu/senpi/issues/2334))
+
+- Native OpenAI Responses requests no longer fail every turn with `Tool choice 'web_search' not found in 'tools' parameter.` when hosted web search replaces the `web_search` function tool ([#2234](https://github.com/code-yeongyu/senpi/issues/2234)).
+
+- Fixed Bedrock Converse requests rejecting tool schemas with root `anyOf`, `oneOf`, `allOf`, or a missing object type, while preserving parameter alternatives and strict sampling ([#1947](https://github.com/code-yeongyu/senpi/issues/1947)).
+
+- Rejected OpenAI Responses WebSocket requests now show the provider's HTTP status and error message instead of `Error Code undefined: undefined` ([#2235](https://github.com/code-yeongyu/senpi/issues/2235)).
+
+- Adjacent user messages sent through the OpenAI-compatible Chat Completions adapter are folded into one ordered message for non-OpenAI hosts, while direct OpenAI requests retain their existing message boundaries. ([#2120](https://github.com/code-yeongyu/senpi/issues/2120))
+
+### Removed
+
+## [2026.9.29] - 2026-09-29
+
+### Breaking Changes
+
+### Added
+
+- Claude Sonnet 5.5 (`claude-sonnet-5-5`) is in the catalog for `anthropic` (1M context, 128k output, $2 / $10 per MTok, cache reads $0.20, effort low through max) and for Bedrock (`global.anthropic.claude-sonnet-5-5`), OpenRouter, Vercel AI Gateway, Venice and OpenCode. Like Claude Opus 5.5 it runs adaptive thinking only, so a thinking-off turn pins `effort: low` instead of sending `thinking.type=disabled`, and `tool_choice` `any` / `tool` are never sent to it. ([#2321](https://github.com/code-yeongyu/senpi/issues/2321))
+
+### Changed
+
+- Anthropic OAuth requests identify as the latest published Claude Code instead of a version fixed at build time: the bundled floor is now 2.1.284 (Claude Sonnet 5.5 needs it), and the host refreshes the version in the background from Anthropic's `latest` release channel and the `@anthropic-ai/claude-code` npm dist-tag at most every six hours, cached under the agent directory. No request waits on the lookup and an offline host advertises the floor. `PI_CLAUDE_CODE_VERSION=X.Y.Z` pins the advertised version. ([#2321](https://github.com/code-yeongyu/senpi/issues/2321))
+
+### Fixed
+
+- `isContextOverflow` classifies the `anthropic-subscription` refusal "The conversation is too long to resend (about N tokens, limit M). Compacting it and retrying." as a context overflow, so overflow recovery compacts and retries it. ([code-yeongyu/senpi#2329](https://github.com/code-yeongyu/senpi/issues/2329))
+
+- A `claude_code_version_too_old` rejection on an Anthropic OAuth request now raises the advertised version to the one Anthropic names and retries the request once, so a model released after the last senpi build works the first time it is asked for. If the retry still fails, the error names the version senpi advertised and how to pin a newer one. ([#2321](https://github.com/code-yeongyu/senpi/issues/2321))
+
+- `AuthResult` and `AuthCheck` carry `ambient: true` when Amazon Bedrock or Google Vertex auth came only from a shared cloud credential chain (AWS profile/keys/roles in the environment, Application Default Credentials), so callers can rank those providers below ones the user configured. ([#2327](https://github.com/code-yeongyu/senpi/issues/2327))
+
+### Removed
+
+## [2026.9.28-7] - 2026-09-28
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.28-6] - 2026-09-28
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- GitHub Copilot Business and Enterprise accounts no longer have requests sent to the individual host (`421 Misdirected Request`): the API host now comes from the token exchange's own `endpoints.api` (bound to that token), then the token's `proxy-ep`, then the GitHub Enterprise domain, with the individual host only as a last resort. This covers login and refresh (`/models`, model policies), inference, and a Copilot token passed as a key (`COPILOT_GITHUB_TOKEN` or an explicit `apiKey`). A 421 now says the request reached another plan's host and includes the GitHub request id. ([#2309](https://github.com/code-yeongyu/senpi/issues/2309))
 
 - The bundled Devin model seed lists exactly the SWE-2 lanes Devin serves: `swe-2-high`, `swe-2-medium` and `swe-2-max`. `swe-2-low` and `swe-2-high-lite`, which appear only inside the Devin CLI binary and are refused with `permission_denied`, are removed, so a config naming them no longer resolves silently. ([#2306](https://github.com/code-yeongyu/senpi/issues/2306))
 ### Removed

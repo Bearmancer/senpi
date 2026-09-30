@@ -38,7 +38,7 @@ function recordAssistantUuid(entry: AnthropicSubscriptionSessionEntry, sentCount
 const RESUME_TARGET_MISSING = /no conversation found with session id/i;
 
 /** Claude Code's wording for a fork point absent from its transcript; the captured id is the dead one. */
-const RESUME_MESSAGE_MISSING = /no message found with message\.uuid(?:\s+of)?:\s*([0-9a-fA-F-]+)/i;
+export const RESUME_MESSAGE_MISSING = /no message found with message\.uuid(?:\s+of)?:\s*([0-9a-fA-F-]+)/i;
 
 /**
  * Drops only the boundary Claude Code rejected. Republishing it would make the next admission ask

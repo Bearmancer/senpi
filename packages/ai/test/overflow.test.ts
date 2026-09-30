@@ -37,6 +37,13 @@ describe("isContextOverflow", () => {
 		expect(isContextOverflow(message, 1000000)).toBe(true);
 	});
 
+	it("detects the anthropic-subscription cold-seed budget refusal before the re-send is dispatched", () => {
+		const message = createErrorMessage(
+			"The conversation is too long to resend (about 1119185 tokens, limit 1000000). Compacting it and retrying.",
+		);
+		expect(isContextOverflow(message, 1000000)).toBe(true);
+	});
+
 	it("detects explicit Ollama prompt-too-long errors", () => {
 		const message = createErrorMessage("400 `prompt too long; exceeded max context length by 100918 tokens`");
 		expect(isContextOverflow(message, 32768)).toBe(true);

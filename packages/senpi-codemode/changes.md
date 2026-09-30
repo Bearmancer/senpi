@@ -1,5 +1,27 @@
 # senpi-codemode fork changes
 
+## 2026-09-29 - Eval return values reach the model whole, and every cut says so (senpi#2402)
+
+### What changed
+
+- `packages/senpi-codemode/src/output/streaming-output.ts`: `OutputSink.push` takes an optional `{ clampColumns: false }`; such a chunk skips the per-line `maxColumns` clamp (default 768 bytes) while still counting toward the byte and line budgets and the artifact spill.
+- `packages/senpi-codemode/src/tool/image.ts`, `src/tool/cell-runtime.ts`: the cell's return value (`valueRepr`) goes through the new `EvalOutputCollector.pushValue`, so a long single-line value is no longer clipped with a bare `…`. Printed output and error messages keep the clamp.
+- `packages/senpi-codemode/src/output/output-meta.ts`, `src/tool/cell-runtime.ts`: when the output was cut for any reason (column clamp, byte budget, line budget), the model-facing text ends with `[Output truncated: kept <kept> of <total> bytes. <detail>]` and `[Full output: <path>]`, built by the new `formatModelTruncationNotice`. Before, that meta and notice lived only in `details` for the TUI.
+- `packages/senpi-codemode/src/output/output-meta.ts`: `formatTruncationWarning` names a middle elision inside one line by its size (`47.2KB elided from the middle of a line`) instead of `Showing lines 1-2 and 2-2 of 2; 0 middle lines (47.2KB) elided`, since that text now reaches the model.
+- Test: `test/eval-result-truncation-notice.test.ts`.
+
+### Why
+
+- #2402: a ~2.9 KB single-line return value reached the model cut after 768 bytes with a bare ellipsis, no sizes and no path, on every provider lane; the full value was already spilled to a session artifact that the model was never told about.
+
+### Why an extension could not handle it
+
+- The output sink and the eval tool result are this package's own code.
+
+### Expected merge conflict zones
+
+- LOW: `OutputSink.push` and `#clampColumns` in `streaming-output.ts`, `CellResultBuilder.finalize` / `#finish` in `cell-runtime.ts`.
+
 ## 2026-09-28 - Retired JS worker children are collected, not left as zombies (senpi#1962)
 
 ### What changed

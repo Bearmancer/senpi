@@ -211,6 +211,7 @@ export {
 	noticeEntryRenderer,
 	noticeMessageRenderer,
 } from "./core/extensions/notice/index.ts";
+export * from "./core/extensions/session-control-types.ts";
 // Footer data provider (git branch + extension statuses - data not otherwise available to extensions)
 export type { ReadonlyFooterDataProvider } from "./core/footer-data-provider.ts";
 export { convertToLlm } from "./core/messages.ts";
@@ -390,20 +391,27 @@ export {
 	type ProjectTrustStoreEntry,
 	type ProjectTrustUpdate,
 } from "./core/trust-manager.ts";
+export { UnknownCommandError, type UnknownCommandReason } from "./core/unknown-command.ts";
 // Main-thread Bun.WebView service for eval kernels running in worker threads
 export { connectWebViewService, type WebViewServiceConnection } from "./core/webview/webview-broker.ts";
 // Main entry point
 export { type MainOptions, main } from "./main.ts";
 // Run modes for programmatic SDK usage
 export {
+	classifyEndpointLiveness,
 	createHostDaemonPaths,
 	DEFAULT_HOST_LAUNCH_SPEC,
 	daemonDirectoryName,
 	decideHostAction,
+	ENDPOINT_REGISTRY_VERSION,
+	type EndpointKind,
+	type EndpointLiveness,
 	type EnsuredHost,
 	type EnsureHostOptions,
+	endpointProbeTimeoutMs,
 	ensureHost,
 	GENERATION_HANDOFF_CAPABILITY,
+	gcHostEndpoints,
 	type HandoffHostOptions,
 	type HandoffRefusal,
 	type HandoffResult,
@@ -419,7 +427,12 @@ export {
 	type HostDecisionClient,
 	type HostDecisionPolicy,
 	type HostDecisionWarning,
+	type HostEndpointEntry,
+	type HostEndpointIdentitySource,
+	type HostEndpointStatus,
 	HostEnsureRefusedError,
+	type HostGcOptions,
+	type HostGcResult,
 	type HostGenerationRow,
 	type HostLaunchSpec,
 	type HostLaunchSpecCore,
@@ -439,6 +452,7 @@ export {
 	type InteractiveModeOptions,
 	isTransportGoneError,
 	type JsonAgentSessionEvent,
+	listHostEndpoints,
 	loadHostLaunchSpec,
 	type ModelInfo,
 	PINNED_HOST_CLIENT_CAPABILITIES,
@@ -461,6 +475,7 @@ export {
 	type RpcResponse,
 	type RpcSessionState,
 	RpcTransportGoneError,
+	readAllHostStatus,
 	readHostStatus,
 	runHostRequest,
 	runPrintMode,
@@ -472,6 +487,7 @@ export {
 	shardSocketPath,
 	shardSocketPathForKey,
 	stopHost,
+	TUI_PROBE_TIMEOUT_MS,
 } from "./modes/index.ts";
 // UI components for extensions
 export {

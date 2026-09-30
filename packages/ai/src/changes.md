@@ -1,3 +1,164 @@
+## 2026-09-30 - GPT-6.1 Sol id inference: xhigh/max on, off vetoed for map-less rows (senpi#2390)
+
+### What changed
+
+- `packages/ai/src/models.ts`: `XHIGH_MODEL_IDS` and `OPENAI_MAX_MODEL_IDS` gain `gpt-6.1-sol`, so a custom provider that ships the id without a `thinkingLevelMap` still surfaces `xhigh` and `max` on the OpenAI-compatible APIs. `inferOpenAIThinkingLevelMap` applies the Astra-shaped map (`off: null`, `minimal: null`, low..max) to any id in the new `GPT_6_NO_NONE_EFFORT_MODEL_IDS` list (`gpt-6-astra`, `gpt-6.1-sol`) instead of to Astra alone, because GPT-6.1 Sol documents no `none` effort either.
+- Catalog rows and generator changes for the same release are tracked in `packages/ai/changes.md`.
+
+### Why
+
+A `models.json` or gateway row for `gpt-6.1-sol` without a map would otherwise lose the two top efforts and keep `off` selectable, and selecting it would put `reasoning.effort: none` on the wire, which the model rejects (`test/gpt-6-family-catalog.test.ts`, map-less block).
+
+### Why an extension could not handle it
+
+Effort inference runs inside the model registry before any extension hook sees the model.
+
+### Expected merge conflict zones
+
+- `packages/ai/src/models.ts`: `inferOpenAIThinkingLevelMap` and the `XHIGH_MODEL_IDS` / `OPENAI_MAX_MODEL_IDS` constant block.
+
+## 2026-09-29 - A reason-less forbidden rejection is retried, not treated as terminal (senpi#2376)
+
+### What changed
+
+- `packages/ai/src/utils/retry.ts`: `RETRYABLE_PROVIDER_ERROR_PATTERN` matches the Anthropic `forbidden` error whose message is only `Request not allowed` (either field order, optional status prefix), so `classifyErrorMessage` answers `retryable` instead of `unknown`.
+
+### Why
+
+- A Claude subscription path answered some requests with `{"type":"error","error":{"type":"forbidden","message":"Request not allowed"}}` while the same credential served neighbouring requests with 200, and the burst ended by itself. As "unknown" the session hopped down the fallback ladder at once, onto a provider that could not serve; a bounded same-model retry recovers. `permission_error` and `forbidden` rejections that name a reason stay terminal.
+
+### Why an extension could not handle it
+
+- Retry classification is the shared provider-error classifier every session and summarizer consults before any extension hook runs.
+
+### Expected merge conflict zones
+
+- LOW: the tail of `RETRYABLE_PROVIDER_ERROR_PATTERN` in `packages/ai/src/utils/retry.ts` (two added patterns).
+
+## 2026-09-29 - A provider module removed by a reinstall ends the turn once (#2358)
+
+### What changed
+
+- `packages/ai/src/api/lazy.ts`: a setup failure whose error is a missing shipped `.js` module (`Cannot find module '<path>'`, or Bun's `ENOENT reading "<path>"`) becomes the message from `describeReplacedInstall()`, new in `utils/provider-failure-description.ts` beside the marker it stamps: `senpi:no-turn-retry:` plus "The installed package changed while this session was running, so <file> can no longer be loaded. Restart and resume this session to continue." Other setup failures keep their own text.
+
+### Why
+
+- After a package manager rewrote the install under a running session, the missing provider chunk failed the turn, then the same-model retries and every fallback model failed on the same missing module (#2358). The no-turn-retry marker stops both, and the text says what to do. A bare package name or a `.ts` source path is left alone, so a genuinely missing dependency still reads as itself.
+
+### Why an extension could not handle it
+
+- `lazyStream` builds the error message before any session or extension sees the failure.
+
+### Expected merge conflict zones
+
+- LOW: `createSetupErrorMessage` in `api/lazy.ts`; the end of `utils/provider-failure-description.ts`.
+
+## 2026-09-29 - Cursor exec calls run once in the release bundle; bundle copies share module state (senpi#2334)
+
+### What changed
+
+- `packages/ai/src/utils/block-symbols.ts`: every block marker (`kStreamingPartialJson`, `kStreamingBlockIndex`, `kStreamingLastParseLen`, `kStreamingEnvelopeId`, `kStreamingBlockKind`, `kCursorExecResolved`) is a registry symbol (`Symbol.for("provider.block.<name>")`), so a block stamped by one copy of the module is recognized by another.
+- `packages/ai/src/utils/process-singleton.ts` (new, browser-safe): `processSingleton(key, create)` keeps one value per process under `Symbol.for(key)` on `globalThis`.
+- `packages/ai/src/session-resources.ts`: the cleanup registry is `processSingleton("@earendil-works/pi-ai:session-resource-cleanups")`.
+- `packages/ai/src/cursor/context-limit-store.ts`: the observed limits, installed port and hydration flag live in `processSingleton("@earendil-works/pi-ai:cursor-context-limits")`.
+- `packages/ai/src/utils/cursor-context-limit.ts`: the file persistence port, with its `savingEnabled` flag, is `processSingleton("@earendil-works/pi-ai:cursor-context-limit-file")`, so every copy installs the same port.
+- `packages/ai/test/bundle-module-copies.test.ts` (new): loads two copies of each module (`vi.resetModules`) and checks the marker, the cleanup registry and the context-limit store are shared.
+
+### Why
+
+- The release bundle emits `chunks/cursor-agent.js` as a self-contained file (`splitting: false`), so it carries its own copy of every module it imports while the agent loop and the coding agent use the main graph's copy. With module-private `Symbol()` markers the loop never saw `kCursorExecResolved` on a block Cursor's exec channel had already executed and ran every exec-bridged tool call a second time under the same id, which replayed stale writes. The same split kept the Cursor conversation-cache cleanup out of the registry `AgentSession.dispose` runs, and kept an observed Cursor context ceiling from reaching the running session until a restart.
+
+### Why an extension could not handle it
+
+- The markers, the cleanup registry and the context-limit store are module state inside `pi-ai`; which copy a caller gets is decided by the release bundle, not by anything an extension controls.
+
+### Expected merge conflict zones
+
+- LOW: the `sessionResourceCleanups` declaration in `session-resources.ts` if upstream touches the registry.
+
+## 2026-09-29 - The anthropic-subscription cold-seed refusal is a context overflow (senpi#2329)
+
+### What changed
+
+- `packages/ai/src/utils/overflow.ts`: `OVERFLOW_PATTERNS` gains `/^The conversation is too long to resend \(about \d+ tokens, limit \d+\)/` and the provider list comment names it, so `isContextOverflow` classifies the refusal the `anthropic-subscription` lane raises before re-sending a conversation that cannot fit ("The conversation is too long to resend (about N tokens, limit M). Compacting it and retrying.").
+
+### Why
+
+- The refusal must reach the same overflow recovery an API rejection does: senpi compacts its own history once and retries (oh-my-openagent#7975). Its wording is plain for the user, so it no longer matches the provider patterns.
+
+### Why an extension could not handle it
+
+- `isContextOverflow` is the shared classifier that core overflow recovery consults before any extension hook runs; only a core pattern can make the provider's own refusal count as an overflow.
+
+### Expected merge conflict zones
+
+- LOW: the head of `OVERFLOW_PATTERNS` in `packages/ai/src/utils/overflow.ts` and its provider list comment.
+
+## 2026-09-29 - Claude Code fingerprint follows the latest release; Sonnet 5.5 request shaping (senpi#2321)
+
+### What changed
+
+- `packages/ai/src/utils/claude-code-version.ts` (new, browser-safe): `createClaudeCodeVersionResolver` (higher of the floor, a host-installed `ClaudeCodeVersionStore` cache and the latest published Claude Code from Anthropic's `latest` release channel and the npm dist-tag; one background refresh per six hours, never blocks, `offline` serves the cache only), `raise()` for a version a rejection names, `getClaudeCodeVersion(floor, env)` honoring `PI_CLAUDE_CODE_VERSION`, `isClaudeCodeVersionTooOldError`, `requiredClaudeCodeVersionFromError`, `recoverClaudeCodeVersion`, `claudeCodeVersionTooOldHint`.
+- `packages/ai/src/utils/claude-code-version-cache.ts` (new, Node): `installClaudeCodeVersionFileStore()` installs the file cache at `<agent dir>/claude-code-version.json` (same agent-dir resolution as the cursor stores, atomic tmp+rename, one failed write disables saving) and passes `PI_OFFLINE` through as `offline`.
+- `packages/ai/src/api/anthropic-messages.ts`: the `claudeCodeVersion` constant stays (2.1.284) as the bundled floor and the byte-for-byte declaration a downstream installer rewrites (`scripts/node-bundle-smoke.test.ts`); `createClient` reads `getClaudeCodeVersion(claudeCodeVersion, env)` per request for the OAuth `user-agent` and returns the advertised version. `stream` keeps an `openClient` closure; a `claude_code_version_too_old` 400 raises the version (the one the error names, else a refresh) and reopens the client for one retry; a second rejection, or a pinned version, appends the hint naming the advertised version and the pin variable. `DISABLED_THINKING_REJECTING_MODEL_MARKERS` adds `sonnet-5-5` / `sonnet-5.5`.
+- `packages/ai/src/api/bedrock-converse-stream.ts`: `rejectsDisabledThinking` adds the same markers.
+- `packages/ai/src/utils/prompt-cache-ttl.ts`: `FORCED_TOOL_CHOICE_REJECTING_MODEL_ID` covers `claude-sonnet-5[.-]5`.
+- `packages/ai/test/claude-code-version.test.ts` (new): resolver, fetch, error parsing. `packages/ai/test/anthropic-oauth-claude-code-version.test.ts`: floor 2.1.284, exact pin, retry once with the named version, hint on the second failure, no retry when pinned. `packages/ai/test/anthropic-sonnet-5-5.test.ts` (new): catalog row and request shape.
+
+### Why
+
+- The fingerprint had gone stale twice (2.1.75 -> 2.1.251 -> 2.1.280), each time a 400 for OAuth users of a new model until a release. Claude Sonnet 5.5 (2026-09-28) requires Claude Code 2.1.284: the 2.1.283 binary does not contain the model id, 2.1.284 does. The Models API and live requests show Sonnet 5.5 rejects `thinking.type=disabled` and forced `tool_choice` exactly like Opus 5.5.
+
+### Why an extension could not handle it
+
+- The user-agent is set inside `createClient` and the rejection is caught inside the request retry loop; neither is reachable from an extension.
+
+### Expected merge conflict zones
+
+- MEDIUM: `createClient`'s OAuth branch and the `stream` request setup in `api/anthropic-messages.ts`; upstream still carries a constant there. LOW: the marker lists.
+
+## 2026-09-29 - Auth resolution marks shared cloud credential chains as ambient (senpi#2327)
+
+### What changed
+
+- `packages/ai/src/auth/types.ts`: `AuthResult` and `AuthCheck` gain optional `ambient?: true`, set when auth came only from a shared cloud credential chain (AWS profile/keys/roles, Google ADC) rather than a credential configured for that provider.
+- `packages/ai/src/providers/amazon-bedrock.ts`: `resolve` marks the environment `AWS_PROFILE`, `AWS_ACCESS_KEY_ID`+`AWS_SECRET_ACCESS_KEY`, ECS task role and web-identity branches `ambient: true`. A stored credential (key or chosen profile) and `AWS_BEARER_TOKEN_BEDROCK` (Bedrock-only) stay unmarked.
+- `packages/ai/src/providers/google-vertex.ts`: `resolve` marks Application Default Credentials without a stored credential `ambient: true`; an API key or a stored credential stays unmarked.
+- `packages/ai/src/models.ts`: `checkProviderAuth` carries `ambient` from the resolution into the `AuthCheck` it returns.
+
+### Why
+
+- AWS keys and ADC exist for many tools. With them in the environment, Bedrock was indistinguishable from a provider the user logged in to, and the coding agent made it the startup model over the user's own login (senpi#2327).
+
+### Why an extension could not handle it
+
+- The provenance is known only inside each provider's `resolve` and must travel through `Models.checkAuth`; no extension sees either.
+
+### Expected merge conflict zones
+
+- LOW: the `AuthResult`/`AuthCheck` interfaces in `auth/types.ts`; the ambient branches of the Bedrock and Vertex `resolve`; the api-key fallback line of `checkProviderAuth` in `models.ts`.
+
+## 2026-09-28 - Copilot requests use the account's own API host (senpi#2309)
+
+### What changed
+
+- `packages/ai/src/api/github-copilot-endpoint.ts` (new): `resolveGitHubCopilotBaseUrl` picks the host from the token response's `endpoints.api` stored for that exact token (`copilotApiEndpoint: { tid, url }`, matched by the token's `tid`), then the token's `proxy-ep`, then the GHE domain, then `GITHUB_COPILOT_INDIVIDUAL_BASE_URL`. `parseGitHubCopilotApiEndpoint` accepts only https URLs without credentials.
+- `packages/ai/src/auth/oauth/github-copilot.ts`: the token exchange stores `copilotApiEndpoint`; `/models`, model-policy updates and `toAuth` resolve through the new helper; the Individual picker fallback compares against the shared constant.
+- `packages/ai/src/providers/github-copilot.ts`: the api-key lane (`COPILOT_GITHUB_TOKEN`, explicit keys) returns the token's `proxy-ep` host as `auth.baseUrl`.
+- `packages/ai/src/api/github-copilot-errors.ts`: a Copilot 421 gets a note naming the wrong-host cause, the fix, and the GitHub request id.
+
+### Why
+
+- Business and Enterprise accounts are served from their own host; a request on the individual host is refused with `421 Misdirected Request` (omo#8662). The token response's `endpoints.api` was discarded, a token without `proxy-ep` fell back to the individual host even at refresh, and a token passed as a key never derived a host at all.
+
+### Why an extension could not handle it
+
+- The host is decided inside the bundled OAuth flow and the provider's auth resolution before any extension sees the request.
+
+### Expected merge conflict zones
+
+- LOW: `refreshGitHubCopilotAccessToken`'s return, the `getGitHubCopilotBaseUrl` call sites and `toAuth` in `auth/oauth/github-copilot.ts`; the `apiKey` line in `providers/github-copilot.ts`; the 421 branch in `api/github-copilot-errors.ts`.
+
 ## 2026-09-28 - Copilot account model limits drive compaction and output budgets (senpi#2299)
 
 ### What changed
@@ -108,6 +269,61 @@
 
 - LOW: the `requestOptions`/`retryProviderRequest` block in `api/openai-responses.ts` if upstream restructures the SSE request path or adds its own transport wrapping.
 - LOW: the regex list in `utils/tool-choice-fallback.ts` (same zone as the senpi#2121 entry).
+
+## 2026-09-28 - allowed_tools no longer names a tool a payload hook removed (senpi#2234)
+
+### What changed
+
+- `packages/ai/src/api/openai-responses.ts`: `applyAllowedToolsChoice` references a declared, active tool that is missing from `tools` only when `splitDeferredTools` deferred it to a transcript item. A function tool that a `before_provider_request` hook removed (the builtin `openai-web-search` extension swaps the `web_search` function for hosted `web_search_preview`) is no longer added back to `tool_choice: allowed_tools`. The new `resolveDeferredToolsMode` gives `buildParams` and `applyAllowedToolsChoice` the same deferred-mode decision.
+
+### Why
+
+- On a model that accepts `allowed_tools`, any inactive declared tool makes the adapter send `allowed_tools`, and the list named the hook-removed `web_search` function, which is not in `tools`. The Responses API rejects such a request with `400 Tool choice 'web_search' not found in 'tools' parameter.`, so native OpenAI sessions with default settings failed every turn.
+
+### Why an extension could not handle it
+
+- The adapter builds `tool_choice` after `onPayload` returns, so a `before_provider_request` hook never sees the `allowed_tools` list it would have to correct.
+
+### Expected merge conflict zones
+
+- LOW: the reference loop in `applyAllowedToolsChoice` and the deferred-mode lines at the top of `buildParams` in `openai-responses.ts`.
+
+## 2026-09-27 - Show nested OpenAI Responses WebSocket errors (senpi#2235)
+
+### What changed
+
+- `packages/ai/src/api/openai-responses-shared.ts`: read nested WebSocket error details and HTTP status when a Responses error event has no top-level code or message, while retaining top-level SSE errors.
+
+### Why
+
+- Rejected WebSocket requests surfaced as `Error Code undefined: undefined` instead of the provider's actionable 400 error message.
+
+### Why an extension could not handle it
+
+- The shared Responses stream parser formats and throws the error before extensions receive a provider error.
+
+### Expected merge conflict zones
+
+- LOW: the `error` event branch in `processResponsesStream`.
+
+## 2026-09-26 - Fold adjacent user messages for non-OpenAI Chat Completions (#2120)
+
+### What changed
+
+- `packages/ai/src/api/openai-completions.ts`: adjacent user messages are emitted as one user message with their content parts kept in order for non-`api.openai.com` hosts; direct OpenAI requests retain their existing message boundaries.
+- `packages/ai/test/openai-completions-message-order.test.ts`: covers folding on a compatible host and preserving the direct OpenAI wire shape.
+
+### Why
+
+- OpenAI-compatible servers with alternation-enforcing chat templates reject a prompt followed by an extension or next-turn user message as consecutive user roles.
+
+### Why an extension could not handle it
+
+- The adapter builds the provider-specific message list after extension hooks run; only the converter can preserve content ordering while changing the wire role sequence.
+
+### Expected merge conflict zones
+
+- LOW: `packages/ai/src/api/openai-completions.ts` near `convertMessages`; the new focused test is isolated from shared fixtures.
 
 ## 2026-09-27 - Terminal provider errors keep the provider Retry-After; quota exhaustion wording is shared (senpi#2198)
 
@@ -517,6 +733,24 @@ These are the ai package's own provider factories, OAuth module registry and exp
 
 - `packages/ai/src/providers/all.ts` and `packages/ai/src/index.ts` export lists, against any other provider addition.
 - `packages/ai/src/auth/oauth/load.ts` module map, against any other OAuth provider.
+
+## 2026-09-22 - Normalize Bedrock root tool schemas (#1947)
+
+### What changed
+
+- `packages/ai/src/api/bedrock-converse-stream.ts` normalizes root parameters before strict sampling. `packages/ai/src/utils/tool-schema-compat.ts` supplies the Bedrock-specific object-composition normalization.
+
+### Why
+
+- `packages/ai/src/api/bedrock-converse-stream.ts` sent missing object types and forbidden root combiners. `packages/ai/src/utils/tool-schema-compat.ts` now preserves alternative properties, intersection constraints and required names without changing other providers' allOf boundary.
+
+### Why an extension could not handle it
+
+- `packages/ai/src/api/bedrock-converse-stream.ts` owns the SDK request; the shared conversion in `packages/ai/src/utils/tool-schema-compat.ts` must also cover direct SDK consumers.
+
+### Expected merge conflict zones
+
+- LOW: `packages/ai/src/api/bedrock-converse-stream.ts` tool conversion and `packages/ai/src/utils/tool-schema-compat.ts` root-object merge.
 
 ## 2026-09-22 - legacy provider id read helpers (senpi#1989)
 

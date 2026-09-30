@@ -1,3 +1,21 @@
+## 2026-09-28 - /btw uses the credential's own API host (senpi#2309)
+
+### What changed
+
+- `btw/index.ts`: the side query's model carries `auth.baseUrl` from `getApiKeyAndHeaders` when the credential names one, since the explicit key passed to `runSideQuery` otherwise skips the runtime's per-credential host.
+
+### Why
+
+- A GitHub Copilot Business or Enterprise account is served from its own API host; the individual catalog host refuses its requests with `421 Misdirected Request` (omo#8662). The session's chat requests already honoured the credential's host, this path did not.
+
+### Why an extension could not handle it
+
+- The fix is inside this builtin's own request construction.
+
+### Expected merge conflict zones
+
+- LOW: the `runSideQuery` call in `btw/index.ts`.
+
 # changes — btw
 
 ## 2026-09-13 - Explicit off switch: bare /btw and kitty-safe Escape

@@ -2,6 +2,12 @@
  * GitHub Copilot OAuth flow
  */
 
+import {
+	GITHUB_COPILOT_INDIVIDUAL_BASE_URL,
+	githubCopilotTokenField,
+	parseGitHubCopilotApiEndpoint,
+	resolveGitHubCopilotBaseUrl,
+} from "../../api/github-copilot-endpoint.ts";
 import { GITHUB_COPILOT_REJECTED_TOKEN_STATUSES } from "../../api/github-copilot-headers.ts";
 import { sleep } from "../../utils/sleep.ts";
 import type { OAuthAuth, OAuthCredential, ProviderAuthInteraction } from "../types.ts";
@@ -62,29 +68,8 @@ function getUrls(domain: string): {
 	};
 }
 
-/**
- * Parse the proxy-ep from a Copilot token and convert to API base URL.
- * Token format: tid=...;exp=...;proxy-ep=proxy.individual.githubcopilot.com;...
- * Returns API URL like https://api.individual.githubcopilot.com
- */
-function getBaseUrlFromToken(token: string): string | null {
-	const match = token.match(/proxy-ep=([^;]+)/);
-	if (!match) return null;
-	const proxyHost = match[1];
-	// Convert proxy.xxx to api.xxx
-	const apiHost = proxyHost.replace(/^proxy\./, "api.");
-	return `https://${apiHost}`;
-}
-
-function getGitHubCopilotBaseUrl(token?: string, enterpriseDomain?: string): string {
-	// If we have a token, extract the base URL from proxy-ep
-	if (token) {
-		const urlFromToken = getBaseUrlFromToken(token);
-		if (urlFromToken) return urlFromToken;
-	}
-	// Fallback for enterprise or if token parsing fails
-	if (enterpriseDomain) return `https://copilot-api.${enterpriseDomain}`;
-	return "https://api.individual.githubcopilot.com";
+function getGitHubCopilotBaseUrl(token?: string, enterpriseDomain?: string, apiEndpoint?: unknown): string {
+	return resolveGitHubCopilotBaseUrl({ token, enterpriseDomain, apiEndpoint });
 }
 
 async function fetchWithRateLimitRetry(
@@ -125,11 +110,12 @@ async function fetchGitHubCopilotModels(
 	enterpriseDomain: string | undefined,
 	signal: AbortSignal,
 	retryPolicy: { maxRetries: number; maxElapsedMs: number },
+	apiEndpoint?: unknown,
 ) {
-	const baseUrl = getGitHubCopilotBaseUrl(copilotToken, enterpriseDomain);
+	const baseUrl = getGitHubCopilotBaseUrl(copilotToken, enterpriseDomain, apiEndpoint);
 	// Some Individual accounts return false for every picker flag despite explicit enabled policies.
 	// Limit the fallback to that endpoint so other account types keep strict picker semantics.
-	const allowPolicyFallback = baseUrl === "https://api.individual.githubcopilot.com";
+	const allowPolicyFallback = baseUrl === GITHUB_COPILOT_INDIVIDUAL_BASE_URL;
 	const response = await fetchWithRateLimitRetry(
 		`${baseUrl}/models`,
 		{
@@ -293,12 +279,18 @@ async function refreshGitHubCopilotAccessToken(
 		throw new Error("Invalid Copilot token response fields");
 	}
 
+	const endpoints = (raw as Record<string, unknown>).endpoints;
+	const apiUrl = parseGitHubCopilotApiEndpoint(
+		typeof endpoints === "object" && endpoints !== null ? Reflect.get(endpoints, "api") : undefined,
+	);
+	const tid = githubCopilotTokenField(token, "tid");
 	return {
 		type: "oauth",
 		refresh: refreshToken,
 		access: token,
 		expires: expiresAt * 1000 - 5 * 60 * 1000,
 		enterpriseUrl: enterpriseDomain,
+		...(apiUrl !== undefined && tid !== undefined ? { copilotApiEndpoint: { tid, url: apiUrl } } : {}),
 	};
 }
 
@@ -319,6 +311,7 @@ async function refreshGitHubCopilotToken(
 			maxRetries: 0,
 			maxElapsedMs: 0,
 		},
+		credentials.copilotApiEndpoint,
 	);
 	return {
 		...credentials,
@@ -336,8 +329,9 @@ async function enableGitHubCopilotModel(
 	modelId: string,
 	enterpriseDomain: string | undefined,
 	signal: AbortSignal,
+	apiEndpoint?: unknown,
 ): Promise<boolean> {
-	const baseUrl = getGitHubCopilotBaseUrl(token, enterpriseDomain);
+	const baseUrl = getGitHubCopilotBaseUrl(token, enterpriseDomain, apiEndpoint);
 	const url = `${baseUrl}/models/${modelId}/policy`;
 
 	let response: Response;
@@ -377,11 +371,12 @@ async function enableGitHubCopilotModels(
 	modelIds: readonly string[],
 	enterpriseDomain: string | undefined,
 	signal: AbortSignal,
+	apiEndpoint?: unknown,
 ): Promise<string[]> {
 	const enabledModelIds: string[] = [];
 	for (const modelId of modelIds) {
 		try {
-			if (await enableGitHubCopilotModel(token, modelId, enterpriseDomain, signal)) {
+			if (await enableGitHubCopilotModel(token, modelId, enterpriseDomain, signal, apiEndpoint)) {
 				enabledModelIds.push(modelId);
 			}
 		} catch (error) {
@@ -428,6 +423,7 @@ async function loginGitHubCopilot(interaction: ProviderAuthInteraction): Promise
 			maxRetries: 2,
 			maxElapsedMs: 5000,
 		},
+		credentials.copilotApiEndpoint,
 	);
 	let enabledModelIds: string[] = [];
 	if (models.policyModelIds.length > 0) {
@@ -437,6 +433,7 @@ async function loginGitHubCopilot(interaction: ProviderAuthInteraction): Promise
 			models.policyModelIds,
 			enterpriseDomain ?? undefined,
 			interaction.signal,
+			credentials.copilotApiEndpoint,
 		);
 	}
 	return {
@@ -464,7 +461,11 @@ export const githubCopilotOAuth: OAuthAuth = {
 	async toAuth(credential) {
 		return {
 			apiKey: credential.access,
-			baseUrl: getGitHubCopilotBaseUrl(credential.access, copilotEnterpriseDomain(credential)),
+			baseUrl: getGitHubCopilotBaseUrl(
+				credential.access,
+				copilotEnterpriseDomain(credential),
+				credential.copilotApiEndpoint,
+			),
 		};
 	},
 };

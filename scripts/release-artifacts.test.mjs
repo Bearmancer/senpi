@@ -15,7 +15,8 @@ describe("release package-lock refresh", () => {
 		assert.deepEqual(commands, [
 			["npm", ["install", "--package-lock-only", "--ignore-scripts"]],
 			["npm", ["install", "--ignore-scripts", "--no-audit", "--no-fund"]],
-			["bun", ["install", "--lockfile-only"]],
+			// senpi#2352: an in-place `bun install --lockfile-only` left stale workspace ranges behind.
+			["node", ["scripts/regenerate-bun-lock-isolated.mjs"]],
 		]);
 	});
 
@@ -31,7 +32,7 @@ describe("release package-lock refresh", () => {
 		assert.deepEqual(previews, [
 			"npm install --package-lock-only --ignore-scripts",
 			"npm install --ignore-scripts --no-audit --no-fund",
-			"bun install --lockfile-only",
+			"node scripts/regenerate-bun-lock-isolated.mjs",
 		]);
 	});
 });

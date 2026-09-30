@@ -38,9 +38,11 @@ import type { AssistantMessage } from "../types.ts";
  * - DashScope/Qwen: "Range of input length should be [1, X]" (HTTP 400 invalid_parameter_error)
  * - Ollama: Some deployments truncate silently, others return errors like "prompt too long; exceeded max context length by X tokens"
  * - pi-ai pre-flight guard (api/context-room.ts): "Context window exhausted: the conversation is estimated at X of Y tokens, ..." - raised before any provider call
+ * - anthropic-subscription cold-seed budget: "The conversation is too long to resend (about X tokens, limit Y). Compacting it and retrying." - raised before the re-send is dispatched
  */
 const OVERFLOW_PATTERNS = [
 	/^Context window exhausted: /, // pi-ai pre-flight guard: no answer room left, provider never called
+	/^The conversation is too long to resend \(about \d+ tokens, limit \d+\)/, // anthropic-subscription cold-seed budget: re-send refused before dispatch
 	/prompt is too long/i, // Anthropic token overflow
 	/request_too_large/i, // Anthropic request byte-size overflow (HTTP 413)
 	/input is too long for requested model/i, // Amazon Bedrock

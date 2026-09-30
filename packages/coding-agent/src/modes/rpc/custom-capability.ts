@@ -20,7 +20,6 @@ import type { RpcExtensionUIRequest } from "./rpc-types.ts";
 /** The capability string a client sends in its handshake to opt into the notice. */
 export const CUSTOM_UNSUPPORTED_CAPABILITY = "custom_unsupported";
 export const EXTENSION_EVENTS_CAPABILITY = "extension_events";
-export const RENDERED_COMPONENTS_CAPABILITY = "rendered_components";
 export const AUTO_TITLE_SESSIONS_CAPABILITY = "auto_title_sessions";
 /**
  * Opt-in: the host replaces inline image bytes inside tool results with `image_ref`
@@ -57,12 +56,32 @@ export const SESSION_KIND_CAPABILITY = "session_kind";
 export const AUTO_TITLE_PER_SESSION_CAPABILITY = "auto_title_per_session";
 
 /**
+ * HOST capability: this host answers `warm` (senpi#2314) - it loads what the next `open_session` for a
+ * cwd, kind and context needs without opening a session. Advertised only by an in-process runtime.
+ */
+export const WARM_CAPABILITY = "warm";
+
+/**
  * HOST capability: this host honors `open_session.durableSessionId`, so a caller that already
  * owns a stable record id for the conversation can CREATE the session under that id and keep
  * one identity instead of maintaining a mapping. Ignored on resume, where the session file's
  * header id stays authoritative.
  */
 export const DURABLE_SESSION_ID_CAPABILITY = "durable_session_id";
+
+/**
+ * HOST capability: this host honors `open_session.promptSurface`, building each session's prompt for
+ * the surface its opener renders on (`terminal` | `app`) instead of only the process-wide
+ * `SENPI_PROMPT_SURFACE`. A later open that names another surface rebuilds that session's prompt.
+ */
+export const PROMPT_SURFACE_CAPABILITY = "prompt_surface";
+
+/**
+ * HOST capability: `open_session.promptSurface` also accepts `chat` (a chat bridge: no routing line,
+ * no handoff block, no todo cues). A host without it refuses `chat` with `invalid_launch_profile`,
+ * so a gateway sends `chat` only after seeing this and otherwise falls back to `app`.
+ */
+export const PROMPT_SURFACE_CHAT_CAPABILITY = "prompt_surface_chat";
 
 /**
  * Env var carrying client capabilities to a single-connection stdio RPC host

@@ -3,8 +3,9 @@ import { createRequire } from "node:module";
 import { basename, dirname, join, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import chalk from "chalk";
-import { CONFIG_DIR_NAME, getAgentDir, getPackageDir, isBunBinary } from "../config.ts";
+import { CONFIG_DIR_NAME, findNodePackageDir, getAgentDir, getPackageDir, isBunBinary } from "../config.ts";
 import { loadThemeFromPath, type Theme } from "../modes/interactive/theme/theme.ts";
+import { resolveInstallPath } from "../runtime-snapshot/marker.ts";
 import type { ResourceDiagnostic } from "./diagnostics.ts";
 import { ACCEPTED_SHIM_BANNERS, GENERATED_SHIM_BANNER } from "./generated-shim-banner.ts";
 
@@ -174,10 +175,13 @@ function isGeneratedGlobalDefaultExtensionShim(content: string): boolean {
  * session. Canonicalizing collapses both spellings to one path.
  */
 export function canonicalizeGlobalDefaultExtensionModulePath(modulePath: string): string {
+	// A session running from its runtime snapshot names the snapshot's copy; the shim outlives
+	// that snapshot and is shared by every build's sessions, so it names the install instead.
+	const installPath = resolveInstallPath(modulePath, findNodePackageDir(dirname(modulePath)));
 	try {
-		return realpathSync(modulePath);
+		return realpathSync(installPath);
 	} catch {
-		return modulePath;
+		return installPath;
 	}
 }
 
@@ -331,7 +335,6 @@ export interface DefaultResourceLoaderOptions {
 	cwd: string;
 	agentDir: string;
 	settingsManager?: SettingsManager;
-	sharedHostEnabled?: boolean;
 	/** Visibility class of the session these resources are loaded for; defaults to `interactive`. */
 	sessionKind?: SessionKind;
 	/** Opaque labels the session was opened with; defaults to `{}`. */
@@ -373,7 +376,6 @@ export class DefaultResourceLoader implements ResourceLoader {
 	private cwd: string;
 	private agentDir: string;
 	private settingsManager: SettingsManager;
-	private sharedHostEnabled: boolean;
 	/** The per-session facts every extension of this session is loaded with. */
 	private extensionSession: ExtensionSessionProfile;
 	private eventBus: EventBus;
@@ -438,9 +440,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 		this.cwd = resolvePath(options.cwd);
 		this.agentDir = resolvePath(options.agentDir);
 		this.settingsManager = options.settingsManager ?? SettingsManager.create(this.cwd, this.agentDir);
-		this.sharedHostEnabled = options.sharedHostEnabled ?? this.settingsManager.getExperimentalSharedHost();
 		this.extensionSession = {
-			sharedHostEnabled: this.sharedHostEnabled,
 			sessionKind: options.sessionKind ?? "interactive",
 			sessionContext: options.sessionContext ?? EMPTY_SESSION_CONTEXT,
 		};
@@ -832,6 +832,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 			resolvedPathsMemoKey({
 				agentDir: this.agentDir,
 				cwd: this.cwd,
+				projectTrusted: this.settingsManager.isProjectTrusted(),
 				globalSettings: this.settingsManager.getGlobalSettings(),
 				projectSettings: this.settingsManager.getProjectSettings(),
 				additionalExtensionPaths: this.additionalExtensionPaths,

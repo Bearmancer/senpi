@@ -68,3 +68,25 @@ export function describeProviderFailureForUser(
 	if (options.recovery) sentences.push(RECOVERY_SENTENCE[options.recovery]);
 	return sentences.join(" ");
 }
+
+// Node: "Cannot find module '/…/chunks/x-HASH.js' imported from …"; Bun: the same with a relative
+// specifier, or "ENOENT reading \"/…/chunks/x-HASH.js\"" when the file vanished after resolution.
+const MISSING_MODULE_PATTERNS = [/^Cannot find module ['"]([^'"]+)['"]/, /^ENOENT reading ['"]([^'"]+)['"]/];
+const SHIPPED_MODULE = /^(?:\.{1,2}[\\/]|[\\/]|[A-Za-z]:[\\/]|file:).*\.m?js$/;
+
+/**
+ * The turn-ending message for a provider module that can no longer be imported because the
+ * installed package was replaced under the running process (#2358), or undefined for any other
+ * failure. It carries the no-turn-retry marker: every model in a fallback chain needs a module from
+ * the same install, so a retry or fallback would only repeat the failure.
+ */
+export function describeReplacedInstall(error: unknown): string | undefined {
+	if (!(error instanceof Error)) return undefined;
+	for (const pattern of MISSING_MODULE_PATTERNS) {
+		const missing = pattern.exec(error.message)?.[1];
+		if (missing !== undefined && SHIPPED_MODULE.test(missing)) {
+			return `${TURN_RETRY_SUPPRESSION_PREFIX}The installed package changed while this session was running, so ${missing.split(/[\\/]/).at(-1)} can no longer be loaded. Restart and resume this session to continue.`;
+		}
+	}
+	return undefined;
+}

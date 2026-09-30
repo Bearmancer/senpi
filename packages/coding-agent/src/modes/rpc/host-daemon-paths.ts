@@ -7,7 +7,8 @@
  *     <agentDir>/rpc-host-daemon/                 the flat directory - shared, and left legacy-empty
  *       layout.json                               { layout: 2, dir } - the only file this build writes here
  *       <sha256(canonical socket)[:16]>/          0700, one per endpoint
- *         endpoint.json                           { layout, socket, created_at } - WHICH socket this is
+ *         endpoint.json                           { layout, registry_version, endpoint_kind, socket, created_at }
+ *                                                 - WHICH socket this is, and what serves it
  *         host.pid                                POINTER: { layout, instance_id, generation_dir, writer }
  *         settings.json                           what the supervisor reads at boot
  *         daemon.lock  stderr.log
@@ -27,7 +28,9 @@
  * rewritten while it names this directory's socket (an ensure repairs one that does not), and the one file
  * a generation's release leaves behind - so an endpoint whose host exited (cleanly or not) can still
  * be enumerated and named. The pointer, `settings.json` and the generation directories all describe
- * a LIVE host and go with it.
+ * a LIVE host and go with it. `endpoint_kind` says what serves the socket - a multi-session host
+ * (`rpc_host`) or a terminal's control endpoint (`tui`) - and a record written before the field
+ * existed is read as `rpc_host`; readers never rewrite one to add it.
  *
  * What those files CONTAIN is `host-daemon-state.ts` (settings, and the primitives every state file
  * is written through) and `host-daemon-registration.ts` (the pointer and the generation records).
@@ -44,6 +47,12 @@ export const HOST_DAEMON_LAYOUT = 2;
 /** Absolute daemon directory handed to a spawned host, which binds a private socket of its own. */
 export const HOST_DAEMON_DIR_ENV = "SENPI_RPC_HOST_DAEMON_DIR";
 
+/** The `endpoint.json` schema this build writes; readers accept any record that names its socket. */
+export const ENDPOINT_REGISTRY_VERSION = 1;
+
+/** What serves an endpoint: a multi-session RPC host, or an interactive terminal's control endpoint. */
+export type EndpointKind = "rpc_host" | "tui";
+
 const DIRECTORY_MODE = 0o700;
 export const HOST_STATE_FILE_MODE = 0o600;
 
@@ -58,7 +67,7 @@ export interface HostDaemonPaths {
 	readonly legacyPidFile: string;
 	/** This endpoint's state directory, `<flatDir>/<sha256(canonical socket)[:16]>`. */
 	readonly dir: string;
-	/** Durable identity `{ layout, socket, created_at }`: survives every generation's release. */
+	/** Durable identity `{ layout, registry_version, endpoint_kind, socket, created_at }`: survives every generation's release. */
 	readonly endpointFile: string;
 	/** The pointer at the current generation. Deliberately unparseable as a legacy pidfile. */
 	readonly pointerFile: string;
@@ -219,9 +228,13 @@ export class HostDaemonStateError extends Error {
 /**
  * Creates this endpoint's directories and publishes the flat marker. The modes are set explicitly
  * rather than left to `mkdir`, because a directory that already exists keeps whatever mode it was
- * created with - and this one holds the evidence that decides who may signal the daemon.
+ * created with - and this one holds the evidence that decides who may signal the daemon. A `tui`
+ * registrant passes its kind; everything else is an `rpc_host`.
  */
-export async function createDaemonDirectories(paths: HostDaemonPaths): Promise<void> {
+export async function createDaemonDirectories(
+	paths: HostDaemonPaths,
+	identity: { readonly kind?: EndpointKind } = {},
+): Promise<void> {
 	try {
 		// The flat directory may predate this layout and may hold a legacy host's files: it is created
 		// when missing and never re-moded, so a legacy host keeps whatever it set up for itself.
@@ -238,7 +251,7 @@ export async function createDaemonDirectories(paths: HostDaemonPaths): Promise<v
 	} catch (cause) {
 		throw new HostDaemonStateError(paths.dir, cause);
 	}
-	await ensureEndpointIdentity(paths, paths.socket);
+	await ensureEndpointIdentity(paths, paths.socket, identity);
 }
 
 /**
@@ -257,12 +270,18 @@ export async function createDaemonDirectories(paths: HostDaemonPaths): Promise<v
 export async function ensureEndpointIdentity(
 	paths: HostDaemonPaths,
 	socket: string,
-	options: { readonly repair?: boolean } = {},
+	options: { readonly repair?: boolean; readonly kind?: EndpointKind } = {},
 ): Promise<void> {
 	const temporary = `${paths.endpointFile}.${process.pid}-${randomUUID()}.tmp`;
 	try {
 		await mkdir(paths.dir, { recursive: true, mode: DIRECTORY_MODE });
-		const record = `${JSON.stringify({ layout: HOST_DAEMON_LAYOUT, socket, created_at: new Date().toISOString() })}\n`;
+		const record = `${JSON.stringify({
+			layout: HOST_DAEMON_LAYOUT,
+			registry_version: ENDPOINT_REGISTRY_VERSION,
+			endpoint_kind: options.kind ?? "rpc_host",
+			socket,
+			created_at: new Date().toISOString(),
+		})}\n`;
 		await writeFile(temporary, record, { mode: HOST_STATE_FILE_MODE, flag: "wx" });
 		const placed = await link(temporary, paths.endpointFile).then(
 			() => true,

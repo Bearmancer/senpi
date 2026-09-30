@@ -1,5 +1,90 @@
 # changes.md — dynamic-prompt
 
+## 2026-09-30 - Chat surface: no routing line, no handoff block, no ledger lines (senpi#2398)
+
+### What changed
+
+- `packages/coding-agent/src/core/dynamic-prompt/types.ts`: `PromptSurface` gains `chat`. New `TerminalOrApp` and `terminalOrApp(surface)`: `chat` takes every `app` entry of a wording table written for the two older surfaces.
+- `build.ts`: `resolvePromptSurface` returns `chat` for `SENPI_PROMPT_SURFACE=chat`; anything other than `app` or `chat` is still `terminal`.
+- `intent-gate.ts`, `verification.ts`, `style.ts`: `chat` renders the app Intent Gate, the app claim audit (`APP_UNRUN_CHECK_RULE`) and "your stop condition".
+- `handoff.ts`: `buildHandoffSection` returns the new `CHAT_REPLIES_SECTION` ("## Replies" + `CHAT_REPLY_RULE`: each reply is a chat message to the people in the conversation, written as the answer itself in their language, with no status block, todo labels or progress ledger). New `CHAT_FINAL_MESSAGE` ("The final message is the answer itself") opens every core's final-message rule on `chat`; `style.ts` uses it in place of "The final message opens with the Handoff block; its For you slot is".
+- Terminal and app renders stay byte-identical (180 renders: the dynamic prompt and 29 presets, two input sets, surface omitted / `terminal` / `app`, main vs this branch: 0 differ).
+
+### Why
+
+- A chat bridge posts the final assistant text into a conversation. The terminal prompt asks for a routing line and the app prompt still asks for the Ask / For you / Now / Next block, so both reached the chat room verbatim. The handoff rule is replaced at its source on `chat`; nothing is appended to contradict it.
+
+### Why an extension could not handle it
+
+- The sections are built inside the shared prompt builder; an extension could only append a competing rule.
+
+### Expected merge conflict zones
+
+- Fork-only files. `HANDOFF_MOMENTS` / `buildHandoffSection` in `handoff.ts`; the surface ternaries in `style.ts` and `intent-gate.ts`.
+
+## 2026-09-30 - App surface: an unrun check is covered by the evidence that did run (senpi#2377)
+
+### What changed
+
+- `packages/coding-agent/src/core/dynamic-prompt/verification.ts`: `buildVerificationSection({ surface })`. On `app` the claim audit reads "report only evidence-backed work and report failing tests with the output" followed by the new exported `APP_UNRUN_CHECK_RULE`: a check that did not run is covered by the evidence that did run and is named only when no other evidence supports the claim; tool and hook feedback (comment-checker findings, language-server availability, internal notices) is for the agent to act on, reaches the user only when it changes what they get, and an unavailable tool or hook never does by itself. The terminal wording ("flag the unverified explicitly") is unchanged.
+- `packages/coding-agent/src/core/dynamic-prompt/intent-gate.ts`: the app Intent Gate no longer carries the tool-feedback sentence; the verification rule is its one home.
+- `packages/coding-agent/src/core/dynamic-prompt/build.ts`: passes `surface` to `buildVerificationSection`.
+- Terminal renders stay byte-identical (60-prompt render diff against main, 0 differences).
+
+### Why
+
+- A live app-surface run (glm-5.3, shared core plus the GLM5 tuning) ended its reply with "Note: the LSP diagnostics hook is unavailable in this sandbox ...". The Verification section asks for "diagnostics on changed files" and to "flag the unverified explicitly", right where the model writes its report, while the tool-feedback line sat in the Intent Gate. Category A on the app surface: the claim-audit rule itself told the model to name every check that did not run. The rule is rewritten at its source instead of being contradicted from another section, and the feedback guidance moves into it so each prompt states it once.
+
+### Why an extension could not handle it
+
+- The verification section is built inside the shared prompt builder; an extension could only append a competing rule.
+
+### Expected merge conflict zones
+
+- Fork-only files. `CLAIM_AUDIT` and `APP_UNRUN_CHECK_RULE` in `verification.ts`; the `APP_ROUTING` string in `intent-gate.ts`.
+
+## 2026-09-29 - App prompt surface: no routing line, tool feedback stays with the agent (senpi#2377)
+
+### What changed
+
+- `packages/coding-agent/src/core/dynamic-prompt/types.ts`: new `PromptSurface = "terminal" | "app"`.
+- `packages/coding-agent/src/core/dynamic-prompt/build.ts`: `BuildDynamicSystemPromptOptions.surface?: PromptSurface` (omitted = `terminal`), `DynamicPromptCoreContext.surface` so `corePrompt` overrides render per surface, and `resolvePromptSurface(env)` / `PROMPT_SURFACE_ENV_VAR`: `SENPI_PROMPT_SURFACE=app` selects `app`, anything else (unset included) is `terminal`. The builder threads the surface into `buildIntentGate` and `buildHandoffSection`.
+- `packages/coding-agent/src/core/dynamic-prompt/intent-gate.ts`: on `app` the routing-line paragraph is replaced (not overridden) by one that keeps the implementation-commit rule, the observable stop condition (decided before acting, not written out), and the scaffolding guard, and adds one sentence: tool and hook feedback (comment-checker findings, language-server availability, internal notices) is for the agent to act on and reaches the user only when it changes what they get. The intent-family routing rules are unchanged.
+- `packages/coding-agent/src/core/dynamic-prompt/handoff.ts`: `HandoffSectionOptions.surface`; on `app` the moment list and the language rule drop their references to the routing line. `HANDOFF_LANGUAGE_RULE` (terminal) is unchanged.
+- `packages/coding-agent/src/core/dynamic-prompt/style.ts`: `buildStyleSection({ surface })`; on `app` the context-limit line reads "Continue until your stop condition holds." ("declared" invites the model to write the condition out, which brings the routing line back).
+- `packages/coding-agent/src/core/dynamic-prompt/index.ts`: re-exports `PromptSurface`, `resolvePromptSurface`, `PROMPT_SURFACE_ENV_VAR`.
+- Terminal renders are byte-identical to the previous builder for the dynamic prompt and every preset (scratch render diff over all 29 preset names x 2 tool sets, empty).
+
+### Why
+
+- Behind an app (the OmO Desktop) every reply opened with the `> I read this as ...` line and relayed internal tool/hook notices; in a chat UI both read as harness chatter. Category C: the builder had no input saying where replies render, so the only option was one prompt for every surface. The app wording removes the mandate instead of appending an override, so no prompt carries both the instruction and its negation.
+
+### Why an extension could not handle it
+
+- The dynamic prompt and the preset cores render the routing line inside their own sections; an extension could only append a second, contradicting rule.
+
+### Expected merge conflict zones
+
+- Fork-only files. The `surface` threading in `buildDynamicSystemPrompt` and the `TERMINAL_ROUTING` / `APP_ROUTING` split in `buildIntentGate`.
+
+## 2026-09-29 - The handoff contract names which parts stay fixed and which follow the user's language (senpi#2366)
+
+### What changed
+
+- `packages/coding-agent/src/core/dynamic-prompt/handoff.ts`: new exported `HANDOFF_LANGUAGE_RULE`, rendered in `buildHandoffSection` in place of the sentence `Now and Next are the todo labels verbatim.`, which it absorbs: the labels Ask, wanted, For you, Now, and Next stay exactly as written, and the routing line, slot contents, todo labels, and the reply itself are written in the user's language (the one their instructions name, else the one they write in).
+
+### Why
+
+- Claude cores carry no user-language rule, and the routing line and handoff block are English sentence templates the model copies verbatim, so a user with a "reply in Korean" rule got English todo labels, English `Now`/`Next` slots, and (per the report) English replies. Category C: the model had no way to know which template tokens are machine-parsed (the ttsr repetitive-turns detector reads `Ask:` through `For you:` / `Now:` in model output) and which are fill-in. Every Claude preset renders this section, so one rule covers all of them; GPT-6 Astra keeps its own language line.
+
+### Why an extension could not handle it
+
+- This is the shared handoff section; an extension could only append a second, competing rule.
+
+### Expected merge conflict zones
+
+- The closing sentence of `buildHandoffSection`. Fork-only file.
+
 ## 2026-09-25 - The brief-update sentence reads as a sentence (senpi#2143)
 
 ### What changed

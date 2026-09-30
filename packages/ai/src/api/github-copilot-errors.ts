@@ -56,6 +56,9 @@ export function describeGitHubCopilotFailure(error: unknown): string | undefined
 	if (isQuotaFailure(status, body, headerValue(headers, "x-ratelimit-exceeded"))) {
 		return `GitHub Copilot quota exceeded (HTTP ${status}): the plan's included usage or its additional-usage limit is used up, so premium models are refused until it resets or the limit is raised. Usage is shown at https://github.com/settings/copilot.${reference}`;
 	}
+	if (status === 421) {
+		return `GitHub Copilot sent this account to a different API host (HTTP 421 Misdirected Request): Business and Enterprise accounts are served from their own host, which senpi reads from the Copilot token. Run /login github-copilot so senpi stores the account's endpoint, and report it with the GitHub request id if it persists.${reference}`;
+	}
 	if (status === 403) {
 		const reason = body === undefined ? " with an empty body" : "";
 		return `GitHub Copilot refused the request (HTTP 403${reason}). Copilot checks access per model and per client; if a fresh /login github-copilot does not help, report it with the GitHub request id.${reference}`;

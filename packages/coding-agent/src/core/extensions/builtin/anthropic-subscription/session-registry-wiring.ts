@@ -130,7 +130,12 @@ export function registerSessionRegistry(
 		}
 	});
 	pi.on("thinking_level_select", (_event, ctx) => {
-		keepBindingThenClose(ctx.sessionManager.getSessionId(), "thinking_level_selected");
+		const sessionId = ctx.sessionManager.getSessionId();
+		// Closing a streaming query kills the in-flight turn (oh-my-openagent#8759). Reasoning
+		// options are part of the toolset fingerprint, so the next admission sees the drift and
+		// reattaches with the new level once this turn has settled.
+		if (getSession(sessionId)?.activeTurn) return;
+		keepBindingThenClose(sessionId, "thinking_level_selected");
 	});
 	pi.on("message_update", (event, ctx) => {
 		if (event.message.role !== "assistant") return;

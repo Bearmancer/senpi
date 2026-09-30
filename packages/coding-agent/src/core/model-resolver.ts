@@ -20,6 +20,7 @@ import { isValidThinkingLevel } from "../cli/args.ts";
 import type { ServiceTier } from "./extensions/builtin/service-tier.ts";
 import type { ModelRegistry } from "./model-registry.ts";
 import type { ModelRuntime } from "./model-runtime.ts";
+import { selectProviderDefault } from "./provider-default-selection.ts";
 
 /**
  * Scope resolution only ever reads the available-model list, so a caller that
@@ -40,11 +41,12 @@ export const defaultModelPerProvider: Record<string, string> = {
 	"alibaba-token-plan": "qwen3.7-max",
 	"amazon-bedrock": "us.anthropic.claude-opus-4-6-v1",
 	"ant-ling": "Ring-2.6-1T",
+	"anthropic-subscription": "claude-opus-4-8",
 	anthropic: "claude-opus-4-8",
 	bai: "gpt-5.6-sol",
-	openai: "gpt-6-sol",
+	openai: "gpt-6.1-sol",
 	"azure-openai-responses": "gpt-5.4",
-	"chatgpt-subscription": "gpt-6-sol",
+	"chatgpt-subscription": "gpt-6.1-sol",
 	ollama: "qwen3.5:397b",
 	// Cursor ships no models until its chat protocol is ported; "auto" matches
 	// the Cursor agent's native model auto-selection once models exist.
@@ -71,7 +73,7 @@ export const defaultModelPerProvider: Record<string, string> = {
 	"moonshotai-cn": "kimi-k2.6",
 	huggingface: "moonshotai/Kimi-K2.6",
 	fireworks: "accounts/fireworks/models/kimi-k3",
-	together: "moonshotai/Kimi-K2.6",
+	together: "moonshotai/Kimi-K3",
 	venice: "z-ai-glm-5-3",
 	baseten: "zai-org/GLM-5.2",
 	opencode: "kimi-k2.6",
@@ -1023,27 +1025,13 @@ export async function findInitialModel(options: {
 			: await modelRuntime.getAvailable()),
 	];
 
-	if (availableModels.length > 0) {
-		// Try to find a default model from known providers
-		for (const provider of Object.keys(defaultModelPerProvider) as KnownProvider[]) {
-			const defaultId = defaultModelPerProvider[provider];
-			const match = availableModels.find((m) => m.provider === provider && m.id === defaultId);
-			if (match) {
-				return {
-					model: match,
-					thinkingLevel: undefined,
-					fallbackMessage: undefined,
-					provenance: "provider-default",
-				};
-			}
-		}
-
-		// If no default found, use first available
+	const selected = selectProviderDefault(availableModels, defaultModelPerProvider, modelRuntime);
+	if (selected) {
 		return {
-			model: availableModels[0],
+			model: selected.model,
 			thinkingLevel: undefined,
 			fallbackMessage: undefined,
-			provenance: "first-available",
+			provenance: selected.provenance,
 		};
 	}
 
@@ -1108,23 +1096,8 @@ export async function restoreModelFromSession(
 			: await modelRuntime.getAvailable()),
 	];
 
-	if (availableModels.length > 0) {
-		// Try to find a default model from known providers
-		let fallbackModel: Model<Api> | undefined;
-		for (const provider of Object.keys(defaultModelPerProvider) as KnownProvider[]) {
-			const defaultId = defaultModelPerProvider[provider];
-			const match = availableModels.find((m) => m.provider === provider && m.id === defaultId);
-			if (match) {
-				fallbackModel = match;
-				break;
-			}
-		}
-
-		// If no default found, use first available
-		if (!fallbackModel) {
-			fallbackModel = availableModels[0];
-		}
-
+	const fallbackModel = selectProviderDefault(availableModels, defaultModelPerProvider, modelRuntime)?.model;
+	if (fallbackModel) {
 		if (shouldPrintMessages) {
 			console.log(chalk.dim(`Falling back to: ${fallbackModel.provider}/${fallbackModel.id}`));
 		}

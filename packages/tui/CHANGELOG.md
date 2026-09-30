@@ -12,6 +12,94 @@
 
 ### Removed
 
+## [2026.9.29-5] - 2026-09-29
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.29-4] - 2026-09-29
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.29-3] - 2026-09-29
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.29-2] - 2026-09-29
+
+### Breaking Changes
+
+### Added
+
+- `AutocompleteItem.awaitsArguments` marks a slash row whose command declares an argument hint; `getSlashCommandSuggestions` sets it from `argumentHint`. `EditorComponent.onSubmit` gains an optional `EditorSubmitDetails` argument whose `rawText` is the submission before trimming.
+
+### Changed
+
+- Enter on a slash-picker row that takes arguments (its command declares an argument hint) now completes `/name ` and waits for the arguments instead of submitting; a second Enter submits. Rows without a hint still submit in one press, and Tab is unchanged.
+
+### Fixed
+
+### Removed
+
+## [2026.9.29] - 2026-09-29
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.28-7] - 2026-09-28
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.28-6] - 2026-09-28
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
 ## [2026.9.28-5] - 2026-09-28
 
 ### Breaking Changes

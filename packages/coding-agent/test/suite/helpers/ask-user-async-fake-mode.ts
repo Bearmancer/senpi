@@ -46,7 +46,7 @@ export type FakeInteractiveMode = {
 	};
 	/** Read through the prototype's `session` getter from `runtimeHost.session`. */
 	readonly session: FakeSession;
-	runtimeHost: { session: FakeSession; sendHostUiProgress?: Mock<(record: unknown) => void> };
+	runtimeHost: { session: FakeSession };
 	onInputCallback: Mock<(input: unknown) => void>;
 	handleDebugCommand: Mock<() => void>;
 	showStatus: Mock<(message: string) => void>;
@@ -100,7 +100,6 @@ export function createFakeInteractiveMode(options: { isStreaming?: boolean } = {
 		},
 		keybindings: new KeybindingsManager(),
 		getNormalTerminalTitle: () => "senpi",
-		questionArrivalEpochMs: Date.now(),
 		runtimeHost: { session },
 		onInputCallback: vi.fn(),
 		handleDebugCommand: vi.fn(),

@@ -43,7 +43,7 @@ type SubmitContext = {
 type ThinkingContext = {
 	session: {
 		thinkingLevel: string;
-		getAvailableThinkingLevels: () => string[] | Promise<string[]>;
+		getAvailableThinkingLevels: () => string[];
 		setThinkingLevel: (level: string) => void;
 		setSessionThinkingLevel: (level: string) => void;
 	};
@@ -89,7 +89,7 @@ function createSubmitContext(): SubmitContext {
 	return context;
 }
 
-function createThinkingContext(levels: string[] | Promise<string[]>): ThinkingContext {
+function createThinkingContext(levels: string[]): ThinkingContext {
 	const context: ThinkingContext = {
 		session: {
 			thinkingLevel: "medium",
@@ -167,9 +167,9 @@ describe("#1437 handleThinkingCommand", () => {
 		expect(context.showError).not.toHaveBeenCalled();
 	});
 
-	it("matches the level case-insensitively and awaits a shared-host level list", async () => {
-		//#given - the shared-host proxy answers getAvailableThinkingLevels over RPC
-		const context = createThinkingContext(Promise.resolve(["off", "low", "high"]));
+	it("matches the level case-insensitively", async () => {
+		//#given
+		const context = createThinkingContext(["off", "low", "high"]);
 
 		//#when
 		await prototype.handleThinkingCommand.call(context, "HIGH");

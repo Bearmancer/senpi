@@ -1,3 +1,194 @@
+## 2026-09-30 - Control endpoint: a question answer settles by the host's rule, so its comment reaches the model (senpi#2407)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/session-control-commands.ts`: `questionResponse` settles through `settledQuestionStatus` and `unansweredQuestionIds` (`../rpc/extension-ui-response.ts`, shared with the host bridge): a non-blank `comment` is `comment-submitted`, unanswered ids come from the pending request's questions, and a frame with neither answers nor a comment is refused `question_incomplete` with the question left pending. `TuiControlSurface` gains `pendingQuestion(requestId)` (the pending request's questions); `answerQuestion` looks the question up through it.
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: `sessionControlContext` implements `pendingQuestion` from `pendingQuestions`.
+- Tests: `test/suite/session-control-answer-parity.test.ts` (new): the same frames (text-only combined, with `confirmed`, comment-only, structured, structured + comment, short form, blank) answered on a host and on a terminal through the real `ask_user_question` tool deliver the identical model message. `test/suite/session-control-ui-response.test.ts`: the short-form comment answer now expects `comment-submitted` with the unanswered id. `test/helpers/session-control-fixture.ts`: the `questions` seam takes `pendingQuestion`.
+
+### Why
+
+senpi#2407: the terminal always built `status: "answered"` with `unanswered: []`, and the ask-user formatter prints a comment only for `comment-submitted`, so a comment-only answer (what a relaying client sends for a question) reached the model as an empty `[Answer to question <id>]` while the host delivered the text.
+
+### Why an extension could not handle it
+
+The endpoint's command surface is core.
+
+### Expected merge conflict zones
+
+- `answerQuestion` / `questionResponse` in `session-control-commands.ts`; `sessionControlContext` in `interactive-mode.ts`.
+
+## 2026-09-29 - The revert notice says when a fallback could not serve (senpi#2376)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: the `⇄ Reverted to <to>` notice explains `<from> cannot serve right now (its account hit a billing or usage limit), so the session is back on the original model.` when the event carries `cause: "fallback-unusable"`; every other revert keeps "The original model is back after its cooldown lapsed."
+
+### Why
+
+- A return from a billing-dead fallback happens before the original's cooldown lapses, so the cooldown wording would misstate why the model changed.
+
+### Why an extension could not handle it
+
+- The fallback notices are rendered by the interactive event loop, not an extension.
+
+### Expected merge conflict zones
+
+- LOW: the `retry_fallback_reverted` case in `packages/coding-agent/src/modes/interactive/interactive-mode.ts`.
+
+## 2026-09-29 - Control endpoint: `extension_ui_response` names the question in `uiRequestId` and replies under the frame `id`
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/session-control-commands.ts`: `answerQuestion` reads the question id from `uiRequestId` (short form: `id`, through `answeredUiRequestId` in `../rpc/extension-ui-response.ts`) and answers success and refusals (`unknown_request`, `invalid_response`) under the frame's `id`, the same contract as a multi-session host.
+- Tests: `test/suite/session-control-ui-response.test.ts` (new): a `uiRequestId` answer resolves once under the frame id, a replay and an unknown question are `unknown_request`, a malformed answer is `invalid_response` and leaves the question pending, the short form works as before. `test/helpers/session-control-fixture.ts`: optional `questions` surface seam.
+
+### Why
+
+senpi#2372: one reply contract on both endpoint kinds.
+
+### Why an extension could not handle it
+
+The endpoint's command surface is core.
+
+### Expected merge conflict zones
+
+- `answerQuestion` in `session-control-commands.ts`.
+
+## 2026-09-29 - The TUI says when a turn was not saved to the session file
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: `handleEvent` handles the `transcript_write_failed` session event with one warning per run (`transcriptWriteNoticeShown`, reset on `agent_start`): `This turn was not saved to the session file (<code>); the model will not see it after the next prompt.` The code is the error's leading `EACCES`/`ENOSPC`-style code, else the sanitized error text.
+
+### Why
+
+- A refused turn stayed on screen unmarked while the next prompt no longer sends it to the model; a prompt-owned run showed only the raw `EACCES ... <session>.jsonl` error, so the screen and the model disagreed with no explanation.
+
+### Why an extension could not handle it
+
+- Extensions can subscribe to session events, but the chat's own error rendering for the failed prompt and the per-run notice belong to the interactive mode's event switch.
+
+### Expected merge conflict zones
+
+- LOW: one `case` next to `continuation_error` in `handleEvent`, one line in its `agent_start` case, and one field declaration.
+
+## 2026-09-29 - Session control endpoint: a registered TUI serves a `tui` endpoint and wakes its inbox drain on edges
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: installs a `TuiSessionControlHost` on the session before every extension bind (`setControlEndpointHost`) and disposes the previous endpoint first; wraps the default editor's `onChange`/`onSubmit` after they are assigned (`attachEditor`) to feed the editor revision, `draft_cleared` and `submission` edges; disposes the endpoint before `runtimeHost.dispose()` on both shutdown paths; tells the host when async questions change (`refreshAsyncWidget`); renders a `session_control_delivery` custom message with the built-in remote-provenance renderer when no extension registered one. The composer hold (`attachment` for pending images, `draft` for non-blank text) is one private `composerHold()`. Nothing else in the TUI changes: extensions stay bound with `mode: "tui"`, the user follow-up handler, `editor.setText` and ^Z are untouched, and a TUI with no registrant creates no listener and no directory.
+- `session-control-host.ts`, `session-control-endpoint.ts`, `session-control-lifecycle.ts`, `session-control-registry.ts`, `session-control-server.ts`, `session-control-commands.ts`, `session-control-feed.ts`, `session-control-wake.ts`, `components/remote-delivery-message.ts` (new, all under `packages/coding-agent/src/modes/interactive/`): the endpoint. Only the host is imported at startup; the endpoint loads on the first `pi.session.registerControlEndpoint` (never `multi-session-host.ts`, never `createRpcConnectionHandler`). Registration persists the session header, reaps dead `tui` endpoints (`gcHostEndpoints(agentDir, { kinds: ["tui"] })`), binds `<agentDir>/rpc/tui/t-<sha256(instance)[:16]>.sock` (dir 0700, socket and `.secret` 0600; a path over 103 bytes moves to `/tmp/senpi-rpc-<sha256(agentDir)[:8]>/tui/`, used only when it is a private directory of this user), and only then registers under the ensure lock: generation record first, `endpoint.json` (`endpoint_kind: "tui"`) last. A failed step undoes the earlier ones and shows one notice `control endpoint unavailable: <reason>`. Every connection must pass the 32-byte secret handshake (`authenticateSocket`) before any JSONL; the commands are `get_protocol_info` (answers the recorded `instanceId`, capability `tui_control`), `list_sessions`, `get_state` (plus `turn_epoch`, `blocking_question`, `compacting`, `editor_has_draft`, `state_version`), `get_messages`, `set_session_name`, `subscribe` (cursor feed of state/report/question/completion events), `wake` (runs the drain and answers its admissions) and `extension_ui_response` (only for a question the session asked); everything else, `prompt`/`steer`/`follow_up` included, answers `unsupported`. The drain runs on edges only - idle, submission, draft cleared, command, inbox (`fs.watch` on the registrant's inbox directory through the shared watch worker), emitted, continue (a persistent SIGCONT listener deferred past the terminal restore) - one pass at a time, with edges during a pass coalesced into exactly one more pass. Clean exit stops the edges, closes the socket, removes a header-only session file only when the registrant's `isSessionReferenced()` answers false, and removes the endpoint directory; an undisposed exit removes it synchronously on `exit`.
+
+- Submitted input holds admission (`hold_reason: "draft"`) until the runtime has taken it: every editor submission opens a ticket in `TuiSessionControlHost`. A branch whose input still has to reach the runtime claims it (`claimHandoff()`): text buffered for the main loop (released by the loop on that input's prompt disposition via `buildMainLoopPromptOptions`, or in its `finally`) and a steer into a running turn (released on its disposition or when its prompt ends). Every other submission - a `!` command, a slash command - is released as soon as the handler's synchronous part returns, i.e. once dispatched, so a long-running `!` command (a dev server, `tail -f`) never holds deliveries. Input held in the compaction queue holds too (`noteBufferedElsewhere`, fed from `updatePendingMessagesDisplay`). No turn start releases anything, so neither the previous input's turn nor an extension-started turn lets a delivery overtake buffered input. The `submission` edge fires when the last ticket is released. The wrapper forwards every `onSubmit` argument, not only the text. The control context moved to `sessionControlContext()` so `test/interactive-session-control-submission-order.test.ts` drives it, with the real submit handler and prompt options.
+
+### Why
+
+Session gateway (IS-4, IS-6, IS-7): a standalone OmO TUI must be listed and reachable by other sessions through the one endpoint registry, and a delivery must reach it while it is idle, without a sender alive and without touching what the user is typing.
+
+### Why an extension could not handle it
+
+The editor's draft state, the TUI's submission and clear edges, its question overlay and the terminal's stop/continue cycle are interactive-mode internals; an extension can register the endpoint but cannot observe or serve them.
+
+### Expected merge conflict zones
+
+- `interactive-mode.ts`: `InteractiveUserInput`, the `pendingImages` field block, the main loop's `finally`, `buildMainLoopPromptOptions`' `promptDisposition`, the streaming-steer and normal-submission branches of the submit handler (`claimHandoff`), `setupEditorSubmitHandler()` call site, the top of `bindCurrentSessionExtensions`, both `runtimeHost.dispose()` sites in `shutdown`, `sessionControlContext`/`composerHold` before `refreshAsyncWidget`, the head of `updatePendingMessagesDisplay`, and the `case "custom"` renderer lookup.
+
+## 2026-09-29 - Startup warns about config edited in ~/.pi/agent after its copy (omo#9173)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: `InteractiveModeOptions.legacyPiEditNotice` is shown with `showWarning` next to the migrated-credentials warning.
+
+### Why
+
+- Config edited in `~/.pi/agent` after the copy to the agent dir had no effect and no explanation (omo#9173).
+
+### Why an extension could not handle it
+
+- The notice comes from pre-extension startup state and belongs with the other startup warnings.
+
+### Expected merge conflict zones
+
+- LOW: the startup-warnings block that destructures `this.options`.
+
+## 2026-09-29 - `/model` lists ambient-only providers after configured ones (senpi#2327)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/components/model-selector.ts`: `sortModels` orders models from providers the user configured before providers available only through ambient cloud credentials (`createAmbientProviderCheck`), after the current model and favorites and before the provider/id order.
+
+### Why
+
+- Bedrock's many models sorted second by provider name, so AWS keys in the environment made them lead `/model` for users who never set Bedrock up (senpi#2327).
+
+### Why an extension could not handle it
+
+- Sorting is private to `ModelSelectorComponent`.
+
+### Expected merge conflict zones
+
+- LOW: the comparator in `sortModels`.
+
+## 2026-09-29 - Confirm an unknown command with a second Enter (senpi#2348)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: the submit handler and `handleFollowUp` send a submission as text (`unknownCommandAsText`) when it repeats the text of the last refused unknown command; the default editor's `onEscape` forgets that refusal first. `reportUnknownCommandRejection` adds a line built from the configured `tui.input.submit` and `app.interrupt` keys ("Enter again sends it as a message; Esc keeps editing.", without the Esc part while the agent is streaming, where Esc interrupts).
+- `packages/coding-agent/src/modes/interactive/unknown-command-feedback.ts` (fork-only): `reportUnknownCommand` arms the confirmation through the target's `armConfirmation` and appends the confirm hint. The refused text lives in the plain `refusedUnknownCommandText` field, read and cleared by the static `confirmsRefusedUnknownCommand`, so handlers driven on hand-built test contexts keep working.
+
+### Why
+
+- The leading-space escape was hidden in prose and the refusal repeated on every Enter; a deliberate second Enter on the unchanged text is the discoverable way to send `/foo` prose.
+
+### Why an extension could not handle it
+
+- The submit handler, editor restore and Esc handling are interactive-mode internals.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: `setupEditorSubmitHandler` (the `unknownCommandAsText` line), `setupKeyHandlers` (`onEscape` first line), `handleFollowUp`, `reportUnknownCommandRejection`.
+
+## 2026-09-29 - The TUI always runs on its own local session; the shared-host proxy is gone (senpi#2328)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-host-runtime.ts` and `packages/coding-agent/src/modes/interactive/interactive-host-attach.ts`: deleted. `main.ts` stopped constructing the proxy in the previous change, so the `InteractiveSession` union, the RPC session proxy, the reconnect loop, the fallback/reconnect warnings and `HOST_CLIENT_CAPABILITIES` had no caller left.
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: the `session` getter is typed `AgentSession` again. Removed the proxy-only branches: the `HostUiRequest`/`HostUiResponse`/`HostUiCapableRuntime` types, the `setHostUiHandler` hook in the constructor, `handleHostUiRequest` with its `linesFactory` helper and `custom_unsupported` notice, the `setClientInfo` calls after `ui.start()` and in the SIGWINCH handler (the handler itself existed only for that call), the `questionArrivalEpochMs` field and the `notifyArrival` question option (only a replayed host question set it, so the arrival bell now always follows the `askUser.bell` setting, which is what a local question already did). `cycleThinkingLevel`, `getAvailableThinkingLevels`, `getSessionStats` and `getUserMessagesForForking` are read synchronously again, as the local `AgentSession` returns them; this reverts the widening recorded in the `/thinking` entry below ("awaited at every new call site because `InteractiveSession` widens it"). The enclosing methods keep their `async` signatures, so callers and the error routing of `app.thinking.cycle` are unchanged. The `thinking_level_changed` status line, the `model_changed` delegation reset, the TUI `bindExtensions({ mode: "tui" })`, the user follow-up handler and ^Z handling are untouched.
+- The proxy's `unknownCommandAsText` forwarding (senpi#2258) goes with `interactive-host-runtime.ts`. Every local submit path in `interactive-mode.ts` already hands the flag straight to `AgentSession.prompt`, and extension `sendUserMessage` on the local session prompts with `source: "extension"`, which the unknown-command check exempts, so the proxy's forced opt-out for extension input has no local counterpart to keep.
+- `packages/coding-agent/src/modes/interactive/components/footer.ts`, `packages/coding-agent/src/modes/interactive/grok/chrome.ts`, `packages/coding-agent/src/modes/interactive/grok/footer.ts`: take and store `AgentSession` instead of `InteractiveSession`.
+
+### Why
+
+- Interactive launches no longer join a shared RPC host (senpi#2328), so every proxy branch was unreachable code that still shaped the TUI's types and call sites.
+
+### Why an extension could not handle it
+
+- The removed code is the TUI's own session seam and its host-driven UI path; extensions sit behind it.
+
+### Expected merge conflict zones
+
+- MEDIUM: the `session` getter and constructor of `InteractiveMode`, the extension-UI block around `withBlockedHostDialog`, `registerSignalHandlers`, and the `showQuestionOverlay`/`showAsyncQuestion` bell lines in `interactive-mode.ts`.
+- LOW: the session type import and fields of `components/footer.ts`, `grok/chrome.ts`, `grok/footer.ts`.
+
+## 2026-09-29 - The model-fallback notice says which model or account hit its usage limit (omo#8296)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: the `retry_fallback_applied` notice body uses `usageLimitCause` when the event carries `limit`: "<from> hit its usage limit; the turn continues on <to>." or "the <provider> account hit its usage limit, so its other models were skipped; the turn continues on <to>." Other switches keep "Retry switched models (<reason>)".
+
+### Why
+
+- A user whose model ran out of its usage limit saw a generic "(transient)" switch and could not tell a limit from a network blip (omo#8296).
+
+### Why an extension could not handle it
+
+- The notice is rendered by the interactive mode's own event switch.
+
+### Expected merge conflict zones
+
+- LOW: the `retry_fallback_applied` case in `interactive-mode.ts`.
+
 ## 2026-09-28 - Show Copilot tool-limit omissions once per session (senpi#2298)
 
 ### What changed
@@ -56,6 +247,27 @@
 
 - LOW: the `/resume` branch in `setupEditorSubmitHandler`, `buildGettingStarted` in `help-content.ts`, and the two tip catalog files.
 
+## 2026-09-28 - Picker argument hints and unknown-command feedback (omo #9042)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: `createBaseAutocompleteProvider` passes `argumentHint` for extension commands and `skill:<name>` rows, so their picker rows wait for arguments. The submit handler reads `EditorSubmitDetails.rawText`: a `/...` submission typed after leading whitespace carries `unknownCommandAsText` through the steering, idle (`InteractiveUserInput` and `buildMainLoopPromptOptions`), Alt+Enter follow-up, and compaction-queue paths (`queueCompactionSubmission`/`queueCompactionMessage` gain an optional trailing flag). An `UnknownCommandError` from any of those paths goes to the new `reportUnknownCommandRejection`: the optimistic echo is dropped, the text returns to an empty editor, and the message is shown as a warning instead of an error. A rejected first compaction-queue prompt is consumed as `handled` so it cannot block the messages behind it.
+- `packages/coding-agent/src/modes/interactive/unknown-command-feedback.ts` (fork-only): `submitsCommandAsText` and `reportUnknownCommand`.
+- `packages/coding-agent/src/modes/interactive/compaction-queue-transfer.ts` (fork-only): `CompactionQueuedMessage.unknownCommandAsText`.
+- `packages/coding-agent/src/modes/interactive/interactive-host-runtime.ts` (fork-only): the shared-host proxy forwards `unknownCommandAsText`, and extension `sendUserMessage` over the proxy sets it because the host sees that input as `rpc`.
+
+### Why
+
+- An unknown command must not reach the model, and the user needs the text back to fix it, plus a way to send `/...` prose on purpose.
+
+### Why an extension could not handle it
+
+- The submit handler, optimistic echo, and editor restore are interactive-mode internals.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: `createBaseAutocompleteProvider` extension/skill rows, `setupEditorSubmitHandler`, the main-loop catch in `run()`, `buildMainLoopPromptOptions`, `handleFollowUp`, `queueCompactionMessage`/`queueCompactionSubmission`, and the compaction transfer `deliverFirstPrompt`.
+
 ## 2026-09-28 - Restore the /thinking interactive dispatch (#1437)
 
 ### What changed
@@ -93,6 +305,24 @@
 ### Expected merge conflict zones
 
 - LOW: the end of the Cost block in `handleSessionCommand` and one import in `interactive-mode.ts`.
+
+## 2026-09-28 - The /computer introduction tip says computer use is experimental (senpi#2315)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/tips/catalog/computer-tips.ts`: the `computer.what-it-is` tip now opens with "Experimental:". The ids, the `requiresCommand: "computer"` gating and the other four tips are unchanged.
+
+### Why
+
+- OmO 5.1.0 ships computer use as experimental support, and every user-facing surface has to say so.
+
+### Why an extension could not handle it
+
+- The tip catalog is host-owned and has no extension registration API (see the senpi#2204 entry).
+
+### Expected merge conflict zones
+
+- LOW: the `computer.what-it-is` render string in `computer-tips.ts`.
 
 ## 2026-09-27 - Tips for the /computer command (senpi#2204)
 

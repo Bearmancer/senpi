@@ -21,13 +21,13 @@ afterEach(() => {
 });
 
 describe("recommended-models builtin", () => {
-	it("#given the shipped recommendation list #when order is read #then opus 5.5, fable 5.1, kimi k3, astra, sol, glm 5.3 at their levels", () => {
+	it("#given the shipped recommendation list #when order is read #then opus 5.5, fable 5.1, kimi k3, astra, 6.1 sol, glm 5.3 at their levels", () => {
 		expect(RECOMMENDED_DEFAULT_MODELS.map(([modelId, level]) => `${modelId} ${level}`)).toEqual([
 			"claude-opus-5-5 medium",
 			"claude-fable-5-1 xhigh",
 			"kimi-k3 max",
 			"gpt-6-astra xhigh",
-			"gpt-6-sol medium",
+			"gpt-6.1-sol medium",
 			"glm-5.3 max",
 		]);
 		for (const [, , providers] of RECOMMENDED_DEFAULT_MODELS) {
@@ -90,24 +90,25 @@ describe("recommended-models builtin", () => {
 		expect(harness.getThinkingLevel()).toBe("medium");
 	});
 
-	it("#given chatgpt-subscription/gpt-6-sol and gpt-5.6-sol #when an off-list model starts by provider default #then it switches to gpt-6-sol at medium", async () => {
+	it("#given chatgpt-subscription/gpt-6.1-sol, gpt-6-sol and gpt-5.6-sol #when an off-list model starts by provider default #then it switches to gpt-6.1-sol at medium", async () => {
+		const gpt61Sol = model("gpt-6.1-sol", "chatgpt-subscription");
 		const gpt6Sol = model("gpt-6-sol", "chatgpt-subscription");
 		const sol = model("gpt-5.6-sol", "chatgpt-subscription");
 		const harness = createHarness({
 			active: model("off-list"),
-			available: [sol, gpt6Sol],
+			available: [sol, gpt6Sol, gpt61Sol],
 		});
 
 		await harness.start("provider-default");
 
-		expect(harness.getActiveModel()).toBe(gpt6Sol);
+		expect(harness.getActiveModel()).toBe(gpt61Sol);
 		expect(harness.getThinkingLevel()).toBe("medium");
-		expect(harness.notices).toEqual([{ message: "Switched to recommended model 'gpt-6-sol'.", type: "info" }]);
+		expect(harness.notices).toEqual([{ message: "Switched to recommended model 'gpt-6.1-sol'.", type: "info" }]);
 	});
 
 	it("#given chatgpt-subscription/gpt-6-astra and sol #when an implicit-fallback provenance starts #then it switches to astra at xhigh", async () => {
 		const astra = model("gpt-6-astra", "chatgpt-subscription");
-		const sol = model("gpt-6-sol", "chatgpt-subscription");
+		const sol = model("gpt-6.1-sol", "chatgpt-subscription");
 		const harness = createHarness({
 			active: model("off-list"),
 			available: [sol, astra],
@@ -126,7 +127,7 @@ describe("recommended-models builtin", () => {
 
 		const harness = createHarness({
 			active: model("gpt-6-astra-fast"),
-			available: [model("gpt-6-sol", "chatgpt-subscription"), model("gpt-6-astra", "chatgpt-subscription")],
+			available: [model("gpt-6.1-sol", "chatgpt-subscription"), model("gpt-6-astra", "chatgpt-subscription")],
 		});
 
 		await harness.start("first-available");
@@ -194,10 +195,10 @@ describe("recommended-models builtin", () => {
 	});
 
 	it("#given suffix and k3 aliases #when the active model is already recommended #then it keeps the active model", async () => {
-		for (const activeId of ["gpt-6-sol-fast", "kimi-k3-ultrafast", "k3"]) {
+		for (const activeId of ["gpt-6.1-sol-fast", "kimi-k3-ultrafast", "k3"]) {
 			const harness = createHarness({
 				active: model(activeId),
-				available: [model("kimi-k3", "kimi-coding"), model("gpt-6-sol", "openai")],
+				available: [model("kimi-k3", "kimi-coding"), model("gpt-6.1-sol", "openai")],
 			});
 
 			await harness.start("first-available");

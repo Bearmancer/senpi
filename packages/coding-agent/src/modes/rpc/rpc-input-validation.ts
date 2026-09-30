@@ -145,6 +145,16 @@ export function sessionAutoTitleError(value: unknown): string | undefined {
 	return "auto_title must be a boolean.";
 }
 
+/**
+ * Detail for an `open_session.promptSurface` the host refuses, or undefined when the value is
+ * absent or a known surface. An unknown value is never read as `terminal`: a client that asked
+ * for the app or chat prompt must not silently get the routing line.
+ */
+export function sessionPromptSurfaceError(value: unknown): string | undefined {
+	if (value === undefined || value === "terminal" || value === "app" || value === "chat") return undefined;
+	return `promptSurface must be "terminal", "app" or "chat".`;
+}
+
 export function rpcCommandShapeError(command: unknown): string | undefined {
 	if (typeof command !== "object" || command === null || Array.isArray(command)) {
 		return "RPC command must be a JSON object.";

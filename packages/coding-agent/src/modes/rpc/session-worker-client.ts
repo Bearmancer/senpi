@@ -1,6 +1,7 @@
 import { fileURLToPath } from "node:url";
 import { Worker } from "node:worker_threads";
 import { isBunBinary } from "../../config.ts";
+import type { PromptSurface } from "../../core/dynamic-prompt/types.ts";
 import { createWebViewBroker } from "../../core/webview/webview-broker.ts";
 import type { CliRuntimeConfiguration } from "../../main.ts";
 import type { RpcConnectionOptions } from "./connection-handler.ts";
@@ -11,12 +12,11 @@ import type {
 	HostToSessionWorker,
 	SessionWorkerToHost,
 	SessionWriteGrant,
-	WorkerDisplay,
 	WorkerSnapshot,
 } from "./session-worker-protocol.ts";
 
 import { SessionWorkerRequests, type WorkerRequestInput } from "./session-worker-requests.ts";
-import { acknowledge, acknowledgeGrant, respondDisplay } from "./session-worker-signals.ts";
+import { acknowledge, acknowledgeGrant } from "./session-worker-signals.ts";
 
 /** Lifecycle hooks the owning registry installs on every worker it allocates. */
 export interface SessionWorkerCallbacks {
@@ -54,15 +54,13 @@ export class SessionWorkerClient {
 		() => this.fail("session_worker_request_timeout"),
 	);
 	private stopped = false;
-	private displayRevision = 0;
 	private closeTimer?: ReturnType<typeof setTimeout>;
 	private writer?: SessionEventWriter;
 	private sessionId?: string;
 	private requestClose?: () => void;
-	private options: Pick<RpcConnectionOptions, "capabilities" | "sharedWidth"> = {};
+	private options: Pick<RpcConnectionOptions, "capabilities" | "clientInfo"> = {};
 	private readonly listeners = new Set<() => void>();
-	private readonly controls = new Set<"display" | "cancel_ui">();
-	private latestDisplay?: Extract<HostToSessionWorker, { type: "display" }>;
+	private cancelUiPending = false;
 	private terminalFailure?: string;
 
 	private readonly callbacks: SessionWorkerCallbacks;
@@ -92,6 +90,12 @@ export class SessionWorkerClient {
 		return result.sessionPath;
 	}
 
+	/** Moves the worker's live session to another prompt surface (a later `open_session.promptSurface`). */
+	async setPromptSurface(surface: PromptSurface): Promise<void> {
+		const result = await this.request({ type: "prompt_surface", surface });
+		if (result.type !== "result") throw new Error("Invalid worker prompt_surface response");
+	}
+
 	async commit(): Promise<WorkerSnapshot> {
 		const result = await this.request({ type: "commit" });
 		if (result.type !== "ready") throw new Error("Invalid worker commit response");
@@ -103,24 +107,23 @@ export class SessionWorkerClient {
 		sessionId: string,
 		writer: SessionEventWriter,
 		requestClose: () => void,
-		options: Pick<RpcConnectionOptions, "capabilities" | "sharedWidth">,
+		options: Pick<RpcConnectionOptions, "capabilities" | "clientInfo">,
 	): Promise<RpcSessionBinding> {
 		this.sessionId = sessionId;
 		this.writer = writer;
 		this.requestClose = requestClose;
 		this.options = options;
-		await this.request({ type: "bind", sessionId, display: this.display(), connection: writer.currentConnection() });
+		await this.request({
+			type: "bind",
+			sessionId,
+			capabilities: options.capabilities ?? [],
+			connection: writer.currentConnection(),
+		});
 		return {
 			handle: async (command) => {
-				await this.request({
-					type: "command",
-					command,
-					connection: writer.currentConnection(),
-					display: this.display(),
-				});
+				await this.request({ type: "command", command, connection: writer.currentConnection() });
 			},
 			cancelPendingExtensionUiRequests: () => this.post({ type: "cancel_ui" }),
-			rerenderComponents: () => this.post({ type: "display", display: this.display() }),
 			dispose: async () => {
 				this.post({ type: "cancel_ui" });
 			},
@@ -154,27 +157,15 @@ export class SessionWorkerClient {
 		void this.worker.terminate();
 	}
 
-	private display(): WorkerDisplay {
-		return {
-			revision: ++this.displayRevision,
-			width: this.options.sharedWidth?.getWidth() ?? 80,
-			rendered: this.options.sharedWidth?.hasRenderedComponents?.(this.sessionId ?? "") ?? false,
-			capabilities: this.options.capabilities ?? [],
-		};
-	}
-
 	private request(message: WorkerRequestInput): ReturnType<SessionWorkerRequests["request"]> {
 		return this.requests.request(message);
 	}
 
 	private post(message: HostToSessionWorker): void {
 		if (this.stopped) return;
-		if (message.type === "display" || message.type === "cancel_ui") {
-			if (this.controls.has(message.type)) {
-				if (message.type === "display") this.latestDisplay = message;
-				return;
-			}
-			this.controls.add(message.type);
+		if (message.type === "cancel_ui") {
+			if (this.cancelUiPending) return;
+			this.cancelUiPending = true;
 		}
 		this.worker.postMessage(message);
 	}
@@ -200,15 +191,9 @@ export class SessionWorkerClient {
 				acknowledge(message.signal, true);
 				if (message.settled) for (const listener of [...this.listeners]) listener();
 				return;
-			case "control_done": {
-				this.controls.delete(message.control);
-				if (message.control === "display" && this.latestDisplay) {
-					const latest = this.latestDisplay;
-					this.latestDisplay = undefined;
-					this.post(latest);
-				}
+			case "control_done":
+				this.cancelUiPending = false;
 				return;
-			}
 			case "output": {
 				const writer = this.writer;
 				const sessionId = this.sessionId;
@@ -245,14 +230,9 @@ export class SessionWorkerClient {
 				);
 				return;
 			}
-			case "width":
-				this.options.sharedWidth?.setWidth(message.connection, message.width);
-				this.options.sharedWidth?.onChange?.();
-				respondDisplay(message.signal, this.display());
-				return;
 			case "capabilities":
-				this.options.sharedWidth?.setCapabilities?.(message.connection, message.capabilities);
-				respondDisplay(message.signal, this.display());
+				this.options.clientInfo?.setCapabilities(message.connection, message.capabilities);
+				acknowledge(message.signal, true);
 				return;
 			case "request_close":
 				this.requestClose?.();

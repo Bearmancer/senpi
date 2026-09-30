@@ -1,6 +1,6 @@
 {
 	"name": "@earendil-works/pi-tui",
-	"version": "2026.9.28-5",
+	"version": "2026.9.29-5",
 	"description": "Terminal User Interface library with differential rendering for efficient text-based applications",
 	"type": "module",
 	"main": "dist/index.js",
@@ -16,6 +16,7 @@
 	},
 	"files": [
 		"dist/**/*",
+		"!dist/**/*.map",
 		"native/napi.h",
 		"native/clipboard.h",
 		"native/win32/prebuilds/**/*.node",

@@ -2,8 +2,8 @@ import { ENV_AGENT_DIR, getAgentDir } from "../../config.ts";
 import { RPC_CLIENT_CAPABILITIES_ENV } from "./custom-capability.ts";
 import { daemonEnvironment } from "./host-daemon-env.ts";
 import { HOST_DAEMON_DIR_ENV, type HostDaemonPaths } from "./host-daemon-paths.ts";
+import { HOST_GENERATION_ENV, HOST_INSTANCE_ID_ENV } from "./host-identity-env.ts";
 import { PINNED_HOST_CLIENT_CAPABILITIES } from "./host-launch.ts";
-import { HOST_GENERATION_ENV, HOST_INSTANCE_ID_ENV } from "./protocol-identity.ts";
 
 export function initialHostEnvironment(options: {
 	readonly agentDir?: string;

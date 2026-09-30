@@ -5,12 +5,21 @@ import {
 	AUTO_TITLE_SESSIONS_CAPABILITY,
 	DURABLE_SESSION_ID_CAPABILITY,
 	MEDIA_PLACEHOLDERS_CAPABILITY,
+	PROMPT_SURFACE_CAPABILITY,
+	PROMPT_SURFACE_CHAT_CAPABILITY,
 	RETAIN_ON_DISCONNECT_CAPABILITY,
 	SESSION_CONTEXT_CAPABILITY,
 	SESSION_KIND_CAPABILITY,
+	WARM_CAPABILITY,
 } from "./custom-capability.ts";
+import { answerWarm } from "./host-warm.ts";
 import { protocolIdentity } from "./protocol-identity.ts";
-import { sessionAutoTitleError, sessionContextError, sessionKindError } from "./rpc-input-validation.ts";
+import {
+	sessionAutoTitleError,
+	sessionContextError,
+	sessionKindError,
+	sessionPromptSurfaceError,
+} from "./rpc-input-validation.ts";
 import type { RpcCommand, RpcResponse, RpcSessionClosedReason } from "./rpc-types.ts";
 import {
 	RPC_ERROR_INVALID_LAUNCH_PROFILE,
@@ -27,6 +36,7 @@ import { readDrainVerdicts } from "./session-drain.ts";
 import type { SessionEventWriter } from "./session-event-writer.ts";
 import type { OpenRpcSession, RpcSessionLaunchProfile, RpcSessionRegistry } from "./session-registry.ts";
 import { RpcSessionRegistryError } from "./session-registry.ts";
+import { releaseSession } from "./session-release.ts";
 import { selectSweepEvictions } from "./session-sweep.ts";
 
 /** How often a draining host re-checks whether the work it is waiting for has settled. */
@@ -105,13 +115,12 @@ export class SessionCommandRouter {
 	private readonly releasedConnections = new Set<string>();
 	private readonly registry: Pick<
 		RpcSessionRegistry,
-		"openSession" | "peek" | "getForCommand" | "beginClose" | "close" | "closeMarked" | "list" | "size"
+		"openSession" | "peek" | "getForCommand" | "beginClose" | "close" | "closeMarked" | "list" | "size" | "warm"
 	>;
 	private readonly writer: SessionEventWriter;
 	private readonly defaults: RpcHostSessionDefaults;
 	private readonly createBinding: typeof createRpcSessionBinding;
 	private readonly connectionOptions: Parameters<typeof createRpcSessionBinding>[4];
-	private readonly widths = new Map<string, Map<string, number>>();
 	private readonly pendingCapabilities = new Map<string, string[]>();
 	private readonly finalizations = new Map<string, { promise: Promise<void>; resolve: () => void }>();
 	private readonly idleNow: () => number;
@@ -126,6 +135,8 @@ export class SessionCommandRouter {
 	private drainExitRequested = false;
 	private readonly handoffClosed = new Set<string>();
 	private readonly activeRequests = new Map<string | undefined, number>();
+	/** Called after any request for that session settles; a release waits here for the others to finish. */
+	private readonly requestSettledListeners = new Map<string, Set<() => void>>();
 	private readonly onHandoffParked?: RpcSessionIdlePolicy["onHandoffParked"];
 	private emptySince: number | undefined;
 	/** Halves the idle window while the host reports memory pressure; never refuses work. */
@@ -134,7 +145,7 @@ export class SessionCommandRouter {
 	constructor(
 		registry: Pick<
 			RpcSessionRegistry,
-			"openSession" | "peek" | "getForCommand" | "beginClose" | "close" | "closeMarked" | "list" | "size"
+			"openSession" | "peek" | "getForCommand" | "beginClose" | "close" | "closeMarked" | "list" | "size" | "warm"
 		>,
 		writer: SessionEventWriter,
 		defaults: RpcHostSessionDefaults,
@@ -237,16 +248,26 @@ export class SessionCommandRouter {
 			return Promise.resolve(undefined);
 		if (this.draining && command.type === "open_session")
 			return Promise.resolve(error(command.id, command.type, "host_draining"));
+		// A warm holds no session and no path, so it stays out of the accounting a drain waits on (senpi#2314).
+		if (command.type === "warm")
+			return answerWarm(command, {
+				draining: this.draining,
+				warm: this.registry.warm,
+				cwd: this.defaults.cwd,
+				hostContext: this.defaults.hostContext,
+			});
 		this.activeRequests.set(sessionId, (this.activeRequests.get(sessionId) ?? 0) + 1);
 		return runWithSessionAttribution({ sessionId }, () => this.dispatch(command)).finally(() => {
 			const remaining = (this.activeRequests.get(sessionId) ?? 1) - 1;
 			if (remaining > 0) this.activeRequests.set(sessionId, remaining);
 			else this.activeRequests.delete(sessionId);
+			if (sessionId !== undefined)
+				for (const listener of this.requestSettledListeners.get(sessionId) ?? []) listener();
 			if (this.draining) this.sweepDrain();
 		});
 	}
 
-	private async dispatch(command: RpcCommand): Promise<RpcResponse | undefined> {
+	private async dispatch(command: Exclude<RpcCommand, { type: "warm" }>): Promise<RpcResponse | undefined> {
 		if (command.type === "get_protocol_info") {
 			const capabilities = new Set([
 				"multi_session",
@@ -263,6 +284,11 @@ export class SessionCommandRouter {
 				// Only a multi-session host can refuse a duplicate durable id, because only it
 				// sees every live session's identity.
 				DURABLE_SESSION_ID_CAPABILITY,
+				// Every session's prompt is built from its own launch profile, so one host serves both surfaces.
+				PROMPT_SURFACE_CAPABILITY,
+				PROMPT_SURFACE_CHAT_CAPABILITY,
+				// Only an in-process runtime shares the loop a warm loads into (senpi#2314).
+				...(this.registry.warm ? [WARM_CAPABILITY] : []),
 				...(this.connectionOptions?.capabilities ?? []),
 			]);
 			return {
@@ -298,6 +324,21 @@ export class SessionCommandRouter {
 		}
 		if (command.type === "open_session") return this.openWithBarrier(command);
 		if (command.type === "close_session") return this.close(command);
+		if (command.type === "release_session")
+			return releaseSession(
+				{
+					draining: () => this.draining,
+					hostInstance: this.defaults.hostContext?.host_instance,
+					lookup: (sessionId) => this.registry.getForCommand(sessionId, "release_session"),
+					code: (cause) => this.code(cause),
+					// The release is itself one of the session's in-flight requests.
+					otherRequests: (sessionId) => Math.max(0, (this.activeRequests.get(sessionId) ?? 1) - 1),
+					otherRequestsSettled: (sessionId) => this.otherRequestsSettled(sessionId),
+					pendingPrompts: (sessionId) => this.bindings.get(sessionId)?.pendingPrompts?.() ?? [],
+					tearDown: (sessionId, sessionPath) => this.tearDownReleased(sessionId, sessionPath),
+				},
+				command,
+			);
 		if (command.type === "set_client_info" && !command.sessionId) {
 			const connection = this.writer.currentConnection();
 			if (connection !== undefined) {
@@ -424,13 +465,45 @@ export class SessionCommandRouter {
 		this.writer.forgetSession(sessionId);
 	}
 
+	/** Resolves once the only request in flight for `sessionId` is the caller's own. */
+	private otherRequestsSettled(sessionId: string): Promise<void> {
+		return new Promise((resolve) => {
+			const listeners = this.requestSettledListeners.get(sessionId) ?? new Set<() => void>();
+			const check = (): void => {
+				if ((this.activeRequests.get(sessionId) ?? 0) > 1) return;
+				listeners.delete(check);
+				if (listeners.size === 0) this.requestSettledListeners.delete(sessionId);
+				resolve();
+			};
+			listeners.add(check);
+			this.requestSettledListeners.set(sessionId, listeners);
+			check();
+		});
+	}
+
+	/**
+	 * The park teardown of `evictIdleSession`, claimed synchronously and sealed as released: every
+	 * attachment is drained, the runtime disposed and the path reservation freed before this resolves.
+	 */
+	private async tearDownReleased(sessionId: string, sessionPath: string): Promise<boolean> {
+		const claim = this.tryClaimClose(sessionId, { drainAttachments: true });
+		if (!claim) return false;
+		const binding = this.bindings.get(sessionId);
+		binding?.cancelPendingExtensionUiRequests?.();
+		this.forgetSessionOwnership(sessionId);
+		if (claim.finalizer)
+			await this.finalizeClose(sessionId, binding, () => this.writer.releaseSession(sessionId, sessionPath));
+		else await this.finalizations.get(sessionId)?.promise;
+		this.writer.forgetSession(sessionId);
+		return true;
+	}
+
 	/** Drops per-connection records for a handle the host closed on its own. */
 	private forgetSessionOwnership(sessionId: string): void {
 		for (const [connection, owned] of this.sessionsByConnection) {
 			owned.delete(sessionId);
 			if (owned.size === 0) this.sessionsByConnection.delete(connection);
 		}
-		this.widths.delete(sessionId);
 	}
 
 	private stopSweep(): void {
@@ -484,6 +557,9 @@ export class SessionCommandRouter {
 		const autoTitleError = sessionAutoTitleError(command.auto_title);
 		if (autoTitleError)
 			return error(command.id, "open_session", `${RPC_ERROR_INVALID_LAUNCH_PROFILE}: ${autoTitleError}`);
+		const promptSurfaceError = sessionPromptSurfaceError(command.promptSurface);
+		if (promptSurfaceError)
+			return error(command.id, "open_session", `${RPC_ERROR_INVALID_LAUNCH_PROFILE}: ${promptSurfaceError}`);
 		let opened: OpenRpcSession | undefined;
 		try {
 			opened = await this.registry.openSession(
@@ -502,6 +578,7 @@ export class SessionCommandRouter {
 						: command.context,
 					...(command.durableSessionId !== undefined ? { durableSessionId: command.durableSessionId } : {}),
 					...(typeof command.auto_title === "boolean" ? { autoTitle: command.auto_title } : {}),
+					...(command.promptSurface !== undefined ? { promptSurface: command.promptSurface } : {}),
 				},
 				// Host lifecycle policy, deliberately outside the immutable launch profile.
 				{ retainOnDisconnect: command.retain_on_disconnect === true },
@@ -539,35 +616,14 @@ export class SessionCommandRouter {
 								owner !== undefined
 									? (this.pendingCapabilities.get(owner) ?? this.connectionOptions?.capabilities ?? [])
 									: this.connectionOptions?.capabilities,
-							sharedWidth: {
-								getWidth: () => {
-									const widths = this.widths.get(openedSession.sessionId);
-									return widths?.size ? Math.min(...widths.values()) : 80;
-								},
-								setWidth: (connectionId, width) => {
-									if (connectionId !== undefined) {
-										const widths = this.widths.get(openedSession.sessionId) ?? new Map<string, number>();
-										widths.set(connectionId, width);
-										this.widths.set(openedSession.sessionId, widths);
-									}
-								},
-								clearWidth: (connectionId) => {
-									const widths = this.widths.get(openedSession.sessionId);
-									if (connectionId !== undefined) widths?.delete(connectionId);
-								},
+							clientInfo: {
 								setCapabilities: (connectionId, capabilities) => {
 									if (connectionId !== undefined) {
 										this.writer.setConnectionCapabilities(connectionId, capabilities);
 										this.pendingCapabilities.set(connectionId, [...capabilities]);
-										for (const binding of this.bindings.values()) binding.rerenderComponents?.();
 									}
 								},
-								hasRenderedComponents: (sessionId) => this.writer.hasCapableConnection(sessionId),
-
 								connectionId: () => this.writer.currentConnection(),
-								onChange: () => {
-									for (const binding of this.bindings.values()) binding.rerenderComponents?.();
-								},
 							},
 						},
 					),
@@ -635,8 +691,6 @@ export class SessionCommandRouter {
 		this.writer.clearConnectionCapabilities(connectionId);
 		for (const sessionId of this.sessionsByConnection.get(connectionId)?.keys() ?? [])
 			this.writer.detachConnectionFromSession(connectionId, sessionId);
-		for (const widths of this.widths.values()) widths.delete(connectionId);
-		for (const binding of this.bindings.values()) binding.rerenderComponents?.();
 		const opens = this.opensByConnection.get(connectionId);
 		const owned = this.sessionsByConnection.get(connectionId);
 		this.sessionsByConnection.delete(connectionId);
@@ -810,17 +864,9 @@ export class SessionCommandRouter {
 		}
 	}
 
-	/** Detaches the closing connection's UI/width state; a rerender failure must not abort the close. */
+	/** Detaches the closing connection from the session's record fanout. */
 	private releaseOwnerAttachment(owner: string, sessionId: string): void {
-		this.widths.get(sessionId)?.delete(owner);
 		this.writer.detachConnectionFromSession(owner, sessionId);
-		for (const binding of this.bindings.values()) {
-			try {
-				binding.rerenderComponents?.();
-			} catch (cause) {
-				process.stderr.write(`senpi rpc rerender after close of session ${sessionId} failed: ${String(cause)}\n`);
-			}
-		}
 		const owned = this.sessionsByConnection.get(owner);
 		const count = owned?.get(sessionId);
 		if (!owned || count === undefined) return;

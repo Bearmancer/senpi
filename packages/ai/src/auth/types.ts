@@ -108,11 +108,18 @@ export interface AuthResult {
 	env?: ProviderEnv;
 	/** Human-readable label for status UI: "ANTHROPIC_API_KEY", "OAuth", "~/.aws/credentials". */
 	source?: string;
+	/**
+	 * Resolved only from a shared cloud credential chain (AWS profile/keys/roles, Google ADC)
+	 * that exists for other tools too, not from a credential configured for this provider.
+	 */
+	ambient?: true;
 }
 
 export interface AuthCheck {
 	source?: string;
 	type: "api_key" | "oauth";
+	/** Same meaning as `AuthResult.ambient`. */
+	ambient?: true;
 }
 
 export type AuthType = "api_key" | "oauth";

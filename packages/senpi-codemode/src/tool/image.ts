@@ -91,6 +91,11 @@ export class EvalOutputCollector {
 		this.#sink.push(text);
 	}
 
+	/** The cell's return value: exempt from the column clamp, still bound by the byte and line budgets. */
+	pushValue(text: string): void {
+		this.#sink.push(text, { clampColumns: false });
+	}
+
 	display(message: DisplayMessage): void {
 		if (message.mimeType.startsWith("image/")) {
 			if (

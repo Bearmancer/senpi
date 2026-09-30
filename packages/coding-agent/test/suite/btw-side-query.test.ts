@@ -1,7 +1,7 @@
 import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 import { registerFauxProvider } from "@earendil-works/pi-ai/compat";
 import type { Component, TUI } from "@earendil-works/pi-tui";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { estimateTokens } from "../../src/core/compaction/index.ts";
 import btwExtension from "../../src/core/extensions/builtin/btw/index.ts";
 import {
@@ -322,6 +322,21 @@ describe("/btw extension command", () => {
 		expect(getMessageText(sideMessages.at(-1))).toBe("what did I just ask?");
 		expect(sideMessages.some((message) => getMessageText(message) === "main question")).toBe(true);
 		expect(sideCall?.context.systemPrompt).toContain(SIDE_QUERY_INSTRUCTION);
+	});
+
+	it("sends the side question to the credential's own API host (#8662)", async () => {
+		const harness = await setup();
+		harness.setResponses([fauxAssistantMessage("side answer")]);
+		vi.spyOn(harness.session.modelRegistry, "getApiKeyAndHeaders").mockResolvedValue({
+			ok: true,
+			apiKey: "account-token",
+			baseUrl: "https://api.business.githubcopilot.com",
+		});
+		const streamSimple = vi.spyOn(harness.session.modelRegistry.modelRuntime, "streamSimple");
+
+		await harness.session.prompt("/btw which host?");
+
+		expect(streamSimple.mock.calls.at(-1)?.[0].baseUrl).toBe("https://api.business.githubcopilot.com");
 	});
 
 	it("shows usage feedback instead of calling the provider when the question is empty", async () => {

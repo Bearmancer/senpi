@@ -61,7 +61,10 @@ describe("OpenAI mid-session configuration updates", () => {
 		["openai", "gpt-6-luna-fast"],
 		["openai", "gpt-5.6-luna"],
 		["openai", "gpt-6-sol"],
+		["openai", "gpt-6.1-sol"],
 		["chatgpt-subscription", "gpt-6-astra-fast"],
+		["chatgpt-subscription", "gpt-6.1-sol"],
+		["chatgpt-subscription", "gpt-6.1-sol-fast"],
 	] as const)("emits the update for flagged %s/%s", (provider, id) => {
 		expect(convert(catalogModel(provider, id), updateThenUser)).toMatchObject([
 			{ type: "configuration_update", reasoning: { effort: "high" } },
@@ -103,7 +106,8 @@ describe("OpenAI mid-session configuration updates", () => {
 });
 
 // senpi#2094: the direct API accepts the item on the GPT-5.6+ family that prices cache writes;
-// the Codex backend was verified only on gpt-6-astra.
+// the Codex backend was verified on gpt-6-astra, and gpt-6.1-sol carries codex's own
+// `supports_reasoning_effort_updates` flag (senpi#2390).
 describe("configuration_update catalog flag", () => {
 	it("flags exactly the openai rows that accept prompt_cache_options", () => {
 		for (const model of getModels("openai")) {
@@ -112,11 +116,11 @@ describe("configuration_update catalog flag", () => {
 		}
 	});
 
-	it("flags only gpt-6-astra and its -fast variant on the ChatGPT subscription", () => {
+	it("flags only gpt-6-astra, gpt-6.1-sol and their -fast variants on the ChatGPT subscription", () => {
 		const flagged = getModels("chatgpt-subscription")
 			.filter((model) => supportsConfigurationUpdate(model))
 			.map((model) => model.id)
 			.sort();
-		expect(flagged).toEqual(["gpt-6-astra", "gpt-6-astra-fast"]);
+		expect(flagged).toEqual(["gpt-6-astra", "gpt-6-astra-fast", "gpt-6.1-sol", "gpt-6.1-sol-fast"]);
 	});
 });

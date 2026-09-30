@@ -174,7 +174,8 @@ async function ensureHostLocked(
 	// A reusable host is held from the connection that proved it compatible, never re-probed later.
 	const held = await holdProtocolInfo(socket, EXISTING_HOST_PROBE_TIMEOUT_MS);
 	const protocol = held?.info;
-	const startedByUs = registeredHere && (await writtenByThisProcess(registered?.writer));
+	const startedByUs =
+		registeredHere && (await writtenByThisProcess(registered?.writer, testOptions?.readProcessStartTime));
 	const attachedPid = registeredHere ? (registered?.record.pid ?? 0) : 0;
 	const decision = decide(options, startedByUs, protocol);
 	if (decision.action === "reuse" && held) {

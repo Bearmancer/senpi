@@ -15,7 +15,7 @@ import {
 	statSync,
 	writeFileSync,
 } from "fs";
-import { readdir } from "fs/promises";
+import { appendFile, type FileHandle, open, readdir, rm } from "fs/promises";
 import { join, resolve } from "path";
 import { StringDecoder } from "string_decoder";
 import { APP_NAME, getAgentDir as getDefaultAgentDir, getSessionsDir } from "../config.ts";
@@ -23,7 +23,13 @@ import { normalizePath, resolvePath } from "../utils/paths.ts";
 import type { RepositoryIdentity } from "./repository-identity.ts";
 import { listSessionFilesInDir, listSessionsFromDir, type SessionListProgress } from "./session-discovery.ts";
 import { materializeSessionEntries } from "./session-entry-materializer.ts";
+import { replaceFileAtomically } from "./session-file-replace.ts";
 import { type ResidentStoreStats, ResidentStringStore } from "./session-resident-store.ts";
+import {
+	discardFailedFirstFlush,
+	discardFailedFirstFlushAsync,
+	truncateToLastCompleteLine,
+} from "./session-write-recovery.ts";
 import {
 	hasOtherLiveSessionWriter,
 	registerSessionWriter,
@@ -870,6 +876,13 @@ export function setSessionEntryLoaderForTesting(loader: typeof loadEntriesFromFi
 	};
 }
 
+const SETUP_ONLY_ENTRY_TYPES: ReadonlySet<FileEntry["type"]> = new Set([
+	"session",
+	"model_change",
+	"model_change_rejected",
+	"thinking_level_change",
+]);
+
 export class SessionManager {
 	private sessionId: string = "";
 	private sessionFile: string | undefined;
@@ -877,6 +890,9 @@ export class SessionManager {
 	private cwd: string;
 	private persist: boolean;
 	private flushed: boolean = false;
+	private headerWrite: Promise<void> | undefined;
+	// Set when an append to the flushed file failed and may have left a partial last line.
+	private tailMayBeTorn = false;
 	private fileEntries: FileEntry[] = [];
 	private byId: Map<string, SessionEntry> = new Map();
 	// Runtime-only identity tracking lets AgentSession compare messages to a
@@ -1159,13 +1175,12 @@ export class SessionManager {
 	private _rewriteFile(): void {
 		if (!this.persist || !this.sessionFile) return;
 		reserveSessionWrite(this.sessionFile);
-		const fd = openSync(this.sessionFile, "w");
-		try {
-			for (const entry of this.fileEntries) {
-				writeFileSync(fd, `${JSON.stringify(this.residentStore.materialize(entry))}\n`);
-			}
-		} finally {
-			closeSync(fd);
+		replaceFileAtomically(this.sessionFile, this._serializedFileEntries());
+	}
+
+	private *_serializedFileEntries(): Generator<string> {
+		for (const entry of this.fileEntries) {
+			yield `${JSON.stringify(this.residentStore.materialize(entry))}\n`;
 		}
 	}
 
@@ -1205,39 +1220,120 @@ export class SessionManager {
 		return this.residentStore.stats();
 	}
 
+	/**
+	 * Writes the buffered header (and anything buffered behind it) through an exclusive create, as
+	 * the first assistant message would, and appends every later entry immediately. A session that
+	 * is exposed to other processes needs its id on disk first: a reopen of a missing file mints a
+	 * new id. The write is asynchronous (the session path never blocks on the filesystem); entries
+	 * persisted while it runs are appended by it before the transcript counts as flushed.
+	 */
+	persistHeaderNow(): Promise<void> {
+		if (!this.persist || !this.sessionFile || this.flushed) return this.headerWrite ?? Promise.resolve();
+		const sessionFile = this.sessionFile;
+		this.headerWrite ??= this._writeHeaderAsync(sessionFile).finally(() => {
+			this.headerWrite = undefined;
+		});
+		return this.headerWrite;
+	}
+
+	isTranscriptFlushed(): boolean {
+		return this.flushed;
+	}
+
+	/**
+	 * Removes the session file when nothing happened in it - the header plus model/thinking setup
+	 * entries only - and returns to buffering, so a later entry cannot recreate a header-less file.
+	 */
+	async discardHeaderOnlyFile(): Promise<boolean> {
+		await this.headerWrite;
+		if (!this.persist || !this.sessionFile || !this.flushed) return false;
+		if (!this.fileEntries.every((entry) => SETUP_ONLY_ENTRY_TYPES.has(entry.type))) return false;
+		await rm(this.sessionFile, { force: true });
+		this.flushed = false;
+		return true;
+	}
+
+	private async _writeHeaderAsync(sessionFile: string): Promise<void> {
+		reserveSessionWrite(sessionFile);
+		const entries = this.fileEntries;
+		const serialize = (batch: readonly FileEntry[]): string =>
+			batch.map((e) => `${JSON.stringify(this.residentStore.materialize(e))}\n`).join("");
+		let written = 0;
+		let handle: FileHandle | undefined = await open(sessionFile, "wx");
+		try {
+			while (written < entries.length) {
+				const batch = entries.slice(written);
+				written += batch.length;
+				await handle.writeFile(serialize(batch));
+			}
+			const closing = handle;
+			handle = undefined;
+			await closing.close();
+			// Entries persisted while the handle closed: append until a pass finds nothing new.
+			while (written < entries.length && this.sessionFile === sessionFile && this.fileEntries === entries) {
+				const batch = entries.slice(written);
+				written += batch.length;
+				await appendFile(sessionFile, serialize(batch));
+			}
+		} catch (error) {
+			// This write created the file: a part-written one would fail every later first flush with
+			// EEXIST while the entries it was carrying stayed in memory only. Nothing counts as flushed yet.
+			return discardFailedFirstFlushAsync(sessionFile, handle, error);
+		}
+		// Synchronous with the last check above: no entry can land between it and the flag.
+		if (this.sessionFile === sessionFile && this.fileEntries === entries && written === entries.length) {
+			this.flushed = true;
+		}
+	}
+
+	/**
+	 * Writes `entry`, which is not in `fileEntries` yet, before memory commits it. A throw means the
+	 * file did not take the entry, so the caller commits nothing and no later entry can chain onto it.
+	 */
 	_persist(entry: SessionEntry): void {
 		if (!this.persist || !this.sessionFile) return;
 		reserveSessionWrite(this.sessionFile);
 		const persistedEntry = this.residentStore.materialize(entry);
 
-		const hasAssistant = this.fileEntries.some((e) => e.type === "message" && e.message.role === "assistant");
-		if (!hasAssistant) {
-			if (this.flushed) {
+		if (this.flushed) {
+			if (this.tailMayBeTorn) {
+				truncateToLastCompleteLine(this.sessionFile);
+				this.tailMayBeTorn = false;
+			}
+			try {
 				appendFileSync(this.sessionFile, `${JSON.stringify(persistedEntry)}\n`);
-			} else {
-				// Mark as not flushed so when assistant arrives, all entries get written
-				this.flushed = false;
+			} catch (error) {
+				this.tailMayBeTorn = true;
+				throw error;
 			}
 			return;
 		}
 
-		if (!this.flushed) {
-			const fd = openSync(this.sessionFile, "wx");
-			try {
-				for (const e of this.fileEntries) {
-					writeFileSync(fd, `${JSON.stringify(this.residentStore.materialize(e))}\n`);
-				}
-			} finally {
-				closeSync(fd);
+		// Entries stay in memory only until the branch holds an assistant message; then all are written.
+		const isAssistant = (e: FileEntry) => e.type === "message" && e.message.role === "assistant";
+		if (!isAssistant(entry) && !this.fileEntries.some(isAssistant)) return;
+
+		// An asynchronous header write owns the file until it finishes, and appends this entry.
+		if (this.headerWrite) return;
+		const fd = openSync(this.sessionFile, "wx");
+		try {
+			for (const e of [...this.fileEntries, entry]) {
+				writeFileSync(fd, `${JSON.stringify(this.residentStore.materialize(e))}\n`);
 			}
-			this.flushed = true;
-		} else {
-			appendFileSync(this.sessionFile, `${JSON.stringify(persistedEntry)}\n`);
+		} catch (error) {
+			discardFailedFirstFlush(this.sessionFile, fd, error);
 		}
+		closeSync(fd);
+		this.flushed = true;
 	}
 
 	private _appendEntry(entry: SessionEntry): void {
 		const residentEntry = this.residentStore.externalize(entry);
+		this._persist(residentEntry);
+		this._commitEntry(residentEntry);
+	}
+
+	private _commitEntry(residentEntry: SessionEntry): void {
 		this.fileEntries.push(residentEntry);
 		this.byId.set(residentEntry.id, residentEntry);
 		this.entryOrdersById.set(residentEntry.id, this.fileEntries.length - 1);
@@ -1245,7 +1341,6 @@ export class SessionManager {
 		this.fullEntryCount++;
 		this._accumulateUsage(residentEntry);
 		this.mutationCount++;
-		this._persist(residentEntry);
 	}
 
 	/**
@@ -1523,8 +1618,8 @@ export class SessionManager {
 			timestamp: new Date().toISOString(),
 			name: sanitizedName,
 		};
-		this.sessionNameCache = sanitizedName || undefined;
 		this._appendEntry(entry);
+		this.sessionNameCache = sanitizedName || undefined;
 		return entry.id;
 	}
 
@@ -1914,7 +2009,6 @@ export class SessionManager {
 			throw new Error(`Entry ${branchFromId} not found`);
 		}
 		const fromId = this.leafId ?? "root";
-		this.leafId = branchFromId;
 		const entry: BranchSummaryEntry = {
 			type: "branch_summary",
 			id: generateId(this.byId),

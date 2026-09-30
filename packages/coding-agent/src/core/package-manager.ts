@@ -2413,7 +2413,7 @@ export class DefaultPackageManager implements PackageManager {
 			);
 		}
 
-		if (resolve(legacyProjectBaseDir) !== resolve(projectBaseDir)) {
+		if (projectTrusted && resolve(legacyProjectBaseDir) !== resolve(projectBaseDir)) {
 			const legacyProjectMetadata: PathMetadata = {
 				...projectMetadata,
 				baseDir: legacyProjectBaseDir,

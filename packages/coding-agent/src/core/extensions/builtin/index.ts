@@ -7,6 +7,7 @@ import askUserExtension from "./ask-user/index.ts";
 import bashTimeoutExtension from "./bash-timeout/index.ts";
 import btwExtension from "./btw/index.ts";
 import cacheKeepAliveExtension from "./cache-keepalive/index.ts";
+import chatReplyScrubExtension from "./chat-reply-scrub/index.ts";
 import compactionExtension from "./compaction/index.ts";
 import configReloadExtension from "./config-reload/index.ts";
 import cursorCliOauthExtension from "./cursor-cli-oauth/index.ts";
@@ -75,6 +76,8 @@ export const builtinExtensions: BuiltinExtensionFactory[] = [
 	// Follows imagegen so the native injector's bypass wiring observes the registered client tool.
 	{ id: "openai-image-gen", factory: openaiImageGenExtension },
 	{ id: "prompt-preset", factory: promptPresetExtension },
+	// Follows prompt-preset (both key on the prompt surface) so later message_end handlers see the scrubbed reply.
+	{ id: "chat-reply-scrub", factory: chatReplyScrubExtension },
 	{ id: "todowrite", factory: todowriteExtension },
 	{ id: "redraws", factory: redrawsExtension },
 	{ id: "anthropic-web-search", factory: anthropicWebSearchExtension },

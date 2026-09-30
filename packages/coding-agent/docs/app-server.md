@@ -35,6 +35,9 @@ senpi app-server --listen stdio://
 `unix:///abs/path` in the `--listen` grammar for local-control socket addresses, but this document does not cover
 daemon lifecycle or control-socket management.
 
+Load extensions into every thread with repeated `--extension <path>`, the same sources the global flag accepts.
+`senpi app-server daemon start` passes them to the daemon and records them, so `restart` keeps them.
+
 ## Protocol Overview
 
 App Server mode speaks JSON-RPC-shaped messages without a `jsonrpc` field. A request has `id`, `method`, and optional
@@ -351,6 +354,11 @@ Response:
 ```json
 {"id":12,"error":{"code":-32600,"message":"Thread not found: missing-thread"}}
 ```
+
+Input whose first token looks like a command that nothing handles (`/foo bar`; `/tmp/a.txt` is a path) is refused
+before any turn starts: no `turn/started` or user item is emitted, and the request fails with code `-32602` and
+`data: {"errorCode": "unknown_command", "command", "suggestions", "reason"}` (the same fields as RPC `prompt`).
+To send such text as a message, repeat the request with the senpi extension field `"unknownCommandAsText": true`.
 
 ### turn/steer
 

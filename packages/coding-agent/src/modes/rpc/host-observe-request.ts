@@ -9,6 +9,8 @@
  *
  * Only the two side-effect-free reads can observe: `observe: true` on any other command is ignored
  * and the connection attaches, so a client cannot hold a session while its host idles out under it.
+ * `warm` never attaches, marked or not: it opens nothing, so a host that only received it idles out
+ * on its normal deadline (senpi#2314).
  * Hosts that predate the field ignore it (commands are parsed by `type`), so a marked read works
  * against every generation.
  */
@@ -26,5 +28,6 @@ export function isObservingRequest(line: string): boolean {
 	}
 	if (typeof request !== "object" || request === null || Array.isArray(request)) return false;
 	const record = request as Readonly<Record<string, unknown>>;
+	if (record.type === "warm") return true;
 	return record[OBSERVE_REQUEST_FIELD] === true && OBSERVING_COMMANDS.has(record.type);
 }

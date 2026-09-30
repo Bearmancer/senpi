@@ -16,7 +16,9 @@ Model fallback chains and hint-aware 429 retry policy for `agent-session.ts`. Pu
 | `hint-policy.ts` | Pure 429 hint tiers (`no-hint-fast-fallback` / `tier1-in-turn` / `tier2-fallback-probe-back` / `tier3-fallback-only`) + probe schedule math |
 | `probe-scheduler.ts` | ONE armed probe plan per session, max two probes (half-hint, then deadline), injected `setTimeout`/`clearTimeout` |
 | `cooldown.ts` | `SelectorCooldowns`: runtime-only selector suppression, injected `now`/`random`, honors `retryAfterMs` |
-| `billing.ts` | Billing-class failure detection — billing fallbacks are PINNED (never revert on cooldown expiry) |
+| `billing.ts` | Billing-class failure detection — billing fallbacks are PINNED (never revert on cooldown expiry) when the billing hit the chain's original model or its account |
+| `pin.ts` | `pinAfterSwitch`: pin provenance after one switch (refusal pins; billing pins only when it hit the original or its account) |
+| `unusable.ts` | `UnusableEntries`: providers (account limit/billing) and entries (model-scoped exhaustion) this session saw refuse to serve, on the session cooldowns; the chain tries spent providers last and never rests on an unusable fallback |
 | `settings.ts` | `RetrySettings` shape (chains, `fallbackRevertPolicy`, provider retry timeouts) resolved via `settings-manager.ts` |
 | `validate.ts` | Chain validation with per-selector warnings (unknown models, unsupported thinking levels) |
 | `log.ts` | `fallback.log` writer: 5 MiB cap, key allow/blocklists, secret scrubbing |
@@ -36,7 +38,7 @@ Model fallback chains and hint-aware 429 retry policy for `agent-session.ts`. Pu
 
 - Everything time- or randomness-dependent is injected (`now`, `random`, `setTimeout`/`clearTimeout`) — tests drive it deterministically with fake timers; never read `Date.now()` directly here.
 - Cooldowns and circuits are runtime-only and deliberately never persisted to settings or session files. Cooldowns are per session; circuits are shared by every session in the process on one agent dir (`/new`, `/resume`, `/fork` and in-process subagents included), open only on `transient`/`billing` fall-out, and never make a chain refuse a turn.
-- Billing-class errors pin the fallback candidate as the session model and NEVER release; refusal pins release when a senpi-owned compaction successfully applies (context changed => one fresh primary attempt); `transient`/`hard-error` fallbacks revert per `fallbackRevertPolicy` (`cooldown-expiry` | `never`).
+- Billing-class errors on the chain's original model (or its account) pin the fallback candidate as the session model and NEVER release; billing on a fallback target from another account never pins, and a session parked on an unusable fallback returns to the original at the next turn boundary regardless of cooldown or revert policy (senpi#2376); refusal pins release when a senpi-owned compaction successfully applies (context changed => one fresh primary attempt); `transient`/`hard-error` fallbacks revert per `fallbackRevertPolicy` (`cooldown-expiry` | `never`).
 - `canonicalizeFallbackChains` is memoized on chains content — provider-error handling calls it several times per error.
 - `fallback.log` scrubs by construction: blocked keys (`headers`, `env`, `authorization`, …), allowlisted data keys only, bearer/api-key text patterns truncated.
 - Consumers: `agent-session.ts` (controller wiring), `settings-manager.ts` (resolution), `builtin/model-fallback/` (validate + canonicalize for `/model-fallback`), `builtin/cursor-cli-oauth/settings.ts` (`isFallbackEligible` probe).

@@ -262,30 +262,7 @@ export function mergeExtensionMcpServers(
 	}
 }
 
-/**
- * Resolve a skill-declared MCP server (mcp.json sidecar or SKILL.md
- * frontmatter). Exposure is forced to search with no directTools so the
- * catalog registers with ZERO active tools until the owning skill loads
- * (0 pre-load payload tokens); lifecycle stays lazy.
- */
-export function resolveSkillMcpServer(
-	name: string,
-	raw: NonNullable<RawConfig["mcpServers"]>[string],
-	sourcePath: string,
-): ResolvedMcpServer {
-	const config = { ...normalizeServer(raw), directTools: [], exposure: "search" as const };
-	return {
-		config,
-		configHash: hashConfig(config),
-		name,
-		source: "skill",
-		sourcePath,
-		state: config.enabled ? "enabled" : "disabled",
-		transport: config.type,
-	};
-}
-
-function normalizeServer(server: NonNullable<RawConfig["mcpServers"]>[string]): McpServerConfig {
+export function normalizeServer(server: NonNullable<RawConfig["mcpServers"]>[string]): McpServerConfig {
 	const type = server.type ?? (server.url ? "http" : "stdio");
 	return {
 		args: server.args ?? [],
@@ -314,7 +291,7 @@ function interpolateConfig(
 	return resolved;
 }
 
-function interpolateValue(value: unknown, path: string, env: Record<string, string | undefined>): unknown {
+export function interpolateValue(value: unknown, path: string, env: Record<string, string | undefined>): unknown {
 	if (typeof value === "string") return interpolateString(value, path, env);
 	if (Array.isArray(value)) return value.map((item, index) => interpolateValue(item, `${path}.${index}`, env));
 	if (typeof value === "object" && value !== null) {
@@ -340,7 +317,7 @@ function interpolateString(value: string, path: string, env: Record<string, stri
 	);
 }
 
-function hashConfig(config: McpServerConfig): string {
+export function hashConfig(config: McpServerConfig): string {
 	// startupTimeoutMs is a client-side startup-race policy, not a connection or
 	// catalog-shape input. Excluding it from the identity hash keeps the catalog
 	// cache valid across upgrades (configs written before the field existed hash

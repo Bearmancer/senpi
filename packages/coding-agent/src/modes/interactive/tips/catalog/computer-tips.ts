@@ -10,7 +10,7 @@ export const COMPUTER_TIPS = [
 		bindings: [],
 		requiresCommand: "computer",
 		render: () =>
-			"Your agent can use native apps too: screenshots, windows, clicks and typing. Run /computer to see whether this machine is ready.",
+			"Experimental: your agent can use native apps too: screenshots, windows, clicks and typing. Run /computer to see whether this machine is ready.",
 	},
 	{
 		id: "computer.stop-chord",

@@ -211,6 +211,10 @@ frontmatter block):
 }
 ```
 
+`${EXA_API_KEY}` expands from your environment for a skill you installed. A
+skill from an untrusted project keeps it literal, and a skill's remote servers
+never expand variables or send `bearerTokenEnv`; see
+[Environment variables in skill servers](mcp.md#environment-variables-in-skill-servers).
 See [Skill-carried MCP servers](mcp.md#skill-carried-mcp-servers) for the
 full declaration forms, collision rules, and reveal semantics.
 

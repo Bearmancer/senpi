@@ -42,6 +42,7 @@ import {
 	wrapStreamWithModelRecovery,
 } from "@earendil-works/pi-ai";
 import * as builtinProviderCatalog from "@earendil-works/pi-ai/providers/all";
+import { installClaudeCodeVersionFileStore } from "@earendil-works/pi-ai/utils/claude-code-version-cache";
 import { APP_NAME, BRAND, getAgentDir } from "../config.ts";
 import { operationSignal, raceWithAbortSignal } from "../utils/abort.ts";
 import { AuthStorage as DefaultAuthStorage } from "./auth-storage.ts";
@@ -77,6 +78,19 @@ interface ModelRuntimeSnapshot {
 	configuredProviders: ReadonlySet<string>;
 	storedProviders: ReadonlySet<string>;
 	auth: ReadonlyMap<string, AuthCheck | undefined>;
+}
+
+/**
+ * The Claude Code version the Anthropic OAuth fingerprint advertises is cached beside
+ * models.json, so every runtime on this agent directory shares one background lookup per
+ * six hours. An in-memory runtime (`modelsPath: null`) keeps pi-ai's bundled floor.
+ */
+function installClaudeCodeVersionCache(modelsPath: string | undefined): void {
+	if (modelsPath === undefined) return;
+	installClaudeCodeVersionFileStore({
+		path: join(dirname(modelsPath), "claude-code-version.json"),
+		offline: envValue("OFFLINE") !== undefined,
+	});
 }
 
 export interface CreateModelRuntimeOptions {
@@ -266,6 +280,7 @@ export class ModelRuntime implements Models {
 		const credentials = new RuntimeCredentials(options.credentials ?? DefaultAuthStorage.create(options.authPath));
 		const modelsPath =
 			options.modelsPath === null ? undefined : (options.modelsPath ?? join(getAgentDir(), "models.json"));
+		installClaudeCodeVersionCache(modelsPath);
 		const config = await ModelConfig.load(modelsPath);
 		const modelsStore =
 			options.modelsStore ??
@@ -320,6 +335,7 @@ export class ModelRuntime implements Models {
 		const credentials = new RuntimeCredentials(options.credentials ?? DefaultAuthStorage.create(options.authPath));
 		const modelsPath =
 			options.modelsPath === null ? undefined : (options.modelsPath ?? join(getAgentDir(), "models.json"));
+		installClaudeCodeVersionCache(modelsPath);
 		const config = ModelConfig.loadSync(modelsPath);
 		const modelsStore =
 			options.modelsStore ??
@@ -740,7 +756,13 @@ export class ModelRuntime implements Models {
 		);
 		if (configured) return configured;
 		const check = this.snapshot.auth.get(providerId);
-		return check ? { configured: true, source: "environment", label: check.source } : { configured: false };
+		if (!check) return { configured: false };
+		return {
+			configured: true,
+			source: "environment",
+			label: check.source,
+			...(check.ambient ? { ambient: true } : {}),
+		};
 	}
 
 	private async prepareRequest<TOptions extends ProviderRequestOptions & ModelsRequestTransforms>(

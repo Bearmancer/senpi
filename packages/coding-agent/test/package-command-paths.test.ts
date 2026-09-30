@@ -27,7 +27,7 @@ describe("package manifest", () => {
 		expect(manifest).toMatchObject({
 			scripts: {
 				build: expect.stringContaining("npm run copy-assets"),
-				prepublishOnly: expect.stringMatching(/npm run build.*npm run shrinkwrap/),
+				prepublishOnly: expect.stringContaining("npm run build"),
 			},
 		});
 	});

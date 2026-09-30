@@ -209,6 +209,16 @@ const RETRYABLE_PROVIDER_ERROR_PATTERN = buildProviderErrorPattern([
 	// gRPC based providers (e.g. NVIDIA NIM)
 	"ResourceExhausted",
 
+	// Claude subscription per-request rejection that names no policy reason:
+	// `{"type":"error","error":{"type":"forbidden","message":"Request not allowed"}}`
+	// (senpi#2376). The same credential answered neighbouring requests with 200 and
+	// the burst ended by itself, so a bounded same-model retry recovers where an
+	// immediate fallback hop stranded the session. Anchored on the exact `forbidden`
+	// type plus the reason-less message, in either field order, so permission_error
+	// and forbidden rejections that carry a reason stay terminal.
+	'"type"\\s*:\\s*"forbidden"\\s*,\\s*"message"\\s*:\\s*"Request not allowed\\.?"',
+	'"message"\\s*:\\s*"Request not allowed\\.?"\\s*,\\s*"type"\\s*:\\s*"forbidden"',
+
 	// Claude Agent SDK session.json lock contention. A second stream/resume
 	// hits proper-lockfile while the previous subprocess still holds the file.
 	// Same-process retry recovers; hopping providers cannot release that lock.

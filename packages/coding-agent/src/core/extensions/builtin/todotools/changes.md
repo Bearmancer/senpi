@@ -1,5 +1,42 @@
 # todotools Fork Tracker
 
+## 2026-09-30 - No handoff cue on the chat surface (senpi#2398)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/todotools/tools/todo.ts`: the handoff moment is skipped when the session's prompt surface (`ctx.getSystemPromptOptions().surface`, else `resolvePromptSurface(process.env)`) is `chat`, so no "Handoff due ... write the Ask / For you / Now / Next block" line is appended. Terminal and app keep the cue.
+- `test/suite/todo-handoff-cue.test.ts`: the four-call harness run asserts the cues on `terminal` and `app` and no cue on `chat`.
+
+### Why
+
+- The chat surface's prompt has no handoff block; a cue asking for one would bring it back right before the reply.
+
+### Why an extension could not handle it
+
+- This is the todotools extension itself; no core file changed.
+
+### Expected merge conflict zones
+
+- Fork-only file. The cue call in `tools/todo.ts` `execute`.
+
+## 2026-09-29 - The all-closed handoff cue stops handing the model an English `none` to copy (senpi#2366)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/todotools/todo-format.ts`: `HANDOFF_CUES["all-closed"]` says `the Ask / For you / Now / Next block, with Now and Next saying no task remains` instead of `the Ask / For you / Now: none / Next: none block`.
+
+### Why
+
+- The cue lands right before the final message, and a Korean-rule run on `claude-opus-5-5` copied its literal `Now: none. Next: none.` into an otherwise Korean handoff. The shared handoff rule (`dynamic-prompt/handoff.ts` `HANDOFF_LANGUAGE_RULE`) keeps the labels fixed and puts the slot contents in the user's language; the cue now describes the slot contents instead of dictating English ones. Same length.
+
+### Why an extension could not handle it
+
+- This is the todotools extension itself; no core file changed.
+
+### Expected merge conflict zones
+
+- None (fork-only file).
+
 ## 2026-09-28 - The first-turn opener stops forcing a model that refused a forced choice (senpi#2218)
 
 ### What changed

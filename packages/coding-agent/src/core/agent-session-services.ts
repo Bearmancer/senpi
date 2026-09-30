@@ -63,6 +63,7 @@ export interface CreateAgentSessionFromServicesOptions {
 	sessionManager: SessionManager;
 	sessionStartEvent?: SessionStartEvent;
 	model?: Model<any>;
+	initialModelProvenance?: CreateAgentSessionOptions["initialModelProvenance"];
 	thinkingLevel?: ThinkingLevel;
 	thinkingSelection?: ThinkingSelection;
 	scopedModels?: Array<{
@@ -82,6 +83,7 @@ export interface CreateAgentSessionFromServicesOptions {
 	noTools?: CreateAgentSessionOptions["noTools"];
 	customTools?: ToolDefinition[];
 	autoTitleSessions?: boolean;
+	promptSurface?: CreateAgentSessionOptions["promptSurface"];
 }
 
 /**
@@ -253,6 +255,7 @@ export async function createAgentSessionFromServices(
 		resourceLoader: options.services.resourceLoader,
 		sessionManager: options.sessionManager,
 		model: options.model,
+		initialModelProvenance: options.initialModelProvenance,
 		thinkingLevel: options.thinkingLevel,
 		thinkingSelection: options.thinkingSelection,
 		scopedModels: options.scopedModels,
@@ -263,5 +266,6 @@ export async function createAgentSessionFromServices(
 		customTools: options.customTools,
 		sessionStartEvent: options.sessionStartEvent,
 		autoTitleSessions: options.autoTitleSessions,
+		promptSurface: options.promptSurface,
 	});
 }

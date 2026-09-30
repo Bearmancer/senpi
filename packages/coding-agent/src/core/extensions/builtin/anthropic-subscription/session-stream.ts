@@ -1,9 +1,11 @@
 import type { Api, Context, Model, SimpleStreamOptions } from "@earendil-works/pi-ai";
 import { type AuthenticatedAttemptInput, queryWithAuthLane } from "./auth-lane.ts";
+import { coldSeedOverflow } from "./cold-seed-budget.ts";
 import { buildPromptBlocks } from "./prompt-bridge.ts";
 import { dedupeUltraworkBlocks, serializedPayloadBytes } from "./prompt-directive-dedupe.ts";
 import type { SDKMessage, SDKUserMessage } from "./sdk-boundary.ts";
 import { getSdkBoundary } from "./sdk-boundary.ts";
+import { reattachRecoveringCheckpoint } from "./session-checkpoint-recovery.ts";
 import { type ContinuityDecision, decideNativeContinuity } from "./session-continuity.ts";
 import {
 	type ContinuityObservation,
@@ -13,7 +15,7 @@ import {
 	sanitizeTerminalFailure,
 	stageContinuityDecision,
 } from "./session-observability.ts";
-import { bindingFromEntry, bindingInvalidationReason, getBinding, reattachSession } from "./session-reattach.ts";
+import { bindingFromEntry, bindingInvalidationReason, getBinding } from "./session-reattach.ts";
 import {
 	type AnthropicSubscriptionSessionEntry,
 	closeSession,
@@ -43,6 +45,8 @@ export type ResidentSessionStreamInput = {
 	toolWatchNote?: string;
 	onResumeFallback: (error: unknown) => void;
 	onContinuityDecision?: (observation: ContinuityObservation) => void;
+	/** Called once per attempt, before dispatch, with whether it re-sends the whole history. */
+	onDispatchShape?: (coldSeed: boolean) => void;
 };
 
 function userMessage(content: SDKUserMessage["message"]["content"]): SDKUserMessage["message"] {
@@ -131,13 +135,14 @@ async function createResidentAttempt(
 			: undefined;
 		try {
 			if (!binding) throw new Error("Anthropic Subscription continuity binding is unavailable");
-			entry = await reattachSession({
+			({ entry, from } = await reattachRecoveringCheckpoint({
 				binding,
 				options: auth.options,
 				...(decision.kind === "fork" ? { atUuid: decision.atUuid } : {}),
 				...(input.streamOptions.signal ? { signal: input.streamOptions.signal } : {}),
-			});
-			from = decision.from;
+				currentHashes: hashes,
+				authLane: auth.authLane,
+			}));
 		} catch (error) {
 			if (input.streamOptions.signal?.aborted) throw error;
 			input.onResumeFallback(error);
@@ -169,6 +174,14 @@ async function createResidentAttempt(
 	const flattenResult = flatten
 		? dedupeUltraworkBlocks(buildPromptBlocks(input.context, input.customToolNameToSdk, input.toolWatchNote))
 		: undefined;
+	input.onDispatchShape?.(flattenResult !== undefined);
+	const overBudget = flattenResult ? coldSeedOverflow(input.model, input.context, flattenResult.blocks) : undefined;
+	if (overBudget) {
+		// Never dispatch a re-send that cannot fit: the SDK cannot compact a single
+		// exchange, so the overflow must reach senpi's own compaction instead.
+		closeSession(sessionId, "cold_seed_over_budget");
+		throw overBudget;
+	}
 	const blocks = flattenResult
 		? flattenResult.blocks
 		: buildDeltaPromptBlocks(messages.slice(from), input.customToolNameToSdk);
@@ -185,6 +198,7 @@ async function createResidentAttempt(
 				? { collapsedDirectives: flattenResult.collapsedDirectives }
 				: {}),
 		}),
+		sessionId,
 		input.onContinuityDecision,
 		// The pending close cause is consumed only when the staged observation
 		// actually emits (attempt retained) — a discarded attempt leaves the
@@ -198,9 +212,11 @@ export async function* residentSessionMessages(input: ResidentSessionStreamInput
 	try {
 		yield* residentAuthLaneMessages(input);
 	} catch (error) {
-		// Every attempt failed: the turn yields exactly one terminal observation.
+		// Every attempt failed: the turn yields exactly one terminal observation. It is `failed`,
+		// not `flatten`: nothing was re-sent, and the retry checkpoint still resumes the lineage.
 		emitContinuityObservation(
-			{ kind: "flatten", reason: sanitizeTerminalFailure(error) },
+			{ kind: "failed", reason: sanitizeTerminalFailure(error) },
+			input.streamOptions.sessionId,
 			input.onContinuityDecision,
 		);
 		throw error;

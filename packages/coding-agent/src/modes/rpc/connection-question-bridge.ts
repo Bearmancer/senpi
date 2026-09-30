@@ -1,4 +1,5 @@
 import type { ExtensionUIContext, QuestionRequest, QuestionResponse } from "../../core/extensions/types.ts";
+import { settledQuestionStatus, unansweredQuestionIds } from "./extension-ui-response.ts";
 import type { RpcExtensionUIProgress, RpcExtensionUIResponse, RpcQuestionUiRequest } from "./rpc-types.ts";
 
 type Options = Parameters<NonNullable<ExtensionUIContext["question"]>>[1];
@@ -45,10 +46,7 @@ export class ConnectionQuestionBridge {
 			let comment: string | undefined;
 			let timer: ReturnType<typeof setTimeout> | undefined;
 			let finished = false;
-			const unanswered = () =>
-				request.questions
-					.filter((q) => !answers[q.id]?.selected.length && !answers[q.id]?.text?.trim())
-					.map((q) => q.id);
+			const unanswered = () => unansweredQuestionIds(request.questions, answers);
 			const finish = (status: QuestionResponse["status"]) => {
 				if (finished) return;
 				finished = true;
@@ -113,8 +111,9 @@ export class ConnectionQuestionBridge {
 					if (!("answers" in response)) return false;
 					answers = response.answers;
 					comment = response.comment;
-					if (!comment?.trim() && Object.keys(answers).length === 0) return false;
-					finish(comment?.trim() ? "comment-submitted" : "answered");
+					const status = settledQuestionStatus(answers, comment);
+					if (status === undefined) return false;
+					finish(status);
 					return true;
 				},
 			});

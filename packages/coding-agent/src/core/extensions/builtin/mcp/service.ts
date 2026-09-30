@@ -8,7 +8,7 @@ import {
 } from "../tool-search/service.ts";
 import { resolveAuthMode } from "./auth/context.ts";
 import { getValidCachedServer, readMcpCatalogCache } from "./catalog-cache.ts";
-import { loadMcpConfig, mergeExtensionMcpServers, resolveSkillMcpServer, visitSpawnableMcpServers } from "./config.ts";
+import { loadMcpConfig, mergeExtensionMcpServers, visitSpawnableMcpServers } from "./config.ts";
 import type { McpServerConfig, ResolvedMcpConfig, ResolvedMcpServer } from "./config-schema.ts";
 import type { ServerConnection } from "./connection.ts";
 import { collectAllPages } from "./expose/pagination.ts";
@@ -40,6 +40,8 @@ import type {
 	McpWireStatusSnapshot,
 	McpWireTool,
 } from "./service-types.ts";
+import { resolveSkillMcpServer } from "./skill-server.ts";
+import type { SkillServerRegistration } from "./skills.ts";
 import {
 	MCP_ATTACH_SETTLE_TIMEOUT_MS,
 	McpDeferredAttach,
@@ -79,6 +81,7 @@ export class McpService {
 	#tierBRegistration: McpSessionRegistration | undefined;
 	#toolSearchService: ToolSearchService | undefined;
 	#sessionOptions: McpSessionOptions = {};
+	readonly #skillServerWarnings = new Set<string>();
 	#pi: Pick<ExtensionAPI, "getActiveTools" | "setActiveTools" | "registerTool"> | undefined;
 	#attachQueue: Promise<void> = Promise.resolve();
 	readonly #deferredAttach = new McpDeferredAttach();
@@ -104,6 +107,7 @@ export class McpService {
 	): Promise<void> {
 		const attach = this.#attachQueue.then(async () => {
 			this.#sessionContext = ctx;
+			this.#skillServerWarnings.clear();
 			this.#sessionStartCount += 1;
 			this.#lastSessionStartReason = event.reason;
 			// Bind the agent dir at attach time: the startup race can background
@@ -160,15 +164,15 @@ export class McpService {
 	 * into search mode with no directTools, so their catalogs register with
 	 * ZERO active tools until activateSkillMcpTools reveals them. A name
 	 * collision with a system-configured server keeps the system config and
-	 * returns a warning (system wins).
+	 * returns a warning (system wins). `${VAR}` expansion follows the declaring
+	 * skill's trust (skill-server.ts); each trust warning is returned once per session.
 	 */
-	async attachSkillMcpServers(
-		declared: ReadonlyMap<string, { raw: Parameters<typeof resolveSkillMcpServer>[1]; sourcePath: string }>,
-	): Promise<string[]> {
+	async attachSkillMcpServers(declared: ReadonlyMap<string, SkillServerRegistration>): Promise<string[]> {
 		const config = this.#config;
 		const pi = this.#pi;
 		if (config === null || pi === undefined) return [];
 		const warnings: string[] = [];
+		const projectTrusted = this.#sessionOptions.projectTrusted ?? this.#sessionContext?.isProjectTrusted() ?? false;
 		let added = 0;
 		for (const [name, decl] of declared) {
 			const existing = config.servers[name];
@@ -178,7 +182,16 @@ export class McpService {
 				);
 				continue;
 			}
-			const resolved = resolveSkillMcpServer(name, decl.raw, decl.sourcePath);
+			const { server: resolved, warning } = resolveSkillMcpServer(name, decl.raw, decl.sourcePath, {
+				env: this.#sessionOptions.env,
+				skillName: decl.skillName,
+				trusted: decl.scope === "project" || decl.scope === undefined ? projectTrusted : true,
+			});
+			if (warning !== undefined && !this.#skillServerWarnings.has(warning)) {
+				this.#skillServerWarnings.add(warning);
+				warnings.push(warning);
+			}
+			if (resolved === undefined) continue;
 			if (existing !== undefined && existing.configHash === resolved.configHash) continue;
 			config.servers[name] = resolved;
 			added += 1;

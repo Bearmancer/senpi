@@ -55,7 +55,13 @@ describe("daemon state directory v2", () => {
 		const identity = join(qa.daemonDir, "endpoint.json");
 		const written = await readFile(identity, "utf8");
 
-		expect(JSON.parse(written)).toEqual({ layout: 2, socket: qa.socket, created_at: expect.any(String) });
+		expect(JSON.parse(written)).toEqual({
+			layout: 2,
+			registry_version: 1,
+			endpoint_kind: "rpc_host",
+			socket: qa.socket,
+			created_at: expect.any(String),
+		});
 		expect(await permissions(identity)).toBe(0o600);
 		const stopped = await stopHost({ socket: qa.socket, agentDir: qa.agentDir, force: true });
 		expect(stopped.action).toBe("stopped");

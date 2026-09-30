@@ -19,6 +19,7 @@ import type {
 	AutocompleteItem,
 	AutocompleteProvider,
 	EditorComponent,
+	EditorSubmitDetails,
 	Keybinding,
 	KeyId,
 	MarkdownTheme,
@@ -69,6 +70,7 @@ import {
 	getShareViewerUrl,
 } from "../../config.ts";
 import {
+	type AgentSession,
 	type AgentSessionEvent,
 	type AssistantEditResult,
 	parseSkillBlock,
@@ -122,6 +124,7 @@ import {
 } from "../../core/model-resolver.ts";
 import { CredentialSynchronizationError } from "../../core/model-runtime.ts";
 import type { ResourceDiagnostic } from "../../core/resource-loader.ts";
+import { usageLimitCause } from "../../core/retry-fallback/usage-limit.ts";
 import { formatMissingSessionCwdPrompt, MissingSessionCwdError } from "../../core/session-cwd.ts";
 import { createSessionLogger, type SessionLogger } from "../../core/session-log.ts";
 import { type SessionEntry, SessionManager, sessionEntryToContextMessages } from "../../core/session-manager.ts";
@@ -133,6 +136,7 @@ import { formatTimings, resetTimings, time } from "../../core/timings.ts";
 import { withBuiltInRenderers } from "../../core/tools/renderers/index.ts";
 import type { TruncationResult } from "../../core/tools/truncate.ts";
 import { hasTrustRequiringProjectResources, ProjectTrustStore } from "../../core/trust-manager.ts";
+import { UnknownCommandError } from "../../core/unknown-command.ts";
 import { getUsageCostBreakdown } from "../../core/usage-totals.ts";
 import {
 	consumeEarlyInspectorVmImportRecoveries,
@@ -202,6 +206,7 @@ import {
 	OAuthSelectorComponent,
 } from "./components/oauth-selector.ts";
 import { DEFAULT_TAIL_BUDGET, DEFAULT_WARM_CHUNK_SIZE } from "./components/progressive-transcript-container.ts";
+import { builtInMessageRenderer } from "./components/remote-delivery-message.ts";
 import { ScopedModelsSelectorComponent } from "./components/scoped-models-selector.ts";
 import { SessionSelectorComponent } from "./components/session-selector.ts";
 import { SettingsSelectorComponent } from "./components/settings-selector.ts";
@@ -225,7 +230,6 @@ import { expandEditorSubmission, expandSubmittedText, transferEditorContent } fr
 import { formatExtensionErrorHeadline, sanitizeTuiErrorMessage } from "./extension-error-format.ts";
 import { editFileInExternalEditor, editInExternalEditor } from "./external-editor.ts";
 import { GrokChrome, type InteractiveChrome, type InteractiveFooter } from "./grok/chrome.ts";
-import type { InteractiveSession } from "./interactive-host-runtime.ts";
 import {
 	prepareInteractiveStderrCapture,
 	restoreInteractiveStderr,
@@ -256,6 +260,8 @@ import { replayAssistantTools } from "./replay-assistant-tools.ts";
 import { allScopeSessions, chooseResumePath, currentScopeSessions } from "./resume-rebind.ts";
 import { isRiskyMainModel, RISKY_MAIN_MODEL_WARNING } from "./risky-main-model-warning.ts";
 import { maybeShowRuntimeNotice } from "./runtime-notice-presenter.ts";
+import { type SubmissionTicket, TuiSessionControlHost } from "./session-control-host.ts";
+import type { TuiControlContext } from "./session-control-lifecycle.ts";
 import { formatSessionFailureInfo } from "./session-failure-info.ts";
 import { DEFAULT_SMOOTH_FPS, StreamingRevealController } from "./streaming-reveal.ts";
 import {
@@ -285,6 +291,7 @@ import { ToolArgsRevealController } from "./tool-args-reveal.ts";
 import { readToolProgress } from "./tool-progress.ts";
 import { ToolResultRevealController } from "./tool-result-reveal.ts";
 import { createInteractiveTui, createInteractiveTuiReference } from "./tui-renderer.ts";
+import { reportUnknownCommand, submitsCommandAsText } from "./unknown-command-feedback.ts";
 import { formatDisplayVersion } from "./version-label.ts";
 import {
 	blendWorkingStatusShimmerRgbColor,
@@ -698,6 +705,9 @@ interface InteractiveUserInput {
 	images?: ImageContent[];
 	/** `undefined` for a submission that paints no echo, such as the manual-continue shortcut. */
 	pendingEchoId: string | undefined;
+	/** Typed after leading whitespace: send `/...` text to the model even when no command handles it. */
+	unknownCommandAsText?: boolean;
+	ticket?: SubmissionTicket;
 }
 
 /** Local copy of pi-tui's image-marker pattern so submission scanning never mutates a shared /g regex. */
@@ -789,6 +799,8 @@ export interface InteractiveModeOptions {
 	uiMode?: TuiMode;
 	/** Providers that were migrated to auth.json (shows warning) */
 	migratedProviders?: string[];
+	/** Config edits made in ~/.pi/agent after its copy, which this agent dir never reads (shows warning) */
+	legacyPiEditNotice?: string;
 	/** Runtime diagnostics collected during session creation. */
 	startupDiagnostics?: Array<{ type: "info" | "warning" | "error"; message: string }>;
 	/** Warning message if session model couldn't be restored */
@@ -812,59 +824,10 @@ export interface InteractiveModeOptions {
 	initialThemeSetting?: string;
 }
 
-/** Extension UI request forwarded from the shared interactive host. */
-type HostUiRequest = {
-	id: string;
-	method: string;
-	title?: string;
-	options?: string[];
-	message?: string;
-	prefill?: string;
-	placeholder?: string;
-	statusKey?: string;
-	statusText?: string;
-	widgetKey?: string;
-	widgetLines?: string[];
-	widgetPlacement?: "aboveEditor" | "belowEditor";
-	extensionName?: string;
-	text?: string;
-	requestId?: string;
-	toolCallId?: string;
-	waitForAnswer?: boolean;
-	questions?: QuestionRequest["questions"];
-	timeout?: number;
-	askedAtMs?: number;
-	deadlineAtMs?: number;
-	remainingMs?: number;
-};
-
-type HostUiResponse =
-	| { type: "extension_ui_response"; id: string; value: string }
-	| { type: "extension_ui_response"; id: string; confirmed: boolean }
-	| { type: "extension_ui_response"; id: string; cancelled: true }
-	| { type: "extension_ui_response"; id: string; answers: QuestionResponse["answers"]; comment?: string };
-
-/**
- * Optional runtime capability: only the shared interactive host proxies extension
- * UI requests back to this mode. The classic local runtime does not implement it.
- */
-type HostUiCapableRuntime = {
-	setHostUiHandler(callback?: (request: HostUiRequest) => Promise<HostUiResponse | undefined>): void;
-	setClientInfo?(width: number): void;
-	/** Draft updates for an open host-side `question` request (debounced by the caller). */
-	sendHostUiProgress?(record: {
-		type: "extension_ui_progress";
-		id: string;
-		answers?: QuestionResponse["answers"];
-		comment?: string;
-	}): void;
-};
-
 type QuestionOverlayOptions = ExtensionUIDialogOptions & {
 	onProgress?: (draft: QuestionDraft) => void;
 	getDeadlineAtMs?: () => number;
 	initialDraft?: QuestionDraft;
-	notifyArrival?: boolean;
 };
 
 /** A waitForAnswer=false question parked behind the collapsed editor widget. */
@@ -880,16 +843,13 @@ type AsyncQuestionState = {
 	finish: (response: QuestionResponse) => void;
 };
 
-function linesFactory(lines: string[] | undefined): ((tui: TUI, thm: Theme) => Component) | undefined {
-	if (lines === undefined) return undefined;
-	return () => {
-		const container = new Container();
-		for (const line of lines) container.addChild(new Text(line, 1, 0));
-		return container;
-	};
-}
-
 export class InteractiveMode {
+	private static confirmsRefusedUnknownCommand(host: InteractiveMode, text: string): boolean {
+		const confirmed = host.refusedUnknownCommandText === text;
+		host.refusedUnknownCommandText = undefined;
+		return confirmed;
+	}
+
 	private static restoreCompactionEscapeOverride(host: InteractiveMode): void {
 		if (!host.compactionEscapeOverrideActive) return;
 		host.defaultEditor.onEscape = host.autoCompactionEscapeHandler;
@@ -937,6 +897,8 @@ export class InteractiveMode {
 	private onInputCallback?: (input: InteractiveUserInput) => void;
 	private pendingUserInputs: InteractiveUserInput[] = [];
 	private agentIdle = false;
+	// One unsaved-turn notice per run, however many of its messages the session file refused.
+	private transcriptWriteNoticeShown = false;
 	private readonly optimisticUserEchoes: OptimisticUserEchoController;
 	/**
 	 * Clipboard images pasted into the composer, keyed by their visible
@@ -946,6 +908,10 @@ export class InteractiveMode {
 	 * {@link reconcilePendingImages}.
 	 */
 	private pendingImages = new Map<number, ImageContent>();
+	/** Lets an extension expose this session on a control endpoint; the endpoint module loads on first use. */
+	private readonly sessionControlHost: TuiSessionControlHost = new TuiSessionControlHost(() =>
+		this.sessionControlContext(),
+	);
 	/**
 	 * Images pre-resolved by handleFollowUp's non-streaming branch, which hands
 	 * off through the public string-only `onSubmit(text)` API. Set BEFORE that
@@ -976,6 +942,8 @@ export class InteractiveMode {
 
 	private lastSigintTime = 0;
 	private lastEscapeTime = 0;
+	/** The last refused unknown-command text; submitting it again unchanged sends it as a message. */
+	private refusedUnknownCommandText: string | undefined;
 	private changelogMarkdown: string | undefined = undefined;
 	private startupNoticesShown = false;
 	private anthropicSubscriptionWarningShown = false;
@@ -1070,7 +1038,6 @@ export class InteractiveMode {
 	private shownQuestionId: string | undefined;
 	private questionSurface: "collapsed" | "list" | "expanded" = "collapsed";
 	private composerDestination: { kind: "chat" } | { kind: "answer"; requestId: string } = { kind: "chat" };
-	private readonly questionArrivalEpochMs = Date.now();
 	private blockingQuestionHeader: string | undefined;
 	private wantsMouseLease = false;
 	private releaseMouseLease?: () => void;
@@ -1110,9 +1077,7 @@ export class InteractiveMode {
 	private themeController: InteractiveThemeController;
 
 	// Convenience accessors
-	// The session may be the local AgentSession or the shared-host RPC proxy; the
-	// four reads widened on InteractiveSession must be awaited at every call site.
-	private get session(): InteractiveSession {
+	private get session(): AgentSession {
 		return this.runtimeHost?.session;
 	}
 	private get sessionManager() {
@@ -1137,10 +1102,6 @@ export class InteractiveMode {
 			await this.rebindCurrentSession({ renderBeforeBind: true });
 			await this.themeController.applyFromSettings();
 		});
-		// Host-driven extension UI only exists on the shared-host lane; the classic
-		// local runtime renders extension UI in-process and has no such hook.
-		const hostUiRuntime = this.runtimeHost as Partial<HostUiCapableRuntime>;
-		hostUiRuntime.setHostUiHandler?.((request) => this.handleHostUiRequest(request as HostUiRequest));
 		this.version = DISPLAY_VERSION;
 		this.renderer = createInteractiveTui({
 			tuiMode,
@@ -1327,8 +1288,7 @@ export class InteractiveMode {
 		const thinkingCommand = slashCommands.find((command) => command.name === "thinking");
 		if (thinkingCommand) {
 			thinkingCommand.getArgumentCompletions = async (prefix: string): Promise<AutocompleteItem[] | null> => {
-				// Awaited at the boundary: the shared-host proxy answers this over RPC.
-				const levels = await this.session.getAvailableThinkingLevels();
+				const levels = this.session.getAvailableThinkingLevels();
 				return createFuzzyAutocompleteItems(
 					levels,
 					prefix,
@@ -1353,6 +1313,7 @@ export class InteractiveMode {
 			.map((cmd) => ({
 				name: cmd.invocationName,
 				description: this.prefixAutocompleteDescription(cmd.description, cmd.sourceInfo),
+				...(cmd.argumentHint && { argumentHint: cmd.argumentHint }),
 				getArgumentCompletions: cmd.getArgumentCompletions,
 			}));
 
@@ -1366,6 +1327,7 @@ export class InteractiveMode {
 				skillCommandList.push({
 					name: commandName,
 					description: this.prefixAutocompleteDescription(skill.description, skill.sourceInfo),
+					...(skill.argumentHint && { argumentHint: skill.argumentHint }),
 				});
 			}
 		}
@@ -1616,7 +1578,6 @@ export class InteractiveMode {
 			throw error;
 		}
 		this.isInitialized = true;
-		(this.runtimeHost as Partial<HostUiCapableRuntime> | undefined)?.setClientInfo?.(this.ui.terminal.columns);
 		time("componentTree+uiStart", "tui");
 
 		await this.themeController.applyFromSettings();
@@ -1713,6 +1674,7 @@ export class InteractiveMode {
 		// Enable the remaining input handlers only after managed-tool setup completes.
 		this.setupKeyHandlers();
 		this.setupEditorSubmitHandler();
+		this.sessionControlHost?.attachEditor(this.defaultEditor, () => this.composerHold() !== undefined);
 		this.ui.requestRender();
 		time("keyHandlers", "tui");
 
@@ -1818,6 +1780,7 @@ export class InteractiveMode {
 		// Show startup warnings
 		const {
 			migratedProviders,
+			legacyPiEditNotice,
 			startupDiagnostics,
 			modelFallbackMessage,
 			initialMessage,
@@ -1828,6 +1791,9 @@ export class InteractiveMode {
 
 		if (migratedProviders && migratedProviders.length > 0) {
 			this.showWarning(`Migrated credentials to auth.json: ${migratedProviders.join(", ")}`);
+		}
+		if (legacyPiEditNotice) {
+			this.showWarning(legacyPiEditNotice);
 		}
 		for (const diagnostic of startupDiagnostics ?? []) {
 			if (diagnostic.type === "warning") this.showWarning(diagnostic.message);
@@ -1887,8 +1853,12 @@ export class InteractiveMode {
 			} catch (error: unknown) {
 				this.optimisticUserEchoes.reject(userInput.pendingEchoId);
 				this.clearStatusIndicator("working");
+				if (error instanceof UnknownCommandError && this.reportUnknownCommandRejection(error, userInput.text))
+					continue;
 				const errorMessage = error instanceof Error ? error.message : "Unknown error occurred";
 				this.showError(errorMessage);
+			} finally {
+				userInput.ticket?.release();
 			}
 		}
 	}
@@ -2617,6 +2587,8 @@ export class InteractiveMode {
 	 * Initialize the extension system with TUI-based UI context.
 	 */
 	private async bindCurrentSessionExtensions(): Promise<void> {
+		await this.sessionControlHost?.disposeActive();
+		this.session.setControlEndpointHost?.(this.sessionControlHost);
 		const uiContext = this.createExtensionUIContext();
 		await this.session.bindExtensions({
 			uiContext,
@@ -2917,127 +2889,6 @@ export class InteractiveMode {
 			return await show();
 		} finally {
 			this.session.emitExtensionEvent("herdr:blocked", { active: false, id });
-		}
-	}
-
-	private async handleHostUiRequest(request: HostUiRequest): Promise<HostUiResponse | undefined> {
-		switch (request.method) {
-			case "select": {
-				const value = await this.withBlockedHostDialog(request.id, request.title ?? "", () =>
-					this.showExtensionSelector(request.title ?? "", request.options ?? []),
-				);
-				return value === undefined
-					? { type: "extension_ui_response", id: request.id, cancelled: true }
-					: { type: "extension_ui_response", id: request.id, value };
-			}
-			case "confirm":
-				return {
-					type: "extension_ui_response",
-					id: request.id,
-					confirmed: await this.withBlockedHostDialog(request.id, request.title ?? "", () =>
-						this.showExtensionConfirm(request.title ?? "", request.message ?? ""),
-					),
-				};
-			case "input": {
-				const value = await this.withBlockedHostDialog(request.id, request.title ?? "", () =>
-					this.showExtensionInput(request.title ?? "", request.placeholder),
-				);
-				return value === undefined
-					? { type: "extension_ui_response", id: request.id, cancelled: true }
-					: { type: "extension_ui_response", id: request.id, value };
-			}
-			case "editor": {
-				const value = await this.withBlockedHostDialog(request.id, request.title ?? "", () =>
-					this.showExtensionEditor(request.title ?? "", request.prefill),
-				);
-				return value === undefined
-					? { type: "extension_ui_response", id: request.id, cancelled: true }
-					: { type: "extension_ui_response", id: request.id, value };
-			}
-			case "question": {
-				const questions = request.questions ?? [];
-				if (questions.length === 0) {
-					return { type: "extension_ui_response", id: request.id, cancelled: true };
-				}
-				const remainingMs =
-					request.remainingMs !== undefined && request.remainingMs > 0 ? request.remainingMs : request.timeout;
-				const hostRuntime = this.runtimeHost as Partial<HostUiCapableRuntime>;
-				let progressTimer: ReturnType<typeof setTimeout> | undefined;
-				let lastDraft: { answers?: QuestionResponse["answers"]; comment?: string } | undefined;
-				const waitForAnswer = request.waitForAnswer ?? true;
-				// Async questions collapse into the editor widget; the host delivers the answer.
-				const show = waitForAnswer ? this.showQuestionOverlay : this.showAsyncQuestion;
-				const response = await show.call(
-					this,
-					{
-						requestId: request.requestId ?? "",
-						questions,
-						waitForAnswer,
-						timeoutMs: request.timeout ?? 0,
-					},
-					{
-						timeout: remainingMs,
-						notifyArrival: request.askedAtMs === undefined || request.askedAtMs >= this.questionArrivalEpochMs,
-						onProgress: (draft) => {
-							lastDraft = draft;
-							if (progressTimer !== undefined) return;
-							progressTimer = setTimeout(() => {
-								progressTimer = undefined;
-								hostRuntime.sendHostUiProgress?.({
-									type: "extension_ui_progress",
-									id: request.id,
-									...(lastDraft?.answers !== undefined ? { answers: lastDraft.answers } : {}),
-									...(lastDraft?.comment !== undefined ? { comment: lastDraft.comment } : {}),
-								});
-							}, 1_000);
-						},
-					},
-				);
-				if (progressTimer !== undefined) clearTimeout(progressTimer);
-				if (response.status === "cancelled") {
-					return { type: "extension_ui_response", id: request.id, cancelled: true };
-				}
-				// The host owns the idle timer; a locally expired countdown sends nothing.
-				if (response.status === "timed_out") return undefined;
-				return {
-					type: "extension_ui_response",
-					id: request.id,
-					answers: response.answers,
-					...(response.comment !== undefined ? { comment: response.comment } : {}),
-				};
-			}
-			case "notify":
-				this.showExtensionNotify(request.message ?? "");
-				return undefined;
-			case "setStatus":
-				this.setExtensionStatus(request.statusKey ?? "", request.statusText);
-				return undefined;
-			case "setTitle":
-				this.extensionTerminalTitle = request.title ?? "";
-				this.applyTerminalTitle();
-				return undefined;
-			case "set_editor_text":
-				this.editor.setText(request.text ?? "");
-				return undefined;
-			case "setWidget":
-				this.setExtensionWidget(request.widgetKey ?? "", request.widgetLines, {
-					placement: request.widgetPlacement,
-				});
-				return undefined;
-			case "setHeader":
-				this.setExtensionHeader(linesFactory(request.widgetLines));
-				return undefined;
-			case "setFooter":
-				this.setExtensionFooter(linesFactory(request.widgetLines));
-				return undefined;
-			case "custom_unsupported":
-				this.showExtensionNotify(
-					`${request.extensionName ?? "This extension"} requires the classic TUI; its component widget cannot be rendered in the shared host.`,
-					"warning",
-				);
-				return undefined;
-			default:
-				return undefined;
 		}
 	}
 
@@ -3945,8 +3796,7 @@ export class InteractiveMode {
 
 			this.blockingQuestionHeader = request.questions[0]?.header;
 			this.applyTerminalTitle();
-			if (opts?.notifyArrival !== false && this.settingsManager.getAskUserSettings().bell)
-				this.ui.terminal.write("\x07");
+			if (this.settingsManager.getAskUserSettings().bell) this.ui.terminal.write("\x07");
 			this.workingMessage = "Waiting for your answer";
 			this.updateWorkingIndicatorMessage();
 			this.askUserQuestion = new AskUserQuestionComponent(request, (response) => finish(response), {
@@ -4026,15 +3876,40 @@ export class InteractiveMode {
 		this.pendingQuestions.set(request.requestId, state);
 		this.pendingOrder.push(request.requestId);
 		this.shownQuestionId ??= request.requestId;
-		if (opts?.notifyArrival !== false && this.settingsManager.getAskUserSettings().bell)
-			this.ui.terminal.write("\x07");
+		if (this.settingsManager.getAskUserSettings().bell) this.ui.terminal.write("\x07");
 		opts?.signal?.addEventListener("abort", onAbort, { once: true });
 		this.refreshAsyncWidget();
 		return completion.promise;
 	}
 
+	private sessionControlContext(): Omit<TuiControlContext, "editorRevision"> {
+		return {
+			session: this.session,
+			agentDir: this.session.agentDir,
+			surface: {
+				draftHold: () => (this.sessionControlHost.submissionInFlight() ? "draft" : this.composerHold()),
+				blockingQuestion: () => this.askUserQuestion !== undefined,
+				pendingQuestionIds: () => [...this.pendingQuestions.keys()],
+				pendingQuestion: (requestId) => this.pendingQuestions.get(requestId)?.request,
+				answerQuestion: (requestId, response) => {
+					const state = this.pendingQuestions.get(requestId);
+					state?.finish(response);
+					return state !== undefined;
+				},
+				notice: (line) => this.showWarning(line),
+			},
+		};
+	}
+
+	/** What the user is composing, if anything: a held external delivery waits for it. */
+	private composerHold(): "attachment" | "draft" | undefined {
+		if (this.pendingImages.size > 0) return "attachment";
+		return this.editor.getText().trim() === "" ? undefined : "draft";
+	}
+
 	/** Only the visible surface ticks; extension deadlines remain authoritative. */
 	private refreshAsyncWidget(): void {
+		this.sessionControlHost?.questionsChanged();
 		this.syncQuestionMouseCapture();
 		this.applyTerminalTitle();
 		const state = this.shownQuestion;
@@ -4517,6 +4392,7 @@ export class InteractiveMode {
 		// Set up handlers on defaultEditor - they use this.editor for text access
 		// so they work correctly regardless of which editor is active
 		this.defaultEditor.onEscape = () => {
+			this.refusedUnknownCommandText = undefined;
 			if (this.session.isStreaming || this.session.retryAttempt > 0) {
 				void this.abortAndFireQueuedMessages().catch((error) =>
 					this.showError(error instanceof Error ? error.message : String(error)),
@@ -4780,7 +4656,7 @@ export class InteractiveMode {
 	}
 
 	private setupEditorSubmitHandler(): void {
-		this.defaultEditor.onSubmit = async (text: string) => {
+		this.defaultEditor.onSubmit = async (text: string, details?: EditorSubmitDetails) => {
 			try {
 				// Capture-then-clear BEFORE any branch: handleFollowUp's non-streaming
 				// path pre-resolves images and hands off here, but slash / extension /
@@ -4793,6 +4669,8 @@ export class InteractiveMode {
 				this.hideShortcutOverlay();
 				this.lastEditorText = "";
 				text = text.trim();
+				const unknownCommandAsText =
+					InteractiveMode.confirmsRefusedUnknownCommand(this, text) || submitsCommandAsText(text, details);
 				if (!text) {
 					// Enter on an empty editor opens the pending async question; it needs
 					// no chord, so it works under every terminal and keymap.
@@ -4873,7 +4751,13 @@ export class InteractiveMode {
 				}
 				if (text === "/answer" || text.startsWith("/answer ")) {
 					this.editor.setText("");
-					await this.handleAnswerCommand(text.slice("/answer".length).trim());
+					// `/answer skip` submits its text after an await: hold deliveries until it has.
+					const hold = this.session.externalAdmission?.beginInput({ command: true });
+					try {
+						await this.handleAnswerCommand(text.slice("/answer".length).trim());
+					} finally {
+						hold?.end();
+					}
 					return;
 				}
 				if (text === "/hotkeys") {
@@ -5001,7 +4885,7 @@ export class InteractiveMode {
 						this.editor.setText("");
 						await this.session.prompt(text);
 					} else {
-						this.queueCompactionSubmission(text, "steer");
+						this.queueCompactionSubmission(text, "steer", unknownCommandAsText);
 					}
 					return;
 				}
@@ -5012,21 +4896,31 @@ export class InteractiveMode {
 				// behavior here applies only to ordinary text, prompt template expansion,
 				// and queueing.
 				if (this.session.isStreaming) {
+					const ticket = this.sessionControlHost?.claimHandoff();
 					// Resolve BEFORE setText(""): the editor's prune chain fires
 					// onImageMarkersChanged([]) and destroys pendingImages.
 					const images = preResolvedImages ?? this.takeSubmissionImages(text);
 					this.editor.addToHistory?.(text);
 					this.editor.setText("");
 					const pendingEchoId = this.beginUserEcho(text, images);
+					const echoOptions = this.optimisticUserEchoes.promptOptions(pendingEchoId);
 					try {
 						await this.session.prompt(text, {
 							streamingBehavior: "steer",
 							...(images.length > 0 ? { images } : {}),
-							...this.optimisticUserEchoes.promptOptions(pendingEchoId),
+							...(unknownCommandAsText ? { unknownCommandAsText } : {}),
+							...echoOptions,
+							promptDisposition: (disposition) => {
+								echoOptions.promptDisposition(disposition);
+								ticket?.release();
+							},
 						});
 					} catch (error) {
 						this.optimisticUserEchoes.reject(pendingEchoId);
+						if (error instanceof UnknownCommandError && this.reportUnknownCommandRejection(error, text)) return;
 						throw error;
+					} finally {
+						ticket?.release();
 					}
 					this.updatePendingMessagesDisplay();
 					this.ui.requestRender();
@@ -5039,8 +4933,14 @@ export class InteractiveMode {
 
 				const images = preResolvedImages ?? this.takeSubmissionImages(text);
 				const pendingEchoId = this.beginUserEcho(text, images);
-				const submission: InteractiveUserInput =
-					images.length > 0 ? { text, images, pendingEchoId } : { text, pendingEchoId };
+				const ticket = this.sessionControlHost?.claimHandoff();
+				const submission: InteractiveUserInput = {
+					text,
+					pendingEchoId,
+					...(images.length > 0 ? { images } : {}),
+					...(unknownCommandAsText ? { unknownCommandAsText } : {}),
+					...(ticket ? { ticket } : {}),
+				};
 				if (this.onInputCallback) {
 					this.onInputCallback(submission);
 				} else {
@@ -5073,6 +4973,7 @@ export class InteractiveMode {
 		switch (event.type) {
 			case "agent_start":
 				this.agentIdle = false;
+				this.transcriptWriteNoticeShown = false;
 				this.clearPendingTools();
 				this.clearActiveToolExecutionStatus();
 				this.clearToolHookStatuses();
@@ -5377,6 +5278,17 @@ export class InteractiveMode {
 				this.showError(sanitizeTerminalLabel(event.errorMessage));
 				break;
 
+			case "transcript_write_failed": {
+				if (this.transcriptWriteNoticeShown) break;
+				this.transcriptWriteNoticeShown = true;
+				const reason =
+					/^[A-Z][A-Z0-9_]+(?=:)/.exec(event.errorMessage)?.[0] ?? sanitizeTerminalLabel(event.errorMessage);
+				this.showWarning(
+					`This turn was not saved to the session file (${reason}); the model will not see it after the next prompt.`,
+				);
+				break;
+			}
+
 			case "session_abort":
 				this.providerErrors?.clear();
 				this.clearStatusIndicator("retry");
@@ -5578,8 +5490,7 @@ export class InteractiveMode {
 			}
 
 			case "model_changed":
-				// Shared-host/other-client model switches arrive as model_changed wire
-				// events; the new model must not inherit the previous model's
+				// The new model must not inherit the previous model's
 				// SDK-delegation episode (post-#1188 core emits no repeat rejection to
 				// self-heal a stale marker).
 				this.externalOwnerCompactionNoticeShown = false;
@@ -5595,7 +5506,7 @@ export class InteractiveMode {
 				this.showNoticeBox({
 					title: `⇄ Model fallback · ${event.from} → ${event.to}`,
 					tone: "warning",
-					why: `Retry switched models (${event.reason}); the turn continues on ${event.to}.`,
+					why: `${usageLimitCause(event.from, event.limit) ?? `Retry switched models (${event.reason})`}; the turn continues on ${event.to}.`,
 				});
 				this.setExtensionStatus(FALLBACK_STATUS_KEY, `fallback: ${event.to}`);
 				// Provider/model failover ends any external-owner delegation episode:
@@ -5617,7 +5528,10 @@ export class InteractiveMode {
 				this.showNoticeBox({
 					title: `⇄ Reverted to ${event.to}`,
 					tone: "accent",
-					why: "The original model is back after its cooldown lapsed.",
+					why:
+						event.cause === "fallback-unusable"
+							? `${event.from} cannot serve right now (its account hit a billing or usage limit), so the session is back on the original model.`
+							: "The original model is back after its cooldown lapsed.",
 				});
 				this.setExtensionStatus(FALLBACK_STATUS_KEY, undefined);
 				break;
@@ -5926,7 +5840,9 @@ export class InteractiveMode {
 			}
 			case "custom": {
 				if (message.display) {
-					const renderer = this.session.extensionRunner.getMessageRenderer(message.customType);
+					const renderer =
+						this.session.extensionRunner.getMessageRenderer(message.customType) ??
+						builtInMessageRenderer(message.customType);
 					const component = new CustomMessageComponent(
 						message,
 						renderer,
@@ -6386,6 +6302,7 @@ export class InteractiveMode {
 	private buildMainLoopPromptOptions(userInput: InteractiveUserInput): {
 		streamingBehavior: "steer";
 		images?: InteractiveUserInput["images"];
+		unknownCommandAsText?: true;
 		preflightResult: (success: boolean) => void;
 		promptDisposition: (disposition: "handled" | "queued" | "started") => void;
 	} {
@@ -6393,9 +6310,11 @@ export class InteractiveMode {
 		return {
 			streamingBehavior: "steer",
 			...(userInput.images ? { images: userInput.images } : {}),
+			...(userInput.unknownCommandAsText ? { unknownCommandAsText: true } : {}),
 			preflightResult: echoOptions.preflightResult,
 			promptDisposition: (disposition) => {
 				echoOptions.promptDisposition(disposition);
+				userInput.ticket?.release();
 				// Clear the retained dock on a handled prompt only when it was the last
 				// buffered input; a still-queued follow-up remounts it on agent_start, so
 				// clearing here would bounce the editor/footer.
@@ -6458,6 +6377,7 @@ export class InteractiveMode {
 			// terminal. If the terminal is gone, the restore writes below emit EIO,
 			// which the stdout/stderr error handler turns into emergencyTerminalExit;
 			// the render loop is already idle, so this cannot hot-spin (see #4144).
+			await this.sessionControlHost?.disposeActive();
 			await this.runtimeHost.dispose();
 			this.themeController.disableAutoSync();
 			await this.ui.terminal.drainInput(1000);
@@ -6475,6 +6395,7 @@ export class InteractiveMode {
 
 		this.stop({ restoreStderr: false });
 		try {
+			await this.sessionControlHost?.disposeActive();
 			await this.runtimeHost.dispose();
 		} finally {
 			restoreInteractiveStderr();
@@ -6612,14 +6533,6 @@ export class InteractiveMode {
 			signals.push("SIGHUP");
 		}
 
-		if (process.platform !== "win32") {
-			const resizeHandler = () => {
-				(this.runtimeHost as Partial<HostUiCapableRuntime> | undefined)?.setClientInfo?.(this.ui.terminal.columns);
-			};
-			process.on("SIGWINCH", resizeHandler);
-			this.signalCleanupHandlers.push(() => process.off("SIGWINCH", resizeHandler));
-		}
-
 		for (const signal of signals) {
 			const handler = () => {
 				// SIGHUP no longer hard-exits: graceful shutdown emits session_shutdown
@@ -6712,8 +6625,10 @@ export class InteractiveMode {
 
 	private async handleFollowUp(): Promise<void> {
 		this.setComposerReply();
-		const text = this.getExpandedEditorText().trim();
+		const rawText = this.getExpandedEditorText();
+		const text = rawText.trim();
 		if (!text) return;
+		const unknownCommandAsText = submitsCommandAsText(text, { rawText });
 		if (isBareSkillNamespace(text)) {
 			this.openSkillPickerForBareNamespace();
 			return;
@@ -6734,7 +6649,11 @@ export class InteractiveMode {
 				this.editor.setText("");
 				await this.session.prompt(text);
 			} else {
-				this.queueCompactionSubmission(text, "followUp");
+				this.queueCompactionSubmission(
+					text,
+					"followUp",
+					InteractiveMode.confirmsRefusedUnknownCommand(this, text) || unknownCommandAsText,
+				);
 			}
 			return;
 		}
@@ -6759,14 +6678,17 @@ export class InteractiveMode {
 				return;
 			}
 			const pendingEchoId = this.beginUserEcho(text, images);
+			const followUpAsText = InteractiveMode.confirmsRefusedUnknownCommand(this, text) || unknownCommandAsText;
 			try {
 				await this.session.prompt(text, {
 					streamingBehavior: "followUp",
 					...(images.length > 0 ? { images } : {}),
+					...(followUpAsText ? { unknownCommandAsText: true } : {}),
 					...this.optimisticUserEchoes.promptOptions(pendingEchoId),
 				});
 			} catch (error) {
 				this.optimisticUserEchoes.reject(pendingEchoId);
+				if (error instanceof UnknownCommandError && this.reportUnknownCommandRejection(error, text)) return;
 				throw error;
 			}
 			this.updatePendingMessagesDisplay();
@@ -6780,7 +6702,7 @@ export class InteractiveMode {
 			// widened main-loop channel.
 			this.preResolvedSubmissionImages = images.length > 0 ? images : undefined;
 			this.editor.setText("");
-			this.editor.onSubmit(text);
+			this.editor.onSubmit(text, { rawText });
 		}
 	}
 
@@ -6810,11 +6732,9 @@ export class InteractiveMode {
 	}
 
 	private async cycleThinkingLevel(): Promise<void> {
-		// The shared-host proxy answers this over RPC. The level itself is rendered
-		// from the thinking_level_changed event (single path for local and remote,
-		// and for changes made by OTHER attached clients); the awaited value only
-		// distinguishes "model does not support thinking".
-		const newLevel = await this.session.cycleThinkingLevel();
+		// The level itself is rendered from the thinking_level_changed event; the
+		// returned value only distinguishes "model does not support thinking".
+		const newLevel = this.session.cycleThinkingLevel();
 		if (newLevel === undefined) {
 			this.showStatus("Current model does not support thinking");
 		}
@@ -7098,6 +7018,9 @@ export class InteractiveMode {
 	}
 
 	private updatePendingMessagesDisplay(): void {
+		this.sessionControlHost?.noteBufferedElsewhere(
+			this.compactionQueuedMessages.length + this.compactionInFlightMessages.length > 0,
+		);
 		this.pendingMessagesContainer.clear();
 		const { steering: steeringMessages, followUp: followUpMessages } = this.getAllQueuedMessages();
 		if (steeringMessages.length > 0 || followUpMessages.length > 0) {
@@ -7167,13 +7090,34 @@ export class InteractiveMode {
 		return allQueued.length;
 	}
 
-	private queueCompactionMessage(text: string, mode: "steer" | "followUp", droppedImageCount = 0): void {
+	/** Restore an unknown-command submission to the editor with a warning; `false` for any other error. */
+	private reportUnknownCommandRejection(error: unknown, submittedText: string): boolean {
+		const sendAgain = `${keyDisplayText("tui.input.submit")} again sends it as a message`;
+		return reportUnknownCommand(error, submittedText, {
+			editor: this.editor,
+			armConfirmation: (text) => {
+				this.refusedUnknownCommandText = text;
+			},
+			confirmHint: this.session.isStreaming
+				? `${sendAgain}.`
+				: `${sendAgain}; ${keyDisplayText("app.interrupt")} keeps editing.`,
+			showWarning: (message) => this.showWarning(message),
+		});
+	}
+
+	private queueCompactionMessage(
+		text: string,
+		mode: "steer" | "followUp",
+		droppedImageCount = 0,
+		unknownCommandAsText = false,
+	): void {
 		// No optimistic echo here: compaction-queued input is waiting state and must
 		// render only in the pending-messages display until it is actually delivered.
 		this.compactionQueuedMessages.push({
 			text,
 			mode,
 			enqueueOrder: this.session.reserveQueuedInputOrder(),
+			...(unknownCommandAsText ? { unknownCommandAsText } : {}),
 		});
 		this.getSessionLogger().debug("compaction_queue_enqueue", {
 			mode,
@@ -7197,15 +7141,15 @@ export class InteractiveMode {
 	 * literal marker has no payload behind it and would ship an unreadable
 	 * `[Image #N]` string to the model once the queue drains.
 	 */
-	private queueCompactionSubmission(text: string, mode: "steer" | "followUp"): void {
+	private queueCompactionSubmission(text: string, mode: "steer" | "followUp", unknownCommandAsText = false): void {
 		const images = this.takeSubmissionImages(text);
 		if (images.length === 0) {
-			this.queueCompactionMessage(text, mode);
+			this.queueCompactionMessage(text, mode, 0, unknownCommandAsText);
 			return;
 		}
 		const queued = text.replace(IMAGE_MARKER_PATTERN, "").trim();
 		if (queued) {
-			this.queueCompactionMessage(queued, mode, images.length);
+			this.queueCompactionMessage(queued, mode, images.length, unknownCommandAsText);
 			return;
 		}
 		this.showStatus(
@@ -7304,6 +7248,7 @@ export class InteractiveMode {
 									: undefined;
 								return session.prompt(message.text, {
 									streamingBehavior: message.mode,
+									...(message.unknownCommandAsText ? { unknownCommandAsText: true } : {}),
 									preflightResult: (success) => {
 										echoOptions?.preflightResult(success);
 										preflightResult(success);
@@ -7321,7 +7266,15 @@ export class InteractiveMode {
 									`Queued prompt failed after acceptance: ${error instanceof Error ? error.message : String(error)}`,
 								);
 							},
-						),
+						).catch((error: unknown) => {
+							// A rejected unknown command is consumed here, so it cannot block the queue behind it.
+							if (
+								error instanceof UnknownCommandError &&
+								this.reportUnknownCommandRejection(error, message.text)
+							)
+								return "handled" as const;
+							throw error;
+						}),
 					deliverQueued: (message) => {
 						if (message.enqueueOrder === undefined) {
 							return message.mode === "followUp" ? session.followUp(message.text) : session.steer(message.text);
@@ -7410,8 +7363,7 @@ export class InteractiveMode {
 	}
 
 	private async showSettingsSelector(): Promise<void> {
-		// Awaited at the boundary: the shared-host proxy answers this over RPC.
-		const availableThinkingLevels = await this.session.getAvailableThinkingLevels();
+		const availableThinkingLevels = this.session.getAvailableThinkingLevels();
 		this.showSelector((done) => {
 			let selector: SettingsSelectorComponent | undefined;
 			selector = new SettingsSelectorComponent(
@@ -7678,8 +7630,7 @@ export class InteractiveMode {
 			return;
 		}
 
-		// Awaited at the boundary: the shared-host proxy answers this over RPC.
-		const availableLevels = await this.session.getAvailableThinkingLevels();
+		const availableLevels = this.session.getAvailableThinkingLevels();
 		const normalized = searchTerm.trim().toLowerCase();
 		const level = availableLevels.find((candidate) => candidate.toLowerCase() === normalized);
 		if (!level) {
@@ -7707,8 +7658,7 @@ export class InteractiveMode {
 	}
 
 	private async showThinkingSelector(): Promise<void> {
-		// Awaited at the boundary: the shared-host proxy answers this over RPC.
-		const availableLevels = await this.session.getAvailableThinkingLevels();
+		const availableLevels = this.session.getAvailableThinkingLevels();
 		this.showSelector((done) => {
 			const selectLevel = (level: ThinkingLevel, persist: boolean) => {
 				this.selectThinkingLevel(level, persist);
@@ -8158,8 +8108,7 @@ export class InteractiveMode {
 	}
 
 	private async showUserMessageSelector(): Promise<void> {
-		// Awaited at the boundary: the shared-host proxy answers this over RPC.
-		const userMessages = await this.session.getUserMessagesForForking();
+		const userMessages = this.session.getUserMessagesForForking();
 
 		if (userMessages.length === 0) {
 			this.showStatus("No messages to fork from");
@@ -9467,8 +9416,7 @@ export class InteractiveMode {
 	}
 
 	private async handleSessionCommand(): Promise<void> {
-		// Awaited at the boundary: the shared-host proxy answers this over RPC.
-		const stats = await this.session.getSessionStats();
+		const stats = this.session.getSessionStats();
 		const sessionName = this.session.sessionName;
 		const entries = this.sessionManager.getEntries();
 		const cacheWaste = computeCacheWaste(entries, this.session.modelRuntime);
