@@ -17,12 +17,15 @@ afterEach(async () => {
 	}
 });
 
+const QUESTION = { id: "q1", header: "Ship", question: "Ship it?", options: [], multiSelect: false };
+
 async function terminalAsking(...requestIds: string[]) {
 	const pending = new Set(requestIds);
 	const answered: Array<{ readonly requestId: string; readonly response: QuestionResponse }> = [];
 	const fixture = await startEndpoint({
 		questions: {
 			pendingQuestionIds: () => [...pending],
+			pendingQuestion: (requestId) => (pending.has(requestId) ? { questions: [QUESTION] } : undefined),
 			answerQuestion: (requestId, response) => {
 				if (!pending.delete(requestId)) return false;
 				answered.push({ requestId, response });
@@ -71,7 +74,10 @@ it("keeps the short form: id alone names the question and is answered under that
 		success: true,
 	});
 	expect(answered).toEqual([
-		{ requestId: "ask-2", response: { status: "answered", answers: {}, unanswered: [], comment: "ship it" } },
+		{
+			requestId: "ask-2",
+			response: { status: "comment-submitted", answers: {}, unanswered: ["q1"], comment: "ship it" },
+		},
 	]);
 });
 

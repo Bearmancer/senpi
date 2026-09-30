@@ -1,3 +1,44 @@
+## 2026-09-30 - One question-settle rule for hosts and terminal control endpoints (senpi#2407)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/extension-ui-response.ts`: new `settledQuestionStatus(answers, comment)` (non-blank comment -> `comment-submitted`, else any answer -> `answered`, else `undefined` = `question_incomplete`) and `unansweredQuestionIds(questions, answers)`.
+- `packages/coding-agent/src/modes/rpc/connection-question-bridge.ts`: `respond` and the unanswered list use them; behavior unchanged. The terminal control endpoint (`../interactive/session-control-commands.ts`) now uses the same two functions.
+
+### Why
+
+senpi#2407: the terminal endpoint had its own copy of the rule that never produced `comment-submitted`, so a comment-only answer reached the model empty there while the host delivered it.
+
+### Why an extension could not handle it
+
+The host's question bridge and the endpoint's command surface are core.
+
+### Expected merge conflict zones
+
+- `respond` in `connection-question-bridge.ts`.
+
+## 2026-09-30 - `open_session.promptSurface` accepts `chat` (senpi#2398)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-input-validation.ts`: `sessionPromptSurfaceError` accepts `chat`; any other value is refused with `invalid_launch_profile: promptSurface must be "terminal", "app" or "chat".`
+- `custom-capability.ts`: new HOST capability `PROMPT_SURFACE_CHAT_CAPABILITY = "prompt_surface_chat"`, advertised by `session-command-router.ts` in `get_protocol_info`. An older host refuses `chat` with `invalid_launch_profile`, so a gateway sends it only after seeing the capability.
+- Worker-backed sessions carry `chat` through the existing `prompt_surface` worker request (typed by `PromptSurface`).
+- `rpc-types.ts`, `rpc-client.ts`, `rpc-mode.ts` header and `docs/rpc.md` "### Prompt surface" document the value and the capability.
+- Tests: `test/suite/rpc-open-session-prompt-surface.test.ts` opens a `chat` session (no routing line, no handoff slot, feedback guidance kept), still refuses `web`, and sees `prompt_surface_chat`; `test/rpc-multi-session.test.ts` pins the capability list.
+
+### Why
+
+- A chat bridge talking to a shared host picks the chat prompt per session, and must be able to tell a host that knows `chat` from one that does not.
+
+### Why an extension could not handle it
+
+- Launch-profile validation and capability advertising happen in the RPC router before any extension binds.
+
+### Expected merge conflict zones
+
+- Fork-only files. `sessionPromptSurfaceError` in `rpc-input-validation.ts`, the capability list in `session-command-router.ts`, and the `promptSurface` docs in `rpc-types.ts`, `rpc-client.ts` and the `rpc-mode.ts` header.
+
 ## 2026-09-29 - `get_auth_providers`: each login method row carries its own status
 
 ### What changed
@@ -18,6 +59,24 @@ A provider listed with both an OAuth and an API-key login row got the same provi
 ### Expected merge conflict zones
 
 - the `get_auth_providers` case in `connection-handler.ts`; the tail of `core/auth-providers.ts`.
+
+## 2026-09-30 - A bundled host re-enters its own bundled CLI (#2409)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-lifecycle.ts`: in a bundled build, `resolveCliMainPath()` returns the package's declared bin (the bundle's `cli.js` beside the chunk) before trying `../../cli-main.js`; it takes the module path and layout as parameters for tests.
+
+### Why
+
+- Bundled, `host-lifecycle` is a chunk under `dist/bundle/chunks/`, so `../../cli-main.js` reached `dist/cli-main.js`, the unbundled tree the package also ships. From a runtime snapshot that was a link into the install, so the supervisor and every host child ran install code an update replaces, and never claimed the snapshot (#2409). Through the bundle's `cli.js` they run the snapshot's copy and claim it the way a session does.
+
+### Why an extension could not handle it
+
+- The supervisor and host child spawn commands are built by the RPC host lifecycle, before any extension loads.
+
+### Expected merge conflict zones
+
+- LOW: `resolveCliMainPath()` in `packages/coding-agent/src/modes/rpc/host-lifecycle.ts`.
 
 ## 2026-09-29 - `open_session.promptSurface`: per-session prompt surface (senpi#2377)
 

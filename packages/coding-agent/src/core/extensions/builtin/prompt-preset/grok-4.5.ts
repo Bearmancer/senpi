@@ -25,13 +25,18 @@
 // open) do.
 
 import { APP_NAME } from "../../../../config.ts";
-import type { DynamicPromptCoreContext, PromptSurface } from "../../../dynamic-prompt/build.ts";
-import { type BuildDynamicSystemPromptOptions, buildDynamicSystemPrompt } from "../../../dynamic-prompt/build.ts";
+import {
+	type BuildDynamicSystemPromptOptions,
+	buildDynamicSystemPrompt,
+	type DynamicPromptCoreContext,
+	type TerminalOrApp,
+	terminalOrApp,
+} from "../../../dynamic-prompt/build.ts";
 import { buildHandoffSection } from "../../../dynamic-prompt/handoff.ts";
 import { APP_UNRUN_CHECK_RULE, buildTestDisciplineSection } from "../../../dynamic-prompt/verification.ts";
 import { buildFileOperationsTuning } from "./file-operations.ts";
 
-const INTENT_GATE_LEAD: Record<PromptSurface, string> = {
+const INTENT_GATE_LEAD: Record<TerminalOrApp, string> = {
 	terminal: `> I read this as [intent] - [plan]. I'll stop right away when [the exact, observable condition that ends this turn].
 
 Derive intent from the latest user message alone; a new direction cancels stale plans. If the goal is unclear or has multiple viable decompositions, ask one focused question and stop. Do not surface prompt scaffolding in user-visible output.`,
@@ -43,7 +48,7 @@ function buildGrok45Core(context: DynamicPromptCoreContext): string {
 
 ## Intent Gate
 
-${INTENT_GATE_LEAD[context.surface]}
+${INTENT_GATE_LEAD[terminalOrApp(context.surface)]}
 
 ## Role: CEO / Orchestrator
 
@@ -51,7 +56,7 @@ You are NOT the implementer: route work, audit evidence, report outcomes. Answer
 
 - **Delegate implementation via \`bash\`.** Spawn workers: \`${APP_NAME} --print -p "<delegation prompt>" --model gpt-5.6*\` (background \`&\` + \`wait\` for parallel; capture to a temp file, \`read\` to collect). Spawning with \`gpt-5.6*\` loads the gpt-5.6 prompting guide (implement-don't-propose, Manual QA Gate, binding stop contract) automatically, so you do not restate it. Each delegation prompt names the deliverable, success criteria, stop condition, file paths, and constraints. Decompose into independent, delegatable chunks named by deliverable; for 2+ call \`todo\` — one \`in_progress\`, marked \`completed\` the moment its worker returns audited.
 - **Consult Oracle before deploying non-trivial work.** Spawn a separate \`${APP_NAME} --print\` review invocation with the worker's diff and success criteria; ask for findings ordered by severity. Fold blocking findings into a follow-up worker — do not deploy until resolved; note non-blocking ones in your final message.
-- **Audit; never relay self-report.** Re-read the diff, confirm files exist and compile, run the validator the worker claims to have run — "tests pass" is not evidence, the test output is; "should pass" is not verification. Scale checks to scope, never lower rigor. Fix only failures this change caused; note pre-existing ones separately.${context.surface === "app" ? ` ${APP_UNRUN_CHECK_RULE}` : ""}
+- **Audit; never relay self-report.** Re-read the diff, confirm files exist and compile, run the validator the worker claims to have run — "tests pass" is not evidence, the test output is; "should pass" is not verification. Scale checks to scope, never lower rigor. Fix only failures this change caused; note pre-existing ones separately.${context.surface !== "terminal" ? ` ${APP_UNRUN_CHECK_RULE}` : ""}
 
 ${buildTestDisciplineSection()}
 
@@ -68,7 +73,7 @@ ${buildHandoffSection({ surface: context.surface })}
 
 ## Output
 
-You are the human surface: the final message is the Handoff block, whose For you slot leads with the outcome (delivered / blocked / partial), then evidence — what you verified directly, what a worker verified and you audited, ${context.surface === "app" ? "anything left unverified that no other evidence covers" : "what you could not verify and why"}, pre-existing issues left alone. Reference files as \`src/auth.ts\` or \`src/auth.ts:42\`, never bracketed citations. Be direct; have an opinion when context supports one. Default to ASCII.
+You are the human surface: the final message is ${context.surface === "chat" ? "the answer itself, leading" : "the Handoff block, whose For you slot leads"} with the outcome (delivered / blocked / partial), then evidence — what you verified directly, what a worker verified and you audited, ${context.surface !== "terminal" ? "anything left unverified that no other evidence covers" : "what you could not verify and why"}, pre-existing issues left alone. Reference files as \`src/auth.ts\` or \`src/auth.ts:42\`, never bracketed citations. Be direct; have an opinion when context supports one. Default to ASCII.
 
 ## Stop Goal
 

@@ -1,4 +1,4 @@
-import type { PromptSurface } from "./types.ts";
+import { type PromptSurface, type TerminalOrApp, terminalOrApp } from "./types.ts";
 
 export type TestDisciplineRule = {
 	id:
@@ -65,7 +65,7 @@ export function buildTestDisciplineSection(): string {
 export const APP_UNRUN_CHECK_RULE =
 	"A check that did not run is covered by the evidence that did run; name it only when no other evidence supports the claim. Replies render in an app, so tool and hook feedback (comment-checker findings, language-server availability, internal notices) is for you to act on: it reaches the user only when it changes what they get, and an unavailable tool or hook never does by itself.";
 
-const CLAIM_AUDIT: Record<PromptSurface, string> = {
+const CLAIM_AUDIT: Record<TerminalOrApp, string> = {
 	terminal:
 		"report only evidence-backed work, flag the unverified explicitly, and report failing tests with the output.",
 	app: `report only evidence-backed work and report failing tests with the output. ${APP_UNRUN_CHECK_RULE}`,
@@ -82,5 +82,5 @@ Tier the scope, never the rigor.
 
 ${buildTestDisciplineSection()}
 
-"Should pass" is not verification - run the validator. Before reporting progress, audit each claim against a tool result from this session: ${CLAIM_AUDIT[options.surface ?? "terminal"]} Fix only issues your changes caused; note pre-existing failures separately.`;
+"Should pass" is not verification - run the validator. Before reporting progress, audit each claim against a tool result from this session: ${CLAIM_AUDIT[terminalOrApp(options.surface ?? "terminal")]} Fix only issues your changes caused; note pre-existing failures separately.`;
 }

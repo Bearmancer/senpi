@@ -413,7 +413,7 @@ export class RpcClient {
 		retain_on_disconnect?: boolean;
 		/** Per-session auto-titling; needs the host's `auto_title_per_session`. */
 		auto_title?: boolean;
-		/** Where this session's replies render; needs the host's `prompt_surface`. */
+		/** Where this session's replies render; needs the host's `prompt_surface` (`prompt_surface_chat` for `chat`). */
 		promptSurface?: PromptSurface;
 	}): Promise<{ sessionId: string; state: RpcSessionState; attached?: boolean }> {
 		if (this.pendingOpenSession) throw new RpcClientOpenInFlightError();

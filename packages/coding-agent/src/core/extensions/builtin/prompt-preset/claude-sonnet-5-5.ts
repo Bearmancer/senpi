@@ -32,8 +32,13 @@
 // no reasoning-in-text lines (reasoning extraction is a refusal category).
 
 import { APP_NAME } from "../../../../config.ts";
-import type { DynamicPromptCoreContext, PromptSurface } from "../../../dynamic-prompt/build.ts";
-import { type BuildDynamicSystemPromptOptions, buildDynamicSystemPrompt } from "../../../dynamic-prompt/build.ts";
+import {
+	type BuildDynamicSystemPromptOptions,
+	buildDynamicSystemPrompt,
+	type DynamicPromptCoreContext,
+	type TerminalOrApp,
+	terminalOrApp,
+} from "../../../dynamic-prompt/build.ts";
 import { buildHandoffSection } from "../../../dynamic-prompt/handoff.ts";
 import { getToolsPromptDisplay } from "../../../dynamic-prompt/tool-categorization.ts";
 import { APP_UNRUN_CHECK_RULE, buildTestDisciplineSection } from "../../../dynamic-prompt/verification.ts";
@@ -47,7 +52,7 @@ function buildSearchLine(context: DynamicPromptCoreContext): string {
 	return `\nSpecialized search available this turn: ${triggerTools}. Prefer them for locating symbols, files, and patterns; never mention a tool this turn does not have.\n`;
 }
 
-const INTENT_GATE_LEAD: Record<PromptSurface, string> = {
+const INTENT_GATE_LEAD: Record<TerminalOrApp, string> = {
 	terminal: `Open every turn with one short routing line:
 
 > I read this as [intent] - [plan]. I'll stop when [the exact, observable condition that ends this turn].
@@ -61,7 +66,7 @@ function buildClaudeSonnet55Core(context: DynamicPromptCoreContext): string {
 
 ## Intent Gate
 
-${INTENT_GATE_LEAD[context.surface]}
+${INTENT_GATE_LEAD[terminalOrApp(context.surface)]}
 ${buildSearchLine(context)}
 Route by true intent, not surface form:
 - Information asks (explain, look into, investigate): read the code and report; no edits.
@@ -88,7 +93,7 @@ Scale the checks to the change, never the rigor: diagnostics on every changed fi
 
 ${buildTestDisciplineSection()}
 
-"Should pass" is not verification: before reporting a change done, run a real check that exercises it - the project's tests, type-checker, or build, or the changed command itself. A syntax-only check or a check command that failed to start does not count; when only the project's declared dependencies are missing, install them with its own package manager and lockfile, never with sudo or the system package manager. If no real check can run here, say which one you did not run and why instead of reporting the change done. Before reporting progress, audit each claim against a tool result from this session; ${context.surface === "app" ? `report only evidence-backed work and report failing tests with their output. ${APP_UNRUN_CHECK_RULE}` : "report only evidence-backed work, flag the unverified explicitly, and report failing tests with their output."} Fix only failures your change caused.
+"Should pass" is not verification: before reporting a change done, run a real check that exercises it - the project's tests, type-checker, or build, or the changed command itself. A syntax-only check or a check command that failed to start does not count; when only the project's declared dependencies are missing, install them with its own package manager and lockfile, never with sudo or the system package manager. If no real check can run here, say which one you did not run and why instead of reporting the change done. Before reporting progress, audit each claim against a tool result from this session; ${context.surface !== "terminal" ? `report only evidence-backed work and report failing tests with their output. ${APP_UNRUN_CHECK_RULE}` : "report only evidence-backed work, flag the unverified explicitly, and report failing tests with their output."} Fix only failures your change caused.
 
 ${context.toolSection}
 
@@ -109,7 +114,7 @@ Have an opinion: agree or disagree plainly, and say why; raise only real problem
 
 Keep responses focused and concise: spend the words on the main answer and keep caveats short. Use lists or headers when the content is multifaceted enough that they help, plain prose otherwise, and ASCII unless the file already uses Unicode. Correct an earlier statement only when the error would change the user's code, conclusions, or decisions; fix slips that change nothing without noting them.
 
-When you finish, open with the Handoff block; its For you slot answers what happened or what you found, then supporting detail and how it was verified, in complete sentences for a reader who did not see the work; drop detail that does not change what the reader does next rather than compressing into fragments. Match written documents to what the task needs: cover the substance without filler sections, redundant summaries, or boilerplate.`;
+When you finish, ${context.surface === "chat" ? "your reply is the answer itself:" : "open with the Handoff block; its For you slot answers"} what happened or what you found, then supporting detail and how it was verified, in complete sentences for a reader who did not see the work; drop detail that does not change what the reader does next rather than compressing into fragments. Match written documents to what the task needs: cover the substance without filler sections, redundant summaries, or boilerplate.`;
 }
 
 export function buildClaudeSonnet55Prompt(options: BuildDynamicSystemPromptOptions): string {

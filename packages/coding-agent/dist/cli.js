@@ -168,7 +168,7 @@ else {
     // an upgrade that rewrites the install cannot remove chunks this session imports later (#2358).
     const entryPath = fileURLToPath(import.meta.url);
     const snapshot = isBundledNode
-        ? prepareRuntimeSnapshot(entryPath, findNodePackageDir(dirname(entryPath)), getAgentDir())
+        ? await prepareRuntimeSnapshot(entryPath, findNodePackageDir(dirname(entryPath)), getAgentDir())
         : undefined;
     if (snapshot?.kind === "hand-off") {
         await import(__rewriteRelativeImportExtension(snapshot.entryUrl));

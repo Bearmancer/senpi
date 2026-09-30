@@ -55,7 +55,7 @@ describe("runtime snapshot registry (#2358)", () => {
 		const install = createFakeInstall();
 		installs.push(install);
 		const script = `import { prepareRuntimeSnapshot } from ${JSON.stringify(enterModule)};
-const decision = prepareRuntimeSnapshot(${JSON.stringify(install.entryPath)}, ${JSON.stringify(install.packageDir)}, ${JSON.stringify(install.agentDir)});
+const decision = await prepareRuntimeSnapshot(${JSON.stringify(install.entryPath)}, ${JSON.stringify(install.packageDir)}, ${JSON.stringify(install.agentDir)});
 process.stdout.write(JSON.stringify(decision) + "\\n");
 process.stdin.resume();
 process.stdin.on("end", () => process.exit(0));`;

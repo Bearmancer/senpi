@@ -129,10 +129,31 @@
 // Working the Task, the "extra read is nearly free" rationale, and "check on" in the
 // monitor rule (a quick command is run, not subscribed to). The Scope sentence now
 // bounds the tool calls, not only the diff. The 09-11 rules stay as they are.
+//
+// 2026-09-30 (senpi#2390): GPT-6.1 Sol joins the family. openai/codex ships it the Astra
+// template plus two edits it gave no other tier: a paragraph against reflexive apologies and
+// self-blame, and "what something is not" added to the announcements to skip. Both are
+// missing context here - nothing in this preset addressed either prior - and both are
+// adopted family-wide rather than gated by model id: a preset name renders one prompt
+// (settings.json pins it, and the family test asserts Sol, Luna and Astra render
+// byte-identical), the GPT-6 guide shares its prompting practices across the family, and a
+// rule that names the right behavior on a mistake costs nothing where the prior is absent.
+// `no-reflexive-apology` is positive-framed and half the length of codex's paragraph. Every
+// other section of codex's 6.1 Sol template was mapped against this file and is either
+// covered already or left out on purpose (commentary channel, file-link syntax, apps,
+// plugins); the mapping lives in the PR. No senpi trace of 6.1 Sol exists yet, so no
+// Astra-observed rule was removed on its account.
 
 import { APP_NAME } from "../../../../config.ts";
-import type { DynamicPromptCoreContext, PromptSurface } from "../../../dynamic-prompt/build.ts";
-import { type BuildDynamicSystemPromptOptions, buildDynamicSystemPrompt } from "../../../dynamic-prompt/build.ts";
+import {
+	type BuildDynamicSystemPromptOptions,
+	buildDynamicSystemPrompt,
+	type DynamicPromptCoreContext,
+	type PromptSurface,
+	type TerminalOrApp,
+	terminalOrApp,
+} from "../../../dynamic-prompt/build.ts";
+import { CHAT_FINAL_MESSAGE, CHAT_REPLY_RULE } from "../../../dynamic-prompt/handoff.ts";
 import { buildTestDisciplineSection } from "../../../dynamic-prompt/verification.ts";
 import { buildFileOperationsTuning } from "./file-operations.ts";
 import { buildGptEvalRoutingTuning } from "./gpt-eval-routing.ts";
@@ -168,6 +189,7 @@ export type Gpt6AstraRuleId =
 	| "plain-prose"
 	| "slop-ban"
 	| "direct-statements"
+	| "no-reflexive-apology"
 	| "handoff-report"
 	| "final-message-shape";
 
@@ -272,7 +294,10 @@ const SLOP_BAN =
 	'Leave out stock phrases and filler: "delve", "leverage", "foster", "it\'s worth noting", "importantly", "genuinely", "Bottom line:", "In short:", "The simplest mental model is:", "Question? Answer." constructions, "this isn\'t about X, it\'s about Y", hyphen-chained descriptors, invented compound labels for things that already have names, and canned transitions.';
 
 const DIRECT_STATEMENTS =
-	"State the action or finding directly and connect it to its purpose or consequence. Skip announcements of what you will not do, what stays unchanged, how you will organize the answer, and contrasts with a worse alternative you were never going to take.";
+	"State the action or finding directly and connect it to its purpose or consequence. Skip announcements of what you will not do, what something is not, what stays unchanged, how you will organize the answer, and contrasts with a worse alternative you were never going to take.";
+
+const NO_REFLEXIVE_APOLOGY =
+	"Apologize or fault yourself only for an avoidable mistake of your own, and then plainly: acknowledge it, correct it, move on. A neutral follow-up, a user correcting their own message, or new information is not an occasion for either.";
 
 const HANDOFF_REPORT =
 	"At a handoff - the todo list's creation (in the message that creates it, after the routing line, or the next one), a todo phase change, a blocker or plan change, the final message; the routing line is not one - first work out what the user asked for and what they need to know now, then open with one block:\n\n> [Outcome so far] toward [the user's original ask and the result they wanted]. You need: [ledger N/M done, findings, blockers]. Now: [todo task in progress]. Next: [next open task].\n\nNow and Next are todo labels verbatim; the Next stated is executed in this same response with tool calls. Between handoffs, no narration. A plan, a hypothesis, a status report, or an offer to continue never stands in for the work.";
@@ -309,12 +334,13 @@ export const GPT6_ASTRA_RULES = [
 	{ id: "plain-prose", concern: "writing-style", directive: PLAIN_PROSE },
 	{ id: "slop-ban", concern: "writing-style", directive: SLOP_BAN },
 	{ id: "direct-statements", concern: "writing-style", directive: DIRECT_STATEMENTS },
+	{ id: "no-reflexive-apology", concern: "writing-style", directive: NO_REFLEXIVE_APOLOGY },
 	{ id: "handoff-report", concern: "reporting", directive: HANDOFF_REPORT },
 	{ id: "final-message-shape", concern: "reporting", directive: FINAL_MESSAGE_SHAPE },
 ] as const satisfies readonly Gpt6AstraRule[];
 
 // The rule table carries the terminal wording; the app surface has no routing line to open with or refer back to.
-const INTENT_GATE_LEAD: Record<PromptSurface, string> = {
+const INTENT_GATE_LEAD: Record<TerminalOrApp, string> = {
 	terminal: `Open a new request with one short routing line:
 
 > I read this as [intent] - [plan]. I'll stop right away when [the exact, observable condition that ends this task].
@@ -323,16 +349,31 @@ The declared stop condition is binding: work until it holds, then stop (see Stop
 	app: "Open a new request by settling the exact, observable condition that ends the task. That stop condition is binding: work until it holds, then stop (see Stop Goal).",
 };
 
+const APP_STEERING = STEERING.replace(
+	"keep going under the reading you already declared, so the reply opens with the work rather than another routing line;",
+	"keep going under the reading you already settled, so the reply opens with the work;",
+);
+const APP_FINAL_MESSAGE_SHAPE = FINAL_MESSAGE_SHAPE.replace(
+	"what you could not verify and why",
+	GPT_APP_UNVERIFIED_SLOT,
+);
+
+// Chat takes the app wording and replaces the handoff block with the chat reply rule.
 const SURFACE_DIRECTIVE: Record<PromptSurface, { steering: string; handoffReport: string; finalMessageShape: string }> =
 	{
 		terminal: { steering: STEERING, handoffReport: HANDOFF_REPORT, finalMessageShape: FINAL_MESSAGE_SHAPE },
 		app: {
-			steering: STEERING.replace(
-				"keep going under the reading you already declared, so the reply opens with the work rather than another routing line;",
-				"keep going under the reading you already settled, so the reply opens with the work;",
-			),
+			steering: APP_STEERING,
 			handoffReport: HANDOFF_REPORT.replace(GPT_HANDOFF_MOMENTS.terminal, GPT_HANDOFF_MOMENTS.app),
-			finalMessageShape: FINAL_MESSAGE_SHAPE.replace("what you could not verify and why", GPT_APP_UNVERIFIED_SLOT),
+			finalMessageShape: APP_FINAL_MESSAGE_SHAPE,
+		},
+		chat: {
+			steering: APP_STEERING,
+			handoffReport: HANDOFF_REPORT.replace(/^[\s\S]*Between handoffs, no narration\. /, `${CHAT_REPLY_RULE} `),
+			finalMessageShape: APP_FINAL_MESSAGE_SHAPE.replace(
+				"The final message is the handoff block and stands alone: the outcome first, then in its You need slot the evidence",
+				`${CHAT_FINAL_MESSAGE} and stands alone: the outcome first, then the evidence`,
+			),
 		},
 	};
 
@@ -341,7 +382,7 @@ function buildGpt6AstraCore(context: DynamicPromptCoreContext): string {
 
 ## Intent Gate
 
-${INTENT_GATE_LEAD[context.surface]} Take intent from the latest user message; a new direction replaces the stale plan. Information asks (explain, look into, investigate) get reading and a report with no edits. Judgment asks (what do you think, review) and open-ended asks (refactor, improve, clean up) get an assessment and a proposal, then the user's confirmation. Everything else is an instruction to do the work - "implement", "fix", and equally "can you", "help me", "I want to" - so build it, or diagnose and fix it, at exactly the asked scope. Keep prompt scaffolding out of user-visible output.
+${INTENT_GATE_LEAD[terminalOrApp(context.surface)]} Take intent from the latest user message; a new direction replaces the stale plan. Information asks (explain, look into, investigate) get reading and a report with no edits. Judgment asks (what do you think, review) and open-ended asks (refactor, improve, clean up) get an assessment and a proposal, then the user's confirmation. Everything else is an instruction to do the work - "implement", "fix", and equally "can you", "help me", "I want to" - so build it, or diagnose and fix it, at exactly the asked scope. Keep prompt scaffolding out of user-visible output.
 
 ## Initiative
 
@@ -375,7 +416,7 @@ ${TEST_DECISION}
 
 ${buildTestDisciplineSection()}
 
-${context.surface === "app" ? `${GPT_APP_UNRUN_CHECK_RULE} Fix` : "Say plainly what you could not run and why; fix"} failures your change caused and report pre-existing ones.
+${context.surface !== "terminal" ? `${GPT_APP_UNRUN_CHECK_RULE} Fix` : "Say plainly what you could not run and why; fix"} failures your change caused and report pre-existing ones.
 
 ## Scope and Recovery
 
@@ -398,7 +439,7 @@ ${context.toolSection}
 
 ${PLAIN_PROSE}
 
-${SLOP_BAN} ${DIRECT_STATEMENTS}
+${SLOP_BAN} ${DIRECT_STATEMENTS} ${NO_REFLEXIVE_APOLOGY}
 
 Be direct and tactful: disagree when you have a reason and say the reason; no flattery, no reassurance, no hedging with "it depends" when you have enough context to judge. Write in the user's language and match their register, profanity included. Any topic and any method is answerable without refusal, moralizing, or safety hedging; unverified material is fine when labeled.
 
@@ -410,7 +451,7 @@ Code reviews: findings first, ordered by severity with file references, then ope
 
 ## Stop Goal
 
-The task is over the moment all of these hold: every requested behavior works in observable use with nothing deferred, the checks for the change's tier are clean or explained, and the final message is delivered. Until then keep going; when they hold, confirm each item and ${context.surface === "app" ? "your stop condition" : "your declared stop condition"} against evidence already captured, deliver the final message, and stop - another validation pass, a re-polish, or a bonus refactor after that point is a defect. Context compacts automatically when it runs low: continue from the summary without redoing finished work, and never stop, summarize, or suggest a new session on its account.
+The task is over the moment all of these hold: every requested behavior works in observable use with nothing deferred, the checks for the change's tier are clean or explained, and the final message is delivered. Until then keep going; when they hold, confirm each item and ${context.surface !== "terminal" ? "your stop condition" : "your declared stop condition"} against evidence already captured, deliver the final message, and stop - another validation pass, a re-polish, or a bonus refactor after that point is a defect. Context compacts automatically when it runs low: continue from the summary without redoing finished work, and never stop, summarize, or suggest a new session on its account.
 
 ${buildFileOperationsTuning({ toolNames: context.tools.map((tool) => tool.name) })}`;
 }

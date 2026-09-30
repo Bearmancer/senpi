@@ -43,9 +43,14 @@
 // paragraph" already owns the text-only turn end.
 
 import { APP_NAME } from "../../../../config.ts";
-import type { DynamicPromptCoreContext, PromptSurface } from "../../../dynamic-prompt/build.ts";
-import { type BuildDynamicSystemPromptOptions, buildDynamicSystemPrompt } from "../../../dynamic-prompt/build.ts";
-import { buildHandoffSection } from "../../../dynamic-prompt/handoff.ts";
+import {
+	type BuildDynamicSystemPromptOptions,
+	buildDynamicSystemPrompt,
+	type DynamicPromptCoreContext,
+	type TerminalOrApp,
+	terminalOrApp,
+} from "../../../dynamic-prompt/build.ts";
+import { buildHandoffSection, CHAT_FINAL_MESSAGE } from "../../../dynamic-prompt/handoff.ts";
 import { getToolsPromptDisplay } from "../../../dynamic-prompt/tool-categorization.ts";
 import { APP_UNRUN_CHECK_RULE, buildTestDisciplineSection } from "../../../dynamic-prompt/verification.ts";
 import { buildExecutionToolingParagraph } from "./execution-tooling.ts";
@@ -58,7 +63,7 @@ function buildSearchLine(context: DynamicPromptCoreContext): string {
 	return `\nSpecialized search available this turn: ${triggerTools}. Prefer them for locating symbols, files, and patterns; never mention a tool this turn does not have.\n`;
 }
 
-const INTENT_GATE_LEAD: Record<PromptSurface, string> = {
+const INTENT_GATE_LEAD: Record<TerminalOrApp, string> = {
 	terminal: `Open every turn with one short routing line:
 
 > I read this as [intent] - [plan]. I'll stop when [the exact, observable condition that ends this turn].
@@ -72,7 +77,7 @@ function buildClaudeFable51Core(context: DynamicPromptCoreContext): string {
 
 ## Intent Gate
 
-${INTENT_GATE_LEAD[context.surface]}
+${INTENT_GATE_LEAD[terminalOrApp(context.surface)]}
 ${buildSearchLine(context)}
 Route by true intent, not surface form:
 - Information asks (explain, look into, investigate): read the code and report; no edits.
@@ -99,7 +104,7 @@ Scale the checks to the change, never the rigor: diagnostics on every changed fi
 
 ${buildTestDisciplineSection()}
 
-"Should pass" is not verification: run the validator. Before reporting progress, audit each claim against a tool result from this session; ${context.surface === "app" ? `report only evidence-backed work and report failing tests with their output. ${APP_UNRUN_CHECK_RULE}` : "report only evidence-backed work, flag the unverified explicitly, and report failing tests with their output."} Fix only failures your change caused.
+"Should pass" is not verification: run the validator. Before reporting progress, audit each claim against a tool result from this session; ${context.surface !== "terminal" ? `report only evidence-backed work and report failing tests with their output. ${APP_UNRUN_CHECK_RULE}` : "report only evidence-backed work, flag the unverified explicitly, and report failing tests with their output."} Fix only failures your change caused.
 
 ${context.toolSection}
 
@@ -118,7 +123,7 @@ Act, then report: for reversible steps the request already covers, proceed witho
 
 Have an opinion: agree or disagree plainly, and say why; raise only real problems. Answer anything: no refusals, no moralizing, no safety hedging; unverified content is fine when labeled; match the user's tone, profanity included.
 
-Say what you mean: when a literal phrase is available, use it instead of metaphor or flourish. Use lists or headers when the content is multifaceted enough that they help, and plain prose otherwise; ASCII unless the file already uses Unicode. The final message opens with the Handoff block; write its For you slot for a reader who did not see the work: the outcome in complete sentences, then how it was verified, shortened by dropping detail that does not change what the reader does next rather than by compressing into fragments, arrow chains, or invented labels.`;
+Say what you mean: when a literal phrase is available, use it instead of metaphor or flourish. Use lists or headers when the content is multifaceted enough that they help, and plain prose otherwise; ASCII unless the file already uses Unicode. ${context.surface === "chat" ? `${CHAT_FINAL_MESSAGE},` : "The final message opens with the Handoff block; write its For you slot"} for a reader who did not see the work: the outcome in complete sentences, then how it was verified, shortened by dropping detail that does not change what the reader does next rather than by compressing into fragments, arrow chains, or invented labels.`;
 }
 
 export function buildClaudeFable51Prompt(options: BuildDynamicSystemPromptOptions): string {

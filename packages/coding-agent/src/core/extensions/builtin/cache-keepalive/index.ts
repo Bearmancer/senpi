@@ -88,6 +88,8 @@ export function createCacheKeepAliveExtension(
 			pi.appendEntry(CACHE_KEEPALIVE_ENTRY_TYPE, data);
 		}
 
+		let armOnSettle = false;
+
 		function stop(reason: string, forceEntry = false): void {
 			const shouldAppend = active || inFlight || timer !== undefined || forceEntry;
 			generation += 1;
@@ -172,11 +174,15 @@ export function createCacheKeepAliveExtension(
 					return;
 				}
 				const preparedMessages = preparation?.messages ?? lastMessages;
+				const prefix = await current.getPromptCachePrefixRequest?.();
 				const activeToolNames = new Set(pi.getActiveTools());
-				const tools: Tool[] = pi
-					.getAllTools()
-					.filter((tool) => activeToolNames.has(tool.name))
-					.map(({ name, description, parameters }) => ({ name, description, parameters }));
+				const tools: Tool[] =
+					prefix?.status === "ready"
+						? (prefix.request.context.tools ?? [])
+						: pi
+								.getAllTools()
+								.filter((tool) => activeToolNames.has(tool.name))
+								.map(({ name, description, parameters }) => ({ name, description, parameters }));
 				const auth = await current.modelRegistry.getApiKeyAndHeaders(current.model);
 				if (pingGeneration !== generation) {
 					inFlight = false;
@@ -251,12 +257,21 @@ export function createCacheKeepAliveExtension(
 			ctx = nextCtx;
 			const usage = lastAssistantUsage(event.messages);
 			if (usage?.stopReason === "error") {
+				armOnSettle = false;
 				stop("provider-error");
 				return;
 			}
 			lastMessages = [...event.messages];
 			lastUsage = usage;
 			lastCompletedAtMs = Date.now();
+			armOnSettle = true;
+			arm();
+		});
+
+		pi.on("agent_settled", (_event, nextCtx) => {
+			ctx = nextCtx;
+			if (!armOnSettle) return;
+			armOnSettle = false;
 			arm();
 		});
 

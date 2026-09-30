@@ -77,6 +77,13 @@ export const DURABLE_SESSION_ID_CAPABILITY = "durable_session_id";
 export const PROMPT_SURFACE_CAPABILITY = "prompt_surface";
 
 /**
+ * HOST capability: `open_session.promptSurface` also accepts `chat` (a chat bridge: no routing line,
+ * no handoff block, no todo cues). A host without it refuses `chat` with `invalid_launch_profile`,
+ * so a gateway sends `chat` only after seeing this and otherwise falls back to `app`.
+ */
+export const PROMPT_SURFACE_CHAT_CAPABILITY = "prompt_surface_chat";
+
+/**
  * Env var carrying client capabilities to a single-connection stdio RPC host
  * (comma-separated). A launcher may set it from a client handshake; a plain
  * stdio client leaves it unset and sees byte-identical default behavior.

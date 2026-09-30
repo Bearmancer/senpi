@@ -3,8 +3,9 @@ import { createRequire } from "node:module";
 import { basename, dirname, join, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import chalk from "chalk";
-import { CONFIG_DIR_NAME, getAgentDir, getPackageDir, isBunBinary } from "../config.ts";
+import { CONFIG_DIR_NAME, findNodePackageDir, getAgentDir, getPackageDir, isBunBinary } from "../config.ts";
 import { loadThemeFromPath, type Theme } from "../modes/interactive/theme/theme.ts";
+import { resolveInstallPath } from "../runtime-snapshot/marker.ts";
 import type { ResourceDiagnostic } from "./diagnostics.ts";
 import { ACCEPTED_SHIM_BANNERS, GENERATED_SHIM_BANNER } from "./generated-shim-banner.ts";
 
@@ -174,10 +175,13 @@ function isGeneratedGlobalDefaultExtensionShim(content: string): boolean {
  * session. Canonicalizing collapses both spellings to one path.
  */
 export function canonicalizeGlobalDefaultExtensionModulePath(modulePath: string): string {
+	// A session running from its runtime snapshot names the snapshot's copy; the shim outlives
+	// that snapshot and is shared by every build's sessions, so it names the install instead.
+	const installPath = resolveInstallPath(modulePath, findNodePackageDir(dirname(modulePath)));
 	try {
-		return realpathSync(modulePath);
+		return realpathSync(installPath);
 	} catch {
-		return modulePath;
+		return installPath;
 	}
 }
 

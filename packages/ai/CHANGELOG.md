@@ -8,6 +8,22 @@
 
 ### Changed
 
+- The `anthropic-subscription` (Claude SDK) lane now reports the prompt-cache TTL Claude Code actually uses: 1 hour on a Claude subscription, 5 minutes when `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_BASE_URL` or a Bedrock/Vertex/Foundry switch puts Claude Code on API, gateway or cloud billing. `CLAUDE_CODE_PROMPT_CACHE_TTL`, `FORCE_PROMPT_CACHING_5M` and `ENABLE_PROMPT_CACHING_1H` are honored the way Claude Code honors them. Cache-aware waits sized from the TTL (the prompt-cache safe-wait budget) grow accordingly on a subscription. ([code-yeongyu/oh-my-openagent#8759](https://github.com/code-yeongyu/oh-my-openagent/issues/8759))
+
+### Fixed
+
+### Removed
+
+## [2026.9.29-5] - 2026-09-29
+
+### Breaking Changes
+
+### Added
+
+- GPT-6.1 Sol (`gpt-6.1-sol`, released 2026-09-29) joins the catalog on OpenAI, ChatGPT Subscription, Azure OpenAI, GitHub Copilot, OpenCode Zen, OpenRouter (`openai/gpt-6.1-sol`, `-pro`, `:batch`), Venice (`openai-gpt-61-sol`) and Vercel AI Gateway, with `-fast` Fast-tier (`service_tier: priority`, 2x list price at request time) variants on OpenAI and ChatGPT Subscription. It carries its published prices (\$2/\$10 per 1M tokens with \$0.10 cache reads and \$2.50 cache writes, doubling input and 1.5x output past 272k), 128k output, text and image input, tool search, additional tools and mid-session `configuration_update` support on both first-party lanes, and the documented effort ladder `low`/`medium`/`high`/`xhigh`/`max` — `none` and `minimal` are not offered, so `off` is not selectable and a map-less `gpt-6.1-sol` row from a custom provider is inferred the same way. Its project prompt budget is 400k, like GPT-6 Sol. Ultrafast is not added: OpenAI does not offer it for GPT-6.1 Sol yet. ([#2390](https://github.com/code-yeongyu/senpi/issues/2390))
+
+### Changed
+
 ### Fixed
 
 ### Removed

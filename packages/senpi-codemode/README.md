@@ -128,7 +128,7 @@ Configuration is loaded in this order:
 | `taskTools.task` | `"task"` | Registered tool name used by `agent()`. |
 | `taskTools.output` | `"task_output"` | Registered tool name used by `output()`. |
 | `outputSink.headBytes` | `20480` | Bytes retained from the beginning of a middle-truncated preview; `0` disables it. |
-| `outputSink.maxColumns` | `768` | Maximum rendered output columns; `0` disables column clamping. |
+| `outputSink.maxColumns` | `768` | Maximum columns per printed output line; `0` disables column clamping. A cell's return value is never column-clamped (the byte and line budgets still apply). |
 | `statusEvents` | `true` | Enables kernel status-event forwarding and rendering. Each cell retains at most 100 status rows; after overflow, one omitted-count row precedes the latest 99 events. |
 | `memory.gcWatermarkMb` | `256` | JavaScript kernel: a finished cell whose heap reached this size and grew runs a full collection before its result; whenever at least this much stays live, an idle full collection runs about a second after the cell, so dropped globals return their memory without a reset. Python kernel: a finished cell whose process footprint reached this size and grew runs `gc.collect()` (plus glibc `malloc_trim(0)` on Linux) before its result, and while at least this much stays live the next cells collect too (at most 1/20 of the time), so `del rows` returns its memory. `0` disables. Env override: `SENPI_CODEMODE_MEMORY_GC_WATERMARK_MB`. |
 | `memory.noticeMb` | `1024` | JavaScript and Python kernels: when live memory after a collection (JS heap, Python process footprint) reaches this size (first time, or 25% more than at the last notice), the result gets one bracketed notice naming the largest globals and how to drop them (`rows = undefined`, `del rows`), plus `details.memory`. Ruby and Julia get no notice. `0` disables. Env override: `SENPI_CODEMODE_MEMORY_NOTICE_MB`. |
@@ -320,7 +320,8 @@ Cell output is streamed while the cell runs. Large streams spill to an absolute
 file after the default 50 KiB threshold or when the output column cap drops
 bytes. With a session file such as `/path/session.jsonl`, artifacts live in
 `/path/session-artifacts/`; sessions without a file use a unique temporary
-directory. Truncated results include a plain-path notice such as
+directory. A truncated result tells the model so in its text: the kept and
+original sizes, then a plain-path notice such as
 `[Full output: /absolute/path/eval-….log]`.
 
 ## Deliberate differences from oh-my-pi

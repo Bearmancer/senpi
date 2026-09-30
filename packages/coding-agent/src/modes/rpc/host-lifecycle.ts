@@ -274,17 +274,25 @@ function parseSocketIdentity(value: string): SocketFileIdentity | undefined {
 	return match ? { dev: Number(match[1]), ino: Number(match[2]) } : undefined;
 }
 
-/** Resolves the committed CLI entry this supervisor wraps (source tree or built dist). */
-export function resolveCliMainPath(): string {
-	const modulePath = fileURLToPath(import.meta.url);
+/**
+ * Resolves the committed CLI entry this supervisor wraps (source tree or built dist).
+ * Exported for tests, which pass the module path and layout of a bundled install.
+ */
+export function resolveCliMainPath(
+	modulePath: string = fileURLToPath(import.meta.url),
+	bundled: boolean = isBundledNode,
+): string {
+	// Bundled, take the entry from the package's own declared bin: the bundle's cli.js beside
+	// this chunk, so a host started from a runtime snapshot runs the snapshot's copy and claims
+	// it the way a session does (#2409). Counting ".." instead lands on dist/cli-main.js, the
+	// unbundled tree the package also ships, which a snapshot links back to the install that an
+	// upgrade replaces, or on the package root, where no cli-main was ever emitted.
+	const declared = bundled ? resolveDeclaredCliEntry(modulePath) : undefined;
+	if (declared !== undefined) return declared;
 	const extension = modulePath.endsWith(".ts") ? ".ts" : ".js";
 	const unbundled = resolve(dirname(modulePath), "..", "..", `cli-main${extension}`);
 	if (existsSync(unbundled)) return unbundled;
-	// Bundled, ".." twice reaches the PACKAGE ROOT rather than dist/, naming a cli-main that
-	// was never emitted. Take the entry from the package's own declared bin instead of
-	// counting directories: it is the one statement of where the CLI lives that holds in
-	// every layout. Falls back to the old path when nothing is declared, so a caller that
-	// was working keeps working.
+	// Falls back to the old path when nothing is declared, so a caller that was working keeps working.
 	return resolveDeclaredCliEntry(modulePath) ?? unbundled;
 }
 

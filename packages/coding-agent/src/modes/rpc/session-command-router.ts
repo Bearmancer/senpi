@@ -6,6 +6,7 @@ import {
 	DURABLE_SESSION_ID_CAPABILITY,
 	MEDIA_PLACEHOLDERS_CAPABILITY,
 	PROMPT_SURFACE_CAPABILITY,
+	PROMPT_SURFACE_CHAT_CAPABILITY,
 	RETAIN_ON_DISCONNECT_CAPABILITY,
 	SESSION_CONTEXT_CAPABILITY,
 	SESSION_KIND_CAPABILITY,
@@ -285,6 +286,7 @@ export class SessionCommandRouter {
 				DURABLE_SESSION_ID_CAPABILITY,
 				// Every session's prompt is built from its own launch profile, so one host serves both surfaces.
 				PROMPT_SURFACE_CAPABILITY,
+				PROMPT_SURFACE_CHAT_CAPABILITY,
 				// Only an in-process runtime shares the loop a warm loads into (senpi#2314).
 				...(this.registry.warm ? [WARM_CAPABILITY] : []),
 				...(this.connectionOptions?.capabilities ?? []),

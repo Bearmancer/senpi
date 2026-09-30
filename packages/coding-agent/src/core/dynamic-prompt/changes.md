@@ -1,5 +1,27 @@
 # changes.md — dynamic-prompt
 
+## 2026-09-30 - Chat surface: no routing line, no handoff block, no ledger lines (senpi#2398)
+
+### What changed
+
+- `packages/coding-agent/src/core/dynamic-prompt/types.ts`: `PromptSurface` gains `chat`. New `TerminalOrApp` and `terminalOrApp(surface)`: `chat` takes every `app` entry of a wording table written for the two older surfaces.
+- `build.ts`: `resolvePromptSurface` returns `chat` for `SENPI_PROMPT_SURFACE=chat`; anything other than `app` or `chat` is still `terminal`.
+- `intent-gate.ts`, `verification.ts`, `style.ts`: `chat` renders the app Intent Gate, the app claim audit (`APP_UNRUN_CHECK_RULE`) and "your stop condition".
+- `handoff.ts`: `buildHandoffSection` returns the new `CHAT_REPLIES_SECTION` ("## Replies" + `CHAT_REPLY_RULE`: each reply is a chat message to the people in the conversation, written as the answer itself in their language, with no status block, todo labels or progress ledger). New `CHAT_FINAL_MESSAGE` ("The final message is the answer itself") opens every core's final-message rule on `chat`; `style.ts` uses it in place of "The final message opens with the Handoff block; its For you slot is".
+- Terminal and app renders stay byte-identical (180 renders: the dynamic prompt and 29 presets, two input sets, surface omitted / `terminal` / `app`, main vs this branch: 0 differ).
+
+### Why
+
+- A chat bridge posts the final assistant text into a conversation. The terminal prompt asks for a routing line and the app prompt still asks for the Ask / For you / Now / Next block, so both reached the chat room verbatim. The handoff rule is replaced at its source on `chat`; nothing is appended to contradict it.
+
+### Why an extension could not handle it
+
+- The sections are built inside the shared prompt builder; an extension could only append a competing rule.
+
+### Expected merge conflict zones
+
+- Fork-only files. `HANDOFF_MOMENTS` / `buildHandoffSection` in `handoff.ts`; the surface ternaries in `style.ts` and `intent-gate.ts`.
+
 ## 2026-09-30 - App surface: an unrun check is covered by the evidence that did run (senpi#2377)
 
 ### What changed

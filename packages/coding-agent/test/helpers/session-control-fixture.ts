@@ -29,7 +29,7 @@ export async function startEndpoint(
 		readonly isSessionReferenced?: RegisterControlEndpointOptions["isSessionReferenced"];
 		readonly harness?: Harness;
 		readonly agentDir?: string;
-		readonly questions?: Pick<TuiControlSurface, "pendingQuestionIds" | "answerQuestion">;
+		readonly questions?: Pick<TuiControlSurface, "pendingQuestionIds" | "pendingQuestion" | "answerQuestion">;
 	} = {},
 ): Promise<EndpointFixture> {
 	const harness = options.harness ?? (await createHarness({ persistSession: true }));
@@ -47,6 +47,7 @@ export async function startEndpoint(
 		draftHold: () => draft,
 		blockingQuestion: () => false,
 		pendingQuestionIds: options.questions?.pendingQuestionIds ?? (() => []),
+		pendingQuestion: options.questions?.pendingQuestion ?? (() => undefined),
 		answerQuestion: options.questions?.answerQuestion ?? (() => false),
 		notice: (line) => notices.push(line),
 	};

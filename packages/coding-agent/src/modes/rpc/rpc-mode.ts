@@ -49,7 +49,8 @@
  * applies to CREATE only - re-opening an existing `sessionPath` keeps that file's header
  * id, so identity is never rewritten by a resume.
  *
- * `open_session.promptSurface` (`terminal` | `app`, host capability `prompt_surface`) builds that
+ * `open_session.promptSurface` (`terminal` | `app` | `chat`, host capabilities `prompt_surface` and
+ * `prompt_surface_chat`) builds that
  * session's system prompt for where its replies render; omitted, the host's `SENPI_PROMPT_SURFACE`
  * decides. An attach naming another surface rebuilds the live session's prompt.
  *
@@ -60,7 +61,7 @@
  * `open_failed: <detail>`, `invalid_session_context: <detail>` (a `context` past a
  * documented cap), `invalid_session_kind: <detail>` (a `kind` that is neither
  * `interactive` nor `worker`), `invalid_launch_profile: <detail>` (a non-boolean
- * `auto_title`, or a `promptSurface` other than `terminal`/`app`), `invalid_session_id: <detail>` (a `durableSessionId` that is not a
+ * `auto_title`, or a `promptSurface` other than `terminal`/`app`/`chat`), `invalid_session_id: <detail>` (a `durableSessionId` that is not a
  * legal session id), `session_id_in_use` (a `durableSessionId` a LIVE session already
  * holds).
  *

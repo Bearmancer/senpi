@@ -9,8 +9,13 @@
 import { VERSION } from "../../config.ts";
 import type { AgentSession } from "../../core/agent-session.ts";
 import { engineBuildIdentity } from "../../core/engine-build-identity.ts";
-import type { AdmissionHoldReason, QuestionResponse, SessionControlDrainResult } from "../../core/extensions/types.ts";
-import { answeredUiRequestId } from "../rpc/extension-ui-response.ts";
+import type {
+	AdmissionHoldReason,
+	QuestionRequest,
+	QuestionResponse,
+	SessionControlDrainResult,
+} from "../../core/extensions/types.ts";
+import { answeredUiRequestId, settledQuestionStatus, unansweredQuestionIds } from "../rpc/extension-ui-response.ts";
 import { buildRpcSessionState } from "../rpc/rpc-session-state.ts";
 import type { ControlFeed } from "./session-control-feed.ts";
 import { type ControlCommand, type ControlConnection, failure, success } from "./session-control-server.ts";
@@ -19,6 +24,7 @@ export interface TuiControlSurface {
 	draftHold(): AdmissionHoldReason | undefined;
 	blockingQuestion(): boolean;
 	pendingQuestionIds(): readonly string[];
+	pendingQuestion(requestId: string): Pick<QuestionRequest, "questions"> | undefined;
 	answerQuestion(requestId: string, response: QuestionResponse): boolean;
 	notice(line: string): void;
 }
@@ -111,22 +117,29 @@ function sessionRow(session: AgentSession): Readonly<Record<string, unknown>> {
 
 /**
  * Only a question this session asked, and is still waiting on, can be answered. `uiRequestId` names
- * it (the short form: `id`); the reply always carries the frame's `id`, as on a host.
+ * it (the short form: `id`); the reply always carries the frame's `id`, as on a host. The answer
+ * settles by the host's rule (`settledQuestionStatus`), so the same frame reaches the model as the same
+ * message on either surface.
  */
 function answerQuestion(surface: TuiControlSurface, command: ControlCommand): object {
 	const frameId = command.id;
 	const requestId = answeredUiRequestId(command);
-	if (requestId === undefined || !surface.pendingQuestionIds().includes(requestId)) {
+	const request = requestId === undefined ? undefined : surface.pendingQuestion(requestId);
+	if (requestId === undefined || request === undefined) {
 		return failure(frameId, "extension_ui_response", "unknown_request");
 	}
-	const response = questionResponse(command);
+	const response = questionResponse(command, request.questions);
+	if (response === "question_incomplete") return failure(frameId, "extension_ui_response", response);
 	if (response === undefined || !surface.answerQuestion(requestId, response)) {
 		return failure(frameId, "extension_ui_response", "invalid_response");
 	}
 	return success(frameId, "extension_ui_response");
 }
 
-function questionResponse(command: ControlCommand): QuestionResponse | undefined {
+function questionResponse(
+	command: ControlCommand,
+	questions: QuestionRequest["questions"],
+): QuestionResponse | "question_incomplete" | undefined {
 	if (command.cancelled === true) return { status: "cancelled", answers: {}, unanswered: [] };
 	const answers = command.answers;
 	if (typeof answers !== "object" || answers === null || Array.isArray(answers)) return undefined;
@@ -140,5 +153,8 @@ function questionResponse(command: ControlCommand): QuestionResponse | undefined
 		parsed[question] = text === undefined ? { selected } : { selected, text };
 	}
 	const comment = typeof command.comment === "string" ? command.comment : undefined;
-	return { status: "answered", answers: parsed, unanswered: [], ...(comment === undefined ? {} : { comment }) };
+	const status = settledQuestionStatus(parsed, comment);
+	if (status === undefined) return "question_incomplete";
+	const unanswered = unansweredQuestionIds(questions, parsed);
+	return { status, answers: parsed, unanswered, ...(comment === undefined ? {} : { comment }) };
 }

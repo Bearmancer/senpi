@@ -12,13 +12,14 @@ import { buildVerificationSection } from "./verification.ts";
 import { buildWorkingTaskSection } from "./working-task.ts";
 import { buildWorkstationSection, type WorkstationDialect } from "./workstation.ts";
 
-export type { PromptSurface } from "./types.ts";
+export { type PromptSurface, type TerminalOrApp, terminalOrApp } from "./types.ts";
 
 export const PROMPT_SURFACE_ENV_VAR = "SENPI_PROMPT_SURFACE";
 
-/** `SENPI_PROMPT_SURFACE=app` selects the app surface; unset or any other value is the terminal. */
+/** `SENPI_PROMPT_SURFACE=app` or `=chat` selects that surface; unset or any other value is the terminal. */
 export function resolvePromptSurface(env: Readonly<Record<string, string | undefined>>): PromptSurface {
-	return env[PROMPT_SURFACE_ENV_VAR] === "app" ? "app" : "terminal";
+	const value = env[PROMPT_SURFACE_ENV_VAR];
+	return value === "app" || value === "chat" ? value : "terminal";
 }
 
 /** Context handed to a `corePrompt` override so it can reuse the dynamic pieces. */
@@ -56,7 +57,8 @@ export interface BuildDynamicSystemPromptOptions {
 	workstationDialect?: WorkstationDialect;
 	/**
 	 * Where replies render. `app` (a chat UI host) drops the visible routing line and keeps
-	 * tool and hook feedback with the agent; omitted means `terminal`.
+	 * tool and hook feedback with the agent; `chat` (a chat bridge) also drops the handoff block and
+	 * ledger lines; omitted means `terminal`.
 	 */
 	surface?: PromptSurface;
 }

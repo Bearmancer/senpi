@@ -1,5 +1,16 @@
-import { mkdirSync, readdirSync, renameSync, rmSync, statSync, unlinkSync, utimesSync, writeFileSync } from "node:fs";
+import {
+	mkdirSync,
+	readdirSync,
+	readFileSync,
+	renameSync,
+	rmSync,
+	statSync,
+	unlinkSync,
+	utimesSync,
+	writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
+import { STAGING_PREFIX } from "./layout.ts";
 import { RUNTIME_SNAPSHOT_MARKER } from "./marker.ts";
 
 const LOCK_NAME = ".lock";
@@ -7,6 +18,11 @@ const CLAIMS_DIR = "claims";
 const STALE_LOCK_MS = 30_000;
 const LOCK_WAIT_MS = 5_000;
 const LOCK_RETRY_MS = 25;
+const BUILD_LOCK_PREFIX = ".build-";
+const BUILD_WAIT_MS = 120_000;
+const BUILD_RETRY_MS = 50;
+/** A build lock whose holder never wrote its pid (it died right after creating it). */
+const UNOWNED_BUILD_LOCK_MS = 30_000;
 export const UNUSED_SNAPSHOT_GRACE_MS = 10 * 60_000;
 const LEFTOVER_MS = 60 * 60_000;
 
@@ -52,6 +68,62 @@ export function withRuntimeLock<T>(root: string, task: () => T): T | undefined {
 	}
 	try {
 		return task();
+	} finally {
+		rmSync(lock, { recursive: true, force: true });
+	}
+}
+
+function buildLockHolder(lock: string): number | undefined {
+	try {
+		const pid = Number(readFileSync(join(lock, "pid"), "utf8"));
+		return Number.isSafeInteger(pid) && pid > 0 ? pid : undefined;
+	} catch (error) {
+		if (errorCode(error) === "ENOENT" || errorCode(error) === "ENOTDIR") return undefined;
+		throw error;
+	}
+}
+
+function isAbandonedBuildLock(lock: string, now: number, isAlive: (pid: number) => boolean): boolean {
+	const holder = buildLockHolder(lock);
+	return holder === undefined ? ageMs(lock, now) > UNOWNED_BUILD_LOCK_MS : !isAlive(holder);
+}
+
+/**
+ * Runs `build` as the only builder of snapshot `id`; undefined when another live builder keeps it
+ * past the wait. Building a snapshot copies thousands of files, so it runs under its own lock, not
+ * the runtime root's, and never blocks launches of snapshots that already exist. A lock whose
+ * holder died is taken over, and the dead builder's staging directories are removed first.
+ */
+export async function withBuildLock<T>(
+	root: string,
+	id: string,
+	build: () => Promise<T>,
+	isAlive: (pid: number) => boolean = isProcessAlive,
+): Promise<T | undefined> {
+	mkdirSync(root, { recursive: true });
+	const lock = join(root, `${BUILD_LOCK_PREFIX}${id}`);
+	const deadline = Date.now() + BUILD_WAIT_MS;
+	for (;;) {
+		try {
+			mkdirSync(lock);
+			writeFileSync(join(lock, "pid"), String(process.pid));
+			break;
+		} catch (error) {
+			if (errorCode(error) !== "EEXIST") throw error;
+		}
+		if (isAbandonedBuildLock(lock, Date.now(), isAlive)) {
+			rmSync(lock, { recursive: true, force: true });
+		} else if (Date.now() > deadline) {
+			return undefined;
+		} else {
+			sleepSync(BUILD_RETRY_MS);
+		}
+	}
+	try {
+		for (const name of readdirSync(root)) {
+			if (name.startsWith(`${STAGING_PREFIX}${id}-`)) rmSync(join(root, name), { recursive: true, force: true });
+		}
+		return await build();
 	} finally {
 		rmSync(lock, { recursive: true, force: true });
 	}

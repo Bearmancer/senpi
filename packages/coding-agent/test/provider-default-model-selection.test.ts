@@ -16,10 +16,12 @@ function runtimeFor(availableModels: Model<Api>[]): InitialModelRuntime {
 }
 
 describe("OpenAI provider defaults", () => {
-	test("prefers GPT-6 Sol automatically while preserving explicit GPT-5.5", async () => {
+	test("prefers GPT-6.1 Sol automatically while preserving explicit GPT-5.5", async () => {
 		const openAiModels = getModels("openai");
 		const codexModels = getModels("chatgpt-subscription");
 		const availableModels: Model<Api>[] = [
+			openAiModels.find((model) => model.id === "gpt-6.1-sol"),
+			codexModels.find((model) => model.id === "gpt-6.1-sol"),
 			openAiModels.find((model) => model.id === "gpt-6-sol"),
 			codexModels.find((model) => model.id === "gpt-6-sol"),
 			openAiModels.find((model) => model.id === "gpt-5.6-sol"),
@@ -37,13 +39,29 @@ describe("OpenAI provider defaults", () => {
 			modelRuntime: runtime,
 		});
 
-		expect(automatic.model?.id).toBe("gpt-6-sol");
+		expect(automatic.model?.id).toBe("gpt-6.1-sol");
 		expect(automatic.provenance).toBe("provider-default");
 		expect(explicit.model?.id).toBe("gpt-5.5");
 		expect(explicit.provenance).toBe("settings");
 	});
 
-	test("falls through to first-available when the registry carries GPT-5.6 Sol but not GPT-6 Sol", async () => {
+	test("falls through to first-available when the registry carries GPT-6 Sol but not GPT-6.1 Sol", async () => {
+		const openAiModels = getModels("openai");
+		const availableModels: Model<Api>[] = [openAiModels.find((model) => model.id === "gpt-6-sol")].filter(
+			(model) => model !== undefined,
+		);
+
+		const automatic = await findInitialModel({
+			scopedModels: [],
+			isContinuing: false,
+			modelRuntime: runtimeFor(availableModels),
+		});
+
+		expect(automatic.model?.id).toBe("gpt-6-sol");
+		expect(automatic.provenance).toBe("first-available");
+	});
+
+	test("falls through to first-available when the registry carries GPT-5.6 Sol but not GPT-6.1 Sol", async () => {
 		const openAiModels = getModels("openai");
 		const availableModels: Model<Api>[] = [openAiModels.find((model) => model.id === "gpt-5.6-sol")].filter(
 			(model) => model !== undefined,

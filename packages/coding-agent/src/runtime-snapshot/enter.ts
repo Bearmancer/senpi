@@ -4,7 +4,7 @@ import { basename, dirname, join, relative } from "node:path";
 import { pathToFileURL } from "node:url";
 import { materializeRuntimeSnapshot, type RuntimeManifest } from "./layout.ts";
 import { readRuntimeSnapshotMarker } from "./marker.ts";
-import { claimRuntimeSnapshot, pruneRuntimeSnapshots, withRuntimeLock } from "./registry.ts";
+import { claimRuntimeSnapshot, pruneRuntimeSnapshots, withBuildLock, withRuntimeLock } from "./registry.ts";
 
 export const RUNTIME_MANIFEST = "runtime-manifest.json";
 
@@ -42,11 +42,11 @@ function readRuntimeManifest(bundleDir: string): RuntimeManifest | undefined {
  * snapshot taken once per build and install, and claims it so it outlives later upgrades.
  * A launch already running from a snapshot only claims it. Any failure keeps the old behavior.
  */
-export function prepareRuntimeSnapshot(
+export async function prepareRuntimeSnapshot(
 	entryPath: string,
 	packageDir: string,
 	agentDir: string,
-): RuntimeSnapshotDecision {
+): Promise<RuntimeSnapshotDecision> {
 	const bundleDir = dirname(entryPath);
 	const runtimeRoot = join(agentDir, "runtime");
 	try {
@@ -59,15 +59,23 @@ export function prepareRuntimeSnapshot(
 		const installId = createHash("sha256").update(realpathSync(packageDir)).digest("hex").slice(0, 12);
 		const snapshotId = `${manifest.buildId}-${installId}`;
 		const snapshotDir = join(runtimeRoot, snapshotId);
-		const ready = withRuntimeLock(runtimeRoot, () => {
-			if (readRuntimeSnapshotMarker(snapshotDir)?.buildId !== manifest.buildId) {
-				materializeRuntimeSnapshot(packageDir, snapshotDir, manifest);
-			}
-			claimRuntimeSnapshot(snapshotDir, process.pid);
-			pruneRuntimeSnapshots(runtimeRoot, snapshotId, Date.now());
-			return true;
-		});
-		if (!ready) return { kind: "run-here" };
+		const isBuilt = () => readRuntimeSnapshotMarker(snapshotDir)?.buildId === manifest.buildId;
+		const claim = () =>
+			withRuntimeLock(runtimeRoot, () => {
+				if (!isBuilt()) return false;
+				claimRuntimeSnapshot(snapshotDir, process.pid);
+				pruneRuntimeSnapshots(runtimeRoot, snapshotId, Date.now());
+				return true;
+			});
+		let claimed = claim();
+		if (claimed === false) {
+			const built = await withBuildLock(runtimeRoot, snapshotId, async () => {
+				if (!isBuilt()) await materializeRuntimeSnapshot(packageDir, snapshotDir, manifest);
+				return true;
+			});
+			if (built) claimed = claim();
+		}
+		if (claimed !== true) return { kind: "run-here" };
 		const entryUrl = pathToFileURL(join(snapshotDir, "dist", "bundle", basename(entryPath))).href;
 		return { kind: "hand-off", entryUrl, snapshotDir };
 	} catch {

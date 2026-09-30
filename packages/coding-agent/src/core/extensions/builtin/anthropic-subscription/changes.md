@@ -1,3 +1,26 @@
+## 2026-09-29 - write and edit reach Claude Code as senpi's own MCP tools, so senpi alone decides and executes them (senpi#2401)
+
+### What changed
+
+- `tools.ts`: `PI_TO_SDK_TOOL_NAME` no longer maps `write` / `edit` to Claude Code's built-in `Write` / `Edit`, and `BUILTIN_SDK_TOOLS` is `Read`, `Bash`, `Grep`, `Glob`. `resolveSdkTools` therefore serves senpi's `write` and `edit` through the existing custom-tools MCP server (`mcp__custom-tools__write`, `mcp__custom-tools__edit`) with senpi's own schemas (`path` + `content`, `path` + `edits[]`), the same path `eval` and every other senpi tool already use. `SDK_TO_PI_TOOL_NAME` and `mapToolArgs` keep their `Write` / `Edit` entries so an older SDK transcript still maps back.
+- `tools.ts`: `HOST_TOOL_POLICY_FINGERPRINT` is `host-tool-denial-v3`.
+
+### Why
+
+- Claude Code runs a built-in tool's `validateInput` before any PreToolUse hook and answers a rejection with `<tool_use_error>` without running hooks. Built-in `Write` / `Edit` check Claude Code's own `readFileState`, which is always empty on this lane because the host-denial hook stops the SDK's `Read`. The check is skipped only when Claude Code's permission check would allow the write (a path inside its working directory) and the model is not in its always-enforce set, so every write or edit to a file outside the working directory got `File has not been read yet`. senpi had already captured the `tool_use` and executed it anyway, so one id carried a refusal and a success. Because no hook ran, `continue: false` never ended the SDK turn: Claude Code called the model again with only the refusal, and senpi batched and executed every `tool_use` from that inner loop, so a retry applied the change twice. For a never-read file the refusal gated nothing: the host still wrote it.
+- As MCP tools, `write` and `edit` have no Claude Code validator. `HOST_TOOL_DENIAL_HOOKS` (matcher `mcp__custom-tools__.*`) answers every call with the host-execution notice and ends the SDK turn, and senpi executes each call once and returns its one result, exactly as on the direct Anthropic lanes. senpi's host `write` / `edit` semantics are unchanged.
+- `Read`, `Bash`, `Grep` and `Glob` stay built-in: a real-binary probe showed their pre-hook validation does not produce a second result for a call senpi also executes.
+- Checked alongside: the permission system keys on the pi tool name (`edit` / `write`), which `mapSdkToolNameToPi` still produces from the MCP name; compaction's clearable-tool lists and tool-watch key on pi names; senpi has no telemetry keyed on SDK tool names. The model-facing history and delta labels now read `mcp__custom-tools__edit` / `mcp__custom-tools__write`, matching the tool names the model sees. MCP tool names are always `mcp__<server>__<tool>`, so the built-in names cannot be kept.
+- The fingerprint bump is part of `toolsetHash`: a resident session retires its live query once with `toolset_changed` and reattaches (resume, not a flatten) with the new tool list; a persisted restart binding reattaches the same way.
+
+### Why an extension could not handle it
+
+- The SDK tool allowlist and the MCP facade are built inside this provider; Claude Code's validation runs before anything an extension can observe.
+
+### Expected merge conflict zones
+
+- LOW: `PI_TO_SDK_TOOL_NAME`, `BUILTIN_SDK_TOOLS` and `HOST_TOOL_POLICY_FINGERPRINT` in `tools.ts`.
+
 ## 2026-09-29 - a cold-seed that cannot fit is refused before dispatch and marked for senpi-owned recovery (senpi#2329)
 
 ### What changed

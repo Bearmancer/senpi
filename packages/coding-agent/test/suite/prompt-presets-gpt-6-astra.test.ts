@@ -105,6 +105,7 @@ const EXPECTED_CONCERN: Record<Gpt6AstraRuleId, Gpt6AstraConcern> = {
 	"plain-prose": "writing-style",
 	"slop-ban": "writing-style",
 	"direct-statements": "writing-style",
+	"no-reflexive-apology": "writing-style",
 	"handoff-report": "reporting",
 	"final-message-shape": "reporting",
 };
@@ -141,6 +142,7 @@ const EXPECTED_SECTION: Record<Gpt6AstraRuleId, string> = {
 	"plain-prose": "Writing",
 	"slop-ban": "Writing",
 	"direct-statements": "Writing",
+	"no-reflexive-apology": "Writing",
 	"handoff-report": "Reporting",
 	"final-message-shape": "Reporting",
 };

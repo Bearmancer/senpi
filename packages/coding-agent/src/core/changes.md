@@ -1,3 +1,59 @@
+## 2026-09-30 - High-reasoning warning covers Venice's dotless gpt-61-sol (senpi#2390)
+
+### What changed
+
+- `packages/coding-agent/src/core/high-reasoning-warning.ts`: the Sol pattern accepts one digit glued to the 6 (`gpt-6(?:\.\d+|\d)?-sol`), so `openai-gpt-61-sol` warns at `xhigh` / `max` like every other GPT-6.1 Sol id; `gpt-61` and `gpt-611-sol` stay out (`test/high-reasoning-warning.test.ts`).
+
+### Why
+
+Venice spells the point release without the dot.
+
+### Why an extension could not handle it
+
+The warning matcher is core.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/high-reasoning-warning.ts`: fork-only file.
+
+## 2026-09-30 - The global extension shim names the install, not a runtime snapshot (#2408)
+
+### What changed
+
+- `packages/coding-agent/src/core/resource-loader.ts`: `canonicalizeGlobalDefaultExtensionModulePath()` maps a path inside a runtime snapshot to the same path in the install it was taken from (`resolveInstallPath()` from `src/runtime-snapshot/marker.ts`) before resolving symlinks.
+
+### Why
+
+- The snapshot's `dist` used to be links into the install, so resolving symlinks alone reached the install. It is a copy now (#2408), and the shim in the agent directory outlives any one snapshot and is shared by the sessions of every build, so it must keep naming the install.
+
+### Why an extension could not handle it
+
+- The shim path is computed by the resource loader before extensions load.
+
+### Expected merge conflict zones
+
+- LOW: the body of `canonicalizeGlobalDefaultExtensionModulePath()` and the imports of `packages/coding-agent/src/core/resource-loader.ts`.
+
+## 2026-09-30 - GPT-6.1 Sol becomes the OpenAI provider default; warning covers it (senpi#2390)
+
+### What changed
+
+- `packages/coding-agent/src/core/model-resolver.ts`: `defaultModelPerProvider.openai` and `defaultModelPerProvider["chatgpt-subscription"]` move from `gpt-6-sol` to `gpt-6.1-sol`. Nothing else in the resolver changes; a registry without the id falls through to first-available as before (`test/provider-default-model-selection.test.ts` keeps a GPT-6-Sol-only and a GPT-5.6-Sol-only case).
+- `packages/coding-agent/src/core/high-reasoning-warning.ts`: `SENSITIVE_MODEL_ID_PATTERN` matches `gpt-6(?:\.\d+)?-sol`, so `gpt-6.1-sol` and its `-fast` / `-pro` / gateway-prefixed forms warn at `xhigh` and `max` like GPT-6 Sol; `gpt-6.1` alone and `gpt-6.1-solaris` stay out.
+
+### Why
+
+OpenAI released GPT-6.1 Sol on 2026-09-29 and openai/codex made it the default catalog model (priority 1) the same day; senpi followed the same pattern when GPT-6 Sol replaced GPT-5.6 Sol. The warning keys on the Sol tier, which now has a point release.
+
+### Why an extension could not handle it
+
+The provider default table is consulted during initial model selection before extensions are bound; the warning matcher is core.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/model-resolver.ts`: the `defaultModelPerProvider` table (fork-only entries around `openai` / `chatgpt-subscription`).
+- `packages/coding-agent/src/core/high-reasoning-warning.ts`: fork-only file, no upstream counterpart.
+
 ## 2026-09-29 - The prompt surface is a per-session property (senpi#2377)
 
 ### What changed

@@ -60,6 +60,7 @@ describe("multi-session RPC routing", () => {
 					"auto_title_per_session",
 					"durable_session_id",
 					"prompt_surface",
+					"prompt_surface_chat",
 				],
 				mode: "multi",
 				// Host identity (`protocol-identity.ts`): the instance is this process, the

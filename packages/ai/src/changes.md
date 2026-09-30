@@ -1,3 +1,22 @@
+## 2026-09-30 - GPT-6.1 Sol id inference: xhigh/max on, off vetoed for map-less rows (senpi#2390)
+
+### What changed
+
+- `packages/ai/src/models.ts`: `XHIGH_MODEL_IDS` and `OPENAI_MAX_MODEL_IDS` gain `gpt-6.1-sol`, so a custom provider that ships the id without a `thinkingLevelMap` still surfaces `xhigh` and `max` on the OpenAI-compatible APIs. `inferOpenAIThinkingLevelMap` applies the Astra-shaped map (`off: null`, `minimal: null`, low..max) to any id in the new `GPT_6_NO_NONE_EFFORT_MODEL_IDS` list (`gpt-6-astra`, `gpt-6.1-sol`) instead of to Astra alone, because GPT-6.1 Sol documents no `none` effort either.
+- Catalog rows and generator changes for the same release are tracked in `packages/ai/changes.md`.
+
+### Why
+
+A `models.json` or gateway row for `gpt-6.1-sol` without a map would otherwise lose the two top efforts and keep `off` selectable, and selecting it would put `reasoning.effort: none` on the wire, which the model rejects (`test/gpt-6-family-catalog.test.ts`, map-less block).
+
+### Why an extension could not handle it
+
+Effort inference runs inside the model registry before any extension hook sees the model.
+
+### Expected merge conflict zones
+
+- `packages/ai/src/models.ts`: `inferOpenAIThinkingLevelMap` and the `XHIGH_MODEL_IDS` / `OPENAI_MAX_MODEL_IDS` constant block.
+
 ## 2026-09-29 - A reason-less forbidden rejection is retried, not treated as terminal (senpi#2376)
 
 ### What changed

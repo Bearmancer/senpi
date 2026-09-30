@@ -43,7 +43,7 @@ interface OpenFields {
 	readonly kind?: "interactive" | "worker";
 	readonly context?: Record<string, string>;
 	readonly auto_title?: boolean;
-	readonly promptSurface?: "terminal" | "app";
+	readonly promptSurface?: "terminal" | "app" | "chat";
 }
 
 /**

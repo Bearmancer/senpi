@@ -1,3 +1,24 @@
+## 2026-09-30 - A runtime snapshot holds its own dependencies, and shared hosts run from it (#2408, #2409)
+
+### What changed
+
+- `packages/coding-agent/src/cli.ts`: the bundled launch awaits `prepareRuntimeSnapshot()`, which is async now because the snapshot's files are copied with a bounded number of copies in flight.
+- `packages/coding-agent/src/runtime-snapshot/` (fork-only): `layout.ts` copies the whole package (except `node_modules`) and every package the install's dependency graph reaches into the snapshot instead of linking back to the install. Each name goes where the package itself resolves it (nested or hoisted); a package that resolves another copy of a name gets that copy nested under itself. Type declarations and source maps are left out. `file-copier.ts` (new) copies each file as a copy-on-write clone, then a hardlink where the filesystem cannot clone, then a plain copy, eight at a time. `registry.ts` gains `withBuildLock()`: one builder per snapshot, a dead builder's lock and staging directories are taken over, and launches of snapshots that already exist never wait on a build. `enter.ts` claims an existing snapshot under the runtime lock, and builds a missing one under the build lock before claiming it.
+
+### Why
+
+- An update that changes the package layout (`bundledDependencies` on or off) deletes the directories the snapshot's links named, so a running session's PTY tools and `eval` failed with `ENOENT` (#2408). Measured on the published releases: 223 of 232 links dangled after 2026.9.29-3 was replaced by 2026.9.29-4.
+- A clone never shares the install's file, so an in-place rewrite of the install cannot reach the snapshot; a hardlink does share it and is only taken where no clone is possible (package managers replace files rather than rewriting them).
+- Cost, measured on macOS with the 2026.9.29-4 dependency closure (14.4k files, 382 MiB logical, all clones): the first launch after an update builds the snapshot once; later launches are unchanged.
+
+### Why an extension could not handle it
+
+- The snapshot is built by the CLI entry before the engine graph loads.
+
+### Expected merge conflict zones
+
+- LOW: the `prepareRuntimeSnapshot` call in `cli.ts` (one added `await`).
+
 ## 2026-09-29 - The CLI runtime factory passes the launch profile's prompt surface (senpi#2377)
 
 ### What changed

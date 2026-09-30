@@ -7,6 +7,7 @@ import { contextHost, responseData } from "./rpc-session-context-support.ts";
 // host: one host process serves a terminal client and an app client at once.
 const ROUTING_LINE = "I read this as";
 const FEEDBACK_GUIDANCE = /tool and hook feedback/i;
+const HANDOFF_SLOT = /For you|You need/;
 
 afterEach(() => {
 	vi.unstubAllEnvs();
@@ -53,7 +54,19 @@ it("rebuilds an attached session's prompt when a later open names another surfac
 	expect(host.systemPrompt(String(first.sessionId))).not.toContain(ROUTING_LINE);
 }, 120_000);
 
-it("refuses a promptSurface outside terminal and app at the RPC boundary", async () => {
+it("builds a chat-surface prompt with no routing line and no handoff block", async () => {
+	vi.stubEnv("SENPI_PROMPT_SURFACE", undefined);
+	await using host = await contextHost();
+
+	const chat = await host.open("conn-chat", { promptSurface: "chat" });
+
+	const chatPrompt = host.systemPrompt(String(chat.sessionId));
+	expect(chatPrompt).not.toContain(ROUTING_LINE);
+	expect(chatPrompt).not.toMatch(HANDOFF_SLOT);
+	expect(chatPrompt).toMatch(FEEDBACK_GUIDANCE);
+}, 120_000);
+
+it("refuses a promptSurface outside terminal, app and chat at the RPC boundary", async () => {
 	await using host = await contextHost();
 
 	const error = await host.openFailure("conn-a", { promptSurface: "web" });
@@ -67,4 +80,5 @@ it("advertises that it honors open_session.promptSurface", async () => {
 	const info = responseData(await host.send("conn-a", { type: "get_protocol_info" }));
 
 	expect(z.array(z.string()).parse(info.capabilities)).toContain("prompt_surface");
+	expect(z.array(z.string()).parse(info.capabilities)).toContain("prompt_surface_chat");
 }, 120_000);

@@ -3890,6 +3890,7 @@ export class InteractiveMode {
 				draftHold: () => (this.sessionControlHost.submissionInFlight() ? "draft" : this.composerHold()),
 				blockingQuestion: () => this.askUserQuestion !== undefined,
 				pendingQuestionIds: () => [...this.pendingQuestions.keys()],
+				pendingQuestion: (requestId) => this.pendingQuestions.get(requestId)?.request,
 				answerQuestion: (requestId, response) => {
 					const state = this.pendingQuestions.get(requestId);
 					state?.finish(response);

@@ -1,9 +1,10 @@
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import type { Api, Model } from "@earendil-works/pi-ai";
 
-// Matches GPT-5.x Sol, GPT-6 Sol and GPT-6 Astra variants, including provider-prefixed
-// forms. The trailing lookahead excludes unrelated ids that continue with letters.
-const SENSITIVE_MODEL_ID_PATTERN = /(?:gpt-5(?:\.\d+)?-sol|gpt-6-sol|gpt-6-astra)(?![a-z])/i;
+// Matches GPT-5.x Sol, GPT-6.x Sol (gpt-6-sol, gpt-6.1-sol, Venice's dotless gpt-61-sol) and
+// GPT-6 Astra variants, including provider-prefixed forms. The trailing lookahead excludes
+// unrelated ids that continue with letters.
+const SENSITIVE_MODEL_ID_PATTERN = /(?:gpt-5(?:\.\d+)?-sol|gpt-6(?:\.\d+|\d)?-sol|gpt-6-astra)(?![a-z])/i;
 const ASTRA_MODEL_ID_PATTERN = /gpt-6-astra(?![a-z])/i;
 
 export function isSensitiveHighReasoningModel(model: Pick<Model<Api>, "id">): boolean {

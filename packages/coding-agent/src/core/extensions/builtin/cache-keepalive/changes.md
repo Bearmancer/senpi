@@ -1,5 +1,23 @@
 # Cache Keep-Alive Extension Changes
 
+## 2026-09-30 - Keep-alive pings arm after the run settles and send the turn's tools (senpi#2389)
+
+### What changed
+
+- `index.ts`: `agent_end` records the completed turn and marks it for arming; a new `agent_settled` handler arms the keep-alive once the session reports idle. The ping's tool list now comes from `ctx.getPromptCachePrefixRequest()`, which builds the agent's tools in request order through `buildProviderContext` with the fields the turn sends; when that build is skipped, the ping falls back to the previous active-tool assembly.
+
+### Why
+
+- `agent_end` handlers run while the run is still active, so `arm()` saw `isIdle() === false`, stood down with `agent-busy`, and nothing re-armed it: the keep-alive never pinged in a real session. The ping also listed tools in registry order without the fields the turn sends, so an armed ping would write a different cache prefix than the turn it keeps warm.
+
+### Why an extension could not handle it
+
+- This is the builtin keep-alive extension itself; the fix uses only existing extension APIs (`agent_settled`, `getPromptCachePrefixRequest`).
+
+### Expected merge conflict zones
+
+- `cache-keepalive/index.ts`: the `agent_end` handler and the tool assembly inside `ping()`.
+
 ## 2026-09-24 - Prewarm the OpenAI GPT-5.6+ prompt cache at session start (senpi#2096)
 
 ### What changed

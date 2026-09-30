@@ -417,6 +417,37 @@ function hasOpenAIExtendedPromptCache(model: Model<Api>): boolean {
 	return OPENAI_EXTENDED_CACHE_MODEL_ID.test(model.id);
 }
 
+/** Env that puts Claude Code on API-key, gateway or cloud billing, where it caches the main conversation for 5 minutes. */
+const CLAUDE_CODE_API_BILLING_ENV = [
+	"ANTHROPIC_API_KEY",
+	"ANTHROPIC_AUTH_TOKEN",
+	"ANTHROPIC_BASE_URL",
+	"CLAUDE_CODE_USE_BEDROCK",
+	"CLAUDE_CODE_USE_VERTEX",
+	"CLAUDE_CODE_USE_FOUNDRY",
+] as const;
+
+function isEnabledFlag(value: string | undefined): boolean {
+	return value !== undefined && !/^(?:|0|false|no|off)$/i.test(value.trim());
+}
+
+/**
+ * The Claude SDK lane's cache TTL is chosen by Claude Code, not senpi: `CLAUDE_CODE_PROMPT_CACHE_TTL`
+ * (`5m` | `1h`) wins, then `FORCE_PROMPT_CACHING_5M` and `ENABLE_PROMPT_CACHING_1H`; otherwise a Claude
+ * subscription gets 1 hour and API-key, gateway or cloud billing gets 5 minutes. A subscription past its
+ * usage limits also drops to 5 minutes, which nothing here can observe.
+ */
+function claudeCodePromptCacheTtlSeconds(env: ProviderEnv | undefined): number {
+	const explicit = getProviderEnvValue("CLAUDE_CODE_PROMPT_CACHE_TTL", env)?.trim().toLowerCase();
+	if (explicit === "5m") return PROMPT_CACHE_TTL_SHORT_SECONDS;
+	if (explicit === "1h") return PROMPT_CACHE_TTL_LONG_SECONDS;
+	if (isEnabledFlag(getProviderEnvValue("FORCE_PROMPT_CACHING_5M", env))) return PROMPT_CACHE_TTL_SHORT_SECONDS;
+	if (isEnabledFlag(getProviderEnvValue("ENABLE_PROMPT_CACHING_1H", env))) return PROMPT_CACHE_TTL_LONG_SECONDS;
+	return CLAUDE_CODE_API_BILLING_ENV.some((name) => getProviderEnvValue(name, env) !== undefined)
+		? PROMPT_CACHE_TTL_SHORT_SECONDS
+		: PROMPT_CACHE_TTL_LONG_SECONDS;
+}
+
 /**
  * Classify the active model's prompt-cache lifetime from the provider's documented cache contract.
  * `cacheRetention: "none"` (or `PI_CACHE_RETENTION` resolving to it) always wins.
@@ -424,8 +455,7 @@ function hasOpenAIExtendedPromptCache(model: Model<Api>): boolean {
 export function resolvePromptCacheLifetime(model: Model<Api>, env?: ProviderEnv): PromptCacheLifetime {
 	switch (model.api) {
 		case "claude-sdk-oauth":
-			// The Claude SDK owns prompt caching for this lane and uses Anthropic's default 5m TTL.
-			return ttl(PROMPT_CACHE_TTL_SHORT_SECONDS);
+			return ttl(claudeCodePromptCacheTtlSeconds(env));
 		case "anthropic-messages": {
 			const anthropicModel = model as Model<"anthropic-messages">;
 			const retention = resolveAnthropicCacheRetention(anthropicModel.cacheRetention, env, "short");

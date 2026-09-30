@@ -63,6 +63,10 @@ describe("anthropic-subscription provider rename", () => {
 	});
 
 	it("keeps the wire api id frozen on the prompt-cache ttl table", () => {
-		expect(resolvePromptCacheTtlSeconds({ api: "claude-sdk-oauth" } as Model<Api>)).toBe(300);
+		// Only the Claude SDK lane reads Claude Code's own TTL override, so these prove the frozen id still reaches it
+		// whatever billing env the runner has.
+		const model = { api: "claude-sdk-oauth" } as Model<Api>;
+		expect(resolvePromptCacheTtlSeconds(model, { CLAUDE_CODE_PROMPT_CACHE_TTL: "1h" })).toBe(3600);
+		expect(resolvePromptCacheTtlSeconds(model, { CLAUDE_CODE_PROMPT_CACHE_TTL: "5m" })).toBe(300);
 	});
 });

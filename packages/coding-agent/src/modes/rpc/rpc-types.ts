@@ -382,9 +382,10 @@ export type RpcCommand =
 			/**
 			 * Where THIS session's replies render (default: the host's `SENPI_PROMPT_SURFACE`). `app` builds
 			 * a prompt with no visible routing line that keeps tool and hook feedback with the agent;
-			 * `terminal` is the classic prompt. A later open that attaches with another value rebuilds
-			 * the session's prompt; an attach without it keeps the current surface. Requires the host
-			 * capability `prompt_surface`. Any other value is refused with `invalid_launch_profile`.
+			 * `terminal` is the classic prompt; `chat` (a chat bridge) is `app` with no handoff block, ledger
+			 * lines, or todo handoff cues, and needs `prompt_surface_chat`. A later open that attaches with
+			 * another value rebuilds the session's prompt; an attach without it keeps the current surface.
+			 * Requires the host capability `prompt_surface`. Any other value is refused with `invalid_launch_profile`.
 			 */
 			promptSurface?: PromptSurface;
 	  }

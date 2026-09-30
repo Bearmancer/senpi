@@ -14,10 +14,13 @@ import { createHarness, type Harness } from "./harness.ts";
 
 // The app surface (SENPI_PROMPT_SURFACE=app) is the contract a host that renders
 // replies in a chat UI relies on: no routing-line mandate, and tool/hook feedback
-// stays with the agent. The terminal surface keeps the routing line.
+// stays with the agent. The chat surface (a chat bridge, senpi#2398) keeps every app
+// rule and also drops the handoff block. The terminal surface keeps the routing line.
 const ROUTING_LINE_SENTINEL = "I read this as";
 const FEEDBACK_GUIDANCE = /tool and hook feedback/i;
 const COVERED_BY_EVIDENCE = "covered by the evidence that did run";
+const HANDOFF_TEMPLATE = [/> Ask:/, /For you:/, /Now: \[/, /handoff block/i];
+const HANDOFF_SLOT = /For you|You need/;
 const UNRUN_CHECK_REPORTING =
 	/flag the unverified explicitly|could not (verify|run)|cannot run, say so|what you could not and why/i;
 
@@ -32,6 +35,10 @@ function intentGate(text: string): string {
 
 const PRESET_NAMES = [...VALID_PRESETS].filter((name): name is Exclude<PromptPresetName, "auto"> => name !== "auto");
 const PROMPTS = ["dynamic", ...PRESET_NAMES] as const;
+const NON_TERMINAL_SURFACES = ["app", "chat"] as const;
+const NON_TERMINAL_CASES = PROMPTS.flatMap((prompt) =>
+	NON_TERMINAL_SURFACES.map((surface) => [prompt, surface] as const),
+);
 
 const OPTIONS: BuildDynamicSystemPromptOptions = {
 	cwd: "/repo",
@@ -55,22 +62,36 @@ describe("prompt surface contract", () => {
 		expect(PRESET_NAMES.length).toBeGreaterThan(20);
 	});
 
-	it.each(PROMPTS)("%s on the app surface drops the routing line and keeps tool feedback with the agent", (prompt) => {
-		const text = render(prompt, "app");
+	it.each(NON_TERMINAL_CASES)(
+		"%s on the %s surface drops the routing line and keeps tool feedback with the agent",
+		(prompt, surface) => {
+			const text = render(prompt, surface);
 
-		expect(text).not.toContain(ROUTING_LINE_SENTINEL);
-		expect(text).not.toMatch(/routing line/i);
-		expect(text).not.toMatch(/declared stop condition/i);
-		expect(text).toContain("## Intent Gate");
-	});
+			expect(text).not.toContain(ROUTING_LINE_SENTINEL);
+			expect(text).not.toMatch(/routing line/i);
+			expect(text).not.toMatch(/declared stop condition/i);
+			expect(text).toContain("## Intent Gate");
+		},
+	);
 
-	it.each(PROMPTS)("%s on the app surface covers an unrun check with the evidence that did run", (prompt) => {
-		const text = render(prompt, "app");
+	it.each(NON_TERMINAL_CASES)(
+		"%s on the %s surface covers an unrun check with the evidence that did run",
+		(prompt, surface) => {
+			const text = render(prompt, surface);
 
-		expect(text).not.toMatch(UNRUN_CHECK_REPORTING);
-		expect(text.split(COVERED_BY_EVIDENCE).length - 1).toBe(1);
-		expect(occurrences(text, FEEDBACK_GUIDANCE)).toBe(1);
-		expect(intentGate(text)).not.toMatch(FEEDBACK_GUIDANCE);
+			expect(text).not.toMatch(UNRUN_CHECK_REPORTING);
+			expect(text.split(COVERED_BY_EVIDENCE).length - 1).toBe(1);
+			expect(occurrences(text, FEEDBACK_GUIDANCE)).toBe(1);
+			expect(intentGate(text)).not.toMatch(FEEDBACK_GUIDANCE);
+		},
+	);
+
+	it.each(PROMPTS)("%s on the chat surface asks for no handoff block, while app keeps it", (prompt) => {
+		const chat = render(prompt, "chat");
+
+		for (const pattern of HANDOFF_TEMPLATE) expect(chat).not.toMatch(pattern);
+		expect(chat).not.toMatch(HANDOFF_SLOT);
+		expect(render(prompt, "app")).toMatch(HANDOFF_SLOT);
 	});
 
 	it.each(PROMPTS)("%s on the terminal surface keeps the routing line", (prompt) => {
@@ -82,9 +103,10 @@ describe("prompt surface contract", () => {
 });
 
 describe("resolvePromptSurface", () => {
-	it("selects the app surface only for SENPI_PROMPT_SURFACE=app", () => {
+	it("selects the app and chat surfaces only for exactly those values", () => {
 		expect(resolvePromptSurface({ SENPI_PROMPT_SURFACE: "app" })).toBe("app");
-		for (const value of [undefined, "", "terminal", "APP", "web"]) {
+		expect(resolvePromptSurface({ SENPI_PROMPT_SURFACE: "chat" })).toBe("chat");
+		for (const value of [undefined, "", "terminal", "APP", "CHAT", "web"]) {
 			expect(resolvePromptSurface({ SENPI_PROMPT_SURFACE: value })).toBe("terminal");
 		}
 	});
@@ -118,6 +140,17 @@ describe("SENPI_PROMPT_SURFACE reaches the session prompt", () => {
 		await harness.session.prompt("hi");
 
 		expect(harness.session.systemPrompt).not.toContain(ROUTING_LINE_SENTINEL);
+		expect(harness.session.systemPrompt).toMatch(FEEDBACK_GUIDANCE);
+	});
+
+	it.each(["gpt-5.5", "unmatched-model"])("renders the chat surface for a %s session", async (modelId) => {
+		vi.stubEnv("SENPI_PROMPT_SURFACE", "chat");
+		const harness = await createSession(modelId);
+
+		await harness.session.prompt("hi");
+
+		expect(harness.session.systemPrompt).not.toContain(ROUTING_LINE_SENTINEL);
+		expect(harness.session.systemPrompt).not.toMatch(HANDOFF_SLOT);
 		expect(harness.session.systemPrompt).toMatch(FEEDBACK_GUIDANCE);
 	});
 

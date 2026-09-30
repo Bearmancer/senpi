@@ -1,3 +1,4 @@
+import type { QuestionRequest, QuestionResponse } from "../../core/extensions/types.ts";
 import type { RpcExtensionUIResponse } from "./rpc-types.ts";
 
 /**
@@ -11,6 +12,31 @@ export function answeredUiRequestId(frame: {
 }): string | undefined {
 	if (typeof frame.uiRequestId === "string") return frame.uiRequestId;
 	return typeof frame.id === "string" ? frame.id : undefined;
+}
+
+/**
+ * How a `question` answer settles, identically on a host and a terminal control endpoint: it reads
+ * `answers` and `comment` (a `value` or `confirmed` beside them belongs to the other dialogs and is
+ * ignored). A non-blank comment settles it `comment-submitted`, the status that carries the comment
+ * to the model; otherwise any answer settles it `answered`; neither leaves it unsettled
+ * (`question_incomplete`).
+ */
+export function settledQuestionStatus(
+	answers: QuestionResponse["answers"],
+	comment: string | undefined,
+): "answered" | "comment-submitted" | undefined {
+	if (comment?.trim()) return "comment-submitted";
+	return Object.keys(answers).length > 0 ? "answered" : undefined;
+}
+
+/** The questions an answer leaves without a selection or text, reported back to the model. */
+export function unansweredQuestionIds(
+	questions: QuestionRequest["questions"],
+	answers: QuestionResponse["answers"],
+): string[] {
+	return questions
+		.filter((question) => !answers[question.id]?.selected.length && !answers[question.id]?.text?.trim())
+		.map((question) => question.id);
 }
 
 export type ExtensionUiResponseReply = {

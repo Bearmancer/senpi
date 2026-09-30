@@ -22,7 +22,7 @@ const APP_ROUTING = `Only the user's explicit request commits you to implementat
 export function buildIntentGate(config: { tools: AvailableTool[]; surface?: PromptSurface }): string {
 	return `## Intent Gate
 
-${config.surface === "app" ? APP_ROUTING : TERMINAL_ROUTING}
+${(config.surface ?? "terminal") === "terminal" ? TERMINAL_ROUTING : APP_ROUTING}
 ${buildKeyTriggers(config.tools)}
 Route by true intent, not surface form:
 - Information asks (explain, look into, investigate): read the code, report the answer or findings - no edits, no fixes yet.

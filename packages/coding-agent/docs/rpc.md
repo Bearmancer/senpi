@@ -753,15 +753,21 @@ Where a session's replies render decides its system prompt. `terminal` is the cl
 shows replies as chat, such as the OmO Desktop) keeps the same intent routing and stop-condition rules but asks for no
 visible `I read this as ...` routing line, and tells the agent that tool and hook feedback (comment-checker findings,
 language-server availability, internal notices) is for it to act on, not to report unless it changes the result.
+`chat` (a chat bridge that posts each reply to people in a conversation) takes every `app` rule and also drops the
+handoff block and todo/ledger lines: the reply is the answer itself, and the todo tool emits no "Handoff due" cue.
+As a backstop, the `chat-reply-scrub` builtin removes a leading routing line, a handoff block and todo-ledger lines
+from each finalized assistant message on `chat` before it is emitted or persisted; streamed `message_update` deltas are
+not rewritten.
 
-A multi-session host decides the surface per session: `open_session.promptSurface: "terminal" | "app"` builds that
+A multi-session host decides the surface per session: `open_session.promptSurface: "terminal" | "app" | "chat"` builds that
 session's prompt for the named surface, so one host serves a terminal client and an app client at once. An omitted field
-uses the host process's `SENPI_PROMPT_SURFACE` (`app` selects the app surface; unset or any other value is `terminal`),
+uses the host process's `SENPI_PROMPT_SURFACE` (`app` or `chat` selects that surface; unset or any other value is `terminal`),
 which remains the only switch for a single-process `--mode rpc` client. A later `open_session` that attaches to a live
 session with another `promptSurface` rebuilds that session's prompt; an attach without the field keeps the current
 surface, and `new_session` / `switch_session` / `fork` inside the session keep it too. Probe `prompt_surface` in
-`get_protocol_info` before sending the field; an older host ignores it. Any value other than `terminal` or `app` is
-refused with `invalid_launch_profile`.
+`get_protocol_info` before sending the field; an older host ignores it. Probe `prompt_surface_chat` before sending
+`chat`: a host without it refuses `chat` with `invalid_launch_profile`, so a gateway falls back to `app`. Any value other
+than `terminal`, `app` or `chat` is refused with `invalid_launch_profile`.
 
 ### Session auto-titling
 
@@ -998,9 +1004,10 @@ registrant opens no socket and writes no registry directory.
     still holds after it.
   - `wake { delivery_ids? }`: one drain pass, answered `{ admitted: [{ delivery_id, kind }] }`.
   - `extension_ui_response`: answers only a question this session asked and still waits on
-    (`unknown_request` / `invalid_response` otherwise). `uiRequestId` names the question (a pending
-    question id from the `question` feed); without it, `id` does. The reply carries the frame's `id`,
-    as on a host (see "Extension UI Responses").
+    (`unknown_request` / `question_incomplete` / `invalid_response` otherwise). `uiRequestId` names the
+    question (a pending question id from the `question` feed); without it, `id` does. The answer settles by
+    the host's rule (see `question`) and the reply carries the frame's `id`, as on a host (see "Extension
+    UI Responses").
   - `prompt`, `steer` and `follow_up` are `unsupported`.
 - **Admission.** A message from another session enters only through the registrant's drain, which calls
   `pi.session.admitExternalMessage({ delivery_id, text, deliverAs, expected_turn_id? })`. One synchronous call
@@ -1285,7 +1292,7 @@ containment, or containment of arbitrary native code. They are not an extension 
 
 | Command | Params | Success data | Notes |
 | --- | --- | --- | --- |
-| `get_protocol_info` | - | `{ protocolVersion: 1, serverVersion: string, capabilities: string[], mode: "classic"\|"multi", instanceId: string, generation: number, engineVersion: string, engineOrdinal: [y, m, d, n, epoch], launch_profile: { profile_id, core }, memory_pressure?: boolean }` | Answered in BOTH modes; side-effect-free; the capability probe. Multi-session hosts include `multi_session`, `retain_on_disconnect`, `session_kind`, `session_context`, `auto_title_per_session`, `durable_session_id` and `prompt_surface` plus the negotiated launch capabilities. Those are HOST capabilities (a client never sends them) and are advertised only in multi-session mode, where the host owns the attachment refcount and the per-session launch profile. The identity fields are described under "Host identity" above; compatibility is decided from `protocolVersion`, `capabilities` and `engineOrdinal`, NEVER from `serverVersion`. |
+| `get_protocol_info` | - | `{ protocolVersion: 1, serverVersion: string, capabilities: string[], mode: "classic"\|"multi", instanceId: string, generation: number, engineVersion: string, engineOrdinal: [y, m, d, n, epoch], launch_profile: { profile_id, core }, memory_pressure?: boolean }` | Answered in BOTH modes; side-effect-free; the capability probe. Multi-session hosts include `multi_session`, `retain_on_disconnect`, `session_kind`, `session_context`, `auto_title_per_session`, `durable_session_id`, `prompt_surface` and `prompt_surface_chat` plus the negotiated launch capabilities. Those are HOST capabilities (a client never sends them) and are advertised only in multi-session mode, where the host owns the attachment refcount and the per-session launch profile. The identity fields are described under "Host identity" above; compatibility is decided from `protocolVersion`, `capabilities` and `engineOrdinal`, NEVER from `serverVersion`. |
 | `open_session` | `sessionPath?`, `cwd?`, `provider?`, `modelId?`, `thinkingLevel?`, `permissionPreset?`, `retain_on_disconnect?`, `kind?`, `context?`, `auto_title?`, `durableSessionId?`, `promptSurface?` (all optional; paths MUST be absolute) | `{ sessionId, state: RpcSessionState, attached?: true }` | `sessionPath` = today's `--session` semantics (open-if-exists else create persisting there, `session-manager.ts:926-940`); `provider`/`modelId` applied only on create (resume restores the session's model — mirrors `SenpiSessionRuntime.ts:198-200`); params form the immutable launch profile (D8). When the path is already held by a fully-open session, the open ATTACHES to it: same routing handle, `attached: true`, one more attachment counted; the runtime is torn down only when the last attachment closes. Idle sessions past the eviction window are closed by the host itself. `retain_on_disconnect: true` (default false) makes a dropped connection DETACH from this session instead of closing it — see "Retained sessions" below. `kind` (default `interactive`) and the opaque `context` map are described under "Session kind and context" above; both are stored frozen for the session's life and never influence auth, model or resource resolution. |
 | `close_session` | `sessionId` | `{}` | Refused with `unknown_session` when the requesting connection never attached to that handle (a close releases the CALLER's attachment, and `list_sessions` publishes every handle). Otherwise aborts active work, awaits agent idle + settled persistence for up to the host grace window (default 10s), then quarantines any worker that has not exited without releasing its path reservation; its response is the LAST record tagged with that handle for the first closer — no events after (test-pinned). An admitted concurrent close joins the same teardown and receives its own successful response; output saturation rejects admission with the bounded close-overflow/resync notice described above. |
 | `list_sessions` | `include_workers?` (default false) | `{ sessions: [{ sessionId, durableSessionId, sessionPath, cwd, name, status, attachments, kind, context? }] }` | Includes `opening`/`closing` entries. Internally quarantined workers remain externally `closing` until exit. `attachments` is the session's live client attachment count; `0` on an `open` row is a retained session with no client attached. Every row carries `kind`. Rows with `kind: "worker"` are omitted unless `include_workers: true`, and `context` is published ONLY on that listing — a default listing carries no `context` at all. |
@@ -1319,7 +1326,7 @@ In the response `error` field, machine-matchable:
 - `open_failed: <detail>`
 - `invalid_session_context: <detail>` (`open_session.context` past a documented cap: more than 32 keys, a key that does not match `^[a-z][a-z0-9_]*$`, a non-string or >16 KiB value, or more than 32 KiB of JSON in total; the detail names the cap and its byte budget)
 - `invalid_session_kind: <detail>` (`open_session.kind` other than `interactive` or `worker`)
-- `invalid_launch_profile: <detail>` (`open_session.auto_title` present but not a boolean, or `open_session.promptSurface` other than `terminal` or `app`)
+- `invalid_launch_profile: <detail>` (`open_session.auto_title` present but not a boolean, or `open_session.promptSurface` other than `terminal`, `app` or `chat`)
 - `host_memory_pressure` (sent only by hosts released before #2207, which declined to CREATE a `kind: "worker"` session above `SENPI_RPC_HOST_RSS_REFUSE_MB`; `errorData { rssMb, retry_after_ms }` says when to ask again. Current hosts never refuse an open for memory; a client talking to an older generation waits and retries, it never starts a second host or a per-child process)
 - `warm_failed: <detail>` (`warm` could not load its profile, for example a `cwd` that does not exist; not remembered, so a retry loads again)
 - `media_not_found` (`get_media` for an unknown `toolCallId`, or a `contentIndex` that does not point at an image block)
@@ -3407,7 +3414,17 @@ Present one or more questions to the user. Requires the `question` client capabi
 }
 ```
 
-Expected response: `extension_ui_response` with `answers` (a map of question id to `{ selected: string[], text?: string }`) and an optional `comment`. Partial answers are allowed: unanswered question ids are reported back to the model. Send `cancelled: true` to dismiss.
+Expected response: `extension_ui_response` with `answers` (a map of question id to `{ selected: string[], text?: string }`) and an optional `comment`. Partial answers are allowed: the model is told which questions went unanswered, by header. Send `cancelled: true` to dismiss.
+
+A multi-session host and a terminal control endpoint settle a `question` answer by one rule, so the same frame reaches the model as the same message on either surface:
+
+- `cancelled: true` dismisses the question.
+- Otherwise `answers` and `comment` are read; a `value` or `confirmed` in the same frame belongs to the other dialog methods and is ignored.
+- A non-blank `comment` settles it `comment-submitted`: the model receives `The user responded: <comment>`, then any answered questions and the headers of the unanswered ones (`Unanswered: <header>, ...`). A frame that carries its text only as `comment` with `answers: {}` is a complete answer.
+- Without a comment, any entry in `answers` settles it `answered`.
+- Neither a non-blank comment nor an answer is refused `question_incomplete`, and the question stays pending.
+
+A terminal refuses a frame whose `answers` is missing or malformed with `invalid_response`.
 
 While the question is open, the client may send `extension_ui_progress` frames with draft `answers` and `comment`. Each progress frame resets the idle timer; the host emits `question_updated` with the refreshed `deadlineAtMs` and `remainingMs`.
 
@@ -3454,7 +3471,7 @@ carrying the frame's `id`:
 `success: true` means the answer resolved a pending request. A refusal carries the same `id` and an
 `error`: on a host `question_incomplete` (a `question` answer with neither answers nor a comment),
 `question_already_resolved` (a late answer) or `unknown_extension_ui_request` (no request of that
-session has that id); on a terminal `unknown_request` or `invalid_response`. A single-session stdio
+session has that id); on a terminal `unknown_request`, `question_incomplete` or `invalid_response`. A single-session stdio
 connection answers every response it resolves the same way, and ignores one that matches none of its
 requests. A client may still fire and forget: the reply is an ordinary `response` record.
 
