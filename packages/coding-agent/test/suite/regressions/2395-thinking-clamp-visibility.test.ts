@@ -14,11 +14,11 @@ const PROVIDER = "local-example";
 
 function createRegistry(): ModelRegistry {
 	const registry = ModelRegistry.inMemory(AuthStorage.inMemory({ [PROVIDER]: { type: "api_key", key: "test-key" } }));
-	const model = (id: string, reasoning?: true) => ({
+	const model = (id: string, reasoning: boolean) => ({
 		id,
 		name: id,
 		api: "openai-completions" as const,
-		...(reasoning ? { reasoning } : {}),
+		reasoning,
 		input: ["text" as const],
 		cost: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0 },
 		contextWindow: 128000,
@@ -28,7 +28,7 @@ function createRegistry(): ModelRegistry {
 		baseUrl: "https://example.test/v1",
 		apiKey: "test-key",
 		api: "openai-completions",
-		models: [model("plain-model"), model("reasoning-model", true)],
+		models: [model("plain-model", false), model("reasoning-model", true)],
 	});
 	return registry;
 }
