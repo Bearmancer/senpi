@@ -30,7 +30,7 @@ import type { ResourceLoader } from "./resource-loader.ts";
 import { DefaultResourceLoader } from "./resource-loader.ts";
 import { getDefaultSessionDir, SessionManager } from "./session-manager.ts";
 import { SettingsManager } from "./settings-manager.ts";
-import { getSupportedThinkingLevels } from "./thinking-levels.ts";
+import { clampThinkingSelection, getSupportedThinkingLevels } from "./thinking-levels.ts";
 import { time } from "./timings.ts";
 import {
 	createBashTool,
@@ -366,12 +366,14 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 	}
 
 	// Clamp to model capabilities without inventing provenance for a defaulted level.
+	const requestedThinkingLevel = thinkingLevel;
 	if (!model) {
 		thinkingLevel = "off";
 	} else {
 		thinkingLevel = clampThinkingLevelToModel(thinkingLevel, model);
 	}
-	if (thinkingSelection) thinkingSelection = { ...thinkingSelection, level: thinkingLevel };
+	// senpi#2395: an explicit request the clamp changed keeps the requested level and the reason.
+	thinkingSelection = clampThinkingSelection(thinkingSelection, requestedThinkingLevel, thinkingLevel, model);
 
 	const defaultActiveToolNames: ToolName[] = ["read", "bash", "edit", "write", "grep"];
 	const configuredDefaultToolNames = settingsManager.getDefaultTools();
