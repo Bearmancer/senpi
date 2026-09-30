@@ -10,6 +10,8 @@
 
 ### Fixed
 
+- The eval schema now explains that runs require an explicit language, and invalid language values produce a distinct error from an omitted language; `peek` and `stop` remain language-free ([#1395](https://github.com/code-yeongyu/senpi/issues/1395)).
+
 ### Removed
 
 ## [2026.9.30] - 2026-09-30
@@ -23,8 +25,6 @@
 ### Fixed
 
 - An `eval` cell's return value reaches the model whole up to the normal tool-output budget: a long single-line value is no longer cut after 768 bytes with a bare `…`. Any output that is still cut (a printed line past the column cap, or output past the byte or line budget) now tells the model so, with the kept and original sizes and a `[Full output: <path>]` pointer to the saved full output. Reported by @haamsuk-collab. ([#2402](https://github.com/code-yeongyu/senpi/issues/2402))
-
-- The eval schema now explains that runs require an explicit language, and invalid language values produce a distinct error from an omitted language; `peek` and `stop` remain language-free ([#1395](https://github.com/code-yeongyu/senpi/issues/1395)).
 
 ### Removed
 
