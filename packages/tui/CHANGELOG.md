@@ -10,6 +10,8 @@
 
 ### Fixed
 
+- Fixed optional-argument command picker rows requiring two Enter presses. A command that declares `requiresArguments: false` submits on the first Enter; a row with an argument hint and no explicit flag still completes and waits ([#2479](https://github.com/code-yeongyu/senpi/issues/2479)).
+
 ### Removed
 
 ## [2026.10.1-2] - 2026-10-01
@@ -45,8 +47,6 @@
 - Reduced inherited fuzzy search latency for long texts by using native substring search ([#9267](https://github.com/earendil-works/pi/issues/9267)).
 
 ### Fixed
-
-- Fixed optional-argument command picker rows requiring two Enter presses. A command that declares `requiresArguments: false` submits on the first Enter; a row with an argument hint and no explicit flag still completes and waits ([#2479](https://github.com/code-yeongyu/senpi/issues/2479)).
 
 - Fixed inherited `/skill` autocomplete appearing empty when loaded skill names did not contain the letters in `skill` ([#9944](https://github.com/earendil-works/pi/issues/9944)), and skill slash-command autocomplete ranking the `skill:` prefix instead of the bare skill name ([#9120](https://github.com/earendil-works/pi/pull/9120) by [@yearth](https://github.com/yearth)).
 
