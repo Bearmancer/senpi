@@ -1,15 +1,23 @@
 import { dirname, resolve } from "node:path";
 import { realpathWithoutOpen } from "../../../../utils/paths.ts";
-import { getBundledResourceRoots } from "../../../bundled-resources.ts";
 import type { ToolInfo } from "../../types.ts";
 import { extractPatchedPaths } from "../gpt-apply-patch/index.ts";
 import { BashArity } from "../permission-system/arity.ts";
-import { expandHome, extractExternalPaths, isExternalPath } from "../permission-system/external-dir.ts";
+import {
+	type AlwaysScope,
+	extractExternalPaths,
+	isExternalPath,
+	toParentDirectoryPattern,
+} from "../permission-system/external-dir.ts";
 import type { Request } from "../permission-system/types.ts";
 import { setApprovedMonitorParent } from "../terminal/monitor-permission.ts";
+import { parseReadPermission } from "./read-permission.ts";
 
 /** Simplified permission request without ID/session metadata */
-export type PermissionRequest = Pick<Request, "permission" | "patterns" | "always">;
+export type PermissionRequest = Pick<Request, "permission" | "patterns" | "always"> & {
+	readonly skipAsk?: true;
+	readonly ruleAliases?: readonly string[];
+};
 
 /** Parser function that extracts permission requests from tool input */
 export type ToolPermissionParser = (
@@ -34,28 +42,6 @@ function getString(input: Record<string, unknown>, ...keys: string[]): string | 
 		}
 	}
 	return undefined;
-}
-
-type AlwaysScope = "file" | "directory";
-
-function toParentDirectoryPattern(inputPath: string, scope: AlwaysScope): string {
-	if (inputPath === "~" || inputPath === "$HOME") {
-		return `${inputPath}/*`;
-	}
-
-	if (scope === "directory") {
-		return inputPath.endsWith("/") || inputPath.endsWith("\\") ? `${inputPath}*` : `${inputPath}/*`;
-	}
-
-	if (inputPath.endsWith("/") || inputPath.endsWith("\\")) {
-		return `${inputPath}*`;
-	}
-
-	const parentPattern = inputPath.replace(/[\\/][^\\/]+$/, "/*");
-	if (parentPattern === "/*") {
-		return inputPath;
-	}
-	return parentPattern;
 }
 
 function parseFilePath(input: Record<string, unknown>): string | undefined {
@@ -225,32 +211,7 @@ export function createBuiltinParserRegistry(): ParserRegistry {
 	registry.register("apply_patch", parseEditPermission);
 	registry.register("multiedit", parseEditPermission);
 
-	registry.register("read", (_toolName, input, cwd) => {
-		const filePath = parseFilePath(input);
-		if (!filePath) {
-			return [fallbackPermissionRequest("read")];
-		}
-
-		// Shipped instructions are engine input, even in ask-first mode. The same
-		// canonical containment check rejects symlinks that escape the payload.
-		const target = resolve(realpathWithoutOpen(cwd), expandHome(filePath));
-		if (getBundledResourceRoots().some((root) => !isExternalPath(target, root))) {
-			return [];
-		}
-
-		return withExternalDirectoryRequests(
-			[
-				{
-					permission: "read",
-					patterns: [filePath],
-					always: [filePath],
-				},
-			],
-			[filePath],
-			cwd,
-			"file",
-		);
-	});
+	registry.register("read", parseReadPermission);
 
 	registry.register("grep", (_toolName, input, cwd) => {
 		const searchPath = getString(input, "path");

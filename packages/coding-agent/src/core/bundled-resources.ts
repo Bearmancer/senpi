@@ -13,8 +13,10 @@ import {
 	getThemesDir,
 	isBunBinary,
 } from "../config.ts";
+import { imagegenSkillPath } from "./extensions/builtin/imagegen/skill-path.ts";
 
 const moduleRequire = createRequire(import.meta.url);
+const runningFromSource = fileURLToPath(import.meta.url).includes(`${sep}src${sep}core${sep}`);
 
 /** Engine-owned extension packages; the loader and read permissions share this resolver. */
 export const bundledBuiltinExtensions: ReadonlyArray<{ readonly id: string; readonly resolvePackage: () => string }> = [
@@ -35,7 +37,6 @@ function resolveBundledPackageJson(
 	binaryRelativePath: string,
 ): string {
 	const packageRoot = getPackageDir();
-	const runningFromSource = fileURLToPath(import.meta.url).includes(`${sep}src${sep}core${sep}`);
 	const workspacePath = resolve(packageRoot, "..", workspaceRelativePath);
 	if (runningFromSource && existsSync(workspacePath)) return workspacePath;
 	const binaryPath = resolve(packageRoot, binaryRelativePath);
@@ -50,10 +51,17 @@ function resolveBundledPackageJson(
 
 /** Shipped payload roots, not user-discovered skill or extension directories. */
 export function getBundledResourceRoots(): readonly string[] {
-	const roots = [getThemesDir(), getExportTemplateDir(), getInteractiveAssetsDir(), getDocsPath(), getExamplesPath()];
-	if (!isBunBinary) {
+	const roots = [
+		getThemesDir(),
+		getExportTemplateDir(),
+		getInteractiveAssetsDir(),
+		getDocsPath(),
+		getExamplesPath(),
+		dirname(imagegenSkillPath()),
+	];
+	if (!isBunBinary && !runningFromSource) {
 		roots.push(getPackageDir(), getInstallPackageDir(), findNodePackageDir(dirname(fileURLToPath(import.meta.url))));
-	} else roots.push(dirname(fileURLToPath(import.meta.url)));
+	} else if (isBunBinary) roots.push(dirname(fileURLToPath(import.meta.url)));
 	for (const extension of bundledBuiltinExtensions) {
 		try {
 			roots.push(dirname(extension.resolvePackage()));

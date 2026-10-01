@@ -120,10 +120,15 @@ export default function permissionSystemExtension(pi: ExtensionAPI): void {
 				metadata: createRequestMetadata(event.toolName, event.input),
 			};
 
-			const askResultPromise = service.ask(request).then(
-				() => ({ ok: true as const }),
-				(error: unknown) => ({ ok: false as const, error }),
-			);
+			const askResultPromise = service
+				.ask(request, {
+					skipAsk: permissionRequest.skipAsk ?? false,
+					...(permissionRequest.ruleAliases ? { ruleAliases: permissionRequest.ruleAliases } : {}),
+				})
+				.then(
+					() => ({ ok: true as const }),
+					(error: unknown) => ({ ok: false as const, error }),
+				);
 			const isPending = service.list().some((pendingRequest) => pendingRequest.id === request.id);
 
 			if (!isPending) {

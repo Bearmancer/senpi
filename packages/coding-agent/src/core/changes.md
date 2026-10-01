@@ -2,7 +2,7 @@
 
 ### What changed
 
-- `packages/coding-agent/src/core/resource-loader.ts`: bundled extension definitions and package resolution move unchanged into `packages/coding-agent/src/core/bundled-resources.ts`, also used to locate shipped payload roots for permission classification.
+- `packages/coding-agent/src/core/resource-loader.ts`: bundled extension definitions and package resolution move into `packages/coding-agent/src/core/bundled-resources.ts`, with the source-module identity guard generalized for its new location. The shared resolver also locates shipped payload roots for permission classification; development runs trust declared asset directories rather than the whole source checkout.
 
 ### Why
 
