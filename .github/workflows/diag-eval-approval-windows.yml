@@ -1,0 +1,64 @@
+name: Eval approval Windows controls
+on:
+  push:
+    branches: [diag/2512-windows-controls]
+
+jobs:
+  python:
+    name: Python control (${{ matrix.label }})
+    runs-on: windows-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: clean-main
+            ref: 79188d577c6a1216ee82e1b865751f33563e5747
+          - label: candidate
+            ref: 780907b269dcd3505e563068102f0fd4db71b2a2
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ matrix.ref }}
+      - run: git rev-parse HEAD
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12.10"
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: "1.4.2"
+      - run: bun install --frozen-lockfile --ignore-scripts
+      - name: Live transport in isolation
+        working-directory: packages/senpi-codemode
+        run: bun ../../node_modules/vitest/vitest.mjs run test/py-kernel.test.ts
+      - name: Original cold startup job invocation
+        working-directory: packages/senpi-codemode
+        run: bun ../../node_modules/vitest/vitest.mjs run test/py-kernel-startup.test.ts test/py-kernel.test.ts test/py-kernel-child-error.test.ts
+
+  read:
+    name: Read prebuild control (${{ matrix.label }})
+    runs-on: windows-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: clean-main
+            ref: 79188d577c6a1216ee82e1b865751f33563e5747
+          - label: candidate
+            ref: 780907b269dcd3505e563068102f0fd4db71b2a2
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ matrix.ref }}
+      - run: git rev-parse HEAD
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: "24"
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: "1.4.2"
+      - run: bun install --ignore-scripts --frozen-lockfile
+      - name: Original locked prebuild fetch
+        working-directory: node_modules/canvas
+        run: bun ../prebuild-install/bin.js -r napi
