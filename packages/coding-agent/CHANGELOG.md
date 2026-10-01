@@ -15,6 +15,8 @@
 
 ### Fixed
 
+- Reads of engine-shipped skills, prompts and resources no longer ask for permission in restricted modes, including packaged runtimes and compiled asset sidecars. Writes and outside reads retain their permission policy, and symlinks escaping a bundle remain outside paths ([#2513](https://github.com/code-yeongyu/senpi/issues/2513)).
+
 - The thinking selector now reflects toggle-only model capabilities: eligible GLM 4.7 and Qwen rows offer `off` and enabled thinking without unsupported effort levels, while models that publish explicit effort metadata retain their declared choices. Thanks to @effortprogrammer. ([#891](https://github.com/code-yeongyu/senpi/issues/891))
 
 - Deferred extension tools, including computer use, keep working after hot-reload. The session now retires old lazy-tool activation callbacks before binding the replacement extension generation ([omo#9365](https://github.com/code-yeongyu/oh-my-openagent/issues/9365)).

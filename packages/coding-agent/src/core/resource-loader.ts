@@ -1,5 +1,4 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
-import { createRequire } from "node:module";
 import { basename, dirname, join, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { detectCapabilities, getTerminalColorMode, type TerminalColorMode } from "@earendil-works/pi-tui";
@@ -14,6 +13,7 @@ export type { ResourceCollision, ResourceDiagnostic } from "./diagnostics.ts";
 
 import { canonicalizePath, isLocalPath, resolvePath } from "../utils/paths.ts";
 import { stripBom } from "../utils/text.ts";
+import { bundledBuiltinExtensions } from "./bundled-resources.ts";
 import { createEventBus, type EventBus } from "./event-bus.ts";
 import {
 	type BuiltinExtensionFactory,
@@ -228,48 +228,6 @@ const VENDORED_BUILTIN_EXTENSION_PACKAGES: ReadonlyArray<{ builtinId: string; pa
 	{ builtinId: "todowrite", packageName: "pi-todotools" },
 	{ builtinId: "codemode", packageName: "@code-yeongyu/senpi-codemode" },
 ];
-const moduleRequire = createRequire(import.meta.url);
-
-const bundledBuiltinExtensions: ReadonlyArray<{
-	id: string;
-	resolvePackage: () => string;
-}> = [
-	{
-		id: "codemode",
-		resolvePackage: () =>
-			resolveBundledPackageJson(
-				"@code-yeongyu/senpi-codemode/package.json",
-				"senpi-codemode/package.json",
-				join("node_modules", "@code-yeongyu", "senpi-codemode", "package.json"),
-			),
-	},
-];
-
-function resolveBundledPackageJson(
-	packageSpecifier: string,
-	workspaceRelativePath: string,
-	binaryRelativePath: string,
-): string {
-	const packageRoot = getPackageDir();
-	const runningFromSource = fileURLToPath(import.meta.url).includes(`${sep}src${sep}core${sep}resource-loader.`);
-	const workspacePath = resolve(packageRoot, "..", workspaceRelativePath);
-	if (runningFromSource && existsSync(workspacePath)) {
-		return workspacePath;
-	}
-	const binaryPath = resolve(packageRoot, binaryRelativePath);
-	if (isBunBinary && existsSync(binaryPath)) {
-		return binaryPath;
-	}
-	try {
-		return moduleRequire.resolve(packageSpecifier);
-	} catch (error) {
-		if (existsSync(workspacePath)) {
-			return workspacePath;
-		}
-		throw error;
-	}
-}
-
 function isGeneratedGlobalDefaultExtensionShim(content: string): boolean {
 	return LEGACY_GENERATED_GLOBAL_EXTENSION_BANNERS.some((banner) => content.startsWith(banner));
 }

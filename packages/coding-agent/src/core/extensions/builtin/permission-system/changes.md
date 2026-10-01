@@ -1,5 +1,23 @@
 # Permission System Builtin Extension
 
+## 2026-10-01 - Read shipped resources without approval (#2513)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/permission-system/parsers.ts`: the read parser resolves the project-relative target and omits requests only for canonical paths beneath the engine's shipped resource roots.
+
+### Why
+
+- Bundled skill reads were classified as external directories, and ask-first also requested read approval. Symlinks escaping the shipped payload and writes must retain their normal permission policy.
+
+### Why an extension could not handle it
+
+- The permission builtin owns classification before the actual read tool executes.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/builtin/permission-system/parsers.ts`: imports and the read parser only; no internal-tool allow-list changes.
+
 ## 2026-09-27 - Tools classify their own calls with `permissionParser`
 
 ### What changed

@@ -1,9 +1,10 @@
 import { dirname, resolve } from "node:path";
 import { realpathWithoutOpen } from "../../../../utils/paths.ts";
+import { getBundledResourceRoots } from "../../../bundled-resources.ts";
 import type { ToolInfo } from "../../types.ts";
 import { extractPatchedPaths } from "../gpt-apply-patch/index.ts";
 import { BashArity } from "../permission-system/arity.ts";
-import { extractExternalPaths, isExternalPath } from "../permission-system/external-dir.ts";
+import { expandHome, extractExternalPaths, isExternalPath } from "../permission-system/external-dir.ts";
 import type { Request } from "../permission-system/types.ts";
 import { setApprovedMonitorParent } from "../terminal/monitor-permission.ts";
 
@@ -228,6 +229,13 @@ export function createBuiltinParserRegistry(): ParserRegistry {
 		const filePath = parseFilePath(input);
 		if (!filePath) {
 			return [fallbackPermissionRequest("read")];
+		}
+
+		// Shipped instructions are engine input, even in ask-first mode. The same
+		// canonical containment check rejects symlinks that escape the payload.
+		const target = resolve(realpathWithoutOpen(cwd), expandHome(filePath));
+		if (getBundledResourceRoots().some((root) => !isExternalPath(target, root))) {
+			return [];
 		}
 
 		return withExternalDirectoryRequests(
