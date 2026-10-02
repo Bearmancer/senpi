@@ -166,6 +166,12 @@ describe("re-authorization scope", () => {
 		const harness = makeHarness(await agentDir(), fixture.mcpUrl, { oauth: { scopes: ["mcp", "offline_access"] } });
 		const first = new URL(await runAuthStart(harness.deps));
 		await runAuthComplete(harness.deps, await followAuthorize(first.href));
+		// The granted token is gone (revoked or expired without a refresh token), so the next sign-in is interactive.
+		await harness.store.update((record) =>
+			record === undefined
+				? undefined
+				: { ...record, accessToken: undefined, refreshToken: undefined, expiresAt: undefined },
+		);
 
 		const second = new URL(await runAuthStart(harness.deps));
 

@@ -1,5 +1,63 @@
 # mcp Extension Changes
 
+
+## 2026-10-02 - Optional OAuth fields and list cursors sent as null (upstream v1.0.0 sync)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/auth/oauth-fetch.ts` (new): wraps the fetch used for OAuth discovery, registration, token and refresh calls and drops optional fields (`expires_in`, `refresh_token`, `scope`, `id_token`, `client_secret` and registration metadata) whose value is `null` or `""`.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/auth/oauth.ts`, `packages/coding-agent/src/core/extensions/builtin/mcp/auth/oauth-refresh.ts`: every SDK OAuth call goes through that fetch.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/transport-sdk.ts`: stdio and HTTP transports drop `nextCursor: null` from list results before the client parses them.
+
+### Why
+
+Upstream fixed the same server quirks in its MCP package (8ce69e9d2). The SDK rejects `null` for these fields, and coerces `expires_in: null` to 0, which stored an already-expired token; a `nextCursor: null` failed the whole tool listing.
+
+### Why an extension could not handle it
+
+The OAuth calls and transports are built inside this builtin.
+
+### Expected merge conflict zones
+
+The fetch wiring in `oauth.ts`/`oauth-refresh.ts` and transport construction in `transport-sdk.ts`.
+
+## 2026-10-02 - RFC 9207 issuer check on MCP authorization responses (upstream v1.0.0 sync)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/auth/oauth.ts`: before the authorization code is exchanged, an `iss` that differs from the discovered issuer, or a missing `iss` when the authorization server advertises `authorization_response_iss_parameter_supported`, fails the sign-in.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/auth/callback.ts`, `packages/coding-agent/src/core/extensions/builtin/mcp/auth/commands-auth.ts`: the loopback callback and the pasted redirect carry `iss` to that check.
+
+### Why
+
+Upstream added the same check (d850edee9) to block authorization-server mix-up attacks. Its `oauth.authServerMetadataUrl` setting is an upstream MCP-extension feature and is not taken.
+
+### Why an extension could not handle it
+
+The authorization response is handled inside this builtin's OAuth flow.
+
+### Expected merge conflict zones
+
+`finishAuthorization` and `parseRedirect` in `oauth.ts`.
+
+## 2026-10-02 - OAuth credentials per server name and URL (upstream v1.0.0 sync)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/auth/token-store.ts`: the credential directory is keyed by server name and URL; a record stored by URL alone moves to the first server that reads it, and signing out also removes the URL-keyed record that server would take over.
+
+### Why
+
+Upstream fixed the same defect (5806068c2): two servers with the same URL (for example a work and a personal account) shared one token, and signing out of one signed the other out.
+
+### Why an extension could not handle it
+
+The token store is this builtin's own persistence.
+
+### Expected merge conflict zones
+
+The directory key in `McpTokenStore`.
+
 ## 2026-10-01 - Skill MCP declarations are cached by file stamp (senpi#2508)
 
 ### What changed

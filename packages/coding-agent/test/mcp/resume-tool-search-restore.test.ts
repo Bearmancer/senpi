@@ -1,6 +1,7 @@
 // A search-mode MCP tool the model loaded through tool_search stays callable
-// after the session is resumed in a new process and after /reload, even though
-// the MCP server reconnects after the session restored its tool loadout.
+// after the session is resumed in a new process, even though the MCP server
+// reconnects after the session restored its tool loadout. Reload replays the
+// same history on attach (rehydration-wiring.test.ts).
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { getMcpService, resetMcpServiceForTests } from "../../src/core/extensions/builtin/mcp/service.ts";
@@ -65,7 +66,7 @@ function toolErrors(harness: Harness): number {
 		.filter((event) => event.toolName === "mcp_fx_tool_2" && event.isError).length;
 }
 
-describe("MCP tools loaded by tool_search across resume and reload", () => {
+describe("MCP tools loaded by tool_search across resume", () => {
 	it("stays callable after the session is resumed by a new process", async () => {
 		const root = makeMcpRoot("resume-loaded", cleanupTasks);
 		const first = await loadToolThroughToolSearch(root);
@@ -82,20 +83,5 @@ describe("MCP tools loaded by tool_search across resume and reload", () => {
 			"fixture tool_2 value=again mode=alpha",
 		]);
 		expect(toolErrors(resumed)).toBe(0);
-	});
-
-	it("stays callable after /reload rebuilds the extension runtime", async () => {
-		const root = makeMcpRoot("reload-loaded", cleanupTasks);
-		const harness = await loadToolThroughToolSearch(root);
-
-		await harness.session.reload();
-		await awaitMcpToolRegistration("fx");
-		await callToolAgain(harness);
-
-		expect(toolResultTexts(harness, "mcp_fx_tool_2")).toEqual([
-			"fixture tool_2 value=first mode=alpha",
-			"fixture tool_2 value=again mode=alpha",
-		]);
-		expect(toolErrors(harness)).toBe(0);
 	});
 });
