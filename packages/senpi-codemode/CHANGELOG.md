@@ -6,9 +6,21 @@
 
 ### Added
 
-- An eval regression gate records the full prompt and schema surfaces, helper witnesses across five required runtime legs, codemode-scoped eager imports, measured teardown resources (including global, named-import, promise and AbortSignal timers, named by creation site) and legacy contract results against a frozen baseline. CI provisions every interpreter and publishes the report; unrelated host imports and slow child startup cannot cause a regression failure. ([#2452](https://github.com/code-yeongyu/senpi/issues/2452))
-
 - Added an interleaved eval timing benchmark that judges each runtime, workload and metric on adjacent base/head pairs against its own A/A-calibrated threshold (capped at 5%, or one shared band with `--band-scope global`), with process CPU accounting across interpreter crashes and explicit inconclusive results for incomplete or noise-limited comparisons. ([#2452](https://github.com/code-yeongyu/senpi/issues/2452))
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.2] - 2026-10-02
+
+### Breaking Changes
+
+### Added
+
+- An eval regression gate records the full prompt and schema surfaces, helper witnesses across five required runtime legs, codemode-scoped eager imports, measured teardown resources (including global, named-import, promise and AbortSignal timers, named by creation site) and legacy contract results against a frozen baseline. CI provisions every interpreter and publishes the report; unrelated host imports and slow child startup cannot cause a regression failure. ([#2452](https://github.com/code-yeongyu/senpi/issues/2452))
 
 ### Changed
 

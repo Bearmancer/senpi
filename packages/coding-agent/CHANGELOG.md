@@ -6,6 +6,18 @@
 
 ### Added
 
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.2] - 2026-10-02
+
+### Breaking Changes
+
+### Added
+
 - Added inherited `quietStartup: "header"`, which keeps the startup header with version and key hints but hides the model scope line and loaded-resource listing. `true` and `false` keep their meaning. See [Settings](docs/settings.md).
 
 - Added an inherited copy code login method to Anthropic `/login` for headless setups where the browser runs on another machine ([#10194](https://github.com/earendil-works/pi/pull/10194) by [@lucasmeijer](https://github.com/lucasmeijer)).
