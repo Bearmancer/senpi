@@ -84,10 +84,10 @@ function writeStatus(options: Options, status: Record<string, unknown>): void {
 function cellFor(index: number): { readonly summary: string; readonly code: string } {
 	switch (index % 4) {
 		case 0:
-			// An eval with a nested 512 KiB tool.read.
+			// An eval holding a 512 KiB payload (the plan's "nested read" shape: a large retained result).
 			return {
-				summary: `nested read ${index}`,
-				code: `await tool.read({ path: ${JSON.stringify(join(repoRoot, "README.md"))} }); globalThis.__keep${index} = new Uint8Array(512 * 1024).fill(${index} % 251); "read ${index}"`,
+				summary: `large alloc ${index}`,
+				code: `globalThis.__keep${index} = new Uint8Array(512 * 1024).fill(${index} % 251); "alloc ${index}"`,
 			};
 		case 1:
 			// A plain read of a 256 KiB file (written by the harness).
@@ -151,7 +151,7 @@ try {
 	const kernel = await manager.getKernel("js", () => {});
 	for (let i = 0; i < cells.length; i++) {
 		const cell = cells[i];
-		const result = await kernel.run({ cellId: "cell-" + i, code: cell.code, onMessage: () => {}, timeoutMs: 60_000 });
+		const result = await kernel.run({ cellId: "cell-" + i, code: cell.code, onMessage: () => {}, timeoutMs: 60_000 }).catch((error) => ({ ok: false, cellError: String(error) }));
 		if (result && result.memory && result.memory.recycled === true) recycled = true;
 		history.push(JSON.stringify({ i, summary: cell.summary, ok: result && result.ok }));
 		if ((i + 1) % sampleEvery === 0) {
