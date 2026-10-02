@@ -26,6 +26,8 @@ export interface SupervisedScratch {
 }
 
 const roots: string[] = [];
+/** Host children live under the OS temp dir, not the scratch root, so they are reaped by pid. */
+const observedChildren = new Set<number>();
 
 export async function supervisedScratch(label: string): Promise<SupervisedScratch> {
 	const root = await mkdtemp(join(tmpdir(), `senpi-stop-${label}-`));
@@ -34,6 +36,10 @@ export async function supervisedScratch(label: string): Promise<SupervisedScratc
 }
 
 export async function removeSupervisedScratches(): Promise<void> {
+	for (const pid of observedChildren) {
+		if (processAlive(pid)) process.kill(pid, "SIGKILL");
+	}
+	observedChildren.clear();
 	for (const root of roots.splice(0)) {
 		await reapProcessesUnder(root);
 		await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
@@ -45,7 +51,7 @@ export function supervisedDaemonPaths(qa: SupervisedScratch) {
 }
 
 /** The supervisor argv a spawn hook launches: the real supervisor, its child replaced by the fixture. */
-export function supervisorLaunch(qa: SupervisedScratch, behavior: "answer" | "silent" = "answer") {
+export function supervisorLaunch(behavior: "answer" | "silent" = "answer") {
 	return (args: readonly string[]) => ({
 		command: process.execPath,
 		args: [
@@ -69,7 +75,7 @@ export function ensureSupervised(
 		socket: qa.socket,
 		agentDir: qa.agentDir,
 		env: { PI_OFFLINE: "1", PI_TELEMETRY: "0", ...options.env },
-		_test: { launch: supervisorLaunch(qa, options.behavior), ...options.test },
+		_test: { launch: supervisorLaunch(options.behavior), ...options.test },
 	});
 }
 
@@ -83,6 +89,7 @@ export function hostChildOf(supervisorPid: number): number {
 	const output = execFileSync("pgrep", ["-P", String(supervisorPid)], { encoding: "utf8" });
 	const pid = Number(output.split("\n")[0]?.trim());
 	if (!Number.isInteger(pid) || pid <= 0) throw new Error(`supervisor ${supervisorPid} has no host child`);
+	observedChildren.add(pid);
 	return pid;
 }
 
@@ -106,7 +113,8 @@ export function watchdogRecords(qa: SupervisedScratch, generation: string): read
 /** The instance id the ensure chose for the start in flight, read from the boot settings it wrote. */
 export async function bootInstanceId(qa: SupervisedScratch): Promise<string> {
 	const settings: unknown = JSON.parse(await readFile(supervisedDaemonPaths(qa).settingsFile, "utf8"));
-	const instanceId = typeof settings === "object" && settings !== null ? Reflect.get(settings, "instanceId") : undefined;
+	const instanceId =
+		typeof settings === "object" && settings !== null ? Reflect.get(settings, "instanceId") : undefined;
 	if (typeof instanceId !== "string") throw new Error("boot settings name no instance id");
 	return instanceId;
 }

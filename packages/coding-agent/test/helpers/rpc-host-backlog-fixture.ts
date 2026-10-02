@@ -24,7 +24,10 @@ async function somaxconn(): Promise<number> {
 	return value;
 }
 
-function attempt(socket: string, timeoutMs: number): Promise<{ outcome: "connected" | "failed" | "pending"; socket: Socket }> {
+function attempt(
+	socket: string,
+	timeoutMs: number,
+): Promise<{ outcome: "connected" | "failed" | "pending"; socket: Socket }> {
 	return new Promise((resolve) => {
 		const connection = createConnection(socket);
 		const timer = setTimeout(() => resolve({ outcome: "pending", socket: connection }), timeoutMs);

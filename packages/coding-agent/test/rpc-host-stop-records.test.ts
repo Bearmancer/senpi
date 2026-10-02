@@ -60,7 +60,12 @@ describe.skipIf(process.platform === "win32")("host stop records", () => {
 		await expectGoneWithin(pid, 15_000);
 
 		expect(terminalRecords(qa, instanceId)).toEqual([
-			expect.objectContaining({ detection: "external", stopIntent: false, signal: "SIGKILL", generation: instanceId }),
+			expect.objectContaining({
+				detection: "external",
+				stopIntent: false,
+				signal: "SIGKILL",
+				generation: instanceId,
+			}),
 		]);
 	}, 30_000);
 
@@ -73,7 +78,10 @@ describe.skipIf(process.platform === "win32")("host stop records", () => {
 			process.kill(pid, "SIGTERM");
 			await expectGoneWithin(pid, 5_000);
 			expect(terminalRecords(qa, instanceId)).toEqual([
-				expect.objectContaining({ detection: "engine_stop", sender: expect.objectContaining({ kind: "supervisor" }) }),
+				expect.objectContaining({
+					detection: "engine_stop",
+					sender: expect.objectContaining({ kind: "supervisor" }),
+				}),
 			]);
 		} finally {
 			await release();
@@ -131,7 +139,7 @@ describe.skipIf(process.platform === "win32")("a supervisor its caller had to SI
 			agentDir: qa.agentDir,
 			env: NO_STALL_ENV,
 			_test: {
-				launch: supervisorLaunch(qa),
+				launch: supervisorLaunch(),
 				readinessTimeoutMs: 2_000,
 				afterSpawn: async (supervisor) => {
 					const child = await hostChildWithin(supervisor, 10_000);
@@ -171,15 +179,17 @@ function freezeSupervisorOnceRegistered(
 	const pointer = supervisedDaemonPaths(qa).pointerFile;
 	return new Promise((resolve, reject) => {
 		const onChange = (): void => {
-			void registeredSupervisor(qa).then(
-				async ({ pid, instanceId }) => {
-					unwatchFile(pointer, onChange);
-					const child = await hostChildWithin(pid, 10_000);
-					process.kill(pid, "SIGSTOP");
-					resolve({ supervisor: pid, child, instanceId });
-				},
-				() => {},
-			);
+			void registeredSupervisor(qa)
+				.then(
+					async ({ pid, instanceId }) => {
+						unwatchFile(pointer, onChange);
+						const child = await hostChildWithin(pid, 10_000);
+						process.kill(pid, "SIGSTOP");
+						resolve({ supervisor: pid, child, instanceId });
+					},
+					() => {},
+				)
+				.catch(reject);
 		};
 		watchFile(pointer, { interval: 25 }, onChange);
 		setTimeout(() => {
