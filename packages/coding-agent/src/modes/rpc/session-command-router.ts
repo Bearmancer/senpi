@@ -22,7 +22,7 @@ import {
 	sessionKindError,
 	sessionPromptSurfaceError,
 } from "./rpc-input-validation.ts";
-import type { RpcCommand, RpcResponse, RpcSessionClosedReason } from "./rpc-types.ts";
+import type { RpcCommand, RpcHostKernelMemory, RpcResponse, RpcSessionClosedReason } from "./rpc-types.ts";
 import {
 	RPC_ERROR_INVALID_LAUNCH_PROFILE,
 	RPC_ERROR_INVALID_SESSION_CONTEXT,
@@ -143,6 +143,10 @@ export class SessionCommandRouter {
 	private emptySince: number | undefined;
 	/** Halves the idle window while the host reports memory pressure; never refuses work. */
 	private memoryPressure = false;
+	/** Live kernel view the host injects; absent until start, and a session with no kernel reads zeros. */
+	private hostMemoryView:
+		| { readonly mainHeapBytes: () => number; readonly kernels: () => readonly RpcHostKernelMemory[] }
+		| undefined;
 
 	constructor(
 		registry: Pick<
@@ -177,6 +181,36 @@ export class SessionCommandRouter {
 	/** Live sessions the host holds, including ones opening or closing. */
 	get sessionCount(): number {
 		return this.registry.size;
+	}
+
+	/**
+	 * Installs the host's live memory view (senpi#1960): the main-thread heap and the kernel
+	 * registry's current listing. The view is read per listing, never cached, so a kernel that
+	 * crashed between samples is absent from the next row rather than repeated with a stale number.
+	 */
+	setHostMemoryView(view: {
+		readonly mainHeapBytes: () => number;
+		readonly kernels: () => readonly RpcHostKernelMemory[];
+	}): void {
+		this.hostMemoryView = view;
+	}
+
+	/** The row's heap split: zeros until the view is installed, and for a session holding no kernel. */
+	private sessionMemory(sessionId: string): {
+		main_heap_bytes: number;
+		kernel_heap_bytes: number;
+		kernel_count: number;
+	} {
+		const view = this.hostMemoryView;
+		if (view === undefined) return { main_heap_bytes: 0, kernel_heap_bytes: 0, kernel_count: 0 };
+		const kernels = view.kernels().filter((kernel) => kernel.sessionId === sessionId);
+		let kernelHeapBytes = 0;
+		for (const kernel of kernels) kernelHeapBytes += kernel.liveBytes;
+		return {
+			main_heap_bytes: view.mainHeapBytes(),
+			kernel_heap_bytes: kernelHeapBytes,
+			kernel_count: kernels.length,
+		};
 	}
 
 	/**
@@ -314,10 +348,11 @@ export class SessionCommandRouter {
 			// Worker sessions are machine-driven work: a client sees them only by asking, and
 			// the opaque context blob travels only on that listing, never to every connection.
 			const rows = this.registry.list();
+			const withMemory = rows.map((row) => ({ ...row, memory: this.sessionMemory(row.sessionId) }));
 			const sessions =
 				command.include_workers === true
-					? rows
-					: rows.filter((row) => row.kind !== "worker").map(({ context: _context, ...row }) => row);
+					? withMemory
+					: withMemory.filter((row) => row.kind !== "worker").map(({ context: _context, ...row }) => row);
 			return {
 				id: command.id,
 				type: "response",

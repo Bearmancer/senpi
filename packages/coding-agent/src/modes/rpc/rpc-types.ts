@@ -1369,6 +1369,27 @@ export interface RpcHostMemoryPressureEvent {
 	measure?: ProcessFootprintMeasure;
 	/** Live sessions the host is holding, including ones opening or closing. */
 	sessions: number;
+	/**
+	 * Main-thread heap in bytes (senpi#1960): `bun:jsc heapSize()` when the runtime offers it, else
+	 * `process.memoryUsage().heapUsed` - which on Bun counts the main thread only, never a kernel
+	 * worker's heap (the loop-lag watchdog's `heapDeltaMb` reads the same main-thread number).
+	 */
+	main?: { readonly heapBytes: number };
+	/**
+	 * Every live kernel, mapped to its session: a JS kernel's own heap estimate, an interpreter's
+	 * process footprint otherwise. A kernel without a reading yet reports `liveBytes: 0`; one that
+	 * crashed between samples is absent, never repeated with a stale number.
+	 */
+	kernels?: readonly RpcHostKernelMemory[];
+}
+
+/** One kernel's memory as the host reports it on the pressure event and the session listing. */
+export interface RpcHostKernelMemory {
+	readonly sessionId: string;
+	readonly language: string;
+	readonly liveBytes: number;
+	/** `"heap"` for a JS worker's own estimate; `"footprint"` for an interpreter process. */
+	readonly measure: string;
 }
 
 /** Emitted when the SDK failover engine advances to a different account slot. */

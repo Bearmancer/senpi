@@ -92,11 +92,17 @@ function startHostObservers(
 	options: { onIdlePressure?: (reading: HostMemoryReading) => void } = {},
 ): { stop: () => void } {
 	const loopLag = new LoopLagWatchdog({ emit: (record) => writer.broadcastHostRecord(record) });
+	const kernels = readCodemodeKernelListing;
 	const memory = new HostMemorySampler({
 		emit: (record) => writer.broadcastHostRecord(record),
 		sessions: () => router.sessionCount,
 		onPressure: (pressure) => router.setMemoryPressure(pressure),
+		readKernels: kernels,
 		...(options.onIdlePressure ? { onIdlePressure: options.onIdlePressure } : {}),
+	});
+	router.setHostMemoryView({
+		mainHeapBytes: readMainHeapBytesForStatus,
+		kernels,
 	});
 	loopLag.start();
 	memory.start();
@@ -673,4 +679,49 @@ function registerShutdownSignals(shutdown: (exitCode?: number) => Promise<never>
 			void shutdown(signal === "SIGHUP" ? 129 : 143);
 		});
 	}
+}
+
+/** The codemode extension's kernel registry key (senpi#2561); the host never imports the extension. */
+const KERNEL_REGISTRY_KEY = Symbol.for("senpi.codemode.kernel-registry");
+
+/**
+ * Live kernels from the extension's process-global registry, one row per kernel with `liveBytes: 0`
+ * for a kernel between readings; a kernel that crashed is absent from the next listing (#1960).
+ */
+function readCodemodeKernelListing(): readonly import("./rpc-types.ts").RpcHostKernelMemory[] {
+	const registry: unknown = Reflect.get(globalThis, KERNEL_REGISTRY_KEY);
+	if (typeof registry !== "object" || registry === null) return [];
+	const list: unknown = Reflect.get(registry, "list");
+	if (typeof list !== "function") return [];
+	const listed: unknown = Reflect.apply(list, registry, []);
+	if (!Array.isArray(listed)) return [];
+	const rows: import("./rpc-types.ts").RpcHostKernelMemory[] = [];
+	for (const entry of listed) {
+		if (typeof entry !== "object" || entry === null) continue;
+		const sessionId: unknown = Reflect.get(entry, "sessionId");
+		const language: unknown = Reflect.get(entry, "language");
+		const measure: unknown = Reflect.get(entry, "measure");
+		const liveBytes: unknown = Reflect.get(entry, "lastLiveBytes");
+		if (typeof sessionId !== "string" || typeof language !== "string" || typeof measure !== "string") continue;
+		rows.push({
+			sessionId,
+			language,
+			liveBytes: typeof liveBytes === "number" && Number.isFinite(liveBytes) ? liveBytes : 0,
+			measure,
+		});
+	}
+	return rows;
+}
+
+/** Main-thread heap for the status rows: `bun:jsc heapSize()` on Bun, else `heapUsed`. */
+function readMainHeapBytesForStatus(): number {
+	const jsc: unknown = process.getBuiltinModule("bun:jsc");
+	if (typeof jsc === "object" && jsc !== null) {
+		const heapSize: unknown = Reflect.get(jsc, "heapSize");
+		if (typeof heapSize === "function") {
+			const bytes: unknown = Reflect.apply(heapSize, jsc, []);
+			if (typeof bytes === "number") return bytes;
+		}
+	}
+	return process.memoryUsage().heapUsed;
 }

@@ -1,5 +1,5 @@
 import { type ProcessFootprint, type ProcessFootprintMeasure, readOwnFootprint } from "../../core/process-footprint.ts";
-import type { RpcHostMemoryPressureEvent } from "./rpc-types.ts";
+import type { RpcHostKernelMemory, RpcHostMemoryPressureEvent } from "./rpc-types.ts";
 
 /** Environment override for the memory warning threshold (compared with the footprint), in megabytes. */
 export const HOST_RSS_WARN_MB_ENV = "SENPI_RPC_HOST_RSS_WARN_MB";
@@ -11,11 +11,15 @@ export const HOST_MEMORY_STDERR_INTERVAL_MS = 5 * 60_000;
 
 const BYTES_PER_MEGABYTE = 1024 * 1024;
 
-/** One sample: the footprint that decides pressure, and the RSS `ps` would show beside it. */
+/** One sample: the footprint that decides pressure, the RSS `ps` would show beside it, and the heap split. */
 export interface HostMemoryReading {
 	readonly footprintMb: number;
 	readonly measure: ProcessFootprintMeasure;
 	readonly rssMb: number;
+	/** Main-thread heap in bytes: `bun:jsc heapSize()` when the runtime offers it, else `heapUsed`. */
+	readonly main: { readonly heapBytes: number };
+	/** Every kernel the codemode extension's registry holds, mapped to its session; a vanished kernel is absent. */
+	readonly kernels: readonly RpcHostKernelMemory[];
 }
 
 export interface HostMemorySamplerOptions {
@@ -38,6 +42,14 @@ export interface HostMemorySamplerOptions {
 	readonly readFootprint?: () => ProcessFootprint;
 	/** Reported beside the footprint; never decides pressure. */
 	readonly readRssBytes?: () => number;
+	/**
+	 * Live kernels, read from the codemode extension's process-global registry without importing it.
+	 * The host injects the accessor at start; a host without the extension lists none. Main-thread
+	 * only on Bun: `process.memoryUsage().heapUsed` never includes a kernel worker's heap.
+	 */
+	readonly readKernels?: () => readonly RpcHostKernelMemory[];
+	/** Main-thread heap in bytes; defaults to `bun:jsc heapSize()` when available, else `heapUsed`. */
+	readonly readMainHeap?: () => number;
 	readonly env?: Readonly<Record<string, string | undefined>>;
 }
 
@@ -66,6 +78,8 @@ export class HostMemorySampler {
 	private readonly now: () => number;
 	private readonly readFootprint: () => ProcessFootprint;
 	private readonly readRssBytes: () => number;
+	private readonly readKernels: () => readonly RpcHostKernelMemory[];
+	private readonly readMainHeap: () => number;
 	private readonly warnMb: number;
 	private timer: ReturnType<typeof setInterval> | undefined;
 	private pressure = false;
@@ -82,6 +96,8 @@ export class HostMemorySampler {
 		this.now = options.now ?? Date.now;
 		this.readFootprint = options.readFootprint ?? readOwnFootprint;
 		this.readRssBytes = options.readRssBytes ?? (() => process.memoryUsage.rss());
+		this.readKernels = options.readKernels ?? readCodemodeKernels;
+		this.readMainHeap = options.readMainHeap ?? readMainHeapBytes;
 		this.warnMb = parsePositiveInteger(env[HOST_RSS_WARN_MB_ENV]) ?? DEFAULT_HOST_RSS_WARN_MB;
 	}
 
@@ -105,6 +121,8 @@ export class HostMemorySampler {
 			footprintMb: Math.round(footprint.bytes / BYTES_PER_MEGABYTE),
 			measure: footprint.measure,
 			rssMb: Math.round(this.readRssBytes() / BYTES_PER_MEGABYTE),
+			main: { heapBytes: this.readMainHeap() },
+			kernels: this.readKernels(),
 		};
 		if (reading.footprintMb <= this.warnMb) {
 			this.idleReported = false;
@@ -126,7 +144,15 @@ export class HostMemorySampler {
 			this.onIdlePressure?.(reading);
 		}
 		const { footprintMb, measure, rssMb } = reading;
-		this.emit({ type: "host_memory_pressure", rssMb, footprintMb, measure, sessions });
+		this.emit({
+			type: "host_memory_pressure",
+			rssMb,
+			footprintMb,
+			measure,
+			sessions,
+			main: reading.main,
+			kernels: reading.kernels,
+		});
 		const now = this.now();
 		if (this.lastLoggedAt !== undefined && now - this.lastLoggedAt < HOST_MEMORY_STDERR_INTERVAL_MS) return;
 		this.lastLoggedAt = now;
@@ -134,4 +160,50 @@ export class HostMemorySampler {
 			`senpi rpc host memory pressure: footprintMb=${footprintMb} (${measure}) rssMb=${rssMb} sessions=${sessions} (idle parking halved)\n`,
 		);
 	}
+}
+
+/** The codemode extension's kernel registry lives on a process-global key (senpi#2561); read structurally. */
+const KERNEL_REGISTRY_KEY = Symbol.for("senpi.codemode.kernel-registry");
+
+/**
+ * Default kernel listing: the extension's registry when it is loaded, mapped one row per live kernel.
+ * A kernel between readings lists `liveBytes: 0` rather than a guess; a kernel that crashed between
+ * samples is simply absent from the registry's next listing.
+ */
+function readCodemodeKernels(): readonly RpcHostKernelMemory[] {
+	const registry: unknown = Reflect.get(globalThis, KERNEL_REGISTRY_KEY);
+	if (typeof registry !== "object" || registry === null) return [];
+	const list: unknown = Reflect.get(registry, "list");
+	if (typeof list !== "function") return [];
+	const listed: unknown = Reflect.apply(list, registry, []);
+	if (!Array.isArray(listed)) return [];
+	const rows: RpcHostKernelMemory[] = [];
+	for (const entry of listed) {
+		if (typeof entry !== "object" || entry === null) continue;
+		const sessionId: unknown = Reflect.get(entry, "sessionId");
+		const language: unknown = Reflect.get(entry, "language");
+		const measure: unknown = Reflect.get(entry, "measure");
+		const liveBytes: unknown = Reflect.get(entry, "lastLiveBytes");
+		if (typeof sessionId !== "string" || typeof language !== "string" || typeof measure !== "string") continue;
+		rows.push({
+			sessionId,
+			language,
+			liveBytes: typeof liveBytes === "number" && Number.isFinite(liveBytes) ? liveBytes : 0,
+			measure,
+		});
+	}
+	return rows;
+}
+
+/** Main-thread heap in bytes: `bun:jsc heapSize()` on Bun, `process.memoryUsage().heapUsed` elsewhere. */
+function readMainHeapBytes(): number {
+	const jsc: unknown = process.getBuiltinModule("bun:jsc");
+	if (typeof jsc === "object" && jsc !== null) {
+		const heapSize: unknown = Reflect.get(jsc, "heapSize");
+		if (typeof heapSize === "function") {
+			const bytes: unknown = Reflect.apply(heapSize, jsc, []);
+			if (typeof bytes === "number") return bytes;
+		}
+	}
+	return process.memoryUsage().heapUsed;
 }
