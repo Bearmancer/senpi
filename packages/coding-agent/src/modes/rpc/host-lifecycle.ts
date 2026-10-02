@@ -1,45 +1,4 @@
 #!/usr/bin/env node
-/**
- * Lifecycle supervisor for the shared RPC socket host started by ensureHost().
- *
- * Process tree:
- *
- *     ensureHost() ──detached──▶ host-lifecycle.ts (this supervisor, owns the pidfile)
- *                                    │  byte-proxies the public socket
- *                                    ▼
- *                          cli-main --mode rpc --listen unix://<public>.internal
- *
- * The supervisor exists to enforce the host lifecycle policy without touching the
- * RPC host itself:
- *
- * - cold start: `transient` (default) means the host lives for the current login
- *   session and idle-exits; `persistent` never idle-exits.
- * - idle exit: after a continuous window with zero attached client connections
- *   and zero active agent turns, the supervisor tears the host down cleanly
- *   (child SIGTERM first so the host flushes pending output and removes its own
- *   socket, then pidfile/settings removal mirroring ensureHost's cleanupState).
- *
- * Observability without host changes: proxying the public socket yields the
- * exact connection count, and the supervisor keeps one always-on observer
- * connection to the internal socket. The multi-session host broadcasts every
- * session lifecycle/agent event to every connection, so the observer sees
- * `agent_start`/`agent_settled` for all sessions even when no client is
- * attached. If the observer connection is ever unhealthy, activity is reported
- * as unknown (non-idle), so a broken observer can only keep the host alive,
- * never kill it mid-turn - for one idle window. Past that, unknown has held
- * the host open for as long as idleness itself would have, and it stops
- * counting as busy; the link keeps reconnecting the whole time (#1979).
- *
- * Lifetime binding: the host is spawned with an extra inherited pipe on fd 3
- * whose write end this supervisor holds and never writes to. The kernel closes
- * that end whenever the supervisor dies - including SIGKILL, an OOM kill, or a
- * crash, where no JS handler runs at all - so the host reads EOF and shuts down
- * cleanly, removing the private internal directory. `stopChild()` remains the
- * fast path for orderly shutdowns; the pipe is what makes an orphaned host
- * impossible. `SENPI_RPC_HOST_WATCH_PPID` is passed alongside as a belt-and-
- * braces fallback for platforms where the extra fd is not inherited.
- */
-import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { realpathSync } from "node:fs";
 import { join } from "node:path";
@@ -47,18 +6,15 @@ import { fileURLToPath } from "node:url";
 import { getAgentDir, isBundledNode } from "../../config.ts";
 import { classifyChildExit, noteChildExit } from "./host-child-exit.ts";
 import { hostCrashCleanupPaths } from "./host-cleanup-paths.ts";
-import { createHostDaemonPaths, generationPaths, HOST_DAEMON_DIR_ENV } from "./host-daemon-paths.ts";
+import { createHostDaemonPaths, generationPaths } from "./host-daemon-paths.ts";
 import { HOST_INSTANCE_ID_ENV } from "./host-identity-env.ts";
 import { SupervisorActivity } from "./host-lifecycle-activity.ts";
 import { drainOnPublicSocketLoss, SupervisorDrain, watchWin32ChildIdentity } from "./host-lifecycle-drain.ts";
 import {
-	createInternalSocketPath,
+	HOST_CHILD_WATCH_FD,
 	parseSupervisorArgs,
-	readSettingsFile,
-	recordChildPid,
-	resolveHostChildLaunch,
 	type SupervisorLaunch,
-	spawnableChildLaunch,
+	spawnHostChild,
 } from "./host-lifecycle-launch.ts";
 import { resolveHostPolicy } from "./host-lifecycle-policy.ts";
 import {
@@ -69,6 +25,7 @@ import {
 	prepareSocketPath,
 	waitForListener,
 } from "./host-lifecycle-proxy.ts";
+import { createInternalSocketPath, readSettingsFile, recordChildPid } from "./host-lifecycle-scratch.ts";
 import {
 	performShutdown,
 	registerSupervisorSignals,
@@ -77,22 +34,14 @@ import {
 	supervisorSender,
 } from "./host-lifecycle-shutdown.ts";
 import { errorMessage, writeStderrLine } from "./host-supervisor-log.ts";
-import {
-	HOST_CLEANUP_PATHS_ENV,
-	HOST_PUBLIC_SOCKET_ENV,
-	HOST_SCRATCH_DIR_ENV,
-	HOST_WATCH_FD_ENV,
-	HOST_WATCH_PPID_ENV,
-} from "./host-watchdog.ts";
 import { PUBLIC_SOCKET_IDENTITY_FILE, statSocketIdentity, writeSocketIdentityFile } from "./socket-ownership.ts";
-import { createSocketSecret, SOCKET_SECRET_FILE_ENV, socketSecretPath } from "./socket-transport.ts";
+import { createSocketSecret, socketSecretPath } from "./socket-transport.ts";
 
 // The exit verdict, the launch surface and the cold-start/idle-exit policy live in their own modules
 // (host-child-exit.ts, host-lifecycle-launch.ts, host-lifecycle-policy.ts); they stay exported from
 // here so every existing importer keeps resolving them at their original home.
 export { classifyChildExit } from "./host-child-exit.ts";
 export {
-	createInternalSocketPath,
 	findInternalSupervisorArgs,
 	INTERNAL_SUPERVISOR_FLAG,
 	parseSupervisorArgs,
@@ -117,14 +66,7 @@ export {
 	parseIdleExitMs,
 	resolveHostPolicy,
 } from "./host-lifecycle-policy.ts";
-
-/**
- * Child stdio slot carrying the supervisor-lifetime pipe. The supervisor holds
- * the write end open and never writes; the kernel closes it when the supervisor
- * dies for ANY reason (SIGKILL, OOM kill, crash), so the host sees EOF on this
- * fd and shuts itself down. Catchable-signal cleanup alone cannot do this.
- */
-const CHILD_WATCH_FD = 3;
+export { createInternalSocketPath } from "./host-lifecycle-scratch.ts";
 
 export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void> {
 	const paths = createHostDaemonPaths({ socket: launch.socket, agentDir: launch.agentDir ?? getAgentDir() });
@@ -166,43 +108,27 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 	});
 	const watchers: Array<() => void> = [];
 
-	const childLaunch = spawnableChildLaunch(resolveHostChildLaunch(launch, internalSocket));
-	const child = spawn(childLaunch.command, childLaunch.args, {
-		env: {
-			...process.env,
-			...(launch.agentDir ? { SENPI_CODING_AGENT_DIR: launch.agentDir } : {}),
-			// The child binds a PRIVATE socket, so it cannot derive this endpoint's daemon directory
-			// from what it listens on: it is told, and it claims its session paths there.
-			[HOST_DAEMON_DIR_ENV]: paths.dir,
-			[HOST_INSTANCE_ID_ENV]: instanceId,
-			[HOST_WATCH_FD_ENV]: String(CHILD_WATCH_FD),
-			[HOST_WATCH_PPID_ENV]: String(process.pid),
-			...(internal.dir ? { [HOST_SCRATCH_DIR_ENV]: internal.dir } : {}),
-			...(internalSecret ? { [SOCKET_SECRET_FILE_ENV]: internalSecretPath } : {}),
-			[HOST_CLEANUP_PATHS_ENV]: hostCrashCleanupPaths({
-				pointerFile: paths.pointerFile,
-				generationPidFile: generation.pidFile,
-				settingsFile: paths.settingsFile,
-				publicSocket,
-				successor: Boolean(successor),
-				platform: process.platform,
-			}).join("\n"),
-			...(process.platform === "win32" ? {} : { [HOST_PUBLIC_SOCKET_ENV]: publicSocket }),
-		},
-		// Slot 3 is the lifetime pipe: "pipe" gives the child a read end it can
-		// wait on and keeps the write end owned by this process alone.
-		shell: childLaunch.shell,
-		stdio: ["ignore", "ignore", "inherit", "pipe"],
-		// The supervisor is spawned detached, so on win32 it owns no console. A
-		// console-subsystem child started from it would allocate a fresh one,
-		// which Windows Terminal renders as an empty window that takes focus.
-		// CREATE_NO_WINDOW gives the child a console with no window instead.
-		windowsHide: true,
+	const child = spawnHostChild({
+		launch,
+		internalSocket,
+		internal: { ...internal, secretPath: internalSecretPath },
+		...(internalSecret ? { internalSecret } : {}),
+		daemonDir: paths.dir,
+		instanceId,
+		cleanupPaths: hostCrashCleanupPaths({
+			pointerFile: paths.pointerFile,
+			generationPidFile: generation.pidFile,
+			settingsFile: paths.settingsFile,
+			publicSocket,
+			successor: Boolean(successor),
+			platform: process.platform,
+		}),
+		publicSocket,
 	});
 	const childStartedAt = Date.now();
 	// Nothing is ever written; the pipe exists purely so its EOF is a reliable
 	// death notification. Errors on it must not crash the supervisor.
-	child.stdio[CHILD_WATCH_FD]?.on("error", () => {});
+	child.stdio[HOST_CHILD_WATCH_FD]?.on("error", () => {});
 	// The CHILD's own identity, so a reader can tell "supervisor gone, child still running" apart.
 	if (child.pid !== undefined) void recordChildPid(generation.childPidFile, child.pid);
 	child.once("exit", (code, signal) => {

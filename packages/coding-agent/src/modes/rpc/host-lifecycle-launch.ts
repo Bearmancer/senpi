@@ -1,55 +1,23 @@
 /**
  * WHAT the lifecycle supervisor is launched with and WHAT it launches: its hidden argv route, the
- * argv it parses, and the host child command it resolves. Split out of `host-lifecycle.ts`, which
- * keeps the supervisor's orchestration; every name stays re-exported there for existing importers.
+ * argv it parses, and the host child it spawns. Split out of `host-lifecycle.ts`, which keeps the
+ * supervisor's orchestration; every name stays re-exported there for existing importers.
  */
-import { randomUUID } from "node:crypto";
-import { existsSync, readFileSync } from "node:fs";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { dirname, extname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
-import { isBunBinary, isBundledNode } from "../../config.ts";
-import { readProcessStartTime } from "../app-server/daemon/process.ts";
-import { writeJsonAtomic } from "./host-state-json.ts";
-import { errorMessage, supervisorLog } from "./host-supervisor-log.ts";
+import { type ChildProcess, spawn } from "node:child_process";
+import { extname } from "node:path";
+import { isBunBinary } from "../../config.ts";
+import { resolveCliMainPath } from "./host-cli-entry.ts";
+import { HOST_DAEMON_DIR_ENV } from "./host-daemon-paths.ts";
+import { HOST_INSTANCE_ID_ENV } from "./host-identity-env.ts";
+import {
+	HOST_CLEANUP_PATHS_ENV,
+	HOST_PUBLIC_SOCKET_ENV,
+	HOST_SCRATCH_DIR_ENV,
+	HOST_WATCH_FD_ENV,
+	HOST_WATCH_PPID_ENV,
+} from "./host-watchdog.ts";
 import type { SocketFileIdentity } from "./socket-ownership.ts";
-
-/**
- * The internal hop must stay short enough for sun_path (104 bytes on macOS)
- * regardless of where the public socket lives, and private against other local
- * users, so it gets its own 0700 directory under the OS temp directory.
- *
- * On win32 the directory lives under the caller-supplied rpc-host-daemon
- * directory, which ensureHost() creates but a direct --internal-rpc-host-supervisor
- * launch does not, so the parent is created recursively.
- */
-export async function createInternalSocketPath(
-	baseDir = tmpdir(),
-	platform: NodeJS.Platform = process.platform,
-): Promise<{ socket: string; dir?: string; secretPath?: string }> {
-	if (platform === "win32") {
-		const dir = join(baseDir, `internal-${randomUUID()}`);
-		await mkdir(dir, { recursive: true, mode: 0o700 });
-		return {
-			socket: `\\\\.\\pipe\\senpi-rpc-internal-${randomUUID()}`,
-			dir,
-			secretPath: join(dir, "secret"),
-		};
-	}
-	const dir = join(tmpdir(), `senpi-rpc-host-internal-${randomUUID().slice(0, 8)}`);
-	await mkdir(dir, { recursive: false, mode: 0o700 });
-	await writeFile(
-		join(dir, ".owner"),
-		JSON.stringify({
-			pid: process.pid,
-			processStartTime: await readProcessStartTime(process.pid),
-			createdAt: Date.now(),
-		}),
-		{ mode: 0o600 },
-	);
-	return { socket: join(dir, "host.sock"), dir, secretPath: join(dir, ".secret") };
-}
+import { SOCKET_SECRET_FILE_ENV } from "./socket-transport.ts";
 
 export interface SupervisorLaunch {
 	readonly socket: string;
@@ -72,6 +40,8 @@ export interface SupervisorLaunch {
 	 */
 	readonly replaceIdentity?: SocketFileIdentity;
 }
+
+export { resolveCliMainPath } from "./host-cli-entry.ts";
 
 /** Hidden internal launch route: wire-invisible, never advertised by the public CLI surface. */
 export const INTERNAL_SUPERVISOR_FLAG = "--internal-rpc-host-supervisor";
@@ -162,54 +132,6 @@ function parseSocketIdentity(value: string): SocketFileIdentity | undefined {
 }
 
 /**
- * Resolves the committed CLI entry this supervisor wraps (source tree or built dist).
- * Exported for tests, which pass the module path and layout of a bundled install.
- */
-export function resolveCliMainPath(
-	modulePath: string = fileURLToPath(import.meta.url),
-	bundled: boolean = isBundledNode,
-): string {
-	// Bundled, take the entry from the package's own declared bin: the bundle's cli.js beside
-	// this chunk, so a host started from a runtime snapshot runs the snapshot's copy and claims
-	// it the way a session does (#2409). Counting ".." instead lands on dist/cli-main.js, the
-	// unbundled tree the package also ships, which a snapshot links back to the install that an
-	// upgrade replaces, or on the package root, where no cli-main was ever emitted.
-	const declared = bundled ? resolveDeclaredCliEntry(modulePath) : undefined;
-	if (declared !== undefined) return declared;
-	const extension = modulePath.endsWith(".ts") ? ".ts" : ".js";
-	const unbundled = resolve(dirname(modulePath), "..", "..", `cli-main${extension}`);
-	if (existsSync(unbundled)) return unbundled;
-	// Falls back to the old path when nothing is declared, so a caller that was working keeps working.
-	return resolveDeclaredCliEntry(modulePath) ?? unbundled;
-}
-
-/** The CLI entry declared by the nearest enclosing package.json, when it exists on disk. */
-function resolveDeclaredCliEntry(modulePath: string): string | undefined {
-	let dir = dirname(modulePath);
-	for (let depth = 0; depth < 8; depth += 1) {
-		const manifestPath = resolve(dir, "package.json");
-		if (existsSync(manifestPath)) {
-			try {
-				const manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as {
-					bin?: Record<string, string> | string;
-				};
-				const declared = manifest.bin;
-				const candidates = typeof declared === "string" ? [declared] : Object.values(declared ?? {});
-				for (const candidate of candidates) {
-					const entry = resolve(dir, candidate);
-					if (existsSync(entry)) return entry;
-				}
-			} catch {}
-			return undefined;
-		}
-		const parent = dirname(dir);
-		if (parent === dir) return undefined;
-		dir = parent;
-	}
-	return undefined;
-}
-
-/**
  * Resolves the host child spawn. Explicit child commands (desktop launchers)
  * are forwarded untouched. The default re-enters the committed CLI entry
  * through the runtime, except in compiled standalone binaries, which always
@@ -273,20 +195,50 @@ export function spawnableChildLaunch(
 	};
 }
 
-/** Best-effort, 0600, by rename; released with the generation directory. */
-export async function recordChildPid(file: string, pid: number): Promise<void> {
-	try {
-		const processStartTime = (await readProcessStartTime(pid).catch(() => undefined)) ?? null;
-		await writeJsonAtomic(file, { pid, processStartTime });
-	} catch (cause) {
-		supervisorLog(`could not record the host child pid: ${errorMessage(cause)}`);
-	}
-}
+/**
+ * Child stdio slot carrying the supervisor-lifetime pipe. The supervisor holds
+ * the write end open and never writes; the kernel closes it when the supervisor
+ * dies for ANY reason (SIGKILL, OOM kill, crash), so the host sees EOF on this
+ * fd and shuts itself down. Catchable-signal cleanup alone cannot do this.
+ */
+export const HOST_CHILD_WATCH_FD = 3;
 
-export async function readSettingsFile(settingsFile: string): Promise<unknown> {
-	try {
-		return JSON.parse(await readFile(settingsFile, "utf8"));
-	} catch {
-		return undefined;
-	}
+/** Spawns the host child with the environment that binds it to this supervisor and its generation. */
+export function spawnHostChild(options: {
+	readonly launch: SupervisorLaunch;
+	readonly internalSocket: string;
+	readonly internal: { readonly dir?: string; readonly secretPath: string };
+	readonly internalSecret?: Buffer;
+	readonly daemonDir: string;
+	readonly instanceId: string;
+	readonly cleanupPaths: readonly string[];
+	readonly publicSocket: string;
+}): ChildProcess {
+	const { launch, internalSocket, internal, internalSecret, publicSocket } = options;
+	const childLaunch = spawnableChildLaunch(resolveHostChildLaunch(launch, internalSocket));
+	return spawn(childLaunch.command, childLaunch.args, {
+		env: {
+			...process.env,
+			...(launch.agentDir ? { SENPI_CODING_AGENT_DIR: launch.agentDir } : {}),
+			// The child binds a PRIVATE socket, so it cannot derive this endpoint's daemon directory
+			// from what it listens on: it is told, and it claims its session paths there.
+			[HOST_DAEMON_DIR_ENV]: options.daemonDir,
+			[HOST_INSTANCE_ID_ENV]: options.instanceId,
+			[HOST_WATCH_FD_ENV]: String(HOST_CHILD_WATCH_FD),
+			[HOST_WATCH_PPID_ENV]: String(process.pid),
+			...(internal.dir ? { [HOST_SCRATCH_DIR_ENV]: internal.dir } : {}),
+			...(internalSecret ? { [SOCKET_SECRET_FILE_ENV]: internal.secretPath } : {}),
+			[HOST_CLEANUP_PATHS_ENV]: options.cleanupPaths.join("\n"),
+			...(process.platform === "win32" ? {} : { [HOST_PUBLIC_SOCKET_ENV]: publicSocket }),
+		},
+		// Slot 3 is the lifetime pipe: "pipe" gives the child a read end it can
+		// wait on and keeps the write end owned by this process alone.
+		shell: childLaunch.shell,
+		stdio: ["ignore", "ignore", "inherit", "pipe"],
+		// The supervisor is spawned detached, so on win32 it owns no console. A
+		// console-subsystem child started from it would allocate a fresh one,
+		// which Windows Terminal renders as an empty window that takes focus.
+		// CREATE_NO_WINDOW gives the child a console with no window instead.
+		windowsHide: true,
+	});
 }
