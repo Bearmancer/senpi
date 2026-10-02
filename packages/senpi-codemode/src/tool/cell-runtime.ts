@@ -5,7 +5,14 @@ import { formatModelTruncationNotice } from "../output/output-meta.ts";
 import { DEFAULT_MAX_BYTES, TailLineRing } from "../output/streaming-output.ts";
 import type { EvalToolCallMetric } from "./call-capture.ts";
 import { type EvalImageResizer, EvalOutputCollector, type EvalOutputResult } from "./image.ts";
-import type { EvalMemoryDetails, EvalRuntimeInfo, EvalStatusEvent, EvalToolDetails, EvalToolInput } from "./types.ts";
+import type {
+	EvalKernelState,
+	EvalMemoryDetails,
+	EvalRuntimeInfo,
+	EvalStatusEvent,
+	EvalToolDetails,
+	EvalToolInput,
+} from "./types.ts";
 
 const LIVE_UPDATE_LINES = 8;
 /** Same cadence as the core bash tool's streaming updates (BASH_UPDATE_THROTTLE_MS). */
@@ -49,6 +56,7 @@ export class CellResultBuilder {
 	readonly #state: CellState;
 	#memory: KernelMemoryReport | undefined;
 	#restartNotice: string | undefined;
+	#kernelState: EvalKernelState | undefined;
 	readonly #liveLines = new TailLineRing({ maxBytes: DEFAULT_MAX_BYTES * 2, maxLines: LIVE_UPDATE_LINES });
 	#lastOutputUpdateAt = 0;
 	#outputUpdateTimer: ReturnType<typeof setTimeout> | undefined;
@@ -87,6 +95,7 @@ export class CellResultBuilder {
 		this.#state.durationMs = result.durationMs;
 		this.#memory = result.memory;
 		this.#restartNotice = result.notice;
+		this.#kernelState = result.kernelState;
 		if (result.ok) {
 			if (result.valueRepr) this.#output.pushValue(`${result.valueRepr}\n`);
 			this.#state.status = "complete";
@@ -205,6 +214,7 @@ export class CellResultBuilder {
 			...(output?.notice === undefined ? {} : { notice: output.notice }),
 			...(output?.meta === undefined ? {} : { meta: output.meta }),
 			...(output === undefined || this.#memory === undefined ? {} : { memory: memoryDetails(this.#memory) }),
+			...(this.#kernelState === undefined ? {} : { kernelState: this.#kernelState }),
 		};
 	}
 

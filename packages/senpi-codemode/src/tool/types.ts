@@ -283,6 +283,10 @@ export interface EvalToolDetails {
 	readonly meta?: TruncationMeta;
 	/** Kernel memory after the cell; its notice text is delivered as its own content part. */
 	readonly memory?: EvalMemoryDetails;
+	/** What a kernel death did to this cell's state, when one did. */
+	readonly kernelState?: EvalKernelState;
 }
+
+export type EvalKernelState = NonNullable<EvalKernelResult["kernelState"]>;
 
 export type EvalMemoryDetails = Omit<KernelMemoryReport, "notice">;

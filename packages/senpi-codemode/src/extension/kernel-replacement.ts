@@ -133,13 +133,16 @@ export class ReplaceableKernel implements EvalKernel {
 	#submit(generation: number, kernel: EvalKernel, input: EvalKernelRunInput): Promise<EvalKernelResult> {
 		return kernel.run(input).then((result) => {
 			if (generation !== this.#generation) return result;
-			// A result from a still-live current instance proves the replacement works; the result the
-			// kernel settled for the cell its death interrupted proves nothing.
-			if (kernel.isAlive?.() !== false) this.#recovering = null;
+			// The result the kernel settled for the cell its death interrupted proves nothing about the
+			// replacement; a result from a still-live current instance proves it works.
+			// A drained cell settles through this same promise already tagged; only the interrupted one is `lost`.
+			if (kernel.isAlive?.() === false)
+				return result.kernelState === undefined ? { ...result, kernelState: "lost" } : result;
+			this.#recovering = null;
 			const notice = this.#announce;
 			if (notice === null) return result;
 			this.#announce = null;
-			return { ...result, notice };
+			return { ...result, notice, kernelState: "restarted" };
 		});
 	}
 

@@ -35,5 +35,5 @@ export class KernelUnavailableError extends Error {
 }
 
 export function unstartedResult(cellId: string, message: string): EvalKernelResult {
-	return { type: "result", cellId, ok: false, error: { message }, durationMs: 0 };
+	return { type: "result", cellId, ok: false, error: { message }, durationMs: 0, kernelState: "not-run" };
 }

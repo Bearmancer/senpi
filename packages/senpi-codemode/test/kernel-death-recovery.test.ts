@@ -130,10 +130,12 @@ describe("a kernel whose interpreter dies is replaced once and keeps its queue",
 			expect(dying).toMatchObject({
 				ok: false,
 				error: { message: expect.stringContaining("every global is lost") },
+				kernelState: "lost",
 			});
-			expect(first).toMatchObject({ ok: true, valueRepr: "42" });
+			expect(first).toMatchObject({ ok: true, valueRepr: "42", kernelState: "restarted" });
 			expect(first.notice).toBe(restartNotice("py"));
 			expect(second).toMatchObject({ ok: true, valueRepr: "41" });
+			expect(second.kernelState).toBeUndefined();
 			expect(second.notice).toBeUndefined();
 			expect(order).toEqual(["dying", "first", "second"]);
 		},
@@ -158,6 +160,7 @@ describe("a kernel whose interpreter dies is replaced once and keeps its queue",
 			expect(stranded).toMatchObject({
 				ok: false,
 				error: { message: expect.stringMatching(/^eval_kernel_unavailable: .*signal 9/) },
+				kernelState: "not-run",
 			});
 			const recovered = await submit(manager, "py", "1 + 1");
 			expect(recovered).toMatchObject({ ok: true, valueRepr: "2" });
