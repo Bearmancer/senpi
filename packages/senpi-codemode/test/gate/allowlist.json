@@ -1,73 +1,77 @@
 {
-	"version": 1,
-	"nodes": {
-		"1": {
-			"additions": [],
-			"reason": "The initial harness preserves the merge-base surfaces without additive production changes."
-		},
-		"32": {
-			"additions": [
-				"legacyContracts/test/js-kernel-shell-stop-bun.test.ts/Bun shell Stop reports state loss when Stop interrupts a native shell wait",
-				"legacyContracts/test/js-kernel-shell-stop-bun.test.ts/Bun shell Stop reports state loss when Stop interrupts a native text wait",
-				"legacyContracts/test/js-kernel-shell-stop-bun.test.ts/Bun shell Stop reports state loss when Stop interrupts a native lines wait",
-				"legacyContracts/test/js-kernel-shell-stop-bun.test.ts/Bun shell Stop reports state loss when Stop interrupts a native late wait",
-				"legacyContracts/test/js-kernel-shell-stop-bun.test.ts/Bun shell Stop keeps globals without a shell restart notice when Stop interrupts a normal await",
-				"legacyContracts/test/js-kernel-shell-stop-bun.test.ts/Bun shell Stop keeps normal shell output and globals when the cell finishes",
-				"legacyContracts/test/js-kernel-shell-stop-bun.test.ts/Bun shell Stop cleans up when the shell exits before connecting"
-			],
-			"reason": "Lead decision A (2026-10-01), node 32: add event-ordered shell restart notice and preservation witnesses without changing default prompts, schemas, helpers, or native shell semantics."
-		},
-		"senpi#2444": {
-			"additions": [
-				"legacyContracts/test/eval-schema-required-fields.test.ts/eval action schemas preserves valid runs and controls through provider schema conversions",
-				"legacyContracts/test/eval-schema-required-fields.test.ts/eval action schemas keeps every root anyOf branch free of enum in each provider's wire schema",
-				"legacyContracts/test/eval-schema-required-fields.test.ts/eval action schemas falls back from preferred OpenAI strict sampling without requiring run fields on controls",
-				"legacyContracts/test/eval-schema-required-fields.test.ts/eval action schemas requires every run field with an explicit or omitted action",
-				"legacyContracts/test/eval-schema-required-fields.test.ts/eval action schemas keeps list, peek and stop usable without run fields",
-				"legacyContracts/test/eval-schema-required-fields.test.ts/eval action schemas declares every required field inside the branch that requires it"
-			],
-			"reason": "Reviewed with senpi#2444 (fixes #2240 and #2569): contract tests for the self-contained, const-typed eval action branches, including the gateway-safe no-enum-in-root-anyOf check. The intended eval schema change is recorded in baseline.json in the same PR."
-		},
-		"senpi#2557": {
-			"additions": [
-				"legacyContracts/test/eval-display-image-check.test.ts/eval display image validation Given image data with a length that is not a multiple of four when displayed then no image block is kept and the output says why",
-				"legacyContracts/test/eval-display-image-check.test.ts/eval display image validation Given image data with a non-base64 character when displayed then no image block is kept and the output says why",
-				"legacyContracts/test/eval-display-image-check.test.ts/eval display image validation Given image data with a truncation marker appended when displayed then no image block is kept and the output says why",
-				"legacyContracts/test/eval-display-image-check.test.ts/eval display image validation Given image data with no data when displayed then no image block is kept and the output says why",
-				"legacyContracts/test/eval-display-image-check.test.ts/eval display image validation Given image data with padding in the middle when displayed then no image block is kept and the output says why",
-				"legacyContracts/test/eval-display-image-check.test.ts/eval display image validation Given image/gif declared over data whose signature is R0lGODlh when displayed then the detected type is kept",
-				"legacyContracts/test/eval-display-image-check.test.ts/eval display image validation Given image/jpeg declared over data whose signature is /9j/4A== when displayed then the detected type is kept",
-				"legacyContracts/test/eval-display-image-check.test.ts/eval display image validation Given image/jpeg declared over data whose signature is iVBORw0KGgo= when displayed then the detected type is kept",
-				"legacyContracts/test/eval-display-image-check.test.ts/eval display image validation Given image/png declared over data whose signature is UklGRgAAAABXRUJQ when displayed then the detected type is kept",
-				"legacyContracts/test/eval-display-image-check.test.ts/eval display image validation Given image/png declared over data whose signature is iVBORw0KGgo= when displayed then the detected type is kept",
-				"legacyContracts/test/eval-display-image-check.test.ts/eval display image validation Given valid base64 of a BMP signature when displayed as an image then it is dropped with a clear reason",
-				"legacyContracts/test/eval-display-image-check.test.ts/eval display image validation Given valid base64 of a JPEG-LS signature when displayed as an image then it is dropped with a clear reason",
-				"legacyContracts/test/eval-display-image-check.test.ts/eval display image validation Given valid base64 of plain text bytes when displayed as an image then it is dropped with a clear reason",
-				"legacyContracts/test/eval-display-image-check.test.ts/eval display image validation Given valid base64 of zero bytes when displayed as an image then it is dropped with a clear reason",
-				"legacyContracts/test/eval-display-image-check.test.ts/eval display image validation Given wrapped base64 when displayed then the line breaks are dropped and the image is kept",
-				"legacyContracts/test/upstream-v1-codemode-parity.test.ts/Windows Bun binary worker path inline worker entry under a Windows B:\\~BUN virtual path resolves to the on-disk sidecar",
-				"legacyContracts/test/upstream-v1-codemode-parity.test.ts/Windows Bun binary worker path worker entry under a Windows B:\\~BUN virtual path resolves to the on-disk sidecar",
-				"legacyContracts/test/upstream-v1-codemode-parity.test.ts/collapsed preview counts wrapped lines one long JSON line does not fill the screen when collapsed"
-			],
-			"reason": "senpi#2557 (upstream v1.0.0 sync), lead+release-senpi approved: new tests from the sync only. The eval display-image validation tests cover the ported upstream fix d2931ad3d (invalid base64 dropped, detected type kept); the parity tests cover upstream v1.0.0 behaviours the fork already has (Windows Bun worker path, wrapped-line preview). No prompt, schema, invariant, census or import change, and no existing contract changed."
-		},
-		"5": {
-			"additions": [
-				"legacyContracts/test/detached-cell-notification.test.ts/detached cell notification state note Given a failed py cell whose kernel died (lost) when the notification is built then it does not claim the variables survived",
-				"legacyContracts/test/detached-cell-notification.test.ts/detached cell notification state note Given a failed py cell whose kernel died (restarted) when the notification is built then it does not claim the variables survived",
-				"legacyContracts/test/detached-cell-notification.test.ts/detached cell notification state note Given a failed py cell whose kernel died (not-run) when the notification is built then it does not claim the variables survived",
-				"legacyContracts/test/kernel-death-recovery.test.ts/a kernel whose interpreter dies is replaced once and keeps its queue rb: an interpreter SIGKILLed between cells is replaced and the next cell runs with the notice",
-				"legacyContracts/test/kernel-death-recovery.test.ts/a kernel whose interpreter dies is replaced once and keeps its queue jl: an interpreter SIGKILLed between cells is replaced and the next cell runs with the notice",
-				"legacyContracts/test/kernel-death-recovery.test.ts/a kernel whose interpreter dies is replaced once and keeps its queue py: a cell queued behind one whose interpreter dies runs on the replacement, in order",
-				"legacyContracts/test/kernel-death-recovery.test.ts/a kernel whose interpreter dies is replaced once and keeps its queue py: two deaths back to back fail the queued cell with eval_kernel_unavailable",
-				"legacyContracts/test/kernel-replacement.test.ts/a replaceable kernel never submits a queued cell cancelled while the replacement starts",
-				"legacyContracts/test/kernel-replacement.test.ts/a replaceable kernel lets session disposal win over a replacement still starting",
-				"legacyContracts/test/kernel-replacement.test.ts/a replaceable kernel fails the held cells with eval_kernel_unavailable when the replacement cannot start",
-				"legacyContracts/test/kernel-replacement.test.ts/a replaceable kernel does not start a second interpreter while the dead one cannot be retired",
-				"legacyContracts/test/kernel-replacement.test.ts/a replaceable kernel ignores a late death reported by an instance it already replaced",
-				"legacyContracts/test/py-kernel-retirement-recovery.test.ts/a Python kernel whose retirement failed reports the failure while the old interpreter lives, and recovers with the notice once it is gone"
-			],
-			"reason": "Node 5 (senpi#2452): RED/GREEN witnesses for replacing a dead py/rb/jl kernel once with its queue, the eval_kernel_unavailable double-death path, retirement-failure recovery, and the detached kernel-state notes; no prompt, schema, helper or default change."
-		}
-	}
+ "version": 1,
+ "nodes": {
+  "1": {
+   "additions": [],
+   "reason": "The initial harness preserves the merge-base surfaces without additive production changes."
+  },
+  "32": {
+   "additions": [
+    "legacyContracts/test/js-kernel-shell-stop-bun.test.ts/Bun shell Stop reports state loss when Stop interrupts a native shell wait",
+    "legacyContracts/test/js-kernel-shell-stop-bun.test.ts/Bun shell Stop reports state loss when Stop interrupts a native text wait",
+    "legacyContracts/test/js-kernel-shell-stop-bun.test.ts/Bun shell Stop reports state loss when Stop interrupts a native lines wait",
+    "legacyContracts/test/js-kernel-shell-stop-bun.test.ts/Bun shell Stop reports state loss when Stop interrupts a native late wait",
+    "legacyContracts/test/js-kernel-shell-stop-bun.test.ts/Bun shell Stop keeps globals without a shell restart notice when Stop interrupts a normal await",
+    "legacyContracts/test/js-kernel-shell-stop-bun.test.ts/Bun shell Stop keeps normal shell output and globals when the cell finishes",
+    "legacyContracts/test/js-kernel-shell-stop-bun.test.ts/Bun shell Stop cleans up when the shell exits before connecting"
+   ],
+   "reason": "Lead decision A (2026-10-01), node 32: add event-ordered shell restart notice and preservation witnesses without changing default prompts, schemas, helpers, or native shell semantics."
+  },
+  "senpi#2444": {
+   "additions": [
+    "legacyContracts/test/eval-schema-required-fields.test.ts/eval action schemas preserves valid runs and controls through provider schema conversions",
+    "legacyContracts/test/eval-schema-required-fields.test.ts/eval action schemas keeps every root anyOf branch free of enum in each provider's wire schema",
+    "legacyContracts/test/eval-schema-required-fields.test.ts/eval action schemas falls back from preferred OpenAI strict sampling without requiring run fields on controls",
+    "legacyContracts/test/eval-schema-required-fields.test.ts/eval action schemas requires every run field with an explicit or omitted action",
+    "legacyContracts/test/eval-schema-required-fields.test.ts/eval action schemas keeps list, peek and stop usable without run fields",
+    "legacyContracts/test/eval-schema-required-fields.test.ts/eval action schemas declares every required field inside the branch that requires it"
+   ],
+   "reason": "Reviewed with senpi#2444 (fixes #2240 and #2569): contract tests for the self-contained, const-typed eval action branches, including the gateway-safe no-enum-in-root-anyOf check. The intended eval schema change is recorded in baseline.json in the same PR."
+  },
+  "senpi#2557": {
+   "additions": [
+    "legacyContracts/test/eval-display-image-check.test.ts/eval display image validation Given image data with a length that is not a multiple of four when displayed then no image block is kept and the output says why",
+    "legacyContracts/test/eval-display-image-check.test.ts/eval display image validation Given image data with a non-base64 character when displayed then no image block is kept and the output says why",
+    "legacyContracts/test/eval-display-image-check.test.ts/eval display image validation Given image data with a truncation marker appended when displayed then no image block is kept and the output says why",
+    "legacyContracts/test/eval-display-image-check.test.ts/eval display image validation Given image data with no data when displayed then no image block is kept and the output says why",
+    "legacyContracts/test/eval-display-image-check.test.ts/eval display image validation Given image data with padding in the middle when displayed then no image block is kept and the output says why",
+    "legacyContracts/test/eval-display-image-check.test.ts/eval display image validation Given image/gif declared over data whose signature is R0lGODlh when displayed then the detected type is kept",
+    "legacyContracts/test/eval-display-image-check.test.ts/eval display image validation Given image/jpeg declared over data whose signature is /9j/4A== when displayed then the detected type is kept",
+    "legacyContracts/test/eval-display-image-check.test.ts/eval display image validation Given image/jpeg declared over data whose signature is iVBORw0KGgo= when displayed then the detected type is kept",
+    "legacyContracts/test/eval-display-image-check.test.ts/eval display image validation Given image/png declared over data whose signature is UklGRgAAAABXRUJQ when displayed then the detected type is kept",
+    "legacyContracts/test/eval-display-image-check.test.ts/eval display image validation Given image/png declared over data whose signature is iVBORw0KGgo= when displayed then the detected type is kept",
+    "legacyContracts/test/eval-display-image-check.test.ts/eval display image validation Given valid base64 of a BMP signature when displayed as an image then it is dropped with a clear reason",
+    "legacyContracts/test/eval-display-image-check.test.ts/eval display image validation Given valid base64 of a JPEG-LS signature when displayed as an image then it is dropped with a clear reason",
+    "legacyContracts/test/eval-display-image-check.test.ts/eval display image validation Given valid base64 of plain text bytes when displayed as an image then it is dropped with a clear reason",
+    "legacyContracts/test/eval-display-image-check.test.ts/eval display image validation Given valid base64 of zero bytes when displayed as an image then it is dropped with a clear reason",
+    "legacyContracts/test/eval-display-image-check.test.ts/eval display image validation Given wrapped base64 when displayed then the line breaks are dropped and the image is kept",
+    "legacyContracts/test/upstream-v1-codemode-parity.test.ts/Windows Bun binary worker path inline worker entry under a Windows B:\\~BUN virtual path resolves to the on-disk sidecar",
+    "legacyContracts/test/upstream-v1-codemode-parity.test.ts/Windows Bun binary worker path worker entry under a Windows B:\\~BUN virtual path resolves to the on-disk sidecar",
+    "legacyContracts/test/upstream-v1-codemode-parity.test.ts/collapsed preview counts wrapped lines one long JSON line does not fill the screen when collapsed"
+   ],
+   "reason": "senpi#2557 (upstream v1.0.0 sync), lead+release-senpi approved: new tests from the sync only. The eval display-image validation tests cover the ported upstream fix d2931ad3d (invalid base64 dropped, detected type kept); the parity tests cover upstream v1.0.0 behaviours the fork already has (Windows Bun worker path, wrapped-line preview). No prompt, schema, invariant, census or import change, and no existing contract changed."
+  },
+  "5": {
+   "additions": [
+    "legacyContracts/test/detached-cell-notification.test.ts/detached cell notification state note Given a failed py cell whose kernel died (lost) when the notification is built then it does not claim the variables survived",
+    "legacyContracts/test/detached-cell-notification.test.ts/detached cell notification state note Given a failed py cell whose kernel died (restarted) when the notification is built then it does not claim the variables survived",
+    "legacyContracts/test/detached-cell-notification.test.ts/detached cell notification state note Given a failed py cell whose kernel died (not-run) when the notification is built then it does not claim the variables survived",
+    "legacyContracts/test/kernel-death-recovery.test.ts/a kernel whose interpreter dies is replaced once and keeps its queue rb: an interpreter SIGKILLed between cells is replaced and the next cell runs with the notice",
+    "legacyContracts/test/kernel-death-recovery.test.ts/a kernel whose interpreter dies is replaced once and keeps its queue jl: an interpreter SIGKILLed between cells is replaced and the next cell runs with the notice",
+    "legacyContracts/test/kernel-death-recovery.test.ts/a kernel whose interpreter dies is replaced once and keeps its queue py: a cell queued behind one whose interpreter dies runs on the replacement, in order",
+    "legacyContracts/test/kernel-death-recovery.test.ts/a kernel whose interpreter dies is replaced once and keeps its queue py: two deaths back to back fail the queued cell with eval_kernel_unavailable",
+    "legacyContracts/test/kernel-replacement.test.ts/a replaceable kernel never submits a queued cell cancelled while the replacement starts",
+    "legacyContracts/test/kernel-replacement.test.ts/a replaceable kernel lets session disposal win over a replacement still starting",
+    "legacyContracts/test/kernel-replacement.test.ts/a replaceable kernel fails the held cells with eval_kernel_unavailable when the replacement cannot start",
+    "legacyContracts/test/kernel-replacement.test.ts/a replaceable kernel does not start a second interpreter while the dead one cannot be retired",
+    "legacyContracts/test/kernel-replacement.test.ts/a replaceable kernel ignores a late death reported by an instance it already replaced",
+    "legacyContracts/test/py-kernel-retirement-recovery.test.ts/a Python kernel whose retirement failed reports the failure while the old interpreter lives, and recovers with the notice once it is gone",
+    "imports/extension/packages/senpi-codemode/src/extension/kernel-replacement.ts",
+    "imports/extension/packages/senpi-codemode/src/kernels/shared/kernel-death.ts",
+    "imports/firstKernel/packages/senpi-codemode/src/extension/kernel-replacement.ts",
+    "imports/firstKernel/packages/senpi-codemode/src/kernels/shared/kernel-death.ts"
+   ],
+   "reason": "Node 5 (senpi#2452): RED/GREEN witnesses for replacing a dead py/rb/jl kernel once with its queue, the eval_kernel_unavailable double-death path, retirement-failure recovery, and the detached kernel-state notes; no prompt, schema, helper or default change. The session manager now imports the replaceable kernel and its death vocabulary (two small lifecycle modules, no installer or sandbox runtime) on the extension and first-kernel paths."
+  }
+ }
 }

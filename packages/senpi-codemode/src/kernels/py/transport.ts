@@ -83,22 +83,27 @@ export class PythonKernelTransport {
 	#active = true;
 	#exited = false;
 	#retirement: Promise<void> | null = null;
-	/** Resolves once the interpreter process is gone, however this transport stopped listening to it. */
-	readonly #gone = Promise.withResolvers<void>();
+	#gone: Promise<void> | null = null;
 	#isGone = false;
 
 	private constructor(options: PythonTransportOptions, child: KernelChild) {
 		this.#options = options;
 		this.#child = child;
-		child.once("exit", () => {
-			this.#isGone = true;
-			this.#gone.resolve();
-		});
 	}
 
-	/** A retirement that timed out is confirmed only by this: the process really exited after all. */
+	/**
+	 * A retirement that timed out is confirmed only by this: the process really exited after all. The
+	 * watch is attached on demand, so a transport nobody asks this of leaves no listener on its child.
+	 */
 	whenGone(): Promise<void> {
-		return this.#gone.promise;
+		if (this.#exited || this.#isGone) return Promise.resolve();
+		this.#gone ??= new Promise<void>((resolve) => {
+			this.#child.once("exit", () => {
+				this.#isGone = true;
+				resolve();
+			});
+		});
+		return this.#gone;
 	}
 
 	static async start(options: PythonTransportOptions): Promise<PythonKernelTransport> {
