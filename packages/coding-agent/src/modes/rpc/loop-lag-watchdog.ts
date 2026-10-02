@@ -78,6 +78,12 @@ export class LoopLagWatchdog {
 	/** This host's own generation directory when a supervisor launched it; evidence goes nowhere else. */
 	private readonly evidenceDir: string | undefined;
 	private heartbeatInFlight = false;
+	/**
+	 * The parent this host was launched under. Once it is gone the host is orphaned and on its way out:
+	 * its generation directory belongs to nobody now (gc may be judging or removing it), so the host
+	 * stops writing evidence there instead of racing that with a heartbeat a dying process may leave torn.
+	 */
+	private readonly launchParentPid = process.ppid;
 	private evidenceFailureLogged = false;
 
 	constructor(options: LoopLagWatchdogOptions) {
@@ -162,7 +168,7 @@ export class LoopLagWatchdog {
 	 * the session loop never waits on it, and a write still in flight skips the next beat.
 	 */
 	private beat(now: number): void {
-		if (this.evidenceDir === undefined || this.heartbeatInFlight) return;
+		if (!this.ownsEvidenceDir() || this.evidenceDir === undefined || this.heartbeatInFlight) return;
 		this.heartbeatInFlight = true;
 		void writeHeartbeat(this.evidenceDir, new Date(now).toISOString())
 			.catch((cause: unknown) => this.evidenceFailed(cause))
@@ -172,7 +178,7 @@ export class LoopLagWatchdog {
 	}
 
 	private persistStall(now: number, record: RpcHostStalledEvent): void {
-		if (this.evidenceDir === undefined) return;
+		if (!this.ownsEvidenceDir() || this.evidenceDir === undefined) return;
 		void writeStallEvidence(this.evidenceDir, {
 			at: new Date(now).toISOString(),
 			driftMs: record.driftMs,
@@ -181,6 +187,10 @@ export class LoopLagWatchdog {
 			...(record.sessionId ? { sessionId: record.sessionId } : {}),
 			...(record.tool ? { tool: record.tool } : {}),
 		}).catch((cause: unknown) => this.evidenceFailed(cause));
+	}
+
+	private ownsEvidenceDir(): boolean {
+		return process.ppid === this.launchParentPid;
 	}
 
 	private evidenceFailed(cause: unknown): void {
