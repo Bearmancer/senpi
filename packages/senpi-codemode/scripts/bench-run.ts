@@ -47,6 +47,7 @@ export interface BlockRecord {
 }
 
 export interface RunResult {
+	readonly reps: number;
 	readonly blocks: readonly BlockRecord[];
 	readonly admissionLoads: readonly number[];
 	readonly runtimes: readonly RuntimeStatus[];
@@ -81,7 +82,14 @@ export async function runBlocks(plan: RunPlan): Promise<RunResult> {
 	const blocks: BlockRecord[] = [];
 	const admissionLoads: number[] = [];
 	if ([...available.values()].some((present) => !present))
-		return { blocks, admissionLoads, failures, reports: collected, ...assemble(plan, available, collected) };
+		return {
+			reps: plan.reps,
+			blocks,
+			admissionLoads,
+			failures,
+			reports: collected,
+			...assemble(plan, available, collected),
+		};
 	blocksLoop: for (let index = 0; index < plan.blocks; index += 1) {
 		const comparisonOrder: Side[] = index % 2 === 0 ? ["base", "head"] : ["head", "base"];
 		const startLoad = loadavg();
@@ -158,7 +166,14 @@ export async function runBlocks(plan: RunPlan): Promise<RunResult> {
 		}
 		blocks.push({ index, comparisonOrder, loadavg: startLoad, loadavgEnd: loadavg(), power, measurements });
 	}
-	return { blocks, admissionLoads, failures, reports: collected, ...assemble(plan, available, collected) };
+	return {
+		reps: plan.reps,
+		blocks,
+		admissionLoads,
+		failures,
+		reports: collected,
+		...assemble(plan, available, collected),
+	};
 }
 
 function versionOf(runs: readonly { report: RuntimeReport }[]): string | undefined {

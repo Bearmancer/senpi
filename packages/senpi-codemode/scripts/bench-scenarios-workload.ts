@@ -11,7 +11,7 @@ import {
 	scalarCell,
 	spillCell,
 } from "./bench-cells.ts";
-import { percentile } from "./bench-compare.ts";
+import { percentile } from "./bench-stats.ts";
 import { measure } from "./bench-measure.ts";
 import type { Scenario } from "./bench-scenarios-latency.ts";
 import { gcAllocateDrop } from "./bench-scenarios-memory.ts";

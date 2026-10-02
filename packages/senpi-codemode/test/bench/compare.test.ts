@@ -1,18 +1,17 @@
 import { describe, expect, it } from "vitest";
-import {
-	admitHost,
-	type BenchInput,
-	decide,
-	injectSlow,
-	type PairedBlock,
-	parseInjection,
-	type Series,
-} from "../../scripts/bench-compare.ts";
+import { admitHost, type BenchInput, decide, type PairedBlock, type Series } from "../../scripts/bench-compare.ts";
+import { injectSlow, parseInjection } from "../../scripts/bench-inject.ts";
+
+// Adjacent repetitions share the host's state (120, 100, 110 ms), and each pair partner differs by under 1%.
+const jitter = [0.004, -0.006, 0.002];
 
 function blocks(ratio: number): readonly PairedBlock[] {
-	return Array.from({ length: 3 }, () => ({
+	return Array.from({ length: 3 }, (_, block) => ({
 		first: [120, 100, 110].map((value) => ({ cpuMs: value, wallMs: value, p95Ms: value })),
-		second: [110, 120, 100].map((value) => ({ cpuMs: value * ratio, wallMs: value, p95Ms: value })),
+		second: [120, 100, 110].map((value, rep) => {
+			const paired = value * Math.exp(jitter[(rep + block) % 3] ?? 0);
+			return { cpuMs: paired * ratio, wallMs: paired, p95Ms: paired };
+		}),
 	}));
 }
 
@@ -24,6 +23,7 @@ const series: Series = {
 	comparison: blocks(1),
 };
 const input: BenchInput = {
+	reps: 3,
 	runtimes: ["js-bun", "js-node", "py", "rb", "jl"].map((id) => ({
 		id,
 		base: { available: true, version: "same-version" },
@@ -41,11 +41,12 @@ describe("paired benchmark verdicts", () => {
 		const result = decide({ ...input, series: [injectSlow(series, [injection])] });
 		// Then the slowdown is rejected against the original measured band.
 		expect(result.exitCode).toBe(1);
-		expect(result.band).toBeCloseTo(0.02);
-		expect(result.results.find((entry) => entry.metric === "cpu")?.medianRatio).toBeCloseTo(1.3);
+		const cpu = result.results.find((entry) => entry.metric === "cpu");
+		expect(cpu?.threshold).toBeLessThan(0.05);
+		expect(cpu?.ratio).toBeCloseTo(1.3, 2);
 	});
 
-	it("passes when interleaved minima stay inside the measured band", () => {
+	it("passes when paired ratios stay inside each row's measured band", () => {
 		// Given matching code with a two-percent measured noise band.
 		// When all paired metrics are evaluated.
 		const result = decide(input);
@@ -60,18 +61,23 @@ describe("paired benchmark verdicts", () => {
 		const result = decide(slowed);
 		// Then the failed metric identifies the workload.
 		expect(result.exitCode).toBe(1);
-		expect(result.results.filter((entry) => entry.regressed)).toMatchObject([
-			{ scenario: "warm-cell-1000", metric: "cpu", medianRatio: 1.25 },
-		]);
+		const failed = result.results.filter((entry) => entry.verdict === "FAIL");
+		expect(failed).toMatchObject([{ scenario: "warm-cell-1000", metric: "cpu" }]);
+		expect(failed[0]?.ratio).toBeCloseTo(1.25, 2);
+		expect(result.lines[0]).toContain("warm-cell-1000 js-bun: paired cpu ratio 1.25");
 	});
 
 	it("returns inconclusive when calibration is too noisy", () => {
-		// Given an eight-percent A/A band.
+		// Given an eight-percent A/A CPU offset.
 		const noisy = { ...input, series: [{ ...series, calibration: blocks(1.08) }] };
 		// When the run is judged.
 		const result = decide(noisy);
 		// Then the host noise is not waived into a pass or regression.
 		expect(result).toMatchObject({ exitCode: 3, verdict: "INCONCLUSIVE" });
+		expect(result.results.find((entry) => entry.metric === "cpu")).toMatchObject({
+			verdict: "NOISE-LIMITED",
+			threshold: 0.05,
+		});
 	});
 
 	it.each(["js-node", "jl"])("invalidates the run when required %s is missing", (id) => {

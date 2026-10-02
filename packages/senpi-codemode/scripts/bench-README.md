@@ -4,26 +4,47 @@ Run from the repository root after installing dependencies and building both
 checkouts:
 
 ```sh
-bun run --cwd packages/senpi-codemode bench -- --base /path/to/base --head /path/to/head --blocks 9 --out bench-report.json
+bun run --cwd packages/senpi-codemode bench -- --base /path/to/base --head /path/to/head --blocks 3 --reps 15 --out bench-report.json
 ```
+
+The defaults (3 blocks x 15 repetitions = 45 adjacent pairs per row) take about 2.5 hours
+for the five-runtime matrix; most of that is the fixed-clock detach, interrupt and
+Julia output workloads.
 
 Both targets run on the same machine, with five unmeasured warm-up cells.
 Each runtime has four isolated retained host processes: base, head, and two
 independent base instances for calibration. Only one receives a measurement
 request at a time. Each scenario first rehearses once without retaining a
-sample, then measures three repetitions per side. Repetitions are paired
+sample, then measures `--reps` repetitions per side. Repetitions are paired
 adjacently, reversing both comparison and calibration order across repetitions
 and blocks; an entire scenario suite never separates a pair.
 Cold-start trials use fresh kernels and have no discarded scenario rehearsal.
-A separate A/A calibration runs in the same
-invocation. For CPU, wall time, and workload p95, the comparator uses each
-block's minimum per side, then the median of the paired head/base ratios.
-Every ratio must be at most `1 + band`; the band is the 95th percentile absolute
-deviation of the A/A ratios. A band above 0.05 is inconclusive, never waived.
+A separate A/A calibration runs in the same invocation.
+
+## Estimator and thresholds
+
+Host noise on a shared machine is time-correlated: two adjacent repetitions move
+together, while per-side minima taken from different moments do not. Each row
+(runtime x scenario x CPU/wall/p95) is therefore judged on its adjacent pairs:
+the gated statistic is the 25% trimmed mean of the paired log ratios across all
+blocks and repetitions (`bench-stats.ts`).
+
+Every row gets its threshold from its own calibration pairs through one rule,
+`rowNoiseBand` in `bench-threshold.ts`: band = |A/A trimmed-mean offset| +
+`THRESHOLD_Z` (4) standard errors of that trimmed mean. Only the constant differs
+between rows; the rule is the same for all of them. The threshold is the band
+capped at `MAX_BAND` (0.05). A row FAILs when its paired ratio exceeds
+`1 + band`. A row whose band is above 0.05 is NOISE-LIMITED: it can still fail
+beyond its own noise, but it never passes, and the run is INCONCLUSIVE. The
+report prints threshold, band, ratio, median paired ratio and verdict per row.
+
+`--band-scope global` switches to one band for every row (the 95th percentile
+over rows of the A/A trimmed-mean deviation) with the same estimator, cap and
+verdicts. It is the only knob between the two policies.
 
 Exit codes: 0 PASS, 1 regression, 2 refused (load above 80 or stale build),
 3 INCONCLUSIVE (missing runtime/scenario/sample, version mismatch, unavailable
-accounting, failed workload, or excessive noise). The report retains individual
+accounting, failed workload, or a noise-limited row). The report retains individual
 samples, observations, actual measurement ordering, block-start/block-end load,
 per-repetition start/end load, power source, and runtime versions.
 RSS and wall time remain load-dependent measurements.
