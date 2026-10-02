@@ -1,3 +1,24 @@
+## 2026-10-02 - On-demand memory report (senpi#2561)
+
+### What changed
+
+- `packages/coding-agent/src/core/memory-report/` (new): `memory-report-registry.ts` (flag readers for `SENPI_MEMORY_REPORT` / `SENPI_MEMORY_REPORT_SNAPSHOT`, a process-global map of live sessions, the TUI render-cache source, reserved report keys), `memory-report-build.ts` (report sections: main-thread heap and footprint, the codemode kernel registry read from its process-global key, resident store, extension reporters), `memory-report-write.ts` (writes `<session>-artifacts/memory/<iso>.json`, the optional heap snapshot, and installs the `SIGUSR2` trigger only under the flag).
+- `packages/coding-agent/src/core/agent-session.ts`: the constructor registers the session for reports (a no-op without the flag); `dispose()` removes it.
+- `packages/coding-agent/src/core/session-resident-store.ts`: `size()` returns `{ entries, approxBytes }` from incremental byte accounting; the accounting moved to `session-resident-store-size.ts` and the JSON copy helper to `session-resident-json.ts` (behaviour unchanged).
+- `packages/coding-agent/src/main.ts`: `installMemoryReportSignal()` before the mode dispatch, so TUI, print, RPC and multi-session hosts all get it.
+
+### Why
+
+- Long sessions held 0.5-3.8 GiB with no way to tell which layer from the shipped binary; diagnosis needs a per-layer reading taken on demand without rebuilding.
+
+### Why an extension could not handle it
+
+- The report reads the session's resident store, every extension's reporters, and the main thread's heap; it must exist in every mode before any extension loads.
+
+### Expected merge conflict zones
+
+- LOW: the end of the `AgentSession` constructor and `dispose()`; the line before the multi-session branch in `main.ts`; `session-resident-store.ts` (fork-only).
+
 ## 2026-10-02 - Mark repeated and cap-skipped skill invocations in place
 
 ### What changed

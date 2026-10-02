@@ -3,16 +3,13 @@ import type { ExtensionContext } from "@code-yeongyu/senpi";
 import { type BridgeServerHandle, startBridgeServer } from "../bridge/http-server.ts";
 import type { KernelToHostMessage } from "../bridge/protocol.ts";
 import { isReservedToolName, runReservedTool } from "../bridges/reserved-dispatch.ts";
-import type { EvalSchemaToolInfo } from "../bridges/schema-bridge.ts";
 import type { CompletionRequest, CompletionResult } from "../completion/handler.ts";
 import { resolveKernelMemoryThresholds } from "../config/memory-settings.ts";
-import { type CodemodeSettings, defaultCodemodeSettings } from "../config/settings.ts";
+import { defaultCodemodeSettings } from "../config/settings.ts";
 import { collectOrphanedChildren } from "../host-sdk.ts";
-import type { InterpreterAvailability } from "../interpreters/detect.ts";
 import { JavaScriptKernel } from "../kernels/js/context-manager.ts";
-import type { SessionEnvironment } from "../kernels/session-env.ts";
 import { marshalToolResult } from "../tool/image.ts";
-import type { EvalKernel, EvalKernelManager, EvalLanguage, ExecuteTool } from "../tool/types.ts";
+import type { EvalKernel, EvalLanguage } from "../tool/types.ts";
 import {
 	javaScriptKernelMemory,
 	registerKernel,
@@ -21,39 +18,18 @@ import {
 } from "./kernel-registration.ts";
 import { kernelRegistry } from "./kernel-registry.ts";
 import { assertSessionCwdAvailable } from "./session-cwd.ts";
+import type {
+	BridgeEndpoint,
+	CodemodeSessionManager,
+	CreateCodemodeSessionManagerOptions,
+} from "./session-manager-contract.ts";
 
-export interface CodemodeSessionManager extends EvalKernelManager {
-	dispose(): Promise<void>;
-	complete(request: CompletionRequest, ctx: ExtensionContext): Promise<CompletionResult>;
-	setContext?(ctx: ExtensionContext): void;
-	bridgeEndpoint?(): BridgeEndpoint;
-}
-
-export interface BridgeEndpoint {
-	readonly port: number;
-	readonly token: string;
-}
-
-export interface EvalExecutionTracker {
-	assertEvalExecutionAllowed(): void;
-	trackEvalExecution<Result>(execution: Promise<Result>, controller: AbortController): Promise<Result>;
-}
-
-export interface CreateCodemodeSessionManagerOptions {
-	readonly sessionId: string;
-	readonly cwd: string;
-	readonly settings: CodemodeSettings;
-	readonly availability: InterpreterAvailability;
-	/** Session-scoped roots exposed to kernel helpers such as local://. */
-	readonly localRoots?: Readonly<Record<string, string>>;
-	/** Session-adjacent directory used for persisted eval artifacts. */
-	readonly artifactsDir?: string;
-	/** Per-session PI_* values exposed to every kernel and the children it spawns. */
-	readonly sessionEnv?: SessionEnvironment;
-	readonly executeTool: ExecuteTool;
-	readonly listTools?: () => readonly EvalSchemaToolInfo[];
-	readonly complete: (request: CompletionRequest, ctx: ExtensionContext) => Promise<CompletionResult>;
-}
+export type {
+	BridgeEndpoint,
+	CodemodeSessionManager,
+	CreateCodemodeSessionManagerOptions,
+	EvalExecutionTracker,
+} from "./session-manager-contract.ts";
 
 export async function createCodemodeSessionManager(
 	options: CreateCodemodeSessionManagerOptions,
@@ -222,7 +198,10 @@ class DefaultCodemodeSessionManager implements CodemodeSessionManager {
 			throw new CodemodeSessionDisposedError();
 		}
 		this.#kernels.set(language, kernel);
-		this.#registrations.set(language, registerKernel(this.#options.sessionId, language, memory));
+		this.#registrations.set(
+			language,
+			registerKernel(this.#options.ownerSessionId ?? this.#options.sessionId, language, memory),
+		);
 		// The directory can vanish while the interpreter starts; every caller sharing this creation
 		// must see that, not only the next one. The kernel stays stored and dispose still closes it.
 		await assertSessionCwdAvailable(this.#options.cwd);

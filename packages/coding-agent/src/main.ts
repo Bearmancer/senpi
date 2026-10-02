@@ -74,6 +74,7 @@ import { type CredentialAccountSummary, summarizeCredentialAccounts } from "./co
 import { exportFromFile } from "./core/export-html/index.ts";
 import type { InlineExtension } from "./core/extensions/types.ts";
 import { applyHttpProxySettings, configureHttpDispatcher } from "./core/http-dispatcher.ts";
+import { installMemoryReportSignal } from "./core/memory-report/memory-report-write.ts";
 import {
 	getModelNarrowingPatterns,
 	resolveCliModel,
@@ -1277,6 +1278,9 @@ export async function main(args: string[], options?: MainOptions) {
 	if (appMode === "interactive" && parsed.useTheme !== undefined) {
 		startupSettingsManager.applyOverrides({ theme: parsed.useTheme });
 	}
+
+	// Installs nothing unless SENPI_MEMORY_REPORT=1; then SIGUSR2 writes a memory report for every live session.
+	installMemoryReportSignal();
 
 	if (appMode === "rpc" && parsed.multiSession) {
 		if (options?.extensionFactories?.length)

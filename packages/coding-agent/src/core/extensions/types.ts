@@ -2091,6 +2091,9 @@ export interface EntryRenderOptions {
 	expanded: boolean;
 }
 
+/** Figures one extension adds to the on-demand memory report, read only when a report is taken. */
+export type MemoryReporter = () => Readonly<Record<string, number>>;
+
 export type MessageRenderer<T = unknown> = (
 	message: CustomMessage<T>,
 	options: MessageRenderOptions,
@@ -2357,6 +2360,13 @@ export interface ExtensionAPI {
 
 	/** Register a transformer for user and assistant Markdown before Pi renders it in the interactive transcript. */
 	registerMarkdownTransformer(transformer: MarkdownTransformer): void;
+
+	/**
+	 * Contribute figures to the on-demand memory report (`SENPI_MEMORY_REPORT=1`): the report carries
+	 * `reporter()`'s numbers under `name`. Called only when a report is taken, never on a timer.
+	 * Throws for a name the report reserves (`main`, `kernels`, `residentStore`, ...).
+	 */
+	registerMemoryReporter(name: string, reporter: MemoryReporter): void;
 
 	/** Register a custom renderer for CustomEntry. Custom entries do not participate in LLM context. */
 	registerEntryRenderer<T = unknown>(
@@ -3096,6 +3106,8 @@ export interface Extension {
 	/** Optional for compatibility with extension records created before filesystem policies. */
 	filesystemPolicies?: FilesystemPolicy[];
 	messageRenderers: Map<string, MessageRenderer>;
+	/** Optional for compatibility with extension records created before memory reporters. */
+	memoryReporters?: Map<string, MemoryReporter>;
 	markdownTransformer?: MarkdownTransformer;
 	entryRenderers?: Map<string, EntryRenderer>;
 	entryRendererOptions?: Map<string, EntryRendererOptions>;
