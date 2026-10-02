@@ -5,10 +5,12 @@ import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { Check } from "typebox/value";
 import { admitHost, type Decision, decide } from "./bench-compare.ts";
-import { injectSlow, parseInjection } from "./bench-inject.ts";
+import { injectCalibrationOffset, injectSlow, parseInjection, type SlowInjection } from "./bench-inject.ts";
+import { loadSavedReport, RescoreError } from "./bench-rescore.ts";
 import { type RunResult, runBlocks, runtimesSchema, type Side } from "./bench-run.ts";
+import type { Series } from "./bench-compare.ts";
 import { assertFreshTarget, BenchTargetError, resolvePackage, targetRevision } from "./bench-target.ts";
-import { DEFAULT_BAND_SCOPE, MAX_BAND, parseBandScope, THRESHOLD_Z } from "./bench-threshold.ts";
+import { type BandScope, DEFAULT_BAND_SCOPE, MAX_BAND, parseBandScope, THRESHOLD_Z } from "./bench-threshold.ts";
 import { MIN_REPS } from "./bench-validate.ts";
 
 const scriptRoot = dirname(fileURLToPath(import.meta.url));
@@ -52,23 +54,30 @@ async function main(): Promise<number> {
 		options: {
 			base: { type: "string" },
 			head: { type: "string" },
-			blocks: { type: "string", default: "9" },
+			blocks: { type: "string", default: "3" },
 			reps: { type: "string", default: "15" },
 			"band-scope": { type: "string", default: DEFAULT_BAND_SCOPE },
 			out: { type: "string", default: "bench-report.json" },
 			runtimes: { type: "string" },
 			"inject-slow": { type: "string", multiple: true, default: [] },
 			"inject-loadavg": { type: "string" },
+			"inject-aa-offset": { type: "string", default: "1" },
+			rescore: { type: "string" },
 		},
 	});
 	const out = resolve(values.out);
 	const bandScope = parseBandScope(values["band-scope"]);
+	const injections = values["inject-slow"].map(parseInjection);
+	const calibrationOffset = Number(values["inject-aa-offset"]);
+	const injected = (series: readonly Series[]) =>
+		series.map((entry) => injectCalibrationOffset(injectSlow(entry, injections), calibrationOffset));
+	if (values.rescore !== undefined)
+		return rescore(resolve(values.rescore), out, { bandScope, injections, calibrationOffset, injected });
 	const load = values["inject-loadavg"] === undefined ? (loadavg()[0] ?? 0) : Number(values["inject-loadavg"]);
 	console.log(`host: 1-minute load ${load.toFixed(2)}, ${process.platform}/${process.arch}`);
 	const admission = admitHost(load);
 	if (admission) return finish(admission, out, {});
 	if (!values.base || !values.head) throw new RangeError("bench needs --base <checkout> and --head <checkout>");
-	const injections = values["inject-slow"].map(parseInjection);
 	const targets = { base: resolvePackage(values.base), head: resolvePackage(values.head) };
 	const revisions: Partial<Record<Side, string>> = {};
 	for (const side of ["base", "head"] as const) {
@@ -101,20 +110,46 @@ async function main(): Promise<number> {
 		env: benchEnv(),
 		log: (line) => console.log(line),
 	});
-	const series = run.series.map((entry) => injectSlow(entry, injections));
-	const decision = decide({
-		runtimes: run.runtimes,
-		reps,
-		bandScope,
-		blockLoads: [
-			...run.admissionLoads,
-			...run.blocks.map((block) => block.loadavg[0] ?? 0),
-			...Object.values(run.reports).flatMap((reports) => reports.map(({ report }) => report.loadavg[0] ?? 0)),
-		],
-		series,
-		failures: run.failures,
+	const series = injected(run.series);
+	const blockLoads = [
+		...run.admissionLoads,
+		...run.blocks.map((block) => block.loadavg[0] ?? 0),
+		...Object.values(run.reports).flatMap((reports) => reports.map(({ report }) => report.loadavg[0] ?? 0)),
+	];
+	const decision = decide({ runtimes: run.runtimes, reps, bandScope, blockLoads, series, failures: run.failures });
+	const context = { targets, revisions, blocks, reps, bandScope, injections, calibrationOffset, blockLoads };
+	return finish(decision, out, { ...context, run, series });
+}
+
+interface Rescoring {
+	readonly bandScope: BandScope;
+	readonly injections: readonly SlowInjection[];
+	readonly calibrationOffset: number;
+	readonly injected: (series: readonly Series[]) => Series[];
+}
+
+/** Re-judges a saved measurement: same comparator, no new samples, so scope and fault injections cost no host time. */
+async function rescore(source: string, out: string, options: Rescoring): Promise<number> {
+	const saved = await loadSavedReport(source).catch((error: unknown) => {
+		if (error instanceof RescoreError) return error;
+		throw error;
 	});
-	return finish(decision, out, { targets, revisions, blocks, reps, bandScope, injections, run, series });
+	if (saved instanceof RescoreError) return finish(refused(saved.message), out, { rescoredFrom: source });
+	const { bandScope, injections, calibrationOffset } = options;
+	const series = options.injected(saved.series);
+	const decision = decide({ ...saved, bandScope, series });
+	console.log(`rescored ${source} (${saved.reps} repetitions per side; no new samples)`);
+	return finish(decision, out, {
+		rescoredFrom: source,
+		reps: saved.reps,
+		bandScope,
+		injections,
+		calibrationOffset,
+		blockLoads: saved.blockLoads,
+		failures: saved.failures,
+		runtimes: saved.runtimes,
+		series,
+	});
 }
 
 async function finish(decision: Decision, out: string, context: Readonly<Record<string, unknown>>): Promise<number> {
@@ -135,11 +170,16 @@ async function finish(decision: Decision, out: string, context: Readonly<Record<
 			platform: process.platform,
 			arch: process.arch,
 		},
-		blocks: runResult?.blocks ?? [],
-		admissionLoads: runResult?.admissionLoads ?? [],
-		runtimes: runResult?.runtimes ?? [],
+		...(runResult === undefined
+			? {}
+			: {
+					blocks: runResult.blocks,
+					admissionLoads: runResult.admissionLoads,
+					runtimes: runResult.runtimes,
+					failures: runResult.failures,
+					reports: runResult.reports,
+				}),
 		decision,
-		reports: runResult?.reports ?? {},
 	};
 	await writeFile(out, `${JSON.stringify(report, null, 2)}\n`);
 	printDecision(decision, out);

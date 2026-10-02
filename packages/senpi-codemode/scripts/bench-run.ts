@@ -1,6 +1,7 @@
 import { loadavg } from "node:os";
 import { type Static, Type } from "typebox";
 import type { PairedBlock, RuntimeStatus, Series } from "./bench-compare.ts";
+import { hostIdleSeconds, powerSource } from "./bench-host.ts";
 import { implementedScenarios, plannedScenarios } from "./bench-scenarios.ts";
 import { runProcess } from "./bench-target.ts";
 import { BenchWorkerError, type RuntimeReport, startWorker } from "./bench-worker.ts";
@@ -35,6 +36,7 @@ export interface BlockRecord {
 	readonly loadavg: readonly number[];
 	readonly loadavgEnd: readonly number[];
 	readonly power: string;
+	readonly idleSeconds: number | null;
 	readonly measurements: readonly {
 		readonly runtimeId: string;
 		readonly scenario: string;
@@ -59,12 +61,6 @@ export interface RunResult {
 }
 
 const interpreterCommand = { js: "bun", py: "python3", rb: "ruby", jl: "julia" } as const;
-
-async function powerSource(): Promise<string> {
-	if (process.platform !== "darwin") return `${process.platform}: not reported`;
-	const result = await runProcess(["pmset", "-g", "batt"], { cwd: process.cwd() }).catch(() => undefined);
-	return /'([^']+)'/u.exec(result?.stdout ?? "")?.[1] ?? "unknown";
-}
 
 async function interpreterAvailable(runtime: RequiredRuntime, env: NodeJS.ProcessEnv): Promise<boolean> {
 	const command = runtime.jsRuntime ?? interpreterCommand[runtime.language];
@@ -94,6 +90,8 @@ export async function runBlocks(plan: RunPlan): Promise<RunResult> {
 		const comparisonOrder: Side[] = index % 2 === 0 ? ["base", "head"] : ["head", "base"];
 		const startLoad = loadavg();
 		const power = await powerSource();
+		const idleSeconds = await hostIdleSeconds();
+		plan.log(`block ${index + 1}/${plan.blocks} start: load ${startLoad.map((value) => value.toFixed(2)).join(" ")}, idle ${idleSeconds ?? "n/a"} s, ${power}`);
 		const measurements: Array<BlockRecord["measurements"][number]> = [];
 		for (const runtime of plan.runtimes) {
 			if (available.get(runtime.id) !== true) continue;
@@ -160,11 +158,19 @@ export async function runBlocks(plan: RunPlan): Promise<RunResult> {
 				);
 			}
 			if (failures.length > 0) {
-				blocks.push({ index, comparisonOrder, loadavg: startLoad, loadavgEnd: loadavg(), power, measurements });
+				blocks.push({
+					index,
+					comparisonOrder,
+					loadavg: startLoad,
+					loadavgEnd: loadavg(),
+					power,
+					idleSeconds,
+					measurements,
+				});
 				break blocksLoop;
 			}
 		}
-		blocks.push({ index, comparisonOrder, loadavg: startLoad, loadavgEnd: loadavg(), power, measurements });
+		blocks.push({ index, comparisonOrder, loadavg: startLoad, loadavgEnd: loadavg(), power, idleSeconds, measurements });
 	}
 	return {
 		reps: plan.reps,

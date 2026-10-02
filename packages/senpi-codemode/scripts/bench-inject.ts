@@ -15,18 +15,37 @@ export function parseInjection(spec: string): SlowInjection {
 	return { side: "head", scenario: match[1], factor };
 }
 
+function scaled(rep: Rep, factor: number): Rep {
+	return {
+		cpuMs: rep.cpuMs * factor,
+		wallMs: rep.wallMs * factor,
+		...(rep.p95Ms === undefined ? {} : { p95Ms: rep.p95Ms * factor }),
+	};
+}
+
+/** Test-only hook: scales the second calibration instance, forcing a known A/A offset on every row. */
+export function injectCalibrationOffset(series: Series, factor: number): Series {
+	if (!(factor > 0)) throw new RangeError(`--inject-aa-offset expects a positive factor, got ${factor}`);
+	if (factor === 1) return series;
+	return {
+		...series,
+		calibration: series.calibration.map((block) => ({
+			first: block.first,
+			second: block.second.map((rep) => scaled(rep, factor)),
+		})),
+	};
+}
+
 export function injectSlow(series: Series, injections: readonly SlowInjection[]): Series {
 	const factor = injections
 		.filter((injection) => injection.scenario === series.scenario)
 		.reduce((product, injection) => product * injection.factor, 1);
 	if (factor === 1) return series;
-	const scale = (rep: Rep): Rep => ({
-		cpuMs: rep.cpuMs * factor,
-		wallMs: rep.wallMs * factor,
-		...(rep.p95Ms === undefined ? {} : { p95Ms: rep.p95Ms * factor }),
-	});
 	return {
 		...series,
-		comparison: series.comparison.map((block) => ({ first: block.first, second: block.second.map(scale) })),
+		comparison: series.comparison.map((block) => ({
+			first: block.first,
+			second: block.second.map((rep) => scaled(rep, factor)),
+		})),
 	};
 }

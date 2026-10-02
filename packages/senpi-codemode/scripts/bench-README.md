@@ -110,3 +110,11 @@ is inconclusive even when both sides omit it.
 `--inject-slow head:warm-cell-1000:1.3` scales only that workload's head comparison
 samples after measurement. It is a comparator fault injection, not a CPU burner.
 `--inject-loadavg 81` exercises refusal without starting a workload.
+`--inject-aa-offset 1.08` scales the second calibration instance of every row,
+forcing an eight-percent A/A offset (an excessive band, so INCONCLUSIVE).
+
+`--rescore bench-report.json` re-judges a saved measurement with the same
+comparator and no new samples, so `--band-scope`, `--inject-slow` and
+`--inject-aa-offset` can be evaluated on one expensive run. A report that
+already carries injected samples is refused. Each block records its start load,
+power source and, on macOS, seconds since the last keyboard or pointer input.
