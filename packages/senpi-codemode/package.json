@@ -17,6 +17,7 @@
 		"LICENSE"
 	],
 	"scripts": {
+		"bench": "bun scripts/bench-eval.ts",
 		"test": "vitest run test/",
 		"clean": "node -e \"\"",
 		"build": "node -e \"\""

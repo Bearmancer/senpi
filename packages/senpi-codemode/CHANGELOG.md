@@ -6,6 +6,8 @@
 
 ### Added
 
+- Added an interleaved eval timing benchmark with A/A calibration, process CPU accounting across interpreter crashes, and explicit inconclusive results for incomplete or noisy comparisons. ([#2452](https://github.com/code-yeongyu/senpi/issues/2452))
+
 ### Changed
 
 ### Fixed

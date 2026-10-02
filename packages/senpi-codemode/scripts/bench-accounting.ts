@@ -1,0 +1,92 @@
+import { watch } from "node:fs";
+import { readdir, readFile, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { Type } from "typebox";
+import { Check } from "typebox/value";
+import type { InterpreterAvailability } from "../src/interpreters/detect.ts";
+import type { EvalLanguage } from "../src/tool/types.ts";
+import type { KernelCpu } from "./bench-session.ts";
+
+const usageSchema = Type.Object({ pid: Type.Integer({ minimum: 1 }), cpuUs: Type.Number({ minimum: 0 }) });
+
+export class BenchAccountingError extends Error {
+	readonly name = "BenchAccountingError";
+}
+
+/** An executable override, not a production lifecycle hook. Each session owns its receipts. */
+export async function instrumentInterpreter(
+	availability: InterpreterAvailability,
+	context: { readonly root: string; readonly language: EvalLanguage },
+): Promise<InterpreterAvailability> {
+	if (context.language === "js") return availability;
+	if (process.platform === "win32") throw new BenchAccountingError("exit CPU accounting requires POSIX wait4");
+	const detected = availability[context.language].detected;
+	const python = availability.py.detected;
+	if (!detected.ok || !python.ok)
+		throw new BenchAccountingError("exit CPU accounting needs the interpreter and Python");
+	const wrapper = join(context.root, "interpreter");
+	const quote = (value: string): string => `'${value.replaceAll("'", "'\\''")}'`;
+	const args = [
+		python.resolvedPath ?? python.path,
+		fileURLToPath(new URL("./bench-interpreter.py", import.meta.url)),
+		context.root,
+		detected.resolvedPath ?? detected.path,
+		context.language === "py" ? "1" : "0",
+	];
+	await writeFile(wrapper, `#!/bin/sh\nexec ${args.map(quote).join(" ")} "$@"\n`, { mode: 0o700 });
+	return {
+		...availability,
+		[context.language]: { ...availability[context.language], detected: { ...detected, path: wrapper } },
+	};
+}
+
+/** Subscribe before kernels start; atomic receipt renames are the completion signal. */
+export function watchExitUsage(root: string) {
+	const seen = new Set<number>();
+	const pending = new Map<string, () => void>();
+	const watcher = watch(root, { persistent: false }, (_event, name) => {
+		if (name) pending.get(name.toString())?.();
+	});
+	return {
+		async totals(live?: KernelCpu): Promise<readonly KernelCpu[]> {
+			for (const name of await readdir(root)) {
+				const match = /^started-(\d+)$/u.exec(name);
+				if (match) seen.add(Number(match[1]));
+			}
+			const completed = await Promise.all(
+				[...seen]
+					.filter((pid) => pid !== live?.pid)
+					.map(async (pid) => {
+						const name = `usage-${pid}.json`;
+						const ready = Promise.withResolvers<void>();
+						pending.set(name, ready.resolve);
+						let timer: NodeJS.Timeout | undefined;
+						try {
+							let text: string;
+							try {
+								text = await readFile(join(root, name), "utf8");
+							} catch (error) {
+								if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
+								timer = setTimeout(
+									() => ready.reject(new BenchAccountingError(`missing exit CPU for process ${pid}`)),
+									60_000,
+								);
+								await ready.promise;
+								text = await readFile(join(root, name), "utf8");
+							}
+							const value: unknown = JSON.parse(text);
+							if (!Check(usageSchema, value)) throw new BenchAccountingError(`invalid exit usage: ${name}`);
+							return value;
+						} finally {
+							clearTimeout(timer);
+							pending.delete(name);
+						}
+					}),
+			);
+			if (live) seen.add(live.pid);
+			return live ? [...completed, live] : completed;
+		},
+		close: () => watcher.close(),
+	};
+}
