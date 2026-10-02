@@ -4,10 +4,11 @@
 
 - `packages/agent/src/harness/compaction/compaction.ts`: `prepareCompaction` computes `tokensBefore` from usage reported after the newest compaction only; until a newer response reports usage, the summary and retained tail are estimated from their content. `estimateContextTokens` itself is unchanged.
 - `packages/agent/src/harness/compaction/compaction.ts`: a summary response that stopped on the token limit, called a tool, or carried no text fails with `summarization_failed` (history summary and split-turn prefix summary alike) instead of becoming the compaction summary.
+- `packages/agent/src/harness/runtime/drive/structural.ts`: threshold and overflow compaction start only when the cut leaves history to summarize (`messagesToSummarize` or `turnPrefixMessages` non-empty); manual compaction keeps its existing behavior.
 
 ### Why
 
-Upstream rewrote the harness as `packages/durable` and fixed these in its compaction (ed0d6b91b, Package 20); the fork keeps its harness, so the fixes are ported into the kept copy (P-5). A retained assistant keeps the usage it reported before the compaction, when it measured the history the compaction replaced; the first checkpoint after a compaction (a new run, `checkpoint.ts` `startRun`) anchored on it and compacted again. An empty, truncated, or tool-call response replaced the summarized history with nothing usable; the coding-agent compaction already rejects these (`core/compaction/compaction.ts` `getSummarizationFailure` and its tool-call check).
+Upstream rewrote the harness as `packages/durable` and fixed these in its compaction (ed0d6b91b, Package 20); the fork keeps its harness, so the fixes are ported into the kept copy (P-5). A retained assistant keeps the usage it reported before the compaction, when it measured the history the compaction replaced; the first checkpoint after a compaction (a new run, `checkpoint.ts` `startRun`) anchored on it and compacted again. An empty, truncated, or tool-call response replaced the summarized history with nothing usable; the coding-agent compaction already rejects these (`core/compaction/compaction.ts` `getSummarizationFailure` and its tool-call check). With nothing before the cut, an automatic compaction spent a summarization request on an empty conversation, re-fired at every checkpoint, and an overflow compacted nothing before failing; the coding-agent compaction already treats this as nothing to compact.
 
 ### Why an extension could not handle it
 
@@ -16,6 +17,7 @@ The context estimate, the summary validity check, and the automatic compaction t
 ### Expected merge conflict zones
 
 - LOW: `prepareCompaction`, `generateSummaryWithRequest` and `generateTurnPrefixSummary` in `packages/agent/src/harness/compaction/compaction.ts` (upstream deleted this file in 7fd478a2e; the fork keeps it, D-1).
+- LOW: `prepareCompactionThreshold` and `prepareOverflowCompaction` in `packages/agent/src/harness/runtime/drive/structural.ts`.
 
 ## 2026-10-01 - Back-to-back background notices share one turn (senpi#2508)
 
