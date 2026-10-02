@@ -11,6 +11,7 @@
  * signals anything.
  */
 import { join } from "node:path";
+import { processIsLive } from "../app-server/daemon/process.ts";
 import { HOST_DAEMON_DIR_ENV, type HostGenerationPaths } from "./host-daemon-paths.ts";
 import { HOST_INSTANCE_ID_ENV } from "./host-identity-env.ts";
 import { parseIdleExitMs } from "./host-lifecycle-policy.ts";
@@ -90,6 +91,12 @@ export async function hostLoopStalled(
 	if ((await recentStall(generation, options.now, options.windowMs)) !== undefined) return true;
 	const heartbeatAge = ageOf((await readJsonObject(generation.aliveFile))?.at, options.now);
 	return heartbeatAge !== undefined && heartbeatAge > options.errorMs && heartbeatAge < options.windowMs;
+}
+
+/** Whether the generation's host CHILD is running, from its own pid record; `undefined` when unrecorded. */
+export async function hostChildAlive(generation: HostGenerationPaths): Promise<boolean | undefined> {
+	const pid = (await readJsonObject(generation.childPidFile))?.pid;
+	return typeof pid === "number" && Number.isInteger(pid) && pid > 0 ? processIsLive(pid) : undefined;
 }
 
 /**

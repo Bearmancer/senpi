@@ -23,6 +23,7 @@ import {
 } from "./host-daemon-registration.ts";
 import { decideHostAction, type HostDecision, HostEnsureRefusedError, type HostProtocolInfo } from "./host-decision.ts";
 import { ensureClient } from "./host-ensure-client.ts";
+import { publicEndpointAccepts, refuseIfStalled } from "./host-ensure-liveness.ts";
 import { hostEnsureLockOptions, hostEnsureLockTarget } from "./host-ensure-lock.ts";
 import { appendStderr, reapOrphanedInternalHostDirs, startHost } from "./host-ensure-start.ts";
 import { DEFAULT_STOP_TIMEOUT_MS, ensureSender, SIGKILL_GRACE_MS, stopManagedHost } from "./host-ensure-stop.ts";
@@ -32,7 +33,6 @@ import type { HostColdStart, HostLifecyclePolicyInput } from "./host-lifecycle-p
 import { holdProtocolInfo, probeSocketReachable } from "./host-probe.ts";
 import { isHostGenerationProcess } from "./host-process-role.ts";
 import { acquireOwnershipSafeLock } from "./ownership-safe-lock.ts";
-import { statSocketIdentity } from "./socket-ownership.ts";
 
 export {
 	createHostDaemonPaths,
@@ -188,6 +188,7 @@ async function ensureHostLocked(
 			// I1: the socket is silent, but the process behind it is alive. Only the process that WROTE
 			// this record may end it - anyone else refuses rather than signalling somebody else's host.
 			if (await publicEndpointAccepts(socket)) throw new HostEnsureRefusedError(socket, "foreign_writer", protocol);
+			await refuseIfStalled(paths, registered.instanceId, socket, protocol);
 			// A foreign record whose public endpoint accepts NOTHING names a generation nobody can reach:
 			// its entry was replaced (so it is already draining, #1893) or removed, or a dead listener
 			// left the entry behind. Refusing here locked every client out until that process happened
@@ -202,6 +203,7 @@ async function ensureHostLocked(
 			if (await probeSocketReachable(socket, EXISTING_HOST_PROBE_TIMEOUT_MS)) {
 				throw new HostEnsureRefusedError(socket, "host_busy", protocol);
 			}
+			await refuseIfStalled(paths, registered.instanceId, socket, protocol);
 			await stopManagedHost(
 				registered.record,
 				testOptions?.stopTimeoutMs ?? DEFAULT_STOP_TIMEOUT_MS,
@@ -228,31 +230,6 @@ async function ensureHostLocked(
 	if (stranded !== undefined) return startHost(paths, socket, options, stranded.generation + 1);
 	if (registeredHere) await clearHostRegistration(paths);
 	return startHost(paths, socket, options);
-}
-
-/**
- * Only the connect matters here, never an answer: the kernel completes it from the listen backlog
- * without the host's event loop, so a live owner under load still accepts within this budget.
- */
-const FOREIGN_ENDPOINT_PROBE_TIMEOUT_MS = 2_000;
-
-/**
- * Whether SOMETHING still accepts connections at the public path - the one fact that says a
- * registered process may still own the endpoint. A missing entry and an entry nobody listens
- * behind (connection refused) both answer no; an accepted connection, however silent, answers yes.
- * A named pipe has no entry to lose and an abstract socket has no path, so both read as owned;
- * so does an entry this process cannot stat, because an owner that cannot be ruled out is one
- * this ensure must not bind over.
- */
-async function publicEndpointAccepts(socket: string): Promise<boolean> {
-	if (process.platform === "win32" || socket.startsWith("\0")) return true;
-	const entry = await statSocketIdentity(socket).then(
-		(identity) => (identity === undefined ? "absent" : "present"),
-		() => "unknown",
-	);
-	if (entry === "absent") return false;
-	if (entry === "unknown") return true;
-	return probeSocketReachable(socket, FOREIGN_ENDPOINT_PROBE_TIMEOUT_MS);
 }
 
 /** `fallback` belongs to clients that can live without a host; an ensure must produce one or fail. */
