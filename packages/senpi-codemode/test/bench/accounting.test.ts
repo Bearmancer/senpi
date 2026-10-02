@@ -1,22 +1,13 @@
+import { once } from "node:events";
 import { mkdtemp, rename, rm, writeFile } from "node:fs/promises";
+import { createConnection } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import { watchExitUsage } from "../../scripts/bench-accounting.ts";
+import { receiptSignalPath, watchExitUsage } from "../../scripts/bench-accounting.ts";
 import { kernelCpuMs } from "../../scripts/bench-measure.ts";
 
 const receiptRead = vi.hoisted(() => Promise.withResolvers<void>());
-
-vi.mock("node:fs", async (original) => {
-	const fs = await original<typeof import("node:fs")>();
-	return {
-		...fs,
-		watch(root: string, options: { persistent: boolean }, listener: (event: string, name: null) => void) {
-			// Filesystem watchers may omit filenames; retain the real notification timing.
-			return fs.watch(root, options, (event) => listener(event, null));
-		},
-	};
-});
 
 vi.mock("node:fs/promises", async (original) => {
 	const fs = await original<typeof import("node:fs/promises")>();
@@ -34,17 +25,20 @@ vi.mock("node:fs/promises", async (original) => {
 });
 
 describe("benchmark process accounting", () => {
-	it("drains a registered interpreter when filesystem notifications omit filenames", async () => {
-		// Given a started interpreter and a collector subscribed before retirement.
+	it("drains a registered interpreter whose receipt is announced while teardown waits", async () => {
+		// Given a started interpreter and a collector listening before retirement.
 		const root = await mkdtemp(join(tmpdir(), "bench-receipt-"));
 		await writeFile(join(root, "started-101"), "");
-		const accounting = watchExitUsage(root);
+		const accounting = await watchExitUsage(root);
 		try {
-			// When teardown starts before the collector atomically publishes usage.
+			// When teardown is already waiting as the waiter publishes usage and announces it.
 			const draining = accounting.totals();
 			await receiptRead.promise;
 			await writeFile(join(root, "pending-101.json"), JSON.stringify({ pid: 101, cpuUs: 75_000 }));
 			await rename(join(root, "pending-101.json"), join(root, "usage-101.json"));
+			const announcement = createConnection(receiptSignalPath(root));
+			await once(announcement, "connect");
+			announcement.destroy();
 			// Then teardown retains the usage instead of racing directory removal.
 			expect(kernelCpuMs([], await draining)).toBe(75);
 		} finally {

@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import os
 import signal
+import socket
 import sys
 from pathlib import Path
 from types import FrameType
@@ -44,6 +45,7 @@ def main() -> int:
         with temporary.open("w", encoding="utf-8") as output:
             json.dump(record, output)
         _ = temporary.replace(Path(receipts) / f"usage-{pid}.json")
+        _announce(Path(receipts) / "receipts.sock")
         os._exit(os.waitstatus_to_exitcode(status) % 256)
 
     os.close(writer)
@@ -64,6 +66,16 @@ def main() -> int:
     _ = signal.pthread_sigmask(signal.SIG_SETMASK, prior_mask)
     _, status = os.waitpid(collector, 0)
     return os.waitstatus_to_exitcode(status) % 256
+
+
+def _announce(signal_path: Path) -> None:
+    """Wake the collector; it rescans every pending receipt on each connection."""
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as notifier:
+        try:
+            notifier.connect(str(signal_path))
+        except (FileNotFoundError, ConnectionRefusedError):
+            # The collector already closed: nobody waits, and the receipt file stays readable.
+            return
 
 
 if __name__ == "__main__":

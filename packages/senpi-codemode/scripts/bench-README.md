@@ -42,7 +42,9 @@ are forwarded; Ruby and Julia retain their existing group-directed signals.
 Snapshots are joined by PID. For an interpreter that dies during the window,
 its final receipt minus its starting snapshot contributes alongside the replacement's
 CPU. Missing final usage invalidates the run; it is never reported as zero.
-Receipt creation is atomic and observed by a watcher installed before startup;
+Receipt creation is atomic; the waiter then connects to a Unix socket the collector
+listens on before any kernel starts (directory watchers subscribe asynchronously on
+macOS and can miss an early receipt);
 missing receipts have a bounded watchdog. The launcher and collector are benchmark
 infrastructure and their own CPU is excluded.
 Windows lacks this waiter and is explicitly unsupported for full process accounting.

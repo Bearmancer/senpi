@@ -107,7 +107,7 @@ export async function createBenchSession(
 		modules.detect.createInterpreterDetector(),
 	);
 	const availability = await instrumentInterpreter(detected, { root, language });
-	const accounting = watchExitUsage(root);
+	const accounting = await watchExitUsage(root);
 	const manager = await modules.sessions.createCodemodeSessionManager({
 		sessionId: `bench-${crypto.randomUUID()}`,
 		cwd: root,

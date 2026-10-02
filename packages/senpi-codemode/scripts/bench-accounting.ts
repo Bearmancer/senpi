@@ -1,5 +1,5 @@
-import { watch } from "node:fs";
 import { readdir, readFile, writeFile } from "node:fs/promises";
+import { createServer } from "node:net";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Type } from "typebox";
@@ -41,13 +41,25 @@ export async function instrumentInterpreter(
 	};
 }
 
-/** Subscribe before kernels start; atomic receipt renames are the completion signal. */
-export function watchExitUsage(root: string) {
+/** The waiter connects here after each atomic receipt rename; bench-interpreter.py uses the same name. */
+export const receiptSignalPath = (root: string): string => join(root, "receipts.sock");
+
+/**
+ * Resolves once the receipt signal is listening, so kernels started afterwards cannot announce unheard.
+ * A directory watcher cannot promise that: macOS starts FSEvents streams asynchronously.
+ */
+export async function watchExitUsage(root: string) {
 	const seen = new Set<number>();
 	const pending = new Map<string, () => void>();
-	const watcher = watch(root, { persistent: false }, () => {
+	const server = createServer((socket) => {
+		socket.destroy();
 		for (const notify of pending.values()) notify();
 	});
+	const listening = Promise.withResolvers<void>();
+	server.once("error", listening.reject);
+	server.listen(receiptSignalPath(root), listening.resolve);
+	await listening.promise;
+	server.unref();
 	return {
 		async totals(live?: KernelCpu): Promise<readonly KernelCpu[]> {
 			for (const name of await readdir(root)) {
@@ -91,6 +103,6 @@ export function watchExitUsage(root: string) {
 			if (live) seen.add(live.pid);
 			return live ? [...completed, live] : completed;
 		},
-		close: () => watcher.close(),
+		close: () => server.close(),
 	};
 }
