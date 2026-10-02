@@ -3,10 +3,11 @@
 ### What changed
 
 - `packages/agent/src/harness/compaction/compaction.ts`: `prepareCompaction` computes `tokensBefore` from usage reported after the newest compaction only; until a newer response reports usage, the summary and retained tail are estimated from their content. `estimateContextTokens` itself is unchanged.
+- `packages/agent/src/harness/compaction/compaction.ts`: a summary response that stopped on the token limit, called a tool, or carried no text fails with `summarization_failed` (history summary and split-turn prefix summary alike) instead of becoming the compaction summary.
 
 ### Why
 
-Upstream rewrote the harness as `packages/durable` and fixed these in its compaction (ed0d6b91b, Package 20); the fork keeps its harness, so the fixes are ported into the kept copy (P-5). A retained assistant keeps the usage it reported before the compaction, when it measured the history the compaction replaced; the first checkpoint after a compaction (a new run, `checkpoint.ts` `startRun`) anchored on it and compacted again.
+Upstream rewrote the harness as `packages/durable` and fixed these in its compaction (ed0d6b91b, Package 20); the fork keeps its harness, so the fixes are ported into the kept copy (P-5). A retained assistant keeps the usage it reported before the compaction, when it measured the history the compaction replaced; the first checkpoint after a compaction (a new run, `checkpoint.ts` `startRun`) anchored on it and compacted again. An empty, truncated, or tool-call response replaced the summarized history with nothing usable; the coding-agent compaction already rejects these (`core/compaction/compaction.ts` `getSummarizationFailure` and its tool-call check).
 
 ### Why an extension could not handle it
 

@@ -701,6 +701,56 @@ describe("harness compaction", () => {
 		expect(abortedResult).toMatchObject({ ok: false, error: { code: "aborted", message: "stopped" } });
 	});
 
+	it.each([
+		["a truncated answer", { ...createAssistantMessage("## Goal\nHalf a summ"), stopReason: "length" as const }],
+		[
+			"a tool call",
+			{
+				...createAssistantMessage(""),
+				content: [{ type: "toolCall" as const, id: "call-1", name: "read", arguments: { path: "a.ts" } }],
+				stopReason: "toolUse" as const,
+			},
+		],
+		["an empty answer", createAssistantMessage("  \n")],
+	])("fails instead of replacing history with %s", async (_name, response: AssistantMessage) => {
+		const { model } = createFauxModel(false);
+		const result = await generateSummary(
+			[createUserMessage("Summarize this.")],
+			createModelsWithSimpleResponses([response]),
+			model,
+			2000,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			BACKGROUND_CONTEXT,
+		);
+		expect(result).toMatchObject({ ok: false, error: { code: "summarization_failed" } });
+	});
+
+	it("fails a split-turn compaction whose turn-prefix summary is empty", async () => {
+		const messages: AgentMessage[] = [createUserMessage("large turn")];
+		const preparation: CompactionPreparation = {
+			messagesToSummarize: [createUserMessage("history")],
+			turnPrefixMessages: messages,
+			retainedTail: messages,
+			isSplitTurn: true,
+			tokensBefore: 100,
+			fileOps: { read: new Set(), written: new Set(), edited: new Set() },
+			settings: { enabled: true, reserveTokens: 2000, keepRecentTokens: 20 },
+		};
+		const { model } = createFauxModel(false);
+		const responses = createModelsWithSimpleResponses([
+			createAssistantMessage("## Goal\nHistory summary"),
+			createAssistantMessage(""),
+		]);
+
+		expect(
+			await compact(preparation, responses, model, undefined, undefined, undefined, undefined, BACKGROUND_CONTEXT),
+		).toMatchObject({ ok: false, error: { code: "summarization_failed" } });
+	});
+
 	it("estimates a compacted path from content until a newer response reports usage", () => {
 		const question = createUserMessage("question");
 		const answer = createAssistantMessage("answer", createMockUsage(190_000, 1_000));

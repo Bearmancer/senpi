@@ -621,11 +621,21 @@ export async function generateSummaryWithRequest(
 		);
 	}
 
+	const unusable = unusableSummary(response, "Summarization");
+	if (unusable !== undefined) return err(new CompactionError("summarization_failed", unusable));
+
 	const textContent = contentTextForSummary(response.content);
 
 	return ok({ text: textContent, usage: response.usage });
 }
 
+/** Why a settled response cannot replace history: only a clean stop with text and no tool call is a summary. */
+function unusableSummary(response: AssistantMessage, label: string): string | undefined {
+	if (response.stopReason === "length") return `${label} hit the token limit; the summary is incomplete`;
+	if (response.content.some((block) => block.type === "toolCall")) return `${label} attempted to call a tool`;
+	if (contentTextForSummary(response.content).trim().length === 0) return `${label} produced no text`;
+	return undefined;
+}
 
 /** Prepared inputs for a compaction run. */
 export interface CompactionPreparation {
@@ -895,6 +905,9 @@ async function generateTurnPrefixSummary(
 			),
 		);
 	}
+
+	const unusable = unusableSummary(response, "Turn prefix summarization");
+	if (unusable !== undefined) return err(new CompactionError("summarization_failed", unusable));
 
 	return ok({
 		text: contentTextForSummary(response.content),
