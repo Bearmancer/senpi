@@ -815,7 +815,7 @@ If generation is selected, `summary.ready` captures configuration, stream option
 
 Threshold compaction is guarded by transcript recency: it runs only when `shouldCompact` is true, the cut leaves history to summarize, and the newest compaction entry is older than the checkpoint trigger, so a successful compaction is its own durable marker; decline never commits back to the threshold-checking checkpoint, so no extra checked flag exists.
 
-Overflow trace: assistant settlement normalizes the response to `error` + usage + overflow preparation → `summary.deciding{boundary: resume_checkpoint{need_assistant(true)}}`; summary attempts run intent → effect → usage/result; publication commits the compaction entry + selected write/steer items + `assistant.ready` in one commit. The overflow response remains durable but is excluded from summarized context. `overflowRecoveryUsed: true` prevents a second compaction loop; a second overflow terminal-fails the run. Overflow compaction requires history before the cut; otherwise the first overflow terminal-fails.
+Overflow trace: assistant settlement normalizes the response to `error` + usage + overflow preparation → `summary.deciding{boundary: resume_checkpoint{need_assistant(true)}}`; summary attempts run intent → effect → usage/result; publication commits the compaction entry + selected write/steer items + `assistant.ready` in one commit. The overflow response remains durable but is excluded from summarized context. `overflowRecoveryUsed: true` prevents a second compaction loop; a second overflow terminal-fails the run. Overflow compaction requires `compaction.enabled` and history before the cut; otherwise the first overflow terminal-fails.
 
 ## 3.10 Navigation
 

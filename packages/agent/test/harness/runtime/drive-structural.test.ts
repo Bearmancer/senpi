@@ -746,6 +746,7 @@ describe("runtime structural drive", () => {
 
 	it.each([
 		["nothing precedes the cut", { enabled: true, reserveTokens: 1_000, keepRecentTokens: 1 }, false],
+		["compaction is disabled", { enabled: false, reserveTokens: 1_000, keepRecentTokens: 1 }, true],
 	])("fails an overflow without compacting when %s", async (_name, compaction, withHistory) => {
 		const fixture = await createFixture();
 		const ready = {

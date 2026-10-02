@@ -1166,7 +1166,7 @@ export async function prepareOverflowCompaction<TContext extends object | undefi
 	drive: Drive,
 	generation: AssistantEffectPendingOperation,
 ): Promise<{ taskId: string; preparation: DurableStructuralPreparation } | undefined> {
-	if (generation.generationContext.overflowRecoveryUsed) return undefined;
+	if (generation.generationContext.overflowRecoveryUsed || !generation.settings.compaction.enabled) return undefined;
 	const path = await readBoundedEntries(lane, drive, generation);
 	if (path.kind === "cancel_requested") return undefined;
 	const prepared = prepareCompaction(path.value, generation.settings.compaction);
