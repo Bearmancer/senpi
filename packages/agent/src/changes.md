@@ -1,3 +1,21 @@
+## 2026-10-02 - Harness compaction: durable Package 20 fixes ported into the kept harness (upstream v1.0.0 sync)
+
+### What changed
+
+- `packages/agent/src/harness/compaction/compaction.ts`: `prepareCompaction` computes `tokensBefore` from usage reported after the newest compaction only; until a newer response reports usage, the summary and retained tail are estimated from their content. `estimateContextTokens` itself is unchanged.
+
+### Why
+
+Upstream rewrote the harness as `packages/durable` and fixed these in its compaction (ed0d6b91b, Package 20); the fork keeps its harness, so the fixes are ported into the kept copy (P-5). A retained assistant keeps the usage it reported before the compaction, when it measured the history the compaction replaced; the first checkpoint after a compaction (a new run, `checkpoint.ts` `startRun`) anchored on it and compacted again.
+
+### Why an extension could not handle it
+
+The context estimate, the summary validity check, and the automatic compaction triggers run inside the harness drive before any hook sees a result; `before_compaction` can only decline or supply a summary.
+
+### Expected merge conflict zones
+
+- LOW: `prepareCompaction`, `generateSummaryWithRequest` and `generateTurnPrefixSummary` in `packages/agent/src/harness/compaction/compaction.ts` (upstream deleted this file in 7fd478a2e; the fork keeps it, D-1).
+
 ## 2026-10-01 - Back-to-back background notices share one turn (senpi#2508)
 
 ### What changed

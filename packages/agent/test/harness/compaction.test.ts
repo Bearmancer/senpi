@@ -701,6 +701,25 @@ describe("harness compaction", () => {
 		expect(abortedResult).toMatchObject({ ok: false, error: { code: "aborted", message: "stopped" } });
 	});
 
+	it("estimates a compacted path from content until a newer response reports usage", () => {
+		const question = createUserMessage("question");
+		const answer = createAssistantMessage("answer", createMockUsage(190_000, 1_000));
+		const u1 = createMessageEntry(question);
+		const a1 = createMessageEntry(answer, u1.id);
+		const compaction = createCompactionEntry("summary", a1.id, [question, answer]);
+		const next = createMessageEntry(createUserMessage("next prompt"), compaction.id);
+		const settings = { enabled: true, reserveTokens: 16_384, keepRecentTokens: 1 };
+
+		const stale = getOrThrow(prepareCompaction([u1, a1, compaction, next], settings));
+		expect(stale?.tokensBefore).toBeLessThan(1_000);
+		expect(shouldCompact(stale?.tokensBefore ?? 0, 200_000, settings)).toBe(false);
+
+		const fresh = createMessageEntry(createAssistantMessage("fresh", createMockUsage(195_000, 1_000)), next.id);
+		const measured = getOrThrow(prepareCompaction([u1, a1, compaction, next, fresh], settings));
+		expect(measured?.tokensBefore).toBe(196_000);
+		expect(shouldCompact(measured?.tokensBefore ?? 0, 200_000, settings)).toBe(true);
+	});
+
 	it("clamps compaction summary maxTokens to the model output cap", async () => {
 		const messages: AgentMessage[] = [createUserMessage("Summarize this.")];
 		const seenOptions: Array<Record<string, unknown> | undefined> = [];

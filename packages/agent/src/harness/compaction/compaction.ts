@@ -626,6 +626,7 @@ export async function generateSummaryWithRequest(
 	return ok({ text: textContent, usage: response.usage });
 }
 
+
 /** Prepared inputs for a compaction run. */
 export interface CompactionPreparation {
 	/** Messages summarized into the history summary. */
@@ -680,9 +681,7 @@ export function prepareCompaction(
 	}
 	const boundaryEnd = compactableEntries.length;
 
-	const tokensBefore = estimateContextTokens(
-		buildContextEntries(pathEntries).flatMap(sessionEntryToContextMessages),
-	).tokens;
+	const tokensBefore = estimateCompactionPathTokens(pathEntries);
 
 	const cutPoint = findCutPoint(compactableEntries, 0, boundaryEnd, settings.keepRecentTokens);
 	const historyEnd = cutPoint.isSplitTurn ? cutPoint.turnStartIndex : cutPoint.firstKeptEntryIndex;
@@ -720,6 +719,29 @@ export function prepareCompaction(
 		fileOps,
 		settings,
 	});
+}
+
+/**
+ * Context tokens of a session path. Usage reported before the newest compaction measured the history that
+ * compaction replaced, so only usage reported after it anchors the estimate; until a newer response reports
+ * usage, the summary and retained tail are estimated from their content.
+ */
+function estimateCompactionPathTokens(pathEntries: Entry[]): number {
+	const entries = buildContextEntries(pathEntries);
+	let boundary = 0;
+	for (let i = entries.length - 1; i >= 0; i--) {
+		if (entries[i].type === "compaction") {
+			boundary = i + 1;
+			break;
+		}
+	}
+	const since = estimateContextTokens(entries.slice(boundary).flatMap(sessionEntryToContextMessages));
+	if (since.lastUsageIndex !== null) return since.tokens;
+	let tokens = since.tokens;
+	for (const message of dropFailedAssistantTurns(entries.slice(0, boundary).flatMap(sessionEntryToContextMessages))) {
+		tokens += estimateTokens(message);
+	}
+	return tokens;
 }
 
 const TURN_PREFIX_SUMMARIZATION_PROMPT = `This is the PREFIX of a turn that was too large to keep. The SUFFIX (recent work) is retained.

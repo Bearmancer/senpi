@@ -740,6 +740,47 @@ describe("runtime structural drive", () => {
 		expect(fixture.events.map((event) => event.type)).toContain("compaction_start");
 	});
 
+	it("does not compact again on usage measured before the newest compaction", async () => {
+		const fixture = await createFixture();
+		const model = fixture.faux.getModel();
+		const answer = fauxAssistantMessage("answer");
+		const measured = {
+			...answer,
+			usage: { ...answer.usage, input: model.contextWindow, totalTokens: model.contextWindow },
+		};
+		const checkpoint: CheckpointOperation = {
+			...runScope({ enabled: true, reserveTokens: 1_000, keepRecentTokens: 1 }),
+			at: "checkpoint",
+			continuation: { kind: "need_assistant", overflowRecoveryUsed: false },
+			triggerEntryId: "next",
+		};
+		await installOperation(
+			fixture,
+			checkpoint,
+			{ kind: "run", promptEntryIds: ["next"] },
+			{
+				entries: [
+					{ id: "question", parentId: null, type: "message", message: user("question") },
+					{ id: "answer", parentId: "question", type: "message", message: measured },
+					{
+						id: "compacted",
+						parentId: "answer",
+						type: "compaction",
+						summary: "summary",
+						retainedTail: [user("question"), measured],
+						tokensBefore: model.contextWindow,
+						fromHook: false,
+					},
+					{ id: "next", parentId: "compacted", type: "message", message: user("next prompt") },
+				],
+			},
+		);
+
+		expect(await runCheckpoint(fixture.lane, fixture.drive, checkpoint)).toEqual({ kind: "continue" });
+		expect(currentState(fixture).at).toBe("assistant.ready");
+		expect(fixture.events.some((event) => event.type === "compaction_start")).toBe(false);
+	});
+
 	it("publishes a hook compaction and terminal cleanup atomically without assistant lifecycle", async () => {
 		const fixture = await createFixture();
 		const deciding = {
