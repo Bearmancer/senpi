@@ -1,3 +1,21 @@
+## 2026-10-02 - Sync with upstream v1.0.0 (a13d35a74): truncateHead reports the limit that actually cut output (port P-4)
+
+### What changed
+
+- `packages/agent/src/harness/utils/truncate.ts`: `truncateHead` sets `truncatedBy` from what was dropped: a byte break reports `"bytes"`, otherwise omitted lines (`outputLines < totalLines`) report `"lines"` and a cut with every line kept reports `"bytes"` (only the trailing newline exceeded `maxBytes`). Before, it reported `"lines"` whenever the loop ended without a byte break. Every other export of the file is unchanged.
+
+### Why
+
+Content whose lines all fit but whose trailing newline pushed it past `maxBytes` was labelled line-truncated, so the harness read tool printed the line-limit continuation notice instead of the byte-limit one. Upstream fixed the same rule in its durable copy (`packages/durable/src/truncate.ts`) after deleting this file in 7fd478a2e; the fork keeps the harness copy (sync decision D-1) and ports the fix (D-3, P-4).
+
+### Why an extension could not handle it
+
+`truncateHead` is a harness utility called directly by the built-in read tool and exported from `@earendil-works/pi-agent-core`; an extension cannot change its return value.
+
+### Expected merge conflict zones
+
+- LOW: upstream deleted this file in v1.0.0; at the next sync, diff `packages/durable/src/truncate.ts` BASE..THEIRS and port any further change to the `truncatedBy` assignment after the line loop in `truncateHead`.
+
 ## 2026-10-01 - Back-to-back background notices share one turn (senpi#2508)
 
 ### What changed
