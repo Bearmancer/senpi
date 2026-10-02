@@ -49,6 +49,8 @@ export interface MemoryReportCore {
 	readonly kernels: readonly KernelMemoryEntry[];
 	readonly residentStore: ResidentStoreSize;
 	readonly tuiRenderCache?: TuiRenderCacheTotals;
+	/** Frame-level figure from the TUI (senpi#1960): byte cost of the lines the last frame holds. */
+	readonly tui?: { readonly previousLinesBytes: number };
 	readonly heapSnapshot?: string;
 	readonly reporterErrors?: Readonly<Record<string, string>>;
 }
@@ -59,6 +61,7 @@ export type MemoryReport = MemoryReportCore & Readonly<Record<string, unknown>>;
 export function buildMemoryReport(source: MemoryReportSessionSource, heapSnapshot?: string): MemoryReport {
 	const { sections, errors } = reporterSections(source.reporters());
 	const tuiRenderCache = tuiRenderCacheTotals();
+	const frameLineBytes = readFrameLineBytes();
 	const core: MemoryReportCore = {
 		sessionId: source.sessionId(),
 		takenAt: new Date().toISOString(),
@@ -67,6 +70,7 @@ export function buildMemoryReport(source: MemoryReportSessionSource, heapSnapsho
 		kernels: liveKernels(),
 		residentStore: source.residentStore(),
 		...(tuiRenderCache === undefined ? {} : { tuiRenderCache }),
+		...(frameLineBytes === undefined ? {} : { tui: { previousLinesBytes: frameLineBytes } }),
 		...(heapSnapshot === undefined ? {} : { heapSnapshot }),
 		...(Object.keys(errors).length === 0 ? {} : { reporterErrors: errors }),
 	};
@@ -104,6 +108,18 @@ function liveKernels(): KernelMemoryEntry[] {
 	return listed
 		.filter((entry) => Value.Check(kernelListingSchema, entry))
 		.map(({ busy, ...entry }) => ({ ...entry, stale: busy }));
+}
+
+// The TUI publishes its frame-line byte total under this process-global key (tui.ts); read structurally
+// so the report never imports the renderer into a host that runs headless.
+const FRAME_LINE_BYTES_KEY = Symbol.for("senpi.tui.frame-line-bytes");
+
+/** The TUI's frame-line byte total, or \`undefined\` in a process that has not rendered a frame yet. */
+function readFrameLineBytes(): number | undefined {
+	const state: unknown = Reflect.get(globalThis, FRAME_LINE_BYTES_KEY);
+	if (typeof state !== "object" || state === null) return undefined;
+	const bytes: unknown = Reflect.get(state, "bytes");
+	return typeof bytes === "number" && Number.isFinite(bytes) ? bytes : undefined;
 }
 
 function reporterSections(reporters: readonly NamedMemoryReporter[]): {

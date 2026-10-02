@@ -1,3 +1,22 @@
+## 2026-10-02 - Per-session heap split and render-cache accounting on the memory surfaces (senpi#1960)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: `RpcHostMemoryPressureEvent` gains optional `main: { heapBytes }` and `kernels: { sessionId, language, liveBytes, measure }[]`; new `RpcHostKernelMemory` names the per-kernel row.
+- `packages/coding-agent/src/modes/interactive/components/tool-execution.ts`: a finished tool card's retained `result` is measured once at finalize (`serializedToolResultBytes` from `tool-execution-cache.ts`) and recorded on its render cache.
+
+### Why
+
+- senpi#1960 asks where a session's memory lives. The pressure event and `list_sessions` now carry the main-thread heap and each session's kernel heaps, so an operator sees the split without an external probe. The render cache is made measurable (exact cached-line bytes per card, finished-card result bytes, and the TUI's frame-line bytes) so a later bound is designed from the measurement rather than guessed.
+
+### Why an extension could not handle it
+
+- The pressure event and the session listing are RPC wire contracts owned by the host; the render cache and the finalize path are tool-card internals. Neither is reachable through the extension API.
+
+### Expected merge conflict zones
+
+- LOW: additive optional fields on the event and the session row; the cache counters and the finalize call are new lines beside existing cache writes.
+
 ## 2026-10-01 - claude-agent-sdk 0.3.286 (senpi#2481)
 
 ### What changed

@@ -3,7 +3,7 @@ import { isModelOnlyText } from "../../../core/tools/model-only-text.ts";
 import { GrokToolRow } from "../grok/tool-row.ts";
 import { createBoundedRenderSignature } from "./render-signature.ts";
 import { ToolExecutionAnimation, toolCardSpins, toolCardStrikes } from "./tool-execution-animation.ts";
-import { ToolExecutionRenderCache } from "./tool-execution-cache.ts";
+import { serializedToolResultBytes, ToolExecutionRenderCache } from "./tool-execution-cache.ts";
 import { collapseFallbackResult } from "./tool-execution-fallback-preview.ts";
 import { ToolExecutionImages } from "./tool-execution-images.ts";
 import { ToolExecutionRenderer } from "./tool-execution-renderer.ts";
@@ -130,7 +130,11 @@ export class ToolExecutionComponent extends Container {
 	updateResult(result: ToolExecutionResult, isPartial = false): void {
 		this.result = result;
 		this.isPartial = isPartial;
-		if (!isPartial) this.argsComplete = true;
+		// senpi#1960: a finished card's retained result is measured once at finalize; a streaming card keeps its last figure.
+		if (!isPartial) {
+			this.argsComplete = true;
+			this.renderCache.finalizeResult(serializedToolResultBytes(result));
+		}
 		this.lastDisplaySignature = undefined;
 		this.updateSpinnerAnimation();
 		this.updateTodoStrikeAnimation();
