@@ -31,7 +31,7 @@ import type { AssistantMessage } from "../types.ts";
  * - kiro-lb gateways: "Request payload is 1095225 bytes, over the 1085435 byte limit Kiro accepts." / "Request payload is N tokens, over the M token limit Kiro accepts." (HTTP 400 local payload guard)
  * - Kiro upstream via kiro-lb: "Model context limit reached. Conversation size exceeds model capacity." (CONTENT_LENGTH_EXCEEDS_THRESHOLD token overflow)
  * - Mistral: "Prompt contains X tokens ... too large for model with Y maximum context length"
- * - z.ai: `{"code":"1261","message":"Prompt too long"}` or silent overflow via usage.input > contextWindow
+ * - z.ai: `{"code":"1261","message":"Prompt too long"}`, `{"code":"1261","message":"Prompt exceeds max length"}` (CN endpoint), or silent overflow via usage.input > contextWindow
  * - Xiaomi MiMo: Truncates input to fill contextWindow exactly, then returns finish_reason "length"
  *   with output=0 (no room left to generate). Detected via stopReason "length" + zero output +
  *   input filling the context window.
@@ -44,6 +44,7 @@ const OVERFLOW_PATTERNS = [
 	/^Context window exhausted: /, // pi-ai pre-flight guard: no answer room left, provider never called
 	/^The conversation is too long to resend \(about \d+ tokens, limit \d+\)/, // anthropic-subscription cold-seed budget: re-send refused before dispatch
 	/prompt (?:is )?too long/i, // Anthropic and z.ai token overflow
+	/prompt exceeds max length/i, // z.ai CN endpoint token overflow
 	/request_too_large/i, // Anthropic request byte-size overflow (HTTP 413)
 	/input is too long for requested model/i, // Amazon Bedrock
 	/exceeds (?:(?:the|this) )?(?:model'?s )?context window/i, // OpenAI (Completions & Responses API)

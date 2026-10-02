@@ -41,3 +41,15 @@ packages/ai/test/openai-codex-oauth.test.ts
 packages/ai/test/openai-codex-stream.test.ts
 packages/coding-agent/examples/extensions/kimi-deferred-tools.ts
 packages/evals/src/extensions.eval.ts
+packages/coding-agent/src/experimental/durable
+packages/coding-agent/src/experimental/vacation
+packages/coding-agent/test/experimental-durable-support.ts
+packages/coding-agent/test/mcp-conformance
+packages/coding-agent/test/mcp-oauth-store.test.ts
+packages/coding-agent/test/codemode-worker-config.test.ts
+packages/coding-agent/docs/codemode.md
+scripts/smoke-test-codemode-binary.mjs
+packages/coding-agent/src/modes/interactive/components/radius-login-selector.ts
+packages/coding-agent/src/modes/interactive/components/pi-logo-animation.ts
+packages/coding-agent/src/modes/interactive/components/pi-logo-animation.lazy.ts
+packages/coding-agent/src/modes/interactive/components/pi-logo.ts

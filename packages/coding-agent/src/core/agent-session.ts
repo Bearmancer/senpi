@@ -288,6 +288,7 @@ import { generateSessionTitle, sessionTitleRetryPolicy, shouldSkipSessionTitle }
 import { SessionWorkBarrier } from "./session-work-barrier.ts";
 import {
 	DEFAULT_STREAM_START_TIMEOUT_MS,
+	DEFAULT_TOOL_NAMES,
 	type SettingsManager,
 	type SettingsSourceSelection,
 } from "./settings-manager.ts";
@@ -631,6 +632,11 @@ export interface AgentSessionConfig {
 	initialActiveToolNames?: string[];
 	/** Configured built-in defaults; fork-native builtin extension tools outside this set are omitted. */
 	defaultToolNames?: string[];
+	/**
+	 * Whether the initial tools come from the `defaultTools` setting. When true, reload activates
+	 * tools newly added to the setting. Tools removed from it stay active.
+	 */
+	usesDefaultTools?: boolean;
 	/** Tool names that remain executable only through the registered eval tool. */
 	evalOnlyToolNames?: string[];
 	/** Optional allowlist of tool names. When provided, only these tool names are exposed. */
@@ -1152,6 +1158,7 @@ export class AgentSession {
 	private _extensionRunnerRef?: { current?: ExtensionRunner };
 	private _initialActiveToolNames?: string[];
 	private _defaultToolNames?: Set<string>;
+	private _usesDefaultTools = false;
 	private _evalOnlyToolNames?: ReadonlySet<string>;
 	/** Explicit config override; when supplied it wins over the fixed and declared policy across reloads. */
 	private readonly _evalOnlyToolNamesOverride?: ReadonlySet<string>;
@@ -1316,6 +1323,7 @@ export class AgentSession {
 		this._extensionRunnerRef = config.extensionRunnerRef;
 		this._initialActiveToolNames = config.initialActiveToolNames;
 		this._defaultToolNames = config.defaultToolNames ? new Set(config.defaultToolNames) : undefined;
+		this._usesDefaultTools = config.usesDefaultTools ?? false;
 		this._evalOnlyToolNamesOverride = config.evalOnlyToolNames ? new Set(config.evalOnlyToolNames) : undefined;
 		this._evalOnlyToolNames = this._resolveEvalOnlyToolNames();
 		this._allowedToolNames = config.allowedToolNames ? new Set(config.allowedToolNames) : undefined;
@@ -8886,6 +8894,8 @@ export class AgentSession {
 		activeToolNames?: string[];
 		includeAllExtensionTools?: boolean;
 		previousActiveToolRegistrationIds?: ReadonlyMap<string, string>;
+		/** Tools to activate that were not active before, such as tools newly added to `defaultTools`. */
+		addedToolNames?: readonly string[];
 	}): void {
 		const previousRegistryNames = new Set(this._toolRegistry.keys());
 		const previousActiveToolNames = this.getActiveToolNames();
@@ -8984,6 +8994,10 @@ export class AgentSession {
 				previousRegistrationIds.get(name) === deriveExtensionRegistrationId(current.sourceInfo, name)
 			);
 		});
+		// Newly added tools had no previous registration to match, so they skip the identity check.
+		for (const name of options?.addedToolNames ?? []) {
+			if (isAllowedTool(name)) nextActiveToolNames.push(name);
+		}
 
 		if (allowedToolNames) {
 			for (const toolName of this._toolRegistry.keys()) {
@@ -9032,6 +9046,7 @@ export class AgentSession {
 		flagValues?: Map<string, boolean | string>;
 		includeAllExtensionTools?: boolean;
 		previousActiveToolRegistrationIds?: ReadonlyMap<string, string>;
+		addedToolNames?: readonly string[];
 	}): void {
 		this._delegatedCompactionKey = undefined;
 		this._lazyToolActivation.reset();
@@ -9091,6 +9106,7 @@ export class AgentSession {
 			activeToolNames: baseActiveToolNames,
 			includeAllExtensionTools: options.includeAllExtensionTools,
 			previousActiveToolRegistrationIds: options.previousActiveToolRegistrationIds,
+			addedToolNames: options.addedToolNames,
 		});
 	}
 
@@ -9131,8 +9147,21 @@ export class AgentSession {
 			reason: "reload",
 		});
 		time("shutdown", "reload");
+		const previousDefaultTools = new Set(
+			this._usesDefaultTools ? (this.settingsManager.getDefaultTools() ?? DEFAULT_TOOL_NAMES) : [],
+		);
 		await this.settingsManager.reload();
 		this._delegatedCompactionKey = undefined;
+		// Activate tools newly added to defaultTools. Removed ones stay active, and tools disabled
+		// during the session stay disabled unless the setting newly adds them.
+		const currentDefaultTools = this._usesDefaultTools
+			? (this.settingsManager.getDefaultTools() ?? DEFAULT_TOOL_NAMES)
+			: [];
+		const addedDefaultTools = currentDefaultTools.filter((name) => !previousDefaultTools.has(name));
+		// Builtin extension tools are registered only when configured; a newly added one must pass that filter.
+		if (this._defaultToolNames && addedDefaultTools.length > 0) {
+			this._defaultToolNames = new Set([...this._defaultToolNames, ...addedDefaultTools]);
+		}
 		// Capture the unfiltered request BEFORE the rebuild reassigns it, so a policy that
 		// disarms during this reload can still restore its withheld eval-only tools.
 		const requestedActiveToolNamesBeforeRebuild = [...(this._requestedActiveToolNames ?? this.getActiveToolNames())];
@@ -9171,6 +9200,7 @@ export class AgentSession {
 				flagValues: previousFlagValues,
 				includeAllExtensionTools: true,
 				previousActiveToolRegistrationIds,
+				addedToolNames: addedDefaultTools,
 			});
 		} finally {
 			// An extension removed by this reload must be told even if the rebuild throws
