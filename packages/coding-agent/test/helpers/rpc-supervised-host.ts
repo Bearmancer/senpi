@@ -4,7 +4,8 @@
  * rely on SIGSTOP/SIGCONT and on the process table.
  */
 import { execFileSync } from "node:child_process";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { unwatchFile, watchFile } from "node:fs";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { VERSION } from "../../src/config.ts";
@@ -108,6 +109,38 @@ export async function bootInstanceId(qa: SupervisedScratch): Promise<string> {
 	const instanceId = typeof settings === "object" && settings !== null ? Reflect.get(settings, "instanceId") : undefined;
 	if (typeof instanceId !== "string") throw new Error("boot settings name no instance id");
 	return instanceId;
+}
+
+/** `generations/<instanceId>/` of the supervised endpoint, where per-generation evidence lives. */
+export function generationDir(qa: SupervisedScratch, instanceId: string): string {
+	return join(supervisedDaemonPaths(qa).generationsDir, instanceId);
+}
+
+/** Writes one per-generation evidence file the way the host would (JSON, one line). */
+export async function writeGenerationFile(
+	qa: SupervisedScratch,
+	instanceId: string,
+	name: string,
+	content: unknown,
+): Promise<void> {
+	await writeFile(join(generationDir(qa, instanceId), name), `${JSON.stringify(content)}\n`, { mode: 0o600 });
+}
+
+/** Resolves once `path` exists, by stat polling (never `fs.watch`); rejects after `timeoutMs`. */
+export function fileAppears(path: string, timeoutMs: number): Promise<void> {
+	return new Promise((resolve, reject) => {
+		const timer = setTimeout(() => {
+			unwatchFile(path, onChange);
+			reject(new Error(`${path} did not appear within ${timeoutMs}ms`));
+		}, timeoutMs);
+		const onChange = (current: { readonly nlink: number }): void => {
+			if (current.nlink === 0) return;
+			clearTimeout(timer);
+			unwatchFile(path, onChange);
+			resolve();
+		};
+		watchFile(path, { interval: 25 }, onChange);
+	});
 }
 
 export { processAlive };
