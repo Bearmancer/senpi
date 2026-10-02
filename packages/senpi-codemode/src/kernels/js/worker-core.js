@@ -2,6 +2,7 @@ import { kernelToolCallContext } from "./kernel-tools-context.js";
 import { kernelToolError } from "./kernel-tools-errors.js";
 import { createKernelToolPump } from "./kernel-tools-pump.js";
 import { hostDeniedError, hostToolRefusal } from "./kernel-tools-scope.js";
+import { installSessionCwd } from "./worker-cwd.js";
 import { createWorkerMemory } from "./worker-memory.js";
 import { JsWorkerRuntime } from "./worker-runtime.js";
 import { installKernelWebView } from "./worker-webview.js";
@@ -123,6 +124,7 @@ export function createWorkerCore(transport, options) {
 		}
 		if (message.type === "init") {
 			applySessionEnvironment(message.sessionEnv);
+			installSessionCwd(options.cwd);
 			installKernelWebView(requestWebViewPort);
 			runtime = new JsWorkerRuntime({
 				cwd: options.cwd,

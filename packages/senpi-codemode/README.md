@@ -81,6 +81,20 @@ what a child spawned from the bash tool sees. The values snapshot at kernel star
 mid-session model switch updates the bash tool's next command but not already-running
 kernels; a new session starts fresh kernels with fresh values.
 
+### Working directory
+
+Every kernel runs in the session's working directory, the same directory the read,
+edit, and bash tools use. Python, Ruby, and Julia start their interpreter there. The
+JavaScript kernel is a worker thread, which cannot change directory, so it applies the
+session directory itself: `process.cwd()`, `path.resolve`, `node:fs` and
+`node:fs/promises`, `node:child_process`, `Bun.file`, `Bun.write`, `Bun.$`,
+`Bun.spawn`/`Bun.spawnSync`, `Bun.Glob` scans, and relative `import()` all resolve a
+relative path inside the session directory, never the host process directory. The host
+process and the bash tool keep their own directory. When the session directory is
+missing or deleted, the next cell fails with `CodemodeSessionCwdUnavailableError` naming
+the directory instead of running somewhere else. A new session (including a switch to
+another project) starts fresh kernels in its own directory.
+
 `PI_GOAL_STORE_FILE` is supplied by the host's optional `ExtensionContext.goalStoreFile`
 getter and may name a file that does not exist yet. It honors session-directory overrides
 and in-memory sessions; it cannot be derived reliably from `PI_SESSION_FILE`. If the host

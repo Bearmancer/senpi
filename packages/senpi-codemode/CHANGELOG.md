@@ -12,6 +12,8 @@
 
 ### Fixed
 
+- JavaScript eval cells run in the session's project directory: a relative path in `Bun.file`, `Bun.write`, `node:fs`, `path.resolve`, `Bun.$`, spawned children, or `Bun.Glob` now resolves inside the project instead of the host process directory, which made `Bun.file("src/todo.ts")` fail with ENOENT in desktop threads and under `--cwd`. A missing or deleted session directory fails the cell with `CodemodeSessionCwdUnavailableError` instead of falling back to another directory. The bash tool's working directory is unchanged ([omo#9371](https://github.com/code-yeongyu/oh-my-openagent/issues/9371)).
+
 - Stop now explicitly reports when a running `Bun.$` wait forces the JavaScript kernel to restart and clears its variables, and recommends `Bun.spawn` or the bash tool for stoppable commands. Native shell semantics remain unchanged. Thanks to [@floweredao](https://github.com/floweredao) for the investigation ([#2475](https://github.com/code-yeongyu/senpi/pull/2475)); native cancellation remains tracked in [#2453](https://github.com/code-yeongyu/senpi/issues/2453).
 
 ### Removed
