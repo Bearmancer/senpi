@@ -90,7 +90,8 @@ function cellFor(index: number): { readonly summary: string; readonly code: stri
 				code: `globalThis.__keep${index} = new Uint8Array(512 * 1024).fill(${index} % 251); "alloc ${index}"`,
 			};
 		case 1:
-			// A plain read of a 256 KiB file (written by the harness).
+			// A trivially small cell: the string literal itself is the whole payload, so case 1 marks
+			// the floor the other shapes' growth is measured against.
 			return { summary: `plain read ${index}`, code: `"plain ${index}"` };
 		case 2:
 			// An eval with 200 KB of Bun.$ output.
@@ -252,10 +253,14 @@ function main(): void {
 	};
 	logLine(options, `SUMMARY ${JSON.stringify(summary, null, 2)}`);
 	writeStatus(options, { arm: options.arm, done: true, summary });
-	// Failure assertion: every session's 120th call produced its result (the run completed),
-	// and a session whose kernel recycled reports recycled: true, never a missing result.
-	if (perSession.some((s) => s.sessionId === "")) {
-		throw new Error("a session finished without its 120th call's result");
+	// Failure assertion: every scripted session came back with its own result marker and its own id
+	// (a session whose output never carried the marker fails `runOneRepetition` before this), and a
+	// session whose kernel recycled still delivered its 120th call's result (recycled: true, never
+	// a missing run).
+	const expected = new Set(Array.from({ length: options.sessions }, (_, s) => `retention-${s}`));
+	const missing = [...expected].filter((id) => !perSession.some((s) => s.sessionId === id));
+	if (missing.length > 0) {
+		throw new Error(`sessions finished without their 120th call's result: ${missing.join(", ")}`);
 	}
 }
 
