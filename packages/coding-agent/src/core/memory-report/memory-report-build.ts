@@ -1,7 +1,6 @@
-import { Type } from "typebox";
-import { Value } from "typebox/value";
 import { type ProcessFootprint, readOwnFootprint } from "../process-footprint.ts";
 import type { ResidentStoreSize } from "../session-resident-store-size.ts";
+import { type HostKernelListing, jscHeapSizeOnBun, readCodemodeKernelListings } from "./kernel-registry-read.ts";
 import {
 	type MemoryReportSessionSource,
 	type NamedMemoryReporter,
@@ -10,19 +9,6 @@ import {
 	tuiRenderCacheTotals,
 } from "./memory-report-registry.ts";
 
-// The codemode extension publishes its live kernels under this process-global key (kernel-registry.ts).
-const KERNEL_REGISTRY_KEY = Symbol.for("senpi.codemode.kernel-registry");
-
-const kernelListingSchema = Type.Object({
-	id: Type.String(),
-	sessionId: Type.String(),
-	language: Type.String(),
-	measure: Type.String(),
-	lastLiveBytes: Type.Optional(Type.Number()),
-	busy: Type.Boolean(),
-	pid: Type.Optional(Type.Number()),
-});
-
 export interface MainThreadMemory {
 	readonly jscHeapSize?: number;
 	readonly heapUsed: number;
@@ -30,16 +16,8 @@ export interface MainThreadMemory {
 	readonly footprint: ProcessFootprint;
 }
 
-export interface KernelMemoryEntry {
-	readonly id: string;
-	readonly sessionId: string;
-	readonly language: string;
-	readonly measure: string;
-	readonly lastLiveBytes?: number;
-	/** A cell was running: `lastLiveBytes` is the last reading, not what the kernel holds now. */
-	readonly stale: boolean;
-	readonly pid?: number;
-}
+/** The report keeps the registry's full listing; the shared reader validates the wire shape once. */
+type KernelMemoryEntry = HostKernelListing;
 
 export interface MemoryReportCore {
 	readonly sessionId: string;
@@ -67,7 +45,7 @@ export function buildMemoryReport(source: MemoryReportSessionSource, heapSnapsho
 		takenAt: new Date().toISOString(),
 		pid: process.pid,
 		main: mainThreadMemory(),
-		kernels: liveKernels(),
+		kernels: readCodemodeKernelListings(),
 		residentStore: source.residentStore(),
 		...(tuiRenderCache === undefined ? {} : { tuiRenderCache }),
 		...(frameLineBytes === undefined ? {} : { tui: { previousLinesBytes: frameLineBytes } }),
@@ -86,28 +64,6 @@ function mainThreadMemory(): MainThreadMemory {
 		external: usage.external,
 		footprint: readOwnFootprint(),
 	};
-}
-
-/** `bun:jsc` answers synchronously on Bun and is absent on Node, where the field is omitted. */
-function jscHeapSizeOnBun(): number | undefined {
-	const jsc: unknown = process.getBuiltinModule("bun:jsc");
-	if (typeof jsc !== "object" || jsc === null) return undefined;
-	const heapSize: unknown = Reflect.get(jsc, "heapSize");
-	if (typeof heapSize !== "function") return undefined;
-	const bytes: unknown = Reflect.apply(heapSize, jsc, []);
-	return typeof bytes === "number" ? bytes : undefined;
-}
-
-function liveKernels(): KernelMemoryEntry[] {
-	const registry: unknown = Reflect.get(globalThis, KERNEL_REGISTRY_KEY);
-	if (typeof registry !== "object" || registry === null) return [];
-	const list: unknown = Reflect.get(registry, "list");
-	if (typeof list !== "function") return [];
-	const listed: unknown = Reflect.apply(list, registry, []);
-	if (!Array.isArray(listed)) return [];
-	return listed
-		.filter((entry) => Value.Check(kernelListingSchema, entry))
-		.map(({ busy, ...entry }) => ({ ...entry, stale: busy }));
 }
 
 // The TUI publishes its frame-line byte total under this process-global key (tui.ts); read structurally

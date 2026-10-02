@@ -1,3 +1,4 @@
+import { readCodemodeKernelRows, readMainThreadHeapBytes } from "../../core/memory-report/kernel-registry-read.ts";
 import { type ProcessFootprint, type ProcessFootprintMeasure, readOwnFootprint } from "../../core/process-footprint.ts";
 import type { RpcHostKernelMemory, RpcHostMemoryPressureEvent } from "./rpc-types.ts";
 
@@ -96,8 +97,8 @@ export class HostMemorySampler {
 		this.now = options.now ?? Date.now;
 		this.readFootprint = options.readFootprint ?? readOwnFootprint;
 		this.readRssBytes = options.readRssBytes ?? (() => process.memoryUsage.rss());
-		this.readKernels = options.readKernels ?? readCodemodeKernels;
-		this.readMainHeap = options.readMainHeap ?? readMainHeapBytes;
+		this.readKernels = options.readKernels ?? readCodemodeKernelRows;
+		this.readMainHeap = options.readMainHeap ?? readMainThreadHeapBytes;
 		this.warnMb = parsePositiveInteger(env[HOST_RSS_WARN_MB_ENV]) ?? DEFAULT_HOST_RSS_WARN_MB;
 	}
 
@@ -160,50 +161,4 @@ export class HostMemorySampler {
 			`senpi rpc host memory pressure: footprintMb=${footprintMb} (${measure}) rssMb=${rssMb} sessions=${sessions} (idle parking halved)\n`,
 		);
 	}
-}
-
-/** The codemode extension's kernel registry lives on a process-global key (senpi#2561); read structurally. */
-const KERNEL_REGISTRY_KEY = Symbol.for("senpi.codemode.kernel-registry");
-
-/**
- * Default kernel listing: the extension's registry when it is loaded, mapped one row per live kernel.
- * A kernel between readings lists `liveBytes: 0` rather than a guess; a kernel that crashed between
- * samples is simply absent from the registry's next listing.
- */
-function readCodemodeKernels(): readonly RpcHostKernelMemory[] {
-	const registry: unknown = Reflect.get(globalThis, KERNEL_REGISTRY_KEY);
-	if (typeof registry !== "object" || registry === null) return [];
-	const list: unknown = Reflect.get(registry, "list");
-	if (typeof list !== "function") return [];
-	const listed: unknown = Reflect.apply(list, registry, []);
-	if (!Array.isArray(listed)) return [];
-	const rows: RpcHostKernelMemory[] = [];
-	for (const entry of listed) {
-		if (typeof entry !== "object" || entry === null) continue;
-		const sessionId: unknown = Reflect.get(entry, "sessionId");
-		const language: unknown = Reflect.get(entry, "language");
-		const measure: unknown = Reflect.get(entry, "measure");
-		const liveBytes: unknown = Reflect.get(entry, "lastLiveBytes");
-		if (typeof sessionId !== "string" || typeof language !== "string" || typeof measure !== "string") continue;
-		rows.push({
-			sessionId,
-			language,
-			liveBytes: typeof liveBytes === "number" && Number.isFinite(liveBytes) ? liveBytes : 0,
-			measure,
-		});
-	}
-	return rows;
-}
-
-/** Main-thread heap in bytes: `bun:jsc heapSize()` on Bun, `process.memoryUsage().heapUsed` elsewhere. */
-function readMainHeapBytes(): number {
-	const jsc: unknown = process.getBuiltinModule("bun:jsc");
-	if (typeof jsc === "object" && jsc !== null) {
-		const heapSize: unknown = Reflect.get(jsc, "heapSize");
-		if (typeof heapSize === "function") {
-			const bytes: unknown = Reflect.apply(heapSize, jsc, []);
-			if (typeof bytes === "number") return bytes;
-		}
-	}
-	return process.memoryUsage().heapUsed;
 }
