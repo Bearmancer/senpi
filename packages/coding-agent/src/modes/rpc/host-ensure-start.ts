@@ -19,7 +19,6 @@ import { generationPaths, type HostDaemonPaths } from "./host-daemon-paths.ts";
 import { clearHostRegistration, writeHostRegistration } from "./host-daemon-registration.ts";
 import { writeHostSettings } from "./host-daemon-state.ts";
 import { HOST_PROTOCOL_VERSION, REQUIRED_HOST_CAPABILITIES } from "./host-decision.ts";
-import type { EnsuredHost, EnsureHostOptions } from "./host-ensure.ts";
 import { hostChildArgv, isCompatible } from "./host-ensure-client.ts";
 import {
 	announceStop,
@@ -32,6 +31,7 @@ import {
 	signalPid,
 	stopSpawnedChild,
 } from "./host-ensure-stop.ts";
+import type { EnsuredHost, EnsureHostOptions } from "./host-ensure-types.ts";
 import { defaultHostLaunch, PINNED_HOST_CLIENT_CAPABILITIES } from "./host-launch.ts";
 import { DEFAULT_HOST_IDLE_EXIT_MS } from "./host-lifecycle-policy.ts";
 import { type ChildExit, pollProtocolInfo } from "./host-readiness.ts";
