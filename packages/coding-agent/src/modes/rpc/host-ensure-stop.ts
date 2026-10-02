@@ -16,10 +16,18 @@ import { noteEscalatedStop } from "./host-child-exit.ts";
 import type { HostStopSender } from "./host-crash-record.ts";
 import type { HostGenerationPaths } from "./host-daemon-paths.ts";
 import type { ChildExit } from "./host-readiness.ts";
+import { activeStopProgress, DEFAULT_CHILD_STALLED_STOP_MAX_MS } from "./host-stalled-evidence.ts";
 import { type HostStopIntent, readStopIntent, writeStopIntent } from "./host-stop-intent.ts";
 
 export const DEFAULT_STOP_TIMEOUT_MS = 10_000;
 export const SIGKILL_GRACE_MS = 2_000;
+/** A stop-progress report older than this is a supervisor that stopped reporting, not one still waiting. */
+const STOP_PROGRESS_FRESH_MS = 10_000;
+/** After a reported stall wait ends, the supervisor still escalates, records and exits: one more window. */
+const AFTER_STALL_WAIT_GRACE_MS = 5_000;
+/** The longest a SIGTERM wait here can run: the ordinary window, or a supervisor's reported stall wait. */
+export const STOP_WAIT_BUDGET_MS =
+	Math.max(DEFAULT_STOP_TIMEOUT_MS, DEFAULT_CHILD_STALLED_STOP_MAX_MS + AFTER_STALL_WAIT_GRACE_MS) + SIGKILL_GRACE_MS;
 
 export interface StopTarget {
 	readonly daemonDir: string;
@@ -67,7 +75,7 @@ export async function stopSpawnedChild(
 	const waitFor = (ms: number) => Promise.race([childExit.then(() => true), delay(ms).then(() => exited())]);
 	const announced = await announceStop(target, pid);
 	signalPid(pid, "SIGTERM");
-	if (await waitFor(termTimeoutMs)) return;
+	if (await waitWhileSupervisorReports(target, termTimeoutMs, waitFor)) return;
 	signalPid(pid, "SIGKILL");
 	if (!(await waitFor(SIGKILL_GRACE_MS))) {
 		throw new Error(`RPC socket host pid ${pid} remained alive after SIGKILL`);
@@ -84,12 +92,33 @@ export async function stopManagedHost(
 ): Promise<void> {
 	const announced = await announceStop(target, pidFile.pid);
 	await signalValidated(pidFile, "SIGTERM", readStartTime);
-	if (await waitForGone(pidFile, termTimeoutMs, readStartTime)) return;
+	const gone = (ms: number) => waitForGone(pidFile, ms, readStartTime);
+	if (await waitWhileSupervisorReports(target, termTimeoutMs, gone)) return;
 	await signalValidated(pidFile, "SIGKILL", readStartTime);
 	if (!(await waitForGone(pidFile, SIGKILL_GRACE_MS, readStartTime))) {
 		throw new Error(`RPC socket host pid ${pidFile.pid} remained alive after SIGKILL`);
 	}
 	await recordEscalation(target, announced);
+}
+
+/**
+ * The caller's SIGTERM deadline, extended while the supervisor reports it is waiting out a stalled child
+ * (`stop-progress.json`): killing the supervisor then would SIGKILL the very host its stall wait is
+ * protecting. Bounded by the supervisor's own `untilAt` plus a grace, and only while reports stay fresh.
+ */
+async function waitWhileSupervisorReports(
+	target: StopTarget,
+	termTimeoutMs: number,
+	waitFor: (ms: number) => Promise<boolean>,
+): Promise<boolean> {
+	if (await waitFor(termTimeoutMs)) return true;
+	let extended = false;
+	for (;;) {
+		const untilAt = await activeStopProgress(target.generation, Date.now(), STOP_PROGRESS_FRESH_MS);
+		if (untilAt === undefined) return extended && (await waitFor(AFTER_STALL_WAIT_GRACE_MS));
+		extended = true;
+		if (await waitFor(Math.min(STOP_PROGRESS_FRESH_MS, Math.max(1, untilAt - Date.now())))) return true;
+	}
 }
 
 type PidFileOwnership = "owns" | "gone" | "unknown";

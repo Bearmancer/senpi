@@ -10,6 +10,7 @@
  * endpoint directory during a handoff. A stalled host is still serving its sessions; nothing here
  * signals anything.
  */
+import { rm } from "node:fs/promises";
 import { join } from "node:path";
 import { processIsLive } from "../app-server/daemon/process.ts";
 import { HOST_DAEMON_DIR_ENV, type HostGenerationPaths } from "./host-daemon-paths.ts";
@@ -22,6 +23,13 @@ export const STALL_REFUSAL_WINDOW_MS_ENV = "SENPI_RPC_STALL_REFUSAL_MS";
 export const DEFAULT_STALL_REFUSAL_WINDOW_MS = 120_000;
 /** How recent stall evidence keeps a graceful stop waiting instead of escalating. */
 export const STOP_STALL_EVIDENCE_MAX_AGE_MS = 60_000;
+/** The longest a graceful stop waits for a stalled child before it escalates to SIGKILL. */
+export const CHILD_STALLED_STOP_MAX_MS_ENV = "SENPI_RPC_CHILD_STALLED_STOP_MAX_MS";
+export const DEFAULT_CHILD_STALLED_STOP_MAX_MS = 60_000;
+
+export function childStalledStopMaxMs(env: Readonly<Record<string, string | undefined>> = process.env): number {
+	return parseIdleExitMs(env[CHILD_STALLED_STOP_MAX_MS_ENV]) ?? DEFAULT_CHILD_STALLED_STOP_MAX_MS;
+}
 
 export interface HostStallEvidence {
 	readonly at: string;
@@ -111,6 +119,10 @@ export interface StopProgress {
 
 export function writeStopProgress(generation: HostGenerationPaths, progress: StopProgress): Promise<void> {
 	return writeJsonAtomic(generation.stopProgressFile, progress);
+}
+
+export async function clearStopProgress(generation: HostGenerationPaths): Promise<void> {
+	await rm(generation.stopProgressFile, { force: true }).catch(() => undefined);
 }
 
 export async function activeStopProgress(

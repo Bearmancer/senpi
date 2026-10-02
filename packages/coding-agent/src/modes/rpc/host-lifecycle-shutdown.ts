@@ -12,6 +12,7 @@ import { releaseGeneration } from "./host-daemon-registration.ts";
 import type { SupervisorActivity } from "./host-lifecycle-activity.ts";
 import type { SupervisorDrain } from "./host-lifecycle-drain.ts";
 import { closeServer } from "./host-lifecycle-proxy.ts";
+import { waitOutStalledChild } from "./host-lifecycle-stall-wait.ts";
 import { layeredSupervisorIntent, readStopIntent, writeStopIntent } from "./host-stop-intent.ts";
 import { supervisorLog, writeStderrLine } from "./host-supervisor-log.ts";
 import { type SocketFileIdentity, shieldSocketDuringClose, unlinkOwnedSocket } from "./socket-ownership.ts";
@@ -101,8 +102,9 @@ export async function performShutdown(context: SupervisorShutdown, reason: strin
 }
 
 /**
- * SIGTERM, then SIGKILL after `CHILD_STOP_TIMEOUT_MS`. The intent is on record BEFORE the signal,
- * layered over any outer sender's intent for this generation so the record names who started it.
+ * SIGTERM, then SIGKILL after `CHILD_STOP_TIMEOUT_MS` - or, for a child that is alive but stalled, after
+ * the bounded stall wait. The intent is on record BEFORE the signal, layered over any outer sender's
+ * intent for this generation so the record names who started it, and names a stall-wait escalation.
  */
 async function stopChild(context: SupervisorShutdown, reason: string): Promise<void> {
 	const { child, generation } = context;
@@ -112,8 +114,20 @@ async function stopChild(context: SupervisorShutdown, reason: string): Promise<v
 	const at = new Date().toISOString();
 	const intent = layeredSupervisorIntent(outer, supervisorSender(context.instanceId), { targetPid: pid, reason, at });
 	await writeStopIntent(generation, intent, supervisorLog);
+	const signalledAt = Date.now();
 	if (!signalChild(pid, "SIGTERM")) return;
 	if (await waitForChildExit(child, CHILD_STOP_TIMEOUT_MS)) return;
+	const stallWaitMs = await waitOutStalledChild({
+		child,
+		generation,
+		signalledAt,
+		waitForExit: waitForChildExit,
+	});
+	if (childExited(child)) return;
+	if (stallWaitMs > 0) {
+		const escalated = { ...intent, reason: `${intent.reason}; escalated_after_stall_wait=${stallWaitMs}` };
+		await writeStopIntent(generation, escalated, supervisorLog);
+	}
 	if (!signalChild(pid, "SIGKILL")) return;
 	await waitForChildExit(child, 2_000);
 }
