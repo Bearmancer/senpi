@@ -26,7 +26,7 @@ import { ensureClient } from "./host-ensure-client.ts";
 import { publicEndpointAccepts, refuseIfStalled } from "./host-ensure-liveness.ts";
 import { hostEnsureLockOptions, hostEnsureLockTarget } from "./host-ensure-lock.ts";
 import { appendStderr, reapOrphanedInternalHostDirs, startHost } from "./host-ensure-start.ts";
-import { DEFAULT_STOP_TIMEOUT_MS, ensureSender, SIGKILL_GRACE_MS, stopManagedHost } from "./host-ensure-stop.ts";
+import { DEFAULT_STOP_TIMEOUT_MS, ensureSender, STOP_WAIT_BUDGET_MS, stopManagedHost } from "./host-ensure-stop.ts";
 import { HANDOFF_LOCK_HOLD_MS, handoffHostLocked } from "./host-handoff.ts";
 import { retireIdleLegacyHost } from "./host-legacy.ts";
 import type { HostColdStart, HostLifecyclePolicyInput } from "./host-lifecycle-policy.ts";
@@ -105,7 +105,7 @@ const DEFAULT_READINESS_TIMEOUT_MS = 10_000;
 /**
  * A lock waiter must outlast the longest critical section a holder can run:
  * probing an existing host, then either stopping an incompatible one (SIGTERM wait
- * plus the SIGKILL grace) and spawning the replacement and waiting for it to answer,
+ * plus the SIGKILL grace, or a supervisor's reported stall wait) and spawning the replacement and waiting for it to answer,
  * or handing it off (an upgrade) - which is also as long as a forced handoff holds it.
  * Each SQLite busy wait stays short because it blocks the event loop; this
  * cumulative budget is what covers the whole section, with headroom for a slow
@@ -114,7 +114,7 @@ const DEFAULT_READINESS_TIMEOUT_MS = 10_000;
  */
 const ENSURE_LOCK_WAIT_MS =
 	EXISTING_HOST_PROBE_TIMEOUT_MS +
-	Math.max(DEFAULT_STOP_TIMEOUT_MS + SIGKILL_GRACE_MS + DEFAULT_READINESS_TIMEOUT_MS, HANDOFF_LOCK_HOLD_MS) +
+	Math.max(STOP_WAIT_BUDGET_MS + DEFAULT_READINESS_TIMEOUT_MS, HANDOFF_LOCK_HOLD_MS) +
 	10_000;
 const lockOptions = hostEnsureLockOptions(ENSURE_LOCK_WAIT_MS);
 export async function ensureHost(options: EnsureHostOptions): Promise<EnsuredHost> {
