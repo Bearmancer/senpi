@@ -4,6 +4,7 @@ import type { FetchLike } from "@modelcontextprotocol/sdk/shared/transport.js";
 import { loadMcpSdkAuth } from "../sdk.lazy.ts";
 import { safeDelay } from "../wrap.ts";
 import { isInvalidGrant, isTransientTokenError, OAuthFlowError } from "./oauth-errors.ts";
+import { oauthFetch } from "./oauth-fetch.ts";
 import {
 	type McpOAuthProvider,
 	mergeTokensIntoStoredAuth,
@@ -100,7 +101,7 @@ export class McpRefreshManager {
 					clientInformation,
 					refreshToken,
 					resource,
-					fetchFn: this.#options.fetchFn,
+					fetchFn: oauthFetch(this.#options.fetchFn),
 				});
 				this.#provider.store.writeUnlocked(mergeTokensIntoStoredAuth(current, tokens, this.#provider.serverUrl));
 				return tokens;
@@ -138,6 +139,6 @@ export class McpRefreshManager {
 	async #discover(): Promise<OAuthServerInfo> {
 		if (this.#options.discover !== undefined) return this.#options.discover(this.#provider.serverUrl);
 		const { discoverOAuthServerInfo } = await loadMcpSdkAuth();
-		return discoverOAuthServerInfo(this.#provider.serverUrl, { fetchFn: this.#options.fetchFn });
+		return discoverOAuthServerInfo(this.#provider.serverUrl, { fetchFn: oauthFetch(this.#options.fetchFn) });
 	}
 }
