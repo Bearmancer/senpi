@@ -14,8 +14,10 @@ import { JavaScriptKernel } from "../kernels/js/context-manager.ts";
 import { PythonKernel } from "../kernels/py/kernel.ts";
 import { RubyKernel } from "../kernels/rb/kernel.ts";
 import type { SessionEnvironment } from "../kernels/session-env.ts";
+import type { KernelLifecycle } from "../kernels/shared/kernel-death.ts";
 import { marshalToolResult } from "../tool/image.ts";
 import type { EvalKernel, EvalKernelManager, EvalLanguage, ExecuteTool } from "../tool/types.ts";
+import { ReplaceableKernel } from "./kernel-replacement.ts";
 import { assertSessionCwdAvailable } from "./session-cwd.ts";
 
 export interface CodemodeSessionManager extends EvalKernelManager {
@@ -209,7 +211,14 @@ class DefaultCodemodeSessionManager implements CodemodeSessionManager {
 		generation: number,
 	): Promise<EvalKernel> {
 		await assertSessionCwdAvailable(this.#options.cwd);
-		const kernel = await this.#createKernel(language, onMessage);
+		// py/rb/jl instances can die; the session holds one replaceable kernel per language so every
+		// cell that kept a reference to it survives the death (JS heals its own worker).
+		const kernel =
+			language === "js"
+				? await this.#createKernel(language, onMessage)
+				: await ReplaceableKernel.create(language, (lifecycle) =>
+						this.#createKernel(language, onMessage, lifecycle),
+					);
 		if (generation !== this.#generation) {
 			await kernel.close();
 			throw new CodemodeSessionDisposedError();
@@ -223,7 +232,11 @@ class DefaultCodemodeSessionManager implements CodemodeSessionManager {
 		return kernel;
 	}
 
-	async #createKernel(language: EvalLanguage, onMessage: (message: KernelToHostMessage) => void): Promise<EvalKernel> {
+	async #createKernel(
+		language: EvalLanguage,
+		onMessage: (message: KernelToHostMessage) => void,
+		lifecycle: KernelLifecycle = {},
+	): Promise<EvalKernel> {
 		const bridge = this.#bridge;
 		if (!bridge) throw new Error("codemode bridge server is not running");
 		const configuredPoolWidth = this.#options.settings.parallelPoolWidth;
@@ -264,6 +277,7 @@ class DefaultCodemodeSessionManager implements CodemodeSessionManager {
 			...(this.#options.sessionEnv ? { sessionEnv: this.#options.sessionEnv } : {}),
 			connection,
 			onMessage,
+			...lifecycle,
 		};
 		const memory = resolveKernelMemoryThresholds(this.#options.settings.memory);
 		if (language === "py") return await PythonKernel.start({ ...shared, interpreterPath: detected.path, memory });

@@ -48,6 +48,7 @@ export class CellResultBuilder {
 	readonly #output: EvalOutputCollector;
 	readonly #state: CellState;
 	#memory: KernelMemoryReport | undefined;
+	#restartNotice: string | undefined;
 	readonly #liveLines = new TailLineRing({ maxBytes: DEFAULT_MAX_BYTES * 2, maxLines: LIVE_UPDATE_LINES });
 	#lastOutputUpdateAt = 0;
 	#outputUpdateTimer: ReturnType<typeof setTimeout> | undefined;
@@ -85,6 +86,7 @@ export class CellResultBuilder {
 	async finalize(result: KernelResult): Promise<AgentToolResult<EvalToolDetails>> {
 		this.#state.durationMs = result.durationMs;
 		this.#memory = result.memory;
+		this.#restartNotice = result.notice;
 		if (result.ok) {
 			if (result.valueRepr) this.#output.pushValue(`${result.valueRepr}\n`);
 			this.#state.status = "complete";
@@ -160,9 +162,10 @@ export class CellResultBuilder {
 				? `(displayed ${output.images.length} image${output.images.length === 1 ? "" : "s"}; no text output)`
 				: "(no output)");
 		const text = output.meta === undefined ? shown : `${shown}\n${formatModelTruncationNotice(output.meta)}`;
-		const notice = this.#memory?.notice;
-		const noticePart = notice === undefined ? [] : [{ type: "text" as const, text: notice }];
-		return { content: [{ type: "text", text }, ...noticePart, ...output.images], details };
+		const noticeParts = [this.#restartNotice, this.#memory?.notice].flatMap((notice) =>
+			notice === undefined ? [] : [{ type: "text" as const, text: notice }],
+		);
+		return { content: [{ type: "text", text }, ...noticeParts, ...output.images], details };
 	}
 
 	#details(output: EvalOutputResult | undefined, isError: boolean): EvalToolDetails {

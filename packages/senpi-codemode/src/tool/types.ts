@@ -161,6 +161,12 @@ export interface KernelInterruptHandle {
 	readonly note?: string;
 }
 
+/** An unstarted cell a dead kernel hands back, so its replacement runs it with the same input and callbacks. */
+export interface PendingCell {
+	readonly input: EvalKernelRunInput;
+	readonly settle: (result: EvalKernelResult) => void;
+}
+
 export interface EvalKernel {
 	run(input: EvalKernelRunInput): Promise<EvalKernelResult>;
 	cancelQueued(cellId: string, reason: string): boolean;
@@ -171,6 +177,10 @@ export interface EvalKernel {
 	close(): Promise<void>;
 	/** Names this kernel has registered; JS collides with other languages in the same session. */
 	listKernelToolNames?(): readonly string[];
+	/** False once the interpreter died on its own; the session manager then replaces the instance. */
+	isAlive?(): boolean;
+	/** Hands over, and forgets, every queued cell of a dead kernel that never started. */
+	drainPending?(): readonly PendingCell[];
 }
 
 export interface EvalKernelManager {
