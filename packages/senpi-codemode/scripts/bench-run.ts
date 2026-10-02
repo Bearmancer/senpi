@@ -1,28 +1,10 @@
 import { loadavg } from "node:os";
-import { resolve } from "node:path";
 import { type Static, Type } from "typebox";
-import { Check } from "typebox/value";
 import type { PairedBlock, RuntimeStatus, Series } from "./bench-compare.ts";
 import { implementedScenarios, plannedScenarios } from "./bench-scenarios.ts";
 import { runProcess } from "./bench-target.ts";
+import { BenchWorkerError, type RuntimeReport, startWorker } from "./bench-worker.ts";
 
-const repSchema = Type.Object({
-	cpuMs: Type.Number(),
-	wallMs: Type.Number(),
-	hostCpuMs: Type.Number(),
-	kernelCpuMs: Type.Number(),
-	p95Ms: Type.Optional(Type.Number()),
-	observations: Type.Optional(
-		Type.Record(Type.String(), Type.Union([Type.String(), Type.Number(), Type.Boolean(), Type.Null()])),
-	),
-});
-const runtimeReportSchema = Type.Object({
-	hostRuntime: Type.Union([Type.Literal("bun"), Type.Literal("node")]),
-	hostVersion: Type.String(),
-	runtimeVersion: Type.String(),
-	loadavg: Type.Array(Type.Number()),
-	scenarios: Type.Record(Type.String(), Type.Array(repSchema)),
-});
 export const runtimesSchema = Type.Object({
 	version: Type.Literal(1),
 	required: Type.Array(
@@ -34,7 +16,6 @@ export const runtimesSchema = Type.Object({
 	),
 });
 
-export type RuntimeReport = Static<typeof runtimeReportSchema>;
 export type RequiredRuntime = Static<typeof runtimesSchema>["required"][number];
 export type Side = "base" | "head";
 
@@ -52,7 +33,17 @@ export interface BlockRecord {
 	readonly index: number;
 	readonly comparisonOrder: readonly Side[];
 	readonly loadavg: readonly number[];
+	readonly loadavgEnd: readonly number[];
 	readonly power: string;
+	readonly measurements: readonly {
+		readonly runtimeId: string;
+		readonly scenario: string;
+		readonly rep: number;
+		readonly role: string;
+		readonly side: Side;
+		readonly loadStart: number;
+		readonly loadEnd: number;
+	}[];
 }
 
 export interface RunResult {
@@ -80,18 +71,6 @@ async function interpreterAvailable(runtime: RequiredRuntime, env: NodeJS.Proces
 	return result?.exitCode === 0;
 }
 
-async function runChild(plan: RunPlan, runtime: RequiredRuntime, target: string): Promise<RuntimeReport | string> {
-	const host = runtime.jsRuntime ?? "bun";
-	const script = resolve(plan.scriptRoot, "bench-runtime.ts");
-	const prefix = host === "node" ? ["node", "--expose-gc", "--import", "tsx"] : ["bun"];
-	const args = [...prefix, script, target, runtime.language, String(plan.reps)];
-	const result = await runProcess(args, { cwd: resolve(plan.scriptRoot, ".."), env: plan.env });
-	const line = result.stdout.split("\n").find((entry) => entry.startsWith("BENCH_RUNTIME:"));
-	const parsed: unknown = line === undefined ? undefined : JSON.parse(line.slice("BENCH_RUNTIME:".length));
-	if (result.exitCode === 0 && Check(runtimeReportSchema, parsed)) return parsed;
-	return `exit ${result.exitCode}: ${(result.stderr || result.stdout).trim().split("\n").slice(-6).join(" | ")}`;
-}
-
 type Collected = Record<string, { block: number; role: string; side: Side; report: RuntimeReport }[]>;
 
 export async function runBlocks(plan: RunPlan): Promise<RunResult> {
@@ -105,30 +84,79 @@ export async function runBlocks(plan: RunPlan): Promise<RunResult> {
 		return { blocks, admissionLoads, failures, reports: collected, ...assemble(plan, available, collected) };
 	blocksLoop: for (let index = 0; index < plan.blocks; index += 1) {
 		const comparisonOrder: Side[] = index % 2 === 0 ? ["base", "head"] : ["head", "base"];
-		blocks.push({ index, comparisonOrder, loadavg: loadavg(), power: await powerSource() });
+		const startLoad = loadavg();
+		const power = await powerSource();
+		const measurements: Array<BlockRecord["measurements"][number]> = [];
 		for (const runtime of plan.runtimes) {
 			if (available.get(runtime.id) !== true) continue;
 			const runs: { role: string; side: Side }[] = [
-				...comparisonOrder.map((side) => ({ role: "comparison", side })),
+				{ role: "comparison", side: "base" },
+				{ role: "comparison", side: "head" },
 				{ role: "calibration-1", side: "base" },
 				{ role: "calibration-2", side: "base" },
 			];
-			for (const run of index % 2 === 0 ? runs : [...runs.slice(2), ...runs.slice(0, 2)]) {
-				const admissionLoad = loadavg()[0] ?? 0;
-				admissionLoads.push(admissionLoad);
-				if (admissionLoad > 80) {
-					failures.push("host load exceeded 80 before the next measurement");
-					break blocksLoop;
+			const workers = runs.map((run) => ({ ...run, worker: startWorker(plan, runtime, plan.targets[run.side]) }));
+			const reports = new Map<(typeof workers)[number], RuntimeReport>();
+			try {
+				for (const scenario of implementedScenarios) {
+					plan.log(`block ${index + 1}/${plan.blocks} ${runtime.id} ${scenario.name}`);
+					for (let rep = -1; rep < plan.reps; rep += 1) {
+						const order = (index + rep) % 2 === 0 ? workers : [...workers].reverse();
+						for (const run of order) {
+							const loadStart = loadavg()[0] ?? 0;
+							admissionLoads.push(loadStart);
+							if (loadStart > 80)
+								throw new BenchWorkerError("host load exceeded 80 before the next measurement");
+							const outcome = await run.worker.next();
+							const loadEnd = loadavg()[0] ?? 0;
+							admissionLoads.push(loadEnd);
+							measurements.push({
+								runtimeId: runtime.id,
+								scenario: scenario.name,
+								rep,
+								role: run.role,
+								side: run.side,
+								loadStart,
+								loadEnd,
+							});
+							if (outcome.scenarios[scenario.name]?.length !== (rep < 0 ? 0 : 1))
+								throw new BenchWorkerError(`unexpected repetition for ${scenario.name}`);
+							const previous = reports.get(run);
+							if (
+								previous &&
+								(previous.runtimeVersion !== outcome.runtimeVersion ||
+									previous.hostRuntime !== outcome.hostRuntime ||
+									previous.hostVersion !== outcome.hostVersion)
+							)
+								throw new BenchWorkerError("runtime version changed during measurement");
+							const scenarios = previous?.scenarios ?? {};
+							for (const [name, samples] of Object.entries(outcome.scenarios))
+								(scenarios[name] ??= []).push(...samples);
+							reports.set(run, { ...outcome, scenarios });
+						}
+					}
 				}
-				plan.log(`block ${index + 1}/${plan.blocks} ${runtime.id} ${run.role} ${run.side}`);
-				const outcome = await runChild(plan, runtime, plan.targets[run.side]);
-				if (typeof outcome === "string") {
-					failures.push(`${runtime.id} ${run.side} block ${index + 1} ${run.role} failed: ${outcome}`);
-					break blocksLoop;
-				}
-				(collected[runtime.id] ??= []).push({ block: index, ...run, report: outcome });
+				for (const [run, report] of reports)
+					(collected[runtime.id] ??= []).push({ block: index, role: run.role, side: run.side, report });
+			} catch (error) {
+				if (!(error instanceof BenchWorkerError)) throw error;
+				failures.push(`${runtime.id} block ${index + 1}: ${error.message}`);
+			} finally {
+				await Promise.all(
+					workers.map(({ worker }) =>
+						worker.close().catch((error: unknown) => {
+							if (!(error instanceof Error)) throw error;
+							failures.push(`${runtime.id} cleanup: ${error.message}`);
+						}),
+					),
+				);
+			}
+			if (failures.length > 0) {
+				blocks.push({ index, comparisonOrder, loadavg: startLoad, loadavgEnd: loadavg(), power, measurements });
+				break blocksLoop;
 			}
 		}
+		blocks.push({ index, comparisonOrder, loadavg: startLoad, loadavgEnd: loadavg(), power, measurements });
 	}
 	return { blocks, admissionLoads, failures, reports: collected, ...assemble(plan, available, collected) };
 }
@@ -170,6 +198,7 @@ function assemble(plan: RunPlan, available: ReadonlyMap<string, boolean>, collec
 			series.push({
 				scenario,
 				runtimeId: runtime.id,
+				optional: plannedScenarios.includes(scenario),
 				present: { base: has("base"), head: has("head") },
 				calibration: paired(["calibration-1", "base", "calibration-2", "base"]),
 				comparison: paired(["comparison", "base", "comparison", "head"]),

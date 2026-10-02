@@ -45,8 +45,8 @@ export async function instrumentInterpreter(
 export function watchExitUsage(root: string) {
 	const seen = new Set<number>();
 	const pending = new Map<string, () => void>();
-	const watcher = watch(root, { persistent: false }, (_event, name) => {
-		if (name) pending.get(name.toString())?.();
+	const watcher = watch(root, { persistent: false }, () => {
+		for (const notify of pending.values()) notify();
 	});
 	return {
 		async totals(live?: KernelCpu): Promise<readonly KernelCpu[]> {
@@ -59,21 +59,25 @@ export function watchExitUsage(root: string) {
 					.filter((pid) => pid !== live?.pid)
 					.map(async (pid) => {
 						const name = `usage-${pid}.json`;
-						const ready = Promise.withResolvers<void>();
-						pending.set(name, ready.resolve);
+						const deadline = Date.now() + 60_000;
 						let timer: NodeJS.Timeout | undefined;
 						try {
 							let text: string;
-							try {
-								text = await readFile(join(root, name), "utf8");
-							} catch (error) {
-								if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
-								timer = setTimeout(
-									() => ready.reject(new BenchAccountingError(`missing exit CPU for process ${pid}`)),
-									60_000,
-								);
-								await ready.promise;
-								text = await readFile(join(root, name), "utf8");
+							for (;;) {
+								const ready = Promise.withResolvers<void>();
+								pending.set(name, ready.resolve);
+								try {
+									text = await readFile(join(root, name), "utf8");
+									break;
+								} catch (error) {
+									if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
+									timer = setTimeout(
+										() => ready.reject(new BenchAccountingError(`missing exit CPU for process ${pid}`)),
+										Math.max(0, deadline - Date.now()),
+									);
+									await ready.promise;
+									clearTimeout(timer);
+								}
 							}
 							const value: unknown = JSON.parse(text);
 							if (!Check(usageSchema, value)) throw new BenchAccountingError(`invalid exit usage: ${name}`);

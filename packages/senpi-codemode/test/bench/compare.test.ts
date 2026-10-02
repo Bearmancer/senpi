@@ -105,6 +105,31 @@ describe("paired benchmark verdicts", () => {
 		expect(result.exitCode).toBe(3);
 	});
 
+	it("invalidates a required scenario absent on both sides", () => {
+		// Given a healthy matrix whose cold-start workload was omitted entirely.
+		const missing = { ...series, scenario: "cold-start", present: { base: false, head: false } };
+		// When the comparator receives the otherwise complete run.
+		const result = decide({ ...input, series: [series, missing] });
+		// Then required evidence cannot be silently skipped.
+		expect(result).toMatchObject({ exitCode: 3, verdict: "INCONCLUSIVE", skipped: [] });
+		expect(result.lines.some((line) => line.includes("cold-start") && line.includes("js-bun"))).toBe(true);
+	});
+
+	it("skips only an explicitly optional scenario absent on both sides", () => {
+		// Given an unshipped capability alongside complete required measurements.
+		const missing = {
+			...series,
+			scenario: "managed-install",
+			optional: true,
+			present: { base: false, head: false },
+		};
+		// When the comparator evaluates the matrix.
+		const result = decide({ ...input, series: [series, missing] });
+		// Then the future capability does not invalidate today's measurement.
+		expect(result.exitCode).toBe(0);
+		expect(result.skipped).toHaveLength(1);
+	});
+
 	it("refuses before measurement when injected host load is 81", () => {
 		// Given a host above the admission ceiling.
 		// When admission runs.

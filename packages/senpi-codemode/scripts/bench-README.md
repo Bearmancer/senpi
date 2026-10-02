@@ -8,8 +8,14 @@ bun run --cwd packages/senpi-codemode bench -- --base /path/to/base --head /path
 ```
 
 Both targets run on the same machine, with five unmeasured warm-up cells.
-Each paired block alternates A-B / B-A and measures three repetitions per side.
-Cold-start trials use fresh kernels. A separate A/A calibration runs in the same
+Each runtime has four isolated retained host processes: base, head, and two
+independent base instances for calibration. Only one receives a measurement
+request at a time. Each scenario first rehearses once without retaining a
+sample, then measures three repetitions per side. Repetitions are paired
+adjacently, reversing both comparison and calibration order across repetitions
+and blocks; an entire scenario suite never separates a pair.
+Cold-start trials use fresh kernels and have no discarded scenario rehearsal.
+A separate A/A calibration runs in the same
 invocation. For CPU, wall time, and workload p95, the comparator uses each
 block's minimum per side, then the median of the paired head/base ratios.
 Every ratio must be at most `1 + band`; the band is the 95th percentile absolute
@@ -18,7 +24,8 @@ deviation of the A/A ratios. A band above 0.05 is inconclusive, never waived.
 Exit codes: 0 PASS, 1 regression, 2 refused (load above 80 or stale build),
 3 INCONCLUSIVE (missing runtime/scenario/sample, version mismatch, unavailable
 accounting, failed workload, or excessive noise). The report retains individual
-samples, observations, block ordering, load, power source, and runtime versions.
+samples, observations, actual measurement ordering, block-start/block-end load,
+per-repetition start/end load, power source, and runtime versions.
 RSS and wall time remain load-dependent measurements.
 
 ## CPU accounting
@@ -73,8 +80,9 @@ observations are `null`, not zero.
 `--runtimes js-bun,js-node,py` explicitly selects a subset for diagnosis; such a
 report does not establish the full five-runtime gate. Unknown or empty selections
 are rejected. The default manifest requires Bun, Node, Python, Ruby, and Julia.
-Features introduced by later plan nodes are recorded as not present on head only
-when absent on both targets.
+Only explicitly optional features introduced by later plan nodes are recorded
+as not present on head when absent on both targets. A missing required workload
+is inconclusive even when both sides omit it.
 
 `--inject-slow head:warm-cell-1000:1.3` scales only that workload's head comparison
 samples after measurement. It is a comparator fault injection, not a CPU burner.

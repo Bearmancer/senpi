@@ -24,6 +24,7 @@ export interface PairedBlock {
 export interface Series {
 	readonly scenario: string;
 	readonly runtimeId: string;
+	readonly optional?: boolean;
 	readonly present: { readonly base: boolean; readonly head: boolean };
 	readonly calibration: readonly PairedBlock[];
 	readonly comparison: readonly PairedBlock[];
@@ -137,6 +138,8 @@ function invalidations(input: BenchInput): string[] {
 			lines.push(`runtime version differs: ${runtime.id} base ${base.version} vs head ${head.version}`);
 	}
 	for (const series of input.series) {
+		if (!series.optional && !series.present.base && !series.present.head)
+			lines.push(`required scenario missing on both sides: ${series.scenario} ${series.runtimeId}`);
 		if (series.present.base !== series.present.head) {
 			const missing = series.present.base ? "head" : "base";
 			lines.push(`scenario missing on ${missing}: ${series.scenario} ${series.runtimeId}`);
@@ -169,7 +172,7 @@ export function decide(input: BenchInput): Decision {
 	if (refusal) return refusal;
 	const measured = input.series.filter((series) => series.present.base && series.present.head);
 	const skipped = input.series
-		.filter((series) => !series.present.base && !series.present.head)
+		.filter((series) => series.optional && !series.present.base && !series.present.head)
 		.map((series) => `${series.scenario} ${series.runtimeId}: not present on head`);
 	const calibration = measured.flatMap((series) =>
 		metricsOf(series).flatMap((metric) => pairedRatios(series.calibration, metric)),
