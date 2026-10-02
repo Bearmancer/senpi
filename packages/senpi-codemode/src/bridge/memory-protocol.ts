@@ -34,6 +34,20 @@ export const kernelMemoryReportSchema = Type.Object({
 	notice: Type.Optional(Type.String()),
 });
 
+/** On-demand heap reading between cells (JS kernels): no cell runs and no collection is forced. */
+export const kernelMemoryQueryHostToKernelSchemas = [
+	Type.Object({ type: Type.Literal("memory-query"), requestId: Type.String({ minLength: 1 }) }),
+] as const;
+
+export const kernelMemoryQueryKernelToHostSchemas = [
+	Type.Object({
+		type: Type.Literal("memory-query-result"),
+		requestId: Type.String({ minLength: 1 }),
+		liveBytes: Type.Integer({ minimum: 0 }),
+		measure: Type.Literal("heap"),
+	}),
+] as const;
+
 export type KernelMemoryThresholds = Static<typeof kernelMemoryThresholdsSchema>;
 export type KernelMemoryReport = Static<typeof kernelMemoryReportSchema>;
 export type KernelMemoryGlobal = Static<typeof kernelMemoryGlobalSchema>;

@@ -114,6 +114,7 @@ export class SubprocessRunQueue {
 				onMessage?.(message);
 				return false;
 			case "webview-connect":
+			case "memory-query-result":
 				return false;
 			default: {
 				const exhaustive: never = message;
