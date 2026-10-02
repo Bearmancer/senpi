@@ -4590,3 +4590,21 @@ The host capability probe runs before any session extension loads. This is only 
 ### Expected merge conflict zones
 
 The additive host capability list and its RPC test expectation.
+
+## 2026-10-02 - RpcClient forwards --provider only with --model (upstream v1.0.0 sync)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts`: `start()` passes `--provider` to the spawned host only when `--model` is also set. A client created with a provider and no model now spawns the host on its default model, which is what the host did before.
+
+### Why
+
+Upstream v1.0.0 (0c453048b) made the CLI reject a lone `--provider`, because the flag was silently ignored and another provider's default model ran. The fork adopts that CLI error, but existing SDK callers that construct `RpcClient({ provider })` without a model must keep working exactly as before the merge.
+
+### Why an extension could not handle it
+
+`RpcClient` builds the child process argv before any extension or session exists; the argument list is owned by the client class.
+
+### Expected merge conflict zones
+
+The provider/model argument block in `RpcClient.start()` if upstream changes how the client spawns the host.
