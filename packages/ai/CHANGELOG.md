@@ -6,9 +6,23 @@
 
 ### Added
 
+- Added the inherited lightweight `@earendil-works/pi-ai/models` entry point for model collections and provider construction without loading TypeBox, built-in catalogs, or provider SDKs.
+
+- Added inherited Anthropic workload identity federation from the Anthropic SDK environment variables `ANTHROPIC_FEDERATION_RULE_ID`, `ANTHROPIC_ORGANIZATION_ID`, and `ANTHROPIC_IDENTITY_TOKEN_FILE` (plus optional `ANTHROPIC_SERVICE_ACCOUNT_ID` and `ANTHROPIC_WORKSPACE_ID`). API keys and `ANTHROPIC_AUTH_TOKEN` take precedence ([#10177](https://github.com/earendil-works/pi/issues/10177), [#10242](https://github.com/earendil-works/pi/pull/10242) by [@philfreo](https://github.com/philfreo)).
+
+- Added an inherited copy code login method to Anthropic OAuth, next to the fork's browser login with manual code fallback. Copy code login shows the authorization code on Anthropic's page for pasting and works when the browser runs on another machine ([#10194](https://github.com/earendil-works/pi/pull/10194) by [@lucasmeijer](https://github.com/lucasmeijer)).
+
 ### Changed
 
+- OAuth browser pages show the logo in color (inherited).
+
 ### Fixed
+
+- Fixed inherited context overflow detection for Z.AI CN endpoint `Prompt exceeds max length` errors ([#10208](https://github.com/earendil-works/pi/issues/10208)).
+
+- Anthropic requests no longer fail when a `strict: "prefer"` tool schema uses keywords Anthropic strict tool use rejects, such as `minimum`/`maximum`; such tools are sent non-strict through the shared constrained-sampling policy (inherited, [#9953](https://github.com/earendil-works/pi/issues/9953)).
+
+- OpenAI Responses requests no longer fail with `Expected an ID that begins with 'ctc'` when replaying grammar tool calls from another provider or a gateway (inherited).
 
 ### Removed
 

@@ -226,7 +226,8 @@ export class RpcClient {
 		const cliPath = this.options.cliPath ?? "dist/cli.js";
 		const args = ["--mode", "rpc"];
 
-		if (this.options.provider) {
+		// A lone --provider is a CLI error; without a model the host keeps its default model, as before.
+		if (this.options.provider && this.options.model) {
 			args.push("--provider", this.options.provider);
 		}
 		if (this.options.model) {

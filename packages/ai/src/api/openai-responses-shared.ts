@@ -498,14 +498,14 @@ export function convertResponsesMessages<TApi extends Api>(
 					// named input property is richer than the persisted freeform fallback.
 
 					// For different-model messages, set id to undefined to avoid pairing validation.
-					// OpenAI tracks which fc_xxx IDs were paired with rs_xxx reasoning items.
+					// OpenAI tracks which item IDs were paired with rs_xxx reasoning items.
 					// By omitting the id, we avoid triggering that validation (like cross-provider does).
-					// Function-call item ids must begin with fc_ while freeform calls can replay
-					// without the local <call_id>|custom sentinel.
-					if (
-						(isDifferentModel && itemId?.startsWith("fc_")) ||
-						(!isFreeform && customInputProperty === undefined && !itemId?.startsWith("fc_"))
-					) {
+					// Also drop ids that do not match the replayed item type: function_call ids must be fc_*
+					// and custom_tool_call ids must be ctc_*. Foreign tool call ids are normalized to fc_*, and
+					// a call can switch between the two types when grammar tool support differs. Freeform
+					// calls replay without an item id and without the local <call_id>|custom sentinel.
+					const itemIdPrefix = customInputProperty === undefined ? "fc_" : "ctc_";
+					if (isDifferentModel || !itemId?.startsWith(itemIdPrefix)) {
 						itemId = undefined;
 					}
 

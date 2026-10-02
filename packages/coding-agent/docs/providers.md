@@ -7,7 +7,7 @@ Senpi supports subscription-based providers via OAuth and API key providers via 
 - [Subscriptions](#subscriptions)
 - [API Keys](#api-keys)
 - [Auth File](#auth-file)
-- [Cloud Providers](#cloud-providers)
+- [Provider Specific Config](#provider-specific-config)
 - [Ollama Cloud](#ollama-cloud)
 - [llama.cpp](#llamacpp)
 - [Custom Providers](#custom-providers)
@@ -314,6 +314,8 @@ senpi
 | Xiaomi MiMo Token Plan (Singapore) | `XIAOMI_TOKEN_PLAN_SGP_API_KEY` | `xiaomi-token-plan-sgp` |
 | Alibaba Token Plan (ap-southeast-1) | `ALIBABA_TOKEN_PLAN_API_KEY` | `alibaba-token-plan` |
 
+With no key or token set, Anthropic uses workload identity federation when `ANTHROPIC_FEDERATION_RULE_ID`, `ANTHROPIC_ORGANIZATION_ID` and `ANTHROPIC_IDENTITY_TOKEN_FILE` are set: the Anthropic SDK exchanges the identity token for a short-lived access token and refreshes it itself (re-reading the identity token file, so keep that file fresh for long sessions). `ANTHROPIC_SERVICE_ACCOUNT_ID` and `ANTHROPIC_WORKSPACE_ID` are passed through when set.
+
 #### OpenGateway
 
 OpenGateway is an OpenAI-compatible multi-provider gateway serving OpenAI, Anthropic, Google, xAI, Moonshot, DeepSeek, ZAI, MiniMax, and Qwen models through one API key. Issue a key at <https://opengateway.ai/api-keys>, then `/login` and select **OpenGateway**, or export `OPENGATEWAY_API_KEY`. The data plane is `https://apis.opengateway.ai`; model ids use the gateway's `owner/model` format (for example `moonshotai/kimi-k3`, `anthropic/claude-fable-5`).
@@ -447,7 +449,7 @@ The `key` field supports command execution, environment interpolation, and liter
 
 OAuth credentials are also stored here after `/login` and managed automatically.
 
-## Cloud Providers
+## Provider Specific Config
 
 ### Azure OpenAI
 
