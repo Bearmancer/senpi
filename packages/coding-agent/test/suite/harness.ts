@@ -144,6 +144,8 @@ export interface HarnessOptions {
 	siblingOf?: Harness;
 	/** With `siblingOf`: build a fresh model runtime instead of sharing it, as `/new` does in the CLI. */
 	siblingFreshRuntime?: boolean;
+	/** Session to continue, for example to test a resume. Default: a new in-memory session. */
+	sessionManager?: SessionManager;
 }
 
 export interface Harness {
@@ -190,9 +192,9 @@ export async function createHarness(options: HarnessOptions = {}): Promise<Harne
 	const withConfiguredAuth = options.withConfiguredAuth ?? true;
 	const extensionRunnerRef: { current?: ExtensionRunner } = {};
 
-	const sessionManager = options.persistSession
-		? SessionManager.create(tempDir, join(tempDir, "sessions"))
-		: SessionManager.inMemory();
+	const sessionManager =
+		options.sessionManager ??
+		(options.persistSession ? SessionManager.create(tempDir, join(tempDir, "sessions")) : SessionManager.inMemory());
 	const agentDir = sibling ? join(sibling.tempDir, "agent") : join(tempDir, "agent");
 	if (options.fileSettings) {
 		mkdirSync(agentDir, { recursive: true });

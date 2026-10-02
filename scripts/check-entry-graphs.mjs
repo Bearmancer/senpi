@@ -32,6 +32,11 @@ const WORKSPACE = {
  */
 const BUDGETS = {
 	"packages/ai": {
+		"./models": {
+			// Fork: models.ts also carries credential-pool slots, models-store and catalog max lookup (21 files at the v1.0.0 sync).
+			maxFiles: 21,
+			forbid: ["providers/", "models.generated.ts", "index.ts", "utils/validation.ts", "utils/typebox-helpers.ts"],
+		},
 		"./utils/*": { maxFiles: 3, forbid: ["providers/", "api/", "index.ts"] },
 	},
 	"packages/agent": {
