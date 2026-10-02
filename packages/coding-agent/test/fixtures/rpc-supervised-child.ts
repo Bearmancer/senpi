@@ -34,7 +34,9 @@ const server = createServer((socket) => {
 				instanceId: process.env[HOST_INSTANCE_ID_ENV],
 				generation: Number(process.env[HOST_GENERATION_ENV] ?? "0"),
 			};
-			socket.write(`${JSON.stringify({ id, type: "response", command: "get_protocol_info", success: true, data })}\n`);
+			socket.write(
+				`${JSON.stringify({ id, type: "response", command: "get_protocol_info", success: true, data })}\n`,
+			);
 		}
 	});
 });

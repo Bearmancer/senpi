@@ -89,6 +89,16 @@ export interface HostGenerationPaths {
 	readonly pidFile: string;
 	readonly settingsFile: string;
 	readonly scratchDir: string;
+	/** The host CHILD's `{pid, processStartTime}`, so its liveness is readable apart from the supervisor's. */
+	readonly childPidFile: string;
+	/** Written by whoever is about to signal this generation, BEFORE the signal (host-stop-intent.ts). */
+	readonly stopIntentFile: string;
+	/** The newest stall the host's loop-lag watchdog measured (host-stalled-evidence.ts). */
+	readonly stalledFile: string;
+	/** The host loop's heartbeat: refreshed on every healthy watchdog tick. */
+	readonly aliveFile: string;
+	/** The supervisor's own report that it is waiting out a stalled child before escalating. */
+	readonly stopProgressFile: string;
 }
 
 /**
@@ -209,6 +219,11 @@ export function generationPaths(paths: HostDaemonDirectory, instanceId: string):
 		pidFile: join(dir, "host.pid"),
 		settingsFile: join(dir, "settings.json"),
 		scratchDir: join(dir, "scratch"),
+		childPidFile: join(dir, "host-child.pid"),
+		stopIntentFile: join(dir, "stop-intent.json"),
+		stalledFile: join(dir, "host-stalled.json"),
+		aliveFile: join(dir, "host-alive.json"),
+		stopProgressFile: join(dir, "stop-progress.json"),
 	};
 }
 

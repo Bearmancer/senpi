@@ -68,7 +68,10 @@ describe.skipIf(process.platform === "win32")("an unreachable host with fresh st
 		const pointerFile = supervisedDaemonPaths(qa).pointerFile;
 		await ensureSupervised(qa, { env: NO_STALL_ENV }).then((ensured) => ensured.release());
 		const pointer: unknown = JSON.parse(await readFile(pointerFile, "utf8"));
-		await writeFile(pointerFile, `${JSON.stringify({ ...Object(pointer), writer: { pid: 1, startTime: "foreign" } })}\n`);
+		await writeFile(
+			pointerFile,
+			`${JSON.stringify({ ...Object(pointer), writer: { pid: 1, startTime: "foreign" } })}\n`,
+		);
 		const { pid } = await freezeUnreachableRegistered(qa);
 		const before = await readFile(pointerFile, "utf8");
 
