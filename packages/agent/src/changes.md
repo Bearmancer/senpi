@@ -1,3 +1,25 @@
+## 2026-10-02 - Interrupted shell commands keep their full-output path (upstream v1.0.0 port P-2)
+
+### What changed
+
+- `packages/agent/src/harness/types.ts`: `ExecutionError` gains an optional `spillPath`, the file holding the complete output preserved before a timeout or abort.
+- `packages/agent/src/harness/env/nodejs.ts`: `NodeExecutionEnv.exec` sets `spillPath` on the `timeout` and `aborted` errors when the output had spilled; a command interrupted before any output still returns an error without it and creates no file.
+- `packages/agent/src/harness/tools/bash.ts`: when the execution error carries `spillPath` and the streamed view does not, the tool names that path in its truncation notice, or as `[Full output: <path>]` when no output was streamed.
+
+### Why
+
+Upstream v1.0.0 made the same fix in its durable runtime (`packages/durable/src/env/node.ts`, the `interrupted` branch): a timed-out or aborted command dropped the path of the spill file, so the complete output was written to disk but unreachable from the result. The fork keeps its own harness copy (decision D-1), so the fix is ported here. Upstream's companion change of the spill stream `highWaterMark` from 8 MiB to 1 MiB is not ported: it accompanied the removal of `OutputCapture`, which the fork keeps.
+
+### Why an extension could not handle it
+
+The spill path is known only inside `NodeExecutionEnv.exec` and the error type is the harness's public execution contract; an extension sees the result after the path has been dropped.
+
+### Expected merge conflict zones
+
+- `packages/agent/src/harness/env/nodejs.ts`: the timeout/aborted settlement in the `waitForChildProcess` continuation of `exec`.
+- `packages/agent/src/harness/types.ts`: the `ExecutionError` class fields.
+- `packages/agent/src/harness/tools/bash.ts`: the `capture` selection and truncation notice after `env.exec`.
+
 ## 2026-10-01 - Back-to-back background notices share one turn (senpi#2508)
 
 ### What changed
