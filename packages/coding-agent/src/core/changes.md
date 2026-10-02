@@ -8676,3 +8676,27 @@ unrelated fallback bus, silently disconnecting `pi.rpc.emit` on trust-requiring 
 
 - `packages/coding-agent/src/core/session-write-reservation.ts`: new `hasOtherLiveSessionWriter(path, self)` answers whether another live persisted writer still owns a session file, pruning collected refs like `liveSessionWritePaths()` does.
 - `packages/coding-agent/src/core/session-manager.ts`: both blob-directory releases (the stale clear in `_setSessionFile` and `dispose()`) go through `_releaseBlobsDirUnlessShared()`, which keeps the directory while another live manager owns the same session file. The app-server loads a thread that is already open (`modes/app-server/threads/registry.ts` disposes the duplicate `AgentSession`), and without this the duplicate's teardown took the live manager's cache, costing it a full JSONL recovery per evicted string.
+
+## Adopted upstream v1.0.0 core session, runtime and settings (2026-10-02)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`
+- `packages/coding-agent/src/core/model-runtime.ts`
+- `packages/coding-agent/src/core/remote-catalog-provider.ts`
+- `packages/coding-agent/src/core/sdk.ts`
+- `packages/coding-agent/src/core/settings-manager.ts`
+
+Upstream session/runtime/settings changes are kept with fork behaviour preserved: `quietStartup: "header"` (D-6), `/reload` enables tools newly added to defaultTools, and the absorbed main's runtime catalog work.
+
+### Why
+
+Each is an upstream improvement that does not break a fork behaviour; fork alternatives stay in place and are tested.
+
+### Why an extension could not handle it
+
+Session runtime, model runtime, remote catalog and settings own these paths below the extension API.
+
+### Expected merge conflict zones
+
+Upstream edits to core session/settings/runtime paths at the next sync.

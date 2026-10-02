@@ -143,6 +143,8 @@ async function drive(runAttempt: (attempt: number) => AsyncIterable<AssistantMes
 	const seen: string[] = [];
 	for await (const event of stream) seen.push(event.type);
 	const result = await stream.result();
+	// The terminal frame precedes onSuccess's state write; await producer cleanup before deleting its directory.
+	await stream[Symbol.asyncIterator]().return?.();
 	return { attempts: () => attempts, seen, result };
 }
 

@@ -210,3 +210,23 @@ The divergence lives in core wiring, package identity, or build plumbing that ex
 ### Expected merge conflict zones
 
 - LOW: `socket.on("data", ...)` handlers in both source files; `packages/server/package.json` name/version/dependency lines.
+
+## 2026-10-02 - Server drops its agent-core dependency (D-16) (upstream v1.0.0 sync)
+
+### What changed
+
+- `packages/server/package.json`
+
+The server package's dependency set follows upstream: `pi-agent-core` is removed and `BACKGROUND_CONTEXT` imports from `@earendil-works/chord/context`.
+
+### Why
+
+Upstream simplified the server's dependencies; the fork modifies nothing here.
+
+### Why an extension could not handle it
+
+Package dependency declarations are not an extension surface.
+
+### Expected merge conflict zones
+
+Upstream server manifest edits at the next sync.

@@ -429,7 +429,10 @@ socket hashing to this directory (torn by a crash of an older build, or foreign)
 leave the endpoint listed as `socket: null` and kept by `gc` as `unknown_identity` forever. It is the one file a generation's release
 leaves behind: a supervisor that exits (idle, drained, or after its host child crashed) removes the pointer,
 `settings.json` and its generation directory, and without `endpoint.json` such an endpoint could not even be
-enumerated. `stderr.log` and `crashes.jsonl` stay too. The only thing that ever removes an endpoint directory
+enumerated. A generation that exits because another entry TOOK its public socket removes only its own
+generation directory: the pointer and `settings.json` then belong to whoever replaced it (a handoff rewrites
+the settings before its successor boots and moves the pointer once the rename landed), and removing them could
+delete the successor's freshly written registration. `stderr.log` and `crashes.jsonl` stay too. The only thing that ever removes an endpoint directory
 (`endpoint.json` included) is the explicit `senpi host gc` below, and only on proof that nothing runs behind it.
 
 The directory is PRUNED of what is no longer running on every registration write and on every single-socket

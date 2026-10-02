@@ -151,14 +151,24 @@ export async function clearHostRegistration(paths: HostDaemonPaths): Promise<voi
  * Drops ONE generation's registration while the files still name it. After a handoff the pointer
  * belongs to the successor, so a draining predecessor removes only its own directory - taking the
  * pointer with it would leave every client reading no daemon at all while one is serving.
+ *
+ * A generation whose public socket another one TOOK (`superseded`) removes only its own directory,
+ * whatever the pointer says. The pointer and `settings.json` are then the replacer's to move: a handoff
+ * rewrites the settings before its successor boots and repoints the pointer only after it saw the rename
+ * land, and a predecessor that noticed the rename first would read "still mine" and remove both just as,
+ * or just after, the handoff moved them - leaving the successor serving with no registration (#2536).
  */
 export async function releaseGeneration(
 	paths: HostDaemonPaths,
-	owner: { readonly instanceId: string; readonly pid: number },
+	owner: { readonly instanceId: string; readonly pid: number; readonly superseded?: boolean },
 ): Promise<void> {
 	const generation = generationPaths(paths, owner.instanceId);
 	const record = parseDaemonPidFile((await readFileOrUndefined(generation.pidFile)) ?? "");
 	if (record !== undefined && record.pid !== owner.pid) return;
+	if (owner.superseded === true) {
+		await rm(generation.dir, { recursive: true, force: true });
+		return;
+	}
 	const pointer = parseJson(await readFileOrUndefined(paths.pointerFile));
 	const ownsPointer = pointer?.instance_id === owner.instanceId;
 	if (ownsPointer) await rm(paths.settingsFile, { force: true });

@@ -878,3 +878,42 @@ Every remaining audited production path with no nearer tracker than the root:
 - HIGH: root `package.json` `scripts`, `devDependencies`, `overrides` and `engines` whenever upstream bumps tooling or adds a `check:*` step.
 - MEDIUM: `tsconfig.json` `paths` when upstream adds a workspace or subpath export; `vitest.base.ts` alias list for the same reason.
 - LOW: `packages/chord/package.json` and `packages/telemetry/package.json` version lines on every upstream release; `packages/chord/src/types.ts` re-wraps whenever upstream edits those conditional types.
+
+## 2026-10-02 - Upstream durable package not taken (upstream v1.0.0 sync)
+
+### What changed
+
+- `packages/durable/src/harness/agent.ts`
+- `packages/durable/src/harness/compaction.ts`
+- `packages/durable/src/harness/define.ts`
+- `packages/durable/src/harness/events.ts`
+- `packages/durable/src/harness/inbox.ts`
+- `packages/durable/src/harness/json.ts`
+- `packages/durable/src/harness/output.ts`
+- `packages/durable/src/harness/task-graph.ts`
+- `packages/durable/src/harness/tool.ts`
+- `packages/durable/src/harness/usage.ts`
+- `packages/durable/src/harness/view.ts`
+- `packages/durable/src/tools/bash.ts`
+- `packages/durable/src/tools/edit.ts`
+- `packages/durable/src/tools/env.ts`
+- `packages/durable/src/tools/file-mutation-queue.ts`
+- `packages/durable/src/tools/image.ts`
+- `packages/durable/src/tools/index.ts`
+- `packages/durable/src/tools/read.ts`
+- `packages/durable/src/tools/write.ts`
+- `packages/durable/src/truncate.ts`
+
+None of these upstream paths exist in the fork. Upstream moved the agent harness out of `packages/agent` into a new `packages/durable` package (7fd478a2e); git records these files as rename destinations of the harness the fork keeps. The fork keeps its harness in `packages/agent/src/harness/**` byte-identical to the previous fork state, and `packages/durable` stays on `.github/agent/upstream-exclusions.txt`.
+
+### Why
+
+The fork's session runtime, compaction, task and eval surfaces are built on its own harness; adopting the durable package would rewrite those surfaces and remove fork behaviour. Real fixes upstream makes in these files are ported into the kept harness instead (see the fork-owned trees rule in `.github/agent/merge-driver.md`).
+
+### Why an extension could not handle it
+
+This is a package-level choice about which source tree ships; extensions cannot replace the agent harness.
+
+### Expected merge conflict zones
+
+Every upstream change under `packages/durable/src/**` appears as a deleted-by-us path; resolve by keeping it absent and porting real fixes into `packages/agent/src/harness/**`.

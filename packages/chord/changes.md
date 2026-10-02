@@ -36,3 +36,23 @@ Every path listed above conflicts again where upstream edits the hunks named in 
 ### Expected merge conflict zones
 
 - The development dependency pins in `packages/chord/package.json`.
+
+## 2026-10-02 - Adopted upstream chord type surface (upstream v1.0.0 sync)
+
+### What changed
+
+- `packages/chord/src/types.ts`
+
+The upstream chord type change is kept (D-16).
+
+### Why
+
+chord is upstream-owned; the fork takes its source unless the fork modifies it.
+
+### Why an extension could not handle it
+
+Not an extension surface.
+
+### Expected merge conflict zones
+
+Upstream chord type edits at the next sync.

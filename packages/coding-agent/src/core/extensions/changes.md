@@ -3008,3 +3008,21 @@ Keep ordinary `pi.events` extension-local, and keep RPC delivery opt-in at the c
 ### Expected merge conflict zones
 
 - MEDIUM: `registerTool` in `createExtension`; the alias table and importer factory.
+
+## Adopted upstream v1.0.0 extension loader (2026-10-02)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/loader.ts` — upstream extension loading changes are kept while the fork's eval-only policy stays.
+
+### Why
+
+The fork's eval-only extension policy is preserved and tested; upstream's loader improvements are adopted underneath.
+
+### Why an extension could not handle it
+
+Extension loading is the core loader itself, not expressible as an extension.
+
+### Expected merge conflict zones
+
+Upstream edits to the extension loader at the next sync.

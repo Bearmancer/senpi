@@ -1,4 +1,4 @@
-import Anthropic from "@anthropic-ai/sdk";
+import Anthropic, { type ClientOptions } from "@anthropic-ai/sdk";
 import type {
 	BetaInputTransformation,
 	BetaStopReason,
@@ -11,6 +11,13 @@ import type {
 	BetaRawMessageStreamEvent as RawMessageStreamEvent,
 	BetaRefusalStopDetails as RefusalStopDetails,
 } from "@anthropic-ai/sdk/resources/beta/messages/messages.js";
+import {
+	ANTHROPIC_FEDERATION_RULE_ID_ENV,
+	ANTHROPIC_IDENTITY_TOKEN_FILE_ENV,
+	ANTHROPIC_ORGANIZATION_ID_ENV,
+	ANTHROPIC_SERVICE_ACCOUNT_ID_ENV,
+	ANTHROPIC_WORKSPACE_ID_ENV,
+} from "../env-api-keys.ts";
 import { calculateCost } from "../models.ts";
 import { readProviderDiagnostic } from "../provider-diagnostic.ts";
 import { registerSessionResourceCleanup } from "../session-resources.ts";
@@ -89,9 +96,13 @@ import {
 	type TranscriptContext,
 } from "../utils/transcript.ts";
 import { sanitizeAnthropicToolPairs } from "./anthropic-tool-pairs.ts";
-import { demoteUnavailableToolReferences } from "./anthropic-tool-references.ts";
+import { demoteToolReferenceReplay, demoteUnavailableToolReferences } from "./anthropic-tool-references.ts";
 import { resolveCloudflareBaseUrl } from "./cloudflare.ts";
-import { getJsonSchemaToolParameters, resolveJsonSchemaStrictSampling } from "./constrained-sampling.ts";
+import {
+	getJsonSchemaToolParameters,
+	resolveJsonSchemaStrictSampling,
+	type UnsupportedStrictSchemaKeywordCheck,
+} from "./constrained-sampling.ts";
 import { withGitHubCopilotFailureNote } from "./github-copilot-errors.ts";
 import { buildCopilotDynamicHeaders, hasCopilotVisionInput } from "./github-copilot-headers.ts";
 import {
@@ -362,6 +373,8 @@ type UnsignedThinkingReplay = "text" | "empty-signature";
 // A provider can reject its own empty signatures. Learn that capability for one
 // conversation without changing the shared model definition used by other sessions.
 const unsignedThinkingTextReplayFallbacks = new Set<string>();
+// Endpoints that rejected a replayed tool_reference for one conversation (senpi #2568).
+const toolReferenceReplayFallbacks = new Set<string>();
 
 registerSessionResourceCleanup((sessionId?: string) => {
 	// One small entry per (session, base URL, model) that ever hit the fallback;
@@ -369,11 +382,14 @@ registerSessionResourceCleanup((sessionId?: string) => {
 	// them for every session that ever ran.
 	if (sessionId === undefined) {
 		unsignedThinkingTextReplayFallbacks.clear();
+		toolReferenceReplayFallbacks.clear();
 		return;
 	}
 	const prefix = `${sessionId}\u0000`;
-	for (const key of unsignedThinkingTextReplayFallbacks) {
-		if (key.startsWith(prefix)) unsignedThinkingTextReplayFallbacks.delete(key);
+	for (const fallbacks of [unsignedThinkingTextReplayFallbacks, toolReferenceReplayFallbacks]) {
+		for (const key of fallbacks) {
+			if (key.startsWith(prefix)) fallbacks.delete(key);
+		}
 	}
 });
 
@@ -392,6 +408,15 @@ function isInvalidUnsignedThinkingSignatureError(error: unknown): boolean {
 		(error as { status?: unknown }).status === 400 &&
 		error instanceof Error &&
 		/Invalid signature in thinking block/i.test(error.message)
+	);
+}
+
+function isToolReferenceNotFoundError(error: unknown): boolean {
+	return (
+		error instanceof Error &&
+		"status" in error &&
+		(error as { status?: unknown }).status === 400 &&
+		/Tool reference '[^']*' not found in available tools/i.test(error.message)
 	);
 }
 
@@ -486,21 +511,72 @@ function hasHeader(headers: Record<string, string | null> | undefined, name: str
 	return false;
 }
 
+function hasRequestAuth(apiKey: string | undefined, headers: Record<string, string | null> | undefined): boolean {
+	return (
+		!!apiKey ||
+		hasHeader(headers, "authorization") ||
+		hasHeader(headers, "x-api-key") ||
+		hasHeader(headers, "cf-aig-authorization")
+	);
+}
+
 function assertRequestAuth(
 	provider: string,
 	apiKey: string | undefined,
 	headers: Record<string, string | null> | undefined,
 ): void {
-	if (apiKey) return;
-	if (
-		hasHeader(headers, "authorization") ||
-		hasHeader(headers, "x-api-key") ||
-		hasHeader(headers, "cf-aig-authorization")
-	) {
-		return;
-	}
-	throw new Error(`No API key for provider: ${provider}`);
+	if (!hasRequestAuth(apiKey, headers)) throw new Error(`No API key for provider: ${provider}`);
 }
+
+/**
+ * Anthropic SDK client that never runs the SDK's own credential chain
+ * (ANTHROPIC_PROFILE config files, federation env vars). Without this, every
+ * client built with `apiKey: null, authToken: null` for header-owned auth would
+ * also resolve and exchange SDK credentials behind pi's auth resolver.
+ */
+class PiAnthropic extends Anthropic {
+	protected override _shouldResolveDefaultCredentials(): boolean {
+		return false;
+	}
+}
+
+type AnthropicFederationConfig = NonNullable<ClientOptions["config"]>;
+
+/**
+ * Workload identity federation config from the ANTHROPIC_* variables the
+ * Anthropic SDK documents; the SDK performs the token exchange and refresh.
+ * Only for the anthropic provider, since the exchange is an Anthropic API
+ * endpoint, and only when no key or auth header was resolved.
+ */
+function getAnthropicFederation(
+	model: Model<"anthropic-messages">,
+	apiKey: string | undefined,
+	headers: Record<string, string | null> | undefined,
+	env: ProviderEnv | undefined,
+): AnthropicFederationConfig | undefined {
+	if (model.provider !== "anthropic" || hasRequestAuth(apiKey, headers)) return undefined;
+	const federationRuleId = getProviderEnvValue(ANTHROPIC_FEDERATION_RULE_ID_ENV, env);
+	const organizationId = getProviderEnvValue(ANTHROPIC_ORGANIZATION_ID_ENV, env);
+	const identityTokenFile = getProviderEnvValue(ANTHROPIC_IDENTITY_TOKEN_FILE_ENV, env);
+	if (!federationRuleId || !organizationId || !identityTokenFile) return undefined;
+	return {
+		organization_id: organizationId,
+		workspace_id: getProviderEnvValue(ANTHROPIC_WORKSPACE_ID_ENV, env),
+		authentication: {
+			type: "oidc_federation",
+			federation_rule_id: federationRuleId,
+			service_account_id: getProviderEnvValue(ANTHROPIC_SERVICE_ACCOUNT_ID_ENV, env),
+			identity_token: { source: "file", path: identityTokenFile },
+		},
+	};
+}
+
+/**
+ * The SDK caches the federated access token per client, but pi creates a client
+ * per request. Keep one client for the current federation config and fetch, and
+ * clone it per request with `withOptions()`, which shares the token cache.
+ */
+let federationClient: { key: string; fetch: typeof globalThis.fetch | undefined; client: Anthropic } | undefined;
 
 interface ServerSentEvent {
 	event: string | null;
@@ -1270,7 +1346,8 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 			} else {
 				const apiKey = options?.apiKey;
 				const optionsHeaders = providerHeadersToRecord(options?.headers);
-				assertRequestAuth(model.provider, apiKey, optionsHeaders);
+				const federation = getAnthropicFederation(model, apiKey, optionsHeaders, options?.env);
+				if (!federation) assertRequestAuth(model.provider, apiKey, optionsHeaders);
 
 				let copilotDynamicHeaders: Record<string, string> | undefined;
 				if (model.provider === "github-copilot") {
@@ -1300,6 +1377,7 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 						copilotDynamicHeaders,
 						cacheSessionId,
 						options?.env,
+						federation,
 					);
 					client = created.client;
 					isOAuth = created.isOAuthToken;
@@ -1340,6 +1418,8 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 				fallbackKey && unsignedThinkingTextReplayFallbacks.has(fallbackKey)
 					? "text"
 					: getAnthropicCompat(model).unsignedThinkingReplay;
+			let demoteReferenceReplay = fallbackKey !== undefined && toolReferenceReplayFallbacks.has(fallbackKey);
+			let requestReplaysReferences = false;
 			const createRequest = async (): Promise<{ params: MessageCreateParamsStreaming; response: Response }> => {
 				let params = buildParams(model, normalizedContext, isOAuth, options, unsignedThinkingReplay);
 				const nextParams = await options?.onPayload?.(params, model);
@@ -1348,9 +1428,11 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 				}
 				params = sanitizeAdaptiveThinkingPayload(model, params, options);
 				params = sanitizeUnsupportedNativeTools(model, params);
-				params = sanitizeAnthropicToolPairs(
-					demoteUnavailableToolReferences(params),
-				) as MessageCreateParamsStreaming;
+				params = demoteUnavailableToolReferences(params);
+				const withoutReferenceReplay = demoteToolReferenceReplay(params);
+				requestReplaysReferences = withoutReferenceReplay !== params;
+				if (demoteReferenceReplay) params = withoutReferenceReplay;
+				params = sanitizeAnthropicToolPairs(params) as MessageCreateParamsStreaming;
 				const payloadRequestMetadata = extractPayloadRequestMetadata(params);
 				params = payloadRequestMetadata.params;
 				const limitedTools = limitGitHubCopilotTools(model.provider, params.tools, params.tool_choice);
@@ -1388,6 +1470,11 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 							if (unsignedThinkingReplay !== "text" && isInvalidUnsignedThinkingSignatureError(error)) {
 								unsignedThinkingReplay = "text";
 								if (fallbackKey) unsignedThinkingTextReplayFallbacks.add(fallbackKey);
+								return createRequest();
+							}
+							if (!demoteReferenceReplay && requestReplaysReferences && isToolReferenceNotFoundError(error)) {
+								demoteReferenceReplay = true;
+								if (fallbackKey) toolReferenceReplayFallbacks.add(fallbackKey);
 								return createRequest();
 							}
 							if (await retryWithNewerClaudeCode(error)) {
@@ -1858,7 +1945,10 @@ export const streamSimple: StreamFunction<"anthropic-messages", SimpleStreamOpti
 	options?: SimpleStreamOptions,
 ): AssistantMessageEventStream => {
 	const apiKey = options?.apiKey;
-	assertRequestAuth(model.provider, apiKey, providerHeadersToRecord(options?.headers));
+	const optionsHeaders = providerHeadersToRecord(options?.headers);
+	if (!getAnthropicFederation(model, apiKey, optionsHeaders, options?.env)) {
+		assertRequestAuth(model.provider, apiKey, optionsHeaders);
+	}
 
 	const base = {
 		...buildBaseOptions(model, context, options, options?.apiKey),
@@ -1916,6 +2006,7 @@ function createClient(
 	dynamicHeaders?: Record<string, string>,
 	sessionId?: string,
 	env?: ProviderEnv,
+	federation?: AnthropicFederationConfig,
 ): { client: Anthropic; isOAuthToken: boolean; claudeCodeVersion?: string } {
 	// Adaptive thinking models have interleaved thinking built in, so skip the beta header.
 	const needsInterleavedBeta = interleavedThinking && !supportsAdaptiveThinking(model);
@@ -1931,7 +2022,7 @@ function createClient(
 	}
 
 	if (model.provider === "cloudflare-ai-gateway") {
-		const client = new Anthropic({
+		const client = new PiAnthropic({
 			apiKey: null,
 			authToken: null,
 			baseURL: resolveCloudflareBaseUrl(model, env),
@@ -1959,7 +2050,7 @@ function createClient(
 
 	// Copilot: Bearer auth, selective betas.
 	if (model.provider === "github-copilot") {
-		const client = new Anthropic({
+		const client = new PiAnthropic({
 			apiKey: null,
 			authToken: apiKey,
 			baseURL: model.baseUrl,
@@ -1987,7 +2078,7 @@ function createClient(
 	// OAuth: Bearer auth, Claude Code identity headers
 	if (apiKey && isOAuthToken(apiKey)) {
 		const advertisedClaudeCodeVersion = getClaudeCodeVersion(claudeCodeVersion, env);
-		const client = new Anthropic({
+		const client = new PiAnthropic({
 			apiKey: null,
 			authToken: apiKey,
 			baseURL: model.baseUrl,
@@ -2013,7 +2104,7 @@ function createClient(
 		return { client, isOAuthToken: true, claudeCodeVersion: advertisedClaudeCodeVersion };
 	}
 
-	// API key auth
+	// API key, header-owned auth, or workload identity federation.
 	const affinityCompat = getAnthropicCompat(model);
 	const sessionAffinityHeaders: Record<string, string | null> = {};
 	if (sessionId && affinityCompat.sendSessionAffinityHeaders) {
@@ -2022,26 +2113,43 @@ function createClient(
 		const header = affinityCompat.sessionAffinityFormat === "openrouter" ? "x-session-id" : "x-session-affinity";
 		sessionAffinityHeaders[header] = sessionId;
 	}
-	const client = new Anthropic({
+	const defaultHeaders = sanitizeAdaptiveThinkingHeaders(
+		model,
+		mergeClientHeaders(
+			model,
+			{
+				accept: "application/json",
+				"anthropic-dangerous-direct-browser-access": "true",
+				...(betaFeatures.length > 0 ? { "anthropic-beta": betaFeatures.join(",") } : {}),
+			},
+			sessionAffinityHeaders,
+			model.headers,
+			optionsHeaders,
+		),
+	);
+	if (federation) {
+		const key = JSON.stringify([model.baseUrl, federation]);
+		if (federationClient?.key !== key || federationClient.fetch !== fetch) {
+			const client = new PiAnthropic({
+				apiKey: null,
+				authToken: null,
+				config: federation,
+				baseURL: model.baseUrl,
+				dangerouslyAllowBrowser: true,
+				fetch,
+			});
+			federationClient = { key, fetch, client };
+		}
+		return { client: federationClient.client.withOptions({ defaultHeaders }), isOAuthToken: false };
+	}
+
+	const client = new PiAnthropic({
 		apiKey: apiKey ?? null,
 		authToken: null,
 		baseURL: model.baseUrl,
 		dangerouslyAllowBrowser: true,
 		fetch,
-		defaultHeaders: sanitizeAdaptiveThinkingHeaders(
-			model,
-			mergeClientHeaders(
-				model,
-				{
-					accept: "application/json",
-					"anthropic-dangerous-direct-browser-access": "true",
-					...(betaFeatures.length > 0 ? { "anthropic-beta": betaFeatures.join(",") } : {}),
-				},
-				sessionAffinityHeaders,
-				model.headers,
-				optionsHeaders,
-			),
-		),
+		defaultHeaders,
 	});
 
 	return { client, isOAuthToken: false };
@@ -2747,6 +2855,41 @@ function shouldUseFineGrainedToolStreamingBeta(
 	return getCurrentTools(context.messages).length > 0 && !getAnthropicCompat(model).supportsEagerToolInputStreaming;
 }
 
+// Keywords Anthropic strict tool use rejects with a 400 for the whole request.
+// https://platform.claude.com/docs/en/build-with-claude/structured-outputs#json-schema-limitations
+const ANTHROPIC_STRICT_UNSUPPORTED_KEYWORDS = new Set([
+	"minimum",
+	"maximum",
+	"exclusiveMinimum",
+	"exclusiveMaximum",
+	"multipleOf",
+	"maxItems",
+	"uniqueItems",
+	"minContains",
+	"maxContains",
+	"minProperties",
+	"maxProperties",
+]);
+const ANTHROPIC_STRICT_STRING_FORMATS = new Set([
+	"date-time",
+	"time",
+	"date",
+	"duration",
+	"email",
+	"hostname",
+	"uri",
+	"ipv4",
+	"ipv6",
+	"uuid",
+]);
+
+const isAnthropicStrictUnsupportedKeyword: UnsupportedStrictSchemaKeywordCheck = (key, value) => {
+	if (ANTHROPIC_STRICT_UNSUPPORTED_KEYWORDS.has(key)) return true;
+	if (key === "minItems") return value !== 0 && value !== 1;
+	if (key === "format") return typeof value !== "string" || !ANTHROPIC_STRICT_STRING_FORMATS.has(value);
+	return false;
+};
+
 function convertTools(
 	tools: Tool[],
 	isOAuthToken: boolean,
@@ -2758,7 +2901,7 @@ function convertTools(
 	if (!tools) return [];
 
 	return tools.map((tool, index) => {
-		const strict = resolveJsonSchemaStrictSampling(tool, supportsStrictTools);
+		const strict = resolveJsonSchemaStrictSampling(tool, supportsStrictTools, isAnthropicStrictUnsupportedKeyword);
 		const parameters = getJsonSchemaToolParameters(tool, strict);
 		// A root union carries no top-level properties, so reading them directly
 		// would advertise the tool to the model as taking no arguments at all.

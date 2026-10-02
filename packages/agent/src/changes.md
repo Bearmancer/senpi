@@ -1,3 +1,64 @@
+## 2026-10-02 - Interrupted shell commands keep their full-output path (upstream v1.0.0 port P-2)
+
+### What changed
+
+- `packages/agent/src/harness/types.ts`: `ExecutionError` gains an optional `spillPath`, the file holding the complete output preserved before a timeout or abort.
+- `packages/agent/src/harness/env/nodejs.ts`: `NodeExecutionEnv.exec` sets `spillPath` on the `timeout` and `aborted` errors when the output had spilled; a command interrupted before any output still returns an error without it and creates no file.
+- `packages/agent/src/harness/tools/bash.ts`: when the execution error carries `spillPath` and the streamed view does not, the tool names that path in its truncation notice, or as `[Full output: <path>]` when no output was streamed.
+
+### Why
+
+Upstream v1.0.0 made the same fix in its durable runtime (`packages/durable/src/env/node.ts`, the `interrupted` branch): a timed-out or aborted command dropped the path of the spill file, so the complete output was written to disk but unreachable from the result. The fork keeps its own harness copy (decision D-1), so the fix is ported here. Upstream's companion change of the spill stream `highWaterMark` from 8 MiB to 1 MiB is not ported: it accompanied the removal of `OutputCapture`, which the fork keeps.
+
+### Why an extension could not handle it
+
+The spill path is known only inside `NodeExecutionEnv.exec` and the error type is the harness's public execution contract; an extension sees the result after the path has been dropped.
+
+### Expected merge conflict zones
+
+- `packages/agent/src/harness/env/nodejs.ts`: the timeout/aborted settlement in the `waitForChildProcess` continuation of `exec`.
+- `packages/agent/src/harness/types.ts`: the `ExecutionError` class fields.
+- `packages/agent/src/harness/tools/bash.ts`: the `capture` selection and truncation notice after `env.exec`.
+
+## 2026-10-02 - Sync with upstream v1.0.0 (a13d35a74): truncateHead reports the limit that actually cut output (port P-4)
+
+### What changed
+
+- `packages/agent/src/harness/utils/truncate.ts`: `truncateHead` sets `truncatedBy` from what was dropped: a byte break reports `"bytes"`, otherwise omitted lines (`outputLines < totalLines`) report `"lines"` and a cut with every line kept reports `"bytes"` (only the trailing newline exceeded `maxBytes`). Before, it reported `"lines"` whenever the loop ended without a byte break. Every other export of the file is unchanged.
+
+### Why
+
+Content whose lines all fit but whose trailing newline pushed it past `maxBytes` was labelled line-truncated, so the harness read tool printed the line-limit continuation notice instead of the byte-limit one. Upstream fixed the same rule in its durable copy (`packages/durable/src/truncate.ts`) after deleting this file in 7fd478a2e; the fork keeps the harness copy (sync decision D-1) and ports the fix (D-3, P-4).
+
+### Why an extension could not handle it
+
+`truncateHead` is a harness utility called directly by the built-in read tool and exported from `@earendil-works/pi-agent-core`; an extension cannot change its return value.
+
+### Expected merge conflict zones
+
+- LOW: upstream deleted this file in v1.0.0; at the next sync, diff `packages/durable/src/truncate.ts` BASE..THEIRS and port any further change to the `truncatedBy` assignment after the line loop in `truncateHead`.
+
+## 2026-10-02 - Harness compaction: durable Package 20 fixes ported into the kept harness (upstream v1.0.0 sync)
+
+### What changed
+
+- `packages/agent/src/harness/compaction/compaction.ts`: `prepareCompaction` computes `tokensBefore` from usage reported after the newest compaction only; until a newer response reports usage, the summary and retained tail are estimated from their content. `estimateContextTokens` itself is unchanged.
+- `packages/agent/src/harness/compaction/compaction.ts`: a summary response that stopped on the token limit, called a tool, or carried no text fails with `summarization_failed` (history summary and split-turn prefix summary alike) instead of becoming the compaction summary.
+- `packages/agent/src/harness/runtime/drive/structural.ts`: threshold and overflow compaction start only when the cut leaves history to summarize (`messagesToSummarize` or `turnPrefixMessages` non-empty); manual compaction keeps its existing behavior.
+- `packages/agent/src/harness/runtime/drive/structural.ts`: overflow compaction is skipped when `settings.compaction.enabled` is false, so the overflow fails with the provider error.
+
+### Why
+
+Upstream rewrote the harness as `packages/durable` and fixed these in its compaction (ed0d6b91b, Package 20); the fork keeps its harness, so the fixes are ported into the kept copy (P-5). A retained assistant keeps the usage it reported before the compaction, when it measured the history the compaction replaced; the first checkpoint after a compaction (a new run, `checkpoint.ts` `startRun`) anchored on it and compacted again. An empty, truncated, or tool-call response replaced the summarized history with nothing usable; the coding-agent compaction already rejects these (`core/compaction/compaction.ts` `getSummarizationFailure` and its tool-call check). With nothing before the cut, an automatic compaction spent a summarization request on an empty conversation, re-fired at every checkpoint, and an overflow compacted nothing before failing; the coding-agent compaction already treats this as nothing to compact. `CompactionSettings.enabled` turns automatic compaction off, yet the overflow path never read it; the coding-agent overflow recovery already honors it (`agent-session.ts`).
+
+### Why an extension could not handle it
+
+The context estimate, the summary validity check, and the automatic compaction triggers run inside the harness drive before any hook sees a result; `before_compaction` can only decline or supply a summary.
+
+### Expected merge conflict zones
+
+- LOW: `prepareCompaction`, `generateSummaryWithRequest` and `generateTurnPrefixSummary` in `packages/agent/src/harness/compaction/compaction.ts` (upstream deleted this file in 7fd478a2e; the fork keeps it, D-1).
+- LOW: `prepareCompactionThreshold` and `prepareOverflowCompaction` in `packages/agent/src/harness/runtime/drive/structural.ts`.
 ## 2026-10-01 - Back-to-back background notices share one turn (senpi#2508)
 
 ### What changed
@@ -1895,3 +1956,60 @@ Conflict zone: `agent-loop.ts` `streamAssistantResponse` catch.
 - LOW: the `AgentState` interface tail in `types.ts`.
 
 - Covered production paths: `packages/agent/src/agent.ts`, `packages/agent/src/types.ts`.
+
+## 2026-10-02 - Harness tools kept after upstream moved them (upstream v1.0.0 sync)
+
+### What changed
+
+- `packages/agent/src/harness/tools/edit-diff.ts`
+- `packages/agent/src/harness/tools/path-utils.ts`
+
+Both files stay exactly as they were in the fork; upstream moved them into its durable package.
+
+### Why
+
+They belong to the fork-owned harness listed in `.github/agent/fork-owned-trees.txt`; the fork's edit and path handling depend on them.
+
+### Why an extension could not handle it
+
+The agent harness is package source, not an extension surface.
+
+### Expected merge conflict zones
+
+Upstream renames or deletes of these files; keep ours and port real fixes.
+
+## 2026-10-02 - Mutation queue keys new files by their canonical parent (upstream v1.0.0 sync, port P-1)
+
+### What changed
+
+- `packages/agent/src/harness/tools/file-mutation-queue.ts`: when the target file does not exist yet, the queue key is its canonical parent joined with its name (recursively for new directories) instead of the uncanonicalized absolute path.
+
+### Why
+
+Upstream fixed the same defect in its durable copy of this queue: a write that creates a file through a symlinked directory and a mutation of the same file through its real directory got different keys and could interleave. The fork keeps its harness, so the fix is ported here; the fork's per-environment queue state is kept (upstream's process-wide `env.id` key needs an environment id the fork does not have).
+
+### Why an extension could not handle it
+
+Every built-in mutating tool goes through this queue inside the harness.
+
+### Expected merge conflict zones
+
+None from upstream (it no longer ships this file); future ports from `packages/durable/src/tools/file-mutation-queue.ts`.
+
+## 2026-10-02 - Edit argument preparation no longer rewrites the provider call (upstream v1.0.0 sync, port P-3)
+
+### What changed
+
+- `packages/agent/src/harness/tools/edit.ts`: `prepareEditArguments` normalizes a copy of the arguments (edits sent as a JSON string, a single edit object, or a top-level oldText/newText pair) and returns array input unchanged so validation rejects it.
+
+### Why
+
+Upstream fixed the same defect in its durable copy: the fork assigned the normalized `edits` back into the provider's tool-call arguments, which rewrote the recorded assistant message and threw on frozen arguments. The fork keeps its harness, so the fix is ported here.
+
+### Why an extension could not handle it
+
+Argument preparation runs inside the harness before any tool hook sees the call.
+
+### Expected merge conflict zones
+
+None from upstream (it no longer ships this file); future ports from `packages/durable/src/tools/edit.ts`.

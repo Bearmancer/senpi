@@ -684,3 +684,21 @@ The divergence lives in core wiring, package identity, or build plumbing that ex
 ### Expected merge conflict zones
 
 - LOW: the `new TUI(...)`/`new ProcessTerminal(...)` construction in `showConfigSelector`.
+
+## Adopted upstream v1.0.0 CLI argument handling (2026-10-02)
+
+### What changed
+
+- `packages/coding-agent/src/cli/args.ts` — upstream argument parsing with the fork's rule that `--provider` requires `--model` (D-7).
+
+### Why
+
+The `--provider`/`--model` pairing is a fork behaviour; upstream's parser changes are adopted underneath it.
+
+### Why an extension could not handle it
+
+CLI argument semantics live in the executable entry, below any extension hook.
+
+### Expected merge conflict zones
+
+Upstream edits to cli/args.ts at the next sync.

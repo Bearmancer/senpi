@@ -1486,3 +1486,29 @@ Component-level caching is added in coding-agent components because high-frequen
 
 - MEDIUM: the autocomplete `tui.select.confirm` and `tui.input.tab` branches in `packages/tui/src/components/editor.ts`; the slash-command branch of `CombinedAutocompleteProvider.applyCompletion` in `packages/tui/src/autocomplete.ts`.
 - LOW: the added optional member in `packages/tui/src/editor-component.ts`.
+
+## 2026-10-02 - Adopted upstream TUI fixes (upstream v1.0.0 sync)
+
+### What changed
+
+- `packages/tui/src/autocomplete.ts`
+- `packages/tui/src/components/box.ts`
+- `packages/tui/src/components/markdown.ts`
+- `packages/tui/src/components/text.ts`
+- `packages/tui/src/index.ts`
+- `packages/tui/src/tui-alt-screen.ts`
+- `packages/tui/src/utils.ts`
+
+The upstream fixes are kept: no color bleed at slice boundaries, less memory per rendered message, one copy of each rendered line, and slash-command completion after leading whitespace (D-13). The fork's regular default stays.
+
+### Why
+
+Up streaming rendering bugs the fork has the same code for; the alternate-screen default is the only upstream change not taken (D-5).
+
+### Why an extension could not handle it
+
+Rendering internals below any extension hook.
+
+### Expected merge conflict zones
+
+Upstream TUI fixes in these files at the next sync.

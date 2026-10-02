@@ -260,10 +260,10 @@ user writes in: a progress update saying what the agent is doing and why, not
 a label for the code. The
 summary is shown in the TUI while the cell runs and in the finished result, so
 you can always tell what is running and why. It has no length limit; a
-collapsed block shows its first three lines. The schema marks all three
-optional only because the control actions (`peek`, `stop`, `list`) share it; a
-run request missing any of them fails with a teaching error that names what to
-add.
+collapsed block shows its first three lines. The schema requires all three
+for runs, including when `action` is omitted. Control actions (`peek`, `stop`,
+`list`) do not require run fields. Each action branch declares its own fields
+so providers can interpret it independently.
 
 ## Detached cells
 

@@ -1700,3 +1700,24 @@ LOW in `oauth-login.ts` (added `check` to the returned shape + optional `readSet
   affinity, mandatory stream-safe failover, `/claude-account` + `--claude-account`, RPC/app-server
   account events, and auth guidance. See `packages/coding-agent/docs/providers.md` (Claude SDK OAuth)
   and `.omo/plans/claude-sdk-oauth-provider.md`.
+
+
+## 2026-10-02 - Relay the login method selector through the subscription adapter
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/oauth-login.ts`
+
+The upstream v1.0.0 Anthropic OAuth flow opens with a mandatory `select` prompt (browser default vs copy-code). This adapter has no select callback, so it answered `""` for every select prompt and the flow threw `Unknown Anthropic login method: `, breaking `/claude-account add` and `/login` on the subscription provider. The adapter now returns the option the flow marks `(default)` (the browser login), else the first option, for any select prompt.
+
+### Why
+
+The fork's subscription login path delegates to `createOAuthConfig` here, not to `anthropicOAuth` directly, so the upstream selector tests do not cover it. Defaulting to the flow-declared default preserves the pre-selector browser-login behaviour for this adapter.
+
+### Why an extension could not handle it
+
+The prompt adapter is the fork's OAuth interaction shim for the subscription provider; there is no higher-level extension hook between it and the ai-package flow.
+
+### Expected merge conflict zones
+
+Upstream edits to the Anthropic subscription login adapter at the next sync.

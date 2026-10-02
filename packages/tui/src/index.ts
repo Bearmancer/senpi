@@ -157,6 +157,7 @@ export { StdinBuffer, type StdinBufferEventMap, type StdinBufferOptions } from "
 // Terminal interface and implementations
 export {
 	type CursorPosition,
+	isAppleTerminalSession,
 	isWarpWslSession,
 	ProcessTerminal,
 	type ProcessTerminalOptions,

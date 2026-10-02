@@ -6,16 +6,28 @@
 
 ### Added
 
+- Added inherited `quietStartup: "header"`, which keeps the startup header with version and key hints but hides the model scope line and loaded-resource listing. `true` and `false` keep their meaning. See [Settings](docs/settings.md).
+
+- Added an inherited copy code login method to Anthropic `/login` for headless setups where the browser runs on another machine ([#10194](https://github.com/earendil-works/pi/pull/10194) by [@lucasmeijer](https://github.com/lucasmeijer)).
+
+- Added inherited Anthropic workload identity federation from the `ANTHROPIC_FEDERATION_RULE_ID`, `ANTHROPIC_ORGANIZATION_ID`, and `ANTHROPIC_IDENTITY_TOKEN_FILE` environment variables (see [Providers](docs/providers.md)) ([#10177](https://github.com/earendil-works/pi/issues/10177), [#10242](https://github.com/earendil-works/pi/pull/10242) by [@philfreo](https://github.com/philfreo)).
+
+- `/reload` now enables tools newly added to the `defaultTools` setting (inherited). Tools removed from it stay enabled, tools turned off during the session stay off unless newly added, and `--tools`, `--no-tools`, and `--no-builtin-tools` still override the setting ([#10245](https://github.com/earendil-works/pi/issues/10245)).
+
 - Shared RPC hosts report `runtimeBuildId`, a content digest of the runtime they loaded at startup (engine files, plugins, flavour, platform), in `get_protocol_info` and `host status`, and `host ensure` reports the `clientRuntimeBuildId` it would launch, so a client can tell two builds of one version apart and see a bundle replaced in place. `senpi host handoff --when idle --operation <id> --if-instance <id> --if-generation <n> --target-build <id>` asks the running host to hand over to the caller's runtime at its next idle point: it stops admitting new work, lets running turns finish, never aborts one, answers `handover_pending` meanwhile, and keeps serving if the successor does not come up. A repeated operation id returns the existing operation.
 
 - Settled user questions identify their answering surface (`resolvedBy`) in tool results, `ask-user:settled` notifications, and RPC `question_resolved` frames. Extensions can also observe the new `ask-user:closed` event once for every terminal outcome, including silent cancellations; `ask-user:settled` keeps firing for the same outcomes as before ([#2533](https://github.com/code-yeongyu/senpi/issues/2533)).
 
-- RPC clients can retry prompts, steering, and follow-ups with durable client message and turn IDs without duplicating an accepted input. Admissions and prepared queues survive transcript reopen (including a started prompt displaced into the queue by a concurrent run, and a transcript holding an unreadable admission entry), conflicting payloads and a non-numeric `enqueueOrder` are rejected, and queue records and turn events echo the IDs. Hosts advertise `durable_client_message_id` ([desktop#1325](https://github.com/code-yeongyu/omo-desktop-app/issues/1325), [#1971](https://github.com/code-yeongyu/senpi/issues/1971)).
-
+- RPC clients can retry prompts, steering, and follow-ups with durable client message and turn IDs without duplicating an accepted input. Admissions and prepared queues survive transcript reopen (including a started prompt displaced into the queue by a concurrent run, and a transcript holding an unreadable admission entry), conflicting payloads and a non-numeric `enqueueOrder` are rejected, and queue records and turn events echo the IDs. Hosts advertise `durable_client_message_id` ([#1971](https://github.com/code-yeongyu/senpi/issues/1971)).
 ### Changed
+
+- `--provider` without `--model` now fails with an error instead of being ignored and running the default model of another provider (inherited, [#10236](https://github.com/earendil-works/pi/issues/10236)). `RpcClient` started with only `provider` keeps its previous behaviour: it forwards `--provider` only together with `--model`, so the spawned host still runs the default model.
 
 ### Fixed
 
+- Anthropic sessions behind a relay that rejects replayed native tool-search results no longer stay stuck on `Tool reference '<name>' not found in available tools` (for example `generate_image` right after a `tool_search_tool_bm25` search). The rejected request is retried once with the search results replayed as text, the tools themselves stay available, and the rest of the session sends the text form directly ([#2568](https://github.com/code-yeongyu/senpi/issues/2568)).
+
+- After a shared RPC host handoff, the replaced generation no longer deletes the successor's registration or boot settings on its way out. A predecessor that noticed its socket taken over before the handoff recorded the successor could remove both, so the next client attached to the running successor reported `pid: 0`, and the next handoff lost the endpoint's lifecycle policy. A taken-over generation now removes only its own records ([#2536](https://github.com/code-yeongyu/senpi/issues/2536)).
 - RPC prompt acknowledgement waits now account for observed conversation compaction instead of reporting failure after 30 seconds while the same input can still be admitted later. The real host response remains authoritative, waiting stays bounded, and transport failures still reject immediately ([#2548](https://github.com/code-yeongyu/senpi/pull/2548) by [@namseokyoo](https://github.com/namseokyoo)).
 
 - When one model family's usage limit runs out on an Anthropic subscription account (for example "You've reached your Fable limit"), only that family is blocked on that account, until its own reset. Opus and Sonnet on the same account keep serving, the fallback chain moves only the limited model to its next rung, and `/claude-account` and `/account` show the block as "blocked for fable until ...". Session and weekly limits, auth failures and disabled accounts still block the whole account, and existing account-level cooldowns are honoured until they expire (reported in [oh-my-openagent#9421](https://github.com/code-yeongyu/oh-my-openagent/issues/9421) by [@hsnam-OBELAB](https://github.com/hsnam-OBELAB)) ([#2555](https://github.com/code-yeongyu/senpi/issues/2555)).
@@ -29,6 +41,30 @@
 - Long sessions stay responsive: typing, streaming a reply and background events no longer re-render the whole transcript on every frame. Finished messages and tool cards are rendered once and reused, read cards no longer walk the filesystem per frame, and the footer no longer re-counts context tokens over every message. In a 10,000-entry session a keystroke now appears in about 4 ms at p95 instead of about 30 ms, and the event loop no longer stalls while typing. A burst of background events (monitor, task or background-command notices) arriving while the agent works is answered in one turn instead of one turn per event, and an animated entry that scrolled into the terminal history no longer forces the whole transcript to be rewritten. In the regular mode the terminal now keeps the recent history (its own scrollback size where readable, else about 2,000 lines) under a line such as "9,700 earlier messages · /tree to browse, or switch to fullscreen", so resuming a 10,000-entry session accepts typing in under 1 s instead of 2-4 s; the session, `/tree`, fullscreen, copy and export keep everything. Each background-triggered turn also stopped copying the whole session several times and re-parsing skill MCP declarations, so in a 10,000-entry session typing during a burst of 20 events per second stays responsive. A 50,000-entry session also uses about as much memory as a 10,000-entry one, and rows that scroll above the kept history drop their rendered lines; memory still grows with the entries a long event stream adds ([#2537](https://github.com/code-yeongyu/senpi/issues/2537)). Recording a shown tip no longer freezes typing while another senpi process holds the settings lock. Thanks @deadcode-walker, whose analysis in [#2219](https://github.com/code-yeongyu/senpi/pull/2219) helped locate the per-frame costs ([#2508](https://github.com/code-yeongyu/senpi/issues/2508)).
 
 - A long session that was compacted could later reuse the id of an entry that compaction had trimmed from memory; the next resume then hung on "opening session" forever. Ids now stay unique across the whole session file, and a file that already has a duplicated id opens normally and no longer freezes `/tree`. Thanks to @jc01rho for the report. ([#1247](https://github.com/code-yeongyu/senpi/issues/1247), [#2508](https://github.com/code-yeongyu/senpi/issues/2508))
+
+- Fixed inherited user messages in the transcript keeping two full-width copies of every rendered line; they keep one, with identical output.
+
+- Fixed inherited `system` theme making pastel palettes such as Catppuccin Frappe much more vivid; palette colors now keep their chroma ([#10255](https://github.com/earendil-works/pi/issues/10255), [#10293](https://github.com/earendil-works/pi/pull/10293) by [@dgtlntv](https://github.com/dgtlntv)).
+
+- Fixed inherited slash command autocompletion not triggering when the input starts with whitespace ([#10218](https://github.com/earendil-works/pi/pull/10218) by [@haoqixu](https://github.com/haoqixu)).
+
+- Fixed inherited color bleeding past mouse selections and search highlights in fullscreen mode when a styled token ends at the highlight boundary ([#10169](https://github.com/earendil-works/pi/issues/10169)).
+
+- Fixed inherited memory retained per rendered message in the transcript; a long assistant message keeps about a fifth of the heap it kept before.
+
+- Fixed inherited new sessions intermittently ignoring the saved default model, or warning that no models are available, when it belongs to an extension-registered native provider with a stored credential ([#9962](https://github.com/earendil-works/pi/issues/9962), [#10190](https://github.com/earendil-works/pi/pull/10190) by [@davidbrai](https://github.com/davidbrai)).
+
+- Fixed inherited prompt submission slowing down with session length, because resolving the session's model selection looked up the model catalog once per assistant message ([#10198](https://github.com/earendil-works/pi/issues/10198)).
+
+- Fixed inherited model lookups slowing down for providers with a refreshed remote catalog, because merging remote catalog models took quadratic time.
+
+- Fixed the inherited `built-in-tool-renderer.ts` and `minimal-mode.ts` extension examples removing the built-in tools' summaries and guidelines from the system prompt ([#10072](https://github.com/earendil-works/pi/issues/10072), [#10193](https://github.com/earendil-works/pi/pull/10193) by [@christianklotz](https://github.com/christianklotz)).
+
+- Fixed inherited context overflow detection for Z.AI CN endpoint `Prompt exceeds max length` errors ([#10208](https://github.com/earendil-works/pi/issues/10208)).
+
+- Fixed inherited Anthropic requests failing when a tool schema uses keywords Anthropic strict tool use rejects, such as `minimum`/`maximum`; such tools are now sent non-strict ([#9953](https://github.com/earendil-works/pi/issues/9953)).
+
+- Fixed inherited extension commands registered without a string name or handler crashing on `/`; the extension now fails to load with an error instead ([#10054](https://github.com/earendil-works/pi/issues/10054)).
 
 ### Removed
 

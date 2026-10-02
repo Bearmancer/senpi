@@ -1,13 +1,25 @@
 import { createHash, randomBytes } from "node:crypto";
-import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import {
+	chmodSync,
+	closeSync,
+	existsSync,
+	mkdirSync,
+	openSync,
+	readFileSync,
+	renameSync,
+	rmSync,
+	statSync,
+	writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 import type { OAuthDiscoveryState } from "@modelcontextprotocol/sdk/client/auth.js";
 import type { OAuthClientInformationFull } from "@modelcontextprotocol/sdk/shared/auth.js";
 import lockfile from "proper-lockfile";
 import { getAgentDir } from "../../../../../config.ts";
 
-// URL-bound OAuth credential record persisted at
-// <agentDir>/mcp-auth/<sha256(serverUrl)>/tokens.json (dir 0700, file 0600).
+// OAuth credential record of one server, persisted at
+// <agentDir>/mcp-auth/<sha256(serverName \0 serverUrl)>/tokens.json (dir 0700, file 0600).
+// Records an older senpi stored by URL alone (<sha256(serverUrl)>) move to the first server that reads them.
 export interface McpStoredAuth {
 	accessToken?: string;
 	refreshToken?: string;
@@ -54,11 +66,16 @@ export function hashServerUrl(serverUrl: string): string {
 	return createHash("sha256").update(serverUrl).digest("hex");
 }
 
+export function hashServerKey(serverName: string, serverUrl: string): string {
+	return createHash("sha256").update(`${serverName}\0${serverUrl}`).digest("hex");
+}
+
 export class McpTokenStore<TRecord extends McpStoredAuth = McpStoredAuth> {
 	readonly serverName: string;
 	readonly serverUrl: string;
 	readonly #agentDir: string;
 	readonly #hash: string;
+	readonly #legacyHash: string;
 	readonly #lock: Required<TokenStoreLockOptions>;
 	readonly #disableLock: boolean;
 
@@ -66,7 +83,8 @@ export class McpTokenStore<TRecord extends McpStoredAuth = McpStoredAuth> {
 		this.serverName = options.serverName;
 		this.serverUrl = options.serverUrl;
 		this.#agentDir = options.agentDir ?? getAgentDir();
-		this.#hash = hashServerUrl(options.serverUrl);
+		this.#hash = hashServerKey(options.serverName, options.serverUrl);
+		this.#legacyHash = hashServerUrl(options.serverUrl);
 		this.#lock = { ...DEFAULT_LOCK, ...options.lock };
 		this.#disableLock = options.disableLock ?? false;
 	}
@@ -84,8 +102,100 @@ export class McpTokenStore<TRecord extends McpStoredAuth = McpStoredAuth> {
 		return join(this.dir, `${TOKENS_FILE}.lock`);
 	}
 
+	get legacyDir(): string {
+		return join(this.rootDir, this.#legacyHash);
+	}
+
+	get #legacyLockFile(): string {
+		return join(this.rootDir, `${this.#legacyHash}.migrate.lock`);
+	}
+
 	read(): TRecord | undefined {
-		return readJsonFile<TRecord>(this.tokensPath);
+		const record = readJsonFile<TRecord>(this.tokensPath);
+		if (record !== undefined) return record;
+		return this.#adoptLegacyRecord();
+	}
+
+	// The first server that reads a URL-keyed record takes it over; other servers with the same URL sign in again.
+	// Claiming is serialized on a lock shared by every consumer of the legacy URL (keyed on the
+	// legacy hash, not the per-server destination hash), so two processes cannot both read the
+	// URL-keyed record before either removes it and duplicate a rotating grant across identities.
+	#adoptLegacyRecord(): TRecord | undefined {
+		const release = this.#acquireLegacyLockSync();
+		try {
+			// Recheck under the lock: another process may have already claimed the record.
+			const legacyTokens = join(this.legacyDir, TOKENS_FILE);
+			const legacy = readJsonFile<TRecord>(legacyTokens);
+			if (legacy === undefined) return undefined;
+			// Recheck the destination before writing so a delayed migrator cannot
+			// overwrite a newer same-server record another process already refreshed.
+			const existing = readJsonFile<TRecord>(this.tokensPath);
+			if (existing !== undefined) {
+				rmSync(legacyTokens, { force: true });
+				return existing;
+			}
+			this.#writeAtomic(legacy);
+			this.#writeIndex();
+			rmSync(legacyTokens, { force: true });
+			return legacy;
+		} finally {
+			release();
+		}
+	}
+
+	// The lock is a file created with O_EXCL (atomic create-or-fail), keyed on the
+	// legacy hash so every server of the URL contends on the same path. It is only
+	// ever taken by this migration (never nested under the per-server update lock),
+	// and release removes a plain file, so it cannot linger the way a directory can.
+	#acquireLegacyLockSync(): () => void {
+		if (this.#disableLock) return () => undefined;
+		mkdirSync(this.rootDir, { mode: 0o700, recursive: true });
+		const lockFile = this.#legacyLockFile;
+		const stale = this.#lock.stale;
+		const deadline = Date.now() + stale;
+		for (;;) {
+			let fd: number | undefined;
+			try {
+				fd = openSync(lockFile, "wx", 0o600);
+				const file = fd;
+				return () => {
+					try {
+						closeSync(file);
+					} catch {
+						// already closed
+					}
+					rmSync(lockFile, { force: true });
+				};
+			} catch (cause) {
+				if (fd !== undefined) {
+					try {
+						closeSync(fd);
+					} catch {
+						// ignore
+					}
+				}
+				const code = (cause as NodeJS.ErrnoException).code;
+				if (code !== "EEXIST") throw cause;
+				let age = 0;
+				try {
+					age = Date.now() - statSync(lockFile).mtimeMs;
+				} catch {
+					continue; // lock vanished between attempts; retry
+				}
+				if (age >= stale) {
+					rmSync(lockFile, { force: true });
+					continue;
+				}
+				if (Date.now() >= deadline) {
+					throw new LockAcquireError(lockFile, new Error(`legacy migration lock held for ${age}ms`));
+				}
+				// bounded spin; the claim window is tiny (a read + one write + one delete)
+				const until = Date.now() + 20;
+				while (Date.now() < until) {
+					// spin
+				}
+			}
+		}
 	}
 
 	async update(mutate: (current: TRecord | undefined) => TRecord | undefined): Promise<TRecord | undefined> {
@@ -137,6 +247,7 @@ export class McpTokenStore<TRecord extends McpStoredAuth = McpStoredAuth> {
 		const release = await this.#acquire();
 		try {
 			rmSync(this.dir, { force: true, recursive: true });
+			rmSync(join(this.legacyDir, TOKENS_FILE), { force: true });
 		} finally {
 			await release().catch(() => undefined);
 		}

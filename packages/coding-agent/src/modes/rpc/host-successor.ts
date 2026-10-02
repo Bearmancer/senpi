@@ -135,6 +135,7 @@ export async function startSuccessor(context: {
 		}
 		// The pointer moves to the successor only now: until the rename landed, the generation the
 		// clients reach is still the predecessor, and the pointer has to name whoever owns the socket.
+		await options._test?.beforeRegistration?.();
 		await writeHostRegistration(paths, registration);
 		child.unref();
 		// The successor owns the socket now: the predecessor may drain. SIGUSR1 is sent only here,

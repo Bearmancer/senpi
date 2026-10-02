@@ -4469,3 +4469,76 @@ The instrumented transitions (`_emit`, queue internals, `RequiredCompactionError
 
 - LOW: the single pattern list in `core/retry-fallback/billing.ts`; the module is fork-local.
 
+## 2026-10-02 - Experimental surface stays on the fork harness (upstream v1.0.0 sync)
+
+### What changed
+
+- `packages/coding-agent/src/experimental/client-tui-chat.ts`
+- `packages/coding-agent/src/experimental/commands.ts`
+- `packages/coding-agent/src/experimental/plugin.ts`
+- `packages/coding-agent/src/experimental/services/agent-controller-provider.ts`
+- `packages/coding-agent/src/experimental/services/agent-controller.ts`
+- `packages/coding-agent/src/experimental/services/models-provider.ts`
+- `packages/coding-agent/src/experimental/services/transcript-provider.ts`
+- `packages/coding-agent/src/experimental/services/transcript.ts`
+- `packages/coding-agent/src/experimental/services/worker.ts`
+- `packages/coding-agent/src/experimental/session-worker.ts`
+- `packages/coding-agent/src/experimental/durable/harness-setup.ts`
+- `packages/coding-agent/src/experimental/durable/main.ts`
+- `packages/coding-agent/src/experimental/durable/prompt.ts`
+- `packages/coding-agent/src/experimental/durable/runtime.ts`
+- `packages/coding-agent/src/experimental/durable/sessions.ts`
+- `packages/coding-agent/src/experimental/durable/subagent.ts`
+- `packages/coding-agent/src/experimental/durable/tui.ts`
+- `packages/coding-agent/src/experimental/vacation/harness-setup.ts`
+- `packages/coding-agent/src/experimental/vacation/main.ts`
+- `packages/coding-agent/src/experimental/vacation/runtime.ts`
+- `packages/coding-agent/src/experimental/vacation/sessions.ts`
+- `packages/coding-agent/src/experimental/vacation/tui.ts`
+- `packages/coding-agent/src/experimental/vacation/vacation.ts`
+
+The first ten paths stay exactly as in the fork; upstream rewrote them onto its durable package (48dd1e2f0). The `experimental/durable/**` and `experimental/vacation/**` paths are upstream additions built on that package and are not taken.
+
+### Why
+
+The fork's experimental client, worker and transcript services run on the fork harness; the upstream rewrite would import a package the fork does not ship.
+
+### Why an extension could not handle it
+
+These are the experimental client and worker entry points themselves, which sit below the extension API.
+
+### Expected merge conflict zones
+
+Upstream edits to `src/experimental/**`: keep ours for the listed files and keep the durable/vacation trees absent.
+
+## 2026-10-02 - Adopted upstream session, settings and runtime changes (upstream v1.0.0 sync)
+
+### What changed
+
+- `packages/coding-agent/src/cli/args.ts`
+- `packages/coding-agent/src/core/agent-session.ts`
+- `packages/coding-agent/src/core/extensions/loader.ts`
+- `packages/coding-agent/src/core/model-runtime.ts`
+- `packages/coding-agent/src/core/remote-catalog-provider.ts`
+- `packages/coding-agent/src/core/sdk.ts`
+- `packages/coding-agent/src/core/settings-manager.ts`
+- `packages/coding-agent/src/index.ts`
+- `packages/coding-agent/src/main.ts`
+- `packages/coding-agent/src/modes/interactive/components/settings-selector.ts`
+- `packages/coding-agent/src/modes/interactive/components/user-message.ts`
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`
+- `packages/coding-agent/src/modes/interactive/theme/system-theme.ts`
+
+The upstream changes are kept with fork behaviour preserved: `--provider` requires `--model` (D-7), `quietStartup: "header"` (D-6), `/reload` enables tools newly added to defaultTools, one copy of each rendered user-message line, pastel system-theme chroma, and the absorbed main's runtime catalog work.
+
+### Why
+
+Each is an upstream improvement that does not break a fork behaviour; the fork alternatives (tuiMode regular, fork header, eval-only policy) are preserved and tested.
+
+### Why an extension could not handle it
+
+Session runtime, settings and interactive mode own these paths below the extension API.
+
+### Expected merge conflict zones
+
+Upstream edits to session/settings/runtime paths at the next sync.

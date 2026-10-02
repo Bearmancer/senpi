@@ -42,6 +42,17 @@ re-check the list against the new upstream tree. Every path on it is an upstream
 fork rejected on record; a new upstream path that belongs to a listed feature is added to the
 list together with its dated `changes.md` exclusion block.
 
+#### Fork-owned trees (upstream removed them)
+
+Upstream deleted the agent harness and its companions on 2026-10-01 (7fd478a2e) and moved that
+code into its own durable package, which the fork does not take. Every path listed in
+`.github/agent/fork-owned-trees.txt` stays exactly as **ours** after a merge: restore any path
+on that list from the fork side and never accept an upstream deletion or rewrite of it.
+The cost of keeping them is a manual port at every sync: diff upstream's
+`packages/durable/src/{tools,env,truncate.ts,harness/compaction.ts,storage}` from the previous
+pin to the new one, and port each real fix into the kept copy as its own commit with a test that
+fails without it.
+
 ### 2. Resolve conflicts (fork-aware)
 
 Resolve conflicts using these fork rules plus semantic judgement. For files that are
