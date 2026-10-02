@@ -48,7 +48,15 @@ it("answers a uiRequestId answer under the frame id, once, and refuses a replay 
 	const first = await answer({ id: "answer-1", uiRequestId: "ask-1", answers: { q1: { selected: ["yes"] } } });
 	expect(first).toEqual({ id: "answer-1", type: "response", command: "extension_ui_response", success: true });
 	expect(answered).toEqual([
-		{ requestId: "ask-1", response: { status: "answered", answers: { q1: { selected: ["yes"] } }, unanswered: [] } },
+		{
+			requestId: "ask-1",
+			response: {
+				status: "answered",
+				resolvedBy: "control_endpoint",
+				answers: { q1: { selected: ["yes"] } },
+				unanswered: [],
+			},
+		},
 	]);
 
 	expect(await answer({ id: "answer-2", uiRequestId: "ask-1", answers: { q1: { selected: ["no"] } } })).toMatchObject({
@@ -76,7 +84,13 @@ it("keeps the short form: id alone names the question and is answered under that
 	expect(answered).toEqual([
 		{
 			requestId: "ask-2",
-			response: { status: "comment-submitted", answers: {}, unanswered: ["q1"], comment: "ship it" },
+			response: {
+				status: "comment-submitted",
+				resolvedBy: "control_endpoint",
+				answers: {},
+				unanswered: ["q1"],
+				comment: "ship it",
+			},
 		},
 	]);
 });

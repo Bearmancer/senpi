@@ -1,3 +1,24 @@
+## 2026-10-02 - Question answer provenance (senpi#2533)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/components/ask-user-question-state.ts`: widget response construction marks submitted answers as `local_ui`.
+- `packages/coding-agent/src/modes/interactive/components/ask-user-async-widget.ts`: collapsed widget and composer answers carry `local_ui`; timeouts do not.
+- `packages/coding-agent/src/modes/interactive/session-control-commands.ts`: admitted question answers carry `control_endpoint`; cancellation does not.
+- Closure: every terminal outcome of a question these surfaces show (an answer from any surface, timeout, cancellation) is published once on the new `ask-user:closed` extension event, `{ requestId, status, resolvedBy? }`, by the ask-user builtin (`src/core/extensions/changes.md`). A losing surface's late answer or cancellation publishes nothing, and reload detaching the widget is not a closure.
+
+### Why
+
+- `packages/coding-agent/src/modes/interactive/components/ask-user-question-state.ts`, `packages/coding-agent/src/modes/interactive/components/ask-user-async-widget.ts`, `packages/coding-agent/src/modes/interactive/session-control-commands.ts`: integrations need the winning surface even when multiple surfaces can answer the same question.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/interactive/components/ask-user-question-state.ts`, `packages/coding-agent/src/modes/interactive/components/ask-user-async-widget.ts`, `packages/coding-agent/src/modes/interactive/session-control-commands.ts`: only these response builders know whether input came from the local widget or an external endpoint.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/interactive/components/ask-user-question-state.ts`, `packages/coding-agent/src/modes/interactive/components/ask-user-async-widget.ts`, `packages/coding-agent/src/modes/interactive/session-control-commands.ts`: response object construction.
+
 ## 2026-10-02 - Route Warp-on-WSL empty paste events to the clipboard
 
 ### What changed

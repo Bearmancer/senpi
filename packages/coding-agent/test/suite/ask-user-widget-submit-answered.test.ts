@@ -43,6 +43,7 @@ describe("pending question widget with nothing unanswered", () => {
 
 			await expect(pending).resolves.toEqual({
 				status: "answered",
+				resolvedBy: "local_ui",
 				answers: { auth: { selected: ["API key"] } },
 				unanswered: [],
 			} satisfies QuestionResponse);

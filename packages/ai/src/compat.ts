@@ -107,7 +107,10 @@ import {
 export function registerFauxProvider(options: RegisterFauxProviderOptions = {}): FauxProviderRegistration {
 	const core = createFauxCore(options);
 	const sourceId = `faux-provider-${Math.random().toString(36).slice(2, 10)}`;
-	registerApiProvider({ api: core.api, stream: core.stream, streamSimple: core.streamSimple }, sourceId);
+	// A session reload runs resetApiProviders(); the caller's provider must still answer afterwards, in or out of a provider scope.
+	registerApiProvider({ api: core.api, stream: core.stream, streamSimple: core.streamSimple }, sourceId, {
+		survivesClear: true,
+	});
 	return {
 		api: core.api,
 		models: core.models,

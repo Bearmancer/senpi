@@ -2,7 +2,7 @@ import type { SessionEntry } from "../../../session-manager.ts";
 import type { ExtensionAPI, ExtensionContext, SessionStartEvent } from "../../types.ts";
 import { TOOL_NAMES } from "./family.ts";
 import { parseAskUserAnswerFrame } from "./format.ts";
-import { ASK_USER_SETTLEMENT_ENTRY } from "./notify.ts";
+import { ASK_USER_SETTLEMENT_ENTRY, emitAskUserClosed } from "./notify.ts";
 import { getPendingQuestions } from "./registry.ts";
 import {
 	type AskUserVariant,
@@ -113,6 +113,7 @@ function settleUnrestorable(
 	const lost: QuestionRequest = { requestId: dangling.toolCallId, questions: [], waitForAnswer: false, timeoutMs };
 	const response: QuestionResponse = { status: "orphaned-after-restart", answers: {}, unanswered: [] };
 	pi.appendEntry(ASK_USER_SETTLEMENT_ENTRY, { requestId: lost.requestId, status: response.status });
+	emitAskUserClosed(pi, lost.requestId, response);
 	deliverAnswer(pi, ctx, lost, response, dangling.variant);
 }
 

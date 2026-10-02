@@ -10,6 +10,8 @@
 
 ### Fixed
 
+- A faux provider registered through `@earendil-works/pi-ai/compat` now keeps answering after `resetApiProviders()`, which a session reload runs, both globally and inside the provider scope it was registered in. Before, a request sent after a reload failed with "No API provider registered", and when the faux API id contained a word the retry classifier treats as transient, the failure sat in a retry backoff for over 15 seconds. ([#2542](https://github.com/code-yeongyu/senpi/issues/2542))
+
 ### Removed
 
 ## [2026.10.1-3] - 2026-10-01

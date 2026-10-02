@@ -177,6 +177,8 @@ export interface QuestionRequest {
 /** Outcome of ExtensionUIContext.question. */
 export interface QuestionResponse {
 	status: "answered" | "comment-submitted" | "timed_out" | "cancelled" | "orphaned-after-restart" | "unavailable";
+	/** Answering surface; omitted when the question ended without an answer. */
+	resolvedBy?: "local_ui" | "rpc_connection" | "control_endpoint";
 	answers: Record<string, { selected: string[]; text?: string }>;
 	comment?: string;
 	unanswered: string[];

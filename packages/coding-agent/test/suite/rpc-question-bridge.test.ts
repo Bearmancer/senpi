@@ -20,6 +20,7 @@ it("degrades into sequential select/input and a final comment", async () => {
 	const input = vi.fn().mockResolvedValueOnce("custom").mockResolvedValueOnce("do it");
 	expect(await degradeQuestion({ select, input }, request)).toEqual({
 		status: "comment-submitted",
+		resolvedBy: "rpc_connection",
 		answers: { q1: { selected: ["A"] }, q2: { selected: [], text: "custom" } },
 		comment: "do it",
 		unanswered: [],

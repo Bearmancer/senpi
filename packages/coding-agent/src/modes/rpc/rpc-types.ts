@@ -1096,6 +1096,7 @@ export type RpcQuestionUpdatedEvent = {
 /** Outbound terminal outcome for a `question` request. */
 export type RpcQuestionResolvedEvent = {
 	type: "question_resolved";
+	resolvedBy?: "local_ui" | "rpc_connection" | "control_endpoint";
 	id: string;
 	requestId: string;
 	toolCallId: string;

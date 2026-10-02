@@ -27,6 +27,20 @@ A label is stored NFC-normalized with internal whitespace collapsed, must contai
 
 `RpcClient` accepts an `onDisconnect` callback for an established socket and rejects subsequent transport operations with the typed `RpcTransportGoneError` (also detectable with `isTransportGoneError`). Callers should use the callback to begin recovery and keep the error text out of user-facing output.
 
+Prompt acceptance can require compaction before the host emits its response. After observing
+`compaction_start` for its session, `RpcClient` gives pending and subsequent prompts a bounded
+45-minute-and-30-second acknowledgement budget: up to 15 minutes of remote compaction, a
+30-minute maximum local-summary override, and the ordinary response allowance. A matching
+`compaction_end` restores the 30-second response deadline. Each compaction operation is tracked by
+its operation ID (older hosts that omit IDs remain supported), so a stale or overlapping start never
+hides another operation's end, and a start whose end never arrives stops counting once it is older
+than that budget. However many compactions start and end while a prompt waits, it never waits more
+than 46 minutes from when it was sent. Outstanding prompts retain their originating session, so
+another lease's compaction does not change their deadlines. Other commands retain their normal
+deadlines, and a disconnected transport still rejects immediately. Compaction events do not
+themselves acknowledge a prompt: its actual response determines success and disposition.
+A timeout does not establish that the host rejected the input, so do not automatically resend it.
+
 ```bash
 senpi --mode rpc [options]
 ```
@@ -3507,6 +3521,7 @@ When the question resolves (answered, comment-submitted, timed_out, or cancelled
   "requestId": "ask-user-1",
   "toolCallId": "call_abc123",
   "outcome": "answered",
+  "resolvedBy": "rpc_connection",
   "answers": { "q1": { "selected": ["PostgreSQL"] } },
   "comment": "",
   "unanswered": []
@@ -3514,6 +3529,22 @@ When the question resolves (answered, comment-submitted, timed_out, or cancelled
 ```
 
 A late answer after resolution receives a `question_already_resolved` error.
+
+`resolvedBy` identifies the surface that submitted the winning answer: `local_ui` for the terminal
+widget or composer, `rpc_connection` for an RPC client (including the sequential dialog fallback),
+and `control_endpoint` for an answer received through the session's terminal control endpoint.
+It is omitted for `timed_out` and `cancelled`, the frame's outcomes with no answering surface.
+Restart orphaning and unavailable UI never reach `question_resolved` with their own status: an
+extension that aborts the dialog for either is reported to connections as `cancelled`, and only the
+tool result and the `ask-user:closed` extension event carry the true status. Clients do not supply
+this field; the answering bridge sets it. Competing or late answers do not change the winner's surface.
+
+The built-in `ask_user_question` and `request_user_input` tools retain the field in blocking
+`tool_execution_end` result details and in the `response` of `ask-user:settled`. Extensions can
+subscribe to `pi.events.on("ask-user:closed", handler)` for `{ requestId, status, resolvedBy? }`,
+emitted once for every terminal outcome, including silent cancellations. `ask-user:settled`
+continues to skip cancellation. A reload that preserves a pending question does not close it;
+a terminal outcome while detached is published once through the next bound extension runner.
 
 `RpcSessionState.pendingQuestions` (returned by `open_session` and `get_state`) lists any questions still waiting for an answer. Connections that attach after the question was asked receive the pending record immediately.
 

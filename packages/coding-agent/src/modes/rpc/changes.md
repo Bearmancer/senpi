@@ -1,3 +1,45 @@
+## 2026-10-02 - Prompt acknowledgements wait through observed compaction
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts`: tracks session-scoped compaction events and adjusts only prompt acknowledgement deadlines. Each pending request retains its original wire session; a new lease's events cannot change older prompts' deadlines. Pending prompts and prompts submitted during observed compaction wait for their real response; matching terminal events restore the ordinary deadline. Duplicate starts and stale terminal events do not reset an operation's budget. Compactions are tracked per operation id; an unpaired start stops counting after the compaction budget, and every prompt also has a hard cap (`PROMPT_ACK_MAX_WAIT_MS`) measured from when it was sent. Transport failure retains immediate rejection and timer cleanup.
+- `packages/coding-agent/src/modes/rpc/rpc-request-deadline.ts`: derives the bounded compaction wait from the remote compaction total budget, the maximum local-summary override, and the normal response allowance.
+- `packages/coding-agent/docs/rpc.md`: documents admission waiting without synthetic success or automatic replay.
+- `packages/coding-agent/test/suite/rpc-client-compaction-deadline.test.ts`: real socket regressions for delayed admission, legacy events, stale operation IDs, ordinary deadlines, bounded waiting, disconnect cleanup, and outstanding requests across lease changes.
+
+### Why
+
+Prompt preflight can compact a large conversation before admitting the input. The fixed 30-second deadline in `packages/coding-agent/src/modes/rpc/rpc-client.ts`, budgeted by `packages/coding-agent/src/modes/rpc/rpc-request-deadline.ts`, expired while that valid work was still running, even though the host could admit and execute the same request later. A caller retrying the apparent failure could duplicate the input.
+
+### Why an extension could not handle it
+
+`packages/coding-agent/src/modes/rpc/rpc-client.ts` owns client-side request correlation and timers; `packages/coding-agent/src/modes/rpc/rpc-request-deadline.ts` owns their budgets. Agent extensions cannot adjust another process's pending acknowledgement deadlines.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts`: pending-request callbacks, constructor event subscription, transport/session resets, and `send`.
+- `packages/coding-agent/src/modes/rpc/rpc-request-deadline.ts`: deadline constants and imports.
+
+## 2026-10-02 - Question answer provenance (senpi#2533)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: `question_resolved` gains optional `resolvedBy`.
+- `packages/coding-agent/src/modes/rpc/connection-question-bridge.ts`: the winning connection response passes its surface into response construction and broadcasts it; timeout and cancellation do not.
+
+### Why
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`, `packages/coding-agent/src/modes/rpc/connection-question-bridge.ts`: a mirrored question needs the answering surface, not just its outcome.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`, `packages/coding-agent/src/modes/rpc/connection-question-bridge.ts`: the connection bridge owns response admission and wire frames.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: RpcQuestionResolvedEvent.
+- `packages/coding-agent/src/modes/rpc/connection-question-bridge.ts`: response construction and the sequential dialog fallback.
+
 ## 2026-10-02 - Runtime identity in host status and a conditional idle handover (desktop #1364, #1055)
 
 ### What changed

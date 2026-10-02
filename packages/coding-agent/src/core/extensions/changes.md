@@ -1,3 +1,27 @@
+## 2026-10-02 - Ask-user answer provenance (senpi#2533)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts`: `QuestionResponse.resolvedBy` identifies the answering surface; no-answer terminal outcomes omit it.
+- `packages/coding-agent/src/core/extensions/builtin/ask-user/notify.ts`: new bus event `ask-user:closed` (`ASK_USER_CLOSED_EVENT`, `AskUserClosedEvent { requestId, status, resolvedBy? }`, `emitAskUserClosed`). The existing `ask-user:settled` payload's `response` now carries `resolvedBy`; it still fires for the same outcomes (never for `cancelled`).
+- `packages/coding-agent/src/core/extensions/builtin/ask-user/tool.ts`, `resume.ts`: `ask-user:closed` fires exactly once per question for every terminal outcome: answers, comments, timeouts, cancellation, unavailable UI, and orphaned restart recovery. Detaching the old UI on reload is not a terminal outcome and emits nothing.
+- `packages/coding-agent/src/core/extensions/builtin/ask-user/pending.ts`, `format.ts`: submitted responses keep `resolvedBy`, and blocking tool result details carry it.
+- `packages/coding-agent/docs/extensions.md`: documents both bus events and `resolvedBy`.
+
+### Why
+
+- `packages/coding-agent/src/core/extensions/types.ts`: integrations mirroring a question need to tell users where it was answered.
+- `ask-user:closed`: `ask-user:settled` skips `cancelled`, so an extension never learned that a non-blocking question was cancelled; changing settled would have changed its existing listeners (the hooks builtin).
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/types.ts`: the answering host must provide provenance in the shared response type.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/types.ts`: QuestionResponse.
+- Fork-only `builtin/ask-user/` files: the settle path in `tool.ts` `startQuestion`, the unavailable returns in `createAskUserTool`, and `settleUnrestorable` in `resume.ts`.
+
 ## 2026-10-01 - Extension load key (senpi#2509)
 
 ### What changed

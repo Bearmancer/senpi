@@ -47,6 +47,7 @@ export function buildAnsweredResponse(request: QuestionRequest, draft: QuestionD
 	const comment = draft.comment?.trim();
 	return {
 		status: comment ? "comment-submitted" : "answered",
+		resolvedBy: "local_ui",
 		answers: draft.answers ?? {},
 		...(comment ? { comment: draft.comment } : {}),
 		unanswered: unansweredIds(request, draft),
@@ -61,6 +62,7 @@ export function buildCommentResponse(
 ): QuestionResponse {
 	return {
 		status: "comment-submitted",
+		resolvedBy: "local_ui",
 		answers: draft.answers ?? {},
 		comment,
 		unanswered: unansweredIds(request, draft),
