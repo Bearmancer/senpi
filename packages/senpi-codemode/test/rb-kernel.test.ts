@@ -17,9 +17,10 @@ function hasRuby(): boolean {
 	}
 }
 
+/** Runners this test file started: other files' kernels run in parallel workers and are not its leaks. */
 function runnerProcessIds(runnerPath: string): Set<string> {
 	try {
-		const output = execFileSync("pgrep", ["-fl", escapeRegExp(runnerPath)], {
+		const output = execFileSync("pgrep", ["-P", String(process.pid), "-fl", escapeRegExp(runnerPath)], {
 			encoding: "utf8",
 			stdio: ["ignore", "pipe", "ignore"],
 			timeout: 3_000,
