@@ -19,6 +19,11 @@ export class BranchSummaryMessageComponent extends Box {
 		this.updateDisplay();
 	}
 
+	/** Rendered entirely by children that this class rebuilds on every state change. */
+	override getRenderRevision(): number | undefined {
+		return this.childRenderRevision();
+	}
+
 	setExpanded(expanded: boolean): void {
 		this.expanded = expanded;
 		this.updateDisplay();

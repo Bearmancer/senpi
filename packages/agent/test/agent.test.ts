@@ -4,6 +4,7 @@ import {
 	EventStream,
 	getCurrentSystemMessage,
 	getModel,
+	type Message,
 	normalizeContext,
 	toToolDeclaration,
 	type UserMessage,
@@ -1306,6 +1307,56 @@ describe("Agent", () => {
 		} else {
 			expect(requests[0]).toContain("Steering 2");
 		}
+	});
+
+	it("one-at-a-time answers a burst of background notices in one turn but keeps LLM messages one per turn", async () => {
+		const requests: string[][] = [];
+		const agent = new Agent({
+			steeringMode: "one-at-a-time",
+			convertToLlm: (messages) =>
+				messages.flatMap((message) =>
+					message.role === "custom"
+						? [{ role: "user" as const, content: String(message.content), timestamp: message.timestamp }]
+						: [message as Message],
+				),
+			streamFn: (_model, context) => {
+				requests.push(
+					context.messages.flatMap((message) =>
+						message.role === "user" && typeof message.content === "string"
+							? [message.content]
+							: message.role === "assistant"
+								? message.content.flatMap((part) => (part.type === "text" ? [part.text] : []))
+								: [],
+					),
+				);
+				const stream = new MockAssistantStream();
+				queueMicrotask(() => {
+					stream.push({ type: "done", reason: "stop", message: createAssistantMessage("Processed") });
+				});
+				return stream;
+			},
+		});
+		agent.state.messages = [createUserMessage("Initial"), createAssistantMessage("Initial response")];
+		for (const name of ["CI finished", "deploy finished", "test run finished"]) {
+			agent.steer({
+				role: "custom",
+				customType: "monitor",
+				content: name,
+				display: true,
+				timestamp: Date.now(),
+			} as AgentMessage);
+		}
+		agent.steer(createAssistantMessage("Queued note 1"));
+		agent.steer(createAssistantMessage("Queued note 2"));
+
+		await expect(agent.continue()).resolves.toBeUndefined();
+
+		expect(requests).toHaveLength(3);
+		expect(requests[0]).toEqual(expect.arrayContaining(["CI finished", "deploy finished", "test run finished"]));
+		expect(requests[0]).not.toContain("Queued note 1");
+		expect(requests[1]).toContain("Queued note 1");
+		expect(requests[1]).not.toContain("Queued note 2");
+		expect(requests[2]).toContain("Queued note 2");
 	});
 
 	it("keeps legacy prepareNextTurn signal callback behavior", async () => {

@@ -92,7 +92,7 @@ export async function startSuccessor(context: {
 			`${replaced.dev}:${replaced.ino}`,
 			...(options.hostArgs ?? []),
 		];
-		const launch = options._test?.launch?.(argv) ?? defaultHostLaunch(argv);
+		const launch = (options._test?.launch ?? options.launch)?.(argv) ?? defaultHostLaunch(argv);
 		const stderr = await open(paths.stderrLog, "a", 0o600);
 		const spawned = spawn(launch.command, [...launch.args], {
 			detached: true,
@@ -100,6 +100,7 @@ export async function startSuccessor(context: {
 			env: successorHostEnvironment({
 				agentDir: options.agentDir,
 				env: options.env,
+				expectedRuntimeBuildId: options.expectedRuntimeBuildId,
 				paths,
 				generation,
 				instanceId,

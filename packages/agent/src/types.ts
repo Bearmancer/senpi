@@ -56,6 +56,8 @@ export type ToolExecutionMode = "sequential" | "parallel";
  *
  * - "all": drain and inject every queued message at that point.
  * - "one-at-a-time": drain and inject only the oldest queued message, leaving the rest queued for later drain points.
+ *   A run of consecutive app-defined notices (any role other than user, assistant, toolResult or system)
+ *   is drained together as that oldest entry, so a burst of background events takes one turn.
  */
 export type QueueMode = "all" | "one-at-a-time";
 

@@ -1,4 +1,5 @@
 import {
+	isWarpWslSession,
 	type Keybinding,
 	type KeybindingDefinitions,
 	type KeybindingsConfig,
@@ -158,7 +159,7 @@ export const KEYBINDINGS = {
 		description: "Show the next pending question",
 	},
 	"app.clipboard.pasteImage": {
-		defaultKeys: windowsKeybindings ? "alt+v" : "ctrl+v",
+		defaultKeys: isWarpWslSession() ? ["ctrl+v", "alt+v"] : windowsKeybindings ? "alt+v" : "ctrl+v",
 		description: "Paste files on macOS, images, or text from clipboard",
 	},
 	"app.session.new": { defaultKeys: [], description: "Start a new session" },

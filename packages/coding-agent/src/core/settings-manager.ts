@@ -21,6 +21,7 @@ import type {
 } from "@earendil-works/pi-tui";
 import { createHash, randomUUID } from "crypto";
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "fs";
+import { mkdir, readFile, rename, rm, writeFile } from "fs/promises";
 import { homedir } from "os";
 import { dirname, join } from "path";
 import lockfile from "proper-lockfile";
@@ -39,6 +40,7 @@ import { DEFAULT_HTTP_IDLE_TIMEOUT_MS, parseHttpIdleTimeoutMs } from "./http-dis
 import {
 	CredentialStoreBusyError,
 	FILE_STORAGE_LOCK_OPTIONS,
+	FILE_STORAGE_LOCK_RETRY_BUDGET_MS,
 	FILE_STORAGE_LOCK_RETRY_MAX_DELAY_MS,
 	FILE_STORAGE_LOCK_RETRY_MIN_DELAY_MS,
 	FILE_STORAGE_SYNC_LOCK_BUDGET_MS,
@@ -465,6 +467,17 @@ export interface SettingsManagerCreateOptions {
 
 export interface SettingsStorage {
 	withLock(scope: SettingsScope, fn: (current: string | undefined) => string | undefined): void;
+	/**
+	 * The same locked read-modify-write without blocking the caller's thread while another writer
+	 * holds the lock. Queued saves use it when present; `withLock` stays for synchronous callers.
+	 */
+	withLockAsync?(
+		scope: SettingsScope,
+		fn: (current: string | undefined) => string | undefined,
+		underLock?: () => void,
+	): Promise<void>;
+	/** `withLock` when the lock is free right now; false (and nothing written) when it is held. */
+	tryWithLock?(scope: SettingsScope, fn: (current: string | undefined) => string | undefined): boolean;
 	selectSource?(scope: SettingsScope): SettingsSourceSelection | undefined;
 }
 
@@ -483,6 +496,8 @@ function toSettingsError(scope: SettingsScope, error: unknown, path?: string): S
 		error: error instanceof Error ? error : new Error(String(error)),
 	};
 }
+
+class SettingsLockBusy extends Error {}
 
 export class FileSettingsStorage implements SettingsStorage {
 	private globalSettingsPath: string;
@@ -506,6 +521,15 @@ export class FileSettingsStorage implements SettingsStorage {
 		if (scope === "global") this.globalSettingsPath = path;
 		else this.projectSettingsPath = path;
 		return source;
+	}
+
+	private tryAcquireLockSync(path: string): () => void {
+		try {
+			return lockfile.lockSync(path, { ...FILE_STORAGE_LOCK_OPTIONS, retries: 0 });
+		} catch (error) {
+			if (isLockError(error)) throw new SettingsLockBusy();
+			throw error;
+		}
 	}
 
 	private acquireLockSyncWithRetry(path: string): () => void {
@@ -532,7 +556,87 @@ export class FileSettingsStorage implements SettingsStorage {
 		}
 	}
 
-	withLock(scope: SettingsScope, fn: (current: string | undefined) => string | undefined): void {
+	private async acquireLockWithRetry(path: string): Promise<() => Promise<void>> {
+		const startedAt = Date.now();
+		let attempt = 0;
+		while (true) {
+			try {
+				return await lockfile.lock(path, { ...FILE_STORAGE_LOCK_OPTIONS, retries: 0 });
+			} catch (error) {
+				if (!isLockError(error)) throw error;
+				const waitedMs = Date.now() - startedAt;
+				if (waitedMs >= FILE_STORAGE_LOCK_RETRY_BUDGET_MS) {
+					throw new CredentialStoreBusyError(path, waitedMs, error);
+				}
+				const delayMs = Math.min(
+					FILE_STORAGE_LOCK_RETRY_MIN_DELAY_MS * 2 ** attempt,
+					FILE_STORAGE_LOCK_RETRY_MAX_DELAY_MS,
+					FILE_STORAGE_LOCK_RETRY_BUDGET_MS - waitedMs,
+				);
+				attempt++;
+				await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
+			}
+		}
+	}
+
+	/**
+	 * `withLock` for queued saves. Waiting on a busy lock used `Atomics.wait` on the UI thread: a
+	 * settings write per turn (tip history) froze typing for up to a second whenever the lock was
+	 * held elsewhere. The protocol is unchanged: lock-free read, merge, re-merge under the lock if
+	 * another writer won, then publish through a same-directory temp file and rename.
+	 */
+	async withLockAsync(
+		scope: SettingsScope,
+		fn: (current: string | undefined) => string | undefined,
+		underLock?: () => void,
+	): Promise<void> {
+		const path = scope === "global" ? this.globalSettingsPath : this.projectSettingsPath;
+		const readCurrent = async (): Promise<string | undefined> => {
+			try {
+				return await readFile(path, "utf-8");
+			} catch (error) {
+				if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+				throw error;
+			}
+		};
+		const current = await readCurrent();
+		let next = fn(current);
+		if (next === undefined) return;
+		await mkdir(dirname(path), { recursive: true });
+		const release = await this.acquireLockWithRetry(path);
+		try {
+			// The wait may have outlived the caller's permission to write (e.g. project trust revoked).
+			underLock?.();
+			const lockedContent = await readCurrent();
+			if (lockedContent !== current) next = fn(lockedContent);
+			if (next !== undefined) {
+				const tempPath = `${path}.${process.pid}.${randomUUID()}.tmp`;
+				try {
+					await writeFile(tempPath, next, "utf-8");
+					await rename(tempPath, path);
+					// After the rename: a failed publish must not mark identical content as our own write.
+					recordSelfWrite(path, next);
+				} catch (error) {
+					await rm(tempPath, { force: true });
+					throw error;
+				}
+			}
+		} finally {
+			await release();
+		}
+	}
+
+	tryWithLock(scope: SettingsScope, fn: (current: string | undefined) => string | undefined): boolean {
+		try {
+			this.withLock(scope, fn, false);
+			return true;
+		} catch (error) {
+			if (error instanceof SettingsLockBusy) return false;
+			throw error;
+		}
+	}
+
+	withLock(scope: SettingsScope, fn: (current: string | undefined) => string | undefined, waitForLock = true): void {
 		const path = scope === "global" ? this.globalSettingsPath : this.projectSettingsPath;
 		const dir = dirname(path);
 
@@ -548,7 +652,7 @@ export class FileSettingsStorage implements SettingsStorage {
 		if (!existsSync(dir)) {
 			mkdirSync(dir, { recursive: true });
 		}
-		const release = this.acquireLockSyncWithRetry(path);
+		const release = waitForLock ? this.acquireLockSyncWithRetry(path) : this.tryAcquireLockSync(path);
 		try {
 			const underLock = existsSync(path) ? readFileSync(path, "utf-8") : undefined;
 			if (underLock !== current) {
@@ -1071,13 +1175,13 @@ export class SettingsManager {
 		this.modifiedProjectNestedFields.clear();
 	}
 
-	private enqueueWrite(scope: SettingsScope, task: () => void): void {
+	private enqueueWrite(scope: SettingsScope, task: () => void | Promise<void>): void {
 		this.writeQueue = this.writeQueue
-			.then(() => {
+			.then(async () => {
 				if (scope === "project") {
 					this.assertProjectTrustedForWrite();
 				}
-				task();
+				await task();
 				this.clearModifiedScope(scope);
 			})
 			.catch((error) => {
@@ -1098,8 +1202,8 @@ export class SettingsManager {
 		snapshotSettings: Settings,
 		modifiedFields: Set<keyof Settings>,
 		modifiedNestedFields: Map<keyof Settings, Set<string>>,
-	): void {
-		this.storage.withLock(scope, (current) => {
+	): void | Promise<void> {
+		const merge = (current: string | undefined): string => {
 			const currentFileSettings = current ? SettingsManager.migrateSettings(parseSettingsJson(current)) : {};
 			const mergedSettings: Settings = { ...currentFileSettings };
 			for (const field of modifiedFields) {
@@ -1119,7 +1223,20 @@ export class SettingsManager {
 			}
 
 			return JSON.stringify(mergedSettings, null, 2);
-		});
+		};
+		const storage = this.storage;
+		if (!storage.withLockAsync || !storage.tryWithLock) {
+			storage.withLock(scope, merge);
+			return;
+		}
+		// Uncontended (the normal case): written before save() returns, as callers expect. Only when
+		// another writer holds the lock does the wait move off the UI thread.
+		if (storage.tryWithLock(scope, merge)) return;
+		return storage.withLockAsync(
+			scope,
+			merge,
+			scope === "project" ? () => this.assertProjectTrustedForWrite() : undefined,
+		);
 	}
 
 	private save(): void {
@@ -1133,9 +1250,9 @@ export class SettingsManager {
 		const modifiedFields = new Set(this.modifiedFields);
 		const modifiedNestedFields = this.cloneModifiedNestedFields(this.modifiedNestedFields);
 
-		this.enqueueWrite("global", () => {
-			this.persistScopedSettings("global", snapshotGlobalSettings, modifiedFields, modifiedNestedFields);
-		});
+		this.enqueueWrite("global", () =>
+			this.persistScopedSettings("global", snapshotGlobalSettings, modifiedFields, modifiedNestedFields),
+		);
 	}
 
 	private saveProjectSettings(settings: Settings): void {
@@ -1150,9 +1267,9 @@ export class SettingsManager {
 		const snapshotProjectSettings = structuredClone(this.projectSettings);
 		const modifiedFields = new Set(this.modifiedProjectFields);
 		const modifiedNestedFields = this.cloneModifiedNestedFields(this.modifiedProjectNestedFields);
-		this.enqueueWrite("project", () => {
-			this.persistScopedSettings("project", snapshotProjectSettings, modifiedFields, modifiedNestedFields);
-		});
+		this.enqueueWrite("project", () =>
+			this.persistScopedSettings("project", snapshotProjectSettings, modifiedFields, modifiedNestedFields),
+		);
 	}
 
 	private updateProjectSettings(field: keyof Settings, update: (settings: Settings) => void): void {

@@ -13,7 +13,7 @@
 // registration (service.attachSkillMcpServers). There is no reliable unload
 // signal, so revealed tools stay active for the session.
 
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { parseFrontmatter } from "../../../../utils/frontmatter.ts";
 import type { SourceScope } from "../../../source-info.ts";
@@ -73,11 +73,39 @@ export function parseSkillMcpDeclarations(skills: readonly SkillLike[]): SkillMc
 	return { servers, warnings };
 }
 
-function readSkillServers(skill: SkillLike): {
+type SkillServers = {
 	declared: Record<string, RawServer & { includeTools?: string[] }>;
 	sourcePath: string;
 	warning?: string;
-} {
+};
+
+/** Parsed declarations per skill file, reused while the sidecar and the skill file are unchanged on disk. */
+const skillServersCache = new Map<string, { readonly key: string; readonly servers: SkillServers }>();
+
+function fileStamp(path: string): string {
+	try {
+		const stat = statSync(path);
+		return `${stat.mtimeMs}:${stat.ctimeMs}:${stat.size}:${stat.ino}`;
+	} catch {
+		return "missing";
+	}
+}
+
+/**
+ * Called for every skill on every turn (before_agent_start), so re-reading and re-parsing each
+ * SKILL.md stalled each turn; the stat key keeps edits on disk visible on the next turn.
+ */
+function readSkillServers(skill: SkillLike): SkillServers {
+	const sidecarPath = join(skill.baseDir, "mcp.json");
+	const key = `${fileStamp(sidecarPath)}|${fileStamp(skill.filePath)}`;
+	const cached = skillServersCache.get(skill.filePath);
+	if (cached?.key === key) return cached.servers;
+	const servers = readSkillServersFromDisk(skill);
+	skillServersCache.set(skill.filePath, { key, servers });
+	return servers;
+}
+
+function readSkillServersFromDisk(skill: SkillLike): SkillServers {
 	const sidecarPath = join(skill.baseDir, "mcp.json");
 	if (existsSync(sidecarPath)) {
 		try {

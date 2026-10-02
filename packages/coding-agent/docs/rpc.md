@@ -298,6 +298,54 @@ A host that reports memory pressure (`SENPI_RPC_HOST_RSS_WARN_MB`, 4096 by defau
 logs one line naming its RSS, and drains when it is also superseded: memory a daemon cannot attribute to a
 session is memory nothing will return, and a generation nobody can reach is pure cost.
 
+#### Runtime identity and the conditional idle handover
+
+A version string cannot say which runtime a host loaded: a development checkout and a packaged install can
+share one version, and a reinstall replaces a bundle at the same path. Every host therefore reports
+`runtimeBuildId: "sha256:<64 hex>"` in `get_protocol_info`, computed ONCE at startup from the runtime it is
+about to serve with: the runtime flavour (`compiled`, `packaged`, `dev`), platform and architecture, the engine
+build text, the digests of the runtime files (`dist/bundle`, `dist`, `src`, or the compiled executable) sorted
+by their relative path, one digest per launch-profile extension, and the profile's `multi_session` and
+`session_runtime`. Absolute paths never enter it, so one build installed in two places has one id; dot-entries,
+nested `node_modules`, `.d.ts`/`.map` files and the build/snapshot manifests are left out. A bundle replaced
+after the host started leaves the host's id unchanged, while a client started from the new bundle computes a
+different one. A host whose runtime cannot be read reports no id (unverified) and still starts.
+
+`host ensure` and `host handoff` also print `clientRuntimeBuildId`: the id a host launched from that launch
+spec by THIS client would report. A client compares it with `runtimeBuildId` to know whether the host serving
+the socket runs its runtime.
+
+A POSIX socket host with an id advertises `runtime_identity_handover` and accepts the conditional handover
+`senpi host handoff --when idle --operation <id> --if-instance <instanceId> --if-generation <n>
+--target-build <runtimeBuildId>`. The CLI refuses `target_build_mismatch` unless the target is its own
+`clientRuntimeBuildId` (the successor runs the CLI's runtime), `stale_generation` unless the socket is served
+by the named generation, and `handover_unsupported` when the host does not advertise the capability. It then
+sends the host `begin_handover`, and the HOST owns the operation:
+
+1. a request with an `operationId` it already holds answers with that operation when the terms match (and
+   `operation_conflict` when they do not); a new operation is checked first against the named generation
+   (`stale_generation`);
+2. it stops admitting new work: `prompt`, `steer`, `follow_up`, `send_custom_message`, `append_user_message`,
+   `bash`, `compact`, `wake` and the two message edits answer `success: false` with an error starting
+   `handover_pending:`. Running turns keep running and keep their control traffic (`abort` included);
+3. it waits for its next safe idle point: no request in flight and no open session busy by the same activity
+   judgement a drain parks by. A retained session with no work is idle. The wait has no deadline; a long turn
+   delays the handover and is never aborted for it;
+4. it hands the socket over through the generation handoff above, launched from the CLI's runtime with the
+   CLI's daemon environment, and drains. The successor is told the target id and exits before it listens when
+   its own runtime digests to another one (its files changed since the request). A successor that never
+   answers is stopped, the host keeps serving and admits work again (`handover_blocked`).
+
+The answer is exit 0 `{ action: "handover_completed" | "handover_pending", operationId, handover, ... }`: a host
+idle at once hands over before answering, and a request whose target already serves the socket answers
+`handover_completed` without touching anything. A repeated `operationId` answers with the operation that
+already exists; another id for the same target joins the pending operation (the answer names its id), and
+one for another target while one is pending refuses `handover_in_progress`. A
+blocked operation refuses `handover_blocked` with the successor's failure in `detail`; a lost reply exits 1
+`handover_reply_lost` after checking whether the target now serves the socket. `host status` shows the
+operation as `handover: { operation_id, state, target_runtime_build_id, reason?, successor? }` with `state`
+`handover_pending`, `handover_switching`, `handover_completed` or `handover_blocked`.
+
 #### Daemon state directory (layout 2)
 
 Every endpoint gets its own directory, named by the socket it serves, so two sockets in one agent
@@ -410,6 +458,7 @@ senpi host ensure     [--json] [--launch-spec <file>] [--policy upgrade|fallback
 senpi host status     [--json] [--include-workers] [--all] [--socket <path>]
 senpi host stop       [--json] [--drain] [--force] [--socket <path>]
 senpi host handoff    [--json] [--launch-spec <file>] [--socket <path>]
+                      [--when idle --operation <id> --if-instance <id> --if-generation <n> --target-build <id>]
 senpi host shard-path --kind <p|i> --owner <id> [--root <dir>] [--json]
 senpi host gc         [--json] [--agent-dir <dir>]
 ```
@@ -430,7 +479,7 @@ symmetry with other commands; the answer is always JSON (the one exception is `s
 which prints the bare socket path).
 
 - `ensure` prints `{ action, socket, pid, instanceId, generation, engineVersion, engineOrdinal,
-  capabilities, launchProfileId, reused, upgradeable }`. `--policy upgrade` (the default) allows a
+  capabilities, launchProfileId, runtimeBuildId, clientRuntimeBuildId, reused, upgradeable }`. `--policy upgrade` (the default) allows a
   generation handoff, `never` only attaches or starts, and `fallback` answers exit 4 rather than attaching
   to a host this build disagrees with. `action` is `handoff` exactly when the socket was already served and
   the process behind it changed. An ensure invoked by an in-process session inside a multi-session host is
@@ -438,7 +487,7 @@ which prints the bare socket path).
   This is process-local state, not an environment marker, so a shell child remains free to run the explicit
   `senpi host handoff` command.
 - `status` prints `{ reachable, socket, pid, instanceId, generation, engineVersion, capabilities,
-  launchProfile, sessions: { total, interactive, worker, retained, foreign_attached, foreign_retained },
+  launchProfile, runtimeBuildId, handover, sessions: { total, interactive, worker, retained, foreign_attached, foreign_retained },
   zombies, rss_mb, host_rss_mb, open_fds, memory_pressure, env_keys, generations, crashes, shard, session_rows,
   claims_live, claims }` and exits 3 when nothing answers - with the same
   field set, so a caller parses one shape and branches on one boolean. `sessions` is what `list_sessions`

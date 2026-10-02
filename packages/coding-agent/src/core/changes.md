@@ -1,3 +1,119 @@
+## 2026-10-02 - Accept Ctrl+V in direct Warp-on-WSL sessions
+
+### What changed
+
+- `packages/coding-agent/src/core/keybindings.ts`: `app.clipboard.pasteImage` defaults to both `ctrl+v` and `alt+v` in direct Warp-on-WSL sessions, using the existing hardened TUI session detector. Other terminal defaults and explicit user overrides are unchanged.
+
+### Why
+
+- WSL selected only the Windows `alt+v` binding, so a delivered Ctrl+V byte never reached clipboard handling even when the Windows clipboard image could be read successfully.
+
+### Why an extension could not handle it
+
+- The app binding table controls clipboard dispatch and its displayed hints. An optional extension shortcut cannot repair the shared default for every composer.
+
+### Expected merge conflict zones
+
+- LOW: the TUI import and `app.clipboard.pasteImage` row in `packages/coding-agent/src/core/keybindings.ts`.
+
+## 2026-10-01 - Queued settings saves no longer block the UI on a held lock (senpi#2508)
+
+### What changed
+
+- `packages/coding-agent/src/core/settings-manager.ts`: `FileSettingsStorage` gains `tryWithLock` (write only when the lock is free right now) and `withLockAsync` (the same locked read-merge-publish, waiting with timers). A queued save writes synchronously when the lock is free, as before, and otherwise waits for it asynchronously.
+
+### Why
+
+Saving the tip history on a turn waited for a held settings lock with `Atomics.wait` on the UI thread: up to 2.9 s of frozen typing whenever another senpi process held the lock, which is normal with several sessions running.
+
+### Why an extension could not handle it
+
+The settings store's write path is core.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/settings-manager.ts`: `SettingsStorage`, `FileSettingsStorage.withLock` and the lock helpers beside it, `enqueueWrite`, `persistScopedSettings`, `save`, `saveProjectSettings`.
+
+## 2026-10-01 - One materialized copy of the session, released at idle (senpi#2508)
+
+### What changed
+
+- `packages/coding-agent/src/core/session-resident-store.ts`: `externalize` remembers values that came out without resident tokens, and `materialize` returns those as is instead of deep-copying them.
+- `packages/coding-agent/src/core/session-manager.ts`: `getBranch` reuses the compact view's materialized entries (`_fromCompactView`), and `holdsMaterializedHistory()` reports a held full-history view of a trimmed mirror.
+- `packages/coding-agent/src/core/agent-session.ts`: the idle release moves into the public `releaseSettledSessionMemory()`, which also drops the views when a full-history view is held.
+
+### Why
+
+Every view deep-copied each entry, the branch copied the session a second time, and a trimmed mirror's full-history view pinned the whole file's entries across idle. At 50,000 entries that held about 60 MB more than at 10,000 (1.6x); after this the ratio is 1.04x, and context builds no longer copy entries that carry no resident strings.
+
+### Why an extension could not handle it
+
+The resident store, the session views and the idle settlement are core internals.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/session-resident-store.ts`: `externalize`, `materialize`.
+- `packages/coding-agent/src/core/session-manager.ts`: `getBranch`, `_extendBranchCache`, `dropMaterializedCaches`, the fields beside `historyView`.
+- `packages/coding-agent/src/core/agent-session.ts`: `_emitAgentIdleAfterDeferredTurns`, `releaseSettledSessionMemory`.
+
+## 2026-10-01 - Entry ids stay unique after a compaction trim; duplicated ids no longer hang open or /tree (senpi#2508, senpi#1247)
+
+### What changed
+
+- `packages/coding-agent/src/core/session-manager.ts`: the ids of entries a compaction trims from the resident mirror stay reserved (`trimmedIds`), and every `generateId` call checks them along with the mirror's index. The leaf-path walks (`buildSessionPath`, `getBranch`, `hasBranchEntry`) stop at the first revisited entry, and `getTree()` attaches each node once.
+
+### Why
+
+`generateId` only checked the trimmed mirror, so a later entry could reuse the id of an entry that was trimmed from memory but is still in the file. On the next resume the reused id closed the parent chain into a cycle and `buildSessionPath` never returned, so the TUI stayed on "opening session" (seen with a 50,000-entry compacted session). Files that already contain duplicated ids (#1247) also froze `/tree` because `getTree()` attached the same node repeatedly.
+
+### Why an extension could not handle it
+
+Id generation and the path/tree walks are the session store itself.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/session-manager.ts`: `generateId` call sites, `_trimMirrorAfterCompaction`, `buildSessionPath`, `getBranch`, `hasBranchEntry`, `getTree`, and the fields beside `mirrorTrimmed`.
+
+## 2026-10-01 - Per-turn session reads extend instead of re-copying the session (senpi#2508)
+
+### What changed
+
+- `packages/coding-agent/src/core/session-manager.ts`: the compact mirror view, the full-history view of a trimmed mirror, the leaf branch and the current projection are materialized once and then extended by the entries appended since (keyed by the mirror array identity and length; anything that rebuilds the mirror assigns a new array and invalidates them). A trimmed mirror no longer re-reads and re-parses the session file for `getEntries()`; `projectSession` builds the leaf path once.
+- `packages/coding-agent/src/core/agent-session.ts`: a turn-end boundary with no drafts projects the session itself instead of cloning the branch into an in-memory manager.
+- `packages/coding-agent/src/core/retry-fallback/chains.ts`: one canonicalization pass asks each provider's fallback eligibility once, and `rankFamilyModels` filters by family before asking.
+
+### Why
+
+Every background-triggered turn copied the whole session several times (context checks, hook previews, stop-hook history scans, footer usage) and re-parsed the skill MCP declaration files, and the first fallback check re-read provider settings per model; each copy blocked input for tens to hundreds of milliseconds in a 10k-entry session.
+
+### Why an extension could not handle it
+
+These are the session store and the turn-preparation paths in the core.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/session-manager.ts`: `getBranch`, `getEntries`, `_getCompactEntries`, `buildSessionProjection`, `buildSessionContext`, `projectSession`, `buildContextEntries`.
+- `packages/coding-agent/src/core/agent-session.ts`: `_buildBoundaryContext`.
+- `packages/coding-agent/src/core/retry-fallback/chains.ts`: `authTiers`.
+
+## 2026-10-01 - Context usage is computed once per message change (senpi#2508)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `getContextUsage()` memoizes its result on the runtime message array, its length and last message, the branch leaf and the model window; the computation moved unchanged to `_computeContextUsage()`.
+
+### Why
+
+The footer calls it on every frame; after a compaction it re-estimated tokens over every message (19% of each frame in a 50k-entry session).
+
+### Why an extension could not handle it
+
+The footer reads the session's own usage API.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/agent-session.ts`: `getContextUsage`.
+
 ## 2026-10-01 - Share shipped package resolution with read permissions (#2513)
 
 ### What changed

@@ -58,6 +58,15 @@ export function hostLaunchProfile(argv: readonly string[], cwd: string): RpcLaun
 	return { profile_id: createHash("sha256").update(canonical).digest("hex"), core };
 }
 
+/**
+ * The launch profile a SOCKET host child started with `hostArgs` derives from its own argv. The
+ * child always runs `--mode rpc --multi-session --listen <socket>`, and `--listen` is what makes its
+ * session runtime `in-process`; the socket itself never enters the profile.
+ */
+export function socketHostLaunchProfile(hostArgs: readonly string[], cwd: string): RpcLaunchProfile {
+	return hostLaunchProfile(["--mode", "rpc", "--multi-session", "--listen", "unix://", ...hostArgs], cwd);
+}
+
 /** The identity fields of this host's `get_protocol_info` answer. */
 export function protocolIdentity(): RpcProtocolIdentity {
 	cachedProfile ??= hostLaunchProfile(process.argv.slice(2), process.cwd());

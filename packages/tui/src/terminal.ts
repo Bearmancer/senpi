@@ -99,8 +99,7 @@ export function normalizeAppleTerminalInput(data: string, isAppleTerminal: boole
 	return normalizeNativeShiftEnterInput(data, isAppleTerminal, isShiftPressed);
 }
 
-export function normalizeWarpWslShiftEnterInput(
-	data: string,
+export function isWarpWslSession(
 	env: NodeJS.ProcessEnv = process.env,
 	platform: NodeJS.Platform = process.platform,
 	socketExists: (socketPath: string) => boolean = (socketPath) => {
@@ -110,16 +109,25 @@ export function normalizeWarpWslShiftEnterInput(
 			return false;
 		}
 	},
-): string {
-	if (data !== "\n" || platform !== "linux") return data;
+): boolean {
+	if (platform !== "linux") return false;
 	if (isMultiplexerSession(env) || env.SSH_CONNECTION?.trim() || env.SSH_CLIENT?.trim() || env.SSH_TTY?.trim()) {
-		return data;
+		return false;
 	}
 	const isWarp = Boolean(env.WARP_SESSION_ID?.trim() || env.WARP_TERMINAL_SESSION_UUID?.trim());
 	const interopPath = env.WSL_INTEROP?.trim();
 	const isWsl =
 		isWarp && interopPath !== undefined && /^\/run\/WSL\/\d+_interop$/.test(interopPath) && socketExists(interopPath);
-	return isWarp && isWsl ? NATIVE_SHIFT_ENTER_SEQUENCE : data;
+	return isWarp && isWsl;
+}
+
+export function normalizeWarpWslShiftEnterInput(
+	data: string,
+	env: NodeJS.ProcessEnv = process.env,
+	platform: NodeJS.Platform = process.platform,
+	socketExists?: (socketPath: string) => boolean,
+): string {
+	return data === "\n" && isWarpWslSession(env, platform, socketExists) ? NATIVE_SHIFT_ENTER_SEQUENCE : data;
 }
 
 export function keyboardEnhancementEnabled(): boolean {

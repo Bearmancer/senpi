@@ -17,7 +17,7 @@ type HeaderFixture = {
 	resumeQuestionMouseCapture(): void;
 	getChangelogForDisplay(): undefined;
 	fdPath: string | undefined;
-	session: { scopedModels: unknown[] };
+	session: { scopedModels: unknown[]; releaseSettledSessionMemory(): void };
 	options: { verbose: boolean };
 	settingsManager: {
 		getQuietStartup(): boolean;
@@ -102,7 +102,7 @@ function createHeaderFixture(): HeaderFixture {
 		resumeQuestionMouseCapture: () => {},
 		getChangelogForDisplay: () => undefined,
 		fdPath: undefined,
-		session: { scopedModels: [] },
+		session: { scopedModels: [], releaseSettledSessionMemory: () => {} },
 		options: { verbose: true },
 		settingsManager: {
 			getQuietStartup: () => false,

@@ -155,7 +155,13 @@ export { type EditorPasteState, expandPasteMarkers } from "./paste-markers.ts";
 // Input buffering for batch splitting
 export { StdinBuffer, type StdinBufferEventMap, type StdinBufferOptions } from "./stdin-buffer.ts";
 // Terminal interface and implementations
-export { type CursorPosition, ProcessTerminal, type ProcessTerminalOptions, type Terminal } from "./terminal.ts";
+export {
+	type CursorPosition,
+	isWarpWslSession,
+	ProcessTerminal,
+	type ProcessTerminalOptions,
+	type Terminal,
+} from "./terminal.ts";
 // Terminal colors
 export {
 	parseTerminalColorSchemeReport,
@@ -207,24 +213,36 @@ export {
 export { sanitizeTerminalLabel, shortenImagePath } from "./terminal-text.ts";
 export {
 	type Component,
+	CompositeRevision,
 	Container,
 	CURSOR_MARKER,
+	claimFrameRow,
 	compositeTuiLine,
+	currentRenderRevision,
+	dispatchMouseEvent,
 	type Focusable,
+	frameMode,
+	frameScrollbackRows,
 	isFocusable,
 	isViewportTUI,
+	joinLineArrays,
+	mainScreenHistoryLines,
+	nextRenderRevision,
 	type OverlayAnchor,
 	type OverlayBounds,
 	type OverlayHandle,
 	type OverlayMargin,
 	type OverlayOptions,
 	type OverlayUnfocusOptions,
+	renderAtFrameRow,
+	resetMainScreenHistoryLines,
 	type SizeValue,
 	TUI,
 	type TuiInputListener,
 	type TuiInputListenerResult,
 	type TuiMode,
 	type TuiMouseButton,
+	type TuiMouseDispatchResult,
 	type TuiMouseEvent,
 	type TuiMouseEventResult,
 	type TuiMouseEventType,

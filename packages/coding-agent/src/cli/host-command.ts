@@ -26,6 +26,7 @@ import { APP_NAME, getAgentDir } from "../config.ts";
 import { envValue } from "../core/brand.ts";
 import type { ShardKind } from "../modes/rpc/host-daemon-paths.ts";
 import type { HostDecisionPolicy } from "../modes/rpc/host-decision.ts";
+import type { IdleHandoverTerms } from "../modes/rpc/host-handover-request.ts";
 import {
 	DEFAULT_HOST_LAUNCH_SPEC,
 	HostLaunchSpecError,
@@ -51,6 +52,8 @@ const USAGE = `usage: ${APP_NAME} host <ensure|status|stop|handoff|shard-path|gc
   status      [--include-workers] [--all] [--socket <path>]   (--all: every endpoint, ignores --socket)
   stop        [--drain] [--force] [--socket <path>]
   handoff     [--launch-spec <file>] [--socket <path>]
+              [--when idle --operation <id> --if-instance <id> --if-generation <n> --target-build <sha256:...>]
+              (--when idle: the running host hands over to THIS runtime at its next safe idle point)
   shard-path  --kind <p|i> --owner <id> [--root <dir>] [--json]   (no host contact)
   gc          [--agent-dir <dir>] [--json]   (removes provably dead endpoints only; ignores --socket)
 
@@ -70,6 +73,7 @@ interface ParsedHostArgs {
 	readonly owner?: string;
 	readonly root?: string;
 	readonly agentDir?: string;
+	readonly handover?: IdleHandoverTerms;
 }
 
 /**
@@ -108,7 +112,12 @@ async function hostRequest(parsed: ParsedHostArgs): Promise<HostRequest> {
 		case "stop":
 			return { action: "stop", target, drain: parsed.drain, force: parsed.force };
 		case "handoff":
-			return { action: "handoff", target, spec: await launchSpec(parsed.specPath) };
+			return {
+				action: "handoff",
+				target,
+				spec: await launchSpec(parsed.specPath),
+				...(parsed.handover !== undefined && { handover: parsed.handover }),
+			};
 		case "shard-path":
 			return {
 				action: "shard_path",
@@ -150,6 +159,7 @@ export function parseHostArgs(args: readonly string[]): ParsedHostArgs | string 
 	let owner: string | undefined;
 	let root: string | undefined;
 	let agentDir: string | undefined;
+	const handover: Record<string, string> = {};
 	for (let index = 0; index < rest.length; index++) {
 		const flag = rest[index];
 		const value = rest[index + 1];
@@ -171,6 +181,9 @@ export function parseHostArgs(args: readonly string[]): ParsedHostArgs | string 
 		} else if (flag === "--agent-dir" && subcommand === "gc" && value !== undefined) {
 			agentDir = value;
 			index++;
+		} else if (subcommand === "handoff" && value !== undefined && HANDOVER_FLAGS.has(flag ?? "")) {
+			handover[flag ?? ""] = value;
+			index++;
 		} else if (flag === "--drain") {
 			drain = true;
 		} else if (flag === "--force") {
@@ -191,6 +204,8 @@ export function parseHostArgs(args: readonly string[]): ParsedHostArgs | string 
 	if (subcommand === "shard-path" && (kind === undefined || owner === undefined)) {
 		return `Error: "${APP_NAME} host shard-path" needs --kind <p|i> and --owner <id>.`;
 	}
+	const terms = Object.keys(handover).length === 0 ? undefined : handoverTerms(handover);
+	if (typeof terms === "string") return terms;
 	return {
 		subcommand,
 		...(specPath !== undefined && { specPath }),
@@ -205,7 +220,28 @@ export function parseHostArgs(args: readonly string[]): ParsedHostArgs | string 
 		...(owner !== undefined && { owner }),
 		...(root !== undefined && { root }),
 		...(agentDir !== undefined && { agentDir }),
+		...(terms !== undefined && { handover: terms }),
 	};
+}
+
+const HANDOVER_FLAGS = new Set(["--when", "--operation", "--if-instance", "--if-generation", "--target-build"]);
+
+/** The conditional handover's terms: all five flags together, or a usage error naming what is wrong. */
+function handoverTerms(flags: Readonly<Record<string, string>>): IdleHandoverTerms | string {
+	const when = flags["--when"];
+	const operationId = flags["--operation"];
+	const ifInstanceId = flags["--if-instance"];
+	const generation = flags["--if-generation"];
+	const targetRuntimeBuildId = flags["--target-build"];
+	if (when !== "idle") return `Error: "${APP_NAME} host handoff" supports only --when idle.`;
+	if (!operationId || !ifInstanceId || !generation || !targetRuntimeBuildId) {
+		return `Error: "${APP_NAME} host handoff --when idle" needs --operation, --if-instance, --if-generation and --target-build.`;
+	}
+	const ifGeneration = Number(generation);
+	if (!/^\d+$/.test(generation) || !Number.isSafeInteger(ifGeneration)) {
+		return `Error: --if-generation must be a non-negative integer.`;
+	}
+	return { operationId, ifInstanceId, ifGeneration, targetRuntimeBuildId };
 }
 
 /** One line, synchronously, so an exit cannot truncate the answer the caller is parsing. */

@@ -22,6 +22,11 @@ export class ThemedText extends Text {
 		this.stale = true;
 	}
 
+	/** Output is the built text; `invalidate()` bumps the revision before the rebuild in `render`. */
+	override getRenderRevision(): number {
+		return this.textRenderRevision();
+	}
+
 	override render(width: number): string[] {
 		if (this.stale) {
 			this.stale = false;

@@ -6,13 +6,20 @@
 
 ### Added
 
+- Shared RPC hosts report `runtimeBuildId`, a content digest of the runtime they loaded at startup (engine files, plugins, flavour, platform), in `get_protocol_info` and `host status`, and `host ensure` reports the `clientRuntimeBuildId` it would launch, so a client can tell two builds of one version apart and see a bundle replaced in place. `senpi host handoff --when idle --operation <id> --if-instance <id> --if-generation <n> --target-build <id>` asks the running host to hand over to the caller's runtime at its next idle point: it stops admitting new work, lets running turns finish, never aborts one, answers `handover_pending` meanwhile, and keeps serving if the successor does not come up. A repeated operation id returns the existing operation.
+
 ### Changed
 
 ### Fixed
 
 - The PR changelog gate no longer fails with `spawnSync git ENOBUFS` once a changelog grows past one mebibyte, which every pull request touching this changelog hit after the 2026.10.1-3 release.
+- Clipboard images pasted with Ctrl+V now attach in direct local Warp-on-WSL sessions by handling Warp's empty bracketed-paste event. Raw Ctrl+V and Alt+V remain supported, without changing non-empty text paste or other terminal defaults ([#2538](https://github.com/code-yeongyu/senpi/pull/2538) by [@deopa0402](https://github.com/deopa0402)).
 
 - Configuration hot-reload ignores creation of an empty project configuration directory or task runtime state, while still discovering real configuration added at the same time or later. It also waits for admitted first requests and rechecks readiness after asynchronous reload vetoes ([omo#9363](https://github.com/code-yeongyu/oh-my-openagent/issues/9363), [omo#9365](https://github.com/code-yeongyu/oh-my-openagent/issues/9365)).
+
+- Long sessions stay responsive: typing, streaming a reply and background events no longer re-render the whole transcript on every frame. Finished messages and tool cards are rendered once and reused, read cards no longer walk the filesystem per frame, and the footer no longer re-counts context tokens over every message. In a 10,000-entry session a keystroke now appears in about 4 ms at p95 instead of about 30 ms, and the event loop no longer stalls while typing. A burst of background events (monitor, task or background-command notices) arriving while the agent works is answered in one turn instead of one turn per event, and an animated entry that scrolled into the terminal history no longer forces the whole transcript to be rewritten. In the regular mode the terminal now keeps the recent history (its own scrollback size where readable, else about 2,000 lines) under a line such as "9,700 earlier messages · /tree to browse, or switch to fullscreen", so resuming a 10,000-entry session accepts typing in under 1 s instead of 2-4 s; the session, `/tree`, fullscreen, copy and export keep everything. Each background-triggered turn also stopped copying the whole session several times and re-parsing skill MCP declarations, so in a 10,000-entry session typing during a burst of 20 events per second stays responsive. A 50,000-entry session also uses about as much memory as a 10,000-entry one, and rows that scroll above the kept history drop their rendered lines; memory still grows with the entries a long event stream adds ([#2537](https://github.com/code-yeongyu/senpi/issues/2537)). Recording a shown tip no longer freezes typing while another senpi process holds the settings lock. Thanks @deadcode-walker, whose analysis in [#2219](https://github.com/code-yeongyu/senpi/pull/2219) helped locate the per-frame costs ([#2508](https://github.com/code-yeongyu/senpi/issues/2508)).
+
+- A long session that was compacted could later reuse the id of an entry that compaction had trimmed from memory; the next resume then hung on "opening session" forever. Ids now stay unique across the whole session file, and a file that already has a duplicated id opens normally and no longer freezes `/tree` ([#1247](https://github.com/code-yeongyu/senpi/issues/1247), [#2508](https://github.com/code-yeongyu/senpi/issues/2508)).
 
 ### Removed
 

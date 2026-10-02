@@ -1,3 +1,21 @@
+## 2026-10-01 - Package directory lookup is resolved once (senpi#2508)
+
+### What changed
+
+- `packages/coding-agent/src/config.ts`: `getPackageDir()` resolves the source/dist package root once per process instead of walking parent directories with `existsSync` on every call.
+
+### Why
+
+Read-card classification calls `getReadmePath()`; the walk ran for every read card on every frame.
+
+### Why an extension could not handle it
+
+Core path resolution.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/config.ts`: `getPackageDir`.
+
 ## 2026-10-01 - Experimental picker preserves optional command arguments (senpi#2479)
 
 ### What changed

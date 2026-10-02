@@ -1,4 +1,10 @@
-import { type Component, dispatchMouseEvent, type TuiMouseDispatchResult, type TuiMouseEvent } from "../tui.ts";
+import {
+	type Component,
+	CompositeRevision,
+	dispatchMouseEvent,
+	type TuiMouseDispatchResult,
+	type TuiMouseEvent,
+} from "../tui.ts";
 import { applyBackgroundToLine, visibleWidth } from "../utils.ts";
 
 type RenderCache = {
@@ -21,6 +27,7 @@ export class Box implements Component {
 	// Cache for rendered output
 	private cache?: RenderCache;
 	private mouseLayout?: { width: number; children: Array<{ component: Component; height: number }> };
+	private readonly composite = new CompositeRevision();
 
 	constructor(paddingX = 1, paddingY = 1, bgFn?: (text: string) => string) {
 		this.paddingX = paddingX;
@@ -66,11 +73,13 @@ export class Box implements Component {
 
 	setBgFn(bgFn?: (text: string) => string): void {
 		this.bgFn = bgFn;
+		this.composite.bump();
 		// Don't invalidate here - we'll detect bgFn changes by sampling output
 	}
 
 	private invalidateCache(): void {
 		this.cache = undefined;
+		this.composite.bump();
 	}
 
 	private matchCache(width: number, childLines: string[], bgSample: string | undefined): boolean {
@@ -86,9 +95,23 @@ export class Box implements Component {
 
 	invalidate(): void {
 		this.invalidateCache();
+		this.composite.bump();
 		for (const child of this.children) {
 			child.invalidate?.();
 		}
+	}
+
+	/** Padding plus background over the children: exact `Box` instances change only with them (see `Container`). */
+	getRenderRevision(): number | undefined {
+		return Object.getPrototypeOf(this) === Box.prototype ? this.childRenderRevision() : undefined;
+	}
+
+	protected childRenderRevision(): number | undefined {
+		return this.composite.read(this.children);
+	}
+
+	protected bumpRenderRevision(): void {
+		this.composite.bump();
 	}
 
 	handleMouse(event: TuiMouseEvent): TuiMouseDispatchResult | undefined {

@@ -2065,7 +2065,12 @@ export class AgentSession {
 		drafts: SessionBoundaryDraft[],
 		boundary: "turn_end" | "agent_before_settle",
 	): BoundaryContextPreview {
-		const projection = this._createBoundaryPreviewManager(drafts).buildSessionProjection();
+		// With no drafts the preview is the session itself; cloning the branch into a new manager
+		// re-indexed and re-copied every entry twice per turn.
+		const projection =
+			drafts.length === 0
+				? this.sessionManager.buildSessionProjection()
+				: this._createBoundaryPreviewManager(drafts).buildSessionProjection();
 		const pendingMessages = this._getPendingBoundaryMessages();
 		const llmMessages = convertToLlm(projection.messages);
 		const finalRole = llmMessages[llmMessages.length - 1]?.role;
@@ -2461,17 +2466,16 @@ export class AgentSession {
 		});
 	}
 
-	private async _emitAgentIdleAfterDeferredTurns(
-		settlementEpoch: number,
-		deferredTurnClaims: DeferredTurnClaim[],
-	): Promise<void> {
-		const dispositions = await Promise.all(deferredTurnClaims.map((claim) => claim.disposition));
-		if (dispositions.includes("started")) return;
-		if (dispositions.includes("delegated") || this._sessionWorkBarrier.hasActiveWork) {
-			await this._waitForSettledSessionWork();
-		}
-		if (settlementEpoch !== this._settlementEpoch) return;
+	/**
+	 * Release the memoized session views and tokenize the runtime messages while nothing runs.
+	 * Called when a run settles idle and after a resumed session's first render, which builds the
+	 * views without any run settling afterwards.
+	 */
+	releaseSettledSessionMemory(): void {
 		if (this._isAgentRunActive || this._sessionWorkBarrier.hasActiveWork) return;
+		// A trimmed mirror bounds memory to the kept tail; a full-history view held across idle
+		// would pin every entry of the file again, so it goes at idle like the views below.
+		if (this.sessionManager.holdsMaterializedHistory()) this.sessionManager.dropMaterializedCaches();
 		// Releasing frees memory only for strings the store already spilled to its blob
 		// backing: a resident string is shared with the store, so tokenizing it hands
 		// back nothing while costing every settled-time reader a re-materialization.
@@ -2486,6 +2490,20 @@ export class AgentSession {
 			this.sessionManager.getResidentStore().externalizeInPlace(this.agent.state.messages);
 			this._runtimeMessagesTokenized = true;
 		}
+	}
+
+	private async _emitAgentIdleAfterDeferredTurns(
+		settlementEpoch: number,
+		deferredTurnClaims: DeferredTurnClaim[],
+	): Promise<void> {
+		const dispositions = await Promise.all(deferredTurnClaims.map((claim) => claim.disposition));
+		if (dispositions.includes("started")) return;
+		if (dispositions.includes("delegated") || this._sessionWorkBarrier.hasActiveWork) {
+			await this._waitForSettledSessionWork();
+		}
+		if (settlementEpoch !== this._settlementEpoch) return;
+		if (this._isAgentRunActive || this._sessionWorkBarrier.hasActiveWork) return;
+		this.releaseSettledSessionMemory();
 		this._emit({ type: "agent_idle" });
 	}
 
@@ -10570,8 +10588,55 @@ export class AgentSession {
 		else process.env[PROMPT_CACHE_SAFE_WAIT_ENV] = String(budget);
 	}
 
+	/**
+	 * Context usage is shown on every frame (footer), but it only changes when a message is appended or
+	 * replaced, the branch moves, or the model changes. Messages are appended in place, so the key is the
+	 * array, its length and last message (with a fingerprint of its content and usage, in case it grows
+	 * in place), plus the leaf and the model's window.
+	 */
 	getContextUsage(): ContextUsage | undefined {
 		const model = this._limitsModel();
+		const runtimeMessages = this.messages;
+		const key = {
+			messages: runtimeMessages,
+			length: runtimeMessages.length,
+			last: runtimeMessages.at(-1),
+			lastFingerprint: messageFingerprint(runtimeMessages.at(-1)),
+			leafId: this.sessionManager.getLeafId(),
+			contextWindow: model?.contextWindow,
+		};
+		const cached = this._contextUsageCache;
+		if (
+			cached !== undefined &&
+			cached.key.messages === key.messages &&
+			cached.key.length === key.length &&
+			cached.key.last === key.last &&
+			cached.key.lastFingerprint === key.lastFingerprint &&
+			cached.key.leafId === key.leafId &&
+			cached.key.contextWindow === key.contextWindow
+		) {
+			return cached.usage;
+		}
+		const usage = this._computeContextUsage(model);
+		this._contextUsageCache = { key, usage };
+		return usage;
+	}
+
+	private _contextUsageCache:
+		| {
+				readonly key: {
+					readonly messages: AgentMessage[];
+					readonly length: number;
+					readonly last: AgentMessage | undefined;
+					readonly lastFingerprint: string;
+					readonly leafId: string | null;
+					readonly contextWindow: number | undefined;
+				};
+				readonly usage: ContextUsage | undefined;
+		  }
+		| undefined;
+
+	private _computeContextUsage(model: Model<any> | undefined): ContextUsage | undefined {
 		if (!model) return undefined;
 
 		const contextWindow = model.contextWindow ?? 0;
@@ -10751,4 +10816,21 @@ export class AgentSession {
 	get extensionRunner(): ExtensionRunner {
 		return this._extensionRunner;
 	}
+}
+
+/** Changes whenever a message's content grows or its usage is filled in, without walking other messages. */
+function messageFingerprint(message: AgentMessage | undefined): string {
+	if (message === undefined) return "";
+	const content = (message as { content?: unknown }).content;
+	let size = 0;
+	if (typeof content === "string") size = content.length;
+	else if (Array.isArray(content)) {
+		for (const part of content as Array<{ text?: unknown; thinking?: unknown; arguments?: unknown }>) {
+			size += 1;
+			if (typeof part.text === "string") size += part.text.length;
+			if (typeof part.thinking === "string") size += part.thinking.length;
+		}
+	}
+	const usage = (message as { usage?: { input?: number; output?: number; totalTokens?: number } }).usage;
+	return `${size}:${usage?.input ?? ""}:${usage?.output ?? ""}:${usage?.totalTokens ?? ""}`;
 }

@@ -62,6 +62,11 @@ export class UserMessageComponent extends Container {
 		this.addChild(answer ? new AskUserAnswerChip(answer, this.answerHeaders, contentBox) : contentBox);
 	}
 
+	/** Output is the zone-marked render of the content box, so it changes only with that subtree. */
+	override getRenderRevision(): number | undefined {
+		return this.childRenderRevision();
+	}
+
 	override render(width: number): string[] {
 		const lines = super.render(width);
 		if (lines.length === 0) {
