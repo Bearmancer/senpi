@@ -1,3 +1,21 @@
+## 2026-10-02 - Memory report trigger at startup (senpi#2561)
+
+### What changed
+
+- `packages/coding-agent/src/main.ts`: calls `installMemoryReportSignal()` before the multi-session branch and the mode dispatch, so TUI, print, RPC and multi-session hosts all install the `SIGUSR2` memory report when `SENPI_MEMORY_REPORT=1`; without the flag it installs nothing.
+
+### Why
+
+- The on-demand memory report must be reachable from every mode of a running session process.
+
+### Why an extension could not handle it
+
+- Extensions load per session, after mode selection; a multi-session host has none until a session opens, and the signal handler is process-wide.
+
+### Expected merge conflict zones
+
+- `main.ts`: the line before `if (appMode === "rpc" && parsed.multiSession)` and the import block.
+
 ## 2026-10-01 - Package directory lookup is resolved once (senpi#2508)
 
 ### What changed
