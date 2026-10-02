@@ -6,8 +6,9 @@ import type { OAuthClientInformationFull } from "@modelcontextprotocol/sdk/share
 import lockfile from "proper-lockfile";
 import { getAgentDir } from "../../../../../config.ts";
 
-// URL-bound OAuth credential record persisted at
-// <agentDir>/mcp-auth/<sha256(serverUrl)>/tokens.json (dir 0700, file 0600).
+// OAuth credential record of one server, persisted at
+// <agentDir>/mcp-auth/<sha256(serverName \0 serverUrl)>/tokens.json (dir 0700, file 0600).
+// Records an older senpi stored by URL alone (<sha256(serverUrl)>) move to the first server that reads them.
 export interface McpStoredAuth {
 	accessToken?: string;
 	refreshToken?: string;
@@ -54,11 +55,16 @@ export function hashServerUrl(serverUrl: string): string {
 	return createHash("sha256").update(serverUrl).digest("hex");
 }
 
+export function hashServerKey(serverName: string, serverUrl: string): string {
+	return createHash("sha256").update(`${serverName}\0${serverUrl}`).digest("hex");
+}
+
 export class McpTokenStore<TRecord extends McpStoredAuth = McpStoredAuth> {
 	readonly serverName: string;
 	readonly serverUrl: string;
 	readonly #agentDir: string;
 	readonly #hash: string;
+	readonly #legacyHash: string;
 	readonly #lock: Required<TokenStoreLockOptions>;
 	readonly #disableLock: boolean;
 
@@ -66,7 +72,8 @@ export class McpTokenStore<TRecord extends McpStoredAuth = McpStoredAuth> {
 		this.serverName = options.serverName;
 		this.serverUrl = options.serverUrl;
 		this.#agentDir = options.agentDir ?? getAgentDir();
-		this.#hash = hashServerUrl(options.serverUrl);
+		this.#hash = hashServerKey(options.serverName, options.serverUrl);
+		this.#legacyHash = hashServerUrl(options.serverUrl);
 		this.#lock = { ...DEFAULT_LOCK, ...options.lock };
 		this.#disableLock = options.disableLock ?? false;
 	}
@@ -84,8 +91,25 @@ export class McpTokenStore<TRecord extends McpStoredAuth = McpStoredAuth> {
 		return join(this.dir, `${TOKENS_FILE}.lock`);
 	}
 
+	get legacyDir(): string {
+		return join(this.rootDir, this.#legacyHash);
+	}
+
 	read(): TRecord | undefined {
-		return readJsonFile<TRecord>(this.tokensPath);
+		const record = readJsonFile<TRecord>(this.tokensPath);
+		if (record !== undefined) return record;
+		return this.#adoptLegacyRecord();
+	}
+
+	// The first server that reads a URL-keyed record takes it over; other servers with the same URL sign in again.
+	#adoptLegacyRecord(): TRecord | undefined {
+		const legacyTokens = join(this.legacyDir, TOKENS_FILE);
+		const legacy = readJsonFile<TRecord>(legacyTokens);
+		if (legacy === undefined) return undefined;
+		this.#writeAtomic(legacy);
+		this.#writeIndex();
+		rmSync(legacyTokens, { force: true });
+		return legacy;
 	}
 
 	async update(mutate: (current: TRecord | undefined) => TRecord | undefined): Promise<TRecord | undefined> {
@@ -137,6 +161,7 @@ export class McpTokenStore<TRecord extends McpStoredAuth = McpStoredAuth> {
 		const release = await this.#acquire();
 		try {
 			rmSync(this.dir, { force: true, recursive: true });
+			rmSync(join(this.legacyDir, TOKENS_FILE), { force: true });
 		} finally {
 			await release().catch(() => undefined);
 		}
