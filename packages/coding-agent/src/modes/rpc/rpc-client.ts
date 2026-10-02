@@ -10,6 +10,7 @@ import type { AgentMessage, ThinkingLevel } from "@earendil-works/pi-agent-core"
 import type { ImageContent } from "@earendil-works/pi-ai";
 import type { PromptDisposition, QueuedInputDisposition, SessionStats } from "../../core/agent-session.ts";
 import type { BashResult } from "../../core/bash-executor.ts";
+import { type ClientMessageIdentity, clientMessageIdentity } from "../../core/client-message-identity.ts";
 import type { CompactionResult } from "../../core/compaction/index.ts";
 import type { PromptSurface } from "../../core/dynamic-prompt/types.ts";
 import type { ServiceTier } from "../../core/extensions/builtin/service-tier.ts";
@@ -105,7 +106,7 @@ export interface ModelInfo {
 	supportedThinkingLevels?: ThinkingLevel[];
 }
 
-type PromptOptions = {
+type PromptOptions = ClientMessageIdentity & {
 	images?: ImageContent[];
 	streamingBehavior?: "steer" | "followUp";
 	thinkingLevel?: ThinkingLevel;
@@ -118,7 +119,7 @@ type PromptOptions = {
 
 export type RpcProviderAccountEvent = RpcAuthAccountsChangedEvent | RpcAccountFailoverEvent;
 export type RpcClientEvent =
-	| JsonAgentSessionEvent
+	| (JsonAgentSessionEvent & ClientMessageIdentity & { readonly clientMessages?: readonly ClientMessageIdentity[] })
 	| RpcProviderAccountEvent
 	| RpcExtensionEvent
 	| RpcExtensionUIRequest
@@ -551,6 +552,7 @@ export class RpcClient {
 			{
 				type: "prompt",
 				message,
+				...clientMessageIdentity(options),
 				...(options.images ? { images: options.images } : {}),
 				...(options.streamingBehavior ? { streamingBehavior: options.streamingBehavior } : {}),
 				...(options.thinkingLevel ? { thinkingLevel: options.thinkingLevel } : {}),
@@ -582,7 +584,7 @@ export class RpcClient {
 				failure.errorCode === RPC_ERROR_UNKNOWN_COMMAND
 					? unknownCommandErrorFromWire(failure.errorData)
 					: undefined;
-			throw unknownCommand ?? new Error(failure.error);
+			throw unknownCommand ?? new RpcCommandError(failure.error, failure.errorCode, failure.errorData);
 		}
 		// Older hosts omit the disposition; "handled" matches the promptDisposition callback fallback.
 		return (response as { data?: { disposition?: PromptDisposition } }).data?.disposition ?? "handled";
@@ -609,9 +611,15 @@ export class RpcClient {
 	async steer(
 		message: string,
 		images?: ImageContent[],
-		recovery?: { enqueueOrder?: number },
+		recovery?: ClientMessageIdentity & { enqueueOrder?: number },
 	): Promise<QueuedInputDisposition> {
-		const response = await this.send({ type: "steer", message, images, enqueueOrder: recovery?.enqueueOrder });
+		const response = await this.send({
+			type: "steer",
+			message,
+			images,
+			enqueueOrder: recovery?.enqueueOrder,
+			...clientMessageIdentity(recovery),
+		});
 		// Older hosts omit the disposition; degrade like prompt() so clients render only canonical events.
 		return this.getData<{ disposition?: QueuedInputDisposition } | undefined>(response)?.disposition ?? "handled";
 	}
@@ -622,9 +630,15 @@ export class RpcClient {
 	async followUp(
 		message: string,
 		images?: ImageContent[],
-		recovery?: { enqueueOrder?: number },
+		recovery?: ClientMessageIdentity & { enqueueOrder?: number },
 	): Promise<QueuedInputDisposition> {
-		const response = await this.send({ type: "follow_up", message, images, enqueueOrder: recovery?.enqueueOrder });
+		const response = await this.send({
+			type: "follow_up",
+			message,
+			images,
+			enqueueOrder: recovery?.enqueueOrder,
+			...clientMessageIdentity(recovery),
+		});
 		// Older hosts omit the disposition; degrade like prompt() so clients render only canonical events.
 		return this.getData<{ disposition?: QueuedInputDisposition } | undefined>(response)?.disposition ?? "handled";
 	}

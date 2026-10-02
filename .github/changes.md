@@ -124,6 +124,24 @@ Workspace manifests, tsconfig and build/check scripts are repository build infra
 
 Every path listed above conflicts again where upstream edits the hunks named in its line; the fork-kept constructs named there are the anchors to preserve.
 
+## 2026-09-30 - Codemode behavior regression gate (senpi#2452)
+
+### What changed
+
+- `.github/workflows/ci.yml`: add the `codemode-gate` job with all five required runtime legs, a frozen behavior baseline, package contracts, harness typechecking, and a JSON report artifact. Its build wrapper records input hashes, including the source file set, so a deleted source cannot be measured against stale workspace output.
+
+### Why
+
+- Codemode changes need exact checks for legacy prompt, schema, helper, lifecycle, and import behavior without relying on wall-clock timings. The import census is scoped through measured parent edges and the loader's virtual module tables; host-only imports do not turn the codemode job red.
+
+### Why an extension could not handle it
+
+- CI workflow.
+
+### Expected merge conflict zones
+
+- LOW: the new `codemode-gate` job in `ci.yml`.
+
 ## 2026-09-29 - Model catalog publish runs only in the upstream repository (senpi#1522)
 
 ### What changed

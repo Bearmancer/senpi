@@ -380,6 +380,92 @@ namespace to prevent recursive execution.
 
 ## Validation
 
+The regression gate compares full prompt content (240 dialect/capability/runtime/host
+combinations), schemas, helper census, live helper witnesses and eager imports,
+and runs the legacy contracts. It requires Bun, Node, Python, Ruby and Julia; a missing
+interpreter fails rather than skipping a runtime. It does not gate wall-clock
+timing or absolute memory footprints; those belong to the paired benchmark.
+Ruby 3.4 and later also require the `base64` gem (`gem install base64 --version 0.3.0 --no-document`).
+
+The eager-import probe starts without third-party validation modules loaded.
+It validates observer records only after measurement, so a target sharing the
+harness dependency tree has the same cold census as a separate checkout.
+Module IDs are package-relative. The exact census covers codemode, its non-virtual
+dependency closure and Node builtins. The observer records parent edges and reads
+both loader `VIRTUAL_MODULES` tables: their backing packages and dependencies
+reachable only across virtual edges belong to the host and are excluded from
+set equality. Every observed edge and classification remains in the report.
+Workspace imports resolve through built `dist` entries. The gate build records
+the source file set, inherited build configs and content hashes after a successful
+build; preflight rejects missing, changed or deleted inputs. Unchanged content
+remains valid after timestamp refreshes. Each ignored `.senpi-gate-inputs.json`
+certificate sits beside its workspace manifest, outside the published `dist` tree.
+
+```bash
+bun packages/senpi-codemode/scripts/gate-build.ts
+bun run --cwd packages/senpi-codemode gate --baseline test/gate/baseline.json
+bun run --cwd packages/senpi-codemode test -- test/gate
+```
+
+The package test script already selects `test/`, so the last command intentionally
+runs the full package suite. For a focused gate-only run, invoke Vitest directly:
+
+```bash
+bun run --cwd packages/senpi-codemode vitest run test/gate
+```
+
+Install and build both the head checkout and a clean checkout of the PR merge
+base with `bun install --ignore-scripts --frozen-lockfile`. Build each target with
+the head harness, `bun packages/senpi-codemode/scripts/gate-build.ts <checkout>`.
+Record the baseline with the **head harness** against that freshly built base
+checkout, not by running an older harness:
+
+```bash
+bun run --cwd packages/senpi-codemode gate --target <base-checkout> \
+  --baseline test/gate/baseline.json --write-baseline
+```
+
+The report is gitignored `gate-report.json` by default (`--report <path>` overrides it).
+`test/gate/allowlist.json` contains reviewed additive changes keyed by plan node;
+it cannot authorize removal or modification of a legacy entry. The test-only
+`SENPI_CODEMODE_GATE_MUTATE=drop-phase` report mutation proves that helper removal
+is rejected. `SENPI_CODEMODE_GATE_MUTATE=leak-kernel` leaves the real kernel
+alive at the teardown witness, then closes it in `finally`; nonzero process,
+worker, socket, handle, subscription and active-resource listener counts fail
+by name. Constructors are observed because Bun's active-handle/report APIs
+return empty arrays even for live workers.
+Live timers are observed independently of the import census, including unref'd
+global timers, named and namespace imports from `node:timers`,
+`node:timers/promises` (including interval iterators and the scheduler), and
+self-rearming `AbortSignal.timeout` polls. Failures name the timer API and its
+creation site. The gate installs delegating wrappers before the kernel graph
+loads; on Bun its module-replacement API also updates builtin ESM bindings.
+These wrappers run only in gate processes and keep the native timer behavior.
+The only production-source additions are an inert gate observer at the existing
+worker, interpreter-process and bridge-server constructors. It is undefined in
+normal execution. This hook is necessary because Bun does not refresh named
+builtin exports when `syncBuiltinESMExports()` runs; patching their default
+exports alone otherwise reports zero resources even for a leaked real kernel.
+
+| Inert hook site | Measured resource | Verification |
+| --- | --- | --- |
+| `src/kernels/js/worker-host.ts` | Worker exit | Real Bun kernel close/leak tests |
+| `src/kernels/py/process.ts` | Python child close | Five-runtime gate and kernel-leak mutation |
+| `src/kernels/shared/subprocess-process.ts` | Ruby/Julia child close | Five-runtime gate and kernel-leak mutation |
+| `src/bridge/http-server.ts` | Server close and accepted sockets | Real Bun bridge close/leak tests |
+
+The gate-only `leak-bridge` mutation leaves the real bridge server open for the
+witness and closes it in `finally`; the real-runtime test must observe an open
+handle. Neither mutation is read by production code.
+
+Legacy scenario identities are compared exactly, so deleting or renaming a
+test cannot make the gate green. Platform-dependent skip outcomes remain
+visible in the report. Driver tests await child close events, with a generous
+hang watchdog; the infinite-loop timeout uses an injected clock after the
+worker announces execution. No deadline tests are excluded from the gate.
+The held-child probe advances the parent clock past all former startup
+deadlines three times before releasing the child's IPC barrier.
+
 ```bash
 cd packages/senpi-codemode
 bun run test

@@ -99,7 +99,13 @@ describe("credential error taxonomy", () => {
 		["Claude session limit", "You've hit your session limit \u00b7 resets 12am (Asia/Seoul)", 12 * HOUR_MS],
 		["Claude weekly limit", "You've hit your weekly limit \u00b7 resets 5am (Asia/Seoul)", 17 * HOUR_MS],
 		["Claude 5-hour limit", "You've reached your 5-hour limit"],
-		["Claude model weekly limit", "You've hit your Fable weekly limit \u00b7 resets Oct 2, 9am", FABLE_RESET_MS],
+		// Names its family, so the block binds only Fable on the account (senpi#2555).
+		[
+			"Claude model weekly limit",
+			"You've hit your Fable weekly limit \u00b7 resets Oct 2, 9am",
+			FABLE_RESET_MS,
+			"fable",
+		],
 		// Claude Code terminal reasons (anthropic-subscription-failover.test.ts).
 		["Claude blocking_limit", "Claude Code error_during_execution: blocking_limit"],
 		["Claude rapid_refill_breaker", "Claude Code error_during_execution: rapid_refill_breaker"],
@@ -116,13 +122,14 @@ describe("credential error taxonomy", () => {
 		["Cursor resource_exhausted", "Connect error resource_exhausted: quota exceeded"],
 	] as const)(
 		"%s is an account usage limit: fails over with a rate-limit cooldown",
-		(_label, message, cooldownMs?: number) => {
+		(_label, message, cooldownMs?: number, modelFamily?: string) => {
 			expect(classifyCredentialFailure(new Error(message), { nowMs: NOW_MS })).toEqual({
 				kind: "failover",
 				block: {
 					reason: "rate_limit",
 					cooldownMs: Math.min(cooldownMs ?? COOLDOWN_BASE_MS, COOLDOWN_CAP_MS),
 					retryAfterWasCapped: (cooldownMs ?? COOLDOWN_BASE_MS) > COOLDOWN_CAP_MS,
+					...(modelFamily === undefined ? {} : { modelFamily }),
 				},
 			});
 		},

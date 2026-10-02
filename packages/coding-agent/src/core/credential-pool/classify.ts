@@ -3,6 +3,7 @@ import { DEFAULT_SLOT_BLOCK_MS, MAX_SLOT_BLOCK_MS } from "@earendil-works/pi-ai/
 import { normalizeProviderError } from "@earendil-works/pi-ai/utils/error-body";
 import { getOverflowPatterns } from "@earendil-works/pi-ai/utils/overflow";
 import { extract429RetryAfterMs } from "@earendil-works/pi-ai/utils/retry-hint";
+import { rateLimitModelFamily } from "./model-scope.ts";
 import { usageLimitResetMs } from "./reset-time.ts";
 import { isAccountUsageLimitText } from "./usage-limit.ts";
 
@@ -13,7 +14,13 @@ export const RETRY_SAME_MAX_ATTEMPTS = 2;
 export type CredentialBlock =
 	| { reason: "auth_error" }
 	| { reason: "account_disabled" }
-	| { reason: "rate_limit"; cooldownMs: number; retryAfterWasCapped: boolean };
+	| {
+			reason: "rate_limit";
+			cooldownMs: number;
+			retryAfterWasCapped: boolean;
+			/** Set when the limit names the one model family it binds ("Fable limit"). */
+			modelFamily?: string;
+	  };
 
 export type CredentialAction =
 	| { kind: "failover"; block: CredentialBlock }
@@ -116,6 +123,7 @@ export function classifyCredentialFailure(
 		const hint =
 			extract429RetryAfterMs({ status: status ?? 429, bodyText: text }, nowMs) ??
 			(usageLimit ? (normalized.retryAfterMs ?? usageLimitResetMs(text, nowMs)) : undefined);
+		const modelFamily = rateLimitModelFamily(text);
 		return {
 			kind: "failover",
 			block: {
@@ -124,6 +132,7 @@ export function classifyCredentialFailure(
 					baseMs: context.cooldownBaseMs,
 					capMs: context.cooldownCapMs,
 				}),
+				...(modelFamily === undefined ? {} : { modelFamily }),
 			},
 		};
 	}

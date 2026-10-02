@@ -238,6 +238,7 @@ function residentAuthLaneMessages(input: ResidentSessionStreamInput): AsyncItera
 		env: input.streamOptions.env,
 		signal: input.streamOptions.signal,
 		sessionId: input.streamOptions.affinitySessionId ?? input.streamOptions.sessionId,
+		model: input.model.id,
 		pinnedAccount: input.pinnedAccount,
 		buildOptions: input.buildOptions,
 		createAttempt: (auth) => createResidentAttempt(input, auth),

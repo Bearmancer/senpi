@@ -5,6 +5,7 @@ import { dirname, join, resolve } from "path";
 import { fileURLToPath } from "url";
 import { getBaiModels } from "./generate-models-bai.ts";
 import { fetchOpenGatewayModels } from "./generate-models-opengateway.ts";
+import { applyOpenAiInputCap } from "../src/utils/openai-input-cap.ts";
 import { MODEL_SHARD_SUFFIX, importedModelShards, isPrunableModelShard } from "./model-shards.ts";
 import { getEffortThinkingLevelMap, type ModelsDevReasoningOption } from "./models-dev-reasoning-options.ts";
 import { buildOpenRouterCatalog, type OpenRouterCatalog, type OpenRouterModelListItem } from "./openrouter-catalog.ts";
@@ -37,6 +38,7 @@ import {
 	type ModelDataStructure,
 	MODEL_DATA_MANIFEST_FILE,
 	readModelDataProviderIds,
+	readModelDataStructure,
 	validateGeneratedModelData,
 	validateModelDataDirectory,
 } from "./model-data.ts";
@@ -56,12 +58,16 @@ function readGeneratorOptions(args: string[]): {
 	jsonOnly: boolean;
 	jsonOutputDir: string | undefined;
 	pretty: boolean;
+	providerIds: string[] | undefined;
+	generatedAt: string | undefined;
 } {
 	let strict = false;
 	let dataOnly = false;
 	let jsonOnly = false;
 	let jsonOutputDir: string | undefined;
 	let pretty = false;
+	let providerIds: string[] | undefined;
+	let generatedAt: string | undefined;
 
 	for (let index = 0; index < args.length; index++) {
 		const arg = args[index];
@@ -87,12 +93,32 @@ function readGeneratorOptions(args: string[]): {
 			jsonOutputDir = resolve(value);
 			continue;
 		}
+		if (arg === "--providers") {
+			const value = args[++index];
+			if (!value) throw new Error("--providers requires a comma-separated provider list");
+			const values = value.split(",").map((providerId) => providerId.trim());
+			if (values.some((providerId) => providerId.length === 0)) {
+				throw new Error("--providers cannot contain empty provider IDs");
+			}
+			providerIds = Array.from(new Set(values)).sort();
+			if (providerIds.length !== values.length) throw new Error("--providers cannot contain duplicate provider IDs");
+			continue;
+		}
+		if (arg === "--generated-at") {
+			const value = args[++index];
+			if (!value || Number.isNaN(Date.parse(value))) throw new Error("--generated-at requires an ISO timestamp");
+			generatedAt = new Date(value).toISOString();
+			continue;
+		}
 		throw new Error(`Unknown argument: ${arg}`);
 	}
 
 	if (jsonOnly && !jsonOutputDir) throw new Error("--json-only requires --json-output");
 	if (dataOnly && (jsonOnly || jsonOutputDir)) throw new Error("--data-only cannot be combined with JSON catalog output");
-	return { strict, dataOnly, jsonOnly, jsonOutputDir, pretty };
+	if (providerIds && (dataOnly || jsonOnly || jsonOutputDir)) {
+		throw new Error("--providers cannot be combined with --data-only or JSON catalog output");
+	}
+	return { strict, dataOnly, jsonOnly, jsonOutputDir, pretty, providerIds, generatedAt };
 }
 
 const generatorOptions = readGeneratorOptions(process.argv.slice(2));
@@ -462,10 +488,6 @@ const OPENAI_LONG_CONTEXT_INPUT_THRESHOLD = 272000;
 // The split follows the model, not the gateway: `applyOpenAiInputCap` runs over every provider's
 // GPT-5.x / GPT-6 rows (Azure, Bedrock, Copilot, OpenRouter, Vercel, OpenGateway, OpenCode...)
 // because those gateways forward the same upstream limit. Issue #1422.
-const OPENAI_DOCUMENTED_CONTEXT_WINDOW_INPUT_CAPS: ReadonlyMap<number, number> = new Map([
-	[400000, OPENAI_LONG_CONTEXT_INPUT_THRESHOLD],
-	[1050000, 922000],
-]);
 const OPENAI_MAX_CONTEXT_INPUT_CAP = 922000;
 // Flagship default context windows. OpenAI documents a 1,050,000-token window for every one of
 // these models; the project deliberately ships cost-tier prompt budgets (users widen through model
@@ -509,28 +531,6 @@ function isGpt6FamilyId(modelId: string): boolean {
 	return gpt6FamilyDefaultContextWindow(modelId) !== undefined;
 }
 
-function toOpenAiInputCap(contextWindow: number, maxTokens: number): number {
-	if (maxTokens !== 128000) return contextWindow;
-	return OPENAI_DOCUMENTED_CONTEXT_WINDOW_INPUT_CAPS.get(contextWindow) ?? contextWindow;
-}
-
-const OPENAI_GATEWAY_ID_PREFIX = /^(?:[a-z]{2}\.)?(?:global\.)?openai[./]/;
-
-/** GPT-5.x / GPT-6 rows on any provider: the OpenAI input/output split follows the model, not the gateway. */
-function isOpenAiFlagshipFamilyId(id: string): boolean {
-	const bare = id.replace(OPENAI_GATEWAY_ID_PREFIX, "");
-	return /^gpt-(?:5|6)(?:[.-]|$)/.test(bare) && !bare.startsWith("gpt-oss");
-}
-
-function applyOpenAiInputCap(model: Model<Api>): void {
-	if (!isOpenAiFlagshipFamilyId(model.id)) return;
-	// models.dev (and the gateways that mirror it) report gpt-5-pro output as 272000,
-	// a duplicate of the input sub-limit; the documented max output is 128000.
-	if (model.id.replace(OPENAI_GATEWAY_ID_PREFIX, "") === "gpt-5-pro" && model.maxTokens === 272000) {
-		model.maxTokens = 128000;
-	}
-	model.contextWindow = toOpenAiInputCap(model.contextWindow, model.maxTokens);
-}
 const OPENAI_SHORT_CONTEXT_CAPPED_MODEL_IDS = new Set([
 	"gpt-5.4",
 	"gpt-5.5",
@@ -4271,9 +4271,15 @@ async function generateModels() {
 
 	const serializeJson = (value: unknown) => `${JSON.stringify(value, null, generatorOptions.pretty ? 2 : undefined)}\n`;
 	const writeJson = (path: string, value: unknown) => writeFileSync(path, serializeJson(value));
-	const generatedDataProviderIds = generatorOptions.dataOnly
-		? readModelDataProviderIds(packageRoot)
-		: sortedProviderIds;
+	const existingModelDataStructure = generatorOptions.providerIds ? readModelDataStructure(packageRoot) : undefined;
+	const unknownProviderIds =
+		generatorOptions.providerIds?.filter(
+			(providerId) => existingModelDataStructure === undefined || !Object.hasOwn(existingModelDataStructure, providerId),
+		) ?? [];
+	if (unknownProviderIds.length > 0) {
+		throw new Error(`Unknown provider selector: ${unknownProviderIds.join(", ")}`);
+	}
+	const generatedDataProviderIds = generatorOptions.providerIds ?? (generatorOptions.dataOnly ? readModelDataProviderIds(packageRoot) : sortedProviderIds);
 	const missingProviderIds = generatedDataProviderIds.filter((providerId) => !jsonAllProviders[providerId]);
 	if (missingProviderIds.length > 0) {
 		throw new Error(`Cannot hydrate missing providers: ${missingProviderIds.join(", ")}`);
@@ -4281,7 +4287,7 @@ async function generateModels() {
 
 	// Only the ignored internal data is grouped by API for type derivation.
 	const generatedDataProviders: Record<string, Record<string, Record<string, AnyModel>>> = {};
-	const modelDataStructure: ModelDataStructure = {};
+	const modelDataStructure: ModelDataStructure = { ...existingModelDataStructure };
 	for (const providerId of generatedDataProviderIds) {
 		const models = jsonAllProviders[providerId];
 		generatedDataProviders[providerId] = {};
@@ -4301,7 +4307,7 @@ async function generateModels() {
 		}
 	}
 
-	const generatedAt = new Date().toISOString();
+	const generatedAt = generatorOptions.generatedAt ?? new Date().toISOString();
 
 	if (!generatorOptions.jsonOnly) {
 		// Stage and validate all provider values before replacing the current generated data.
@@ -4314,9 +4320,12 @@ async function generateModels() {
 		try {
 			mkdirSync(stagedDataDir, { recursive: true });
 			const fileContents: Record<string, string> = {};
-			for (const providerId of generatedDataProviderIds) {
+			const stagedProviderIds = existingModelDataStructure ? Object.keys(existingModelDataStructure).sort() : generatedDataProviderIds;
+			for (const providerId of stagedProviderIds) {
 				const filename = `${providerId}.json`;
-				const content = serializeJson(generatedDataProviders[providerId]);
+				const content = generatedDataProviders[providerId]
+					? serializeJson(generatedDataProviders[providerId])
+					: readFileSync(join(dataDir, filename), "utf8");
 				fileContents[filename] = content;
 				writeFileSync(join(stagedDataDir, filename), content);
 			}
@@ -4326,7 +4335,7 @@ async function generateModels() {
 			);
 			validateModelDataDirectory(modelDataStructure, stagedDataDir);
 
-			if (!generatorOptions.dataOnly) {
+			if (!generatorOptions.dataOnly && !generatorOptions.providerIds) {
 				const previousShardContents = new Map(
 					readdirSync(providersDir)
 						.filter((entry) => entry.endsWith(".models.ts"))

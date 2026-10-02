@@ -1,6 +1,10 @@
 {
 	"version": 1,
 	"nodes": {
+		"1": {
+			"additions": [],
+			"reason": "The initial harness preserves the merge-base surfaces without additive production changes."
+		},
 		"32": {
 			"additions": [
 				"legacyContracts/test/js-kernel-shell-stop-bun.test.ts/Bun shell Stop reports state loss when Stop interrupts a native shell wait",

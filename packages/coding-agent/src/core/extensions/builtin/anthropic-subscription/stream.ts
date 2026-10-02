@@ -155,6 +155,7 @@ export function streamAnthropicSubscription(
 						env: options?.env,
 						signal: options?.signal,
 						sessionId: affinityKey,
+						model: model.id,
 						pinnedAccount: getSessionClaudeAccountPin(options?.sessionId),
 						onQuery: (query) => {
 							sdkQuery = query;

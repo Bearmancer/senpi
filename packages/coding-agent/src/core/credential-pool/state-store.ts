@@ -30,6 +30,9 @@ const slotStateSchema = z.strictObject({
 	lastSuccessAt: z.number().int().positive().optional(),
 	credentialRevision: z.string().regex(HEX_256_BIT).optional(),
 	lease: leaseSchema.optional(),
+	// Rate limits that bind one model family on this slot, not the slot (senpi#2555).
+	// Absent in files written before; `blockedUntil` keeps meaning "account blocked".
+	modelBlocks: z.record(z.string().min(1), z.strictObject({ blockedUntil: z.number().int().positive() })).optional(),
 });
 
 export type CredentialSlotState = Readonly<z.infer<typeof slotStateSchema>>;

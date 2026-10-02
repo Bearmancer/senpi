@@ -1,3 +1,22 @@
+## 2026-10-02 - Monitor footer ticker retires on a stale context (senpi#2549)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/terminal/monitor-status-ticker.ts`: `tick()` catches the error a retired extension context throws (`isStaleExtensionContextError` from `../goal/stale-context.ts`), stops the ticker and returns `false`; `sync()` returns early on `false`, so a sync whose immediate render hits the retired context does not re-arm the interval. The next `sync()` with a live context re-arms it. Any other render error is rethrown unchanged.
+- Tests (`packages/coding-agent/test/suite/regressions/2549-monitor-status-ticker-stale-context.test.ts`): the ticker retires on both retirement messages, re-arms on the next live sync, does not re-arm a sync whose first render is stale, and still throws a non-stale render error; through the real extension and a real `cat` monitor, a reload and a disposed new/fork session leave no throw and the next session renders and advances the watch.
+
+### Why
+
+- The render reads the extension's captured `state.ctx`, whose guarded `ui` getter throws once the session is retired. The throw ran inside the 1 s `setInterval` callback, where nothing catches it, so the process exited with an `uncaughtException` (senpi#2549). `session_shutdown` stops the ticker, but a session disposed without `session_shutdown` (app-server thread unload/delete, `modes/app-server/threads/registry.ts`) leaves it armed, and #1028 already established that shutdown ordering is not a guarantee for tickers.
+
+### Why an extension could not handle it
+
+- The ticker and its render closure are the terminal builtin's own footer wiring.
+
+### Expected merge conflict zones
+
+- `monitor-status-ticker.ts` `sync()`/`tick()`. Fork-only surface.
+
 ## 2026-09-30 - Persistent monitors: no per-session cap by default (senpi#2420)
 
 ### What changed

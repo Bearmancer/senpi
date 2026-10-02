@@ -18,6 +18,7 @@
 	],
 	"scripts": {
 		"bench": "bun scripts/bench-eval.ts",
+		"gate": "bun scripts/gate-eval.ts",
 		"test": "vitest run test/",
 		"clean": "node -e \"\"",
 		"build": "node -e \"\""

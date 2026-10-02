@@ -1449,6 +1449,58 @@ In particular, Node `readline` is not protocol-compliant for RPC mode because it
 
 ### Prompting
 
+#### Durable client identity
+
+Hosts advertising `durable_client_message_id` in `get_protocol_info` accept optional
+`clientMessageId` and `clientTurnId` on `prompt`, `steer`, and `follow_up`. Each is a
+non-empty string of at most 256 characters. Keep these IDs unchanged when retrying
+after a disconnect; the transport `id` and routing `sessionId` may change.
+
+```json
+{"id":"request-2","type":"prompt","message":"Hello","clientMessageId":"message-1","clientTurnId":"turn-1"}
+```
+
+Admission is deduplicated by the durable session header ID and `clientMessageId`.
+Repeating a delivery returns the existing admission without running input handlers,
+appending another user message, or starting another answer. Changing the input kind,
+text, images, prompt options, or `clientTurnId` under that key fails with
+`errorCode: "client_message_id_conflict"`. Recovery `enqueueOrder` is not part of
+payload identity; the first admission's order stays authoritative. When present it must
+be a finite number; any other value is refused before admission.
+
+Successful responses echo both IDs in `data` and, when `clientMessageId` is present,
+include `data.admission`:
+
+```json
+{"durableSessionId":"session-id","clientMessageId":"message-1","clientTurnId":"turn-1","state":"running","disposition":"started"}
+```
+
+`state` is `queued`, `running`, or `completed`. Completed means the admission settled,
+including handled or cleared input; it is not a claim that a provider answered
+successfully. The existing `disposition` remains `started`, `queued`, or `handled`.
+Preflight or storage rejection creates no accepted admission, so the same delivery
+can be retried after the failure is repaired.
+
+Accepted queues and their prepared content survive reopening the transcript. They
+are restored in the original enqueue order without rerunning input transforms, and a
+delivery that arrives while they are being restored is queued behind them. A prompt
+that was acknowledged as `started` but displaced into the steering queue by a run that
+began first is stored as queued input too, so it survives a host restart. A transcript
+entry that does not parse as an admission is ignored rather than blocking the session.
+Running or completed admissions are never replayed, and `clear_queue` retires its
+admissions before returning. Native steering priority and drain behavior are unchanged.
+Durability requires a persistent session; `--no-session` retains deduplication only
+for that runtime's lifetime.
+
+The IDs appear on persisted user messages, `turn_start`, message and tool execution
+events, `turn_end`, and `agent_end`. A turn consuming several identified inputs adds
+`clientMessages` with their identities; top-level IDs identify the most recently
+consumed input. `turn_start` identifies the first consumed input. A turn whose input is a custom
+message, such as a `send_custom_message` trigger turn, carries no client IDs. The `ordered`
+records in `queue_update`, `get_state`, `clear_queue`, `get_steering_messages`, and
+`get_follow_up_messages` carry IDs too. The legacy string `messages`, `steering`,
+and `followUp` arrays remain available.
+
 #### prompt
 
 Send a user prompt to the agent. The command response is emitted after the prompt is accepted, queued, or handled. Events continue streaming asynchronously after acceptance.

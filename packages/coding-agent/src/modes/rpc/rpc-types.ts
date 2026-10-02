@@ -9,8 +9,9 @@ import type { AgentMessage, ThinkingLevel } from "@earendil-works/pi-agent-core"
 import type { ImageContent, Model, ProviderDiagnostic, ThinkingSelection } from "@earendil-works/pi-ai";
 import type { SessionRuntimeKind } from "../../cli/args.ts";
 import type { AgentAbortSource } from "../../core/agent-abort-provenance.ts";
-import type { PromptDisposition, QueuedInputDisposition, SessionStats } from "../../core/agent-session.ts";
+import type { PromptDisposition, QueuedInput, QueuedInputDisposition, SessionStats } from "../../core/agent-session.ts";
 import type { BashResult } from "../../core/bash-executor.ts";
+import type { ClientMessageIdentity } from "../../core/client-message-identity.ts";
 import type { CompactionResult } from "../../core/compaction/index.ts";
 import type { PromptSurface } from "../../core/dynamic-prompt/types.ts";
 import type { EngineOrdinal } from "../../core/engine-build-identity.ts";
@@ -19,6 +20,7 @@ import type { ContextUsage, SessionControlAdmission, SessionKind } from "../../c
 import type { ProcessFootprintMeasure } from "../../core/process-footprint.ts";
 import type { SessionEntry, SessionMessageEntry, SessionTreeNode, UsageTotals } from "../../core/session-manager.ts";
 import type { SourceInfo } from "../../core/source-info.ts";
+import type { ClientMessageAdmission } from "./client-admission-record.ts";
 import type { RpcSlashCommand } from "./rpc-command-surface.ts";
 
 export type { SessionContext, SessionKind } from "../../core/extensions/types.ts";
@@ -41,6 +43,8 @@ type RpcSessionCommand =
 			sessionTitlePrompt?: string | false;
 			expandPromptTemplates?: boolean;
 			unknownCommandAsText?: boolean;
+			clientMessageId?: string;
+			clientTurnId?: string;
 	  }
 	| {
 			id?: string;
@@ -54,8 +58,20 @@ type RpcSessionCommand =
 	  }
 	| { id?: string; type: "append_user_message"; content: unknown }
 	| { id?: string; type: "append_session_entry"; entry: SessionEntry }
-	| { id?: string; type: "steer"; message: string; images?: ImageContent[]; enqueueOrder?: number }
-	| { id?: string; type: "follow_up"; message: string; images?: ImageContent[]; enqueueOrder?: number }
+	| ({
+			id?: string;
+			type: "steer";
+			message: string;
+			images?: ImageContent[];
+			enqueueOrder?: number;
+	  } & ClientMessageIdentity)
+	| ({
+			id?: string;
+			type: "follow_up";
+			message: string;
+			images?: ImageContent[];
+			enqueueOrder?: number;
+	  } & ClientMessageIdentity)
 	| { id?: string; type: "abort" }
 	| { id?: string; type: "abort_compaction" }
 	| { id?: string; type: "reload" }
@@ -557,7 +573,7 @@ export interface RpcSessionState {
 	scopedModels: RpcSessionModelEntry[];
 	steering: string[];
 	followUp: string[];
-	ordered: Array<{ text: string; mode: "steer" | "followUp"; enqueueOrder: number }>;
+	ordered: QueuedInput[];
 	autoCompactionEnabled: boolean;
 	messageCount: number;
 	pendingMessageCount: number;
@@ -692,17 +708,29 @@ export type RpcResponse =
 	// so proxied optimistic-echo contracts resolve exactly like the local path; older
 	// hosts omit it and clients must degrade to canonical-only rendering. steer/follow_up carry the
 	// per-input disposition (queued/handled) under the same optional contract.
-	| { id?: string; type: "response"; command: "prompt"; success: true; data?: { disposition?: PromptDisposition } }
+	| {
+			id?: string;
+			type: "response";
+			command: "prompt";
+			success: true;
+			data?: ClientMessageIdentity & { disposition?: PromptDisposition; admission?: ClientMessageAdmission };
+	  }
 	| { id?: string; type: "response"; command: "send_custom_message"; success: true }
 	| { id?: string; type: "response"; command: "append_user_message"; success: true }
 	| { id?: string; type: "response"; command: "append_session_entry"; success: true }
-	| { id?: string; type: "response"; command: "steer"; success: true; data?: { disposition?: QueuedInputDisposition } }
+	| {
+			id?: string;
+			type: "response";
+			command: "steer";
+			success: true;
+			data?: ClientMessageIdentity & { disposition?: QueuedInputDisposition; admission?: ClientMessageAdmission };
+	  }
 	| {
 			id?: string;
 			type: "response";
 			command: "follow_up";
 			success: true;
-			data?: { disposition?: QueuedInputDisposition };
+			data?: ClientMessageIdentity & { disposition?: QueuedInputDisposition; admission?: ClientMessageAdmission };
 	  }
 	| { id?: string; type: "response"; command: "abort"; success: true }
 	| { id?: string; type: "response"; command: "abort_compaction"; success: true }
@@ -722,7 +750,7 @@ export type RpcResponse =
 			data: {
 				steering: string[];
 				followUp: string[];
-				ordered: Array<{ text: string; mode: "steer" | "followUp"; enqueueOrder: number }>;
+				ordered: QueuedInput[];
 			};
 	  }
 	| { id?: string; type: "response"; command: "new_session"; success: true; data: { cancelled: boolean } }

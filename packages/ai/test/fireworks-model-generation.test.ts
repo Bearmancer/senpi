@@ -46,9 +46,11 @@ function generateFireworksModels(
 			`  if (\n` +
 			`    url.startsWith("https://openrouter.ai/api/v1/models") ||\n` +
 			`    url === "https://ai-gateway.vercel.sh/v1/models" ||\n` +
-			`    url === "https://apis.opengateway.ai/v1/models" ||\n` +
 			`    url === "https://integrate.api.nvidia.com/v1/models"\n` +
 			`  ) return Response.json({ data: [] });\n` +
+			// An empty gateway listing or price table counts as an outage, so serve one retired model and one price.
+			`  if (url === "https://apis.opengateway.ai/v1/models") return Response.json({ data: [{ id: "acme/retired", status: "retired", endpoints: ["chat_completions"] }] });\n` +
+			`  if (url === "https://opengateway.ai/api/model-prices") return Response.json({ "acme/retired": { provider: "acme", modelOwner: "acme", modelName: "retired", inputCostPerToken: 0.000001, outputCostPerToken: 0.000001 } });\n` +
 			`  if (url === "https://radius.pi.dev/v1/config") return Response.json({ baseUrl: "https://radius.pi.dev", models: [{ id: "test", name: "Test", reasoning: false, input: ["text"], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 4096, maxTokens: 4096 }] });\n` +
 			`  throw new Error(\`Unexpected fetch: \${url}\`);\n` +
 			`};\n`,
