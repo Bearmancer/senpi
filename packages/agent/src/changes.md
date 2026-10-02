@@ -1895,3 +1895,21 @@ Conflict zone: `agent-loop.ts` `streamAssistantResponse` catch.
 - LOW: the `AgentState` interface tail in `types.ts`.
 
 - Covered production paths: `packages/agent/src/agent.ts`, `packages/agent/src/types.ts`.
+
+## 2026-10-02 - Mutation queue keys new files by their canonical parent (upstream v1.0.0 sync, port P-1)
+
+### What changed
+
+- `packages/agent/src/harness/tools/file-mutation-queue.ts`: when the target file does not exist yet, the queue key is its canonical parent joined with its name (recursively for new directories) instead of the uncanonicalized absolute path.
+
+### Why
+
+Upstream fixed the same defect in its durable copy of this queue: a write that creates a file through a symlinked directory and a mutation of the same file through its real directory got different keys and could interleave. The fork keeps its harness, so the fix is ported here; the fork's per-environment queue state is kept (upstream's process-wide `env.id` key needs an environment id the fork does not have).
+
+### Why an extension could not handle it
+
+Every built-in mutating tool goes through this queue inside the harness.
+
+### Expected merge conflict zones
+
+None from upstream (it no longer ships this file); future ports from `packages/durable/src/tools/file-mutation-queue.ts`.
