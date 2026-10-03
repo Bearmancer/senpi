@@ -6,6 +6,9 @@
 
 ### Added
 
+- An opt-in `memory.idleParkMinutes` setting (off by default) closes a kernel that had no cell running or queued for that many minutes to give its memory back; the next cell starts a fresh kernel and its result says every earlier global is lost ([#2452](https://github.com/code-yeongyu/senpi/issues/2452)).
+- Ruby eval results name their largest globals, and Ruby and Julia kernels now get the same large-memory notice as JavaScript and Python when the interpreter footprint crosses `memory.noticeMb` ([#2452](https://github.com/code-yeongyu/senpi/issues/2452)).
+
 ### Changed
 - Kernel tool descriptors may name any eval language (`js`, `py`, `rb`, `jl`), not only `js`; today only JavaScript kernels define tools, so nothing a session sees changes ([#2452](https://github.com/code-yeongyu/senpi/issues/2452)).
 
@@ -13,6 +16,7 @@
 - A Ruby or Julia kernel whose start hangs no longer leaves its cells waiting forever: startup fails, naming the stage it stalled in, once the runner has printed nothing, changed no stage and its process group has used no CPU for 30 s, so a slow but busy start (a cold Julia compiling its prelude) is never cut off ([#2452](https://github.com/code-yeongyu/senpi/issues/2452)).
 
 - A Python cell's host calls (`tool.*`, `completion`) no longer go through a configured HTTP proxy: the loopback bridge request ignores proxy settings from the environment and, on Windows, the registry, so a proxy can't refuse a `127.0.0.1` call that never needed it ([#2619](https://github.com/code-yeongyu/senpi/issues/2619)).
+- A JavaScript memory report no longer runs user code: array elements are read through their own descriptors (an index accessor is skipped and the estimate marked approximate), and typed arrays, buffers, Blob, Map and Set are sized through the built-in getters, so a subclass that overrides `byteLength` or `size` is never called ([#2452](https://github.com/code-yeongyu/senpi/issues/2452)).
 
 ### Removed
 

@@ -35,6 +35,31 @@ export function registerKernel(sessionId: string, language: EvalLanguage, memory
 	return id;
 }
 
+/** One registry entry per language for a session; replacing a language's kernel replaces its entry. */
+export class SessionKernelRegistrations {
+	readonly #owner: string;
+	readonly #ids = new Map<EvalLanguage, string>();
+
+	constructor(owner: string) {
+		this.#owner = owner;
+	}
+
+	register(language: EvalLanguage, memory: RegisteredKernelSource | undefined): void {
+		this.unregister(language);
+		if (memory !== undefined) this.#ids.set(language, registerKernel(this.#owner, language, memory));
+	}
+
+	unregister(language: EvalLanguage): void {
+		const id = this.#ids.get(language);
+		if (id !== undefined) kernelRegistry.unregister(id);
+		this.#ids.delete(language);
+	}
+
+	clear(): void {
+		for (const language of [...this.#ids.keys()]) this.unregister(language);
+	}
+}
+
 export function javaScriptKernelMemory(kernel: JavaScriptKernel): RegisteredKernelSource {
 	return {
 		measure: "heap",
