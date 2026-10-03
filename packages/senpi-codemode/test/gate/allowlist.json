@@ -133,6 +133,12 @@
     "legacyContracts/test/bench/sampler.test.ts/per-block host sampling samples at the start, on every interval and at the end, in order and never concurrently"
    ],
    "reason": "Plan node 2 (senpi#2534, refs #2452): contract tests for the eval timing benchmark - paired comparator, per-row A/A-calibrated thresholds capped at 0.05, rescoring, scheduler, CPU accounting and workload fixtures. Test-only; no prompt, schema, helper or runtime surface changes."
+  },
+  "senpi#2562": {
+   "additions": [
+    "legacyContracts/test/py-kernel-child-lifecycle.test.ts/PythonKernel retires cell subprocesses on close leaves no driver, kernel or child behind when the process that started the driver dies"
+   ],
+   "reason": "Adds a witness that the host-loss test driver exits when the process that started it dies (stdin EOF), so no driver, kernel or child outlives the test. Test-only; no prompt, schema, helper or runtime surface changes."
   }
  }
 }
