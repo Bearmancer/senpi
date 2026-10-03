@@ -46,6 +46,11 @@ function projectRoot(cwd: string): string | undefined {
 	return root === path.parse(root).root || rootContainsHome || hiddenRoot ? undefined : root;
 }
 
+/** Whether something, even a dangling symlink, exists at `target` itself; git looks at the name. */
+export function existsAtName(target: string): boolean {
+	return lstatSync(target, { throwIfNoEntry: false }) !== undefined;
+}
+
 /** Whether `cwd` is a root `auto` approves anything in (see `projectRoot`). */
 export function isProjectSession(cwd: string): boolean {
 	return projectRoot(cwd) !== undefined;

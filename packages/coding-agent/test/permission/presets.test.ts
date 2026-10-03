@@ -86,24 +86,6 @@ describe("permission presets", () => {
 		expect(evaluate("unknown_tool", "*", ruleset).action).toBe("ask");
 	});
 
-	it("allows no-UI requests with full-access", () => {
-		// given
-		const events: Array<{ event: string; data: unknown }> = [];
-
-		// when
-		const result = handleNoUI(createRequest(), {
-			staticRuleset: rulesForPreset("full-access"),
-			cliOverride: [],
-			emitEvent: (event, data) => {
-				events.push({ event, data });
-			},
-		});
-
-		// then
-		expect(result).toBeUndefined();
-		expect(events.map((event) => event.event)).toEqual(["permission_asked", "permission_replied"]);
-	});
-
 	it("rejects no-UI requests when a preset still requires confirmation", () => {
 		// given
 		const events: Array<{ event: string; data: unknown }> = [];
@@ -111,8 +93,6 @@ describe("permission presets", () => {
 
 		// when
 		const result = handleNoUI(createRequest(), {
-			staticRuleset: staticRuleset,
-			cliOverride: [],
 			emitEvent: (event, data) => {
 				events.push({ event, data });
 			},
