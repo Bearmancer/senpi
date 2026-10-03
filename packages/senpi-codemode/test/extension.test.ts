@@ -528,7 +528,15 @@ describe("senpi-codemode extension lifecycle", () => {
 			undefined,
 			ctx,
 		);
-		await manager.runStarted.promise;
+		const outcome = await Promise.race([
+			manager.runStarted.promise.then(() => "kernel reached"),
+			Promise.resolve(run).then(
+				(settled) => JSON.stringify(settled?.content ?? settled),
+				(error: unknown) => String(error),
+			),
+		]);
+
+		expect(outcome).toBe("kernel reached");
 
 		expect(attempts).toBe(2);
 		const diagnostics = written.filter((line) => line.includes("re-created a runtime"));
@@ -539,10 +547,12 @@ describe("senpi-codemode extension lifecycle", () => {
 		await run;
 	});
 
-	it("Given a failed start whose re-creation also fails, when eval runs, then the error names the re-creation failure and the remedy", async () => {
+	it("Given a failed start whose re-creation also fails, when eval runs, then the error names the re-creation failure and the remedy, and later evals report it without retrying", async () => {
 		const pi = new FakePi();
+		let attempts = 0;
 		senpiCodemode(pi, {
 			createSessionManager: async () => {
+				attempts += 1;
 				throw new Error("bridge port unavailable");
 			},
 		});
@@ -561,6 +571,55 @@ describe("senpi-codemode extension lifecycle", () => {
 		await expect(run).rejects.toThrow(
 			"codemode runtime could not be re-created: bridge port unavailable. Start a new session or reload to bring eval back.",
 		);
+		const again = pi.registeredTool?.execute(
+			"re-creation-fails-again",
+			{ language: "js", code: "1", summary: "second cell after a failed start" },
+			undefined,
+			undefined,
+			ctx,
+		);
+		await expect(again).rejects.toThrow("codemode runtime could not be re-created: bridge port unavailable");
+		expect(attempts).toBe(2);
+	});
+
+	it("Given a failed start, when two evals arrive together, then they share one re-creation and one diagnostic", async () => {
+		const pi = new FakePi();
+		const managers: DisposableManager[] = [];
+		let attempts = 0;
+		senpiCodemode(pi, {
+			createSessionManager: async () => {
+				attempts += 1;
+				if (attempts === 1) throw new Error("bridge port unavailable");
+				const manager = new DisposableManager();
+				managers.push(manager);
+				return manager;
+			},
+		});
+		const ctx = extensionContext();
+		const written: string[] = [];
+		vi.spyOn(process.stderr, "write").mockImplementation((chunk) => {
+			written.push(String(chunk));
+			return true;
+		});
+		await emit(pi, "session_start", { reason: "startup" }, ctx).catch(() => undefined);
+
+		const cells = ["first", "second"].map((name) =>
+			pi.registeredTool?.execute(
+				`together-${name}`,
+				{ language: "js", code: "1", summary: `cell ${name}` },
+				undefined,
+				undefined,
+				ctx,
+			),
+		);
+		await managers[0]?.runStarted.promise;
+		await vi.waitFor(() => expect(managers[0]?.getKernelCount).toBe(2));
+
+		expect(attempts).toBe(2);
+		expect(managers).toHaveLength(1);
+		expect(written.filter((line) => line.includes("re-created a runtime"))).toHaveLength(1);
+		await emit(pi, "session_shutdown", {}, ctx);
+		await Promise.allSettled(cells);
 	});
 
 	it("Given a session that ended with session_shutdown, when eval runs afterwards, then it is not recovered and no diagnostic is written", async () => {

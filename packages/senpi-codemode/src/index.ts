@@ -25,7 +25,7 @@ import { jsRuntimeInfo, jsRuntimeLabel } from "./extension/runtime-info.ts";
 import type { CodemodeSessionManager, CreateCodemodeSessionManagerOptions } from "./extension/session-manager.ts";
 import { SessionManagerProxy } from "./extension/session-manager-proxy.ts";
 import { activeBunSkillPath, registerBunSkillContribution } from "./extension/skill-contribution.ts";
-import { StartRecovery } from "./extension/start-recovery.ts";
+import { StartRecovery, withStartRecovery } from "./extension/start-recovery.ts";
 import { WAKE_SOURCE_STATE_EVENT, type WakeSourceState } from "./extension/wake-source-state.ts";
 import type { KernelToolsCapability } from "./kernels/js/kernel-tools-types.ts";
 import { EvalDetachedCellManager, type EvalDetachedCellStatusEntry } from "./tool/detached-cell-manager.ts";
@@ -120,14 +120,7 @@ export default function senpiCodemode(pi: CodemodeExtensionAPI, options: SenpiCo
 		pi.rpc?.emit(WAKE_SOURCE_STATE_EVENT, state);
 		pi.events?.emit(WAKE_SOURCE_STATE_EVENT, state);
 	};
-	const recovery = new StartRecovery(async (event, ctx) => {
-		await startSession(event, ctx);
-		recovery.started();
-	});
-	const withRecovery = <Tool extends ReturnType<typeof createEvalTool>>(tool: Tool): Tool => ({
-		...tool,
-		execute: recovery.wrap(tool.execute, (args) => args[4]),
-	});
+	const recovery = new StartRecovery(async (event, ctx) => await startSession(event, ctx));
 	const registerEvalForRuntime = (
 		runtime: SessionRuntime,
 		modelId: string | undefined,
@@ -146,7 +139,8 @@ export default function senpiCodemode(pi: CodemodeExtensionAPI, options: SenpiCo
 		const preludes = promptKernelPreludes(pi);
 		promptPreludeDocs = kernelPreludeDocsKey(preludes);
 		pi.registerTool(
-			withRecovery(
+			withStartRecovery(
+				recovery,
 				createEvalTool({
 					enabledLanguages: runtime.enabledLanguages,
 					kernelManager: manager,
@@ -187,7 +181,8 @@ export default function senpiCodemode(pi: CodemodeExtensionAPI, options: SenpiCo
 		await manager.dispose();
 	};
 	pi.registerTool(
-		withRecovery(
+		withStartRecovery(
+			recovery,
 			createEvalTool({
 				enabledLanguages: { py: true, js: true, rb: true, jl: true },
 				kernelManager: manager,
@@ -258,15 +253,7 @@ export default function senpiCodemode(pi: CodemodeExtensionAPI, options: SenpiCo
 		activeModelId = ctx.model?.id;
 		registerEvalForRuntime(runtime, activeModelId, cellManager);
 	};
-	pi.on("session_start", async (event, ctx) => {
-		try {
-			await startSession(event, ctx);
-			recovery.started();
-		} catch (error) {
-			recovery.startFailed(event, error);
-			throw error;
-		}
-	});
+	pi.on("session_start", async (event, ctx) => await recovery.runStart(event, ctx));
 	pi.on("session_shutdown", async () => {
 		recovery.sessionEnded();
 		await dropRuntime();
