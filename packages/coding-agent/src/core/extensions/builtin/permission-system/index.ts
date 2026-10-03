@@ -166,7 +166,6 @@ export default function permissionSystemExtension(pi: ExtensionAPI): void {
 				.ask(request, {
 					autoApproveAsk: permissionRequest.autoApproveAsk ?? false,
 					approveBlanketAsk: auto?.approveBlanketAsk ?? false,
-					requireApproval: auto?.requireApproval ?? false,
 					...(permissionRequest.ruleAliases ? { ruleAliases: permissionRequest.ruleAliases } : {}),
 				})
 				.then(

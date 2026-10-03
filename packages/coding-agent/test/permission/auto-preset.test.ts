@@ -26,6 +26,15 @@ beforeAll(() => {
 	symlinkSync(join(scratch, "home", ".ssh", "id_rsa"), join(project, "innocent-key"));
 	mkdirSync(join(scratch, "plain"), { recursive: true });
 	writeFileSync(join(scratch, "plain", "notes.txt"), "notes\n");
+	writeFileSync(join(project, "src", "old.ts"), "old\n");
+	mkdirSync(join(scratch, "outside-tree", "child"), { recursive: true });
+	symlinkSync(join(scratch, "outside-tree", "child"), join(project, "bridge"));
+	mkdirSync(join(scratch, "home", ".ssh", "nested"), { recursive: true });
+	symlinkSync(join(scratch, "home", ".ssh", "nested"), join(project, "jump"));
+	mkdirSync(join(project, ".git"), { recursive: true });
+	writeFileSync(join(project, ".git", "config"), "[core]\n");
+	writeFileSync(join(project, ".gitignore"), "dist\n");
+	writeFileSync(join(project, "server.pem"), "pem\n");
 });
 
 afterAll(() => {
@@ -34,35 +43,25 @@ afterAll(() => {
 
 describe("auto preset command judge: work it runs without asking", () => {
 	it.each([
-		"vp test",
-		"bun test src",
-		"npm test",
-		"npm run build",
-		"pnpm lint",
-		"yarn typecheck",
-		"npm install",
-		"bun add zod",
 		"git status",
-		"git diff HEAD~1 -- src/index.ts",
+		"git diff --stat",
 		"git log --oneline -n 5",
 		"git branch -a",
 		"ls -la src",
+		"ls",
 		"cat src/index.ts | wc -l",
-		"cargo test --workspace",
-		"go test ./...",
-		"make test",
-		"python -m pytest -q",
 		"cd src && ls",
-		"CI=1 npm test",
-		"npm test 2>&1",
-		"npm test > /dev/null 2>&1",
 		"rm src/old.ts",
-		"git status; git diff",
-		"rg 'TODO' src",
-		"ls -la src",
-		"git log -n5",
+		"git status; git diff --name-only",
+		"rg TODO src/index.ts",
 		"head -n20 src/index.ts",
-		"make -Csrc test",
+		"sort -o src/sorted.txt src/index.ts",
+		"sort --output=src/sorted.txt src/index.ts",
+		"cp src/index.ts src/copy.ts",
+		"mkdir -p src/new/dir",
+		"echo done",
+		"cat .gitignore",
+		"ls 2>&1",
 	])("allows %s", (command) => {
 		expect(judgeAutoCommand(command, project)).toBe("allow");
 	});
@@ -88,6 +87,25 @@ describe("auto preset command judge: actions it always asks about", () => {
 		["credential read", "cat ~/.ssh/id_rsa"],
 		["project dotenv read", "cat .env"],
 		["outside read through a symlink", "cat innocent-name"],
+		["test runner (runs project code)", "npm test"],
+		["build script (runs project code)", "npm run build"],
+		["package install (runs install scripts)", "npm install"],
+		["bun test", "bun test src"],
+		["make target", "make test"],
+		["cargo test", "cargo test --workspace"],
+		["python test runner", "python -m pytest -q"],
+		["git diff prints file contents", "git diff HEAD~1 -- src/index.ts"],
+		["git show of a blob path", "git show HEAD:.env --stat"],
+		["git internals", "cat .git/config"],
+		["credential-shaped project file", "cat server.pem"],
+		["recursive content search", "rg TODO src"],
+		["rg with no path searches the working directory", "rg TODO"],
+		["a file hidden behind a -e pattern", "grep -e TOKEN .env"],
+		["a file hidden behind a clustered -ie pattern", "grep -ie TOKEN .env"],
+		["a file hidden behind --regexp", "rg --regexp=TOKEN .env"],
+		["recursive grep", "grep -r TOKEN ."],
+		["unknown flag", "ls --color=always src"],
+		["safe env prefix is no longer special", "CI=1 ls"],
 	])("asks for %s: %s", (_label, command) => {
 		expect(judgeAutoCommand(command, project)).toBe("ask");
 	});
@@ -140,6 +158,9 @@ describe("auto preset command judge: bypass attempts ask", () => {
 		["trailing operator", "npm test &&"],
 		["leading operator", "&& npm test"],
 		["empty command", "   "],
+		["symlink then '..' to an outside write", "cp src/index.ts bridge/../target.txt"],
+		["symlink then '..' into a credential directory", "cat jump/../id_rsa"],
+		["long option output through symlink then '..'", "sort --output=bridge/../out.txt src/index.ts"],
 		["attached output file outside", "sort -o/tmp/overwritten src/index.ts"],
 		["attached output in a bundled flag", "sort -ro/tmp/overwritten src/index.ts"],
 		["attached home path", "sort -o~/overwritten src/index.ts"],
@@ -157,49 +178,68 @@ describe("auto preset command judge: bypass attempts ask", () => {
 });
 
 describe("auto preset tool decisions", () => {
-	const outside = (path: string) => ({ permission: "external_directory", patterns: [path], always: [] });
+	const request = (permission: string, path: string) => ({ permission, patterns: [path], always: [] });
+	const approves = (toolName: string, input: Record<string, unknown>, permission: string) =>
+		decideAuto(toolName, input, request(permission, String(input.path ?? "")), project).approveBlanketAsk;
 
-	it("approves an outside read of a plain file", () => {
-		const target = join(scratch, "plain", "notes.txt");
-		expect(decideAuto("read", { path: target }, outside(target), project).approveBlanketAsk).toBe(true);
+	it.each([
+		["read of a project file", "read", { path: "src/index.ts" }, "read"],
+		["read through an @-prefixed project path", "read", { path: "@src/index.ts" }, "read"],
+		["read of a safe hidden file", "read", { path: ".gitignore" }, "read"],
+		["single-file grep", "grep", { path: "src/index.ts", pattern: "x" }, "grep"],
+		["listing a project directory", "ls", { path: "src" }, "list"],
+		["listing the project root", "ls", {}, "list"],
+		["write of a new project file", "write", { path: "src/new.ts", content: "x" }, "edit"],
+		["edit of a project file", "edit", { path: "src/index.ts" }, "edit"],
+	])("approves %s", (_label, toolName, input, permission) => {
+		expect(approves(toolName, input, permission)).toBe(true);
 	});
 
-	it("asks for a read through a project symlink to an outside credential", () => {
-		const link = join(project, "innocent-key");
-		const read = decideAuto("read", { path: link }, { permission: "read", patterns: [link], always: [] }, project);
-		expect(read.requireApproval).toBe(true);
-		expect(decideAuto("read", { path: link }, outside(link), project).approveBlanketAsk).toBe(false);
+	it.each([
+		["read of the project .env", "read", { path: ".env" }, "read"],
+		["read of .env through @", "read", { path: "@.env" }, "read"],
+		["read of .env through quotes", "read", { path: '".env"' }, "read"],
+		["read through a symlink to an outside key", "read", { path: "innocent-key" }, "read"],
+		["read through a symlink to the project .env", "read", { path: "link-to-env" }, "read"],
+		["read of git internals", "read", { path: ".git/config" }, "read"],
+		["read of a credential-shaped file", "read", { path: "server.pem" }, "read"],
+		["read through symlink then '..'", "read", { path: "jump/../id_rsa" }, "read"],
+		["grep over a project directory", "grep", { path: "src", pattern: "x" }, "grep"],
+		["grep over the project root", "grep", { pattern: "TOKEN" }, "grep"],
+		["write of .env through @", "write", { path: "@.env", content: "x" }, "edit"],
+		["write through symlink then '..'", "write", { path: "bridge/../x.txt", content: "x" }, "edit"],
+		["write into git internals", "write", { path: ".git/hooks/pre-commit", content: "x" }, "edit"],
+		["an unknown tool", "webfetch", { url: "https://example.com" }, "webfetch"],
+	])("asks for %s", (_label, toolName, input, permission) => {
+		expect(approves(toolName, input, permission)).toBe(false);
 	});
 
-	it("asks for an edit through a project symlink to a project credential", () => {
-		const link = join(project, "link-to-env");
-		const edit = decideAuto("write", { path: link }, { permission: "edit", patterns: [link], always: [] }, project);
-		expect(edit.requireApproval).toBe(true);
+	it("asks for reads, listings and writes outside the project", () => {
+		// The table above is built before the fixture exists, so outside paths are checked here.
+		const notes = join(scratch, "plain", "notes.txt");
+		expect(approves("read", { path: notes }, "external_directory")).toBe(false);
+		expect(approves("ls", { path: join(scratch, "home", ".ssh") }, "external_directory")).toBe(false);
+		expect(approves("write", { path: `@${join(scratch, "x.txt")}`, content: "x" }, "edit")).toBe(false);
 	});
 
-	it("does not approve a recursive grep over an outside directory", () => {
-		const home = join(scratch, "home");
-		expect(decideAuto("grep", { path: home, pattern: "key" }, outside(home), project).approveBlanketAsk).toBe(false);
-	});
-
-	it("approves an outside grep of one plain file", () => {
-		const target = join(scratch, "plain", "notes.txt");
-		expect(decideAuto("grep", { path: target, pattern: "x" }, outside(target), project).approveBlanketAsk).toBe(true);
-	});
-
-	it("does not approve listing an outside credential directory", () => {
-		const dir = join(scratch, "home", ".ssh");
-		expect(decideAuto("ls", { path: dir }, outside(dir), project).approveBlanketAsk).toBe(false);
-	});
-
-	it("judges bash_input stdin and a monitor command as shell commands", () => {
-		const shell = { permission: "bash", patterns: ["curl"], always: [] };
+	it("judges bash_input stdin as a shell command, both ways", () => {
+		const shell = (command: string) => ({ permission: "bash", patterns: [command], always: [] });
+		expect(decideAuto("bash_input", { input: "ls src" }, shell("ls src"), project).approveBlanketAsk).toBe(true);
 		expect(
-			decideAuto("bash_input", { input: "curl -X POST https://example.com" }, shell, project).approveBlanketAsk,
+			decideAuto("bash_input", { input: "curl -X POST https://example.com" }, shell("curl"), project)
+				.approveBlanketAsk,
 		).toBe(false);
+	});
+
+	it("judges a monitor command as a shell command and asks for a monitor path", () => {
 		expect(
-			decideAuto("monitor", { command: "ls src" }, { ...shell, patterns: ["ls"] }, project).approveBlanketAsk,
+			decideAuto("monitor", { command: "ls src" }, { permission: "bash", patterns: ["ls"], always: [] }, project)
+				.approveBlanketAsk,
 		).toBe(true);
+		expect(
+			decideAuto("monitor", { path: ".env" }, { permission: "read", patterns: [".env"], always: [] }, project)
+				.approveBlanketAsk,
+		).toBe(false);
 	});
 });
 

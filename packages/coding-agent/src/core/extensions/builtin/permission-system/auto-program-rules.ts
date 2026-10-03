@@ -1,279 +1,183 @@
+import { type ClassifiedWord, classifyWords, type ProgramSpec, type WordRole } from "./auto-shell-grammar.ts";
 import type { ShellWord } from "./auto-shell-segments.ts";
 
-export type ProgramRule = (args: readonly ShellWord[]) => boolean;
+/** Classifies a command's words, or undefined when the program or any word is not understood. */
+export type ProgramRule = (args: readonly ShellWord[]) => ClassifiedWord[] | undefined;
 
-const SAFE_SCRIPT =
-	/^(test|tests|build|lint|check|checks|typecheck|type-check|types|tsc|format|fmt|compile|verify)([:._-][\w:.-]*)?$/;
-const GLOBAL_INSTALL_FLAGS = new Set(["-g", "--global", "-G", "--location=global"]);
-const RUN_VALUE_FLAGS = new Set(["--filter", "-F", "-w", "--workspace", "--cwd", "-C", "--prefix", "--dir"]);
+const all = (role: WordRole) => (): WordRole => role;
+const lastIs =
+	(last: WordRole, rest: WordRole) =>
+	(index: number, count: number): WordRole =>
+		index === count - 1 ? last : rest;
+const firstIs =
+	(first: WordRole, rest: WordRole) =>
+	(index: number): WordRole =>
+		index === 0 ? first : rest;
 
-const texts = (args: readonly ShellWord[]) => args.map((arg) => arg.text);
-const always: ProgramRule = () => true;
-const firstIn =
-	(...allowed: string[]): ProgramRule =>
+const flags = (names: string, role: true | WordRole = true): Record<string, true | WordRole> =>
+	Object.fromEntries(names.split(" ").map((name) => [name, role]));
+
+const spec =
+	(value: ProgramSpec): ProgramRule =>
 	(args) =>
-		args.length > 0 && allowed.includes(args[0].text);
-const noArgOrFirstIn =
-	(...allowed: string[]): ProgramRule =>
-	(args) =>
-		args.length === 0 || allowed.includes(args[0].text);
+		classifyWords(args, value);
 
-function scriptAfterRun(args: readonly string[]): string | undefined {
-	for (let index = 0; index < args.length; index += 1) {
-		const arg = args[index];
-		if (RUN_VALUE_FLAGS.has(arg)) {
-			index += 1;
-			continue;
-		}
-		if (!arg.startsWith("-")) return arg;
-	}
-	return undefined;
-}
-
-const isSafeScript = (name: string | undefined) => name !== undefined && SAFE_SCRIPT.test(name);
-const isPackageSpecSafe = (args: readonly string[]) =>
-	!args.some(
-		(arg) => GLOBAL_INSTALL_FLAGS.has(arg) || /:\/\/|^git[+@]|^(github|gitlab|bitbucket|file|link):/.test(arg),
-	);
-
-function packageManagerRule(options: {
-	readonly install: readonly string[];
-	readonly bareScripts: boolean;
-}): ProgramRule {
-	return (words) => {
-		const args = texts(words);
-		if (!isPackageSpecSafe(args)) return false;
-		const sub = args[0];
-		if (sub === undefined) return options.install.includes("");
-		if (options.install.includes(sub)) return true;
-		if (sub === "test" || sub === "t") return true;
-		if (sub === "run" || sub === "run-script") return isSafeScript(scriptAfterRun(args.slice(1)));
-		return options.bareScripts && isSafeScript(sub);
+/**
+ * grep and rg: the first operand is the pattern unless a pattern came from `-e`/`--regexp`, in
+ * which case every operand is a file to read.
+ */
+const searchSpec =
+	(value: ProgramSpec): ProgramRule =>
+	(args) => {
+		const patternFromFlag = args.some(
+			(word) => word.text === "--regexp" || word.text.startsWith("--regexp=") || /^-[^-]*e/.test(word.text),
+		);
+		return classifyWords(args, patternFromFlag ? { ...value, operand: all("read-file"), minOperands: 1 } : value);
 	};
-}
 
-const GIT_READ_SUBCOMMANDS = new Set([
-	"status",
-	"diff",
-	"log",
-	"show",
-	"rev-parse",
-	"ls-files",
-	"ls-tree",
-	"blame",
-	"describe",
-	"shortlog",
-	"grep",
-	"cat-file",
-	"merge-base",
-	"rev-list",
-	"show-ref",
-	"whatchanged",
-	"count-objects",
-]);
-const GIT_BRANCH_FLAGS = new Set([
-	"-a",
-	"--all",
-	"-r",
-	"--remotes",
-	"-v",
-	"-vv",
-	"--verbose",
-	"--list",
-	"-l",
-	"--show-current",
-]);
-const GIT_BRANCH_VALUE_FLAGS = new Set(["--contains", "--no-contains", "--merged", "--no-merged", "--points-at"]);
-const GIT_PAGER_FLAGS = /^(-O|--open-files-in-pager|--ext-diff$|--output)/;
+const READ_FILES: ProgramSpec = { flags: {}, operand: all("read-file") };
 
-const gitRule: ProgramRule = (words) => {
-	const args = texts(words);
-	let index = 0;
-	while (index < args.length && args[index].startsWith("-")) {
-		if (args[index] === "--no-pager") index += 1;
-		else if (args[index] === "-C") index += 2;
-		else return false;
-	}
-	const sub = args[index];
-	const rest = args.slice(index + 1);
-	if (sub === undefined) return false;
-	if (rest.some((arg) => GIT_PAGER_FLAGS.test(arg))) return false;
-	if (GIT_READ_SUBCOMMANDS.has(sub)) return true;
-	if (sub === "branch") {
-		for (let position = 0; position < rest.length; position += 1) {
-			const arg = rest[position];
-			if (GIT_BRANCH_VALUE_FLAGS.has(arg)) position += 1;
-			else if (!GIT_BRANCH_FLAGS.has(arg) && !/^--(sort|format|color)=/.test(arg)) return false;
-		}
-		return true;
-	}
-	if (sub === "tag") return rest.length === 0 || rest[0] === "-l" || rest[0] === "--list";
-	if (sub === "remote")
-		return rest.length === 0 || (rest.length === 1 && (rest[0] === "-v" || rest[0] === "--verbose"));
-	if (sub === "stash") return rest[0] === "list" || rest[0] === "show";
-	if (sub === "config") return ["--get", "--get-all", "--get-regexp", "--list", "-l"].includes(rest[0] ?? "");
-	if (sub === "reflog") return rest.length === 0 || rest[0] === "show";
-	return false;
+const SPECS: ReadonlyArray<readonly [string, ProgramRule]> = [
+	["pwd", spec({ flags: {}, operand: all("text"), maxOperands: 0 })],
+	["true", spec({ flags: {}, operand: all("text"), maxOperands: 0 })],
+	["echo", spec({ flags: flags("-n -e -E"), operand: all("text") })],
+	["which", spec({ flags: flags("-a"), operand: all("text"), minOperands: 1 })],
+	[
+		"ls",
+		spec({
+			flags: flags("-a -A -l -h -1 -R -t -S -r -d -F -p --all --almost-all --human-readable --recursive"),
+			operand: all("list"),
+		}),
+	],
+	["cat", spec({ ...READ_FILES, flags: flags("-n -b -s -A -e -t -v") })],
+	["head", spec({ ...READ_FILES, flags: { ...flags("-n -c --lines --bytes", "text"), ...flags("-q -v --quiet") } })],
+	["tail", spec({ ...READ_FILES, flags: { ...flags("-n -c --lines --bytes", "text"), ...flags("-q -v --quiet") } })],
+	["wc", spec({ ...READ_FILES, flags: flags("-l -w -c -m -L --lines --words --bytes --chars") })],
+	[
+		"diff",
+		spec({
+			...READ_FILES,
+			flags: { ...flags("-u -q -s -w -b -B -i --brief"), ...flags("-U --unified", "text") },
+			minOperands: 2,
+			maxOperands: 2,
+		}),
+	],
+	["stat", spec({ flags: flags("-L"), operand: all("list"), minOperands: 1 })],
+	["file", spec({ flags: flags("-b -i -L --brief --mime"), operand: all("read-file"), minOperands: 1 })],
+	[
+		"sort",
+		spec({
+			...READ_FILES,
+			flags: {
+				...flags("-r -n -u -f -b -d -h -V -s --reverse --numeric-sort --unique --ignore-case --stable"),
+				...flags("-k -t --key --field-separator", "text"),
+				...flags("-o --output", "write"),
+			},
+		}),
+	],
+	[
+		"uniq",
+		spec({
+			flags: flags("-c -d -u -i --count --repeated --unique --ignore-case"),
+			operand: firstIs("read-file", "write"),
+			maxOperands: 2,
+		}),
+	],
+	[
+		"cut",
+		spec({
+			...READ_FILES,
+			flags: {
+				...flags("-d -f -c -b --delimiter --fields --characters --bytes", "text"),
+				...flags("-s --only-delimited"),
+			},
+		}),
+	],
+	[
+		"grep",
+		searchSpec({
+			flags: {
+				...flags(
+					"-i -n -c -l -L -v -w -x -o -q -s -H -h -F -E --ignore-case --line-number --count --fixed-strings --extended-regexp --files-with-matches",
+				),
+				...flags("-e -m -A -B -C --regexp --max-count --after-context --before-context --context", "text"),
+			},
+			operand: firstIs("text", "read-file"),
+			minOperands: 1,
+		}),
+	],
+	[
+		"rg",
+		searchSpec({
+			flags: {
+				...flags(
+					"-i -n -c -l -v -w -x -o -F -S -N --ignore-case --line-number --count --fixed-strings --smart-case --files-with-matches --no-heading",
+				),
+				...flags("-e -m -A -B -C --regexp --max-count --after-context --before-context --context", "text"),
+			},
+			operand: firstIs("text", "read-file"),
+			minOperands: 2,
+		}),
+	],
+	["mkdir", spec({ flags: flags("-p --parents"), operand: all("write"), minOperands: 1 })],
+	["touch", spec({ flags: {}, operand: all("write"), minOperands: 1 })],
+	[
+		"cp",
+		spec({ flags: flags("-p -n --preserve --no-clobber"), operand: lastIs("write", "read-file"), minOperands: 2 }),
+	],
+	["mv", spec({ flags: flags("-n --no-clobber"), operand: lastIs("write", "remove-file"), minOperands: 2 })],
+	["rm", spec({ flags: {}, operand: all("remove-file"), minOperands: 1 })],
+];
+
+const GIT_READ_SUBCOMMANDS: Readonly<Record<string, ProgramSpec>> = {
+	status: { flags: flags("-s -b -u --short --branch --porcelain --untracked-files"), operand: all("list") },
+	diff: {
+		flags: flags("--stat --cached --staged --name-only --name-status --numstat --no-color --color -w"),
+		operand: all("text"),
+	},
+	log: {
+		flags: {
+			...flags("--oneline --graph --decorate --stat --no-color --all --reverse --name-only --name-status"),
+			...flags("-n --max-count --since --until --author --format --pretty", "text"),
+		},
+		operand: all("text"),
+	},
+	show: { flags: flags("--stat --name-only --name-status --oneline --no-color"), operand: all("text") },
+	"rev-parse": { flags: flags("--abbrev-ref --short --show-toplevel --verify"), operand: all("text") },
+	"ls-files": {
+		flags: flags("-m -o -d -s --modified --others --deleted --stage --exclude-standard"),
+		operand: all("list"),
+	},
+	blame: {
+		flags: { ...flags("-w -s --porcelain"), ...flags("-L", "text") },
+		operand: all("read-file"),
+		minOperands: 1,
+	},
+	branch: {
+		flags: flags("-a -r -v -vv --all --remotes --verbose --list --show-current"),
+		operand: all("text"),
+		maxOperands: 0,
+	},
 };
 
-const FIND_ACTIONS = new Set([
-	"-exec",
-	"-execdir",
-	"-ok",
-	"-okdir",
-	"-delete",
-	"-fprint",
-	"-fprint0",
-	"-fprintf",
-	"-fls",
-]);
-const RM_FORBIDDEN_FLAG = /^-[^-]*[rRfd]|^--(recursive|force|dir)$/;
+const SUMMARY_ONLY = new Set(["--stat", "--name-only", "--name-status", "--numstat"]);
 
-const rmRule: ProgramRule = (words) => {
-	const operands = words.filter((word) => !word.text.startsWith("-"));
-	return (
-		operands.length > 0 &&
-		!words.some((word) => RM_FORBIDDEN_FLAG.test(word.text) || word.hasGlob) &&
-		!operands.some((word) => word.text === "." || word.text === ".." || word.text === "/")
-	);
+/**
+ * Read-only git subcommands only; any global option (`-c`, `-C`, `--git-dir`, a pager) asks.
+ * `diff` and `show` print file contents, which can include a tracked secret, so they pass only in
+ * a summary form, and no operand may name an object path (`HEAD:.env` prints that blob).
+ */
+const gitRule: ProgramRule = (args) => {
+	const [sub, ...rest] = args;
+	if (sub === undefined) return undefined;
+	const subSpec = GIT_READ_SUBCOMMANDS[sub.text];
+	if (subSpec === undefined || rest.some((word) => word.text.includes(":"))) return undefined;
+	if ((sub.text === "diff" || sub.text === "show") && !rest.some((word) => SUMMARY_ONLY.has(word.text)))
+		return undefined;
+	return classifyWords(rest, subSpec);
 };
-
-const FILE_UTILITY_PROGRAMS = [
-	"ls",
-	"cat",
-	"head",
-	"tail",
-	"wc",
-	"pwd",
-	"echo",
-	"printf",
-	"which",
-	"file",
-	"stat",
-	"du",
-	"tree",
-	"grep",
-	"egrep",
-	"fgrep",
-	"uniq",
-	"cut",
-	"tr",
-	"diff",
-	"cmp",
-	"basename",
-	"dirname",
-	"realpath",
-	"date",
-	"true",
-	"false",
-	"test",
-	"jq",
-	"nl",
-	"tac",
-	"sha256sum",
-	"shasum",
-	"md5sum",
-	"cksum",
-	"column",
-	"mkdir",
-	"touch",
-	"cp",
-	"mv",
-];
-const BUILD_TOOLS = [
-	"tsc",
-	"tsgo",
-	"eslint",
-	"prettier",
-	"biome",
-	"oxlint",
-	"vitest",
-	"jest",
-	"pytest",
-	"ruff",
-	"mypy",
-	"black",
-	"isort",
-];
 
 export const PROGRAM_RULES: ReadonlyMap<string, ProgramRule> = new Map<string, ProgramRule>([
-	...FILE_UTILITY_PROGRAMS.map((name) => [name, always] as const),
-	...BUILD_TOOLS.map((name) => [name, always] as const),
-	["rg", (args) => !args.some((arg) => arg.text === "--pre" || arg.text.startsWith("--pre="))],
-	["sort", (args) => !args.some((arg) => arg.text.startsWith("--compress-program"))],
-	["find", (args) => !args.some((arg) => FIND_ACTIONS.has(arg.text))],
-	["rm", rmRule],
+	...SPECS,
 	["git", gitRule],
-	["npm", packageManagerRule({ install: ["install", "i", "ci", "add"], bareScripts: false })],
-	["pnpm", packageManagerRule({ install: ["install", "i", "add"], bareScripts: true })],
-	["yarn", packageManagerRule({ install: ["", "install", "add"], bareScripts: true })],
-	["bun", packageManagerRule({ install: ["install", "i", "add"], bareScripts: false })],
-	["vp", packageManagerRule({ install: ["install", "i", "check", "lint", "fmt", "build"], bareScripts: false })],
-	[
-		"cargo",
-		(args) =>
-			!args.some((arg) => arg.text === "--config" || arg.text.startsWith("--config=")) &&
-			firstIn(
-				"build",
-				"b",
-				"test",
-				"t",
-				"check",
-				"c",
-				"clippy",
-				"fmt",
-				"doc",
-				"bench",
-				"tree",
-				"metadata",
-				"fetch",
-			)(args),
-	],
-	[
-		"go",
-		(args) =>
-			!args.some((arg) => /^-(exec|toolexec)(=|$)/.test(arg.text)) &&
-			(firstIn("build", "test", "vet", "fmt", "list", "version")(args) ||
-				(args[0]?.text === "mod" && firstIn("download", "tidy", "verify", "graph", "why")(args.slice(1)))),
-	],
-	["make", (args) => args.every((arg) => arg.text.startsWith("-") || isSafeScript(arg.text))],
-	[
-		"python",
-		(args) =>
-			args[0]?.text === "-m" &&
-			firstIn("pytest", "unittest", "mypy", "ruff", "black", "isort", "compileall", "py_compile")(args.slice(1)),
-	],
-	[
-		"python3",
-		(args) =>
-			args[0]?.text === "-m" &&
-			firstIn("pytest", "unittest", "mypy", "ruff", "black", "isort", "compileall", "py_compile")(args.slice(1)),
-	],
-	[
-		"uv",
-		(args) =>
-			args[0]?.text === "sync" ||
-			(args[0]?.text === "run" && firstIn("pytest", "mypy", "ruff", "black")(args.slice(1))),
-	],
-	["deno", firstIn("test", "check", "lint", "fmt")],
-	[
-		"mvn",
-		(args) =>
-			args.length > 0 &&
-			args.every(
-				(arg) =>
-					arg.text.startsWith("-") ||
-					["test", "compile", "package", "verify", "validate", "clean"].includes(arg.text),
-			),
-	],
-	[
-		"gradle",
-		(args) =>
-			args.length > 0 &&
-			args.every(
-				(arg) => arg.text.startsWith("-") || ["test", "build", "check", "assemble", "clean"].includes(arg.text),
-			),
-	],
-	["swift", firstIn("build", "test")],
-	["dotnet", noArgOrFirstIn("build", "test", "restore")],
 ]);

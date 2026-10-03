@@ -33,12 +33,10 @@ export class PermissionService {
 		{
 			autoApproveAsk = false,
 			approveBlanketAsk = false,
-			requireApproval = false,
 			ruleAliases,
 		}: {
 			readonly autoApproveAsk?: boolean;
 			readonly approveBlanketAsk?: boolean;
-			readonly requireApproval?: boolean;
 			readonly ruleAliases?: readonly string[];
 		} = {},
 	): Promise<void> {
@@ -59,7 +57,7 @@ export class PermissionService {
 			}
 
 			const approvedAsk = autoApproveAsk || (approveBlanketAsk && isPresetRule(rule));
-			if ((rule.action === "ask" && !approvedAsk) || requireApproval) {
+			if (rule.action === "ask" && !approvedAsk) {
 				needsAsk = true;
 			}
 		}

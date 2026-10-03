@@ -57,14 +57,14 @@ describe("auto permission preset in a real host session", () => {
 		expect(result.isError).toBe(true);
 	});
 
-	it("reads a file outside the project without asking", async () => {
+	it("asks before reading a file outside the project", async () => {
 		// Given an auto session and a non-credential file outside the project.
 		const session = await host();
 		// When the agent reads it.
 		const result = await session.run("auto", { name: "read", args: { path: session.outsidePath } });
-		// Then the read goes through without a prompt.
-		expect(result.approvals).toEqual([]);
-		expect(JSON.stringify(result.result)).toContain("private outside content");
+		// Then auto approves only project paths, so the user is asked and the denied read returns nothing.
+		expect(result.approvals.length).toBeGreaterThan(0);
+		expect(JSON.stringify(result.result ?? "")).not.toContain("private outside content");
 	});
 
 	it("asks before reading a project credential file", async () => {
@@ -138,6 +138,104 @@ describe("auto permission preset in a real host session", () => {
 		const session = await host("external_directory=ask");
 		const result = await session.run("auto", { name: "read", args: { path: session.outsidePath } });
 		expect(result.approvals.length).toBeGreaterThan(0);
+	});
+
+	it("asks before a copy follows a project symlink and then '..' to write outside", async () => {
+		// Given a project symlink into an outside directory and an outside file next to its target.
+		const session = await host();
+		const outsideDir = join(dirname(session.outsidePath), "outside-tree");
+		await mkdir(join(outsideDir, "child"), { recursive: true });
+		await writeFile(join(outsideDir, "target.txt"), "outside original\n");
+		await symlink(join(outsideDir, "child"), join(session.cwd, "bridge"));
+		await writeFile(join(session.cwd, "payload.txt"), "project payload\n");
+		// When the agent copies through the link and back up with '..'.
+		const result = await session.run("auto", {
+			name: "bash",
+			args: { command: "cp payload.txt bridge/../target.txt" },
+		});
+		// Then it is asked, and the denied copy leaves the outside file alone.
+		expect(result.approvals.length).toBeGreaterThan(0);
+		expect(await readFile(join(outsideDir, "target.txt"), "utf8")).toBe("outside original\n");
+	});
+
+	it("asks before reading a credential directory reached through a symlink and '..'", async () => {
+		const session = await host();
+		const sshDir = join(dirname(session.outsidePath), "home", ".ssh");
+		await mkdir(join(sshDir, "nested"), { recursive: true });
+		await writeFile(join(sshDir, "config"), "SSH-CONFIG-MARKER\n");
+		await symlink(join(sshDir, "nested"), join(session.cwd, "jump"));
+		const result = await session.run("auto", { name: "bash", args: { command: "cat jump/../config" } });
+		expect(result.approvals.length).toBeGreaterThan(0);
+		expect(JSON.stringify(result.result ?? "")).not.toContain("SSH-CONFIG-MARKER");
+	});
+
+	it.each([
+		["@-prefixed", "@.env"],
+		["quoted", '".env"'],
+	])("asks before reading a project .env through a %s path", async (_label, spelling) => {
+		const session = await host();
+		await writeFile(join(session.cwd, ".env"), "TOKEN=ENV-SECRET\n");
+		const result = await session.run("auto", { name: "read", args: { path: spelling } });
+		expect(result.approvals.length).toBeGreaterThan(0);
+		expect(JSON.stringify(result.result ?? "")).not.toContain("ENV-SECRET");
+	});
+
+	it("asks before writing a project .env through an @-prefixed path", async () => {
+		const session = await host();
+		await writeFile(join(session.cwd, ".env"), "TOKEN=original\n");
+		const result = await session.run("auto", { name: "write", args: { path: "@.env", content: "TOKEN=changed\n" } });
+		expect(result.approvals.length).toBeGreaterThan(0);
+		expect(await readFile(join(session.cwd, ".env"), "utf8")).toBe("TOKEN=original\n");
+	});
+
+	it("asks before writing outside the project through an @-prefixed absolute path", async () => {
+		const session = await host();
+		const result = await session.run("auto", {
+			name: "write",
+			args: { path: `@${session.outsidePath}`, content: "overwritten\n" },
+		});
+		expect(result.approvals.length).toBeGreaterThan(0);
+		expect(await readFile(session.outsidePath, "utf8")).toBe("private outside content\n");
+	});
+
+	it.each([
+		["the engine's MCP OAuth token store", ["agent", "mcp-auth", "abc123", "tokens.json"]],
+		["a yarn config with an auth token", ["home", ".yarnrc.yml"]],
+		["a pip config", ["home", ".config", "pip", "pip.conf"]],
+		["a Chromium cookie store", ["home", "Chrome", "Default", "Cookies"]],
+		["a Chrome password store", ["home", "Chrome", "Default", "Login Data"]],
+		["a Firefox password store", ["home", "firefox", "profile", "logins.json"]],
+	])("asks before reading %s outside the project", async (_label, segments) => {
+		const session = await host();
+		const store = join(dirname(session.outsidePath), ...segments);
+		await mkdir(dirname(store), { recursive: true });
+		await writeFile(store, "STORE-SECRET\n");
+		const result = await session.run("auto", { name: "read", args: { path: store } });
+		expect(result.approvals.length).toBeGreaterThan(0);
+		expect(JSON.stringify(result.result ?? "")).not.toContain("STORE-SECRET");
+	});
+
+	it("asks before a project-wide search that would read a project .env", async () => {
+		const session = await host();
+		await writeFile(join(session.cwd, ".env"), "TOKEN=ENV-SECRET\n");
+		const result = await session.run("auto", { name: "grep", args: { path: session.cwd, pattern: "TOKEN" } });
+		expect(result.approvals.length).toBeGreaterThan(0);
+		expect(JSON.stringify(result.result ?? "")).not.toContain("ENV-SECRET");
+	});
+
+	it("reads, searches and writes plain project files without asking", async () => {
+		// Positive controls for the allowlist: ordinary project work stays unprompted.
+		const session = await host();
+		await mkdir(join(session.cwd, "src"), { recursive: true });
+		await writeFile(join(session.cwd, "src", "index.ts"), "export const marker = 'PLAIN-MARKER';\n");
+		const read = await session.run("auto", { name: "read", args: { path: "src/index.ts" } });
+		expect(read.approvals).toEqual([]);
+		expect(JSON.stringify(read.result)).toContain("PLAIN-MARKER");
+		const grep = await session.run("auto", { name: "grep", args: { path: "src/index.ts", pattern: "marker" } });
+		expect(grep.approvals).toEqual([]);
+		const write = await session.run("auto", { name: "write", args: { path: "src/new.ts", content: "ok\n" } });
+		expect(write.approvals).toEqual([]);
+		expect(await readFile(join(session.cwd, "src", "new.ts"), "utf8")).toBe("ok\n");
 	});
 
 	it("keeps asking for every command under accept-edits", async () => {

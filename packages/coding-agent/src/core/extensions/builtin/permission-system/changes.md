@@ -1,5 +1,22 @@
 # Permission System Builtin Extension
 
+## 2026-10-03 - Auto preset becomes an allowlist
+
+### What changed
+
+- `config.ts`: the `auto` preset's rules are a single `*:*=ask`; it no longer inherits accept-edits' `read/list/grep/edit=allow`.
+- `auto-paths.ts` (new): resolves a path the way the file tools do (`@` stripped, Unicode spaces, `~`/`$HOME`, `read`'s quoted fallback) and then physically, component by component, so a symlink is followed before a later `..` (`resolvePhysicalPath`; a missing tail must be plain names). `isApprovableProjectPath` accepts only a resolved path inside the resolved project root with no hidden component (except `.github`, `.gitignore`, `.gitattributes`, `.editorconfig`, `.nvmrc`, `.node-version`, formatter/linter configs, `.vscode`) and no credential-shaped name.
+- `auto-shell-grammar.ts` (new) + `auto-program-rules.ts`: each allowed program has a full flag grammar; every flag, attached value (`-o/x`, `-ro/x`, `--output=x`) and operand is classified as read-file, list, write, remove-file or text, and an unknown flag or form asks. The set is file utilities (`ls cat head tail wc diff stat file sort uniq cut grep rg mkdir touch cp mv rm echo pwd true which`) and read-only git (`status`, summary-only `diff`/`show`, `log`, `rev-parse`, `ls-files`, `blame`, `branch`). Test runners, builds, package managers and installs were removed.
+- `auto-policy.ts`: approves `read`, `ls`/`find`, `write`/`edit`/`multiedit`/`apply_patch` only when every path the tool will touch is approvable, `grep` only on regular files, and shell commands only when every segment parses and every path word is approvable both as written (traversal order) and lexically. Anything else returns no approval. `requireApproval` is gone (the preset already asks).
+
+### Why
+
+- Two review rounds on #2614 found eight bypasses of the earlier denylist (attached option values, symlink then `..`, `@`/quoted spellings, credential stores missing from the list, recursive grep). Approving only what is proven safe removes that class instead of adding entries.
+
+### Must not break
+
+- A user's rules still win over the judge (`isPresetRule`). The judge's check runs before the tool; a path swapped for a symlink between the check and the tool call is the documented residual window (`docs/settings.md`).
+
 ## 2026-10-03 - Auto preset review fixes: attached option values, resolved credentials, user rule precedence
 
 ### What changed

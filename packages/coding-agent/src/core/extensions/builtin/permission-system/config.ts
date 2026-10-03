@@ -27,17 +27,8 @@ const PERMISSION_PRESET_RULES: Record<PermissionPresetName, Ruleset> = {
 		{ permission: "bash", pattern: "*", action: "ask" },
 		{ permission: "external_directory", pattern: "*", action: "ask" },
 	],
-	// The rules match accept-edits; auto-policy.ts approves the blanket bash and outside-read
-	// asks it judges safe and asks again for anything touching a credential.
-	auto: [
-		{ permission: "*", pattern: "*", action: "ask" },
-		{ permission: "read", pattern: "*", action: "allow" },
-		{ permission: "list", pattern: "*", action: "allow" },
-		{ permission: "grep", pattern: "*", action: "allow" },
-		{ permission: "edit", pattern: "*", action: "allow" },
-		{ permission: "bash", pattern: "*", action: "ask" },
-		{ permission: "external_directory", pattern: "*", action: "ask" },
-	],
+	// Ask for everything; auto-policy.ts approves, over this rule only, the calls on its allowlist.
+	auto: [{ permission: "*", pattern: "*", action: "ask" }],
 	"read-only": [
 		{ permission: "*", pattern: "*", action: "ask" },
 		{ permission: "read", pattern: "*", action: "allow" },
