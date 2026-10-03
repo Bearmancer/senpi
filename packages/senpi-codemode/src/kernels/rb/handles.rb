@@ -67,6 +67,7 @@ class SenpiHandleControl
   def send_message(message)
     __senpi_call_tool(SENPI_RESERVED_HANDLE_SEND_TOOL, { "ref" => @ref, "message" => message.to_s })
   end
+  # Deliberately shadows Object#send so control.send(msg) matches the other languages; use __send__ for reflection.
   alias send send_message
 
   def cancel
