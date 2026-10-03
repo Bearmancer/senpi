@@ -451,9 +451,9 @@ describe("senpi-codemode extension factory", () => {
 
 		await emit(pi, "session_start", { reason: "startup" }, ctx);
 		await emit(pi, "session_start", { reason: "reload" }, ctx);
-		await emit(pi, "session_before_switch", {}, ctx);
+		await emit(pi, "session_shutdown", { reason: "resume" }, ctx);
 		await emit(pi, "session_start", { reason: "switch" }, ctx);
-		await emit(pi, "session_before_fork", {}, ctx);
+		await emit(pi, "session_shutdown", { reason: "fork" }, ctx);
 		await emit(pi, "session_start", { reason: "fork" }, ctx);
 		await emit(pi, "session_shutdown", {}, ctx);
 
@@ -501,6 +501,36 @@ describe("senpi-codemode extension factory", () => {
 
 describe("senpi-codemode extension lifecycle", () => {
 	afterEach(() => vi.useRealTimers());
+
+	it.each(["session_before_switch", "session_before_fork"] as const)(
+		"Given a %s that another extension cancels (or that fails before teardown), when the session keeps running, then eval still reaches its kernel",
+		async (beforeEvent) => {
+			const pi = new FakePi();
+			const manager = new DisposableManager();
+			senpiCodemode(pi, { createSessionManager: () => manager });
+			const ctx = extensionContext();
+			await emit(pi, "session_start", { reason: "startup" }, ctx);
+
+			// The switch or fork never happens: no session_shutdown and no new session_start follow.
+			await emit(pi, beforeEvent, {}, ctx);
+			const run = pi.registeredTool?.execute(
+				"after-cancelled-replacement",
+				{ language: "js", code: "1", summary: "cell after a cancelled switch" },
+				undefined,
+				undefined,
+				ctx,
+			);
+			const outcome = await Promise.race([
+				manager.runStarted.promise.then(() => "kernel reached"),
+				Promise.resolve(run).then((settled) => JSON.stringify(settled?.content ?? settled)),
+			]);
+
+			expect(outcome).toBe("kernel reached");
+			expect(manager.disposeCount).toBe(0);
+			await emit(pi, "session_shutdown", {}, ctx);
+			await run;
+		},
+	);
 
 	it("settles a mid-run cell as an error and rejects post-shutdown work", async () => {
 		const pi = new FakePi();

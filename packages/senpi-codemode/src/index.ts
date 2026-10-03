@@ -36,12 +36,9 @@ import {
 import { createEvalTool } from "./tool/eval-tool.ts";
 import { renderEvalCall, renderEvalResult } from "./tool/render.ts";
 
-const SESSION_LIFECYCLE_EVENTS = [
-	"session_start",
-	"session_shutdown",
-	"session_before_switch",
-	"session_before_fork",
-] as const;
+// session_before_switch / session_before_fork are veto points another extension can cancel, so they never
+// tear the runtime down; a switch or fork that goes ahead emits session_shutdown before the old session ends.
+const SESSION_LIFECYCLE_EVENTS = ["session_start", "session_shutdown"] as const;
 
 type SessionLifecycleEvent = (typeof SESSION_LIFECYCLE_EVENTS)[number];
 
@@ -249,8 +246,6 @@ export default function senpiCodemode(pi: CodemodeExtensionAPI, options: SenpiCo
 		registerEvalForRuntime(runtime, activeModelId, cellManager);
 	});
 	pi.on("session_shutdown", async () => dropRuntime());
-	pi.on("session_before_switch", async () => dropRuntime());
-	pi.on("session_before_fork", async () => dropRuntime());
 	pi.on("model_select", async (event, ctx) => {
 		activeContext = ctx;
 		const runtime = activeRuntime;

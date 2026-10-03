@@ -123,6 +123,13 @@
 			],
 			"reason": "Ruby and Julia kernels get a no-progress startup watchdog (two new modules in the scoped census) with its contracts; two tests pin the one-spawn replacement node 5 already delivers."
 		},
+		"7": {
+			"additions": [
+				"legacyContracts/test/extension.test.ts/senpi-codemode extension lifecycle Given a session_before_switch that another extension cancels (or that fails before teardown), when the session keeps running, then eval still reaches its kernel",
+				"legacyContracts/test/extension.test.ts/senpi-codemode extension lifecycle Given a session_before_fork that another extension cancels (or that fails before teardown), when the session keeps running, then eval still reaches its kernel"
+			],
+			"reason": "Node 7 (#1706): the extension no longer tears the runtime down on session_before_switch/session_before_fork, which another extension can cancel; the cancelled-replacement contracts."
+		},
 		"8": {
 			"additions": [
 				"imports/extension/packages/senpi-codemode/src/extension/bridge-tool-call.ts",
