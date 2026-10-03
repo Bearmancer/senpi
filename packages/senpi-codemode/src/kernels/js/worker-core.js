@@ -24,6 +24,7 @@ const SESSION_ENVIRONMENT_KEYS = [
 	"PI_PROVIDER",
 	"PI_MODEL",
 	"PI_REASONING_LEVEL",
+	"OMO_BROWSER_ENGINE",
 ];
 
 export function createWorkerCore(transport, options) {

@@ -11,6 +11,7 @@ import type { SessionRuntimeKind } from "../../cli/args.ts";
 import type { AgentAbortSource } from "../../core/agent-abort-provenance.ts";
 import type { PromptDisposition, QueuedInput, QueuedInputDisposition, SessionStats } from "../../core/agent-session.ts";
 import type { BashResult } from "../../core/bash-executor.ts";
+import type { BrowserEngine } from "../../core/browser-engine.ts";
 import type { ClientMessageIdentity } from "../../core/client-message-identity.ts";
 import type { CompactionResult } from "../../core/compaction/index.ts";
 import type { PromptSurface } from "../../core/dynamic-prompt/types.ts";
@@ -413,6 +414,15 @@ export type RpcCommand =
 			 * Requires the host capability `prompt_surface`. Any other value is refused with `invalid_launch_profile`.
 			 */
 			promptSurface?: PromptSurface;
+			/**
+			 * Which browser THIS session's skills drive: `connected` (the user's own browser), `builtin` (the
+			 * app's in-app browser) or `none`. Session-scoped, never process-wide: the session's tool
+			 * subprocesses and eval kernel see `OMO_BROWSER_ENGINE=<value>`, other sessions on the host do
+			 * not, and a session opened without it sees no such variable. A later open that attaches with
+			 * another value moves the live session to it; an attach without it keeps the current engine.
+			 * Requires the host capability `browser_engine`. Any other value is refused with `invalid_launch_profile`.
+			 */
+			browserEngine?: BrowserEngine;
 	  }
 	| { id?: string; type: "close_session"; sessionId: string }
 	| {

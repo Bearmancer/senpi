@@ -99,6 +99,7 @@ import { resolveAssistantUsageScope } from "./assistant-usage-scope.ts";
 import { formatNoApiKeyFoundMessage, formatNoModelSelectedMessage } from "./auth-guidance.ts";
 import { type BashResult, executeBashWithOperations } from "./bash-executor.ts";
 import { envValue } from "./brand.ts";
+import type { BrowserEngine } from "./browser-engine.ts";
 import {
 	type ClientMessageIdentity,
 	clientMessageIdentity,
@@ -668,6 +669,8 @@ export interface AgentSessionConfig {
 	autoTitleSessions?: boolean;
 	/** Where this session's replies render; omitted means `SENPI_PROMPT_SURFACE` decides. */
 	promptSurface?: PromptSurface;
+	/** Browser engine this session's skills drive; omitted means none was chosen. */
+	browserEngine?: BrowserEngine;
 }
 
 type SessionModelEntry = {
@@ -1247,9 +1250,11 @@ export class AgentSession {
 	};
 	private _systemPromptOverride?: string;
 	private _promptSurface: PromptSurface | undefined;
+	private _browserEngine: BrowserEngine | undefined;
 
 	constructor(config: AgentSessionConfig) {
 		this._promptSurface = config.promptSurface;
+		this._browserEngine = config.browserEngine;
 		this.agent = config.agent;
 		this.sessionManager = config.sessionManager;
 		this.settingsManager = config.settingsManager;
@@ -3937,6 +3942,15 @@ export class AgentSession {
 		if (current === surface) return;
 		this._systemPromptOverride = undefined;
 		this._applyToolDeclarations(this.getActiveToolNames());
+	}
+
+	/** Moves this session to another browser engine (a later `open_session.browserEngine`); the next tool call sees it. */
+	setBrowserEngine(engine: BrowserEngine): void {
+		this._browserEngine = engine;
+	}
+
+	get browserEngine(): BrowserEngine | undefined {
+		return this._browserEngine;
 	}
 
 	/** Current effective system prompt (includes any per-turn extension modifications) */
@@ -8814,6 +8828,7 @@ export class AgentSession {
 					};
 				},
 				getAskUserSettings: () => this.settingsManager.getAskUserSettings(),
+				getBrowserEngine: () => this._browserEngine,
 				getImageSettings: () => ({
 					autoResize: this.settingsManager.getImageAutoResize(),
 					blockImages: this.settingsManager.getBlockImages(),

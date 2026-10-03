@@ -79,6 +79,14 @@ export const DURABLE_SESSION_ID_CAPABILITY = "durable_session_id";
 export const PROMPT_SURFACE_CAPABILITY = "prompt_surface";
 
 /**
+ * HOST capability: this host honors `open_session.browserEngine` (`connected` | `builtin` | `none`). The
+ * choice is per session, never per process: that session's tool subprocesses and eval kernel see
+ * `OMO_BROWSER_ENGINE=<value>` and no other session on the host does. Advertised only because the
+ * value reaches every consumer, so a client may rely on it the moment it sees this name.
+ */
+export const BROWSER_ENGINE_CAPABILITY = "browser_engine";
+
+/**
  * HOST capability: `open_session.promptSurface` also accepts `chat` (a chat bridge: no routing line,
  * no handoff block, no todo cues). A host without it refuses `chat` with `invalid_launch_profile`,
  * so a gateway sends `chat` only after seeing this and otherwise falls back to `app`.

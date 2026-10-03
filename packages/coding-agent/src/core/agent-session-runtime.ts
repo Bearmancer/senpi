@@ -3,6 +3,7 @@ import { basename, join, parse, resolve } from "node:path";
 import { resolvePath } from "../utils/paths.ts";
 import type { AgentSession } from "./agent-session.ts";
 import type { AgentSessionRuntimeDiagnostic, AgentSessionServices } from "./agent-session-services.ts";
+import type { BrowserEngine } from "./browser-engine.ts";
 import type { PromptSurface } from "./dynamic-prompt/types.ts";
 import type { HostMcpRegistry } from "./extensions/builtin/mcp/host-registry.ts";
 import type {
@@ -53,6 +54,8 @@ export interface AgentSessionLaunchProfile {
 	autoTitle?: boolean;
 	/** Per-session prompt surface (`open_session.promptSurface`); absent means `SENPI_PROMPT_SURFACE`. */
 	promptSurface?: PromptSurface;
+	/** Per-session browser engine (`open_session.browserEngine`); absent means none was chosen. */
+	browserEngine?: BrowserEngine;
 }
 
 /**
@@ -171,6 +174,12 @@ export class AgentSessionRuntime {
 	setPromptSurface(surface: PromptSurface): void {
 		this._launchProfile = Object.freeze({ ...(this._launchProfile ?? { cwd: this.cwd }), promptSurface: surface });
 		this._session.setPromptSurface(surface);
+	}
+
+	/** Moves this session to another browser engine; later replacements (switch, new, fork) keep it. */
+	setBrowserEngine(engine: BrowserEngine): void {
+		this._launchProfile = Object.freeze({ ...(this._launchProfile ?? { cwd: this.cwd }), browserEngine: engine });
+		this._session.setBrowserEngine(engine);
 	}
 
 	setRebindSession(rebindSession?: (session: AgentSession) => Promise<void>): void {

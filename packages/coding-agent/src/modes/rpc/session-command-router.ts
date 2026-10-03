@@ -5,6 +5,7 @@ import { buildRpcSessionState } from "./connection-handler.ts";
 import {
 	AUTO_TITLE_PER_SESSION_CAPABILITY,
 	AUTO_TITLE_SESSIONS_CAPABILITY,
+	BROWSER_ENGINE_CAPABILITY,
 	CONTINUE_FROM_LEAF_CAPABILITY,
 	DURABLE_SESSION_ID_CAPABILITY,
 	MEDIA_PLACEHOLDERS_CAPABILITY,
@@ -19,6 +20,7 @@ import { answerWarm } from "./host-warm.ts";
 import { protocolIdentity } from "./protocol-identity.ts";
 import {
 	sessionAutoTitleError,
+	sessionBrowserEngineError,
 	sessionContextError,
 	sessionKindError,
 	sessionPromptSurfaceError,
@@ -327,6 +329,8 @@ export class SessionCommandRouter {
 				// Every session's prompt is built from its own launch profile, so one host serves both surfaces.
 				PROMPT_SURFACE_CAPABILITY,
 				PROMPT_SURFACE_CHAT_CAPABILITY,
+				// Each session's tool subprocesses and eval kernel get its own OMO_BROWSER_ENGINE from its launch profile.
+				BROWSER_ENGINE_CAPABILITY,
 				ACCEPT_EDITS_PERMISSION_PRESET_CAPABILITY,
 				// Only an in-process runtime shares the loop a warm loads into (senpi#2314).
 				...(this.registry.warm ? [WARM_CAPABILITY] : []),
@@ -436,7 +440,13 @@ export class SessionCommandRouter {
 	sweepIdleSessions(): void {
 		const now = this.idleNow();
 		const idleEvictionMs = this.memoryPressure ? this.idleEvictionMs / 2 : this.idleEvictionMs;
-		const verdicts = selectSweepEvictions(this.registry, now, idleEvictionMs);
+		const verdicts = selectSweepEvictions(
+			this.registry,
+			now,
+			idleEvictionMs,
+			(sessionId) =>
+				this.activeRequests.has(sessionId) || (this.bindings.get(sessionId)?.pendingPrompts?.().length ?? 0) > 0,
+		);
 		for (const sessionId of verdicts.orphaned) void this.evictIdleSession(sessionId, "session_dir_removed");
 		for (const sessionId of verdicts.idle) void this.evictIdleSession(sessionId);
 		if (Number.isFinite(this.emptyExitMs)) {
@@ -602,6 +612,9 @@ export class SessionCommandRouter {
 		const promptSurfaceError = sessionPromptSurfaceError(command.promptSurface);
 		if (promptSurfaceError)
 			return error(command.id, "open_session", `${RPC_ERROR_INVALID_LAUNCH_PROFILE}: ${promptSurfaceError}`);
+		const browserEngineError = sessionBrowserEngineError(command.browserEngine);
+		if (browserEngineError)
+			return error(command.id, "open_session", `${RPC_ERROR_INVALID_LAUNCH_PROFILE}: ${browserEngineError}`);
 		let opened: OpenRpcSession | undefined;
 		try {
 			opened = await this.registry.openSession(
@@ -621,6 +634,7 @@ export class SessionCommandRouter {
 					...(command.durableSessionId !== undefined ? { durableSessionId: command.durableSessionId } : {}),
 					...(typeof command.auto_title === "boolean" ? { autoTitle: command.auto_title } : {}),
 					...(command.promptSurface !== undefined ? { promptSurface: command.promptSurface } : {}),
+					...(command.browserEngine !== undefined ? { browserEngine: command.browserEngine } : {}),
 				},
 				// Host lifecycle policy, deliberately outside the immutable launch profile.
 				{ retainOnDisconnect: command.retain_on_disconnect === true },

@@ -1045,6 +1045,7 @@ export function createCliRuntimeFactory(
 				launchProfile?.autoTitle,
 			),
 			promptSurface: launchProfile?.promptSurface,
+			browserEngine: launchProfile?.browserEngine,
 		});
 		markSwitch("createSession");
 		const cliThinkingOverride = runtimeParsed.thinking !== undefined || cliThinkingFromModel;

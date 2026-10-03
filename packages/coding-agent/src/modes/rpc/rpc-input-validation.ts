@@ -1,3 +1,4 @@
+import { isBrowserEngine } from "../../core/browser-engine.ts";
 import { clientMessageIdentitySchema } from "../../core/client-message-identity.ts";
 
 export const MAX_RPC_MESSAGE_CHARACTERS = 1_000_000;
@@ -168,6 +169,16 @@ export function sessionAutoTitleError(value: unknown): string | undefined {
 export function sessionPromptSurfaceError(value: unknown): string | undefined {
 	if (value === undefined || value === "terminal" || value === "app" || value === "chat") return undefined;
 	return `promptSurface must be "terminal", "app" or "chat".`;
+}
+
+/**
+ * Detail for an `open_session.browserEngine` the host refuses, or undefined when the value is absent
+ * or a known engine. An unknown value is never read as `none`: a client that asked for the user's
+ * own browser must not silently run without one.
+ */
+export function sessionBrowserEngineError(value: unknown): string | undefined {
+	if (value === undefined || isBrowserEngine(value)) return undefined;
+	return `browserEngine must be "connected", "builtin" or "none".`;
 }
 
 export function rpcCommandShapeError(command: unknown): string | undefined {

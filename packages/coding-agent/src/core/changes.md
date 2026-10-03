@@ -8836,3 +8836,23 @@ Session runtime, model runtime, remote catalog and settings own these paths belo
 ### Expected merge conflict zones
 
 Upstream edits to core session/settings/runtime paths at the next sync.
+
+## The session launch profile carries the browser engine (2026-10-03)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session-runtime.ts`: `AgentSessionLaunchProfile.browserEngine` and `setBrowserEngine`, which also updates the frozen profile so a later switch, new session or fork keeps the engine.
+- `packages/coding-agent/src/core/agent-session.ts`, `agent-session-services.ts`, `sdk.ts`: the engine is passed through session creation, held on `AgentSession` (`browserEngine`, `setBrowserEngine`) and handed to extensions through the context action `getBrowserEngine`.
+- `core/browser-engine.ts` (new): the `BrowserEngine` values and the `OMO_BROWSER_ENGINE` name.
+
+### Why
+
+`open_session.browserEngine` (senpi#2611) is a per-session choice; the profile is where every other per-session open field (`promptSurface`, `kind`, `context`) already lives.
+
+### Why an extension could not handle it
+
+Session creation and the launch profile are core lifecycle code that runs before extensions load.
+
+### Expected merge conflict zones
+
+The `promptSurface` plumbing in `agent-session.ts`, `agent-session-services.ts` and `sdk.ts`, which the new field sits next to.
