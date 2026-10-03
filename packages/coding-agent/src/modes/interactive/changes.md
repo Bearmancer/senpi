@@ -2269,3 +2269,21 @@ Interactive-mode components and theme are rendering internals below the extensio
 ### Expected merge conflict zones
 
 Upstream edits to interactive-mode components at the next sync.
+
+## 2026-10-03 - Tool-card diff contrast raised to >= 7:1 (senpi#2655)
+
+### What changed
+
+`packages/coding-agent/src/modes/interactive/theme/dark.json` and `light.json`: tool success/error/pending card backgrounds move from saturated dark-tinted blocks to a near-plain surface, and the diff foreground colors are decoupled from the shared `success`/`error` roles into dedicated brighter values so added/removed diff lines read at >= 7:1 against the card background. Dark: card `okhsl(229 5% 13%)`, `toolDiffAdded okhsl(159 62% 72%)`, `toolDiffRemoved okhsl(20 74% 72%)`. Light: card `okhsl(248 3% 93%)`, `toolDiffAdded okhsl(159 82% 32%)`, `toolDiffRemoved okhsl(20 97% 34%)`. Meaning is carried by the foreground color and the existing +/− sign instead of a colored background block. General text contrast on the card is unchanged or better (dark text 12.6, muted 6.7; light text 11.4, muted 4.2).
+
+### Why
+
+The saturated card backgrounds dropped diff text contrast to 4.2-4.7:1, below readable. Carrying meaning in the foreground on a near-plain background restores diff readability without dimming general text.
+
+### Why an extension could not handle it
+
+Theme color roles are interactive-mode assets resolved at startup; an extension cannot re-map the tool-card background or the diff foreground roles.
+
+### Expected merge conflict zones
+
+Upstream edits to `theme/dark.json` or `theme/light.json` color roles at the next sync.
