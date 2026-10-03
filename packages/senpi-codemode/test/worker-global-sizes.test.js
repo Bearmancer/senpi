@@ -96,4 +96,107 @@ describe("largest-globals sizing never runs user code", () => {
 
 		expect(sized.find((global) => global.name === "mostlyTexts")).toMatchObject({ approximate: true });
 	});
+
+	it("Given Set, DataView, ArrayBuffer and Blob subclasses that override their size getters when the globals are sized then no override runs and the real sizes are reported", () => {
+		const baseline = captureGlobalBaseline();
+		let hits = 0;
+		const MiB = 1024 * 1024;
+		class CountedSet extends Set {
+			get size() {
+				hits += 1;
+				return 0;
+			}
+		}
+		class CountedView extends DataView {
+			get byteLength() {
+				hits += 1;
+				return 0;
+			}
+		}
+		class CountedBuffer extends ArrayBuffer {
+			get byteLength() {
+				hits += 1;
+				return 0;
+			}
+		}
+		class CountedBlob extends Blob {
+			get size() {
+				hits += 1;
+				return 0;
+			}
+		}
+		const set = new CountedSet();
+		for (let index = 0; index < 600; index += 1) set.add("x".repeat(2048) + index);
+		defineGlobal("countedSet", set);
+		defineGlobal("countedView", new CountedView(new ArrayBuffer(2 * MiB)));
+		defineGlobal("countedBuffer", new CountedBuffer(2 * MiB));
+		defineGlobal("countedBlob", new CountedBlob([new Uint8Array(2 * MiB)]));
+
+		const sized = largestGlobals(baseline, 10);
+		const bytes = (name) => sized.find((global) => global.name === name)?.bytes ?? 0;
+
+		expect(hits).toBe(0);
+		for (const name of ["countedSet", "countedView", "countedBuffer", "countedBlob"]) expect(bytes(name)).toBeGreaterThanOrEqual(2 * MiB);
+	});
+
+	it("Given replaced Map and Set iteration methods and a redefined Blob instanceof hook when the globals are sized then none of them runs", () => {
+		const baseline = captureGlobalBaseline();
+		let hits = 0;
+		const count = () => {
+			hits += 1;
+		};
+		const entries = Map.prototype.entries;
+		const values = Set.prototype.values;
+		const mapIteratorPrototype = Object.getPrototypeOf(new Map().entries());
+		const mapNext = mapIteratorPrototype.next;
+		const hasInstance = Object.getOwnPropertyDescriptor(Blob, Symbol.hasInstance);
+		const map = new Map([[1, "x".repeat(2 * 1024 * 1024)]]);
+		defineGlobal("plainMap", map);
+		defineGlobal("plainSet", new Set(["x".repeat(2 * 1024 * 1024)]));
+		defineGlobal("plainObject", { text: "x".repeat(2 * 1024 * 1024) });
+		try {
+			Map.prototype.entries = function () {
+				count();
+				return entries.call(this);
+			};
+			Set.prototype.values = function () {
+				count();
+				return values.call(this);
+			};
+			mapIteratorPrototype.next = function () {
+				count();
+				return mapNext.call(this);
+			};
+			Object.defineProperty(Blob, Symbol.hasInstance, { value: () => (count(), false), configurable: true });
+
+			largestGlobals(baseline, 10);
+		} finally {
+			Map.prototype.entries = entries;
+			Set.prototype.values = values;
+			mapIteratorPrototype.next = mapNext;
+			if (hasInstance) Object.defineProperty(Blob, Symbol.hasInstance, hasInstance);
+			else Reflect.deleteProperty(Blob, Symbol.hasInstance);
+		}
+
+		expect(hits).toBe(0);
+	});
+
+	it("Given an object with an accessor property when the globals are sized then the accessor never runs and the estimate is approximate", () => {
+		const baseline = captureGlobalBaseline();
+		let hits = 0;
+		const holder = { text: "x".repeat(2 * 1024 * 1024) };
+		Object.defineProperty(holder, "computed", {
+			get() {
+				hits += 1;
+				return "y";
+			},
+			enumerable: true,
+		});
+		defineGlobal("withAccessor", holder);
+
+		const sized = largestGlobals(baseline, 5);
+
+		expect(hits).toBe(0);
+		expect(sized.find((global) => global.name === "withAccessor")).toMatchObject({ approximate: true });
+	});
 });

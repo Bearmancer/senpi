@@ -22,9 +22,26 @@ const SHARED_ARRAY_BUFFER_BYTE_LENGTH =
 const MAP_SIZE = intrinsicGetter(Map.prototype, "size");
 const SET_SIZE = intrinsicGetter(Set.prototype, "size");
 const BLOB_SIZE = typeof Blob === "function" ? intrinsicGetter(Blob.prototype, "size") : undefined;
+// Iteration captured at load too: a user who replaces Map.prototype.entries or an iterator's next() is never called.
+const MAP_ENTRIES = Map.prototype.entries;
+const SET_VALUES = Set.prototype.values;
+const MAP_ITERATOR_NEXT = Object.getPrototypeOf(new Map().entries()).next;
+const SET_ITERATOR_NEXT = Object.getPrototypeOf(new Set().values()).next;
 
 function read(getter, value) {
 	return Reflect.apply(getter, value, []);
+}
+
+// The Blob brand, checked by its own size getter (which throws on anything else), not by instanceof:
+// instanceof would call a user-redefinable Symbol.hasInstance.
+function isBlob(value) {
+	if (BLOB_SIZE === undefined) return false;
+	try {
+		read(BLOB_SIZE, value);
+		return true;
+	} catch {
+		return false;
+	}
 }
 
 export function captureGlobalBaseline() {
@@ -73,11 +90,12 @@ function createSizer() {
 		return (total / SAMPLED_ELEMENTS) * length;
 	}
 
-	function entriesOf(iterable, count, depth, sizeOf) {
+	function entriesOf(iterator, next, count, depth, sizeOf) {
 		const taken = [];
-		for (const entry of iterable) {
-			taken.push(entry);
-			if (taken.length >= SAMPLED_ELEMENTS) break;
+		while (taken.length < SAMPLED_ELEMENTS) {
+			const step = Reflect.apply(next, iterator, []);
+			if (step.done) break;
+			taken.push(step.value);
 		}
 		if (taken.length < count) approximate = true;
 		let total = 0;
@@ -100,24 +118,27 @@ function createSizer() {
 		if (types.isDataView(value)) return read(DATA_VIEW_BYTE_LENGTH, value);
 		if (types.isArrayBuffer(value)) return read(ARRAY_BUFFER_BYTE_LENGTH, value);
 		if (types.isSharedArrayBuffer(value) && SHARED_ARRAY_BUFFER_BYTE_LENGTH) return read(SHARED_ARRAY_BUFFER_BYTE_LENGTH, value);
-		if (BLOB_SIZE !== undefined && value instanceof Blob) return read(BLOB_SIZE, value);
+		if (isBlob(value)) return read(BLOB_SIZE, value);
 		if (Array.isArray(value)) {
 			const length = value.length;
 			return OBJECT_BYTES + length * POINTER_BYTES + sampled(length, (index) => elementOf(value, index), depth);
 		}
 		if (types.isMap(value)) {
 			const count = read(MAP_SIZE, value);
-			const entries = Map.prototype.entries.call(value);
-			return OBJECT_BYTES + count * 2 * POINTER_BYTES + entriesOf(entries, count, depth, ([key, item], at) => size(key, at) + size(item, at));
+			const entries = Reflect.apply(MAP_ENTRIES, value, []);
+			return OBJECT_BYTES + count * 2 * POINTER_BYTES + entriesOf(entries, MAP_ITERATOR_NEXT, count, depth, ([key, item], at) => size(key, at) + size(item, at));
 		}
 		if (types.isSet(value)) {
 			const count = read(SET_SIZE, value);
-			return OBJECT_BYTES + count * POINTER_BYTES + entriesOf(Set.prototype.values.call(value), count, depth, size);
+			return OBJECT_BYTES + count * POINTER_BYTES + entriesOf(Reflect.apply(SET_VALUES, value, []), SET_ITERATOR_NEXT, count, depth, size);
 		}
 		const keys = Object.keys(value);
 		const propertyValue = (index) => {
 			const descriptor = Object.getOwnPropertyDescriptor(value, keys[index]);
-			return descriptor !== undefined && "value" in descriptor ? descriptor.value : undefined;
+			if (descriptor === undefined) return undefined;
+			if ("value" in descriptor) return descriptor.value;
+			approximate = true;
+			return undefined;
 		};
 		return OBJECT_BYTES + keys.length * POINTER_BYTES + sampled(keys.length, propertyValue, depth);
 	}

@@ -109,7 +109,10 @@
 				"legacyContracts/test/worker-global-sizes.test.js/largest-globals sizing never runs user code Given an array hole whose prototype has an index getter when the globals are sized then the prototype getter never runs",
 				"legacyContracts/test/worker-global-sizes.test.js/largest-globals sizing never runs user code Given a typed array subclass that overrides byteLength when the globals are sized then its real byte length is reported without running the override",
 				"legacyContracts/test/worker-global-sizes.test.js/largest-globals sizing never runs user code Given a Map subclass that overrides size when the globals are sized then the override never runs",
-				"legacyContracts/test/worker-global-sizes.test.js/largest-globals sizing never runs user code Given a fully walked array with one accessor element when the globals are sized then it is still reported, marked approximate"
+				"legacyContracts/test/worker-global-sizes.test.js/largest-globals sizing never runs user code Given a fully walked array with one accessor element when the globals are sized then it is still reported, marked approximate",
+				"legacyContracts/test/worker-global-sizes.test.js/largest-globals sizing never runs user code Given Set, DataView, ArrayBuffer and Blob subclasses that override their size getters when the globals are sized then no override runs and the real sizes are reported",
+				"legacyContracts/test/worker-global-sizes.test.js/largest-globals sizing never runs user code Given replaced Map and Set iteration methods and a redefined Blob instanceof hook when the globals are sized then none of them runs",
+				"legacyContracts/test/worker-global-sizes.test.js/largest-globals sizing never runs user code Given an object with an accessor property when the globals are sized then the accessor never runs and the estimate is approximate"
 			],
 			"reason": "Memory sizing no longer runs user getters or overridden built-in getters; the new contracts pin that."
 		},
