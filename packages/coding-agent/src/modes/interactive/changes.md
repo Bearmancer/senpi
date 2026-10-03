@@ -2307,3 +2307,21 @@ The session selector's delete action is interactive-mode UI code with no extensi
 ### Expected merge conflict zones
 
 `deleteSessionFile` in `session-selector.ts`.
+
+## 2026-10-03 - Fold the startup banner into one summary line (senpi#2651)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: the compact resource listing now truncates to a few names with a `+N more (ctrl+o)` hint when it would be long (a 69-skill list filled the whole first screen on an 80x24 terminal); short listings (<= 8 names) still show in full, and the full list always renders on Ctrl+O via the existing `setToolsExpanded` re-expansion. More than one startup model-runtime warning now collapses into a single expandable notice box (`N model warnings` with the first as the body and the rest as Ctrl+O-detail `extra` lines) when startup details are hidden (quiet startup); a single warning still shows in full, and verbose/detail-showing modes keep the per-warning lines.
+
+### Why
+
+The first screen was only the skill list plus up to 7 warning lines. A truncated listing and a single expandable warning notice keep the count and the first items visible without flooding the first frame, and every detail stays one keypress away.
+
+### Why an extension could not handle it
+
+The startup banner and the startup-warning loop are interactive-mode internals below the extension API; an extension cannot rewrite what `showLoadedResources` or the warning loop prints.
+
+### Expected merge conflict zones
+
+Upstream edits to `showLoadedResources` or the startup-warning block in interactive-mode.ts at the next sync.

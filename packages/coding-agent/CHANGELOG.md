@@ -11,6 +11,7 @@
 
 ### Changed
 
+- Startup no longer fills the first screen: a long loaded-resource list shows its first names and a `+N more` hint with the key that expands it, and several startup model warnings collapse into one expandable notice when startup details are hidden; the full list and every warning stay one keypress away ([#2651](https://github.com/code-yeongyu/senpi/issues/2651)).
 - The Claude Fable 5.1 prompt preset now asks for a one-line progress update after each tool wave that changes what the agent knows (an instruction naming the moment and the shape, in place of a recommendation that produced no more updates than presets asking for none), and three rules the preset stated twice are stated once: the Style section no longer repeats Scope's proceed-without-asking rule, the Verification section keeps only the claim audit, and the fourth Hard Limit drops the tail Scope already carries. Every other preset and the default prompt render unchanged ([#2681](https://github.com/code-yeongyu/senpi/issues/2681)).
 
 ### Fixed
