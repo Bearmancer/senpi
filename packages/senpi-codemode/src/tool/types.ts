@@ -167,6 +167,8 @@ export interface EvalKernelRunInput {
 	readonly onMessage?: (message: KernelToHostMessage) => void;
 	/** Globals of the tools active when the cell was submitted; kernels without preludes ignore them. */
 	readonly kernelPreludes?: readonly KernelPreludeContribution[];
+	/** Python only: the session's active environment revision, put first on the import path before the cell runs. */
+	readonly envRoot?: string;
 }
 
 export interface KernelInterruptHandle {
