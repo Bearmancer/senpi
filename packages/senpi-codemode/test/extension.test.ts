@@ -502,6 +502,98 @@ describe("senpi-codemode extension factory", () => {
 describe("senpi-codemode extension lifecycle", () => {
 	afterEach(() => vi.useRealTimers());
 
+	it("Given a session_start whose runtime could not be created, when the next eval runs, then the runtime is re-created once, the cell runs, and one diagnostic names the failed start", async () => {
+		const pi = new FakePi();
+		const manager = new DisposableManager();
+		let attempts = 0;
+		senpiCodemode(pi, {
+			createSessionManager: async () => {
+				attempts += 1;
+				if (attempts === 1) throw new Error("bridge port unavailable");
+				return manager;
+			},
+		});
+		const ctx = extensionContext();
+		const written: string[] = [];
+		vi.spyOn(process.stderr, "write").mockImplementation((chunk) => {
+			written.push(String(chunk));
+			return true;
+		});
+		await emit(pi, "session_start", { reason: "startup" }, ctx).catch(() => undefined);
+
+		const run = pi.registeredTool?.execute(
+			"after-failed-start",
+			{ language: "js", code: "1", summary: "cell after a failed start" },
+			undefined,
+			undefined,
+			ctx,
+		);
+		await manager.runStarted.promise;
+
+		expect(attempts).toBe(2);
+		const diagnostics = written.filter((line) => line.includes("re-created a runtime"));
+		expect(diagnostics).toHaveLength(1);
+		expect(diagnostics[0]).toMatch(/failed session_start \(session [0-9a-f]{12}\)/);
+		expect(diagnostics[0]).not.toContain("bridge port unavailable");
+		await emit(pi, "session_shutdown", {}, ctx);
+		await run;
+	});
+
+	it("Given a failed start whose re-creation also fails, when eval runs, then the error names the re-creation failure and the remedy", async () => {
+		const pi = new FakePi();
+		senpiCodemode(pi, {
+			createSessionManager: async () => {
+				throw new Error("bridge port unavailable");
+			},
+		});
+		const ctx = extensionContext();
+		vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+		await emit(pi, "session_start", { reason: "startup" }, ctx).catch(() => undefined);
+
+		const run = pi.registeredTool?.execute(
+			"re-creation-fails",
+			{ language: "js", code: "1", summary: "cell after a failed start" },
+			undefined,
+			undefined,
+			ctx,
+		);
+
+		await expect(run).rejects.toThrow(
+			"codemode runtime could not be re-created: bridge port unavailable. Start a new session or reload to bring eval back.",
+		);
+	});
+
+	it("Given a session that ended with session_shutdown, when eval runs afterwards, then it is not recovered and no diagnostic is written", async () => {
+		const pi = new FakePi();
+		let created = 0;
+		senpiCodemode(pi, {
+			createSessionManager: () => {
+				created += 1;
+				return new DisposableManager();
+			},
+		});
+		const ctx = extensionContext();
+		const written: string[] = [];
+		vi.spyOn(process.stderr, "write").mockImplementation((chunk) => {
+			written.push(String(chunk));
+			return true;
+		});
+		await emit(pi, "session_start", { reason: "startup" }, ctx);
+		await emit(pi, "session_shutdown", { reason: "quit" }, ctx);
+
+		const run = pi.registeredTool?.execute(
+			"after-shutdown",
+			{ language: "js", code: "1", summary: "cell after shutdown" },
+			undefined,
+			undefined,
+			ctx,
+		);
+
+		await expect(run).rejects.toThrow("codemode session manager is disposed");
+		expect(created).toBe(1);
+		expect(written.some((line) => line.includes("re-created a runtime"))).toBe(false);
+	});
+
 	it.each(["session_before_switch", "session_before_fork"] as const)(
 		"Given a %s that another extension cancels (or that fails before teardown), when the session keeps running, then eval still reaches its kernel",
 		async (beforeEvent) => {
@@ -509,6 +601,11 @@ describe("senpi-codemode extension lifecycle", () => {
 			const manager = new DisposableManager();
 			senpiCodemode(pi, { createSessionManager: () => manager });
 			const ctx = extensionContext();
+			const written: string[] = [];
+			vi.spyOn(process.stderr, "write").mockImplementation((chunk) => {
+				written.push(String(chunk));
+				return true;
+			});
 			await emit(pi, "session_start", { reason: "startup" }, ctx);
 
 			// The switch or fork never happens: no session_shutdown and no new session_start follow.
@@ -527,6 +624,8 @@ describe("senpi-codemode extension lifecycle", () => {
 
 			expect(outcome).toBe("kernel reached");
 			expect(manager.disposeCount).toBe(0);
+			// The primary fix keeps the manager, so the recovery path never runs here.
+			expect(written.some((line) => line.includes("re-created a runtime"))).toBe(false);
 			await emit(pi, "session_shutdown", {}, ctx);
 			await run;
 		},
