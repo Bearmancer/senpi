@@ -1,7 +1,9 @@
+import { Container } from "@earendil-works/pi-tui";
 import { describe, expect, test } from "vitest";
 import {
 	isNetworkProviderError,
 	isRetryableProviderError,
+	ProviderErrorPresentation,
 } from "../../../src/modes/interactive/provider-error-presentation.ts";
 
 // Regression for https://github.com/code-yeongyu/senpi/issues/2652
@@ -31,5 +33,38 @@ describe("provider error presentation classification", () => {
 	test("empty/undefined input is never quiet", () => {
 		expect(isRetryableProviderError(undefined)).toBe(false);
 		expect(isRetryableProviderError("")).toBe(false);
+	});
+});
+
+// A terminal compaction failure after an episode that already finished must not reopen the stale
+// banner: the quiet finish() is gated on a retry recorded in the CURRENT episode.
+describe("provider error episode marker", () => {
+	const envelope = JSON.stringify({
+		type: "error",
+		error: { type: "api_error", message: "Network error or service unavailable" },
+	});
+
+	test("a recorded retry marks the episode as awaiting finish until finish() closes it", () => {
+		const p = new ProviderErrorPresentation(new Container());
+		expect(p.awaitingRetryFinish).toBe(false);
+		p.retrying(envelope, false);
+		expect(p.awaitingRetryFinish).toBe(true);
+		p.finish(envelope);
+		expect(p.awaitingRetryFinish).toBe(false);
+	});
+
+	test("after a finished episode, a fresh failure is NOT awaiting finish (surfaces as an error)", () => {
+		const p = new ProviderErrorPresentation(new Container());
+		p.retrying(envelope, false);
+		p.finish(envelope);
+		// A later, never-retried terminal failure on the same banner: no current retry episode.
+		expect(p.awaitingRetryFinish).toBe(false);
+	});
+
+	test("a retry recorded then cleared still awaits finish (the exhausted close-out)", () => {
+		const p = new ProviderErrorPresentation(new Container());
+		p.retrying(envelope, false);
+		p.clear();
+		expect(p.awaitingRetryFinish).toBe(true);
 	});
 });

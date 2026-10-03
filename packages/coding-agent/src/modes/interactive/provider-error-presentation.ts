@@ -99,6 +99,7 @@ export class ProviderErrorPresentation {
 
 	record(raw: string, expanded = false): void {
 		this.pending = true;
+		this.retryAwaitingFinish = true;
 		if (!this.notice) {
 			this.notice = new ProviderFailureNotice();
 			this.notice.setExpanded(expanded);
@@ -124,15 +125,22 @@ export class ProviderErrorPresentation {
 		return this.pending;
 	}
 
-	/** True once any retry has been recorded this episode (the notice exists), surviving clear(). */
-	get hadRetryEpisode(): boolean {
-		return this.notice !== undefined;
+	/**
+	 * True only while a retry has been recorded in the CURRENT episode and not yet closed out by
+	 * finish(). A fresh terminal failure after an episode that already finished returns false, so
+	 * it surfaces as a plain error instead of reopening the stale banner.
+	 */
+	get awaitingRetryFinish(): boolean {
+		return this.retryAwaitingFinish;
 	}
+
+	private retryAwaitingFinish = false;
 
 	finish(raw?: string, attempts?: number): void {
 		if (raw) this.record(raw);
 		if (!this.pending) return;
 		this.pending = false;
+		this.retryAwaitingFinish = false;
 		const count = attempts === undefined ? "" : ` after ${attempts} retries`;
 		this.notice?.setSummary(
 			`The model provider could not complete the request${count}. Try again or choose another model with /model.`,
