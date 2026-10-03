@@ -60,8 +60,9 @@ export function selectSweepEvictions(
 			// Delivery debt is still owed a turn, even after the ordinary idle deadline.
 			if (session.pendingMessageCount > 0 || session.externalAdmission.list().pending.length > 0) continue;
 			// A just-detached worker is a client about to reconnect; park it only once the
-			// disconnect has stood longer than the grace age.
-			if (now - (entry.detachedAt ?? entry.lastCommandAt) < DETACHED_RETIREMENT_GRACE_MS) continue;
+			// disconnect has stood longer than the grace age. An entry at zero attachments
+			// with no detach stamp was never disconnected, so it keeps its normal window.
+			if (entry.detachedAt === undefined || now - entry.detachedAt < DETACHED_RETIREMENT_GRACE_MS) continue;
 			idle.push(sessionId);
 			continue;
 		}
