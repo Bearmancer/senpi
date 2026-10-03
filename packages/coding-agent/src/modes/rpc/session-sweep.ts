@@ -15,12 +15,15 @@ export interface SweepVerdicts {
  * One occupancy sweep's decisions. "Idle" is the COMPLETE session-owned activity contract
  * (`AgentSession.isSessionBusy`: agent run, bash, background terminal jobs and other published
  * wake sources, compaction, barrier-held session work): a busy session restarts its idle clock
- * instead, so work that outlives a turn is never killed. A non-finite window evicts nothing idle.
+ * instead, so work that outlives a turn is never killed. A quiet detached in-process worker
+ * with flushed history can reopen by path and need not keep its runtime for the idle window.
+ * A non-finite window evicts nothing idle.
  */
 export function selectSweepEvictions(
 	registry: Pick<RpcSessionRegistry, "list" | "peek">,
 	now: number,
 	idleEvictionMs: number,
+	hasPendingRequest: (sessionId: string) => boolean = () => false,
 ): SweepVerdicts {
 	const idle: string[] = [];
 	const orphaned: string[] = [];
@@ -33,8 +36,21 @@ export function selectSweepEvictions(
 			continue;
 		}
 		if (!Number.isFinite(idleEvictionMs)) continue;
-		if (entry.worker?.busy || entry.runtime?.session.isSessionBusy) {
+		if (hasPendingRequest(sessionId)) continue;
+		const session = entry.runtime?.session;
+		if (entry.worker?.busy || session?.isSessionBusy) {
 			entry.lastCommandAt = now;
+			continue;
+		}
+		if (
+			entry.kind === "worker" &&
+			entry.retainOnDisconnect &&
+			entry.attachments === 0 &&
+			session?.sessionManager.isTranscriptFlushed()
+		) {
+			// Delivery debt is still owed a turn, even after the ordinary idle deadline.
+			if (session.pendingMessageCount > 0 || session.externalAdmission.list().pending.length > 0) continue;
+			idle.push(sessionId);
 			continue;
 		}
 		if (now - entry.lastCommandAt >= idleEvictionMs) idle.push(sessionId);
