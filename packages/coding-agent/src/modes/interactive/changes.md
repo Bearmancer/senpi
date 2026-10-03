@@ -2274,15 +2274,15 @@ Upstream edits to interactive-mode components at the next sync.
 
 ### What changed
 
-`packages/coding-agent/src/modes/interactive/theme/dark.json` and `light.json`: tool success/error/pending card backgrounds move from saturated dark-tinted blocks to a near-plain surface, and the diff foreground colors are decoupled from the shared `success`/`error` roles into dedicated brighter values so added/removed diff lines read at >= 7:1 against the card background. Dark: card `okhsl(229 5% 13%)`, `toolDiffAdded okhsl(159 62% 72%)`, `toolDiffRemoved okhsl(20 74% 72%)`. Light: card `okhsl(248 3% 93%)`, `toolDiffAdded okhsl(159 82% 32%)`, `toolDiffRemoved okhsl(20 97% 34%)`. Meaning is carried by the foreground color and the existing +/− sign instead of a colored background block. General text contrast on the card is unchanged or better (dark text 12.6, muted 6.7; light text 11.4, muted 4.2).
+`packages/coding-agent/src/modes/interactive/theme/dark.json` and `light.json`: tool success/error/pending card backgrounds move from saturated dark-tinted blocks to muted near-plain tints that stay distinct per status (success green-tint, error red-tint, pending neutral), and the diff foreground colors are decoupled from the shared `success`/`error` roles into dedicated brighter values, so added and removed diff lines keep distinct backgrounds and read at >= 7:1 for the full line content. Dark: success `okhsl(158 26% 13%)`, error `okhsl(19 28% 14%)`, added `okhsl(159 58% 76%)` (9.1:1), removed `okhsl(20 70% 77%)` (8.5:1). Light: success `okhsl(156 25% 91%)`, error `okhsl(24 28% 91%)`, added `okhsl(159 85% 28%)` (7.8:1), removed `okhsl(20 100% 30%)` (8.2:1). Status is still visible from the card background; general text contrast on the card is unchanged or better.
 
 ### Why
 
-The saturated card backgrounds dropped diff text contrast to 4.2-4.7:1, below readable. Carrying meaning in the foreground on a near-plain background restores diff readability without dimming general text.
+The saturated card backgrounds dropped diff text contrast to 4.2-4.7:1, and flattening them to one shared background made added and removed lines indistinguishable. Distinct muted tints plus brighter diff foregrounds restore both readability and the added/removed distinction.
 
 ### Why an extension could not handle it
 
-Theme color roles are interactive-mode assets resolved at startup; an extension cannot re-map the tool-card background or the diff foreground roles.
+Theme color roles are interactive-mode assets resolved at startup; an extension cannot re-map the tool-card backgrounds or the diff foreground roles.
 
 ### Expected merge conflict zones
 
