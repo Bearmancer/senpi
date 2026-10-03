@@ -1461,7 +1461,7 @@ and asks for bash, external_directory and other tools. Clients without that
 capability must use `ask`, never `workspace`, for an edit-only approval promise.
 Hosts that support `permissionPreset: "auto"` advertise `permission_preset_auto`;
 clients without it must not send `auto`.
-Explicit permission rules and remembered approvals retain their existing precedence.
+Explicit permission rules and remembered approvals retain their existing precedence, except under `auto`: there settings and CLI rules can only narrow the preset (the more restrictive decision wins), and an "Always" answer given in the session still allows its pattern.
 
 | Command | Params | Success data | Notes |
 | --- | --- | --- | --- |

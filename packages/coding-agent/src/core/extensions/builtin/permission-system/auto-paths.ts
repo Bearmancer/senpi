@@ -46,6 +46,11 @@ function projectRoot(cwd: string): string | undefined {
 	return root === path.parse(root).root || rootContainsHome || hiddenRoot ? undefined : root;
 }
 
+/** Whether `cwd` is a root `auto` approves anything in (see `projectRoot`). */
+export function isProjectSession(cwd: string): boolean {
+	return projectRoot(cwd) !== undefined;
+}
+
 /** What is at `target` after following every symlink, without opening anything. */
 export function targetKind(target: string): TargetKind {
 	const physical = physicalPath(target);

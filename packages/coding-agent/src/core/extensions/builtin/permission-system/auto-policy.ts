@@ -3,7 +3,7 @@ import { resolveReadPathAsync, resolveToCwd } from "../../../tools/path-utils.ts
 import { normalizeApplyPatchArguments } from "../gpt-apply-patch/params.ts";
 import { parsePatch } from "../gpt-apply-patch/parser.ts";
 import { resolvePatchPath } from "../gpt-apply-patch/workspace.ts";
-import { isApprovableTarget, type TargetKind, targetKind } from "./auto-paths.ts";
+import { isApprovableTarget, isProjectSession, type TargetKind, targetKind } from "./auto-paths.ts";
 import { PROGRAM_RULES } from "./auto-program-rules.ts";
 import type { ClassifiedWord } from "./auto-shell-grammar.ts";
 import { splitShellSegments } from "./auto-shell-segments.ts";
@@ -95,6 +95,7 @@ export async function decideAuto(
 	request: PermissionRequest,
 	cwd: string,
 ): Promise<AutoDecision> {
+	if (!isProjectSession(cwd)) return NO;
 	if (toolName === "bash" || (toolName === "monitor" && typeof input.command === "string")) {
 		if (request.permission !== "bash" || typeof input.command !== "string") return NO;
 		return judgeAutoCommand(input.command, cwd) === "allow" ? YES : NO;

@@ -146,7 +146,17 @@ const gitRule: ProgramRule = (args) => {
 	const [sub, ...rest] = args;
 	if (sub === undefined) return undefined;
 	const subSpec = GIT_READ_SUBCOMMANDS[sub.text];
-	if (subSpec === undefined || rest.some((word) => word.text.includes(":") || /^[0-9a-f]{4,64}$/i.test(word.text))) {
+	// A flag's value (`-n 1000`) is not an object id; every other word is checked.
+	const isFlagValue = (index: number) => {
+		const previous = rest[index - 1]?.text;
+		return previous !== undefined && typeof subSpec?.flags[previous] === "string";
+	};
+	if (
+		subSpec === undefined ||
+		rest.some(
+			(word, index) => word.text.includes(":") || (!isFlagValue(index) && /^[0-9a-f]{4,64}$/i.test(word.text)),
+		)
+	) {
 		return undefined;
 	}
 	if (sub.text === "diff" && !rest.some((word) => SUMMARY_ONLY.has(word.text))) return undefined;

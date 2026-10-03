@@ -5,16 +5,26 @@ import type { ReplyInput, Request, Ruleset } from "../permission-system/types.ts
  * Handle permission request in no-UI mode (print mode, unbound SDK).
  * Returns ReplyInput to reject, or undefined to allow.
  *
- * Precedence: CLI override > static ruleset > auto-deny
+ * Precedence: CLI override > static ruleset > auto-deny. With `presetBound` (the `auto` preset) the
+ * service has already combined every rule and still asks, so no configured allow may answer it here.
  */
 export function handleNoUI(
 	request: Request,
 	staticRuleset: Ruleset,
 	cliOverride: Ruleset,
 	emitEvent: (event: string, data: unknown) => void,
+	presetBound = false,
 ): ReplyInput | undefined {
 	// Emit permission_asked event for logging/telemetry
 	emitEvent("permission_asked", request);
+
+	if (presetBound) {
+		return {
+			requestID: request.id,
+			reply: "reject",
+			message: `Permission required for ${request.permission} (${request.patterns.join(", ")}): the auto preset asks for this, and allow rules do not widen it. Run it interactively or choose another preset.`,
+		};
+	}
 
 	const cliRule = evaluate(request.permission, request.patterns[0], cliOverride);
 	if (cliRule.action === "allow") {

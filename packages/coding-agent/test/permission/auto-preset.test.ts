@@ -8,7 +8,7 @@ import { rulesForPreset } from "../../src/core/extensions/builtin/permission-sys
 import { createLocalEventEmitter } from "../../src/core/extensions/builtin/permission-system/events.ts";
 import { PermissionService } from "../../src/core/extensions/builtin/permission-system/service.ts";
 import type { Ruleset } from "../../src/core/extensions/builtin/permission-system/types.ts";
-import { DeniedError } from "../../src/core/extensions/builtin/permission-system/types.ts";
+import { DeniedError, type Request } from "../../src/core/extensions/builtin/permission-system/types.ts";
 
 let scratch = "";
 let project = "";
@@ -50,6 +50,7 @@ describe("auto preset command judge: work it runs without asking", () => {
 		"git diff --stat",
 		"git diff --stat main src/index.ts",
 		"git log --oneline HEAD",
+		"git log -n 1000",
 		"git log --oneline -n 5",
 		"git branch -a",
 		"git ls-files",
@@ -126,6 +127,7 @@ describe("auto preset command judge: actions it always asks about", () => {
 		["git log of a dotfile path", "git log --oneline .env"],
 		["git diff that prints contents", "git diff src/index.ts"],
 		["a short object id", "git log --oneline abcd"],
+		["an object id after a flag value", "git log -n 1000 abcd"],
 		["cat with no file reads the terminal", "cat"],
 		["grep with no file reads the terminal", "grep TODO"],
 	])("asks for %s: %s", (_label, command) => {
@@ -283,6 +285,10 @@ describe("auto preset tool decisions", () => {
 			(await decideAuto("read", { path: join(scratch, ".config", "tool", "notes.txt") }, read, root()))
 				.approveBlanketAsk,
 		).toBe(false);
+		for (const command of ["git status", "pwd", "ls -aR"]) {
+			const shell = { permission: "bash", patterns: [command], always: [] };
+			expect((await decideAuto("bash", { command }, shell, root())).approveBlanketAsk).toBe(false);
+		}
 		const write = { permission: "edit", patterns: ["x.plist"], always: [] };
 		expect(
 			(await decideAuto("write", { path: join(homedir(), "Library", "LaunchAgents", "x.plist") }, write, root()))
@@ -418,6 +424,37 @@ describe("auto preset rule precedence", () => {
 			}
 		},
 	);
+
+	it("keeps a pending call asking when an Always reply to another call re-checks it", async () => {
+		// Given auto with a user allow for every command, and two calls waiting for an answer.
+		const { service, emitter } = makeService([...rulesForPreset("auto"), userRule("allow")]);
+		const asked: Request[] = [];
+		emitter.onAsked((request) => asked.push(request));
+		const options = { approveBlanketAsk: false, presetBound: true };
+		const first = service.ask({ ...shell, patterns: ["npm test"], always: ["npm test"], sessionID: "s" }, options);
+		const second = service.ask({ ...shell, patterns: ["rm notes.txt"], sessionID: "s" }, options);
+		const secondSettled = second.then(() => "allowed");
+		expect(asked).toHaveLength(2);
+		// When the user answers "Always" for the first.
+		service.reply({ requestID: asked[0]?.id ?? "", reply: "always" });
+		await first;
+		// Then the second is still waiting: a user allow never widens auto.
+		expect(service.list().map((request) => request.id)).toEqual([asked[1]?.id]);
+		service.reply({ requestID: asked[1]?.id ?? "", reply: "reject" });
+		await expect(secondSettled).rejects.toBeDefined();
+	});
+
+	it("remembers an Always answer under auto for the same pattern", async () => {
+		const { service, emitter } = makeService([...rulesForPreset("auto")]);
+		const asked: Request[] = [];
+		emitter.onAsked((request) => asked.push(request));
+		const options = { approveBlanketAsk: false, presetBound: true };
+		const first = service.ask({ ...shell, patterns: ["npm test"], always: ["npm test"], sessionID: "s" }, options);
+		service.reply({ requestID: asked[0]?.id ?? "", reply: "always" });
+		await first;
+		await service.ask({ ...shell, patterns: ["npm test"], sessionID: "s" }, options);
+		expect(asked).toHaveLength(1);
+	});
 });
 
 function makeService(ruleset: Ruleset) {

@@ -1,5 +1,22 @@
 # Permission System Builtin Extension
 
+## 2026-10-03 - Auto: one decision for ask, the pending re-check and no-UI
+
+### What changed
+
+- `service.ts`: `decide()` is the single decision for a call. `ask` uses it, and so does the re-check of still-pending requests after an "Always" reply (each pending request keeps the options it was asked with). Under `presetBound`, settings and CLI rules combine with the preset as the more restrictive; an "Always" answer given in this session then allows its pattern.
+- `non-interactive.ts` + `index.ts`: with `auto` and no UI, a call the service still asks for is refused with a reason (no configured allow can answer it); a no-UI allow is now answered with `once` instead of leaving the call waiting.
+- `auto-policy.ts`: a session root that is not a project (`/`, home or above, a hidden directory) approves nothing, shell commands included.
+- `auto-program-rules.ts`: a flag's value (`git log -n 1000`) is not treated as an object id.
+
+### Why
+
+- Round 6 of the #2614 review: the no-UI path hung on `auto` + `--permission bash=allow`; the pending re-check after "Always" still used the order-dependent evaluation and approved a pending `rm`; shell commands without a path were approved in a home or `/` root.
+
+### Must not break
+
+- Every path that decides a call goes through `decide()`; a configured user rule can only narrow `auto`.
+
 ## 2026-10-03 - Auto: preset and user decisions combine as the more restrictive
 
 ### What changed

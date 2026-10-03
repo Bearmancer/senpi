@@ -14,9 +14,17 @@ import {
 
 type RequestInput = Omit<Request, "id"> & { id?: string };
 
+interface DecisionOptions {
+	readonly approveBlanketAsk?: boolean;
+	readonly presetBound?: boolean;
+	readonly ruleAliases?: readonly string[] | undefined;
+}
+
 /** Core service for managing permission requests and rule evaluation */
 export class PermissionService {
 	private pending = new Map<string, PendingEntry>();
+	/** How each pending request was decided, so a re-check after an "Always" reply decides it the same way. */
+	private pendingOptions = new Map<string, DecisionOptions>();
 	private approved: Ruleset;
 	private staticRuleset: Ruleset;
 	private emitter: PermissionEventEmitter;
@@ -32,22 +40,31 @@ export class PermissionService {
 	private static readonly RESTRICTIVENESS: Readonly<Record<Rule["action"], number>> = { allow: 0, ask: 1, deny: 2 };
 
 	/**
-	 * The preset's decision and the user's decision for one call, evaluated independently. For the
-	 * preset, the judge's approval turns its blanket ask into allow; a call no rule of a set matches
-	 * gets that set's default (ask for the preset, none for the user).
+	 * The one decision for a call, used when it is asked and again whenever an "Always" reply re-checks
+	 * the requests still pending. Without `presetBound` it is last-match-wins over every rule, with the
+	 * judge's approval turning the preset's own blanket ask into allow. With `presetBound` the preset's
+	 * rules and the user's settings and CLI rules are evaluated apart and the more restrictive wins, so
+	 * no configured rule, in any order or layer, can widen the preset; only an "Always" answer given in
+	 * this session (explicit consent for that pattern) can then turn a remaining ask into allow.
 	 */
-	private presetAndUserActions(
-		permission: string,
-		pattern: string | readonly string[],
-		approveBlanketAsk: boolean,
-	): { readonly preset: Rule["action"]; readonly user: Rule["action"] | undefined } {
-		const all = [...this.staticRuleset, ...this.approved];
-		const presetRules = all.filter((rule) => isPresetRule(rule));
-		const userRules = all.filter((rule) => !isPresetRule(rule));
-		const presetRule = evaluate(permission, pattern, presetRules);
-		const preset = presetRule.action === "ask" && approveBlanketAsk ? "allow" : presetRule.action;
-		const userRule = evaluate(permission, pattern, userRules);
-		return { preset, user: userRules.includes(userRule) ? userRule.action : undefined };
+	private decide(permission: string, target: string | readonly string[], options: DecisionOptions): Rule["action"] {
+		if (!options.presetBound) {
+			const rule = evaluate(permission, target, this.staticRuleset, this.approved);
+			return options.approveBlanketAsk && isPresetRule(rule) && rule.action === "ask" ? "allow" : rule.action;
+		}
+		const presetRules = this.staticRuleset.filter((rule) => isPresetRule(rule));
+		const userRules = this.staticRuleset.filter((rule) => !isPresetRule(rule));
+		const presetRule = evaluate(permission, target, presetRules);
+		const preset = presetRule.action === "ask" && options.approveBlanketAsk ? "allow" : presetRule.action;
+		const userRule = evaluate(permission, target, userRules);
+		const user = userRules.includes(userRule) ? userRule.action : undefined;
+		const combined =
+			user === undefined || PermissionService.RESTRICTIVENESS[preset] >= PermissionService.RESTRICTIVENESS[user]
+				? preset
+				: user;
+		if (combined !== "ask") return combined;
+		const remembered = evaluate(permission, target, this.approved);
+		return this.approved.includes(remembered) && remembered.action === "allow" ? "allow" : "ask";
 	}
 
 	/** Request permission for a tool call. Resolves if allowed, throws on denial. */
@@ -77,23 +94,9 @@ export class PermissionService {
 		const deniedPatterns: string[] = [];
 		let needsAsk = false;
 
+		const options: DecisionOptions = { approveBlanketAsk, presetBound, ruleAliases };
 		for (const pattern of info.patterns) {
-			const target = ruleAliases ?? pattern;
-			let action: Rule["action"];
-			if (presetBound) {
-				// The more restrictive of the two decisions wins, whatever order or layer the rules come
-				// from: a user rule can narrow the preset, never widen it.
-				const { preset, user } = this.presetAndUserActions(info.permission, target, approveBlanketAsk);
-				action =
-					user === undefined ||
-					PermissionService.RESTRICTIVENESS[preset] >= PermissionService.RESTRICTIVENESS[user]
-						? preset
-						: user;
-			} else {
-				const rule = evaluate(info.permission, target, this.staticRuleset, this.approved);
-				action = approveBlanketAsk && isPresetRule(rule) && rule.action === "ask" ? "allow" : rule.action;
-			}
-
+			const action = this.decide(info.permission, ruleAliases ?? pattern, options);
 			if (action === "deny") {
 				deniedPatterns.push(pattern);
 				continue;
@@ -117,15 +120,18 @@ export class PermissionService {
 				info,
 				resolve: () => {
 					this.pending.delete(info.id);
+					this.pendingOptions.delete(info.id);
 					resolve();
 				},
 				reject: (error) => {
 					this.pending.delete(info.id);
+					this.pendingOptions.delete(info.id);
 					reject(error);
 				},
 			};
 
 			this.pending.set(info.id, pendingEntry);
+			this.pendingOptions.set(info.id, options);
 		});
 
 		this.emitter.emitAsked(info);
@@ -141,6 +147,7 @@ export class PermissionService {
 		}
 
 		this.pending.delete(input.requestID);
+		this.pendingOptions.delete(input.requestID);
 		this.emitter.emitReplied(existing.info.id, existing.info.sessionID, input.reply);
 
 		if (input.reply === "reject") {
@@ -194,6 +201,7 @@ export class PermissionService {
 			}
 
 			this.pending.delete(requestID);
+			this.pendingOptions.delete(requestID);
 			this.emitter.emitReplied(entry.info.id, entry.info.sessionID, "reject");
 			entry.reject(new RejectedError());
 		}
@@ -205,15 +213,17 @@ export class PermissionService {
 				continue;
 			}
 
-			const isAllowed = entry.info.patterns.every((pattern) => {
-				return evaluate(entry.info.permission, pattern, this.staticRuleset, this.approved).action === "allow";
-			});
+			const options = this.pendingOptions.get(requestID) ?? {};
+			const isAllowed = entry.info.patterns.every(
+				(pattern) => this.decide(entry.info.permission, options.ruleAliases ?? pattern, options) === "allow",
+			);
 
 			if (!isAllowed) {
 				continue;
 			}
 
 			this.pending.delete(requestID);
+			this.pendingOptions.delete(requestID);
 			this.emitter.emitReplied(entry.info.id, entry.info.sessionID, "always");
 			entry.resolve();
 		}
