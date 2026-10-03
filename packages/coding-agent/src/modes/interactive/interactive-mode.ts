@@ -1876,8 +1876,15 @@ export class InteractiveMode {
 			this.showError(`models.json error: ${modelsJsonError}`);
 		}
 
-		for (const warning of this.session.modelRuntime.getWarnings()) {
-			this.showWarning(warning);
+		const modelRuntimeWarnings = this.session.modelRuntime.getWarnings();
+		if (showsStartupDetails(this.options.verbose, this.settingsManager.getQuietStartup())) {
+			for (const warning of modelRuntimeWarnings) {
+				this.showWarning(warning);
+			}
+		} else if (modelRuntimeWarnings.length > 0) {
+			this.showWarning(
+				`${modelRuntimeWarnings.length} startup warning${modelRuntimeWarnings.length === 1 ? "" : "s"} — ${modelRuntimeWarnings[0]}${modelRuntimeWarnings.length > 1 ? ` (+${modelRuntimeWarnings.length - 1} more — Ctrl+O for details)` : ""}`,
+			);
 		}
 
 		if (modelFallbackMessage) {
@@ -2215,115 +2222,6 @@ export class InteractiveMode {
 		return this.formatDisplayPath(fullPath);
 	}
 
-	private getCompactPathLabel(resourcePath: string, sourceInfo?: SourceInfo): string {
-		const shortPath = this.getShortPath(resourcePath, sourceInfo);
-		const normalizedPath = shortPath.replace(/\\/g, "/");
-		const segments = normalizedPath.split("/").filter((segment) => segment.length > 0 && segment !== "~");
-		if (segments.length > 0) {
-			return segments[segments.length - 1]!;
-		}
-		return shortPath;
-	}
-
-	private getCompactPackageSourceLabel(sourceInfo?: SourceInfo): string {
-		const source = sourceInfo?.source ?? "";
-		if (source.startsWith("npm:")) {
-			return source.slice("npm:".length) || source;
-		}
-
-		const gitSource = parseGitUrl(source);
-		if (gitSource) {
-			return gitSource.path || source;
-		}
-
-		return source;
-	}
-
-	private getCompactExtensionLabel(resourcePath: string, sourceInfo?: SourceInfo): string {
-		if (!this.isPackageSource(sourceInfo)) {
-			return this.getCompactPathLabel(resourcePath, sourceInfo);
-		}
-
-		const sourceLabel = this.getCompactPackageSourceLabel(sourceInfo);
-		if (!sourceLabel) {
-			return this.getCompactPathLabel(resourcePath, sourceInfo);
-		}
-
-		const shortPath = this.getShortPath(resourcePath, sourceInfo).replace(/\\/g, "/");
-		const packagePath = shortPath.startsWith("extensions/") ? shortPath.slice("extensions/".length) : shortPath;
-		const parsedPath = path.posix.parse(packagePath);
-
-		if (parsedPath.name === "index") {
-			return !parsedPath.dir || parsedPath.dir === "." ? sourceLabel : `${sourceLabel}:${parsedPath.dir}`;
-		}
-
-		return `${sourceLabel}:${packagePath}`;
-	}
-
-	private getCompactDisplayPathSegments(resourcePath: string): string[] {
-		return this.formatDisplayPath(resourcePath)
-			.replace(/\\/g, "/")
-			.split("/")
-			.filter((segment) => segment.length > 0 && segment !== "~");
-	}
-
-	private getCompactNonPackageExtensionLabel(
-		resourcePath: string,
-		index: number,
-		allPaths: Array<{ path: string; segments: string[] }>,
-	): string {
-		const segments = allPaths[index]?.segments;
-		if (!segments || segments.length === 0) {
-			return this.getCompactPathLabel(resourcePath);
-		}
-
-		for (let segmentCount = 1; segmentCount <= segments.length; segmentCount += 1) {
-			const candidate = segments.slice(-segmentCount).join("/");
-			const isUnique = allPaths.every((item, itemIndex) => {
-				if (itemIndex === index) {
-					return true;
-				}
-				return item.segments.slice(-segmentCount).join("/") !== candidate;
-			});
-
-			if (isUnique) {
-				return candidate;
-			}
-		}
-
-		return segments.join("/");
-	}
-
-	private getCompactExtensionLabels(extensions: Array<{ path: string; sourceInfo?: SourceInfo }>): string[] {
-		const nonPackageExtensions = extensions
-			.map((extension) => {
-				const segments = this.getCompactDisplayPathSegments(extension.path);
-				const lastSegment = segments[segments.length - 1];
-				if (segments.length > 1 && (lastSegment === "index.ts" || lastSegment === "index.js")) {
-					segments.pop();
-				}
-				return {
-					path: extension.path,
-					sourceInfo: extension.sourceInfo,
-					segments,
-				};
-			})
-			.filter((extension) => !this.isPackageSource(extension.sourceInfo));
-
-		return extensions.map((extension) => {
-			if (this.isPackageSource(extension.sourceInfo)) {
-				return this.getCompactExtensionLabel(extension.path, extension.sourceInfo);
-			}
-
-			const nonPackageIndex = nonPackageExtensions.findIndex((item) => item.path === extension.path);
-			if (nonPackageIndex === -1) {
-				return this.getCompactPathLabel(extension.path, extension.sourceInfo);
-			}
-
-			return this.getCompactNonPackageExtensionLabel(extension.path, nonPackageIndex, nonPackageExtensions);
-		});
-	}
-
 	private getDisplaySourceInfo(sourceInfo?: SourceInfo): DisplaySourceInfo {
 		return getDisplaySourceInfo(sourceInfo);
 	}
@@ -2443,6 +2341,14 @@ export class InteractiveMode {
 			}
 			return theme.fg("dim", `  ${labels.join(", ")}`);
 		};
+		// The collapsed body is a one-line summary, never the joined name list: on a narrow terminal
+		// that list is what filled the whole first screen. `labels.length` is the visible (non-system)
+		// count; the expanded body still shows every entry on demand (Ctrl+O). An empty visible set
+		// yields no summary, so a section that would only list system resources stays hidden collapsed.
+		const formatSummary = (items: string[]): (() => string) => {
+			const count = items.map((item) => item.trim()).filter((item) => item.length > 0).length;
+			return () => (count === 0 ? "" : theme.fg("dim", `  ${count}`));
+		};
 		// System resources are left out of the compact body; a section with nothing else to show stays
 		// hidden until the listing is expanded, where the system group lists them. Bodies are built on
 		// demand so the listing follows theme changes.
@@ -2529,10 +2435,9 @@ export class InteractiveMode {
 						formatPath: (item) => this.formatDisplayPath(item.path),
 						formatPackagePath: (item) => this.getShortPath(item.path, item.sourceInfo),
 					});
-				const skillCompactList = () =>
-					formatCompactList(
-						skills.filter((skill) => !isSystemResource(skill.sourceInfo)).map((skill) => skill.name),
-					);
+				const skillCompactList = formatSummary(
+					skills.filter((skill) => !isSystemResource(skill.sourceInfo)).map((skill) => skill.name),
+				);
 				addLoadedSection("Skills", skillCompactList, skillList);
 			}
 
@@ -2556,12 +2461,11 @@ export class InteractiveMode {
 							return template ? `/${template.name}` : this.formatDisplayPath(item.path);
 						},
 					});
-				const promptCompactList = () =>
-					formatCompactList(
-						templates
-							.filter((template) => !isSystemResource(template.sourceInfo))
-							.map((template) => `/${template.name}`),
-					);
+				const promptCompactList = formatSummary(
+					templates
+						.filter((template) => !isSystemResource(template.sourceInfo))
+						.map((template) => `/${template.name}`),
+				);
 				addLoadedSection("Prompts", promptCompactList, templateList);
 			}
 
@@ -2573,10 +2477,10 @@ export class InteractiveMode {
 						formatPackagePath: (item) =>
 							this.formatExtensionDisplayPath(this.getShortPath(item.path, item.sourceInfo)),
 					});
-				const extensionLabels = this.getCompactExtensionLabels(
-					extensions.filter((extension) => !isSystemResource(extension.sourceInfo)),
-				);
-				const extensionCompactList = () => formatCompactList(extensionLabels);
+				const extensionLabels = extensions
+					.filter((extension) => !isSystemResource(extension.sourceInfo))
+					.map((extension) => this.formatExtensionDisplayPath(extension.path));
+				const extensionCompactList = formatSummary(extensionLabels);
 				addLoadedSection("Extensions", extensionCompactList, extList, "mdHeading");
 			}
 		}

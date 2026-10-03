@@ -2269,3 +2269,21 @@ Interactive-mode components and theme are rendering internals below the extensio
 ### Expected merge conflict zones
 
 Upstream edits to interactive-mode components at the next sync.
+
+## 2026-10-03 - Fold the startup banner into one summary line (senpi#2651)
+
+### What changed
+
+`packages/coding-agent/src/modes/interactive/interactive-mode.ts`: `showLoadedResources` collapsed bodies now render a one-line summary (section header plus the visible, non-system count) instead of joining every loaded skill/prompt/extension name inline, which is what filled the whole first screen on an 80x24 terminal. The full list still renders on demand via the existing Ctrl+O expand (`setToolsExpanded` re-expands every expandable section). Repeated startup model-runtime warnings collapse to a single summary line with a Ctrl+O-for-more hint when startup details are hidden (quiet startup); verbose and detail-showing modes keep the per-warning lines.
+
+### Why
+
+On a standard terminal the first screen was only the skill list: up to 7 model warnings plus a 69-entry `[Skills]` dump left no room for the input box. A summary line keeps the count visible without flooding the first frame.
+
+### Why an extension could not handle it
+
+The startup banner and warning rendering are interactive-mode internals below the extension API; an extension cannot rewrite what `showLoadedResources` or the startup-warning loop prints.
+
+### Expected merge conflict zones
+
+Upstream edits to `showLoadedResources` or the startup-warning block in interactive-mode.ts at the next sync.
