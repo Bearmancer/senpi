@@ -48,6 +48,20 @@ export class StreamingPatchParser {
 		return structuredClone(this.hunks);
 	}
 
+	/**
+	 * The live hunk list without cloning, for streaming render only. Callers must treat it as
+	 * read-only; mutating it corrupts the parser's in-flight state. Avoids the per-delta
+	 * structuredClone over every hunk on the render path.
+	 */
+	getLiveHunks(): readonly ParsedPatch[] {
+		return this.hunks;
+	}
+
+	/** The not-yet-newline-terminated line currently being accumulated, for a dimmed in-flight row. */
+	getPartialLine(): string {
+		return this.lineBuffer;
+	}
+
 	private ensureUpdateHunkIsNotEmpty(line: string): void {
 		const hunk = this.hunks[this.hunks.length - 1];
 		if (hunk?.type !== "update") return;

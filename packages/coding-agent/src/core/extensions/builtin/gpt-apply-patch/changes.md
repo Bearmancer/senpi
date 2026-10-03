@@ -259,3 +259,21 @@ Inactive-tool eligibility is intentionally owned by the registering extension. A
 ### Expected merge conflict zones
 
 - LOW: `preview-format.ts` around `truncatePreview()` when refreshing the vendored apply_patch renderer.
+
+## 2026-10-03 - Bounded, incremental apply_patch streaming render (senpi#2656)
+
+### What changed
+
+`streaming-parser.ts`: adds `getLiveHunks()` (the live hunk list, read-only, no per-delta `structuredClone`) and `getPartialLine()` (the in-flight, not-yet-newline-terminated line). `streaming-render.ts`: the streaming box is now tail-windowed to 12 lines per file with a sticky per-file header carrying net `(+a -d)` counts and a `… (+N lines above)` marker when a file outgrows the window, so a long patch no longer takes over the viewport; the in-flight partial line renders as a dimmed last row; a delta that produces no new visible text skips the rebuild entirely (render-key short-circuit), and a zero-length delta no longer re-parses. `types.ts`: the streaming render state carries the optional non-cloning accessors and the render key.
+
+### Why
+
+The streaming box had no height bound and re-parsed plus re-rendered the whole body on every delta, with a per-delta `structuredClone` over every hunk — about 3x the CPU of the comparison TUI, and at 13 s only the first of three files was visible. A bounded, sticky-header box plus incremental rendering keeps the stream readable and cuts the per-delta work.
+
+### Why an extension could not handle it
+
+The streaming parser and renderer are internal to this builtin's tool surface; the per-delta clone and the unbounded box are not reachable through the public extension API.
+
+### Expected merge conflict zones
+
+Upstream edits to `streaming-parser.ts` or `streaming-render.ts` at the next sync.

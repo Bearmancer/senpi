@@ -128,9 +128,15 @@ export type ApplyPatchRenderState = {
 	collapsed?: string;
 	expanded?: string;
 	streamingInput?: string;
-	streamingParser?: { pushDelta: (delta: string) => ParsedPatch[] };
+	streamingParser?: {
+		pushDelta: (delta: string) => ParsedPatch[];
+		getLiveHunks?: () => readonly ParsedPatch[];
+		getPartialLine?: () => string;
+	};
 	streamingHunks?: ParsedPatch[];
 	streamingError?: string;
+	/** Last rendered body fingerprint, so a delta that changes nothing skips the rebuild. */
+	streamingLastRenderKey?: string;
 };
 
 export type ApplyPatchToolDefinition = ToolDefinition<
