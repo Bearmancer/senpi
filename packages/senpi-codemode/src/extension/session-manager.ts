@@ -2,22 +2,21 @@ import { join } from "node:path";
 import type { ExtensionContext } from "@code-yeongyu/senpi";
 import { type BridgeServerHandle, startBridgeServer } from "../bridge/http-server.ts";
 import type { KernelToHostMessage } from "../bridge/protocol.ts";
-import { isReservedToolName, runReservedTool } from "../bridges/reserved-dispatch.ts";
 import type { CompletionRequest, CompletionResult } from "../completion/handler.ts";
 import { resolveKernelMemoryThresholds } from "../config/memory-settings.ts";
-import { defaultCodemodeSettings } from "../config/settings.ts";
 import { collectOrphanedChildren } from "../host-sdk.ts";
 import { JavaScriptKernel } from "../kernels/js/context-manager.ts";
 import type { KernelLifecycle } from "../kernels/shared/kernel-death.ts";
-import { marshalToolResult } from "../tool/image.ts";
 import type { EvalKernel, EvalLanguage } from "../tool/types.ts";
+import { type BridgeToolCallRequest, routeBridgeToolCall } from "./bridge-tool-call.ts";
+import { parkWhenIdle } from "./idle-parking-kernel.ts";
 import {
 	javaScriptKernelMemory,
-	registerKernel,
+	SessionKernelRegistrations,
 	type StartedKernel,
 	startSubprocessKernel,
 } from "./kernel-registration.ts";
-import { kernelRegistry, type RegisteredKernelSource } from "./kernel-registry.ts";
+import type { RegisteredKernelSource } from "./kernel-registry.ts";
 import { ReplaceableKernel } from "./kernel-replacement.ts";
 import { assertSessionCwdAvailable } from "./session-cwd.ts";
 import type {
@@ -61,7 +60,7 @@ class DefaultCodemodeSessionManager implements CodemodeSessionManager {
 	readonly #options: CreateCodemodeSessionManagerOptions;
 	#bridge: BridgeServerHandle | undefined;
 	#kernels = new Map<EvalLanguage, EvalKernel>();
-	readonly #registrations = new Map<EvalLanguage, string>();
+	readonly #registrations: SessionKernelRegistrations;
 	#kernelCreations = new Map<EvalLanguage, Promise<EvalKernel>>();
 	#onMessageRefs = new Map<EvalLanguage, (message: KernelToHostMessage) => void>();
 	#context: ExtensionContext | undefined;
@@ -70,6 +69,7 @@ class DefaultCodemodeSessionManager implements CodemodeSessionManager {
 
 	constructor(options: CreateCodemodeSessionManagerOptions) {
 		this.#options = options;
+		this.#registrations = new SessionKernelRegistrations(options.ownerSessionId ?? options.sessionId);
 	}
 
 	async start(): Promise<void> {
@@ -81,29 +81,8 @@ class DefaultCodemodeSessionManager implements CodemodeSessionManager {
 		});
 	}
 
-	// Subprocess kernels (py/rb/jl) reach the host only through this route, so every reply
-	// must match the in-process JS path in tool/cell-handler.ts: reserved helper names dispatch
-	// through runReservedTool (forwarding them made agent() fail with "Unknown tool __agent__"),
-	// and ordinary tool results are marshalled to { text, images, details, hasError } — the raw
-	// { content } shape left python cells unable to reach tool.read image blocks.
-	async #call(request: { toolName: string; args: unknown; callId: string; signal: AbortSignal }): Promise<unknown> {
-		if (!isReservedToolName(request.toolName)) {
-			return marshalToolResult(
-				await this.#options.executeTool(request.toolName, request.args, { signal: request.signal }),
-			);
-		}
-		const taskTools = this.#options.settings.taskTools ?? defaultCodemodeSettings.taskTools;
-		return await runReservedTool(request.toolName, {
-			callId: request.callId,
-			args: request.args,
-			executeTool: this.#options.executeTool,
-			taskToolName: taskTools.task,
-			taskOutputToolName: taskTools.output,
-			listTools: this.#options.listTools,
-			signal: request.signal,
-			emitStatus: () => {},
-			marshalToolResult,
-		});
+	async #call(request: BridgeToolCallRequest): Promise<unknown> {
+		return await routeBridgeToolCall(this.#options, request);
 	}
 
 	async getKernel(language: EvalLanguage, onMessage: (message: KernelToHostMessage) => void): Promise<EvalKernel> {
@@ -170,7 +149,6 @@ class DefaultCodemodeSessionManager implements CodemodeSessionManager {
 		const kernels = [...this.#kernels.values()];
 		const bridge = this.#bridge;
 		this.#kernels.clear();
-		for (const id of this.#registrations.values()) kernelRegistry.unregister(id);
 		this.#registrations.clear();
 		this.#onMessageRefs.clear();
 		this.#bridge = undefined;
@@ -194,42 +172,51 @@ class DefaultCodemodeSessionManager implements CodemodeSessionManager {
 		generation: number,
 	): Promise<EvalKernel> {
 		await assertSessionCwdAvailable(this.#options.cwd);
-		// py/rb/jl instances can die; the session holds one replaceable kernel per language so every
-		// cell that kept a reference to it survives the death (JS heals its own worker).
-		let memory: RegisteredKernelSource | undefined;
-		const kernel =
-			language === "js"
-				? (() => {
-						return this.#createKernel(language, onMessage).then((created) => {
-							memory = created.memory;
-							return created.kernel;
-						});
-					})()
-				: ReplaceableKernel.create(language, async (lifecycle) => {
-						const created = await this.#createKernel(language, onMessage, lifecycle);
-						memory ??= created.memory;
-						return created.kernel;
-					});
-		const resolvedKernel = await kernel;
+		const started = await this.#startLanguageKernel(language, onMessage);
+		const idleParkMinutes = this.#options.settings.memory?.idleParkMinutes ?? 0;
+		const resolvedKernel = parkWhenIdle(
+			language,
+			idleParkMinutes,
+			started.kernel,
+			async () => {
+				const restarted = await this.#startLanguageKernel(language, onMessage);
+				if (generation !== this.#generation) {
+					await restarted.kernel.close();
+					throw new CodemodeSessionDisposedError();
+				}
+				this.#registrations.register(language, restarted.memory);
+				return restarted.kernel;
+			},
+			() => this.#registrations.unregister(language),
+		);
 		if (generation !== this.#generation) {
 			await resolvedKernel.close();
 			throw new CodemodeSessionDisposedError();
 		}
 		this.#kernels.set(language, resolvedKernel);
-		this.#registrations.set(
-			language,
-			registerKernel(
-				this.#options.ownerSessionId ?? this.#options.sessionId,
-				language,
-				memory as RegisteredKernelSource,
-			),
-		);
+		this.#registrations.register(language, started.memory);
 		// The directory can vanish while the interpreter starts; every caller sharing this creation
 		// must see that, not only the next one. The kernel stays stored and dispose still closes it.
 		await assertSessionCwdAvailable(this.#options.cwd);
 		// A dispose that started during the check above already owns this stored kernel.
 		if (generation !== this.#generation) throw new CodemodeSessionDisposedError();
 		return resolvedKernel;
+	}
+
+	// py/rb/jl instances can die; the session holds one replaceable kernel per language so every
+	// cell that kept a reference to it survives the death (JS heals its own worker).
+	async #startLanguageKernel(
+		language: EvalLanguage,
+		onMessage: (message: KernelToHostMessage) => void,
+	): Promise<{ readonly kernel: EvalKernel; readonly memory: RegisteredKernelSource | undefined }> {
+		if (language === "js") return await this.#createKernel(language, onMessage);
+		let memory: RegisteredKernelSource | undefined;
+		const kernel = await ReplaceableKernel.create(language, async (lifecycle) => {
+			const created = await this.#createKernel(language, onMessage, lifecycle);
+			memory ??= created.memory;
+			return created.kernel;
+		});
+		return { kernel, memory };
 	}
 
 	async #createKernel(
