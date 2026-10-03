@@ -431,6 +431,12 @@ bun run --cwd packages/senpi-codemode gate --target <base-checkout> \
   --baseline test/gate/baseline.json --write-baseline
 ```
 
+Record with the canonical runtimes, so the baseline's runtime observations do not
+flip between recordings: Bun 1.4.2, Python 3.14, Julia 1.12 and Ruby 4.x from
+Homebrew (put `/opt/homebrew/opt/ruby/bin` first on `PATH`; macOS's system Ruby
+2.6 records a different runtime). Check `ruby --version` and `python3 --version`
+before `--write-baseline`.
+
 The report is gitignored `gate-report.json` by default (`--report <path>` overrides it).
 `test/gate/allowlist.json` contains reviewed additive changes keyed by plan node;
 it cannot authorize removal or modification of a legacy entry. The test-only
