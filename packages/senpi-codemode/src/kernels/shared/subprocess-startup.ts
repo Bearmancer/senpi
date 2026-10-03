@@ -5,7 +5,7 @@ import type { KernelToHostMessage } from "../../bridge/protocol.ts";
  * no CPU used by its process group - before startup fails. A cold Julia compiling its prelude prints
  * nothing for seconds but keeps the CPU busy, so it never trips; only a runner that is silent AND idle
  * (blocked on a lock, a pipe or a stopped process) does. It restarts on every sign of progress, so it is
- * not a total startup budget.
+ * not a total startup budget. Where the group's CPU cannot be read it never fires.
  */
 export const subprocessStartupNoProgressMs = 30_000;
 
@@ -44,7 +44,8 @@ export class SubprocessStartupWatchdog {
 	observe(message: KernelToHostMessage): void {
 		if (this.#stopped) return;
 		if (message.type === "status" && message.event.op === "kernel-startup") {
-			const next = stages.indexOf(message.event.stage as SubprocessStartupStage);
+			const stage = stages.find((candidate) => candidate === message.event.stage);
+			const next = stage === undefined ? -1 : stages.indexOf(stage);
 			if (next > this.#stageIndex) this.#stageIndex = next;
 		}
 		if (message.type === "text" && message.stream === "stderr") {
@@ -67,7 +68,9 @@ export class SubprocessStartupWatchdog {
 	#expire(): void {
 		if (this.#stopped) return;
 		const cpu = this.#readCpu();
-		if (cpu !== undefined && (this.#lastCpu === undefined || cpu > this.#lastCpu)) {
+		// Unreadable CPU means busy and idle look the same: never cut a start off on silence alone.
+		// Any change counts, a drop included: a member of the group exited, which is activity.
+		if (cpu === undefined || cpu !== this.#lastCpu) {
 			this.#lastCpu = cpu;
 			this.#arm();
 			return;

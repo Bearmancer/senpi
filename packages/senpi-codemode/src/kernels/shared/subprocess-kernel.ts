@@ -203,9 +203,7 @@ export class SubprocessKernel {
 		this.startup?.stop();
 		const startup = this.options.startup;
 		this.startup = startup
-			? new SubprocessStartupWatchdog(startup, child.pid, (message) => {
-					if (this.accepts(process)) this.failClosed(new KernelStartupError(message));
-				})
+			? new SubprocessStartupWatchdog(startup, child.pid, (message) => this.stalled(process, message))
 			: null;
 		this.memory?.processReplaced();
 		try {
@@ -231,10 +229,7 @@ export class SubprocessKernel {
 
 	private handleMessage(process: SubprocessProcess, message: KernelToHostMessage): void {
 		if (!this.accepts(process)) return;
-		if (!this.processReady) {
-			this.startup?.observe(message);
-			if (message.type === "status" && message.event.op === "kernel-startup") return;
-		}
+		if (!this.processReady) this.startup?.observe(message);
 		if (message.type === "ready") {
 			this.startup?.stop();
 			this.processReady = true;
@@ -291,6 +286,20 @@ export class SubprocessKernel {
 			this.runs.settle(active, failureResult(active, new Error(`${error.message}; every global is lost`)));
 		}
 		onDeath(reason);
+	}
+
+	/** A stalled start is a death: the owner replaces the kernel and the cells that never started run there. */
+	private stalled(process: SubprocessProcess, message: string): void {
+		if (!this.accepts(process)) return;
+		const error = new KernelStartupError(message);
+		const onDeath = this.options.onDeath;
+		if (!onDeath) {
+			this.failClosed(error);
+			return;
+		}
+		process.retire();
+		this.trackRetirement(process, this.terminateOwnedProcess(process));
+		this.die(error, message, onDeath);
 	}
 
 	private accepts(process: SubprocessProcess): boolean {

@@ -5,14 +5,15 @@
  * - darwin: every member from `proc_listpgrppids`, each `ri_user_time + ri_system_time` from
  *   `proc_pid_rusage(RUSAGE_INFO_V2)` (libproc, via `bun:ffi`);
  * - linux: every `/proc/<pid>/stat` whose process group is `pgid`, `utime + stime` in clock ticks;
- * - win32: `GetProcessTimes` kernel + user time of the process itself (Windows has no process
- *   groups, so a helper the runner starts is not counted there);
- * - anything else, or a runtime without `bun:ffi`: `undefined`, so the caller relies on output and
- *   stage events alone.
+ * - darwin on a runtime without `bun:ffi` (Node): the members' `cputime` from one `ps` call, in
+ *   hundredths of a second;
+ * - win32 and anything else: `undefined`. Windows has no process groups, and the launcher's own time
+ *   misses the interpreter a launcher such as juliaup starts, so the caller treats the CPU as unknown.
  *
  * `bun:ffi` is fetched with `process.getBuiltinModule` so the module still loads on Node, the same
  * runtime boundary `process-footprint.ts` in coding-agent uses. Every read is synchronous and never throws.
  */
+import { execFileSync } from "node:child_process";
 import { readdirSync, readFileSync } from "node:fs";
 
 type BunFfi = typeof import("bun:ffi");
@@ -23,7 +24,7 @@ const RI_USER_TIME_OFFSET = 16;
 const RI_SYSTEM_TIME_OFFSET = 24;
 const RUSAGE_BUFFER_BYTES = 256;
 const MAX_GROUP_MEMBERS = 4096;
-const PROCESS_QUERY_LIMITED_INFORMATION = 0x1000;
+const PS_TIMEOUT_MS = 2_000;
 
 let groupReader: GroupCpuReader | null | undefined;
 
@@ -45,17 +46,47 @@ export function parseProcStat(stat: string): { readonly pgrp: number; readonly c
 	return { pgrp, cpuTicks: BigInt(utime) + BigInt(stime) };
 }
 
+/** `ps` `cputime` (`[[hh:]mm:]ss.cc`) in hundredths of a second, or `undefined` when malformed. */
+export function parsePsCpuTime(text: string): bigint | undefined {
+	const match = /^(?:(\d+):)?(?:(\d+):)?(\d+)\.(\d{2})$/.exec(text.trim());
+	if (match === null) return undefined;
+	const [, first, second, seconds, hundredths] = match;
+	const hours = second === undefined ? 0 : Number(first ?? 0);
+	const minutes = second === undefined ? Number(first ?? 0) : Number(second);
+	return BigInt(((hours * 60 + minutes) * 60 + Number(seconds)) * 100 + Number(hundredths));
+}
+
 function createGroupReader(): GroupCpuReader | undefined {
 	if (process.platform === "linux") return linuxGroupReader;
-	if (process.platform !== "darwin" && process.platform !== "win32") return undefined;
+	if (process.platform !== "darwin") return undefined;
 	const ffi = process.getBuiltinModule("bun:ffi") as BunFfi | undefined;
-	if (ffi === undefined) return undefined;
+	if (ffi === undefined) return darwinPsGroupReader;
 	try {
-		return process.platform === "darwin" ? darwinGroupReader(ffi) : windowsProcessReader(ffi);
+		return darwinGroupReader(ffi);
 	} catch {
-		// A library or symbol this build cannot bind: the watchdog falls back to output and stages.
+		// A library or symbol this build cannot bind: read the group through ps instead.
+		return darwinPsGroupReader;
+	}
+}
+
+function darwinPsGroupReader(pgid: number): bigint | undefined {
+	let listing: string;
+	try {
+		listing = execFileSync("ps", ["-A", "-o", "pgid=,cputime="], { encoding: "utf8", timeout: PS_TIMEOUT_MS });
+	} catch {
 		return undefined;
 	}
+	let total = 0n;
+	let members = 0;
+	for (const line of listing.split("\n")) {
+		const [group, cputime] = line.trim().split(/\s+/);
+		if (group !== String(pgid) || cputime === undefined) continue;
+		const used = parsePsCpuTime(cputime);
+		if (used === undefined) continue;
+		total += used;
+		members += 1;
+	}
+	return members === 0 ? undefined : total;
 }
 
 function linuxGroupReader(pgid: number): bigint | undefined {
@@ -104,29 +135,5 @@ function darwinGroupReader({ dlopen, FFIType, ptr }: BunFfi): GroupCpuReader {
 			members += 1;
 		}
 		return members === 0 ? undefined : total;
-	};
-}
-
-function windowsProcessReader({ dlopen, FFIType, ptr }: BunFfi): GroupCpuReader {
-	const library = dlopen("kernel32.dll", {
-		OpenProcess: { args: [FFIType.u32, FFIType.i32, FFIType.u32], returns: FFIType.ptr },
-		GetProcessTimes: {
-			args: [FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.ptr],
-			returns: FFIType.i32,
-		},
-		CloseHandle: { args: [FFIType.ptr], returns: FFIType.i32 },
-	});
-	const times = new BigUint64Array(4);
-	return (pid) => {
-		const handle = library.symbols.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
-		if (!handle) return undefined;
-		try {
-			times.fill(0n);
-			const base = ptr(times);
-			if (library.symbols.GetProcessTimes(handle, base, base + 8, base + 16, base + 24) === 0) return undefined;
-			return (times[2] ?? 0n) + (times[3] ?? 0n);
-		} finally {
-			library.symbols.CloseHandle(handle);
-		}
 	};
 }
