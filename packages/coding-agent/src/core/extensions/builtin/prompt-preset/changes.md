@@ -1,5 +1,24 @@
 # prompt-preset Extension Changes
 
+## 2026-10-03 - GPT-6 Astra: keep few-call reading and own-change checks; a subagent only for a track that lands the task sooner (senpi#2630)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/prompt-preset/gpt-6-astra.ts`: three rules are replaced at their source, none added. `DELEGATION` keeps reading, lookups and checks on your own change "however many calls they take" (was: "whatever closes in a handful of calls is yours"), and hands out only "a track that runs beside yours and lands the task sooner - a wide investigation across many files, or an implementation unit beyond one coherent edit in files you are not touching" (was: "Only a sizeable track independent of your own earns a subagent"); the brief clause shrinks to its four nouns. `ASYNC_DEFAULT` drops "CHILD TASKS AND" from its bold lead. `FOREGROUND_EXCEPTION` ends "A child task never meets the first test; it runs in the background and its completion delivers its result." (was: "... when its result would be your next input, either the work was small enough to do yourself or the child runs in the background and its completion delivers it").
+- Rule ids, concerns, sections and the bold set are unchanged; `test/suite/prompt-presets-gpt-6-astra.test.ts` passes as is. The preset loses four words net.
+
+### Why
+
+- Astra handed few-call reading, credential lookups and the checks on its own change to subagents on executable lanes, then ended its turn to wait for them. A 10-day session survey put its delegation share level with the Claude and Kimi presets (the 2026-09-08 reframe did its job by count), but 86% of its spawns went to executable categories against 30-50% for the others, nine were read-only investigations, and in the trigger session the main thread idled 90 s for a child whose evidence memory already held. The model's stated reasons repeated the rule's words ("independent", "non-overlapping"), so the defect is the rule's framing (prompt-engineering category B): a six-call investigation failed the call-count keep-it test and passed the independence spawn test, the loudest rule in the file named child tasks first, and the foreground exception sanctioned the result-needed-next -> background child -> turn-end path. The replacement carries the clauses the Opus 5.5 preset already had (a parallel run must finish the task sooner; your own verification is yours) in the hephaestus prompts' terms (direct execution by default; a category only for a unit beyond one coherent edit). The 2026-09-11 early-stop set is untouched.
+
+### Why an extension could not handle it
+
+- These sentences are the preset core itself.
+
+### Expected merge conflict zones
+
+- `gpt-6-astra.ts` header comment, `DELEGATION`, `ASYNC_DEFAULT`, `FOREGROUND_EXCEPTION`.
+
 ## 2026-10-01 - GPT-6 Astra: delete the verification gates codex does not carry (senpi#2505)
 
 ### What changed

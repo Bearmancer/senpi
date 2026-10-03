@@ -6,13 +6,25 @@
 
 ### Added
 
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.4] - 2026-10-03
+
+### Breaking Changes
+
+### Added
+
 - `PI_TUI_BURST_WINDOW_MS` sets how long a line break ending a read with text is held in case the rest of a paste follows, when the terminal sends no bracketed-paste markers. It defaults to `100` ms over SSH and `20` ms otherwise, and `0` never holds a line break ([#2622](https://github.com/code-yeongyu/senpi/issues/2622), reported by [@Bearmancer](https://github.com/Bearmancer)).
 
 ### Changed
 
 ### Fixed
 
-- A multiline paste that arrives without bracketed-paste markers no longer submits one prompt per line: newline-bearing stdin bursts coalesce into a single `paste` event, so the editor receives one block ([#2600](https://github.com/code-yeongyu/senpi/issues/2600)).
+- A multiline paste that arrives without bracketed-paste markers no longer submits one prompt per line: newline-bearing stdin bursts coalesce into a single `paste` event, so the editor receives one block ([#2600](https://github.com/code-yeongyu/senpi/issues/2600), [#2606](https://github.com/code-yeongyu/senpi/pull/2606) by [@Bearmancer](https://github.com/Bearmancer)).
 - An Enter typed right after other input is no longer lost when the next stdin read is half of a multibyte character (an emoji over SSH): the held line break is released on time, and a read that arrives after the paste window releases it as Enter instead of joining it to a later paste ([#2621](https://github.com/code-yeongyu/senpi/issues/2621), reported by [@Bearmancer](https://github.com/Bearmancer)).
 
 ### Removed

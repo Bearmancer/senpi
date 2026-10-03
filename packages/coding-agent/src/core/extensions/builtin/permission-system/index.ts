@@ -61,6 +61,7 @@ export default function permissionSystemExtension(pi: ExtensionAPI): void {
 	let cliRuleset: Ruleset = [];
 	let staticRuleset: Ruleset = [];
 	let initialApprovedCount = 0;
+	let setupError: string | null = null;
 
 	const nextRequestID = createRequestIDFactory();
 
@@ -74,7 +75,20 @@ export default function permissionSystemExtension(pi: ExtensionAPI): void {
 	});
 
 	pi.on("session_start", async (_event, ctx) => {
-		const settingsManager = SettingsManager.create(ctx.cwd);
+		setupError = null;
+		try {
+			loadPermissionRules(ctx.cwd);
+		} catch (error) {
+			// The runner reports a throwing handler and keeps the session running, so a rules
+			// failure must block tool calls itself instead of leaving them unchecked (#2617).
+			setupError = getReason(error);
+			throw error;
+		}
+		applyToolDenials();
+	});
+
+	const loadPermissionRules = (cwd: string): void => {
+		const settingsManager = SettingsManager.create(cwd);
 		const permissionFlag = pi.getFlag("permission");
 		const permissionPresetFlag = pi.getFlag("permission-preset");
 		cliRuleset = typeof permissionFlag === "string" ? parsePermissionFlag(permissionFlag) : [];
@@ -87,22 +101,27 @@ export default function permissionSystemExtension(pi: ExtensionAPI): void {
 			);
 		}
 
-		const loadedSettings = loadPermissionSettings(settingsManager, cliRuleset, ctx.cwd, cliPreset);
+		const loadedSettings = loadPermissionSettings(settingsManager, cliRuleset, cwd, cliPreset);
 		staticRuleset = loadedSettings.staticRuleset;
 		const approved = loadedSettings.approved;
 		parserRegistry = createBuiltinParserRegistry();
 		service = new PermissionService(staticRuleset, approved, createEventEmitter(pi));
 		initialApprovedCount = approved.length;
+	};
 
+	const applyToolDenials = (): void => {
 		const allTools = pi.getAllTools().map((tool) => tool.name);
 		const disabledTools = disabled(allTools, staticRuleset);
 		const activeTools = pi
 			.getActiveTools()
 			.filter((toolName) => INTERNAL_PERMISSION_TOOLS.has(toolName) || !disabledTools.has(toolName));
 		pi.setActiveTools(activeTools);
-	});
+	};
 
 	pi.on("tool_call", async (event, ctx) => {
+		if (setupError !== null) {
+			return { block: true, reason: `Permission setup failed: ${setupError}` };
+		}
 		if (!service || !parserRegistry) {
 			return undefined;
 		}

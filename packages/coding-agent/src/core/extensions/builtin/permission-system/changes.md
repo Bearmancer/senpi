@@ -1,5 +1,23 @@
 # Permission System Builtin Extension
 
+## 2026-10-03 - A failed permission setup blocks tools instead of skipping checks (#2617)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/permission-system/index.ts`: `session_start` loads the permission rules (`loadPermissionRules`) inside a try/catch. When that throws (unknown `--permission-preset` or RPC `permissionPreset`, unknown or non-string settings `permissionPreset`), the error is recorded and rethrown as before, and `tool_call` refuses every call with `Permission setup failed: <reason>` until a later `session_start` succeeds. Applying deny rules to the active tool list (`applyToolDenials`) runs after and outside that guard: it calls extension action methods, which throw while the extension runtime is still starting, and that must not lock a session whose rules loaded fine.
+
+### Why
+
+- The extension runner reports a throwing handler and keeps the session running. The service was never created, and `tool_call` returned no decision when it was missing, so every tool ran unchecked: a misspelled preset turned the strictest setting into full access.
+
+### Why an extension could not handle it
+
+- The permission builtin owns tool-call gating; nothing after it can tell an unconfigured permission system from an allow.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/builtin/permission-system/index.ts`: the `session_start` handler (now a wrapper around `startPermissionSession`) and the first lines of the `tool_call` handler.
+
 ## 2026-10-01 - Read shipped resources without approval (#2513)
 
 ### What changed

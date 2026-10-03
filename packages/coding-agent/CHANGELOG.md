@@ -6,9 +6,21 @@
 
 ### Added
 
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.4] - 2026-10-03
+
+### Breaking Changes
+
+### Added
+
 - Shared RPC hosts now report the per-session memory split: the `host_memory_pressure` record carries `main` (the main-thread heap) and `kernels` (every live eval kernel's heap by session), and `list_sessions` rows carry `memory` (`main_heap_bytes`, `kernel_heap_bytes`, `kernel_count`), surfaced on `host status --all --include-workers --json` as `{ main_heap_mb, kernel_heap_mb, kernel_count }`. The terminal tool-card render cache and the TUI frame are now measurable too: the memory report's `tuiRenderCache` gains `finishedCards`, exact `cachedLinesBytes` and `resultBytes`, and a new `tui.previousLinesBytes` reports the frame's line bytes, so a later bound is designed from the measurement ([#1960](https://github.com/code-yeongyu/senpi/issues/1960)).
 - A running session can report where its memory goes, on demand and only when started with `SENPI_MEMORY_REPORT=1`: `SIGUSR2` (POSIX; reports every session registered in the signalled process, so a worker-runtime multi-session host's sessions answer only over RPC) or the RPC `memory_report` request writes `<session>-artifacts/memory/<iso>.json` with the main thread's heap and footprint, every live eval kernel's last-known heap (marked stale while a cell runs), the resident session-string store, the terminal tool-card render cache, and figures extensions add through `pi.registerMemoryReporter(name, reporter)`. `SENPI_MEMORY_REPORT_SNAPSHOT=1` adds a heap snapshot. Without the flag nothing is installed and `SIGUSR2` keeps its default behaviour ([#2561](https://github.com/code-yeongyu/senpi/issues/2561)).
-- RPC session state now reports a model switch that is held until the next compaction: `pendingModelSwitch` is the held model's `{ provider, id }`, or `null` when nothing is held, so a client can tell a held switch from one a later selection superseded. The key is always present on current hosts, so a missing key identifies an older host.
+- RPC session state now reports a model switch that is held until the next compaction: `pendingModelSwitch` is the held model's `{ provider, id }`, or `null` when nothing is held, so a client can tell a held switch from one a later selection superseded. The key is always present on current hosts, so a missing key identifies an older host ([#2593](https://github.com/code-yeongyu/senpi/pull/2593) by [@effortprogrammer](https://github.com/effortprogrammer)).
 
 ### Changed
 
@@ -16,10 +28,12 @@
 
 ### Fixed
 
+- **Permission checks stay on when the permission setup fails.** In every release since 2026.6.23, a failure while the permission system started (an unknown, misspelled or non-string `permissionPreset` in global or project `settings.json`, an unknown `--permission-preset` or RPC `open_session.permissionPreset`, a `null` permission rule value, or an unreadable `permissions-approved.jsonl`) left every tool call running with no permission check, behind a single extension error at startup. The session now refuses tool calls with `Permission setup failed: <reason>` until the setting is fixed, and a valid preset works as before. If you can't update yet, use exactly one of `full-access`, `workspace`, `accept-edits`, `read-only` or `ask`, keep `permission` rule values as strings or objects, and treat a permission-system extension error at startup as a session with no checks: quit and fix the setting. ([#2617](https://github.com/code-yeongyu/senpi/issues/2617), [#2618](https://github.com/code-yeongyu/senpi/pull/2618))
+- The GPT-6 preset keeps few-call reading, lookups and the checks on the model's own change in the main session, and spawns a subagent only for a track that runs beside its own and lands the task sooner (a wide investigation across many files, or an implementation unit beyond one coherent edit in files it is not touching); the bold asynchronous-work lead no longer names child tasks first, and a result needed next is no longer a licence to spawn a background child and end the turn ([#2630](https://github.com/code-yeongyu/senpi/issues/2630)).
 - An idle shared RPC host now gives its cost back. A session closed, parked or released mid-turn no longer pins the host's idle exit forever: the host publishes the turn's `agent_settled` (`reason: "session_closed"`) before it seals the session. A host whose last session closes collects once and reports the footprint it returned (`host_trimmed`, at most once a minute), and each `host ensure` schedules a bounded background `host gc` pass (at most every 5 minutes per agent directory, never on the awaited path) so dead endpoint records stop accumulating ([#2567](https://github.com/code-yeongyu/senpi/issues/2567)).
 - A client attaching to a host built from the same plugin set installed under a different directory no longer logs a profile mismatch on every ensure, and a build that loads a proper superset of the host's extensions can take over from it: host launch profiles now compare the plugin's extensions by role instead of by absolute path.
-- `logs/session.log` lines written by a session now carry its `sessionId` and the active `provider` and `model`, and `provider_error` names the provider and model of the failing response, so lines from parent and child sessions sharing one agent dir can be told apart ([#2541](https://github.com/code-yeongyu/senpi/issues/2541))
-- `RpcClient.closeSession` now rejects with `RpcCommandError` when the host refuses `close_session` (`success: false`), instead of resolving as if the session had closed. A gone transport still counts as closed ([#2572](https://github.com/code-yeongyu/senpi/issues/2572))
+- `logs/session.log` lines written by a session now carry its `sessionId` and the active `provider` and `model`, and `provider_error` names the provider and model of the failing response, so lines from parent and child sessions sharing one agent dir can be told apart ([#2541](https://github.com/code-yeongyu/senpi/issues/2541), [#2605](https://github.com/code-yeongyu/senpi/pull/2605) by [@MoerAI](https://github.com/MoerAI))
+- `RpcClient.closeSession` now rejects with `RpcCommandError` when the host refuses `close_session` (`success: false`), instead of resolving as if the session had closed. A gone transport still counts as closed ([#2572](https://github.com/code-yeongyu/senpi/issues/2572), [#2602](https://github.com/code-yeongyu/senpi/pull/2602) by [@MoerAI](https://github.com/MoerAI))
 
 ### Removed
 
