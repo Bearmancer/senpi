@@ -5,6 +5,7 @@ import {
 	isRetryableProviderError,
 	ProviderErrorPresentation,
 } from "../../../src/modes/interactive/provider-error-presentation.ts";
+import { createPresentationHarness, providerEnvelope } from "../provider-error-presentation-harness.ts";
 
 // Regression for https://github.com/code-yeongyu/senpi/issues/2652
 describe("provider error presentation classification", () => {
@@ -85,5 +86,43 @@ describe("provider error episode marker", () => {
 		// failure must surface as an error, old notice untouched.
 		p.clear();
 		expect(p.awaitingRetryFinish).toBe(false);
+	});
+});
+
+// Event-driven through handleEvent: the success-branch clear() must fire from the wiring, not a
+// hand-called clear() on the presentation object.
+describe("provider error episode: event-driven success-then-terminal", () => {
+	test("retry scheduled -> retry finished -> compaction success -> terminal failure shows the error", async () => {
+		const h = createPresentationHarness();
+		// The prototype-built mode has no field initializers; the compaction success path flushes the
+		// queue through these.
+		const stub = h.mode as unknown as Record<string, unknown>;
+		stub.compactionInFlightMessages = [];
+		stub.compactionQueuedMessages = [];
+		stub.compactionTransferAbortControllers = new Map();
+		await h.event({ type: "message_start", message: { role: "user", content: "go", timestamp: 1 } });
+		for (let i = 0; i < 3; i++)
+			await h.event({ type: "summarization_retry_scheduled", reason: "threshold", errorMessage: providerEnvelope });
+		await h.event({ type: "summarization_retry_finished" });
+		// Successful compaction: the success branch must clear the episode marker via the wiring.
+		await h.event({
+			type: "compaction_end",
+			reason: "threshold",
+			result: { summary: "a summary", tokensBefore: 1000, tokensAfter: 100, details: undefined, usage: undefined },
+		} as never);
+		// A later, never-retried terminal compaction failure must render as an error, not the banner.
+		await h.event({
+			type: "compaction_end",
+			reason: "threshold",
+			result: undefined,
+			aborted: false,
+			willRetry: false,
+			errorMessage: "timeout",
+		} as never);
+		const rendered = h.render(200);
+		expect(rendered).toContain("timeout");
+		expect(rendered).not.toContain("/model");
+		expect(rendered).toContain("timeout");
+		expect(rendered).not.toContain("/model");
 	});
 });
