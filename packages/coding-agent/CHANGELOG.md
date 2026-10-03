@@ -6,6 +6,8 @@
 
 ### Added
 
+- `open_session` accepts `retryFallback` (`{ modelFallback, fallbackChains }`) and hosts advertise the `retry_fallback_profile` capability: the chain is that session's own, applied as an in-memory override that is never written to a settings file and never seen by another session on the host, so a task child running on a shared host can fall back to its own models mid-turn ([code-yeongyu/oh-my-openagent#9512](https://github.com/code-yeongyu/oh-my-openagent/issues/9512)).
+
 ### Changed
 
 ### Fixed

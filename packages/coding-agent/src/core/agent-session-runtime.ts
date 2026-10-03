@@ -56,6 +56,19 @@ export interface AgentSessionLaunchProfile {
 	promptSurface?: PromptSurface;
 	/** Per-session browser engine (`open_session.browserEngine`); absent means none was chosen. */
 	browserEngine?: BrowserEngine;
+	/**
+	 * Per-session retry fallback (`open_session.retryFallback`): applied to THIS session's settings as an
+	 * in-memory override that is never written to a settings file, so one session's chain never reaches
+	 * another session on the host or the user's settings. Absent means the host's settings decide.
+	 */
+	retryFallback?: SessionRetryFallbackProfile;
+}
+
+/** The fallback policy one session runs with, chosen by its opener (e.g. a task child's own chain). */
+export interface SessionRetryFallbackProfile {
+	readonly modelFallback: boolean;
+	/** Chain key (selector, optionally `:thinking`) to its ordered fallback selectors. */
+	readonly fallbackChains: Readonly<Record<string, readonly string[]>>;
 }
 
 /**
