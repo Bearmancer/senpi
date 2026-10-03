@@ -123,6 +123,33 @@
 			],
 			"reason": "Ruby and Julia kernels get a no-progress startup watchdog (two new modules in the scoped census) with its contracts; two tests pin the one-spawn replacement node 5 already delivers."
 		},
+		"8": {
+			"additions": [
+				"imports/extension/packages/senpi-codemode/src/extension/bridge-tool-call.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/extension/bridge-tool-call.ts",
+				"imports/extension/packages/senpi-codemode/src/extension/idle-parking-kernel.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/extension/idle-parking-kernel.ts",
+				"legacyContracts/test/idle-parking-kernel.test.ts/IdleParkingKernel Given a kernel idle for the configured minutes when the next cell arrives then it runs on a fresh kernel whose result says every earlier global is gone",
+				"legacyContracts/test/idle-parking-kernel.test.ts/IdleParkingKernel Given a cell still running when the idle time elapses when it settles then the kernel is kept and the idle clock starts over",
+				"legacyContracts/test/idle-parking-kernel.test.ts/IdleParkingKernel Given the kernel reports a queued cell when the idle time elapses then it is not parked",
+				"legacyContracts/test/idle-parking-kernel.test.ts/IdleParkingKernel Given a cell submitted while the parked kernel is still closing when the close finishes then the cell runs on the fresh kernel, never on the closed one",
+				"legacyContracts/test/idle-parking-kernel.test.ts/IdleParkingKernel Given the restart fails when a cell arrives after the park then that cell gets the reason and the next cell retries the restart",
+				"legacyContracts/test/idle-parking-kernel.test.ts/IdleParkingKernel Given a parking kernel when it is closed then no idle timer stays behind and nothing restarts",
+				"legacyContracts/test/idle-parking-kernel.test.ts/IdleParkingKernel Given the default of zero minutes when a kernel is wrapped then the same kernel comes back and no timer is armed",
+				"legacyContracts/test/memory-settings.test.ts/codemode memory settings Given no idle-park setting when settings load then kernels are never parked",
+				"legacyContracts/test/memory-settings.test.ts/codemode memory settings Given an idle-park time in the file when settings load then it is kept",
+				"legacyContracts/test/memory-settings.test.ts/codemode memory settings Given a negative idle-park time in the file when settings load then the file is rejected with a warning and parking stays off",
+				"legacyContracts/test/idle-parking-kernel.test.ts/IdleParkingKernel Given a JavaScript kernel with kernel tools when it is wrapped then the tools stay reachable and a tool call keeps it from being parked",
+				"legacyContracts/test/idle-parking-kernel.test.ts/IdleParkingKernel Given a kernel without kernel tools when it is wrapped then the wrapper does not claim to have them",
+				"imports/extension/packages/senpi-codemode/src/extension/kernel-tools-probe.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/extension/kernel-tools-probe.ts",
+				"legacyContracts/test/idle-parking-kernel.test.ts/IdleParkingKernel Given a kernel whose cells defined tools when it stays idle then it is never parked, and it parks once the tools are gone",
+				"legacyContracts/test/session-manager-idle-park.test.ts/session manager with idle park Given a parked kernel when the next cell restarts it then the registry drops the parked kernel and lists the fresh one",
+				"legacyContracts/test/session-manager-idle-park.test.ts/session manager with idle park Given a restart still starting when the session is disposed then the fresh kernel is closed and never registered",
+				"legacyContracts/test/memory-settings.test.ts/codemode memory settings Given the longest idle-park time a timer can wait when settings load then it is kept, and one minute more is rejected"
+			],
+			"reason": "The session manager's bridge tool-call routing moved into its own module (move-only) and the opt-in idle-park facade is imported by the session manager, so the scoped census loads two more extension modules; the idle-park facade and its setting add their own contracts."
+		},
 		"9": {
 			"additions": [
 				"legacyContracts/test/kernel-tools-descriptor-language.test.ts/kernel tool descriptors name any eval language Given a descriptor from a Python kernel when it is typed and validated then it is accepted",
