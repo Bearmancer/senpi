@@ -55,6 +55,7 @@ describe("multi-session RPC routing", () => {
 					"auto_title_sessions",
 					"media_placeholders",
 					"durable_client_message_id",
+					"continue_from_leaf",
 					"retain_on_disconnect",
 					"session_context",
 					"session_kind",

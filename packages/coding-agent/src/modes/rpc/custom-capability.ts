@@ -21,6 +21,8 @@ import type { RpcExtensionUIRequest } from "./rpc-types.ts";
 export const CUSTOM_UNSUPPORTED_CAPABILITY = "custom_unsupported";
 export const EXTENSION_EVENTS_CAPABILITY = "extension_events";
 export const AUTO_TITLE_SESSIONS_CAPABILITY = "auto_title_sessions";
+/** Host capability: the `continue_from_leaf` command starts a turn with no new prompt (#1930). */
+export const CONTINUE_FROM_LEAF_CAPABILITY = "continue_from_leaf";
 /**
  * Opt-in: the host replaces inline image bytes inside tool results with `image_ref`
  * placeholders for this connection; the client fetches a block on demand with `get_media`.

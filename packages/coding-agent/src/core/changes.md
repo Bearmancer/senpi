@@ -1,3 +1,22 @@
+## 2026-10-03 - Continue a session from its leaf with no new prompt (senpi#1930)
+
+### What changed
+
+- `packages/coding-agent/src/core/continue-from-leaf.ts` (new): `CONTINUE_FROM_LEAF_CUSTOM_TYPE` ("continue-from-leaf"), the hidden `CONTINUE_FROM_LEAF_DIRECTIVE`, and `ContinueFromLeafError` with codes `streaming | nothing_to_continue | leaf_not_assistant`; `AgentSession.continueFromLeaf()` refuses unless the last message is an assistant answer.
+- `packages/coding-agent/src/core/agent-session.ts`: `continueFromLeaf()` starts a turn from the current leaf by sending the directive as a hidden custom message (`display: false`, `triggerTurn: true`), the same mechanism as the "." manual continue. It refuses while streaming and on a session with no messages. After `editAssistantMessage` makes an edited answer the leaf, the model continues from the edited text.
+
+### Why
+
+- `packages/coding-agent/src/core/agent-session.ts`: #1930. `agent.continue()` refuses an assistant tail, and assistant prefill is rejected by the default models (Claude 4.6+ returns 400 on a trailing assistant message; OpenAI's Responses API has no prefill), so a clean "regenerate from my edited answer" needs a user-turn nudge the transcript never shows. It has its own type so the goal extension's manual-continue hook does not treat it as a "." continue.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/agent-session.ts`: the RPC command must start a turn with the session's own refusal semantics (streaming, empty session) and typed errors; an extension command is a prompt, which the desktop would render as user text.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/agent-session.ts`: the import block beside `./manual-continue.ts`, and the method inserted before `editAssistantMessage`.
+
 ## 2026-10-03 - nvidia's default is a model its regenerated catalog still has (senpi#2645)
 
 ### What changed

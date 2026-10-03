@@ -607,6 +607,15 @@ export class RpcClient {
 	}
 
 	/**
+	 * Start a turn from the current leaf with no new prompt (#1930), for example after an
+	 * edited assistant response. Refused with `streaming` or `nothing_to_continue`.
+	 */
+	async continueFromLeaf(): Promise<void> {
+		const response = await this.send({ type: "continue_from_leaf" });
+		this.getData(response);
+	}
+
+	/**
 	 * Queue a steering message to interrupt the agent mid-run.
 	 */
 	async steer(
