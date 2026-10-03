@@ -166,6 +166,33 @@ describe("JuliaKernel", () => {
 					expect(deepNames).toContain("rows");
 					const touched = await kernel.run({ cellId: "touched", code: "user_touched[]", timeoutMs: 120_000 });
 					expect(touched).toMatchObject({ ok: true, valueRepr: "false" });
+
+					// A global that holds Type values is still sized (sizeof on a Type throws), a grid of short strings
+					// stops at its walk budget, and a user AbstractSet is never iterated either.
+					const more = await kernel.run({
+						cellId: "more",
+						code: [
+							"typed_frame = Dict{Symbol, Any}(:dtype => Float64, :data => rand(4_000_000))",
+							'string_grid = [[string("s", i, j) for j in 1:600] for i in 1:600]',
+							"struct UserSet <: AbstractSet{Int} end",
+							"Base.length(::UserSet) = (user_touched[] = true; 3)",
+							"Base.iterate(::UserSet, s = 1) = (user_touched[] = true; nothing)",
+							"user_set = UserSet()",
+							"nothing",
+						].join("\n"),
+						timeoutMs: 120_000,
+					});
+					const moreGlobals = more.memory?.globals ?? [];
+					expect(moreGlobals.find((global) => global.name === "typed_frame")?.bytes).toBeGreaterThanOrEqual(
+						25 * MiB,
+					);
+					expect(moreGlobals.find((global) => global.name === "string_grid")).toMatchObject({ approximate: true });
+					const touchedAgain = await kernel.run({
+						cellId: "touched-again",
+						code: "user_touched[]",
+						timeoutMs: 120_000,
+					});
+					expect(touchedAgain).toMatchObject({ ok: true, valueRepr: "false" });
 				} finally {
 					await kernel.close();
 				}

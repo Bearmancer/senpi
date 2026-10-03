@@ -311,6 +311,7 @@ senpi_over_budget(sizer::SenpiSizer) = sizer.nodes >= SENPI_SIZER_NODE_BUDGET
 
 function senpi_size(sizer::SenpiSizer, value, depth::Int)::Int
     sizer.nodes += 1
+    value isa Type && return 0
     value isa Union{Number, Char, Bool, Symbol, Nothing} && return isbits(value) ? sizeof(value) : 0
     value isa String && return SENPI_SIZER_OBJECT + sizeof(value)
     if ismutable(value)
