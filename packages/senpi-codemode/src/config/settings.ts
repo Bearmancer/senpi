@@ -4,7 +4,9 @@ import { join } from "node:path";
 import type { Static } from "typebox";
 import { Type } from "typebox";
 import { Check } from "typebox/value";
+import { type CodemodeFeatureSettings, featureSettingsProperties, pickFeatureSettings } from "./feature-settings.ts";
 import { type CodemodeMemorySettings, memorySettingsSchema, validatedMemorySettings } from "./memory-settings.ts";
+import { withoutUnknownTopLevelKeys } from "./unknown-settings.ts";
 
 export const codemodeSettingsSchema = Type.Object(
 	{
@@ -15,6 +17,7 @@ export const codemodeSettingsSchema = Type.Object(
 					js: Type.Optional(Type.Boolean()),
 					rb: Type.Optional(Type.Boolean()),
 					jl: Type.Optional(Type.Boolean()),
+					pyInterpreter: Type.Optional(Type.String({ minLength: 1 })),
 				},
 				{ additionalProperties: false },
 			),
@@ -45,6 +48,7 @@ export const codemodeSettingsSchema = Type.Object(
 		),
 		statusEvents: Type.Optional(Type.Boolean()),
 		memory: Type.Optional(memorySettingsSchema),
+		...featureSettingsProperties,
 	},
 	{ additionalProperties: false },
 );
@@ -61,12 +65,14 @@ export interface CodemodeOutputSink {
 	readonly maxColumns: number;
 }
 
-export interface CodemodeSettings {
+export interface CodemodeSettings extends CodemodeFeatureSettings {
 	readonly languages: {
 		readonly py: boolean;
 		readonly js: boolean;
 		readonly rb: boolean;
 		readonly jl: boolean;
+		/** Explicit Python interpreter; unset keeps today's PATH detection. */
+		readonly pyInterpreter?: string;
 	};
 	/** Idle time an interactive call blocks the turn before the cell detaches; capped by the foreground window. */
 	readonly cellTimeoutSeconds: number;
@@ -169,13 +175,6 @@ export const defaultCodemodeSettings: ResolvedCodemodeSettings = {
 	memory: validatedMemorySettings(undefined).settings,
 };
 
-const languageEnvironmentFlags = {
-	py: "SENPI_CODEMODE_PY",
-	js: "SENPI_CODEMODE_JS",
-	rb: "SENPI_CODEMODE_RB",
-	jl: "SENPI_CODEMODE_JL",
-} as const;
-
 export type Environment = Readonly<Record<string, string | undefined>>;
 
 export async function loadCodemodeSettings(options: LoadCodemodeSettingsOptions = {}): Promise<LoadedCodemodeSettings> {
@@ -193,48 +192,6 @@ export async function loadCodemodeSettings(options: LoadCodemodeSettingsOptions 
 	return { settings: defaultCodemodeSettings, source: null, warnings: [] };
 }
 
-export function resolveEnabledLanguages(
-	settings: CodemodeSettings,
-	env: Environment = process.env,
-): CodemodeSettings["languages"] {
-	return {
-		py: resolveLanguage(settings.languages.py, env[languageEnvironmentFlags.py]),
-		js: resolveLanguage(settings.languages.js, env[languageEnvironmentFlags.js]),
-		rb: resolveLanguage(settings.languages.rb, env[languageEnvironmentFlags.rb]),
-		jl: resolveLanguage(settings.languages.jl, env[languageEnvironmentFlags.jl]),
-	};
-}
-
-/** Environment override wins over the settings file; a non-positive or malformed value is ignored. */
-export function resolveHardLimitSeconds(settings: CodemodeSettings, env: Environment = process.env): number {
-	return positiveSecondsOverride(env[HARD_LIMIT_ENVIRONMENT_FLAG]) ?? settings.hardLimitSeconds;
-}
-
-/** Environment override wins over the settings file; a non-positive or malformed value is ignored. */
-export function resolveForegroundWindowSeconds(settings: CodemodeSettings, env: Environment = process.env): number {
-	return positiveSecondsOverride(env[FOREGROUND_WINDOW_ENVIRONMENT_FLAG]) ?? settings.foregroundWindowSeconds;
-}
-
-/** Environment override wins over the settings file; a non-positive or malformed value is ignored. */
-export function resolveRunBudgetSeconds(settings: CodemodeSettings, env: Environment = process.env): number {
-	return positiveSecondsOverride(env[RUN_BUDGET_ENVIRONMENT_FLAG]) ?? settings.runBudgetSeconds;
-}
-
-/** Uses the same positive-integer environment parsing as the run budget. */
-export function resolveMaxDetachedCells(settings: CodemodeSettings, env: Environment = process.env): number {
-	return (
-		positiveSecondsOverride(env[MAX_DETACHED_CELLS_ENVIRONMENT_FLAG]) ??
-		settings.maxDetachedCells ??
-		DEFAULT_MAX_DETACHED_CELLS
-	);
-}
-
-function positiveSecondsOverride(value: string | undefined): number | undefined {
-	if (value === undefined) return undefined;
-	const parsed = Number.parseInt(value, 10);
-	return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
-}
-
 async function loadSettingsFile(path: string): Promise<LoadedCodemodeSettings> {
 	const raw = await readFile(path, "utf8");
 	let parsed: unknown;
@@ -249,15 +206,21 @@ async function loadSettingsFile(path: string): Promise<LoadedCodemodeSettings> {
 		};
 	}
 
-	if (!Check(codemodeSettingsSchema, parsed)) {
+	const known = withoutUnknownTopLevelKeys(parsed, new Set(Object.keys(codemodeSettingsSchema.properties)), path);
+	const candidate = known.value;
+	if (!Check(codemodeSettingsSchema, candidate)) {
 		return {
 			settings: defaultCodemodeSettings,
 			source: path,
-			warnings: [`Invalid codemode settings in ${path}. Falling back to codemode defaults.`],
+			warnings: [...known.warnings, `Invalid codemode settings in ${path}. Falling back to codemode defaults.`],
 		};
 	}
 
-	return { settings: mergeSettings(parsed), source: path, warnings: validatedMemorySettings(parsed.memory).warnings };
+	return {
+		settings: mergeSettings(candidate),
+		source: path,
+		warnings: [...known.warnings, ...validatedMemorySettings(candidate.memory).warnings],
+	};
 }
 
 function mergeSettings(input: CodemodeSettingsInput): ResolvedCodemodeSettings {
@@ -267,6 +230,7 @@ function mergeSettings(input: CodemodeSettingsInput): ResolvedCodemodeSettings {
 			js: input.languages?.js ?? defaultCodemodeSettings.languages.js,
 			rb: input.languages?.rb ?? defaultCodemodeSettings.languages.rb,
 			jl: input.languages?.jl ?? defaultCodemodeSettings.languages.jl,
+			...(input.languages?.pyInterpreter === undefined ? {} : { pyInterpreter: input.languages.pyInterpreter }),
 		},
 		cellTimeoutSeconds: input.cellTimeoutSeconds ?? defaultCodemodeSettings.cellTimeoutSeconds,
 		foregroundWindowSeconds: input.foregroundWindowSeconds ?? defaultCodemodeSettings.foregroundWindowSeconds,
@@ -284,21 +248,8 @@ function mergeSettings(input: CodemodeSettingsInput): ResolvedCodemodeSettings {
 		},
 		statusEvents: input.statusEvents ?? defaultCodemodeSettings.statusEvents,
 		memory: validatedMemorySettings(input.memory).settings,
+		...pickFeatureSettings(input),
 	};
-}
-
-function resolveLanguage(fileSetting: boolean, environmentValue: string | undefined): boolean {
-	if (environmentValue === undefined) return fileSetting;
-	switch (environmentValue.trim().toLowerCase()) {
-		case "0":
-		case "false":
-			return false;
-		case "1":
-		case "true":
-			return true;
-		default:
-			return fileSetting;
-	}
 }
 
 async function fileExists(path: string): Promise<boolean> {
@@ -309,3 +260,11 @@ async function fileExists(path: string): Promise<boolean> {
 		return false;
 	}
 }
+
+export {
+	resolveEnabledLanguages,
+	resolveForegroundWindowSeconds,
+	resolveHardLimitSeconds,
+	resolveMaxDetachedCells,
+	resolveRunBudgetSeconds,
+} from "./settings-overrides.ts";
