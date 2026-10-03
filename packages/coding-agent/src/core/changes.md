@@ -1,3 +1,21 @@
+## 2026-10-03 - A launch profile carries the session's own fallback policy (omo#9512)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session-runtime.ts`: `AgentSessionLaunchProfile.retryFallback?: SessionRetryFallbackProfile` (`{ modelFallback, fallbackChains }`).
+
+### Why
+
+- `test/suite/rpc-open-session-retry-fallback.test.ts` opens two sessions on one host with different chains: each falls back to its own model on a usage limit, a session without a profile keeps the host's settings and fails cleanly, and the user's `settings.json` is byte-identical afterwards. Three of its four cases fail on main. `test/suite/rpc-worker-retry-fallback.test.ts` checks the same per-session chain on worker-isolate sessions.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/agent-session-runtime.ts`: the launch profile is built by the host before any extension loads, and an extension's only settings lever (`ctx.sessionSettings`) writes the global settings file.
+
+### Expected merge conflict zones
+
+- LOW: the `AgentSessionLaunchProfile` fields in `agent-session-runtime.ts`.
+
 ## 2026-10-03 - Continue a session from its leaf with no new prompt (senpi#1930)
 
 ### What changed

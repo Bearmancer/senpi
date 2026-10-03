@@ -140,6 +140,21 @@ export function frozenProfile(profile: RpcSessionLaunchProfile): Readonly<RpcSes
 		...profile,
 		...(profile.creationModel ? { creationModel: Object.freeze({ ...profile.creationModel }) } : {}),
 		...(profile.sessionContext ? { sessionContext: Object.freeze({ ...profile.sessionContext }) } : {}),
+		...(profile.retryFallback
+			? {
+					retryFallback: Object.freeze({
+						modelFallback: profile.retryFallback.modelFallback,
+						fallbackChains: Object.freeze(
+							Object.fromEntries(
+								Object.entries(profile.retryFallback.fallbackChains).map(([key, entries]) => [
+									key,
+									Object.freeze([...entries]),
+								]),
+							),
+						),
+					}),
+				}
+			: {}),
 	});
 }
 
