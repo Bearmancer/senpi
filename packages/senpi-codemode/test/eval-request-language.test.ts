@@ -79,6 +79,12 @@ describe("parseEvalRequest language and code enforcement", () => {
 		);
 	});
 
+	it("lists only the enabled languages when a run names an unknown language", () => {
+		expect(parseError({ language: "python", code: "print(1)", summary: "run with an unknown language" }, ["js"]).message).toBe(
+			"eval run language must be one of: js",
+		);
+	});
+
 	it("throws an actionable error when a run omits code", () => {
 		expect(parseError({ language: "js", summary: "run without code" }).message).toBe(CODE_TEACHING_ERROR);
 	});
