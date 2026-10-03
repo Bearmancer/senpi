@@ -91,8 +91,12 @@ describe("permission presets", () => {
 		const events: Array<{ event: string; data: unknown }> = [];
 
 		// when
-		const result = handleNoUI(createRequest(), rulesForPreset("full-access"), [], (event, data) => {
-			events.push({ event, data });
+		const result = handleNoUI(createRequest(), {
+			staticRuleset: rulesForPreset("full-access"),
+			cliOverride: [],
+			emitEvent: (event, data) => {
+				events.push({ event, data });
+			},
 		});
 
 		// then
@@ -106,8 +110,12 @@ describe("permission presets", () => {
 		const staticRuleset: Ruleset = rulesForPreset("read-only");
 
 		// when
-		const result = handleNoUI(createRequest(), staticRuleset, [], (event, data) => {
-			events.push({ event, data });
+		const result = handleNoUI(createRequest(), {
+			staticRuleset: staticRuleset,
+			cliOverride: [],
+			emitEvent: (event, data) => {
+				events.push({ event, data });
+			},
 		});
 
 		// then

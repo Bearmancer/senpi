@@ -1459,7 +1459,9 @@ Hosts that support `open_session.permissionPreset: "accept-edits"` advertise
 `permission_preset_accept_edits`. This preset allows project read/list/grep/edit
 and asks for bash, external_directory and other tools. Clients without that
 capability must use `ask`, never `workspace`, for an edit-only approval promise.
-Explicit permission rules and remembered approvals retain their existing precedence.
+Hosts that support `permissionPreset: "auto"` advertise `permission_preset_auto`;
+clients without it must not send `auto`.
+Explicit permission rules and remembered approvals retain their existing precedence, except under `auto`: there settings and CLI rules can only narrow the preset (the more restrictive decision wins), and an "Always" answer (saved in `.senpi/permissions-approved.jsonl`, from this or an earlier session) still allows its pattern.
 
 | Command | Params | Success data | Notes |
 | --- | --- | --- | --- |
