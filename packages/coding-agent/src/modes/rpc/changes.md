@@ -80,6 +80,16 @@
 
 - LOW: `RpcHostMemoryPressureEvent` in `rpc-types.ts`.
 
+## 2026-10-03 - Advertise the auto permission preset
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/session-command-router.ts`: `get_protocol_info` advertises `permission_preset_auto` from the permission-system extension, next to `permission_preset_accept_edits`.
+
+### Why
+
+- A client must only send `permissionPreset: "auto"` to a host that knows it.
+
 ## 2026-10-03 - Expose held model switches through RPC session state
 
 ### What changed

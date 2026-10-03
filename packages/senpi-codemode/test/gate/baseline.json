@@ -6564,9 +6564,9 @@
       "test/kernels/rb/subprocess-lifecycle.test.ts/SubprocessKernel lifecycle drops output calls results errors and exit from a retiring generation": "passed",
       "test/kernels/rb/subprocess-lifecycle.test.ts/SubprocessKernel lifecycle settles queued work once when replacement startup fails": "passed",
       "test/kernels/rb/subprocess-memory-ceiling.test.ts/SubprocessKernel (rb) memory ceiling Given an interpreter footprint over the ceiling with a cell queued behind it when both settle then the queued cell runs on the same interpreter and the next cell on a fresh one": "passed",
-      "test/kernels/rb/subprocess-memory-ceiling.test.ts/SubprocessKernel (rb) memory ceiling Given an interpreter footprint over the notice threshold but under the ceiling when a cell settles then the result reports the footprint without a notice": "passed",
+      "test/kernels/rb/subprocess-memory-ceiling.test.ts/SubprocessKernel (rb) memory ceiling Given an interpreter footprint over the notice threshold but under the ceiling when a cell settles then the result carries the large-memory notice without a restart": "passed",
       "test/kernels/rb/subprocess-memory-ceiling.test.ts/SubprocessKernel (jl) memory ceiling Given an interpreter footprint over the ceiling with a cell queued behind it when both settle then the queued cell runs on the same interpreter and the next cell on a fresh one": "passed",
-      "test/kernels/rb/subprocess-memory-ceiling.test.ts/SubprocessKernel (jl) memory ceiling Given an interpreter footprint over the notice threshold but under the ceiling when a cell settles then the result reports the footprint without a notice": "passed"
+      "test/kernels/rb/subprocess-memory-ceiling.test.ts/SubprocessKernel (jl) memory ceiling Given an interpreter footprint over the notice threshold but under the ceiling when a cell settles then the result carries the large-memory notice without a restart": "passed"
     }
   },
   "unmeasured": []

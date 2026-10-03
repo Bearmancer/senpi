@@ -158,6 +158,20 @@
 			],
 			"reason": "The kernel-tools pump moved to kernels/shared/ (the baseline census entry is renamed to the new path) and descriptors may name any eval language; two contracts pin the widened descriptor."
 		},
+		"24": {
+			"additions": [
+				"legacyContracts/test/worker-global-sizes.test.js/largest-globals sizing never runs user code Given a global array with an index accessor when the globals are sized then the getter never runs",
+				"legacyContracts/test/worker-global-sizes.test.js/largest-globals sizing never runs user code Given an array hole whose prototype has an index getter when the globals are sized then the prototype getter never runs",
+				"legacyContracts/test/worker-global-sizes.test.js/largest-globals sizing never runs user code Given a typed array subclass that overrides byteLength when the globals are sized then its real byte length is reported without running the override",
+				"legacyContracts/test/worker-global-sizes.test.js/largest-globals sizing never runs user code Given a Map subclass that overrides size when the globals are sized then the override never runs",
+				"legacyContracts/test/worker-global-sizes.test.js/largest-globals sizing never runs user code Given a fully walked array with one accessor element when the globals are sized then it is still reported, marked approximate",
+				"legacyContracts/test/worker-global-sizes.test.js/largest-globals sizing never runs user code Given Set, DataView, ArrayBuffer and Blob subclasses that override their size getters when the globals are sized then no override runs and the real sizes are reported",
+				"legacyContracts/test/worker-global-sizes.test.js/largest-globals sizing never runs user code Given replaced Map and Set iteration methods and a redefined Blob instanceof hook when the globals are sized then none of them runs",
+				"legacyContracts/test/worker-global-sizes.test.js/largest-globals sizing never runs user code Given an object with an accessor property when the globals are sized then the accessor never runs and the estimate is approximate",
+				"legacyContracts/test/worker-global-sizes.test.js/largest-globals sizing never runs user code Given an object whose prototype is a Proxy when the globals are sized then the Proxy's getPrototypeOf trap never runs"
+			],
+			"reason": "Memory sizing no longer runs user getters or overridden built-in getters; the new contracts pin that."
+		},
 		"29": {
 			"additions": [
 				"legacyContracts/test/js-kernel-webview-readiness.test.ts/a Chrome launch that never becomes ready retires the stalled launch and answers the create from a fresh Chrome",
@@ -238,6 +252,12 @@
 				"legacyContracts/test/py-kernel-child-lifecycle.test.ts/PythonKernel retires cell subprocesses on close leaves no driver, kernel or child behind when the process that started the driver dies"
 			],
 			"reason": "Adds a witness that the host-loss test driver exits when the process that started it dies (stdin EOF), so no driver, kernel or child outlives the test. Test-only; no prompt, schema, helper or runtime surface changes."
+		},
+		"8-rb": {
+			"additions": [
+				"legacyContracts/test/rb-kernel.test.ts/RubyKernel reports the largest globals in the result memory notice when live memory crosses the notice threshold"
+			],
+			"reason": "Ruby results name their largest globals in the large-memory notice (new kernel contract); the rb/jl ceiling contract that pinned 'no notice under the ceiling' is renamed in the baseline to the notice behaviour it now asserts."
 		}
 	}
 }

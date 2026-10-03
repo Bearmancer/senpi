@@ -1,5 +1,8 @@
 import { VERSION } from "../../config.ts";
-import { ACCEPT_EDITS_PERMISSION_PRESET_CAPABILITY } from "../../core/extensions/builtin/permission-system/config.ts";
+import {
+	ACCEPT_EDITS_PERMISSION_PRESET_CAPABILITY,
+	AUTO_PERMISSION_PRESET_CAPABILITY,
+} from "../../core/extensions/builtin/permission-system/config.ts";
 import { DURABLE_CLIENT_MESSAGE_ID_CAPABILITY } from "./client-admission-record.ts";
 import { buildRpcSessionState } from "./connection-handler.ts";
 import {
@@ -336,6 +339,7 @@ export class SessionCommandRouter {
 				// Each session's fallback chain is its own in-memory settings override, never the host's file.
 				RETRY_FALLBACK_PROFILE_CAPABILITY,
 				ACCEPT_EDITS_PERMISSION_PRESET_CAPABILITY,
+				AUTO_PERMISSION_PRESET_CAPABILITY,
 				// Only an in-process runtime shares the loop a warm loads into (senpi#2314).
 				...(this.registry.warm ? [WARM_CAPABILITY] : []),
 				...(this.connectionOptions?.capabilities ?? []),
