@@ -225,6 +225,7 @@ describe("RubyKernel", () => {
 					expect(
 						result.memory?.globals?.find((global) => global.name === "$big_blob")?.bytes,
 					).toBeGreaterThanOrEqual(128 * MiB);
+					expect(result.memory?.notice).toContain("$big_blob");
 				} finally {
 					await kernel.close();
 				}

@@ -98,7 +98,7 @@ describe.each(["rb", "jl"] as const)("SubprocessKernel (%s) memory ceiling", (la
 		}
 	});
 
-	it("Given an interpreter footprint over the notice threshold but under the ceiling when a cell settles then the result reports the footprint without a notice", async () => {
+	it("Given an interpreter footprint over the notice threshold but under the ceiling when a cell settles then the result carries the large-memory notice without a restart", async () => {
 		const kernel = new SubprocessKernel({
 			command: language === "rb" ? "ruby" : "julia",
 			args: [],
@@ -110,7 +110,10 @@ describe.each(["rb", "jl"] as const)("SubprocessKernel (%s) memory ceiling", (la
 		try {
 			const result = await kernel.run({ cellId: "under-ceiling", code: "big" });
 
-			expect(result.memory).toEqual({ liveBytes: 100 * MIB, measure: "footprint" });
+			expect(result.memory).toMatchObject({ liveBytes: 100 * MIB, measure: "footprint" });
+			expect(result.memory?.notice).toBeDefined();
+			expect(result.memory?.overCeiling).toBeUndefined();
+			expect(result.memory?.recycled).toBeUndefined();
 		} finally {
 			await kernel.close();
 		}

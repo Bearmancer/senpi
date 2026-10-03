@@ -10,8 +10,9 @@ export type FootprintReader = (pid: number) => { readonly bytes: number } | unde
 
 export interface KernelMemoryHostOptions {
 	/**
-	 * Host-measured kernel (rb, jl): the kernel reports no memory itself, so the host reads the
-	 * interpreter's footprint after each result. Such a kernel gets the ceiling only - no notice, no globals.
+	 * Host-measured kernel (rb, jl): the host reads the interpreter's footprint after each result and
+	 * replaces the runner's live reading with it; the runner still names its largest globals, so the
+	 * notice and the ceiling both apply, with every reading counting (no collection precedes it).
 	 */
 	readonly readFootprint?: FootprintReader;
 }
@@ -31,7 +32,7 @@ export class KernelMemoryHost {
 		this.#policy =
 			this.#readFootprint === undefined
 				? new KernelMemoryPolicy(language, thresholds)
-				: new KernelMemoryPolicy(language, { ...thresholds, noticeBytes: 0 }, { collects: false });
+				: new KernelMemoryPolicy(language, thresholds, { collects: false });
 	}
 
 	annotate(result: ResultMessage, pid?: number): ResultMessage {
