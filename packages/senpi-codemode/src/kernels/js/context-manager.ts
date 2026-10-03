@@ -1,6 +1,7 @@
 import type { HostToKernelMessage, KernelToHostMessage } from "../../bridge/protocol.ts";
 import { CHILD_LIFECYCLE_OP, INTERRUPT_ACK_OP } from "../../bridge/reserved.ts";
 import type { KernelInterruptHandle } from "../../tool/types.ts";
+import { KernelToolHostPump } from "../shared/kernel-tools-pump.ts";
 import { ActiveCellControl } from "./active-cell-control.ts";
 import { DEFAULT_INTERRUPT_BOUNDS, type WorkerRetirement } from "./interrupt-bounds.ts";
 import {
@@ -14,7 +15,6 @@ import {
 } from "./kernel-contract.ts";
 import { type JavaScriptMemoryReading, KernelMemoryBridge } from "./kernel-memory-bridge.ts";
 import { kernelToolError } from "./kernel-tools-errors.ts";
-import { KernelToolHostPump } from "./kernel-tools-host.ts";
 import type {
 	KernelToolsDescribeResult,
 	KernelToolsInvokeOptions,

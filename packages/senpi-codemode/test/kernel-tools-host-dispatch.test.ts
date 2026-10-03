@@ -7,6 +7,7 @@ import {
 } from "@code-yeongyu/senpi";
 import { afterEach, describe, expect, it } from "vitest";
 import type { KernelToHostMessage } from "../src/bridge/protocol.ts";
+import { ReplaceableKernel } from "../src/extension/kernel-replacement.ts";
 import { JavaScriptKernel } from "../src/kernels/js/context-manager.ts";
 import type { KernelToolsDescribeResult } from "../src/kernels/js/kernel-tools-types.ts";
 import { createEvalTool } from "../src/tool/eval-tool.ts";
@@ -209,8 +210,9 @@ describe("kernel tools on the real worker tool-call path", () => {
 	});
 
 	it("leaves a host tool dispatched by a non-JS cell without a kernel-tool capability", async () => {
-		// A stub py kernel keeps the negative interpreter-free; the language gate lives in
-		// run-eval-cell.ts, and py/rb/jl kernels expose no describe/invoke at all.
+		// A stub py kernel keeps the negative interpreter-free. There is no language gate any more:
+		// a kernel gets the capability only if it exposes describe/invoke, and the py/rb/jl kernels the
+		// session holds (ReplaceableKernel) expose neither, hiding their tools_unavailable stubs.
 		const kernel = new FakeKernel([
 			{ type: "tool-call", callId: "py-1", toolName: "probe", args: { phase: "py" } },
 			result("kernel-tools-host-dispatch-py", "done"),
@@ -256,5 +258,24 @@ describe("kernel tools on the real worker tool-call path", () => {
 		expect(observations).toEqual([{ phase: "py", kernelToolsDefined: false }]);
 		expect(cell.details.toolCalls[0]).toMatchObject({ name: "probe", ok: true });
 		expect(ctx.kernelTools).toBeUndefined();
+	});
+
+	it("Given the replaceable kernel a session holds for py, rb and jl when it is probed for kernel tools then it exposes none of the interpreter's stubs", async () => {
+		for (const language of ["py", "rb", "jl"] as const) {
+			const inner = Object.assign(new FakeKernel([]), {
+				describeKernelTools: async () => {
+					throw new Error("tools_unavailable");
+				},
+				invokeKernelTool: async () => {
+					throw new Error("tools_unavailable");
+				},
+				drainPending: () => [],
+			});
+			const held = await ReplaceableKernel.create(language, async () => inner);
+
+			expect("describeKernelTools" in held).toBe(false);
+			expect("invokeKernelTool" in held).toBe(false);
+			await held.close();
+		}
 	});
 });

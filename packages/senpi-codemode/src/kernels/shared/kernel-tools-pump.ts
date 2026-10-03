@@ -1,13 +1,13 @@
 import type { HostToKernelMessage, KernelToHostMessage } from "../../bridge/protocol.ts";
 import { generateCorrelationId } from "../../bridge/protocol.ts";
 import { RESERVED_AGENT_TOOL } from "../../bridge/reserved.ts";
-import { kernelToolError } from "./kernel-tools-errors.ts";
+import { kernelToolError } from "../js/kernel-tools-errors.ts";
 import type {
 	KernelToolsDescribeResult,
 	KernelToolsInvokeOptions,
 	KernelToolsInvokeRequest,
 	KernelToolsInvokeScope,
-} from "./kernel-tools-types.ts";
+} from "../js/kernel-tools-types.ts";
 
 type KernelToolReply = Extract<
 	KernelToHostMessage,

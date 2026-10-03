@@ -8,6 +8,8 @@ export interface SessionTeardownHost {
 	releaseReservation(key: string): void;
 	/** Publishes that this path is retained with no client attached, for the cross-generation claim. */
 	markDetached(key: string): void;
+	/** The registry's clock, so the detach stamp shares the sweep's timeline. */
+	now(): number;
 	sync(): void;
 }
 
@@ -41,6 +43,7 @@ export function beginSessionClose(
 	// reservation, and is torn down only by an explicit close or the idle window.
 	if (options?.detach && entry.retainOnDisconnect) {
 		entry.attachments = 0;
+		entry.detachedAt ??= host.now();
 		// A retained session nobody is attached to is what another generation may reclaim the path
 		// from (#1893) - but only once nothing is still WRITING it. A session mid-turn keeps its claim
 		// until it parks, because reclaiming it would put two writers on one transcript.

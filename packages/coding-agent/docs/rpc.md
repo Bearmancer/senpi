@@ -867,6 +867,22 @@ surface, and `new_session` / `switch_session` / `fork` inside the session keep i
 `chat`: a host without it refuses `chat` with `invalid_launch_profile`, so a gateway falls back to `app`. Any value other
 than `terminal`, `app` or `chat` is refused with `invalid_launch_profile`.
 
+#### Fallback chain per session (`retry_fallback_profile`)
+
+`open_session.retryFallback: { modelFallback: boolean, fallbackChains: Record<string, string[]> }` is the fallback
+policy THIS session runs with, e.g. a task child's own chain. It overrides that session's `retry.modelFallback` and
+`retry.fallbackChains` in memory only: it is never written to a settings file, and no other session on the host sees
+it. A session opened without the field keeps the host's settings. It is applied when the open creates the session; an
+attach to a live session keeps the policy that session was created with. Probe `retry_fallback_profile` in
+`get_protocol_info` before sending the field. A malformed profile (a missing `modelFallback`, a chain that is not an
+array of non-empty selectors, a selector longer than 512 characters, more than 32 chains or 32 entries per chain) is
+refused with `invalid_launch_profile` rather than opening a session without the chain its caller asked for; an empty
+chain (`[]`) is accepted and means no fallback for that key. If something inside that session later changes a
+fallback setting through the settings setters, that write follows the setters' own rules (it persists to the global
+settings file) and replaces the session's override for that one key only: a `setFallbackChain` drops the profile's
+chains, while `modelFallback` keeps the profile's value. The policy is not stored with the session, so a client that
+reopens a session after it was closed sends the profile again.
+
 #### Browser engine per session (`browser_engine`)
 
 `open_session.browserEngine: "connected" | "builtin" | "none"` names the browser THIS session's skills drive: the
@@ -1029,7 +1045,7 @@ extensions and contents; neither runtime provides process-fatal OOM containment.
 
 What the host does enforce are lifecycle windows, and they only ever return memory from work nobody is doing:
 
-- **Idle eviction**: a session with no routed command and no session-owned work for
+- **Idle eviction**: a session with no activity-refreshing command and no session-owned work for
   `SENPI_RPC_SESSION_IDLE_EVICTION_MS` (default 30 minutes) is closed through the exact `close_session` sequence
   (abort → waitForIdle → dispose, all attachments drained, path reservation released) and every attached connection
   receives that handle's `session_closed { reason: "idle_evicted" }` broadcast plus a final `close_session` response
@@ -1048,6 +1064,21 @@ What the host does enforce are lifecycle windows, and they only ever return memo
   background terminal jobs and any other published wake source (terminal monitors, loop-guard holds), compaction,
   and barrier-held session work all defer eviction, and the idle clock restarts when that work settles. An evicted
   session resumes like any other: the next `open_session` with the same `sessionPath` reopens it.
+- **Observational reads**: session state, history, model/auth inventory, loaded surfaces, and `memory_report`
+  do not restart the idle clock of a **detached** session in either runtime. With any client still attached,
+  these reads keep refreshing activity as before: an attached client polling `get_state` keeps the same live
+  routing handle and runtime. An attached session receiving no commands can still idle-evict as before.
+  Commands that change the session restart the clock even when detached. An in-flight request or prompt
+  preflight prevents ordinary idle parking while the request is running; directory-removal teardown is separate.
+- **Completed detached workers**: on the in-process runtime, a retained `kind: "worker"` session with zero
+  attachments is parked on the next occupancy sweep once its transcript is flushed and it has no session-owned
+  work, queued input, admitted unwritten delivery, pending prompt, or in-flight request - provided the disconnect
+  has already stood for at least five seconds (a short grace age, so a transient reconnect keeps the live runtime
+  instead of re-opening cold). It does not wait out the normal idle window. This releases its runtime and eval
+  kernels, not its durable history: reopen its
+  `sessionPath` to continue under a new routing handle. Active monitors and other wake sources still prevent
+  early parking. Unflushed workers, worker-isolate runtimes, and interactive sessions keep their normal window.
+  A zero-attachment worker without a recorded disconnect time also keeps its normal idle deadline.
 - **Worker capacity** (worker runtime ONLY - a stdio host, `--listen stdio://`, an embedder, or a socket host that
   passed `--session-runtime worker` explicitly): at most 20 workers may be preparing, open, closing, or quarantined
   together, because each one is an isolate the host must keep alive. Admission beyond this bound fails explicitly
@@ -1064,7 +1095,8 @@ What the host does enforce are lifecycle windows, and they only ever return memo
   `open_session` with that `sessionPath` — from any connection — attaches to the same routing handle and returns
   `attached: true`. Retention never outranks an explicit teardown: a `close_session` from an attached connection still
   reaches zero attachments and closes the session, host shutdown closes it, and the idle-eviction window above still
-  parks it — announced as `session_parked { sessionId, sessionPath }`, after which the file reopens by path like any
+  parks it (or the completed-detached-worker rule above parks it sooner) — announced as
+  `session_parked { sessionId, sessionPath }`, after which the file reopens by path like any
   evicted session, and the parked session counts as gone for the empty-host exit below. It is also bounded by the empty-host exit
   and the supervisor's idle-exit window below: retention survives a client, not the host. Any attach may turn retention
   on for a live session; no attach turns it off for clients that already rely on it. Omitting the flag is byte-identical
@@ -1432,7 +1464,7 @@ Explicit permission rules and remembered approvals retain their existing precede
 | Command | Params | Success data | Notes |
 | --- | --- | --- | --- |
 | `get_protocol_info` | - | `{ protocolVersion: 1, serverVersion: string, capabilities: string[], mode: "classic"\|"multi", instanceId: string, generation: number, engineVersion: string, engineOrdinal: [y, m, d, n, epoch], launch_profile: { profile_id, core }, memory_pressure?: boolean }` | Answered in BOTH modes; side-effect-free; the capability probe. Multi-session hosts include `multi_session`, `retain_on_disconnect`, `session_kind`, `session_context`, `auto_title_per_session`, `durable_session_id`, `prompt_surface` and `prompt_surface_chat` plus the negotiated launch capabilities. Those are HOST capabilities (a client never sends them) and are advertised only in multi-session mode, where the host owns the attachment refcount and the per-session launch profile. The identity fields are described under "Host identity" above; compatibility is decided from `protocolVersion`, `capabilities` and `engineOrdinal`, NEVER from `serverVersion`. |
-| `open_session` | `sessionPath?`, `cwd?`, `provider?`, `modelId?`, `thinkingLevel?`, `permissionPreset?`, `retain_on_disconnect?`, `kind?`, `context?`, `auto_title?`, `durableSessionId?`, `promptSurface?`, `browserEngine?` (all optional; paths MUST be absolute) | `{ sessionId, state: RpcSessionState, attached?: true }` | `sessionPath` = today's `--session` semantics (open-if-exists else create persisting there, `session-manager.ts:926-940`); `provider`/`modelId` applied only on create (resume restores the session's model — mirrors `SenpiSessionRuntime.ts:198-200`); params form the immutable launch profile (D8). When the path is already held by a fully-open session, the open ATTACHES to it: same routing handle, `attached: true`, one more attachment counted; the runtime is torn down only when the last attachment closes. Idle sessions past the eviction window are closed by the host itself. `retain_on_disconnect: true` (default false) makes a dropped connection DETACH from this session instead of closing it — see "Retained sessions" below. `kind` (default `interactive`) and the opaque `context` map are described under "Session kind and context" above; both are stored frozen for the session's life and never influence auth, model or resource resolution. |
+| `open_session` | `sessionPath?`, `cwd?`, `provider?`, `modelId?`, `thinkingLevel?`, `permissionPreset?`, `retain_on_disconnect?`, `kind?`, `context?`, `auto_title?`, `durableSessionId?`, `promptSurface?`, `browserEngine?`, `retryFallback?` (all optional; paths MUST be absolute) | `{ sessionId, state: RpcSessionState, attached?: true }` | `sessionPath` = today's `--session` semantics (open-if-exists else create persisting there, `session-manager.ts:926-940`); `provider`/`modelId` applied only on create (resume restores the session's model — mirrors `SenpiSessionRuntime.ts:198-200`); params form the immutable launch profile (D8). When the path is already held by a fully-open session, the open ATTACHES to it: same routing handle, `attached: true`, one more attachment counted; the runtime is torn down only when the last attachment closes. Idle sessions past the eviction window are closed by the host itself. `retain_on_disconnect: true` (default false) makes a dropped connection DETACH from this session instead of closing it — see "Retained sessions" below. `kind` (default `interactive`) and the opaque `context` map are described under "Session kind and context" above; both are stored frozen for the session's life and never influence auth, model or resource resolution. |
 | `close_session` | `sessionId` | `{}` | Refused with `unknown_session` when the requesting connection never attached to that handle (a close releases the CALLER's attachment, and `list_sessions` publishes every handle). Otherwise aborts active work, awaits agent idle + settled persistence for up to the host grace window (default 10s), then quarantines any worker that has not exited without releasing its path reservation; its response is the LAST record tagged with that handle for the first closer — no events after (test-pinned). An admitted concurrent close joins the same teardown and receives its own successful response; output saturation rejects admission with the bounded close-overflow/resync notice described above. |
 | `list_sessions` | `include_workers?` (default false) | `{ sessions: [{ sessionId, durableSessionId, sessionPath, cwd, name, status, attachments, kind, context? }] }` | Includes `opening`/`closing` entries. Internally quarantined workers remain externally `closing` until exit. `attachments` is the session's live client attachment count; `0` on an `open` row is a retained session with no client attached. Every row carries `kind`. Rows with `kind: "worker"` are omitted unless `include_workers: true`, and `context` is published ONLY on that listing — a default listing carries no `context` at all. |
 | `release_session` | `sessionId`, `reason: "takeover"`, `interrupt?`, `force?` | `{ released: true, session_path, attachments }` | Hands the session to a runtime outside this host. See "Handing a session over (`release_session`)" below. |
@@ -1465,7 +1497,7 @@ In the response `error` field, machine-matchable:
 - `open_failed: <detail>`
 - `invalid_session_context: <detail>` (`open_session.context` past a documented cap: more than 32 keys, a key that does not match `^[a-z][a-z0-9_]*$`, a non-string or >16 KiB value, or more than 32 KiB of JSON in total; the detail names the cap and its byte budget)
 - `invalid_session_kind: <detail>` (`open_session.kind` other than `interactive` or `worker`)
-- `invalid_launch_profile: <detail>` (`open_session.auto_title` present but not a boolean, `open_session.promptSurface` other than `terminal`, `app` or `chat`, or `open_session.browserEngine` other than `connected`, `builtin` or `none`)
+- `invalid_launch_profile: <detail>` (`open_session.auto_title` present but not a boolean, `open_session.promptSurface` other than `terminal`, `app` or `chat`, `open_session.browserEngine` other than `connected`, `builtin` or `none`, or a malformed `open_session.retryFallback`)
 - `host_memory_pressure` (sent only by hosts released before #2207, which declined to CREATE a `kind: "worker"` session above `SENPI_RPC_HOST_RSS_REFUSE_MB`; `errorData { rssMb, retry_after_ms }` says when to ask again. Current hosts never refuse an open for memory; a client talking to an older generation waits and retries, it never starts a second host or a per-child process)
 - `warm_failed: <detail>` (`warm` could not load its profile, for example a `cwd` that does not exist; not remembered, so a retry loads again)
 - `media_not_found` (`get_media` for an unknown `toolCallId`, or a `contentIndex` that does not point at an image block)

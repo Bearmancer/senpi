@@ -64,6 +64,7 @@ describe("multi-session RPC routing", () => {
 					"prompt_surface",
 					"prompt_surface_chat",
 					"browser_engine",
+					"retry_fallback_profile",
 					"permission_preset_accept_edits",
 				],
 				mode: "multi",
