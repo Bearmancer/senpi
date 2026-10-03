@@ -788,7 +788,7 @@ The `delete env.PI_*` block and the session-exposure block in `resolveSpawnConte
 
 ### What changed
 
-`packages/coding-agent/src/core/tools/diff-render.ts`: adds `countDiffChanges`, which returns net added/removed line counts for a unified diff (skipping `+++`/`---` headers and context). `packages/coding-agent/src/core/tools/renderers/edit.ts`: the edit card header now appends a `(+a/-d)` count next to the path, derived from the preview diff. The model bash tool card already shows a `Took <duration>`, a `(timeout Ns)` tag, and an `(N earlier lines, ctrl+o to expand)` fold, so no bash change was needed.
+`packages/coding-agent/src/core/tools/diff-render.ts`: adds `countDiffChanges`, which returns net added/removed line counts for a unified diff (skipping `+++`/`---` headers and context). see `renderers/changes.md` for the edit-card header change.
 
 ### Why
 
