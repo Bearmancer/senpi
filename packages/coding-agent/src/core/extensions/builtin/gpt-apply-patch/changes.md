@@ -264,11 +264,11 @@ Inactive-tool eligibility is intentionally owned by the registering extension. A
 
 ### What changed
 
-`streaming-parser.ts`: adds `getLiveHunks()` (the live hunk list, read-only, no per-delta `structuredClone`) and `getPartialLine()` (the in-flight, not-yet-newline-terminated line). `streaming-render.ts`: the streaming box is now tail-windowed to 12 lines per file with a sticky per-file header carrying net `(+a -d)` counts and a `… (+N lines above)` marker when a file outgrows the window, so a long patch no longer takes over the viewport; the in-flight partial line renders as a dimmed last row; a delta that produces no new visible text skips the rebuild entirely (render-key short-circuit), and a zero-length delta no longer re-parses. `types.ts`: the streaming render state carries the optional non-cloning accessors and the render key.
+`streaming-parser.ts`: `pushDelta` returns the parser's live hunk list (no per-delta `structuredClone`; `finish()` still returns a defensive clone) and adds `getLiveHunks()` / `getPartialLine()` for the render path. `streaming-render.ts`: the streaming box is tail-windowed to 12 lines per file with a sticky per-file header carrying net `(+a -d)` counts (real changes only — unchanged context lines are excluded) and a `… (+N lines above)` marker when a file outgrows the window; the in-flight partial line renders dimmed as the last row; a delta that produces no new visible text keeps the already-rendered box instead of rebuilding or blanking it. `types.ts`: the streaming render state carries the non-cloning accessors, the render key, and a readonly hunk list.
 
 ### Why
 
-The streaming box had no height bound and re-parsed plus re-rendered the whole body on every delta, with a per-delta `structuredClone` over every hunk — about 3x the CPU of the comparison TUI, and at 13 s only the first of three files was visible. A bounded, sticky-header box plus incremental rendering keeps the stream readable and cuts the per-delta work.
+The streaming box had no height bound and re-parsed plus re-rendered the whole body on every delta, with a per-delta `structuredClone` over every hunk — about 3x the CPU of the comparison TUI, and at 13 s only the first of three files was visible. A bounded, sticky-header box plus incremental, clone-free rendering keeps the stream readable and cuts the per-delta work.
 
 ### Why an extension could not handle it
 

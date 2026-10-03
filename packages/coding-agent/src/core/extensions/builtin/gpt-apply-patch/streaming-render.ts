@@ -39,8 +39,13 @@ function hunkChangeCounts(hunk: ParsedPatch): { added: number; removed: number }
 	let added = 0;
 	let removed = 0;
 	for (const chunk of hunk.chunks) {
+		// oldLines and newLines both include unchanged context lines; a line present in both is
+		// context, not an add or a remove, so the header's (+a -d) reflects real changes only.
 		removed += chunk.oldLines.length;
 		added += chunk.newLines.length;
+		const contextCount = chunk.oldLines.filter((line, i) => chunk.newLines[i] === line).length;
+		removed -= contextCount;
+		added -= contextCount;
 	}
 	return { added, removed };
 }
@@ -64,7 +69,7 @@ function formatStreamingHunks(hunks: readonly ParsedPatch[], partialLine: string
 	}
 	// The in-flight, not-yet-newline-terminated line renders dimmed as the last row.
 	const partial = partialLine.trim();
-	if (partial.length > 0) blocks.push(`  ${partial}▌`);
+	if (partial.length > 0) blocks.push(`  ${partial}`);
 	return blocks.join("\n");
 }
 
@@ -93,16 +98,20 @@ function updateStreamingState(input: string, state: ApplyPatchRenderState): read
 	return state.streamingHunks ?? [];
 }
 
-function renderBox(title: string, body: string, theme: ApplyPatchTheme): Container {
+function renderBox(title: string, body: string, theme: ApplyPatchTheme, dimLastLine: boolean): Container {
 	const component = new Container();
 	const box = new Box(1, 1, (text: string) => theme.bg("toolPendingBg", text));
 	box.addChild(new Text(theme.fg("toolTitle", theme.bold(title)), 0, 0));
 	box.addChild(new Spacer(1));
+	const lines = body.split("\n");
 	box.addChild(
 		new Text(
-			body
-				.split("\n")
-				.map((line) => renderPatchLine(line, theme))
+			lines
+				.map((line, index) =>
+					dimLastLine && index === lines.length - 1
+						? theme.fg("toolDiffContext", line)
+						: renderPatchLine(line, theme),
+				)
 				.join("\n"),
 			0,
 			0,
@@ -110,6 +119,25 @@ function renderBox(title: string, body: string, theme: ApplyPatchTheme): Contain
 	);
 	component.addChild(box);
 	return component;
+}
+
+// A no-change delta keeps the already-rendered body; the component renders it on demand so the
+// box persists across a redraw without a rebuild.
+class MemoizedStreamingBox extends Container {
+	private built: Container | undefined;
+	private readonly body: string;
+	private readonly hasPartial: boolean;
+	private readonly theme: ApplyPatchTheme;
+	constructor(body: string, hasPartial: boolean, theme: ApplyPatchTheme) {
+		super();
+		this.body = body;
+		this.hasPartial = hasPartial;
+		this.theme = theme;
+	}
+	override render(width: number): string[] {
+		this.built ??= renderBox("Applying patch", this.body, this.theme, this.hasPartial);
+		return this.built.render(width);
+	}
 }
 
 export function renderStreamingPatchCall(
@@ -120,18 +148,20 @@ export function renderStreamingPatchCall(
 	const input = normalizeApplyPatchArguments(args).input;
 	if (!input) return undefined;
 	const hunks = updateStreamingState(input, state);
-	if (state.streamingError) return renderBox("Invalid patch stream", state.streamingError, theme);
+	if (state.streamingError) return renderBox("Invalid patch stream", state.streamingError, theme, false);
 	if (hunks.length > 0) {
 		const partialLine = state.streamingParser?.getPartialLine?.() ?? "";
 		const body = formatStreamingHunks(hunks, partialLine);
-		// Skip the rebuild when nothing the box would show has changed since the last render.
+		const hasPartial = partialLine.trim().length > 0;
+		// A no-change delta keeps the already-rendered box instead of rebuilding it; the box must
+		// still render (returning undefined here would blank the preview on any redraw).
 		if (body === state.streamingLastRenderKey && state.streamingLastRenderKey !== undefined) {
-			return undefined;
+			return new MemoizedStreamingBox(body, hasPartial, theme);
 		}
 		state.streamingLastRenderKey = body;
-		return renderBox("Applying patch", body, theme);
+		return renderBox("Applying patch", body, theme, hasPartial);
 	}
 	const paths = extractPatchedPaths(input);
 	if (paths.length === 0) return undefined;
-	return renderBox("Applying patch", paths.map((filePath) => `• ${filePath}`).join("\n"), theme);
+	return renderBox("Applying patch", paths.map((filePath) => `• ${filePath}`).join("\n"), theme, false);
 }

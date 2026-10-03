@@ -46,14 +46,31 @@ describe("apply_patch streaming render is bounded and incremental", () => {
 		expect(out).toContain("• Added src/a.ts (+3 -0)");
 	});
 
-	test("a delta that changes nothing skips the rebuild (returns no new component)", () => {
+	test("an update hunk's header counts only real changes, not context lines", () => {
+		const state: ApplyPatchRenderState = {};
+		const input = [
+			"*** Begin Patch",
+			"*** Update File: src/a.ts",
+			"@@ context1",
+			" context1",
+			"-old line",
+			"+new line",
+			" context2",
+			"*** End Patch",
+		].join("\n");
+		const out = render(renderStreamingPatchCall({ input }, THEME, state));
+		// One real change (one removed, one added); the two context lines are not counted.
+		expect(out).toContain("• Edited src/a.ts (+1 -1)");
+	});
+
+	test("a delta that changes nothing keeps the rendered box instead of blanking it", () => {
 		const state: ApplyPatchRenderState = {};
 		const input = patchFor([{ path: "src/a.ts", body: "+one" }]);
-		const first = renderStreamingPatchCall({ input }, THEME, state);
-		expect(first).toBeDefined();
-		// Same input again: no new text, so no new component.
-		const second = renderStreamingPatchCall({ input }, THEME, state);
-		expect(second).toBeUndefined();
+		const first = render(renderStreamingPatchCall({ input }, THEME, state));
+		expect(first).toContain("• Added src/a.ts");
+		// Same input again: the box still renders (a redraw must not blank the preview).
+		const second = render(renderStreamingPatchCall({ input }, THEME, state));
+		expect(second).toContain("• Added src/a.ts");
 	});
 
 	test("an in-flight partial line renders as the last dimmed row", () => {
