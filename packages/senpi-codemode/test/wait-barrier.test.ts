@@ -49,9 +49,15 @@ describe("wait() barrier over the handle registry", () => {
 	it("wait-atomic-subscribe-and-epoch-fence: a settle during watch() setup is seen once and a successor epoch is never followed", async () => {
 		const { host, wait, call } = fixture();
 		const a = host.spawn("agent");
+		const b = host.spawn("agent");
+		// A settles while watch() is still assembling `initial`: it shows up terminal there AND once in updates.
 		host.watchSetupHook = () => host.settle(a.id, "early");
-		await expect(wait([a])).resolves.toEqual(["early"]);
-		expect(host.calls.filter((entry) => entry.op === "result")).toHaveLength(1);
+		const pending = wait([a, b]);
+		await vi.waitFor(() => expect(host.calls.filter((entry) => entry.op === "watch")).toHaveLength(1));
+		host.settle(b.id, "later");
+		await expect(pending).resolves.toEqual(["early", "later"]);
+		const fetched = host.calls.filter((entry) => entry.op === "result").map((entry) => entry.refs[0]?.id);
+		expect(fetched).toEqual([a.id, b.id]);
 
 		const successor = host.resume(a.id);
 		await expect(wait([a])).rejects.toMatchObject({ code: "eval_handle_stale" });

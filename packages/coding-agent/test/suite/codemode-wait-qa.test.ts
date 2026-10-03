@@ -92,16 +92,20 @@ async function runEvalTurn(harness: Harness, code: string): Promise<string> {
 describe("codemode wait() QA over the fake EvalHandleHost", () => {
 	it("happy: two agent handles waited in input order even though the second child finishes first", async () => {
 		const host = new FakeEvalHandleHost({ ownerSessionId: "qa" });
-		// Settle only once both children exist: B first, then A, so input order is what the result proves.
+		// The children settle only after wait() has subscribed, B first and then A, so the barrier is
+		// really parked and input order is what the result proves.
+		const spawned: string[] = [];
+		host.watchSetupHook = () => {
+			const [a, b] = spawned;
+			if (a === undefined || b === undefined) return;
+			setTimeout(() => {
+				host.settle(b, "valueB");
+				host.settle(a, "valueA");
+			}, 0);
+		};
 		const harness = await createQaHarness(
 			taskOwnerExtension(host, (ids) => {
-				if (ids.length !== 2) return;
-				const [a, b] = ids;
-				if (a === undefined || b === undefined) return;
-				setTimeout(() => {
-					host.settle(b, "valueB");
-					host.settle(a, "valueA");
-				}, 0);
+				spawned.splice(0, spawned.length, ...ids);
 			}),
 		);
 		try {

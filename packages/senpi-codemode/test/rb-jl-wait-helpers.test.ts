@@ -123,6 +123,7 @@ describe.skipIf(!has("ruby"))("Ruby wait()/handle() helpers", () => {
 					expect(pauseResumeCounts(messages)).toEqual([3, 3]);
 					const bad = await kernel.run({ cellId: "bad", code: "wait([{ 'id' => 'st_x' }])", timeoutMs: 10_000 });
 					expect(bad.ok).toBe(false);
+					if (!bad.ok) expect(bad.error.message).toMatch(/handle\(\) expects/u);
 				} finally {
 					await kernel.close();
 				}

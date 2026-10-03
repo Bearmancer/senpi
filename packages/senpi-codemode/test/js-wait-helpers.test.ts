@@ -153,13 +153,13 @@ return { text, handle: h.handle, keys: Object.keys(h), hasControl: typeof h.cont
 
 	it("rejects malformed handles and options before any bridge call", async () => {
 		await withJavaScriptKernel(async (kernel) => {
-			for (const code of [
-				"await wait([{ id: 'st_x' }])",
-				"await wait([{ kind: 'agent', id: 'st_x', run_epoch: -1 }])",
-				"await wait([], { mode: 'sometimes' })",
-				"await wait([], { timeout: Infinity })",
-				"handle('agent://st_x')",
-			]) {
+			for (const [code, reason] of [
+				["await wait([{ id: 'st_x' }])", /handle\(\) expects/u],
+				["await wait([{ kind: 'agent', id: 'st_x', run_epoch: -1 }])", /run_epoch must be a non-negative integer/u],
+				["await wait([], { mode: 'sometimes' })", /mode must be/u],
+				["await wait([], { timeout: Infinity })", /timeout must be a finite number/u],
+				["handle('agent://st_x')", /handle\(\) expects/u],
+			] as const) {
 				const messages: KernelToHostMessage[] = [];
 				const result = await kernel.run({
 					cellId: `bad-${crypto.randomUUID()}`,
@@ -168,6 +168,7 @@ return { text, handle: h.handle, keys: Object.keys(h), hasControl: typeof h.cont
 					onMessage: (m) => messages.push(m),
 				});
 				expect(result.ok, code).toBe(false);
+				if (!result.ok) expect(result.error.message, code).toMatch(reason);
 				expect(
 					messages.some((m) => m.type === "tool-call"),
 					code,

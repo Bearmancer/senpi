@@ -186,15 +186,19 @@ describe.skipIf(!(await hasPython3()))("Python wait()/handle() helpers", () => {
 		await withPythonBridge(
 			() => "unused",
 			async (kernel, calls) => {
-				for (const code of [
-					"wait([{'id': 'st_x'}])",
-					"wait([{'kind': 'agent', 'id': 'st_x', 'run_epoch': -1}])",
-					"wait([], mode='sometimes')",
-					"wait([], timeout=float('inf'))",
-					"handle('agent://st_x')",
-				]) {
+				for (const [code, reason] of [
+					["wait([{'id': 'st_x'}])", /handle\(\) expects/u],
+					[
+						"wait([{'kind': 'agent', 'id': 'st_x', 'run_epoch': -1}])",
+						/run_epoch must be a non-negative integer/u,
+					],
+					["wait([], mode='sometimes')", /mode must be/u],
+					["wait([], timeout=float('inf'))", /timeout must be a finite number/u],
+					["handle('agent://st_x')", /handle\(\) expects/u],
+				] as const) {
 					const result = await runCell(kernel, code);
 					expect(result.ok, code).toBe(false);
+					if (!result.ok) expect(result.error.message, code).toMatch(reason);
 				}
 				expect(calls).toEqual([]);
 			},
