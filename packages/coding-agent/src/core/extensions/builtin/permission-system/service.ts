@@ -1,3 +1,4 @@
+import { isPresetRule } from "./config.ts";
 import { evaluate } from "./evaluate.ts";
 import { createLocalEventEmitter, type PermissionEventEmitter } from "./events.ts";
 import {
@@ -57,7 +58,7 @@ export class PermissionService {
 				continue;
 			}
 
-			const approvedAsk = autoApproveAsk || (approveBlanketAsk && rule.pattern === "*");
+			const approvedAsk = autoApproveAsk || (approveBlanketAsk && isPresetRule(rule));
 			if ((rule.action === "ask" && !approvedAsk) || requireApproval) {
 				needsAsk = true;
 			}

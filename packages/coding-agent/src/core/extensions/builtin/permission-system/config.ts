@@ -82,8 +82,19 @@ export function fromConfig(config: PermissionConfig): Ruleset {
 	return rules;
 }
 
+const presetRules = new WeakSet<Rule>();
+
 export function rulesForPreset(preset: PermissionPresetName): Ruleset {
-	return PERMISSION_PRESET_RULES[preset].map((rule) => ({ ...rule }));
+	return PERMISSION_PRESET_RULES[preset].map((rule) => {
+		const copy = { ...rule };
+		presetRules.add(copy);
+		return copy;
+	});
+}
+
+/** True only for a rule object produced by `rulesForPreset`, never for a user's identical rule. */
+export function isPresetRule(rule: Rule): boolean {
+	return presetRules.has(rule);
 }
 
 export function merge(...rulesets: Ruleset[]): Ruleset {

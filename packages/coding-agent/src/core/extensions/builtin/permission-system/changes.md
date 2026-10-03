@@ -1,5 +1,22 @@
 # Permission System Builtin Extension
 
+## 2026-10-03 - Auto preset review fixes: attached option values, resolved credentials, user rule precedence
+
+### What changed
+
+- `auto-policy.ts`: a short-option word is checked at every tail that could be an attached value (`sort -o/x`, `-ro/x`, `cp -t/dir`, `make -C/dir -f/file -I/dir`, `unittest -s/dir`), the same as a separate argument. Credential checks run on the symlink-resolved target as well as the name, for shell arguments and for every path permission request (`read`, `edit`, `list`, `grep`, `external_directory`). An outside read is approved only when it resolves to no credential; outside `grep` only for a single regular file (the grep tool searches hidden files by default).
+- `auto-credentials.ts`: adds agent `auth.json`, `.credentials.json`, `credentials.toml`, `.envrc`, `.terraformrc` and `credentials.tfrc.json`, shell history files, and `.m2/settings.xml`.
+- `config.ts` + `service.ts`: `rulesForPreset` marks its rule objects (`isPresetRule`), and the judge's approval applies only to an ask that came from the preset's own rule, so a user's `bash=ask` or `external_directory=ask` after `auto` keeps asking.
+- `auto-program-rules.ts`: `READ_ONLY_PROGRAMS` renamed `FILE_UTILITY_PROGRAMS` (it includes `mkdir`, `touch`, `cp`, `mv`).
+
+### Why
+
+- Review of record on #2614 found that attached option values and project symlinks to credentials bypassed the checks, and that the judge overrode a user's blanket ask rule.
+
+### Must not break
+
+- A user's rule always wins over the judge: deny, pattern-specific ask and blanket ask. `isPresetRule` relies on the preset's rule objects reaching `evaluate` unchanged (`merge` and the service only copy the array).
+
 ## 2026-10-03 - A failed permission setup blocks tools instead of skipping checks (#2617)
 
 ### What changed

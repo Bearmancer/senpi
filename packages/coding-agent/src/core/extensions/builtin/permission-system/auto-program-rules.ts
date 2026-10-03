@@ -138,7 +138,7 @@ const rmRule: ProgramRule = (words) => {
 	);
 };
 
-const READ_ONLY_PROGRAMS = [
+const FILE_UTILITY_PROGRAMS = [
 	"ls",
 	"cat",
 	"head",
@@ -197,7 +197,7 @@ const BUILD_TOOLS = [
 ];
 
 export const PROGRAM_RULES: ReadonlyMap<string, ProgramRule> = new Map<string, ProgramRule>([
-	...READ_ONLY_PROGRAMS.map((name) => [name, always] as const),
+	...FILE_UTILITY_PROGRAMS.map((name) => [name, always] as const),
 	...BUILD_TOOLS.map((name) => [name, always] as const),
 	["rg", (args) => !args.some((arg) => arg.text === "--pre" || arg.text.startsWith("--pre="))],
 	["sort", (args) => !args.some((arg) => arg.text.startsWith("--compress-program"))],

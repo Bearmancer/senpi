@@ -1,5 +1,5 @@
-import { readFile, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { mkdir, readFile, symlink, writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { createPermissionP0Host } from "./permission-p0-host.ts";
 
@@ -8,8 +8,8 @@ afterEach(async () => {
 	for (const dispose of disposers.splice(0).reverse()) await dispose();
 });
 
-async function host() {
-	const created = await createPermissionP0Host();
+async function host(permissionFlag?: string) {
+	const created = await createPermissionP0Host([], permissionFlag);
 	disposers.push(created.dispose);
 	return created;
 }
@@ -86,6 +86,58 @@ describe("auto permission preset in a real host session", () => {
 		});
 		expect(result.approvals.length).toBeGreaterThan(0);
 		expect(await readFile(session.outsidePath, "utf8")).toBe("private outside content\n");
+	});
+
+	it("asks before an attached option value writes outside the project", async () => {
+		// Given a project file and a command that names its output file inside the flag.
+		const session = await host();
+		await writeFile(join(session.cwd, "payload.txt"), "project content\n");
+		// When the agent sorts into the outside file.
+		const result = await session.run("auto", {
+			name: "bash",
+			args: { command: `sort -o${session.outsidePath} payload.txt` },
+		});
+		// Then it is asked, and the denied command leaves the outside file untouched.
+		expect(result.approvals).toHaveLength(1);
+		expect(await readFile(session.outsidePath, "utf8")).toBe("private outside content\n");
+	});
+
+	it("asks before reading an outside key through a project symlink", async () => {
+		// Given a project file that is a symlink to an outside private key.
+		const session = await host();
+		const key = join(dirname(session.outsidePath), ".ssh", "id_rsa");
+		await mkdir(dirname(key), { recursive: true });
+		await writeFile(key, "PRIVATE-KEY-MATERIAL\n");
+		await symlink(key, join(session.cwd, "innocent-key"));
+		// When the agent reads the symlink.
+		const result = await session.run("auto", { name: "read", args: { path: join(session.cwd, "innocent-key") } });
+		// Then it is asked and the key stays out of the transcript.
+		expect(result.approvals.length).toBeGreaterThan(0);
+		expect(JSON.stringify(result.result ?? "")).not.toContain("PRIVATE-KEY-MATERIAL");
+	});
+
+	it("asks before reading the engine's own token store outside the project", async () => {
+		const session = await host();
+		const authFile = join(dirname(session.outsidePath), "agent", "auth.json");
+		await writeFile(authFile, '{"token":"OAUTH-SECRET"}');
+		const result = await session.run("auto", { name: "read", args: { path: authFile } });
+		expect(result.approvals.length).toBeGreaterThan(0);
+		expect(JSON.stringify(result.result ?? "")).not.toContain("OAUTH-SECRET");
+	});
+
+	it("keeps asking for commands when the user adds bash=ask after the auto preset", async () => {
+		// Given the user's own blanket rule placed after the preset.
+		const session = await host("bash=ask");
+		// When the agent runs a command the judge would allow.
+		const result = await session.run("auto", { name: "bash", args: { command: "echo user-rule" } });
+		// Then the user's rule wins.
+		expect(result.approvals).toHaveLength(1);
+	});
+
+	it("keeps asking for outside reads when the user adds external_directory=ask", async () => {
+		const session = await host("external_directory=ask");
+		const result = await session.run("auto", { name: "read", args: { path: session.outsidePath } });
+		expect(result.approvals.length).toBeGreaterThan(0);
 	});
 
 	it("keeps asking for every command under accept-edits", async () => {

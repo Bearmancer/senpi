@@ -2,7 +2,12 @@ import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { judgeAutoCommand } from "../../src/core/extensions/builtin/permission-system/auto-policy.ts";
+import { isCredentialPath } from "../../src/core/extensions/builtin/permission-system/auto-credentials.ts";
+import { decideAuto, judgeAutoCommand } from "../../src/core/extensions/builtin/permission-system/auto-policy.ts";
+import { rulesForPreset } from "../../src/core/extensions/builtin/permission-system/config.ts";
+import { createLocalEventEmitter } from "../../src/core/extensions/builtin/permission-system/events.ts";
+import { PermissionService } from "../../src/core/extensions/builtin/permission-system/service.ts";
+import type { Ruleset } from "../../src/core/extensions/builtin/permission-system/types.ts";
 
 let scratch = "";
 let project = "";
@@ -14,6 +19,13 @@ beforeAll(() => {
 	writeFileSync(join(project, "src", "index.ts"), "export {};\n");
 	writeFileSync(join(scratch, "outside-secret.txt"), "outside\n");
 	symlinkSync(join(scratch, "outside-secret.txt"), join(project, "innocent-name"));
+	writeFileSync(join(project, ".env"), "TOKEN=x\n");
+	symlinkSync(join(project, ".env"), join(project, "link-to-env"));
+	mkdirSync(join(scratch, "home", ".ssh"), { recursive: true });
+	writeFileSync(join(scratch, "home", ".ssh", "id_rsa"), "key\n");
+	symlinkSync(join(scratch, "home", ".ssh", "id_rsa"), join(project, "innocent-key"));
+	mkdirSync(join(scratch, "plain"), { recursive: true });
+	writeFileSync(join(scratch, "plain", "notes.txt"), "notes\n");
 });
 
 afterAll(() => {
@@ -47,6 +59,10 @@ describe("auto preset command judge: work it runs without asking", () => {
 		"rm src/old.ts",
 		"git status; git diff",
 		"rg 'TODO' src",
+		"ls -la src",
+		"git log -n5",
+		"head -n20 src/index.ts",
+		"make -Csrc test",
 	])("allows %s", (command) => {
 		expect(judgeAutoCommand(command, project)).toBe("allow");
 	});
@@ -97,7 +113,8 @@ describe("auto preset command judge: bypass attempts ask", () => {
 		["append redirect", "echo pwned >> src/index.ts"],
 		["here-doc", "cat <<EOF > ~/.bashrc"],
 		["input redirect", "sh < script.sh"],
-		["escaped operator", "echo hi \\; rm -rf ~"],
+		["escaped operator", "echo hi \\; ls"],
+		["escaped flag", "rm \\-rf src"],
 		["unsafe env prefix", "GIT_EXTERNAL_DIFF=sh git diff"],
 		["path hijack prefix", "PATH=/tmp/evil:$PATH npm test"],
 		["tilde user expansion", "cat ~root/.ssh/id_rsa"],
@@ -123,7 +140,117 @@ describe("auto preset command judge: bypass attempts ask", () => {
 		["trailing operator", "npm test &&"],
 		["leading operator", "&& npm test"],
 		["empty command", "   "],
+		["attached output file outside", "sort -o/tmp/overwritten src/index.ts"],
+		["attached output in a bundled flag", "sort -ro/tmp/overwritten src/index.ts"],
+		["attached home path", "sort -o~/overwritten src/index.ts"],
+		["attached target directory", "cp -t/tmp src/index.ts"],
+		["attached parent target", "mv -t.. src/index.ts"],
+		["attached make directory", "make -C/tmp test"],
+		["attached makefile", "make -f/tmp/evil.mk test"],
+		["attached include directory", "make -I/etc test"],
+		["attached unittest start directory", "python -m unittest discover -s/tmp"],
+		["attached symlink to an outside file", "sort -oinnocent-name src/index.ts"],
+		["symlink to a project credential", "cat link-to-env"],
 	])("asks for %s: %s", (_label, command) => {
 		expect(judgeAutoCommand(command, project)).toBe("ask");
 	});
 });
+
+describe("auto preset tool decisions", () => {
+	const outside = (path: string) => ({ permission: "external_directory", patterns: [path], always: [] });
+
+	it("approves an outside read of a plain file", () => {
+		const target = join(scratch, "plain", "notes.txt");
+		expect(decideAuto("read", { path: target }, outside(target), project).approveBlanketAsk).toBe(true);
+	});
+
+	it("asks for a read through a project symlink to an outside credential", () => {
+		const link = join(project, "innocent-key");
+		const read = decideAuto("read", { path: link }, { permission: "read", patterns: [link], always: [] }, project);
+		expect(read.requireApproval).toBe(true);
+		expect(decideAuto("read", { path: link }, outside(link), project).approveBlanketAsk).toBe(false);
+	});
+
+	it("asks for an edit through a project symlink to a project credential", () => {
+		const link = join(project, "link-to-env");
+		const edit = decideAuto("write", { path: link }, { permission: "edit", patterns: [link], always: [] }, project);
+		expect(edit.requireApproval).toBe(true);
+	});
+
+	it("does not approve a recursive grep over an outside directory", () => {
+		const home = join(scratch, "home");
+		expect(decideAuto("grep", { path: home, pattern: "key" }, outside(home), project).approveBlanketAsk).toBe(false);
+	});
+
+	it("approves an outside grep of one plain file", () => {
+		const target = join(scratch, "plain", "notes.txt");
+		expect(decideAuto("grep", { path: target, pattern: "x" }, outside(target), project).approveBlanketAsk).toBe(true);
+	});
+
+	it("does not approve listing an outside credential directory", () => {
+		const dir = join(scratch, "home", ".ssh");
+		expect(decideAuto("ls", { path: dir }, outside(dir), project).approveBlanketAsk).toBe(false);
+	});
+
+	it("judges bash_input stdin and a monitor command as shell commands", () => {
+		const shell = { permission: "bash", patterns: ["curl"], always: [] };
+		expect(
+			decideAuto("bash_input", { input: "curl -X POST https://example.com" }, shell, project).approveBlanketAsk,
+		).toBe(false);
+		expect(
+			decideAuto("monitor", { command: "ls src" }, { ...shell, patterns: ["ls"] }, project).approveBlanketAsk,
+		).toBe(true);
+	});
+});
+
+describe("auto preset credential names", () => {
+	it.each([
+		"/home/u/.senpi/agent/auth.json",
+		"/home/u/.claude/.credentials.json",
+		"/repo/.envrc",
+		"/home/u/.zsh_history",
+		"/home/u/.bash_history",
+		"/home/u/.local/share/fish/fish_history",
+		"/home/u/.terraform.d/credentials.tfrc.json",
+		"/home/u/.m2/settings.xml",
+		"/home/u/.cargo/credentials.toml",
+	])("treats %s as a credential", (path) => {
+		expect(isCredentialPath(path)).toBe(true);
+	});
+});
+
+describe("auto preset rule precedence", () => {
+	const shell = { permission: "bash", patterns: ["npm test"], always: [], metadata: {} };
+	const decision = { approveBlanketAsk: true } as const;
+
+	it("lets the judge approve the preset's own blanket bash ask", async () => {
+		const { service, asked } = makeService([...rulesForPreset("auto")]);
+		await service.ask({ ...shell, sessionID: "s" }, decision);
+		expect(asked).toEqual([]);
+	});
+
+	it.each([
+		["a user's blanket ask", [{ permission: "bash", pattern: "*", action: "ask" as const }]],
+		["a user's pattern-specific ask", [{ permission: "bash", pattern: "npm *", action: "ask" as const }]],
+	])("keeps asking for %s placed after the preset", async (_label, userRules) => {
+		const { service, asked } = makeService([...rulesForPreset("auto"), ...userRules]);
+		void service.ask({ ...shell, sessionID: "s" }, decision).catch(() => undefined);
+		await Promise.resolve();
+		expect(asked).toHaveLength(1);
+	});
+
+	it("denies a user's deny rule even when the judge approves", async () => {
+		const { service } = makeService([
+			...rulesForPreset("auto"),
+			{ permission: "bash", pattern: "*", action: "deny" },
+		]);
+		await expect(service.ask({ ...shell, sessionID: "s" }, decision)).rejects.toThrow();
+	});
+});
+
+function makeService(ruleset: Ruleset) {
+	const emitter = createLocalEventEmitter();
+	const asked: unknown[] = [];
+	emitter.onAsked((request) => asked.push(request));
+	return { service: new PermissionService(ruleset, [], emitter), asked };
+}

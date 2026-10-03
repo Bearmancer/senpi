@@ -1,3 +1,4 @@
+import { lstatSync } from "node:fs";
 import * as path from "node:path";
 import { realpathWithoutOpen } from "../../../../utils/paths.ts";
 import { isCredentialPath } from "./auto-credentials.ts";
@@ -16,23 +17,55 @@ export interface AutoDecision {
 
 const SAFE_ENV_ASSIGNMENT = /^(CI|NODE_ENV|FORCE_COLOR|NO_COLOR|DEBUG|RUST_BACKTRACE|RUST_LOG|TZ|LANG|LC_ALL)=[^/]*$/;
 const SHELL_COMMAND_TOOLS = new Set(["bash", "bash_input"]);
-const READ_TOOLS = new Set(["read", "grep", "find", "ls"]);
+const PATH_PERMISSIONS = new Set(["read", "edit", "list", "grep", "external_directory"]);
 const NONE: AutoDecision = { approveBlanketAsk: false, requireApproval: false };
 
+/**
+ * Every reading of a word that could name a file: the word itself, the value after `=`, and for a
+ * short-option word every tail that could be an attached value (`-o/x`, `-ro/x`, `-Cdir`), since
+ * which letter takes a value is program-specific.
+ */
 function pathCandidates(word: string): string[] {
+	const candidates = new Set<string>();
 	const separator = word.indexOf("=");
-	return separator > 0 ? [word, word.slice(separator + 1)] : [word];
+	if (separator > 0) candidates.add(word.slice(separator + 1));
+	if (word.startsWith("-")) {
+		if (!word.startsWith("--")) {
+			for (let index = 2; index < word.length; index += 1) candidates.add(word.slice(index));
+		}
+	} else {
+		candidates.add(word);
+	}
+	return [...candidates].filter((candidate) => candidate !== "" && candidate !== "-");
 }
+
+const resolvesToCredential = (target: string, dir: string): boolean =>
+	isCredentialPath(target) || isCredentialPath(realpathWithoutOpen(path.resolve(dir, expandHome(target))));
 
 function touchesOutsideOrCredential(word: ShellWord, dir: string): boolean {
 	if (word.hasGlob) return true;
-	return pathCandidates(word.text).some((candidate) => {
-		if (candidate === "" || candidate === "-") return false;
-		if (isCredentialPath(candidate)) return true;
-		if (candidate.startsWith("-")) return false;
-		const absolute = path.resolve(dir, expandHome(candidate));
-		return isExternalPath(absolute, dir) || isCredentialPath(realpathWithoutOpen(absolute));
-	});
+	if (isCredentialPath(word.text)) return true;
+	return pathCandidates(word.text).some(
+		(candidate) =>
+			resolvesToCredential(candidate, dir) || isExternalPath(path.resolve(dir, expandHome(candidate)), dir),
+	);
+}
+
+const isRegularFile = (target: string): boolean => {
+	try {
+		return lstatSync(realpathWithoutOpen(target)).isFile();
+	} catch {
+		return false;
+	}
+};
+
+/** An outside location the agent may read unasked: never a credential, and grep only one file. */
+function isApprovableOutsideRead(toolName: string, target: string, cwd: string): boolean {
+	if (resolvesToCredential(target, cwd)) return false;
+	const absolute = path.resolve(cwd, expandHome(target));
+	if (toolName === "read") return true;
+	if (toolName === "grep") return isRegularFile(absolute);
+	return toolName === "find" || toolName === "ls";
 }
 
 /**
@@ -70,7 +103,10 @@ export function decideAuto(
 	request: PermissionRequest,
 	cwd: string,
 ): AutoDecision {
-	if (request.patterns.some((pattern) => isCredentialPath(pattern))) {
+	if (
+		PATH_PERMISSIONS.has(request.permission) &&
+		request.patterns.some((pattern) => resolvesToCredential(pattern, cwd))
+	) {
 		return { approveBlanketAsk: false, requireApproval: true };
 	}
 	const command =
@@ -80,8 +116,11 @@ export function decideAuto(
 	if (isShellCommand && request.permission === "bash" && command !== undefined) {
 		return { approveBlanketAsk: judgeAutoCommand(command, cwd) === "allow", requireApproval: false };
 	}
-	if (READ_TOOLS.has(toolName) && request.permission === "external_directory") {
-		return { approveBlanketAsk: true, requireApproval: false };
+	if (request.permission === "external_directory") {
+		return {
+			approveBlanketAsk: request.patterns.every((pattern) => isApprovableOutsideRead(toolName, pattern, cwd)),
+			requireApproval: false,
+		};
 	}
 	return NONE;
 }
