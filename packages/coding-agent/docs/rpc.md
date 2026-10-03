@@ -548,9 +548,13 @@ which prints the bare socket path).
   - `shard`: `{ kind: "p" | "i", key }` when the socket's basename is `<kind>-<16 hex>.sock` (the naming
     contract below), else `null`.
   - `session_rows`: under `--include-workers` only (else `[]`), every row of that same `list_sessions
-    { include_workers: true }` reply as `{ id, kind, session_path, cwd, name, attachments, context }`. `session_path` is
+    { include_workers: true }` reply as `{ id, kind, session_path, cwd, name, attachments, context, memory }`. `session_path` is
     the host's canonical path, the key a client matches a session by; `context` is the published labels
-    including the host's own `host_socket`/`host_instance`, `null` where none were published.
+    including the host's own `host_socket`/`host_instance`, `null` where none were published. `memory` is the
+    per-session heap split the host published on the listing, as `{ main_heap_mb, kernel_heap_mb, kernel_count }`:
+    the host's main-thread heap (the same host-wide number on every row), the sum of this session's kernel
+    heaps, and how many kernels that is. All three are `0` for a session holding no kernel, and for every row
+    of a host released before the field - never `null`.
   - `claims_live`: session-path claims in `reservations/` whose owner process is still running, `0` when the
     directory is absent.
   - `claims`: under `--include-workers` only (else `[]`), every claim in `reservations/` whichever generation
@@ -1254,9 +1258,18 @@ REPORT: nothing here aborts a turn, kills a session, or refuses an `open_session
   decides: it keeps counting memory the host already returned (after a collection or an eval kernel reset it stayed
   at gigabytes while the footprint was back near 150 MB, senpi#2261). Above `SENPI_RPC_HOST_RSS_WARN_MB` (default 4096,
   compared with the footprint despite its name) it broadcasts `host_memory_pressure`
-  (`{ type, rssMb, footprintMb, measure, sessions }`) on every sample, writes one stderr line per five minutes naming
+  (`{ type, rssMb, footprintMb, measure, sessions, main, kernels }`) on every sample, writes one stderr line per five minutes naming
   both numbers, and HALVES the idle-eviction window above while the host stays above the threshold, so idle sessions
-  return their memory sooner. It is released as soon as the footprint falls back under the threshold. Memory never refuses an open: the
+  return their memory sooner. `main` is `{ heapBytes }`, the host's main-thread heap in bytes (`bun:jsc heapSize()` when
+  the runtime offers it, else `process.memoryUsage().heapUsed` - on Bun that counts the main thread only, never a kernel
+  worker's heap, which is also why the loop-lag watchdog's `heapDeltaMb` is a main-thread figure). `kernels` lists every
+  live kernel as `{ sessionId, language, liveBytes, measure }`, so the record names which sessions own the pressure:
+  `measure: "heap"` for a JS kernel's own estimate, `"footprint"` for an interpreter process's footprint; a kernel
+  without a reading yet reports `liveBytes: 0`, and one that crashed between samples is absent rather than repeated
+  with a stale number. `list_sessions` rows carry the same split per session as `memory`
+  (`{ main_heap_bytes, kernel_heap_bytes, kernel_count }`, zeros for a session holding no kernel), which is what
+  `host status --all --include-workers --json` reports as `{ main_heap_mb, kernel_heap_mb, kernel_count }` on
+  `session_rows`. It is released as soon as the footprint falls back under the threshold. Memory never refuses an open: the
   host has no resource caps, so every `open_session` is admitted whatever the host holds (#2207). Hosts released
   before #2207 had a second admission watermark; current hosts have no such admission path.
 - **Per-endpoint pressure under sharding**: an agent directory may contain many independent hosts, so each endpoint

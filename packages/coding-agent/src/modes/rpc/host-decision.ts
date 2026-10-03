@@ -217,12 +217,29 @@ function supersedes(client: HostDecisionClient, host: HostProtocolInfo): boolean
 function profileWarning(client: HostDecisionClient, host: HostProtocolInfo): HostDecisionWarning | undefined {
 	if (client.launchProfile === undefined || host.launch_profile === undefined) return "profile_mismatch_attached";
 	if (client.launchProfile.profile_id === host.launch_profile.profile_id) return undefined;
-	return covers(client.launchProfile, host.launch_profile) ? "profile_mismatch_attached" : "profile_narrower_attached";
+	const clientCoversHost = covers(client.launchProfile, host.launch_profile);
+	// The same plugin set installed under another root differs only in path: nothing to warn about.
+	if (clientCoversHost && covers(host.launch_profile, client.launchProfile)) return undefined;
+	return clientCoversHost ? "profile_mismatch_attached" : "profile_narrower_attached";
 }
 
+/**
+ * The role of a launch-profile extension: the engine plugin's files are identified from the last
+ * `plugin` path segment on (`plugin`, `plugin/extensions/<name>.js`), so two installs of the same
+ * plugin set under different roots (a runtime directory per build) name the same roles. Every other
+ * extension keeps its whole path: only the plugin's location is build-specific.
+ */
+function extensionRole(extension: string): string {
+	const segments = extension.split(/[\\/]+/);
+	const pluginAt = segments.lastIndexOf("plugin");
+	return pluginAt < 0 ? extension : segments.slice(pluginAt).join("/");
+}
+
+/** Profile compatibility only: runtime identity (`runtimeBuildId`, the engine ordinal) is decided elsewhere. */
 function covers(candidate: RpcLaunchProfile | undefined, running: RpcLaunchProfile | undefined): boolean {
 	if (candidate === undefined || running === undefined) return false;
-	return running.core.extensions.every((extension) => candidate.core.extensions.includes(extension));
+	const candidateRoles = new Set(candidate.core.extensions.map(extensionRole));
+	return running.core.extensions.every((extension) => candidateRoles.has(extensionRole(extension)));
 }
 
 /** True when both builds are the same released version and only their build epoch differs. */

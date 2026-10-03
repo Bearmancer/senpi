@@ -45,6 +45,12 @@ export interface TuiRenderCacheTotals {
 	readonly components: number;
 	readonly cachedLines: number;
 	readonly images: number;
+	/** Cards that finished and keep a retained \`result\` (senpi#1960). */
+	readonly finishedCards: number;
+	/** Byte cost of every live card's cached rendered lines (2 per code unit + 8 per array slot). */
+	readonly cachedLinesBytes: number;
+	/** Serialized size of the retained \`result\` over every finished card, computed once at finalize. */
+	readonly resultBytes: number;
 }
 
 interface MemoryReportState {

@@ -1,3 +1,21 @@
+## 2026-10-03 - Per-session memory split on the host pressure record (senpi#1960)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: `RpcHostMemoryPressureEvent` gains optional `main` (`{ heapBytes }`, the main-thread heap) and `kernels` (`RpcHostKernelMemory[]`: every live kernel's `sessionId`, `language`, `liveBytes` and `measure`), the shape the host reports on the pressure event and the session listing.
+
+### Why
+
+- A shared host's memory pressure says which session's kernel holds the memory, not just the process total.
+
+### Why an extension could not handle it
+
+- The RPC host's event and listing types are core protocol.
+
+### Expected merge conflict zones
+
+- LOW: `RpcHostMemoryPressureEvent` in `rpc-types.ts`.
+
 ## 2026-10-03 - Expose held model switches through RPC session state
 
 ### What changed
@@ -4821,3 +4839,21 @@ Upstream v1.0.0 (0c453048b) made the CLI reject a lone `--provider`, because the
 ### Expected merge conflict zones
 
 The provider/model argument block in `RpcClient.start()` if upstream changes how the client spawns the host.
+
+## 2026-10-03 - Host profile coverage compares plugin extensions by role
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-decision.ts`: `covers()` compares `core.extensions` by role instead of by absolute path. The engine plugin's entries are identified from the last `plugin` path segment on (`plugin`, `plugin/extensions/<name>.js`, either separator), and every other extension keeps its whole path. `profileWarning()` returns no warning when the client and host profiles cover each other, so two installs of the same plugin set under different roots no longer log `profile_mismatch_attached` on every ensure.
+
+### Why
+
+A runtime directory per build put the plugin under a different absolute path each time, so two builds of the same plugin set compared as different and a proper superset never counted as covering. Role coverage is profile compatibility only: the handoff still needs a STRICTLY newer engine ordinal (I2), an uncomparable build still attaches, and `covers()` still fails when the client lacks any extension role the host loads.
+
+### Why an extension could not handle it
+
+The host decision runs in the client before any session or extension exists; the comparison is owned by `decideHostAction`.
+
+### Expected merge conflict zones
+
+`covers()` and `profileWarning()` in `host-decision.ts`, and the profile rows in `test/suite/host-decision.test.ts`.

@@ -1367,7 +1367,15 @@ describe("ToolExecutionComponent parity", () => {
 describe("tool card render cache totals (#2561)", () => {
 	test("Given rendered tool cards when one is disposed then the memory report totals drop its lines and images", () => {
 		initTheme("dark");
-		const before = tuiRenderCacheTotals() ?? { components: 0, cachedLines: 0, images: 0 };
+		const emptyTotals = () => ({
+			components: 0,
+			cachedLines: 0,
+			images: 0,
+			finishedCards: 0,
+			cachedLinesBytes: 0,
+			resultBytes: 0,
+		});
+		const before = tuiRenderCacheTotals() ?? emptyTotals();
 		const text = new ToolExecutionComponent(
 			"custom_tool",
 			"cache-text",
@@ -1386,10 +1394,21 @@ describe("tool card render cache totals (#2561)", () => {
 			createFakeTui(),
 			process.cwd(),
 		);
-		text.updateResult({ content: [{ type: "text", text: "one\ntwo\nthree" }], isError: false });
-		image.updateResult({ content: [{ type: "image", data: "png", mimeType: "image/png" }], isError: false });
+		const textResult = { content: [{ type: "text" as const, text: "one\ntwo\nthree" }], isError: false };
+		const imageResult = { content: [{ type: "image" as const, data: "png", mimeType: "image/png" }], isError: false };
+		text.updateResult(textResult);
+		image.updateResult(imageResult);
 		const textLines = text.render(80).length;
 		const imageLines = image.render(80).length;
+
+		// The same estimator the cache publishes: 8 per line slot plus 2 per UTF-16 code unit.
+		const lineBytes = (count: number, sample: readonly string[]) => count * 8 + sample.join("").length * 2;
+		const textBytes = lineBytes(textLines, text.render(80));
+		const imageBytes = lineBytes(imageLines, image.render(80));
+		// The same shape the component serializes at finalize: content JSON, plus details when present.
+		const resultBytes = (result: { content: unknown; details?: unknown }) =>
+			(JSON.stringify(result.content)?.length ?? 0) +
+			(result.details === undefined ? 0 : (JSON.stringify(result.details)?.length ?? 0));
 
 		const rendered = tuiRenderCacheTotals();
 		text.dispose();
@@ -1399,11 +1418,17 @@ describe("tool card render cache totals (#2561)", () => {
 			components: before.components + 2,
 			cachedLines: before.cachedLines + textLines + imageLines,
 			images: before.images + 1,
+			finishedCards: before.finishedCards + 2,
+			cachedLinesBytes: before.cachedLinesBytes + textBytes + imageBytes,
+			resultBytes: before.resultBytes + resultBytes(textResult) + resultBytes(imageResult),
 		});
 		expect(afterDispose).toEqual({
 			components: before.components + 1,
 			cachedLines: before.cachedLines + imageLines,
 			images: before.images + 1,
+			finishedCards: before.finishedCards + 1,
+			cachedLinesBytes: before.cachedLinesBytes + imageBytes,
+			resultBytes: before.resultBytes + resultBytes(imageResult),
 		});
 		image.dispose();
 		expect(tuiRenderCacheTotals()).toEqual(before);

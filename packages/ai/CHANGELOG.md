@@ -7,6 +7,7 @@
 ### Added
 
 ### Changed
+- The advertised Claude Code fingerprint floor follows the bundled Claude Agent SDK to Claude Code 2.1.288.
 
 ### Fixed
 

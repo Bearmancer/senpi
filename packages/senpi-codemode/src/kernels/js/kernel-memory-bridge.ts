@@ -9,6 +9,9 @@ export interface JavaScriptMemoryReading {
 	readonly measure: "heap";
 }
 
+/** A query waits at most this long: the worker answers between cells, never inside one. */
+const MEMORY_QUERY_TIMEOUT_MS = 5_000;
+
 type QueryResult = Extract<KernelToHostMessage, { type: "memory-query-result" }>;
 
 /**
@@ -19,7 +22,10 @@ type QueryResult = Extract<KernelToHostMessage, { type: "memory-query-result" }>
 export class KernelMemoryBridge {
 	readonly #policy: KernelMemoryPolicy | null;
 	readonly #onCollected: ((liveBytes: number) => void) | undefined;
-	readonly #queries = new Map<string, PromiseWithResolvers<JavaScriptMemoryReading>>();
+	readonly #queries = new Map<
+		string,
+		{ pending: PromiseWithResolvers<JavaScriptMemoryReading>; timer: ReturnType<typeof setTimeout> }
+	>();
 	#lastLiveBytes: number | undefined;
 
 	constructor(thresholds: KernelMemoryThresholds | undefined, onCollected?: (liveBytes: number) => void) {
@@ -60,10 +66,23 @@ export class KernelMemoryBridge {
 		return true;
 	}
 
+	/**
+	 * A fresh reading from the worker. The worker answers between cells, so the wait is bounded:
+	 * a kernel whose cell never yields (a sync loop) cannot answer until that cell settles, and the
+	 * query rejects after {@link MEMORY_QUERY_TIMEOUT_MS} instead of hanging its caller forever.
+	 */
 	query(post: (message: HostToKernelMessage) => void): Promise<JavaScriptMemoryReading> {
 		const requestId = crypto.randomUUID();
 		const pending = Promise.withResolvers<JavaScriptMemoryReading>();
-		this.#queries.set(requestId, pending);
+		const timer = setTimeout(() => {
+			if (!this.#queries.delete(requestId)) return;
+			pending.reject(
+				new Error(
+					`memory-query timed out after ${MEMORY_QUERY_TIMEOUT_MS}ms (a cell is running; queries answer between cells)`,
+				),
+			);
+		}, MEMORY_QUERY_TIMEOUT_MS);
+		this.#queries.set(requestId, { pending, timer });
 		post({ type: "memory-query", requestId });
 		return pending.promise;
 	}
@@ -74,14 +93,18 @@ export class KernelMemoryBridge {
 		this.#lastLiveBytes = undefined;
 		const waiting = [...this.#queries.values()];
 		this.#queries.clear();
-		for (const pending of waiting) pending.reject(error);
+		for (const { pending, timer } of waiting) {
+			clearTimeout(timer);
+			pending.reject(error);
+		}
 	}
 
 	#answered(result: QueryResult): void {
-		const pending = this.#queries.get(result.requestId);
-		if (pending === undefined) return;
+		const waiting = this.#queries.get(result.requestId);
+		if (waiting === undefined) return;
 		this.#queries.delete(result.requestId);
+		clearTimeout(waiting.timer);
 		this.#lastLiveBytes = result.liveBytes;
-		pending.resolve({ liveBytes: result.liveBytes, measure: result.measure });
+		waiting.pending.resolve({ liveBytes: result.liveBytes, measure: result.measure });
 	}
 }

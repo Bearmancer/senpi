@@ -222,6 +222,8 @@ export {
 	currentRenderRevision,
 	dispatchMouseEvent,
 	type Focusable,
+	type FrameLineBytesTotals,
+	frameLineBytesTotals,
 	frameMode,
 	frameScrollbackRows,
 	isFocusable,

@@ -5,6 +5,7 @@ import type { CreateAgentSessionRuntimeFactory } from "../../core/agent-session-
 import { envValue } from "../../core/brand.ts";
 import { HostMcpRegistry } from "../../core/extensions/builtin/mcp/host-registry.ts";
 import type { SessionContext } from "../../core/extensions/types.ts";
+import { readCodemodeKernelRows, readMainThreadHeapBytes } from "../../core/memory-report/kernel-registry-read.ts";
 import {
 	flushRawStdout,
 	takeOverStdout,
@@ -92,11 +93,17 @@ function startHostObservers(
 	options: { onIdlePressure?: (reading: HostMemoryReading) => void } = {},
 ): { stop: () => void } {
 	const loopLag = new LoopLagWatchdog({ emit: (record) => writer.broadcastHostRecord(record) });
+	const kernels = readCodemodeKernelRows;
 	const memory = new HostMemorySampler({
 		emit: (record) => writer.broadcastHostRecord(record),
 		sessions: () => router.sessionCount,
 		onPressure: (pressure) => router.setMemoryPressure(pressure),
+		readKernels: kernels,
 		...(options.onIdlePressure ? { onIdlePressure: options.onIdlePressure } : {}),
+	});
+	router.setHostMemoryView({
+		mainHeapBytes: readMainThreadHeapBytes,
+		kernels,
 	});
 	loopLag.start();
 	memory.start();

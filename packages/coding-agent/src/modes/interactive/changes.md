@@ -1,3 +1,21 @@
+## 2026-10-03 - Exact tool-card result bytes for the memory report (senpi#1960)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/components/tool-execution.ts`: a card's final `updateResult` measures its retained result once (`serializedToolResultBytes`) and records it in the render cache (`finalizeResult`); a streaming card keeps its last figure.
+
+### Why
+
+- The memory report's `tuiRenderCache` reports exact `resultBytes` and `finishedCards`, so a later bound on the cache is designed from a measurement.
+
+### Why an extension could not handle it
+
+- The card and its render cache are private to the core interactive mode.
+
+### Expected merge conflict zones
+
+- LOW: `ToolExecutionComponent.updateResult()` in `tool-execution.ts`.
+
 ## 2026-10-02 - Tool-card render cache totals (senpi#2561)
 
 ### What changed

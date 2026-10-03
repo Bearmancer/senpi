@@ -6,14 +6,18 @@
 
 ### Added
 
+- Shared RPC hosts now report the per-session memory split: the `host_memory_pressure` record carries `main` (the main-thread heap) and `kernels` (every live eval kernel's heap by session), and `list_sessions` rows carry `memory` (`main_heap_bytes`, `kernel_heap_bytes`, `kernel_count`), surfaced on `host status --all --include-workers --json` as `{ main_heap_mb, kernel_heap_mb, kernel_count }`. The terminal tool-card render cache and the TUI frame are now measurable too: the memory report's `tuiRenderCache` gains `finishedCards`, exact `cachedLinesBytes` and `resultBytes`, and a new `tui.previousLinesBytes` reports the frame's line bytes, so a later bound is designed from the measurement ([#1960](https://github.com/code-yeongyu/senpi/issues/1960)).
 - A running session can report where its memory goes, on demand and only when started with `SENPI_MEMORY_REPORT=1`: `SIGUSR2` (POSIX; reports every session registered in the signalled process, so a worker-runtime multi-session host's sessions answer only over RPC) or the RPC `memory_report` request writes `<session>-artifacts/memory/<iso>.json` with the main thread's heap and footprint, every live eval kernel's last-known heap (marked stale while a cell runs), the resident session-string store, the terminal tool-card render cache, and figures extensions add through `pi.registerMemoryReporter(name, reporter)`. `SENPI_MEMORY_REPORT_SNAPSHOT=1` adds a heap snapshot. Without the flag nothing is installed and `SIGUSR2` keeps its default behaviour ([#2561](https://github.com/code-yeongyu/senpi/issues/2561)).
 - RPC session state now reports a model switch that is held until the next compaction: `pendingModelSwitch` is the held model's `{ provider, id }`, or `null` when nothing is held, so a client can tell a held switch from one a later selection superseded. The key is always present on current hosts, so a missing key identifies an older host.
 
 ### Changed
 
+- The bundled Claude Agent SDK is updated to 0.3.288 (from 0.3.286), so the Anthropic subscription lane runs Claude Code 2.1.288 and the models it knows.
+
 ### Fixed
 
 - A shared RPC host that the engine stops on purpose is now recorded in the endpoint's `crashes.jsonl`, naming who stopped it and why (an ensure replacing an unreachable host, `host stop`, a failed start or handoff, the supervisor's own idle exit), and a host killed from outside is recorded as `external` instead of being indistinguishable from a crash; `host status` keeps counting only real deaths. An ensure no longer stops or replaces a host that is alive but measurably stalled - it refuses with `host_stalled` - and a graceful stop waits out a measured stall (up to `SENPI_RPC_CHILD_STALLED_STOP_MAX_MS`, 60 s by default) before escalating to SIGKILL ([#2566](https://github.com/code-yeongyu/senpi/issues/2566)).
+- A client attaching to a host built from the same plugin set installed under a different directory no longer logs a profile mismatch on every ensure, and a build that loads a proper superset of the host's extensions can take over from it: host launch profiles now compare the plugin's extensions by role instead of by absolute path.
 
 ### Removed
 
