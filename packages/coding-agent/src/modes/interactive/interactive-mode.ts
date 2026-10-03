@@ -1879,7 +1879,11 @@ export class InteractiveMode {
 		}
 
 		const modelRuntimeWarnings = this.session.modelRuntime.getWarnings();
-		if (showsStartupDetails(this.options.verbose, this.settingsManager.getQuietStartup())) {
+		// Fold repeated warnings only in quiet startup; a hand-built context without getQuietStartup
+		// is treated as not-quiet so full detail shows (the safe default, and what the old path did).
+		const getQuietStartup = this.settingsManager?.getQuietStartup?.bind(this.settingsManager);
+		const quietStartup = getQuietStartup ? getQuietStartup() : false;
+		if (showsStartupDetails(this.options.verbose, quietStartup)) {
 			for (const warning of modelRuntimeWarnings) {
 				this.showWarning(warning);
 			}
