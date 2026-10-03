@@ -2274,15 +2274,15 @@ Upstream edits to interactive-mode components at the next sync.
 
 ### What changed
 
-`packages/coding-agent/src/modes/interactive/provider-error-presentation.ts`: adds `isRetryableProviderError`, a presentation classifier that is true for any transient provider failure (network drop, 429 rate-limit, or 5xx) by delegating to the shared `isRetryableErrorMessage` classifier in `@earendil-works/pi-ai`, and false for hard auth/quota/billing failures (which classify non-retryable). `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: the quiet-vs-verbose error decision at the six provider-error call sites (mid-retry `retrying`, final `finish`, summarization retry, the retry-status indicator's trouble variant, and `showError`) now uses `isRetryableProviderError` instead of the network-only `isNetworkProviderError`, so a 429 is coalesced into one banner with a status-line countdown instead of printing its raw JSON on every retry.
+`packages/coding-agent/src/modes/interactive/provider-error-presentation.ts`: adds `isRetryableProviderError`, a presentation classifier that is true for any transient provider failure (network drop, 429 rate-limit, or 5xx) by delegating to the shared `isRetryableErrorMessage` classifier in `@earendil-works/pi-ai`, and false for hard auth/quota/billing failures. `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: the retry-event paths (mid-retry `retrying`, fallback-exhausted `finish`, summarization retry, the retry-status indicator's trouble variant) now use `isRetryableProviderError` instead of the network-only `isNetworkProviderError`, so a 429 coalesces into one banner with a status-line countdown instead of printing its raw JSON on every retry. The general `showError` path is unchanged: it still only routes genuine network-envelope errors to the quiet presentation, so non-provider error text is never hidden behind the provider banner.
 
 ### Why
 
-A 429 rate-limit was excluded from the quiet path by the auth/quota guard (`otherFailure`), so it printed raw `Error: 429: {...}` JSON once per automatic retry and flooded the transcript. Transient failures should retry quietly behind one banner; only failures that need a credential or plan change stay verbose.
+A 429 rate-limit was excluded from the quiet path by the auth/quota guard, so it printed raw `Error: 429: {...}` JSON once per automatic retry. Transient failures should retry quietly behind one banner; the change is scoped to the retry loop so unrelated errors still render verbatim.
 
 ### Why an extension could not handle it
 
-The presentation classification and the transcript render decision live in interactive-mode internals below the extension API; an extension cannot redirect which errors reach the quiet banner.
+The presentation classification and the retry-event render decision live in interactive-mode internals below the extension API.
 
 ### Expected merge conflict zones
 

@@ -261,6 +261,7 @@ import { describeLoginFailure, type LoginFailureNotice } from "./login-outcome.t
 import { refreshModelCatalogs } from "./model-catalog-refresh.ts";
 import { getModelSearchText } from "./model-search.ts";
 import {
+	isNetworkProviderError,
 	isNetworkProviderMessage,
 	isRetryableProviderError,
 	ProviderErrorPresentation,
@@ -7009,7 +7010,7 @@ export class InteractiveMode {
 	}
 
 	showError(errorMessage: string): void {
-		if (isRetryableProviderError(errorMessage)) {
+		if (isNetworkProviderError(errorMessage, true)) {
 			this.getProviderErrors().record(errorMessage, this.toolOutputExpanded);
 			this.ui.requestRender();
 			return;
