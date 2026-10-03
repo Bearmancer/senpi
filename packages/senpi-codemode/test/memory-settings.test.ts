@@ -85,4 +85,25 @@ describe("codemode memory settings", () => {
 		expect(loaded.warnings).toHaveLength(1);
 		expect(loaded.settings.memory.ceilingMb).toBe(defaultMemoryCeilingMb());
 	});
+
+	it("Given no idle-park setting when settings load then kernels are never parked", async () => {
+		const loaded = await loadFile({ memory: { noticeMb: 512 } });
+
+		expect(loaded.warnings).toEqual([]);
+		expect(loaded.settings.memory.idleParkMinutes).toBeUndefined();
+	});
+
+	it("Given an idle-park time in the file when settings load then it is kept", async () => {
+		const loaded = await loadFile({ memory: { idleParkMinutes: 5 } });
+
+		expect(loaded.warnings).toEqual([]);
+		expect(loaded.settings.memory.idleParkMinutes).toBe(5);
+	});
+
+	it("Given a negative idle-park time in the file when settings load then the file is rejected with a warning and parking stays off", async () => {
+		const loaded = await loadFile({ memory: { idleParkMinutes: -1 } });
+
+		expect(loaded.warnings).toHaveLength(1);
+		expect(loaded.settings.memory.idleParkMinutes).toBeUndefined();
+	});
 });
