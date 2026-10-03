@@ -7,7 +7,7 @@ import { execFileSync } from "node:child_process";
 import { unwatchFile, watchFile } from "node:fs";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { VERSION } from "../../src/config.ts";
 import { type HostCrashRecord, readHostCrashRecords } from "../../src/modes/rpc/host-crash-record.ts";
 import { readHostRegistration } from "../../src/modes/rpc/host-daemon-registration.ts";
@@ -85,8 +85,15 @@ export async function registeredSupervisor(qa: SupervisedScratch): Promise<{ pid
 	return { pid: registered.record.pid, instanceId: registered.instanceId };
 }
 
+/**
+ * The supervisor's HOST child, matched by its command line: the supervisor also runs short-lived
+ * helpers of its own (`ps -o lstart=` for its and its child's start time), and the first child
+ * `pgrep -P` lists can be one of those, which exits at once and would stand in for the host.
+ */
 export function hostChildOf(supervisorPid: number): number {
-	const output = execFileSync("pgrep", ["-P", String(supervisorPid)], { encoding: "utf8" });
+	const output = execFileSync("pgrep", ["-P", String(supervisorPid), "-f", basename(childFixture)], {
+		encoding: "utf8",
+	});
 	const pid = Number(output.split("\n")[0]?.trim());
 	if (!Number.isInteger(pid) || pid <= 0) throw new Error(`supervisor ${supervisorPid} has no host child`);
 	observedChildren.add(pid);
