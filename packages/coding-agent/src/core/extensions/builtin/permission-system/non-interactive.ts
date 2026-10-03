@@ -18,7 +18,7 @@ export interface NoUIOptions {
  * the service's ask stands, so the request is refused: no configured allow can widen `auto`.
  */
 export function handleNoUI(request: Request, options: NoUIOptions): ReplyInput | undefined {
-	const { staticRuleset, cliOverride, emitEvent, presetBound = false } = options;
+	const { emitEvent, presetBound = false } = options;
 	// Emit permission_asked event for logging/telemetry
 	emitEvent("permission_asked", request);
 	const patternsStr = request.patterns.join(", ");
