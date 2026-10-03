@@ -4,7 +4,6 @@ import { type BridgeServerHandle, startBridgeServer } from "../bridge/http-serve
 import type { KernelToHostMessage } from "../bridge/protocol.ts";
 import type { CompletionRequest, CompletionResult } from "../completion/handler.ts";
 import { resolveKernelMemoryThresholds } from "../config/memory-settings.ts";
-import { resolveHardLimitSeconds } from "../config/settings.ts";
 import { collectOrphanedChildren } from "../host-sdk.ts";
 import { JavaScriptKernel } from "../kernels/js/context-manager.ts";
 import type { KernelLifecycle } from "../kernels/shared/kernel-death.ts";
@@ -265,7 +264,6 @@ class DefaultCodemodeSessionManager implements CodemodeSessionManager {
 			port: bridge.port,
 			token: bridge.token,
 			parallelPoolWidth,
-			hardLimitSeconds: resolveHardLimitSeconds(this.#options.settings),
 			...(localRoots ? { localRoots: { ...localRoots } } : {}),
 			...(this.#options.artifactsDir ? { artifactsDir: this.#options.artifactsDir } : {}),
 		};

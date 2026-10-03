@@ -27,7 +27,6 @@ const connectionConfigSchema = Type.Object({
 	artifactsDir: Type.Optional(Type.String()),
 	parallelPoolWidth: Type.Optional(Type.Integer({ minimum: 1 })),
 	/** Wall-clock kill deadline of a cell; a prelude bounds its long-lived `wait()` request by it. */
-	hardLimitSeconds: Type.Optional(Type.Integer({ minimum: 1 })),
 });
 
 const hostToKernelMessageSchema = Type.Union([

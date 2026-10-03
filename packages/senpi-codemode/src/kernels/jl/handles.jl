@@ -64,12 +64,11 @@ function senpi_handle_call(tool_name::String, arguments)
     senpi_with_bridge_timeout_pause(() -> senpi_call_tool(tool_name, arguments))
 end
 
-# A long-lived request bounded by the explicit timeout (plus grace for the host's reply) or else by the
-# cell's hard limit; an interrupt from the host closes the socket and so the host-side subscription.
+# A long-lived request bounded by the explicit timeout (plus grace for the host's reply) or else only by the
+# cell's own end; an interrupt from the host (cancel, the cell's hard limit) closes the socket and so the
+# host-side subscription.
 function senpi_wait_post(arguments, timeout)
-    hard_limit = get(senpi_connection, "hardLimitSeconds", nothing)
-    bound = timeout !== nothing ? timeout : hard_limit isa Real ? hard_limit : nothing
-    read_timeout = bound === nothing ? nothing : Float64(bound) + SENPI_WAIT_SOCKET_GRACE_SECONDS
+    read_timeout = timeout === nothing ? nothing : Float64(timeout) + SENPI_WAIT_SOCKET_GRACE_SECONDS
     payload = Dict("callId" => "jl-" * string(time_ns()), "toolName" => SENPI_RESERVED_WAIT_TOOL, "args" => arguments)
     senpi_with_bridge_timeout_pause(() -> senpi_bridge_request("/call", payload; read_timeout=read_timeout))
 end

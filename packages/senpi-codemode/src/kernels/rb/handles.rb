@@ -28,13 +28,10 @@ def __senpi_handle_ref(value)
 end
 
 # A long-lived request: ordinary calls keep their 60 s read timeout; this one is bounded by the explicit
-# timeout (plus grace for the host's reply) or else by the cell's hard limit, and SIGINT from the host
-# (cancel, hard limit) interrupts the read, which closes the socket and the host-side subscription.
+# timeout (plus grace for the host's reply) or else only by the cell's own end: SIGINT from the host (cancel,
+# the cell's hard limit) interrupts the read, which closes the socket and the host-side subscription.
 def __senpi_wait_post(args, timeout)
-  connection = $__senpi_connection
-  hard_limit = connection.is_a?(Hash) ? connection["hardLimitSeconds"] : nil
-  bound = timeout || (hard_limit.is_a?(Numeric) ? hard_limit : nil)
-  read_timeout = bound.nil? ? nil : bound.to_f + SENPI_WAIT_SOCKET_GRACE_SECONDS
+  read_timeout = timeout.nil? ? nil : timeout.to_f + SENPI_WAIT_SOCKET_GRACE_SECONDS
   payload = { "callId" => "rb-#{Process.pid}-#{rand(1_000_000)}", "toolName" => SENPI_RESERVED_WAIT_TOOL, "args" => args }
   __senpi_bridge_request("/call", payload, read_timeout: read_timeout)
 end

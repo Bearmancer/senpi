@@ -86,6 +86,10 @@ export class CompletionHandles {
 		return ref;
 	}
 
+	get openWatches(): number {
+		return this.#watches.size;
+	}
+
 	owns(ref: HandleRef): boolean {
 		return ref.kind === "completion";
 	}
@@ -96,15 +100,7 @@ export class CompletionHandles {
 		// Subscribe first, then snapshot: a settle between the two is queued and arrives in updates once.
 		this.#watches.add(queue);
 		const initial = entries.map((entry) => snapshotOf(entry));
-		const watch = queue.toWatch(initial);
-		return {
-			initial: watch.initial,
-			updates: watch.updates,
-			close: () => {
-				watch.close();
-				this.#watches.delete(queue);
-			},
-		};
+		return queue.toWatch(initial, () => this.#watches.delete(queue));
 	}
 
 	result(ref: HandleRef): HandleOutcome {

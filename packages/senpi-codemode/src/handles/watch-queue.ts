@@ -43,8 +43,11 @@ export class WatchQueue {
 		this.close();
 	}
 
-	toWatch(initial: readonly HandleSnapshot[]): HandleWatch {
-		const close = (): void => this.close();
+	toWatch(initial: readonly HandleSnapshot[], onClose?: () => void): HandleWatch {
+		const close = (): void => {
+			this.close();
+			onClose?.();
+		};
 		const next = async (): Promise<IteratorResult<HandleSnapshot>> => {
 			while (this.#queue.length === 0 && !this.#closed) {
 				await new Promise<void>((resolve) => {

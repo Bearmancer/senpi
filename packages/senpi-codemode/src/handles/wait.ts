@@ -8,6 +8,8 @@ import {
 } from "@code-yeongyu/senpi";
 import { refKey, type WaitRequest } from "./handle-args.ts";
 
+const MAX_TIMER_MS = 2 ** 31 - 1;
+
 export interface WaitBackend {
 	watch(refs: readonly HandleRef[]): Promise<HandleWatch>;
 	result(ref: HandleRef): Promise<HandleOutcome>;
@@ -140,7 +142,17 @@ function interruption(
 	let ended = false;
 	const fired = new Promise<never>((_resolve, reject) => {
 		if (timeoutSeconds !== undefined && timeoutSeconds > 0) {
-			timer = setTimeout(() => reject(timeoutError(timeoutSeconds, refs, outcomes)), timeoutSeconds * 1_000);
+			// A timer longer than the platform maximum fires at once, so a long deadline is armed in chunks.
+			const deadline = Date.now() + timeoutSeconds * 1_000;
+			const arm = (): void => {
+				const remainingMs = deadline - Date.now();
+				if (remainingMs <= 0) {
+					reject(timeoutError(timeoutSeconds, refs, outcomes));
+					return;
+				}
+				timer = setTimeout(arm, Math.min(remainingMs, MAX_TIMER_MS));
+			};
+			arm();
 		}
 		if (signal !== undefined) {
 			onAbort = () =>

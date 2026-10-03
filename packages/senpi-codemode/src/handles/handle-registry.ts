@@ -50,6 +50,10 @@ export class HandleRegistry {
 		return this.#open.size;
 	}
 
+	get openCompletionWatches(): number {
+		return this.#completions.openWatches;
+	}
+
 	startCompletion(input: CompletionStart): HandleRef {
 		this.#assertLive();
 		return this.#completions.start(input);
@@ -59,10 +63,10 @@ export class HandleRegistry {
 		this.#assertLive();
 		const local = refs.filter((ref) => this.#completions.owns(ref));
 		const remote = refs.filter((ref) => !this.#completions.owns(ref));
+		const host = remote.length > 0 ? this.#requireHost(backend, remote) : undefined;
 		const parts: HandleWatch[] = [];
 		if (local.length > 0) parts.push(this.#completions.watch(local));
-		if (remote.length > 0) {
-			const host = this.#requireHost(backend, remote);
+		if (host !== undefined) {
 			try {
 				parts.push(await host.watch(remote, this.#callContext(backend)));
 			} catch (error) {

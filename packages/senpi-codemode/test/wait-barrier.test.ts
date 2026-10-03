@@ -129,6 +129,48 @@ describe("wait() barrier over the handle registry", () => {
 		});
 	});
 
+	it("Given a timeout longer than the platform timer limit, when time passes, then wait() keeps waiting past one timer span and still returns the settled value", async () => {
+		vi.useFakeTimers();
+		const { host, wait } = fixture();
+		const a = host.spawn("agent");
+		const pending = wait([a], { timeout: 2_200_000 });
+		pending.catch(() => undefined);
+
+		await vi.advanceTimersByTimeAsync(2 ** 31 + 10);
+		expect(host.openWatches).toBe(1);
+		host.settle(a.id, "A");
+
+		await expect(pending).resolves.toEqual(["A"]);
+	});
+
+	it("Given a timeout longer than the platform timer limit that runs out, then wait() times out at the full deadline, not one timer span early", async () => {
+		vi.useFakeTimers();
+		const { host, wait } = fixture();
+		const a = host.spawn("agent");
+		const pending = wait([a], { timeout: 2_200_000 });
+		pending.catch(() => undefined);
+
+		await vi.advanceTimersByTimeAsync(2_200_000_000 - 1);
+		expect(host.openWatches).toBe(1);
+		await vi.advanceTimersByTimeAsync(1);
+
+		await expect(pending).rejects.toThrow("wait() timed out after 2200000s");
+		expect(host.openWatches).toBe(0);
+	});
+
+	it("Given a runtime without the host capability, when one wait mixes a completion handle with an agent ref, then it fails as unavailable and leaves no completion subscription behind", async () => {
+		const { host, registry, wait } = fixture({ host: false });
+		const completion = registry.startCompletion({
+			run: () => new Promise(() => {}),
+			deadlineMs: Date.now() + 60_000,
+		});
+		const a = host.spawn("agent");
+
+		await expect(wait([completion, a])).rejects.toMatchObject({ code: "eval_wait_unavailable" });
+
+		expect(registry.openCompletionWatches).toBe(0);
+	});
+
 	it("wait-unavailable-host: without ctx.evalHandleHost an agent ref fails with eval_wait_unavailable and no task_output call", async () => {
 		const { host, wait } = fixture({ host: false });
 		const a = host.spawn("agent");

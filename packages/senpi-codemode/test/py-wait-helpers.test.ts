@@ -29,7 +29,7 @@ async function withPythonBridge<T>(
 		interpreterPath: detected.path,
 		sessionId: `py-wait-${crypto.randomUUID()}`,
 		cwd: process.cwd(),
-		connection: { port: server.port, token: server.token, hardLimitSeconds: 600 },
+		connection: { port: server.port, token: server.token },
 		onMessage: (message) => messages.push(message),
 	});
 	try {

@@ -663,12 +663,11 @@ def _handle_call(tool_name: str, args: dict[str, Any]) -> Any:
 
 
 def _bridge_wait_post(args: dict[str, Any], timeout: float | None) -> Any:
-    # A long-lived request: no 60 s socket cap. It is bounded by the explicit timeout (plus grace for the
-    # host's reply) or else by the cell's hard limit, and SIGINT from the host (cancel, hard limit) interrupts
-    # the blocking read in this main thread, which closes the socket and so the host-side subscription.
-    hard_limit = CONNECTION.get("hardLimitSeconds")
-    bound = timeout if timeout is not None else hard_limit if isinstance(hard_limit, (int, float)) else None
-    socket_timeout = None if bound is None else float(bound) + _WAIT_SOCKET_GRACE_SECONDS
+    # A long-lived request: no 60 s socket cap. An explicit timeout bounds it (plus grace for the host's
+    # reply); without one only the cell's own end does: SIGINT from the host (cancel, the cell's hard limit,
+    # which the eval timeout can raise) interrupts the blocking read, which closes the socket and so the
+    # host-side subscription.
+    socket_timeout = None if timeout is None else float(timeout) + _WAIT_SOCKET_GRACE_SECONDS
     return bridge_post(
         "/call",
         {"callId": f"py-{uuid.uuid4()}", "toolName": RESERVED_WAIT_TOOL, "args": args},
