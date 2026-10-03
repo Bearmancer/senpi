@@ -15,8 +15,8 @@ export interface ClassifiedWord {
 export interface ProgramSpec {
 	/** Every flag the program may take; `true` = no value, a role = takes one value. */
 	readonly flags: Readonly<Record<string, true | WordRole>>;
-	/** The role of operand `index` out of `count` operands. */
-	readonly operand: (index: number, count: number) => WordRole;
+	/** The role of operand `index` out of `count` operands, given its text. */
+	readonly operand: (index: number, count: number, text: string) => WordRole;
 	readonly minOperands?: number;
 	readonly maxOperands?: number;
 }
@@ -82,7 +82,7 @@ export function classifyWords(words: readonly ShellWord[], spec: ProgramSpec): C
 	if (operands.length < (spec.minOperands ?? 0)) return undefined;
 	if (spec.maxOperands !== undefined && operands.length > spec.maxOperands) return undefined;
 	operands.forEach((word, index) => {
-		classified.push({ role: spec.operand(index, operands.length), word });
+		classified.push({ role: spec.operand(index, operands.length, word.text), word });
 	});
 	return classified;
 }

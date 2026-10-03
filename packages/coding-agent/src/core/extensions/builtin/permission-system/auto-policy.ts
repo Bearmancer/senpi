@@ -1,5 +1,5 @@
 import * as path from "node:path";
-import { resolveReadPath, resolveToCwd } from "../../../tools/path-utils.ts";
+import { resolveReadPathAsync, resolveToCwd } from "../../../tools/path-utils.ts";
 import { normalizeApplyPatchArguments } from "../gpt-apply-patch/params.ts";
 import { parsePatch } from "../gpt-apply-patch/parser.ts";
 import { resolvePatchPath } from "../gpt-apply-patch/workspace.ts";
@@ -84,16 +84,16 @@ function patchTargets(input: Record<string, unknown>, cwd: string): string[] | u
 
 /**
  * The `auto` preset's allowlist (decision table on senpi#2614). Each decision is made on the exact
- * target the tool will open, obtained from the tool's own resolver (`resolveReadPath` for `read`,
+ * target the tool will open, obtained from the tool's own resolver (`resolveReadPathAsync` for `read`,
  * `resolveToCwd` for the other file tools, `parsePatch` + `resolvePatchPath` for `apply_patch`).
  * Every other call keeps the preset's ask.
  */
-export function decideAuto(
+export async function decideAuto(
 	toolName: string,
 	input: Record<string, unknown>,
 	request: PermissionRequest,
 	cwd: string,
-): AutoDecision {
+): Promise<AutoDecision> {
 	if (toolName === "bash" || (toolName === "monitor" && typeof input.command === "string")) {
 		if (request.permission !== "bash" || typeof input.command !== "string") return NO;
 		return judgeAutoCommand(input.command, cwd) === "allow" ? YES : NO;
@@ -101,7 +101,7 @@ export function decideAuto(
 	if (toolName === "read") {
 		const raw = input.path ?? input.file_path;
 		if (typeof raw !== "string") return NO;
-		return approvedTarget(resolveReadPath(raw, cwd), cwd, ["file", "missing"]) ? YES : NO;
+		return approvedTarget(await resolveReadPathAsync(raw, cwd), cwd, ["file", "missing"]) ? YES : NO;
 	}
 	if (toolName === "grep") {
 		const raws = stringPaths(input.path);

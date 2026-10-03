@@ -1,5 +1,22 @@
 # Permission System Builtin Extension
 
+## 2026-10-03 - Auto: a user allow never widens it; home-ancestor roots, git operands
+
+### What changed
+
+- `service.ts`: with `auto` active, only a user `deny` or `ask` for the call replaces the preset's rule (`userRestrictionFor`); a user `allow` is ignored there, so it cannot let a call skip the judge.
+- `auto-paths.ts`: a session root that is `/`, the home directory or any ancestor of it (`/Users`, `/home`) approves nothing.
+- `auto-program-rules.ts`: a `git diff`/`log`/`rev-parse` operand that is not a plain ref is checked as a project path; the dead `show` branch is gone.
+- `auto-policy.ts`: `decideAuto` is async and judges `read` with the tool's own `resolveReadPathAsync`.
+
+### Why
+
+- Round 4 of the #2614 review: a project `bash: allow` plus `auto` deleted a file with no prompt (only `deny`/`ask` are promised to win); a `/Users` root counted as a project; git operands were never path-checked.
+
+### Must not break
+
+- A user rule may only narrow `auto`, never widen it.
+
 ## 2026-10-03 - Auto decides on the tool's own resolved target; user rules win from every layer
 
 ### What changed

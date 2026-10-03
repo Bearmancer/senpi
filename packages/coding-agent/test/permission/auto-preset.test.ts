@@ -1,6 +1,6 @@
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { isCredentialPath } from "../../src/core/extensions/builtin/permission-system/auto-credentials.ts";
 import { decideAuto, judgeAutoCommand } from "../../src/core/extensions/builtin/permission-system/auto-policy.ts";
@@ -47,6 +47,8 @@ describe("auto preset command judge: work it runs without asking", () => {
 	it.each([
 		"git status",
 		"git diff --stat",
+		"git diff --stat main src/index.ts",
+		"git log --oneline HEAD",
 		"git log --oneline -n 5",
 		"git branch -a",
 		"git ls-files",
@@ -119,6 +121,9 @@ describe("auto preset command judge: actions it always asks about", () => {
 		["redirect to /dev/null", "ls 2>/dev/null"],
 		["home expansion", "cat ~/notes.txt"],
 		["parent path", "cat ../outside.txt"],
+		["git operand outside the project", "git diff --numstat /dev/null /etc/hosts"],
+		["git log of a dotfile path", "git log --oneline .env"],
+		["git diff that prints contents", "git diff src/index.ts"],
 	])("asks for %s: %s", (_label, command) => {
 		expect(judgeAutoCommand(command, project)).toBe("ask");
 	});
@@ -192,8 +197,8 @@ describe("auto preset command judge: bypass attempts ask", () => {
 
 describe("auto preset tool decisions", () => {
 	const request = (permission: string, path: string) => ({ permission, patterns: [path], always: [] });
-	const approves = (toolName: string, input: Record<string, unknown>, permission: string) =>
-		decideAuto(toolName, input, request(permission, String(input.path ?? "")), project).approveBlanketAsk;
+	const approves = async (toolName: string, input: Record<string, unknown>, permission: string) =>
+		(await decideAuto(toolName, input, request(permission, String(input.path ?? "")), project)).approveBlanketAsk;
 
 	it.each([
 		["read of a project file", "read", { path: "src/index.ts" }, "read"],
@@ -211,8 +216,8 @@ describe("auto preset tool decisions", () => {
 			{ path: "bridge/../x.txt", content: "x" },
 			"edit",
 		],
-	])("approves %s", (_label, toolName, input, permission) => {
-		expect(approves(toolName, input, permission)).toBe(true);
+	])("approves %s", async (_label, toolName, input, permission) => {
+		expect(await approves(toolName, input, permission)).toBe(true);
 	});
 
 	it.each([
@@ -232,51 +237,101 @@ describe("auto preset tool decisions", () => {
 		["write of .env through @", "write", { path: "@.env", content: "x" }, "edit"],
 		["write into git internals", "write", { path: ".git/hooks/pre-commit", content: "x" }, "edit"],
 		["an unknown tool", "webfetch", { url: "https://example.com" }, "webfetch"],
-	])("asks for %s", (_label, toolName, input, permission) => {
-		expect(approves(toolName, input, permission)).toBe(false);
+	])("asks for %s", async (_label, toolName, input, permission) => {
+		expect(await approves(toolName, input, permission)).toBe(false);
 	});
 
-	it("asks for reads, listings and writes outside the project", () => {
+	it("asks for reads, listings and writes outside the project", async () => {
 		// The table above is built before the fixture exists, so outside paths are checked here.
 		const notes = join(scratch, "plain", "notes.txt");
-		expect(approves("read", { path: notes }, "external_directory")).toBe(false);
-		expect(approves("ls", { path: join(scratch, "home", ".ssh") }, "external_directory")).toBe(false);
-		expect(approves("write", { path: `@${join(scratch, "x.txt")}`, content: "x" }, "edit")).toBe(false);
+		expect(await approves("read", { path: notes }, "external_directory")).toBe(false);
+		expect(await approves("ls", { path: join(scratch, "home", ".ssh") }, "external_directory")).toBe(false);
+		expect(await approves("write", { path: `@${join(scratch, "x.txt")}`, content: "x" }, "edit")).toBe(false);
 	});
 
-	it("decides apply_patch on the paths the patch parser will write", () => {
+	it("decides apply_patch on the paths the patch parser will write", async () => {
 		const patch = (header: string) => ({ input: `*** Begin Patch\n${header}\n+x\n*** End Patch` });
 		const edit = { permission: "edit", patterns: [], always: [] };
-		expect(decideAuto("apply_patch", patch("*** Add File: src/added.ts"), edit, project).approveBlanketAsk).toBe(
-			true,
-		);
 		expect(
-			decideAuto("apply_patch", patch("*** Add File: x\u2028/../../outside/target.txt"), edit, project)
-				.approveBlanketAsk,
-		).toBe(false);
-		expect(decideAuto("apply_patch", patch("*** Add File: .env"), edit, project).approveBlanketAsk).toBe(false);
-		expect(decideAuto("apply_patch", { input: "not a patch" }, edit, project).approveBlanketAsk).toBe(false);
-	});
-
-	it("asks for everything when the session root is the home directory", () => {
-		const read = { permission: "read", patterns: ["notes.txt"], always: [] };
-		expect(decideAuto("read", { path: "notes.txt" }, read, homedir()).approveBlanketAsk).toBe(false);
-	});
-
-	it("asks for bash_input text, which runs wherever an earlier command left its shell", () => {
-		const shell = (command: string) => ({ permission: "bash", patterns: [command], always: [] });
-		expect(decideAuto("bash_input", { input: "ls src" }, shell("ls src"), project).approveBlanketAsk).toBe(false);
-		expect(decideAuto("bash_input", { input: "rm notes.txt" }, shell("rm"), project).approveBlanketAsk).toBe(false);
-	});
-
-	it("judges a monitor command as a shell command and asks for a monitor path", () => {
-		expect(
-			decideAuto("monitor", { command: "ls src" }, { permission: "bash", patterns: ["ls"], always: [] }, project)
-				.approveBlanketAsk,
+			(await decideAuto("apply_patch", patch("*** Add File: src/added.ts"), edit, project)).approveBlanketAsk,
 		).toBe(true);
 		expect(
-			decideAuto("monitor", { path: ".env" }, { permission: "read", patterns: [".env"], always: [] }, project)
+			(await decideAuto("apply_patch", patch("*** Add File: x\u2028/../../outside/target.txt"), edit, project))
 				.approveBlanketAsk,
+		).toBe(false);
+		expect((await decideAuto("apply_patch", patch("*** Add File: .env"), edit, project)).approveBlanketAsk).toBe(
+			false,
+		);
+		expect((await decideAuto("apply_patch", { input: "not a patch" }, edit, project)).approveBlanketAsk).toBe(false);
+	});
+
+	it.each([
+		["the home directory", () => homedir()],
+		["a parent of the home directory", () => dirname(homedir())],
+		["the filesystem root", () => "/"],
+	])("asks for everything when the session root is %s", async (_label, root) => {
+		const read = { permission: "read", patterns: ["notes.txt"], always: [] };
+		expect((await decideAuto("read", { path: "notes.txt" }, read, root())).approveBlanketAsk).toBe(false);
+		const write = { permission: "edit", patterns: ["x.plist"], always: [] };
+		expect(
+			(await decideAuto("write", { path: join(homedir(), "Library", "LaunchAgents", "x.plist") }, write, root()))
+				.approveBlanketAsk,
+		).toBe(false);
+	});
+
+	it("covers find, multiedit, an apply_patch move and the .github exception", async () => {
+		mkdirSync(join(project, ".github", "workflows"), { recursive: true });
+		expect(await approves("find", { path: "src", pattern: "*.ts" }, "list")).toBe(true);
+		expect(await approves("find", { path: ".git", pattern: "*" }, "list")).toBe(false);
+		expect(await approves("multiedit", { path: "src/index.ts" }, "edit")).toBe(true);
+		expect(await approves("multiedit", { path: ".env" }, "edit")).toBe(false);
+		expect(await approves("write", { path: ".github/workflows/ci.yml", content: "x" }, "edit")).toBe(true);
+		const edit = { permission: "edit", patterns: [], always: [] };
+		const move = (to: string) => ({
+			input: `*** Begin Patch\n*** Update File: src/index.ts\n*** Move to: ${to}\n@@\n-export {};\n+export {};\n*** End Patch`,
+		});
+		expect((await decideAuto("apply_patch", move("src/moved.ts"), edit, project)).approveBlanketAsk).toBe(true);
+		expect((await decideAuto("apply_patch", move("../outside.ts"), edit, project)).approveBlanketAsk).toBe(false);
+	});
+
+	it("follows read's macOS name fallbacks to the file the tool would open", async () => {
+		const outside = join(scratch, "outside-secret.txt");
+		symlinkSync(outside, join(project, "Shot 1.02.03\u202FPM.png"));
+		symlinkSync(outside, join(project, "cafe\u0301.txt"));
+		expect(await approves("read", { path: "Shot 1.02.03 PM.png" }, "read")).toBe(false);
+		expect(await approves("read", { path: "caf\u00e9.txt" }, "read")).toBe(false);
+	});
+
+	it("asks for bash_input text, which runs wherever an earlier command left its shell", async () => {
+		const shell = (command: string) => ({ permission: "bash", patterns: [command], always: [] });
+		expect((await decideAuto("bash_input", { input: "ls src" }, shell("ls src"), project)).approveBlanketAsk).toBe(
+			false,
+		);
+		expect((await decideAuto("bash_input", { input: "rm notes.txt" }, shell("rm"), project)).approveBlanketAsk).toBe(
+			false,
+		);
+	});
+
+	it("judges a monitor command as a shell command and asks for a monitor path", async () => {
+		expect(
+			(
+				await decideAuto(
+					"monitor",
+					{ command: "ls src" },
+					{ permission: "bash", patterns: ["ls"], always: [] },
+					project,
+				)
+			).approveBlanketAsk,
+		).toBe(true);
+		expect(
+			(
+				await decideAuto(
+					"monitor",
+					{ path: ".env" },
+					{ permission: "read", patterns: [".env"], always: [] },
+					project,
+				)
+			).approveBlanketAsk,
 		).toBe(false);
 	});
 });
@@ -333,6 +388,18 @@ describe("auto preset rule precedence", () => {
 			await Promise.resolve();
 			expect(asked).toHaveLength(1);
 		}
+	});
+
+	it("does not let a user allow rule placed BEFORE the preset skip the auto judge", async () => {
+		const { service, asked } = makeService([
+			{ permission: "bash", pattern: "*", action: "allow" },
+			...rulesForPreset("auto"),
+		]);
+		void service
+			.ask({ ...shell, sessionID: "s" }, { approveBlanketAsk: false, userRulesBeatPreset: true })
+			.catch(() => undefined);
+		await Promise.resolve();
+		expect(asked).toHaveLength(1);
 	});
 
 	it("denies a user's deny rule even when the judge approves", async () => {

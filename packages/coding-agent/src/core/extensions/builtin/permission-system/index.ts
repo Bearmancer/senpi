@@ -161,7 +161,9 @@ export default function permissionSystemExtension(pi: ExtensionAPI): void {
 			};
 
 			const auto =
-				activePreset === "auto" ? decideAuto(event.toolName, event.input, permissionRequest, ctx.cwd) : undefined;
+				activePreset === "auto"
+					? await decideAuto(event.toolName, event.input, permissionRequest, ctx.cwd)
+					: undefined;
 			const askResultPromise = service
 				.ask(request, {
 					autoApproveAsk: permissionRequest.autoApproveAsk ?? false,

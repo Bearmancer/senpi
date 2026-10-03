@@ -31,12 +31,17 @@ const physicalPath = (target: string): string | undefined => {
 	}
 };
 
-/** The project root `auto` works in, or undefined when the session root is the home directory or `/`. */
+/**
+ * The project root `auto` works in, or undefined when the session root is `/`, the home directory or
+ * any ancestor of it (`/Users`, `/home`): from there every login item and app store counts as project.
+ */
 function projectRoot(cwd: string): string | undefined {
 	const root = physicalPath(path.resolve(cwd));
-	if (root === undefined) return undefined;
 	const home = physicalPath(os.homedir());
-	return root === path.parse(root).root || root === home ? undefined : root;
+	if (root === undefined || home === undefined) return undefined;
+	const homeFromRoot = path.relative(root, home);
+	const rootContainsHome = homeFromRoot === "" || (!homeFromRoot.startsWith("..") && !path.isAbsolute(homeFromRoot));
+	return root === path.parse(root).root || rootContainsHome ? undefined : root;
 }
 
 /** What is at `target` after following every symlink, without opening anything. */

@@ -28,11 +28,14 @@ export class PermissionService {
 		this.emitter = emitter;
 	}
 
-	/** The last user rule (any layer, not a preset's) matching the call, if one does. */
-	private userRuleFor(permission: string, pattern: string | readonly string[]): Rule | undefined {
+	/**
+	 * The user's own `deny` or `ask` for the call (the last matching non-preset rule, any layer), if
+	 * that is what it is. A user `allow` returns undefined: it never lets a call skip the preset.
+	 */
+	private userRestrictionFor(permission: string, pattern: string | readonly string[]): Rule | undefined {
 		const userRules = [...this.staticRuleset, ...this.approved].filter((rule) => !isPresetRule(rule));
 		const matched = evaluate(permission, pattern, userRules);
-		return userRules.includes(matched) ? matched : undefined;
+		return userRules.includes(matched) && matched.action !== "allow" ? matched : undefined;
 	}
 
 	/** Request permission for a tool call. Resolves if allowed, throws on denial. */
@@ -46,7 +49,7 @@ export class PermissionService {
 		}: {
 			readonly autoApproveAsk?: boolean;
 			readonly approveBlanketAsk?: boolean;
-			/** When the matching rule is the preset's own, a user rule for the same call decides instead. */
+			/** When the matching rule is the preset's own, a user deny or ask for the same call decides instead. */
 			readonly userRulesBeatPreset?: boolean;
 			readonly ruleAliases?: readonly string[];
 		} = {},
@@ -63,7 +66,7 @@ export class PermissionService {
 			const matched = evaluate(info.permission, ruleAliases ?? pattern, this.staticRuleset, this.approved);
 			const rule =
 				userRulesBeatPreset && isPresetRule(matched)
-					? (this.userRuleFor(info.permission, ruleAliases ?? pattern) ?? matched)
+					? (this.userRestrictionFor(info.permission, ruleAliases ?? pattern) ?? matched)
 					: matched;
 
 			if (rule.action === "deny") {

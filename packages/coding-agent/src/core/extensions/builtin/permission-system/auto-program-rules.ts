@@ -98,20 +98,26 @@ const SPECS: ReadonlyArray<readonly [string, ProgramRule]> = [
 	],
 ];
 
+const GIT_REF = /^[A-Za-z0-9_][A-Za-z0-9_.@-]*$/;
+
+/** A git operand that is not a plain ref (`HEAD`, `main`, `v1.2`) is a path and is checked as one. */
+const gitOperand = (_index: number, _count: number, text: string): WordRole =>
+	GIT_REF.test(text) && !text.includes("..") ? "text" : "list";
+
 const GIT_READ_SUBCOMMANDS: Readonly<Record<string, ProgramSpec>> = {
 	status: { flags: flags("-s -b -u --short --branch --porcelain --untracked-files"), operand: all("list") },
 	diff: {
 		flags: flags("--stat --cached --staged --name-only --name-status --numstat --no-color --color -w"),
-		operand: all("text"),
+		operand: gitOperand,
 	},
 	log: {
 		flags: {
 			...flags("--oneline --graph --decorate --stat --no-color --all --reverse --name-only --name-status"),
 			...flags("-n --max-count --since --until --author --format --pretty", "text"),
 		},
-		operand: all("text"),
+		operand: gitOperand,
 	},
-	"rev-parse": { flags: flags("--abbrev-ref --short --show-toplevel --verify"), operand: all("text") },
+	"rev-parse": { flags: flags("--abbrev-ref --short --show-toplevel --verify"), operand: gitOperand },
 	"ls-files": {
 		flags: flags("-m -o -d -s --modified --others --deleted --stage --exclude-standard"),
 		operand: all("list"),
@@ -133,8 +139,8 @@ const SUMMARY_ONLY = new Set(["--stat", "--name-only", "--name-status", "--numst
 /**
  * Read-only git subcommands only; any global option (`-c`, `-C`, `--git-dir`, a pager) asks.
  * `diff` prints file contents, which can include a tracked secret, so it passes only in a summary
- * form; `show` is not listed (`git show <blob id>` prints any tracked file), and no operand may name
- * an object path or a full object id.
+ * form; `show` is not listed (`git show <blob id>` prints any tracked file), no operand may name an
+ * object path or a full object id, and an operand that is not a plain ref is checked as a path.
  */
 const gitRule: ProgramRule = (args) => {
 	const [sub, ...rest] = args;
@@ -143,8 +149,7 @@ const gitRule: ProgramRule = (args) => {
 	if (subSpec === undefined || rest.some((word) => word.text.includes(":") || /^[0-9a-f]{7,64}$/i.test(word.text))) {
 		return undefined;
 	}
-	if ((sub.text === "diff" || sub.text === "show") && !rest.some((word) => SUMMARY_ONLY.has(word.text)))
-		return undefined;
+	if (sub.text === "diff" && !rest.some((word) => SUMMARY_ONLY.has(word.text))) return undefined;
 	return classifyWords(rest, subSpec);
 };
 

@@ -325,6 +325,17 @@ describe("auto permission preset in a real host session", () => {
 		expect(result.approvals.length).toBeGreaterThan(0);
 	});
 
+	it("keeps asking under auto when the project allows every command", async () => {
+		// Given a project that allows all shell commands, and auto chosen at session open.
+		const session = await host(undefined, { projectSettings: { permission: { bash: "allow" } } });
+		await writeFile(join(session.cwd, "notes.txt"), "keep me\n");
+		// When the agent deletes a file, which auto does not approve.
+		const result = await session.run("auto", { name: "bash", args: { command: "rm notes.txt" } });
+		// Then auto still asks: only a user deny or ask overrides the preset, never an allow.
+		expect(result.approvals.length).toBeGreaterThan(0);
+		expect(await readFile(join(session.cwd, "notes.txt"), "utf8")).toBe("keep me\n");
+	});
+
 	it("keeps asking for every command under accept-edits", async () => {
 		// Given the edit-only preset, where the auto judge must not apply.
 		const session = await host();
