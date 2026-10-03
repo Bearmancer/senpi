@@ -35,7 +35,10 @@ jobs:
     # Measured full-gate releases land at 22-26 min, so a 30 min cap has under 5 min
     # of headroom and kills the job mid-suite (run 33605173502). Budget for the slow
     # path plus growth; gate-reused releases still finish in ~4 min.
-    timeout-minutes: 50
+    # A regenerated catalog now always forces the full serial `CI=1 npm test` (senpi#2645),
+    # and that suite outgrew 50 min: run 37138537174 was still in the gate at the 50 min
+    # kill. A timed-out job keeps no log, so the cap must clear the slow path with room.
+    timeout-minutes: 90
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
