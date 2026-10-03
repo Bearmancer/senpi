@@ -98,7 +98,7 @@ it.each(["attached", "unflushed", "turn", "wake", "queued", "delivery", "prompt"
 
 		// When: the host considers early retirement.
 		try {
-			if (reason === "queued" || reason === "delivery") now = 60_001;
+			if (reason === "queued" || reason === "delivery" || reason === "prompt" || reason === "request") now = 60_001;
 			rig.router.sweepIdleSessions();
 
 			// Then: work and the runtime are preserved.

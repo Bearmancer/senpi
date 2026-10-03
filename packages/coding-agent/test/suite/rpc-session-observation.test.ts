@@ -19,8 +19,8 @@ it.each([
 	"get_commands",
 	"get_loaded_surfaces",
 	"memory_report",
-] as const)("does not let %s polling renew a session's idle lifetime", async (type) => {
-	// Given: an otherwise idle session, almost at its eviction deadline.
+] as const)("does not let %s polling renew a detached session's idle lifetime", async (type) => {
+	// Given: a retained session whose owner detached, almost at its eviction deadline.
 	const dir = await mkdtemp(join(tmpdir(), "senpi-session-observation-"));
 	directories.push(dir);
 	let now = 0;
@@ -28,10 +28,11 @@ it.each([
 	const first = opened(await rig.open("owner", { cwd: dir, retain_on_disconnect: true }), 0);
 	const entry = rig.registry.peek(first.sessionId);
 	if (!entry) throw new Error("Session did not open");
+	await rig.drop("owner");
 	now = 999;
 
-	// When: a client reads it just before the original deadline, then the sweep runs.
-	await rig.send("owner", { id: "read", type, sessionId: first.sessionId });
+	// When: an observer reads without attaching, then the original deadline arrives.
+	await rig.send("observer", { id: "read", type, sessionId: first.sessionId });
 	now = 1_000;
 	rig.router.sweepIdleSessions();
 
@@ -39,6 +40,40 @@ it.each([
 	expect(entry.state).toBe("closing");
 	await entry.closeCompletion;
 	expect(rig.registry.peek(first.sessionId)).toBeUndefined();
+});
+
+it.each([
+	{ kind: "interactive", retained: false },
+	{ kind: "interactive", retained: true },
+	{ kind: "worker", retained: false },
+	{ kind: "worker", retained: true },
+] as const)("keeps the polled attached $kind handle usable (retained: $retained)", async ({ kind, retained }) => {
+	// Given: an attached session with persisted history and an almost-expired idle window.
+	const dir = await mkdtemp(join(tmpdir(), "senpi-session-observation-"));
+	directories.push(dir);
+	let now = 0;
+	const handled: string[] = [];
+	await using rig = createInProcessRig(dir, { now: () => now, idleEvictionMs: 1_000 }, async (command) => {
+		handled.push(command.type);
+	});
+	const first = opened(
+		await rig.send("owner", { id: "open", type: "open_session", cwd: dir, kind, retain_on_disconnect: retained }),
+		0,
+	);
+	const turn = rig.turns.get(first.state.sessionFile);
+	if (!turn) throw new Error("Session did not open");
+	turn.finish();
+	now = 999;
+
+	// When: its owner polls before the original deadline and then uses the same handle after it.
+	await rig.send("owner", { id: "poll", type: "get_state", sessionId: first.sessionId });
+	now = 1_000;
+	rig.router.sweepIdleSessions();
+	await rig.send("owner", { id: "after", type: "get_state", sessionId: first.sessionId });
+
+	// Then: no unsolicited teardown or routing-handle replacement occurred.
+	expect(rig.registry.peek(first.sessionId)).toMatchObject({ state: "open", attachments: 1 });
+	expect(handled).toEqual(["get_state", "get_state"]);
 });
 
 it("renews the idle window for a command that changes the session", async () => {

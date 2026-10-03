@@ -167,7 +167,7 @@ export class WorkerSessionRegistry {
 		)
 			throw new RpcSessionRegistryError("session_closing");
 		if (entry.state !== "open" && entry.state !== "closing") throw new RpcSessionRegistryError("unknown_session");
-		if (refreshesSessionActivity(command)) entry.lastCommandAt = this.now();
+		if (entry.attachments > 0 || refreshesSessionActivity(command)) entry.lastCommandAt = this.now();
 		return entry;
 	}
 

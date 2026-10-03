@@ -38,6 +38,7 @@ interface OpenFields {
 	cwd?: string;
 	sessionPath?: string;
 	retain_on_disconnect?: boolean;
+	kind?: "interactive" | "worker";
 }
 
 /**
@@ -167,7 +168,11 @@ async function retainHost(options: { idleEvictionMs?: number } = {}) {
 			await settle();
 		},
 		async list(): Promise<ListedSession[]> {
-			const response = await router.handle({ type: "list_sessions", id: `list-${++requests}` });
+			const response = await router.handle({
+				type: "list_sessions",
+				id: `list-${++requests}`,
+				include_workers: true,
+			});
 			return (response as { data?: { sessions?: ListedSession[] } } | undefined)?.data?.sessions ?? [];
 		},
 		/** The live worker client of an open session, for producing worker-side traffic. */
@@ -327,14 +332,15 @@ it("parks a retained detached session at the idle window and reopens it by path"
 	expect((reopened?.data as { sessionId?: string } | undefined)?.sessionId).not.toBe(sessionId);
 });
 
-it.each(["get_state", "memory_report"])("does not renew a worker isolate's idle window for %s", async (command) => {
-	// Given: an idle worker isolate near its configured eviction deadline.
+it.each(["get_state", "memory_report"])("does not renew detached isolate lifetime for %s", async (command) => {
+	// Given: a detached worker isolate near its configured eviction deadline.
 	await using host = await retainHost({ idleEvictionMs: 1_000 });
 	await host.open("owner", { cwd: host.cwd, retain_on_disconnect: true });
 	const [row] = await host.list();
 	if (!row) throw new Error("Session did not open");
 	const entry = host.registry.peek(row.sessionId);
 	if (!entry) throw new Error("Session did not open");
+	await host.drop("owner");
 	host.clock.now = 999;
 
 	// When: an observation is routed just before the deadline.
@@ -346,4 +352,32 @@ it.each(["get_state", "memory_report"])("does not renew a worker isolate's idle 
 	expect(entry.state).toBe("closing");
 	await entry.closeCompletion;
 	expect(await host.list()).toEqual([]);
+});
+
+it.each([
+	{ kind: "interactive", retained: false },
+	{ kind: "interactive", retained: true },
+	{ kind: "worker", retained: false },
+	{ kind: "worker", retained: true },
+] as const)("keeps the polled attached $kind isolate usable (retained: $retained)", async ({ kind, retained }) => {
+	// Given: one attached owner of a worker-isolate runtime.
+	await using host = await retainHost({ idleEvictionMs: 1_000 });
+	await host.open("owner", { cwd: host.cwd, kind, retain_on_disconnect: retained });
+	const [row] = await host.list();
+	if (!row) throw new Error("Session did not open");
+	host.clock.now = 999;
+
+	// When: the owner polls, the original deadline passes, and it polls the same handle again.
+	await host.writer.withConnection("owner", () =>
+		host.router.handle({ id: "poll", type: "get_state", sessionId: row.sessionId }),
+	);
+	host.clock.now = 1_000;
+	host.router.sweepIdleSessions();
+	await host.writer.withConnection("owner", () =>
+		host.router.handle({ id: "after", type: "get_state", sessionId: row.sessionId }),
+	);
+
+	// Then: both commands reached the worker and its original handle is still attached.
+	expect(await host.list()).toEqual([expect.objectContaining({ sessionId: row.sessionId, attachments: 1 })]);
+	expect(host.posted.filter(({ message }) => message.type === "command")).toHaveLength(2);
 });

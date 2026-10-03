@@ -157,6 +157,20 @@
 // the edit-plus-proof todo pairing, the enumerated verification floor, the never-present
 // hard limit, the verified/unverified report slots, the user-mentioned-run watch, the stop-goal
 // audit, and the read-bun-1-4-first mandate. The 09-11 early-stop set is untouched.
+//
+// 2026-10-03 (senpi#2630): Astra handed few-call reading, credential lookups and the checks on
+// its own change to subagents on executable lanes, then ended its turn to wait for them. A 10-day
+// survey put its delegation share level with the Claude and Kimi presets, but 86% of its spawns
+// went to executable categories (30-50% for the others), nine were read-only investigations, and
+// in the trigger session the main thread idled 90 s for a child whose evidence memory already
+// held. Three sentences licensed that and are replaced at their source (category B): `delegation`
+// tested a call count and independence, so a six-call investigation was rule compliance - it now
+// keeps reading, lookups and checks on your own change however many calls they take, and hands
+// out only a track that runs beside yours and lands the task sooner, in the hephaestus prompts'
+// terms (a wide investigation across many files, or an implementation unit beyond one coherent
+// edit in files you are not touching); `async-default` no longer opens its bold lead with child
+// tasks; `foreground-exception` drops the sentence that let a result needed next be a background
+// child plus a turn end. The bold set, the rule ids and their sections are unchanged.
 
 import { APP_NAME } from "../../../../config.ts";
 import {
@@ -264,7 +278,7 @@ const LSP_SYMBOL_ROUTING =
 	"Where LSP tools exist, let the language server answer symbol questions - a definition, its callers, the blast radius of a rename, the diagnostics on a file you just touched. Plain text search earns its place on literal strings, filenames, and commit history.";
 
 const DELEGATION =
-	"Do the work yourself by default: whatever closes in a handful of calls is yours, and a follow-up on work you delegated is yours to take back, not to forward. Only a sizeable track independent of your own earns a subagent; spawn such tracks together in the background, each brief stating what to produce, where its edits may land, the observable condition that ends it, and the evidence it hands back for you to check.";
+	"Do the work yourself by default: reading, lookups, and checks on your own change are yours however many calls they take, and a follow-up on work you delegated is yours to take back, not to forward. A subagent is for a track that runs beside yours and lands the task sooner - a wide investigation across many files, or an implementation unit beyond one coherent edit in files you are not touching; spawn such tracks together in the background, each brief naming its output, allowed edit paths, stop condition, and returned evidence.";
 
 const LEGIBLE_MESSAGES =
 	"Messages to other agents and your final answer are read by people: full sentences, proper spaces between words and numbers, no private shorthand.";
@@ -273,10 +287,10 @@ const TODO_GRANULARITY =
 	"Given a todo tool, cut multi-step work into the smallest items that still stand alone and move each one the instant its state changes: opened, finished, newly discovered and appended, abandoned and dropped. A one-step ask or a question carries no list.";
 
 const ASYNC_DEFAULT =
-	"**ASYNCHRONOUS IS THE DEFAULT FORM OF EVERY CALL THAT OFFERS ONE: CHILD TASKS AND BASH SESSIONS START IN THE BACKGROUND, A LONG COMPUTATION DETACHES ITS EVAL CELL, AND A WAIT IS A `tool.monitor` SUBSCRIPTION - NEVER A CELL THAT SITS ON A `--watch` OR A SPAWNED PROCESS, NEVER A CHILD SPAWNED TO WATCH.** Each returns a handle at once and delivers its result later as a message; treat the handle like a pending async call and keep working on everything that does not need it.";
+	"**ASYNCHRONOUS IS THE DEFAULT FORM OF EVERY CALL THAT OFFERS ONE: BASH SESSIONS START IN THE BACKGROUND, A LONG COMPUTATION DETACHES ITS EVAL CELL, AND A WAIT IS A `tool.monitor` SUBSCRIPTION - NEVER A CELL THAT SITS ON A `--watch` OR A SPAWNED PROCESS, NEVER A CHILD SPAWNED TO WATCH.** Each returns a handle at once and delivers its result later as a message; treat the handle like a pending async call and keep working on everything that does not need it.";
 
 const FOREGROUND_EXCEPTION =
-	"Block only on a call that finishes within the time a reply takes and decides your very next call, or on an approval-gated or destructive action you must watch directly. A child task never meets the first test; when its result would be your next input, either the work was small enough to do yourself or the child runs in the background and its completion delivers it.";
+	"Block only on a call that finishes within the time a reply takes and decides your very next call, or on an approval-gated or destructive action you must watch directly. A child task never meets the first test; it runs in the background and its completion delivers its result.";
 
 const TURN_END_IS_WAIT =
 	"**THERE IS NO WAIT TOOL. END YOUR TURN WHEN THE NEXT STEP NEEDS A PENDING RESULT AND A HANDLE WILL WAKE YOU; WITH NOTHING PENDING AND WORK STILL OPEN, THE TURN KEEPS GOING.** Repeated status reads, sleeps, and timed retries replay the whole context for nothing; a single peek serves a midpoint decision only.";

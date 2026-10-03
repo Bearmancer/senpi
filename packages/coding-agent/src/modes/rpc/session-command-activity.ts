@@ -1,6 +1,6 @@
 import type { RpcCommand } from "./rpc-types.ts";
 
-/** Observations do not buy another idle window; unknown or mutating commands still do. */
+/** Whether the command itself refreshes activity, apart from attached-client keepalives. */
 const observations: ReadonlySet<string> = new Set([
 	"get_state",
 	"get_messages",

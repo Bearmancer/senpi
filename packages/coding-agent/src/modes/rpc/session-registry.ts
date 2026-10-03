@@ -243,8 +243,8 @@ export class RpcSessionRegistry {
 			throw new RpcSessionRegistryError("session_closing");
 		}
 		if (entry.state !== "open" && entry.state !== "closing") throw new RpcSessionRegistryError("unknown_session");
-		// Polling a retained session is observation, not work that needs its runtime.
-		if (refreshesSessionActivity(command)) entry.lastCommandAt = this.now();
+		// Attached clients keep their polling keepalive; detached observations do not retain a runtime.
+		if (entry.attachments > 0 || refreshesSessionActivity(command)) entry.lastCommandAt = this.now();
 		return entry;
 	}
 

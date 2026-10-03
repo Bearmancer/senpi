@@ -994,7 +994,7 @@ extensions and contents; neither runtime provides process-fatal OOM containment.
 
 What the host does enforce are lifecycle windows, and they only ever return memory from work nobody is doing:
 
-- **Idle eviction**: a session with no activity-changing command and no session-owned work for
+- **Idle eviction**: a session with no activity-refreshing command and no session-owned work for
   `SENPI_RPC_SESSION_IDLE_EVICTION_MS` (default 30 minutes) is closed through the exact `close_session` sequence
   (abort → waitForIdle → dispose, all attachments drained, path reservation released) and every attached connection
   receives that handle's `session_closed { reason: "idle_evicted" }` broadcast plus a final `close_session` response
@@ -1014,15 +1014,19 @@ What the host does enforce are lifecycle windows, and they only ever return memo
   and barrier-held session work all defer eviction, and the idle clock restarts when that work settles. An evicted
   session resumes like any other: the next `open_session` with the same `sessionPath` reopens it.
 - **Observational reads**: session state, history, model/auth inventory, loaded surfaces, and `memory_report`
-  do not restart the idle clock in either runtime. In particular, polling `get_state` does not keep an otherwise
-  idle session resident. Commands that change the session still restart the clock. An in-flight request or
-  prompt preflight prevents the occupancy sweep from tearing its session down while the request is running.
+  do not restart the idle clock of a **detached** session in either runtime. With any client still attached,
+  these reads keep refreshing activity as before: an attached client polling `get_state` keeps the same live
+  routing handle and runtime. An attached session receiving no commands can still idle-evict as before.
+  Commands that change the session restart the clock even when detached. An in-flight request or prompt
+  preflight prevents ordinary idle parking while the request is running; directory-removal teardown is separate.
 - **Completed detached workers**: on the in-process runtime, a retained `kind: "worker"` session with zero
   attachments is parked on the next occupancy sweep once its transcript is flushed and it has no session-owned
   work, queued input, admitted unwritten delivery, pending prompt, or in-flight request. It does not wait out the
   normal idle window. This releases its runtime and eval kernels, not its durable history: reopen its
   `sessionPath` to continue under a new routing handle. Active monitors and other wake sources still prevent
   early parking. Unflushed workers, worker-isolate runtimes, and interactive sessions keep their normal window.
+  There is no extra reconnect grace period: a brief disconnect overlapping a sweep can require a fresh
+  runtime on reopen rather than reattaching to the previous one. Durable identity and history still survive.
 - **Worker capacity** (worker runtime ONLY - a stdio host, `--listen stdio://`, an embedder, or a socket host that
   passed `--session-runtime worker` explicitly): at most 20 workers may be preparing, open, closing, or quarantined
   together, because each one is an isolate the host must keep alive. Admission beyond this bound fails explicitly
