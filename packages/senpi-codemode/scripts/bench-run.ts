@@ -37,6 +37,8 @@ export interface BlockRecord {
 	readonly loadavgEnd: readonly number[];
 	readonly power: string;
 	readonly idleSeconds: number | null;
+	readonly startedAt: string;
+	readonly endedAt: string;
 	readonly measurements: readonly {
 		readonly runtimeId: string;
 		readonly scenario: string;
@@ -88,10 +90,11 @@ export async function runBlocks(plan: RunPlan): Promise<RunResult> {
 		};
 	blocksLoop: for (let index = 0; index < plan.blocks; index += 1) {
 		const comparisonOrder: Side[] = index % 2 === 0 ? ["base", "head"] : ["head", "base"];
+		const startedAt = new Date().toISOString();
 		const startLoad = loadavg();
 		const power = await powerSource();
 		const idleSeconds = await hostIdleSeconds();
-		plan.log(`block ${index + 1}/${plan.blocks} start: load ${startLoad.map((value) => value.toFixed(2)).join(" ")}, idle ${idleSeconds ?? "n/a"} s, ${power}`);
+		plan.log(`block ${index + 1}/${plan.blocks} start ${startedAt}: load ${startLoad.map((value) => value.toFixed(2)).join(" ")}, idle ${idleSeconds ?? "n/a"} s, ${power}`);
 		const measurements: Array<BlockRecord["measurements"][number]> = [];
 		for (const runtime of plan.runtimes) {
 			if (available.get(runtime.id) !== true) continue;
@@ -165,12 +168,14 @@ export async function runBlocks(plan: RunPlan): Promise<RunResult> {
 					loadavgEnd: loadavg(),
 					power,
 					idleSeconds,
+					startedAt,
+					endedAt: new Date().toISOString(),
 					measurements,
 				});
 				break blocksLoop;
 			}
 		}
-		blocks.push({ index, comparisonOrder, loadavg: startLoad, loadavgEnd: loadavg(), power, idleSeconds, measurements });
+		blocks.push({ index, comparisonOrder, loadavg: startLoad, loadavgEnd: loadavg(), power, idleSeconds, startedAt, endedAt: new Date().toISOString(), measurements });
 	}
 	return {
 		reps: plan.reps,

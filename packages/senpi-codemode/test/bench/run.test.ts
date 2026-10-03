@@ -45,6 +45,12 @@ describe("paired runtime scheduling", () => {
 			expect(firstComparison?.side).toBe(block.index % 2 === 0 ? "base" : "head");
 		}
 		expect(decide({ ...run, blockLoads: run.admissionLoads }).exitCode).toBe(0);
+		// And every block records an ordered wall-clock window, so host activity can be checked for overlap.
+		const windows = run.blocks.map((block) => [Date.parse(block.startedAt), Date.parse(block.endedAt)] as const);
+		for (const [index, [start, end]] of windows.entries()) {
+			expect(end).toBeGreaterThanOrEqual(start);
+			expect(start).toBeGreaterThanOrEqual(windows[index - 1]?.[1] ?? start);
+		}
 	}, 30_000);
 
 	it("invalidates a run when a runtime exits before its requested sample", async () => {
