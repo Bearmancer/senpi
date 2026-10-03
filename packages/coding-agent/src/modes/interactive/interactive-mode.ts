@@ -917,7 +917,7 @@ export class InteractiveMode {
 	private readonly sessionShownTipIds = new Set<string>();
 	private shortcutOverlay: ShortcutOverlay | undefined;
 	private lastEditorText = "";
-	private providerGuidanceShown = false;
+	private startupProviderGuidanceShown = false;
 	private lastInputWasPaste = false;
 	private sessionLogger: SessionLogger | undefined;
 	private readonly continuityNotices = new ContinuityNoticeTracker();
@@ -1884,7 +1884,7 @@ export class InteractiveMode {
 
 		if (modelFallbackMessage) {
 			this.showWarning(modelFallbackMessage);
-			if (modelFallbackMessage === formatNoModelsAvailableMessage()) this.providerGuidanceShown = true;
+			if (modelFallbackMessage === formatNoModelsAvailableMessage()) this.startupProviderGuidanceShown = true;
 		}
 
 		for (const warning of this.session.fallbackValidationWarnings) {
@@ -5185,9 +5185,13 @@ export class InteractiveMode {
 				break;
 
 			case "provider_required":
-				// The startup "No models available" warning already carries this /login guidance.
-				if (!this.providerGuidanceShown) this.showWarning(event.notice);
-				this.providerGuidanceShown = true;
+				// The first notice repeats the startup "No models available" warning (same /login guidance), so it
+				// is absorbed by it; the session emits again only after a turn was admitted in between.
+				if (this.startupProviderGuidanceShown) {
+					this.startupProviderGuidanceShown = false;
+					break;
+				}
+				this.showWarning(event.notice);
 				break;
 
 			case "settings_source_selected":

@@ -1,6 +1,7 @@
 import type { Model } from "@earendil-works/pi-ai";
-import type { ExtensionAPI } from "../../../src/core/extensions/types.ts";
+import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it } from "vitest";
+import type { ExtensionAPI } from "../../../src/core/extensions/types.ts";
 import { createHarness, type Harness } from "../harness.ts";
 
 const COMPACTION_ERROR = "Context remains above the compaction threshold";
@@ -116,5 +117,73 @@ describe("a first run with no provider configured", () => {
 		expect(extensionErrors).toEqual([]);
 		expect(harness.eventsOfType("provider_required").map((event) => event.notice)).toEqual([typedPromptGuidance]);
 		expect(harness.faux.getCallLog()).toEqual([]);
+	});
+
+	it("#given no provider #when an extension sends a user message #then it gets the same one notice, not an extension error", async () => {
+		// given
+		let api: ExtensionAPI | undefined;
+		const harness = await createHarness({
+			withConfiguredAuth: false,
+			extensionFactories: [
+				(pi) => {
+					api = pi;
+				},
+			],
+		});
+		harnesses.push(harness);
+		harness.session.agent.state.model = NO_PROVIDER_PLACEHOLDER;
+		const extensionErrors: string[] = [];
+		const outcome = new Promise<string>((resolve, reject) => {
+			const timer = setTimeout(() => reject(new Error("no outcome within 10s")), 10_000);
+			harness.getExtensionRunner().onError((error) => {
+				extensionErrors.push(error.error);
+				clearTimeout(timer);
+				resolve("extension-error");
+			});
+			harness.session.subscribe((event) => {
+				if (event.type !== "provider_required") return;
+				clearTimeout(timer);
+				resolve("provider-required");
+			});
+		});
+
+		// when
+		api?.sendUserMessage("continue the plan");
+
+		// then
+		expect(await outcome).toBe("provider-required");
+		expect(extensionErrors).toEqual([]);
+		expect(harness.eventsOfType("provider_required")).toHaveLength(1);
+		expect(harness.eventsOfType("provider_required")[0]?.notice).toContain("/login");
+		expect(harness.faux.getCallLog()).toEqual([]);
+	});
+
+	it("#given the notice was shown #when a turn is admitted and the provider is lost again #then the user is told again", async () => {
+		// given
+		let api: ExtensionAPI | undefined;
+		const harness = await createHarness({
+			extensionFactories: [
+				(pi) => {
+					api = pi;
+				},
+			],
+		});
+		harnesses.push(harness);
+		const workingModel = harness.getModel();
+		harness.setResponses([fauxAssistantMessage("answered")]);
+		harness.session.agent.state.model = NO_PROVIDER_PLACEHOLDER;
+		api?.sendMessage({ customType: "note", content: "first", display: false }, { triggerTurn: true });
+		await harness.session.waitForSettledSessionWork();
+
+		// when
+		harness.session.agent.state.model = workingModel;
+		await harness.session.prompt("hello");
+		harness.session.agent.state.model = NO_PROVIDER_PLACEHOLDER;
+		api?.sendMessage({ customType: "note", content: "second", display: false }, { triggerTurn: true });
+		await harness.session.waitForSettledSessionWork();
+
+		// then
+		expect(harness.eventsOfType("provider_required")).toHaveLength(2);
+		expect(harness.faux.getCallLog()).toHaveLength(1);
 	});
 });

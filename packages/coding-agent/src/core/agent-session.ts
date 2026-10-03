@@ -415,8 +415,9 @@ export type AgentSessionEvent =
 	  }
 	| { type: "continuation_error"; errorMessage: string }
 	/**
-	 * A background turn (an extension's `triggerTurn`) could not start because no provider is ready. Emitted
-	 * at most once per session with the same guidance a typed prompt gets, instead of an extension error.
+	 * A background turn (an extension's `sendMessage` with `triggerTurn`, or `sendUserMessage`) could not start
+	 * because no provider is ready. Emitted once until a turn is admitted again, with the same guidance a typed
+	 * prompt gets, instead of an extension error.
 	 */
 	| { type: "provider_required"; notice: string }
 	/** The session file refused a message of the running turn; the message is not in the transcript. */
@@ -7691,7 +7692,11 @@ export class AgentSession {
 		const hasConfiguredAuth =
 			this._modelRuntime.hasConfiguredAuth(this.model.provider) ||
 			(await this._modelRuntime.checkAuth(this.model.provider)) !== undefined;
-		if (hasConfiguredAuth) return;
+		if (hasConfiguredAuth) {
+			// A provider is ready again: a later refusal is a new episode the user should hear about.
+			this._providerRequiredNoticed = false;
+			return;
+		}
 		if (this._modelRuntime.isUsingOAuth(this.model.provider)) {
 			throw new ModelNotReadyError(
 				`Authentication failed for "${this.model.provider}". ` +
@@ -7702,7 +7707,7 @@ export class AgentSession {
 		throw new ModelNotReadyError(formatNoApiKeyFoundMessage(this.model.provider));
 	}
 
-	/** Shows the provider guidance for a refused background turn once per session. */
+	/** Shows the provider guidance for a refused background turn once until a turn is admitted again. */
 	private _noticeProviderRequired(notice: string): void {
 		if (this._providerRequiredNoticed) return;
 		this._providerRequiredNoticed = true;
@@ -7764,8 +7769,9 @@ export class AgentSession {
 		}
 
 		// Under a virtual selection, the physical model of the latest response supplies the limits;
-		// before one, the virtual model's declared limits apply. An undeclared window (<= 0) is unknown for
-		// every model, never "already over the threshold".
+		// before one, the virtual model's declared limits apply. An undeclared window (<= 0) is unknown, so
+		// admission never refuses a turn as "already over the threshold" (#2677). Compaction after a turn
+		// (`_checkCompaction`) still runs and rejects against a 0 window, as it did before.
 		const limitsModel = this._limitsModel();
 		if (
 			!settings.enabled ||
@@ -7833,7 +7839,8 @@ export class AgentSession {
 		const lateQueuedMessages = this._pendingQueuedInputMessages();
 		if (!messages.some((message) => message.role === "custom") && lateQueuedMessages.length === 0) return;
 
-		// Same limits rule as the pre-provider threshold check: an undeclared window is unknown, never oversized.
+		// Same limits rule as the pre-provider threshold check: an undeclared window is unknown, so this gate
+		// never refuses a turn as oversized (#2677).
 		const model = this._limitsModel();
 		if (!model || model.contextWindow <= 0) return;
 		const settings = this._getCompactionSettings();
@@ -8760,6 +8767,10 @@ export class AgentSession {
 				},
 				sendUserMessage: (content, options) => {
 					const reportError = (err: unknown) => {
+						if (err instanceof ModelNotReadyError) {
+							this._noticeProviderRequired(err.message);
+							return;
+						}
 						runner.emitError({
 							extensionPath: RUNTIME_EXTENSION_PATH,
 							event: "send_user_message",

@@ -20,7 +20,7 @@
 
 ### What changed
 
-- `packages/coding-agent/src/core/agent-session.ts`: `_assertModelReadyForTurn()` (no model, or no credentials for its provider) is shared by `prompt()` and the `triggerTurn` path of `sendCustomMessage`, which used to reach the compaction gate unchecked. `_enforceCompactionBeforeProvider` and `_enforceFinalProviderAdmission` treat a context window `<= 0` as unknown for every model, not only virtual ones. The check throws `ModelNotReadyError`; the extension `sendMessage` error reporter turns it into one `provider_required` session event (with the same guidance text) instead of `runner.emitError`, so a background turn on a first run is neither silent nor an error.
+- `packages/coding-agent/src/core/agent-session.ts`: `_assertModelReadyForTurn()` (no model, or no credentials for its provider) is shared by `prompt()` and the `triggerTurn` path of `sendCustomMessage`, which used to reach the compaction gate unchecked. `_enforceCompactionBeforeProvider` and `_enforceFinalProviderAdmission` treat a context window `<= 0` as unknown for every model, not only virtual ones. The check throws `ModelNotReadyError`; the extension `sendMessage` and `sendUserMessage` error reporters turn it into one `provider_required` session event (with the same guidance text) instead of `runner.emitError`, so a background turn on a first run is neither silent nor an error; the once-latch resets when a turn is admitted, so losing the provider again later is reported again.
 
 ### Why
 
