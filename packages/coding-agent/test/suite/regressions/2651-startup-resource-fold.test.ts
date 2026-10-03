@@ -1,58 +1,104 @@
-import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
 import { Container } from "@earendil-works/pi-tui";
-import { describe, expect, test } from "vitest";
-import { LoadedResourceSection } from "../../../src/modes/interactive/components/loaded-resource-section.ts";
-
-const INTERACTIVE_MODE_SOURCE = readFileSync(
-	fileURLToPath(new URL("../../../src/modes/interactive/interactive-mode.ts", import.meta.url)),
-	"utf8",
-);
-
-function renderAll(container: Container): string {
-	return container.render(120).flat().join("\n");
-}
+import { beforeAll, describe, expect, test } from "vitest";
+import { InteractiveMode } from "../../../src/modes/interactive/interactive-mode.ts";
+import { initTheme } from "../../../src/modes/interactive/theme/theme.ts";
 
 // Regression for https://github.com/code-yeongyu/senpi/issues/2651
-describe("startup resource banner folds to a one-line summary", () => {
-	const names = Array.from({ length: 69 }, (_, i) => `skill-${String(i).padStart(2, "0")}`);
 
-	test("a compact summary line carries the section header and count, no names", () => {
-		const section = new LoadedResourceSection(
-			() => "[Skills] 69",
-			() => `[Skills]\n${names.join("\n")}`,
-			false,
-		);
-		const container = new Container();
-		container.addChild(section);
-		const rendered = renderAll(container);
+beforeAll(() => initTheme("dark"));
 
-		expect(rendered).toContain("[Skills]");
-		expect(rendered).toContain("69");
-		for (const name of names.slice(0, 5)) {
-			expect(rendered).not.toContain(name);
-		}
+function renderAll(container: Container, width = 120): string {
+	return container.render(width).flat().join("\n");
+}
+
+function fakeResourcesThis(skills: Array<{ filePath: string; name: string }>, expanded: boolean) {
+	const fakeThis: any = {
+		options: { verbose: false },
+		toolOutputExpanded: expanded,
+		loadedResourcesContainer: new Container(),
+		chatContainer: new Container(),
+		settingsManager: {
+			getQuietStartup: () => false,
+			getDisabledBuiltinExtensions: () => [],
+		},
+		sessionManager: { getCwd: () => "/tmp/project" },
+		session: {
+			promptTemplates: [],
+			extensionRunner: { getCommandDiagnostics: () => [], getShortcutDiagnostics: () => [] },
+			resourceLoader: {
+				getPathMetadata: () => new Map(),
+				getAgentsFiles: () => ({ agentsFiles: [] }),
+				getSystemPromptSource: () => undefined,
+				getAppendSystemPromptSources: () => [],
+				getSkills: () => ({ skills, diagnostics: [] }),
+				getPrompts: () => ({ prompts: [], diagnostics: [] }),
+				getExtensions: () => ({ extensions: [], errors: [], runtime: {} }),
+				getThemes: () => ({ themes: [], diagnostics: [] }),
+			},
+		},
+		formatDisplayPath: (p: string) => (InteractiveMode as any).prototype.formatDisplayPath.call(fakeThis, p),
+		formatExtensionDisplayPath: (p: string) =>
+			(InteractiveMode as any).prototype.formatExtensionDisplayPath.call(fakeThis, p),
+		formatContextPath: (p: string) => (InteractiveMode as any).prototype.formatContextPath.call(fakeThis, p),
+		getStartupExpansionState: () => (InteractiveMode as any).prototype.getStartupExpansionState.call(fakeThis),
+		getBuiltinExtensionNameFromPath: (InteractiveMode as any).prototype.getBuiltinExtensionNameFromPath,
+		getBuiltinExtensionDisplayName: (InteractiveMode as any).prototype.getBuiltinExtensionDisplayName,
+		formatExtensionScopeGroups: (extensions: unknown[]) =>
+			(InteractiveMode as any).prototype.formatExtensionScopeGroups.call(fakeThis, extensions),
+		buildScopeGroups: (items: Array<{ path: string; sourceInfo?: unknown }>) =>
+			(InteractiveMode as any).prototype.buildScopeGroups.call(fakeThis, items),
+		formatScopeGroups: (groups: unknown, formatOptions: unknown) =>
+			(InteractiveMode as any).prototype.formatScopeGroups.call(fakeThis, groups, formatOptions),
+		isPackageSource: (sourceInfo?: unknown) =>
+			(InteractiveMode as any).prototype.isPackageSource.call(fakeThis, sourceInfo),
+		getShortPath: (p: string, sourceInfo?: unknown) =>
+			(InteractiveMode as any).prototype.getShortPath.call(fakeThis, p, sourceInfo),
+		getCompactPathLabel: (p: string, sourceInfo?: unknown) =>
+			(InteractiveMode as any).prototype.getCompactPathLabel.call(fakeThis, p, sourceInfo),
+		getCompactPackageSourceLabel: (sourceInfo?: unknown) =>
+			(InteractiveMode as any).prototype.getCompactPackageSourceLabel.call(fakeThis, sourceInfo),
+		getCompactExtensionLabel: (p: string, sourceInfo?: unknown) =>
+			(InteractiveMode as any).prototype.getCompactExtensionLabel.call(fakeThis, p, sourceInfo),
+		getCompactDisplayPathSegments: (p: string) =>
+			(InteractiveMode as any).prototype.getCompactDisplayPathSegments.call(fakeThis, p),
+		getCompactNonPackageExtensionLabel: (p: string, i: number, all: unknown) =>
+			(InteractiveMode as any).prototype.getCompactNonPackageExtensionLabel.call(fakeThis, p, i, all),
+		formatDiagnostics: () => [],
+		getBuiltInCommandConflictDiagnostics: () => [],
+	};
+	return fakeThis;
+}
+
+const MANY_SKILLS = Array.from({ length: 69 }, (_, i) => ({
+	filePath: `/tmp/skills/skill-${String(i).padStart(2, "0")}/SKILL.md`,
+	name: `skill-${String(i).padStart(2, "0")}`,
+}));
+
+describe("startup banner fold", () => {
+	test("the compact list truncates to a few names with a +N more hint, so the first screen fits", () => {
+		const fakeThis = fakeResourcesThis(MANY_SKILLS, false);
+		(InteractiveMode as any).prototype.showLoadedResources.call(fakeThis, { force: true });
+		const out = renderAll(fakeThis.loadedResourcesContainer);
+
+		expect(out).toContain("[Skills]");
+		expect(out).toMatch(/\+\d+ more/);
+		// Not all 69 names are inlined in the collapsed body.
+		expect(out).not.toContain("skill-40");
+		expect(out).not.toContain("skill-68");
 	});
 
 	test("expanding reveals the full list", () => {
-		const section = new LoadedResourceSection(
-			() => "[Skills] 69",
-			() => `[Skills]\n${names.join("\n")}`,
-			false,
-		);
-		section.setExpanded(true);
-		const container = new Container();
-		container.addChild(section);
-		const rendered = renderAll(container);
-
-		expect(rendered).toContain("skill-00");
-		expect(rendered).toContain("skill-68");
+		const fakeThis = fakeResourcesThis(MANY_SKILLS, true);
+		(InteractiveMode as any).prototype.showLoadedResources.call(fakeThis, { force: true });
+		const out = renderAll(fakeThis.loadedResourcesContainer);
+		expect(out).toContain("skill-68");
 	});
 
-	test("the compact banner no longer joins every loaded name inline", () => {
-		// The compact body must be a summary, not the full list: labels.join(", ") is what dumped
-		// all 69 skill names onto the first screen. It must not back the collapsed section bodies.
-		expect(INTERACTIVE_MODE_SOURCE).toContain("formatSummary(");
-		expect(INTERACTIVE_MODE_SOURCE).not.toMatch(/const skillCompactList = \(\) =>\s*\n?\s*formatCompactList/);
+	test("the collapsed body keeps some real names, not just a bare count", () => {
+		const fakeThis = fakeResourcesThis(MANY_SKILLS, false);
+		(InteractiveMode as any).prototype.showLoadedResources.call(fakeThis, { force: true });
+		const out = renderAll(fakeThis.loadedResourcesContainer);
+		// At least one actual skill name is still shown (the fold is a truncation, not a count).
+		expect(out).toMatch(/skill-0[0-9]/);
 	});
 });
