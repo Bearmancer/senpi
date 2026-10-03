@@ -103,6 +103,16 @@
 			],
 			"reason": "The kernel-tools pump moved to kernels/shared/ (the baseline census entry is renamed to the new path) and descriptors may name any eval language; two contracts pin the widened descriptor."
 		},
+		"24": {
+			"additions": [
+				"legacyContracts/test/worker-global-sizes.test.js/largest-globals sizing never runs user code Given a global array with an index accessor when the globals are sized then the getter never runs",
+				"legacyContracts/test/worker-global-sizes.test.js/largest-globals sizing never runs user code Given an array hole whose prototype has an index getter when the globals are sized then the prototype getter never runs",
+				"legacyContracts/test/worker-global-sizes.test.js/largest-globals sizing never runs user code Given a typed array subclass that overrides byteLength when the globals are sized then its real byte length is reported without running the override",
+				"legacyContracts/test/worker-global-sizes.test.js/largest-globals sizing never runs user code Given a Map subclass that overrides size when the globals are sized then the override never runs",
+				"legacyContracts/test/worker-global-sizes.test.js/largest-globals sizing never runs user code Given a fully walked array with one accessor element when the globals are sized then it is still reported, marked approximate"
+			],
+			"reason": "Memory sizing no longer runs user getters or overridden built-in getters; the new contracts pin that."
+		},
 		"29": {
 			"additions": [
 				"legacyContracts/test/js-kernel-webview-readiness.test.ts/a Chrome launch that never becomes ready retires the stalled launch and answers the create from a fresh Chrome",
