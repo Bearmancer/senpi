@@ -1021,12 +1021,12 @@ What the host does enforce are lifecycle windows, and they only ever return memo
   preflight prevents ordinary idle parking while the request is running; directory-removal teardown is separate.
 - **Completed detached workers**: on the in-process runtime, a retained `kind: "worker"` session with zero
   attachments is parked on the next occupancy sweep once its transcript is flushed and it has no session-owned
-  work, queued input, admitted unwritten delivery, pending prompt, or in-flight request. It does not wait out the
-  normal idle window. This releases its runtime and eval kernels, not its durable history: reopen its
+  work, queued input, admitted unwritten delivery, pending prompt, or in-flight request - provided the disconnect
+  has already stood for at least five seconds (a short grace age, so a transient reconnect keeps the live runtime
+  instead of re-opening cold). It does not wait out the normal idle window. This releases its runtime and eval
+  kernels, not its durable history: reopen its
   `sessionPath` to continue under a new routing handle. Active monitors and other wake sources still prevent
   early parking. Unflushed workers, worker-isolate runtimes, and interactive sessions keep their normal window.
-  There is no extra reconnect grace period: a brief disconnect overlapping a sweep can require a fresh
-  runtime on reopen rather than reattaching to the previous one. Durable identity and history still survive.
 - **Worker capacity** (worker runtime ONLY - a stdio host, `--listen stdio://`, an embedder, or a socket host that
   passed `--session-runtime worker` explicitly): at most 20 workers may be preparing, open, closing, or quarantined
   together, because each one is an isolate the host must keep alive. Admission beyond this bound fails explicitly

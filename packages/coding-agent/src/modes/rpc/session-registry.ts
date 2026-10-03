@@ -79,6 +79,7 @@ export class RpcSessionRegistry {
 				this.options.pathReservations?.release(key);
 			},
 			markDetached: (key) => this.options.pathReservations?.setAttached(key, false),
+			now: () => this.now(),
 			sync: () => this.syncRuntimeMetadata(),
 		};
 	}
@@ -243,7 +244,8 @@ export class RpcSessionRegistry {
 			throw new RpcSessionRegistryError("session_closing");
 		}
 		if (entry.state !== "open" && entry.state !== "closing") throw new RpcSessionRegistryError("unknown_session");
-		// Attached clients keep their polling keepalive; detached observations do not retain a runtime.
+		// Polling a session nobody holds is observation, not work that needs its runtime;
+		// an attached client's polling keeps its session alive exactly as before.
 		if (entry.attachments > 0 || refreshesSessionActivity(command)) entry.lastCommandAt = this.now();
 		return entry;
 	}

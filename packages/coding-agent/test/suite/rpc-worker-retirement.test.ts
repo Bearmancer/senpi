@@ -18,9 +18,11 @@ async function directory(): Promise<string> {
 }
 
 it("parks a completed detached worker on the next sweep and reopens its durable history", async () => {
-	// Given: a retained worker with a persisted result, disconnected before the idle window.
+	// Given: a retained worker with a persisted result, disconnected longer than the
+	// early-retirement grace age before the idle window.
 	const dir = await directory();
-	await using rig = createInProcessRig(dir, { idleEvictionMs: 60_000 });
+	let now = 0;
+	await using rig = createInProcessRig(dir, { now: () => now, idleEvictionMs: 60_000 });
 	const first = opened(
 		await rig.send("owner", {
 			id: "open",
@@ -39,6 +41,7 @@ it("parks a completed detached worker on the next sweep and reopens its durable 
 	await rig.drop("owner");
 
 	// When: the occupancy sweep observes the completed worker.
+	now = 5_000;
 	rig.router.sweepIdleSessions();
 	expect(entry.state).toBe("closing");
 	await entry.closeCompletion;
@@ -98,6 +101,9 @@ it.each(["attached", "unflushed", "turn", "wake", "queued", "delivery", "prompt"
 
 		// When: the host considers early retirement.
 		try {
+			now = 5_000;
+			// "queued"/"delivery" already sat past the deadline; a held prompt or request must
+			// also protect the worker past it, not just at time zero.
 			if (reason === "queued" || reason === "delivery" || reason === "prompt" || reason === "request") now = 60_001;
 			rig.router.sweepIdleSessions();
 
