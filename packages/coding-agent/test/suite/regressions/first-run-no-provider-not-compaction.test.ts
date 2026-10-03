@@ -1,23 +1,14 @@
-import type { Model } from "@earendil-works/pi-ai";
+import { Agent } from "@earendil-works/pi-agent-core";
 import { fauxAssistantMessage } from "@earendil-works/pi-ai";
+import { streamSimple } from "@earendil-works/pi-ai/compat";
 import { afterEach, describe, expect, it } from "vitest";
 import type { ExtensionAPI } from "../../../src/core/extensions/types.ts";
 import { createHarness, type Harness } from "../harness.ts";
 
 const COMPACTION_ERROR = "Context remains above the compaction threshold";
 
-const NO_PROVIDER_PLACEHOLDER = {
-	id: "unknown",
-	name: "unknown",
-	api: "unknown",
-	provider: "unknown",
-	baseUrl: "",
-	reasoning: false,
-	input: [],
-	cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-	contextWindow: 0,
-	maxTokens: 0,
-} satisfies Model<string>;
+/** The model a session runs on when no provider is configured: the agent's own default state. */
+const NO_PROVIDER_PLACEHOLDER = new Agent({ streamFn: streamSimple }).state.model;
 
 describe("a first run with no provider configured", () => {
 	const harnesses: Harness[] = [];
