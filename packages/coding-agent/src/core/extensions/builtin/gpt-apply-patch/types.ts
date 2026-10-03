@@ -133,7 +133,7 @@ export type ApplyPatchRenderState = {
 		getLiveHunks?: () => readonly ParsedPatch[];
 		getPartialLine?: () => string;
 	};
-	streamingHunks?: ParsedPatch[];
+	streamingHunks?: readonly ParsedPatch[];
 	streamingError?: string;
 	/** Last rendered body fingerprint, so a delta that changes nothing skips the rebuild. */
 	streamingLastRenderKey?: string;

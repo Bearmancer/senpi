@@ -26,7 +26,9 @@ export class StreamingPatchParser {
 				this.lineBuffer += character;
 			}
 		}
-		return this.snapshot();
+		// Streaming render reads getLiveHunks(); returning the live list here avoids the
+		// per-delta structuredClone over every hunk. finish() still returns a defensive clone.
+		return this.hunks;
 	}
 
 	finish(): ParsedPatch[] {

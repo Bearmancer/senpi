@@ -81,7 +81,10 @@ function updateStreamingState(input: string, state: ApplyPatchRenderState): read
 	// A zero-length delta (same render pass re-run with no new text) must not re-parse or re-render.
 	if (delta.length === 0) return state.streamingHunks ?? [];
 	try {
-		state.streamingHunks = state.streamingParser.pushDelta(delta);
+		// Parse the delta, then render the parser's live hunk list rather than the deep clone
+		// pushDelta returns; the per-delta structuredClone over every hunk is the O(n^2) cost.
+		state.streamingParser.pushDelta(delta);
+		state.streamingHunks = state.streamingParser.getLiveHunks?.() ?? state.streamingHunks;
 		state.streamingInput = input;
 		state.streamingError = undefined;
 	} catch (error) {
