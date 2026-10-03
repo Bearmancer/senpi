@@ -258,6 +258,12 @@
 				"legacyContracts/test/rb-kernel.test.ts/RubyKernel reports the largest globals in the result memory notice when live memory crosses the notice threshold"
 			],
 			"reason": "Ruby results name their largest globals in the large-memory notice (new kernel contract); the rb/jl ceiling contract that pinned 'no notice under the ceiling' is renamed in the baseline to the notice behaviour it now asserts."
+		},
+		"8-jl": {
+			"additions": [
+				"legacyContracts/test/jl-kernel.test.ts/JuliaKernel reports the largest globals in the result memory notice when live memory crosses the notice threshold"
+			],
+			"reason": "Julia results name their largest globals in the large-memory notice (new kernel contract)."
 		}
 	}
 }
