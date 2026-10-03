@@ -63,6 +63,23 @@ describe("apply_patch streaming render is bounded and incremental", () => {
 		expect(out).toContain("• Edited src/a.ts (+1 -1)");
 	});
 
+	test("a mid-chunk insert/delete does not miscount context as changes", () => {
+		const state: ApplyPatchRenderState = {};
+		const input = [
+			"*** Begin Patch",
+			"*** Update File: src/a.ts",
+			" ctx1",
+			"-old line",
+			"+inserted line",
+			" ctx2",
+			" ctx3",
+			"*** End Patch",
+		].join("\n");
+		const out = render(renderStreamingPatchCall({ input }, THEME, state));
+		// One real change (one removed, one added); the three context lines are not counted.
+		expect(out).toContain("• Edited src/a.ts (+1 -1)");
+	});
+
 	test("a delta that changes nothing keeps the rendered box instead of blanking it", () => {
 		const state: ApplyPatchRenderState = {};
 		const input = patchFor([{ path: "src/a.ts", body: "+one" }]);
