@@ -4,8 +4,8 @@
 
 ### What changed
 
-- `non-interactive.ts`: `handleNoUI(request, { emitEvent, presetBound })` always returns the refusal. It is only reached for a request the service is still asking about, so its old allow and deny outcomes could never apply; `index.ts` replies with it directly.
-- `auto-paths.ts` + `auto-policy.ts`: a ref-shaped git operand counts as a path when anything exists at that name, a dangling symlink included (`existsAtName`, an `lstat`); before, a dangling project symlink was treated as missing and allowed.
+- `non-interactive.ts`: `handleNoUI(request, { emitEvent, presetBound })` always returns the refusal. It is only reached for a request the service is still asking about, so its old allow outcome could never apply and its deny outcome only ever refused too; `index.ts` replies with it directly.
+- `auto-paths.ts` + `auto-policy.ts`: a ref-shaped git operand counts as a path when anything exists at that name, a dangling symlink included (`existsAtName`, an `lstat`); before, a dangling project symlink was treated as missing and allowed. A name `lstat` refuses (too long, a loop) also counts as a path, so it asks instead of throwing.
 
 ### Why
 

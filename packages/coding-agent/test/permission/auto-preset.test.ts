@@ -135,6 +135,7 @@ describe("auto preset command judge: actions it always asks about", () => {
 		["a ref-shaped name that is a symlink out of the project", "git log --oneline innocent-name"],
 		["a ref-shaped name that is a credential file", "git log --stat server.pem"],
 		["a ref-shaped name that is a dangling symlink", "git log --oneline dangling"],
+		["a ref-shaped name too long for the filesystem", `git log --oneline ${"a".repeat(300)}`],
 		["cat with no file reads the terminal", "cat"],
 		["grep with no file reads the terminal", "grep TODO"],
 	])("asks for %s: %s", (_label, command) => {

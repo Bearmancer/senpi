@@ -3,7 +3,7 @@ import { rulesForPreset } from "../../src/core/extensions/builtin/permission-sys
 import { evaluate } from "../../src/core/extensions/builtin/permission-system/evaluate.ts";
 import { handleNoUI } from "../../src/core/extensions/builtin/permission-system/non-interactive.ts";
 import { createBuiltinParserRegistry } from "../../src/core/extensions/builtin/permission-system/parsers.ts";
-import type { Request, Ruleset } from "../../src/core/extensions/builtin/permission-system/types.ts";
+import type { Request } from "../../src/core/extensions/builtin/permission-system/types.ts";
 
 function createRequest(overrides: Partial<Request> = {}): Request {
 	return {

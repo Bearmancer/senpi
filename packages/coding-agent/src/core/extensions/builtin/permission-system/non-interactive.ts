@@ -9,7 +9,8 @@ export interface NoUIOptions {
 /**
  * Answers, with no UI to ask (print mode, unbound SDK), a request the permission service is still
  * asking about. The service has already applied every rule and found at least one pattern it must
- * ask about, so the answer is always a refusal with a reason, never an approval.
+ * ask about, so the answer is always a refusal with a reason, never an approval; a configured allow
+ * or deny for the other patterns does not change that.
  */
 export function handleNoUI(request: Request, { emitEvent, presetBound = false }: NoUIOptions): ReplyInput {
 	emitEvent("permission_asked", request);
