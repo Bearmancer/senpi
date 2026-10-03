@@ -98,50 +98,62 @@ describe("JuliaKernel", () => {
 		},
 	);
 
-	it("reports the largest globals in the result memory notice when live memory crosses the notice threshold", async () => {
-		const juliaPath = resolveCommandPath("julia");
-		if (juliaPath === undefined) {
-			return;
-		}
-		const root = await mkdtemp(join(tmpdir(), "senpi-jl-kernel-globals-"));
-		const server = await startBridgeServer({
-			token: "live-token",
-			onCall: async () => "unexpected",
-			onEmit: async () => {},
-			onCompletion: async () => {
-				throw new Error("unexpected completion");
-			},
-		});
-		const MiB = 1024 * 1024;
-		try {
-			const kernel = JuliaKernel.start({
-				cwd: root,
-				sessionId: "jl-globals",
-				connection: { port: server.port, token: server.token },
-				command: juliaPath,
-				memory: {
-					thresholds: { gcWatermarkBytes: 32 * MiB, noticeBytes: 64 * MiB, ceilingBytes: 768 * MiB },
-					readFootprint: () => ({ bytes: 128 * MiB }),
+	const juliaPath = resolveCommandPath("julia");
+
+	it.skipIf(juliaPath === undefined)(
+		"reports the largest globals in the result memory notice when live memory crosses the notice threshold",
+		async () => {
+			if (juliaPath === undefined) throw new Error("unreachable: skipped without Julia");
+			const root = await mkdtemp(join(tmpdir(), "senpi-jl-kernel-globals-"));
+			const server = await startBridgeServer({
+				token: "live-token",
+				onCall: async () => "unexpected",
+				onEmit: async () => {},
+				onCompletion: async () => {
+					throw new Error("unexpected completion");
 				},
 			});
+			const MiB = 1024 * 1024;
 			try {
-				const result = await kernel.run({
-					cellId: "big",
-					code: 'big_blob = repeat("a", 4 * 1024 * 1024); nothing',
-					timeoutMs: 120_000,
+				const kernel = JuliaKernel.start({
+					cwd: root,
+					sessionId: "jl-globals",
+					connection: { port: server.port, token: server.token },
+					command: juliaPath,
+					memory: {
+						thresholds: { gcWatermarkBytes: 32 * MiB, noticeBytes: 64 * MiB, ceilingBytes: 768 * MiB },
+						readFootprint: () => ({ bytes: 128 * MiB }),
+					},
 				});
-				expect(result).toMatchObject({ ok: true });
-				expect(result.memory?.globals).toBeDefined();
-				expect(result.memory?.globals?.map((global) => global.name)).toContain("big_blob");
-				expect(result.memory?.notice).toContain("big_blob");
+				try {
+					const result = await kernel.run({
+						cellId: "big",
+						code: 'big_blob = repeat("a", 4 * 1024 * 1024); nothing',
+						timeoutMs: 120_000,
+					});
+					expect(result).toMatchObject({ ok: true });
+					expect(result.memory?.globals).toBeDefined();
+					expect(result.memory?.globals?.map((global) => global.name)).toContain("big_blob");
+					expect(result.memory?.notice).toContain("big_blob");
+
+					const rows = await kernel.run({
+						cellId: "rows",
+						code: 'rows = [string(repeat("x", 200), i) for i in 1:150_000]; nothing',
+						timeoutMs: 120_000,
+					});
+					const sizedRows = rows.memory?.globals?.find((global) => global.name === "rows");
+					expect(sizedRows?.bytes).toBeGreaterThanOrEqual(25 * MiB);
+					expect(sizedRows?.approximate).toBe(true);
+				} finally {
+					await kernel.close();
+				}
 			} finally {
-				await kernel.close();
+				await server.close();
+				await rm(root, { recursive: true, force: true });
 			}
-		} finally {
-			await server.close();
-			await rm(root, { recursive: true, force: true });
-		}
-	}, 150_000);
+		},
+		150_000,
+	);
 	it.skipIf(!hasJulia())(
 		"matches helper, status, markdown, and auto-display contracts",
 		async () => {

@@ -289,18 +289,80 @@ const senpi_memory = Ref{Any}(nothing)
 
 const SENPI_MEMORY_INTERNALS = Set([:senpi_current_cell, :senpi_memory, :senpi_connection, :senpi_frame_io, :senpi_stdout_capture, :senpi_stderr_capture, :senpi_protocol_stdin])
 
-function senpi_measure_global(value)
-    try
-        value isa Union{AbstractArray, AbstractString} && return sizeof(value)
-        Base.summarysize(value)
-    catch
-        nothing
+const SENPI_SIZER_SAMPLE = 1_000
+const SENPI_SIZER_NODE_BUDGET = 20_000
+const SENPI_SIZER_MAX_DEPTH = 64
+const SENPI_SIZER_POINTER = 8
+const SENPI_SIZER_OBJECT = 16
+const SENPI_SIZER_MIN_REPORTED = 1024 * 1024
+
+# Sizes a global with sampling and one node budget, so a huge container costs a bounded walk; the
+# estimate is marked approximate whenever it was sampled or cut short.
+mutable struct SenpiSizer
+    seen::IdDict{Any, Nothing}
+    nodes::Int
+    approximate::Bool
+end
+SenpiSizer() = SenpiSizer(IdDict{Any, Nothing}(), 0, false)
+
+function senpi_size(sizer::SenpiSizer, value, depth::Int)::Int
+    value isa Union{Number, Char, Bool, Symbol, Nothing} && return isbits(value) ? sizeof(value) : 0
+    value isa AbstractString && return SENPI_SIZER_OBJECT + sizeof(value)
+    if !isbits(value) && ismutable(value)
+        haskey(sizer.seen, value) && return 0
     end
+    if depth >= SENPI_SIZER_MAX_DEPTH || sizer.nodes >= SENPI_SIZER_NODE_BUDGET
+        sizer.approximate = true
+        return 0
+    end
+    ismutable(value) && (sizer.seen[value] = nothing)
+    sizer.nodes += 1
+    if value isa Array
+        isbitstype(eltype(value)) && return SENPI_SIZER_OBJECT + sizeof(value)
+        return SENPI_SIZER_OBJECT + length(value) * SENPI_SIZER_POINTER +
+            senpi_sampled(sizer, length(value), depth) do index
+                isassigned(value, index) ? value[index] : nothing
+            end
+    elseif value isa AbstractDict
+        count = length(value)
+        total = 0
+        taken = 0
+        for (key, item) in value
+            total += senpi_size(sizer, key, depth + 1) + senpi_size(sizer, item, depth + 1)
+            taken += 1
+            taken >= SENPI_SIZER_SAMPLE && break
+        end
+        taken < count && (sizer.approximate = true)
+        return SENPI_SIZER_OBJECT + count * 2 * SENPI_SIZER_POINTER + (taken == 0 ? 0 : div(total * count, taken))
+    elseif value isa Union{AbstractSet, Tuple}
+        items = collect(Iterators.take(value, SENPI_SIZER_SAMPLE))
+        count = length(value)
+        length(items) < count && (sizer.approximate = true)
+        total = sum((senpi_size(sizer, item, depth + 1) for item in items); init = 0)
+        return SENPI_SIZER_OBJECT + count * SENPI_SIZER_POINTER + (isempty(items) ? 0 : div(total * count, length(items)))
+    end
+    isbits(value) && return sizeof(value)
+    fields = fieldcount(typeof(value))
+    return SENPI_SIZER_OBJECT + fields * SENPI_SIZER_POINTER +
+        senpi_sampled(sizer, fields, depth) do index
+            isdefined(value, index) ? getfield(value, index) : nothing
+        end
+end
+
+function senpi_sampled(at, sizer::SenpiSizer, count::Int, depth::Int)::Int
+    if count <= SENPI_SIZER_SAMPLE
+        return sum((senpi_size(sizer, at(index), depth + 1) for index in 1:count); init = 0)
+    end
+    sizer.approximate = true
+    step = count / SENPI_SIZER_SAMPLE
+    total = sum((senpi_size(sizer, at(1 + floor(Int, (sample - 1) * step)), depth + 1) for sample in 1:SENPI_SIZER_SAMPLE); init = 0)
+    return round(Int, total / SENPI_SIZER_SAMPLE * count)
 end
 
 function senpi_largest_globals(limit::Int)
     try
-        candidates = Tuple{String, Int}[]
+        sizer = SenpiSizer()
+        candidates = Tuple{String, Int, Bool}[]
         Base.invokelatest() do
             for name in names(Main, all = true)
                 name in SENPI_MEMORY_INTERNALS && continue
@@ -315,12 +377,17 @@ function senpi_largest_globals(limit::Int)
                 value isa IO && continue
                 value isa Type && continue
                 value isa Function && continue
-                bytes = senpi_measure_global(value)
-                bytes !== nothing && bytes > 0 && push!(candidates, (string(name), bytes))
+                sizer.approximate = false
+                bytes = try
+                    senpi_size(sizer, value, 0) + SENPI_SIZER_POINTER
+                catch
+                    0
+                end
+                bytes >= SENPI_SIZER_MIN_REPORTED && push!(candidates, (string(name), bytes, sizer.approximate))
             end
         end
-        sort!(candidates, by = last, rev = true)
-        [Dict("name" => name, "bytes" => bytes) for (name, bytes) in candidates[1:min(limit, end)]]
+        sort!(candidates, by = entry -> entry[2], rev = true)
+        [approximate ? Dict{String, Any}("name" => name, "bytes" => bytes, "approximate" => true) : Dict{String, Any}("name" => name, "bytes" => bytes) for (name, bytes, approximate) in candidates[1:min(limit, end)]]
     catch
         Dict{String, Any}[]
     end
@@ -329,13 +396,12 @@ end
 function senpi_memory_report()
     try
         senpi_memory[] === nothing && return nothing
-        live = Int(Sys.maxrss())
+        # The host reads the interpreter's current footprint and decides on the notice; the runner only
+        # names its largest globals, with a bounded walk, so a cell never pays for an unbounded scan.
+        named = senpi_largest_globals(5)
+        live = sum((entry["bytes"] for entry in named); init = 0)
         report = Dict{String, Any}("liveBytes" => live, "measure" => "footprint", "approximate" => true)
-        notice = get(senpi_memory[], "noticeBytes", 0)
-        if notice > 0 && live >= notice
-            named = senpi_largest_globals(5)
-            isempty(named) || (report["globals"] = named)
-        end
+        isempty(named) || (report["globals"] = named)
         report
     catch
         nothing
