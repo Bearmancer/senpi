@@ -62,9 +62,11 @@ export function selectSweepEvictions(
 			// A just-detached worker is a client about to reconnect; park it only once the
 			// disconnect has stood longer than the grace age. An entry at zero attachments
 			// with no detach stamp was never disconnected, so it keeps its normal window.
-			if (entry.detachedAt === undefined || now - entry.detachedAt < DETACHED_RETIREMENT_GRACE_MS) continue;
-			idle.push(sessionId);
-			continue;
+			if (entry.detachedAt !== undefined) {
+				if (now - entry.detachedAt < DETACHED_RETIREMENT_GRACE_MS) continue;
+				idle.push(sessionId);
+				continue;
+			}
 		}
 		if (now - entry.lastCommandAt >= idleEvictionMs) idle.push(sessionId);
 	}

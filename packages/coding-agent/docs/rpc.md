@@ -1027,6 +1027,7 @@ What the host does enforce are lifecycle windows, and they only ever return memo
   kernels, not its durable history: reopen its
   `sessionPath` to continue under a new routing handle. Active monitors and other wake sources still prevent
   early parking. Unflushed workers, worker-isolate runtimes, and interactive sessions keep their normal window.
+  A zero-attachment worker without a recorded disconnect time also keeps its normal idle deadline.
 - **Worker capacity** (worker runtime ONLY - a stdio host, `--listen stdio://`, an embedder, or a socket host that
   passed `--session-runtime worker` explicitly): at most 20 workers may be preparing, open, closing, or quarantined
   together, because each one is an isolate the host must keep alive. Admission beyond this bound fails explicitly

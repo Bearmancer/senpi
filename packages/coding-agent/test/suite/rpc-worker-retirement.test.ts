@@ -56,6 +56,32 @@ it("parks a completed detached worker on the next sweep and reopens its durable 
 	);
 });
 
+it("uses the normal idle deadline when a zero-attachment worker has no detach stamp", async () => {
+	// Given: a flushed worker with no client ownership and no recorded disconnect.
+	const dir = await directory();
+	let now = 0;
+	await using rig = createInProcessRig(dir, { now: () => now, idleEvictionMs: 60_000 });
+	const first = opened(await rig.open("owner", { cwd: dir, kind: "worker", retain_on_disconnect: true }), 0);
+	const entry = rig.registry.peek(first.sessionId);
+	const turn = rig.turns.get(first.state.sessionFile);
+	if (!entry || !turn) throw new Error("Worker did not open");
+	turn.finish();
+	entry.attachments = 0;
+	expect(entry.detachedAt).toBeUndefined();
+
+	// When: the early-retirement grace passes, followed by the ordinary idle deadline.
+	now = 5_000;
+	rig.router.sweepIdleSessions();
+	expect(entry.state).toBe("open");
+	now = 60_000;
+	rig.router.sweepIdleSessions();
+
+	// Then: no detach stamp prevents early retirement, not all retirement forever.
+	expect(entry.state).toBe("closing");
+	await entry.closeCompletion;
+	expect(rig.registry.peek(first.sessionId)).toBeUndefined();
+});
+
 it.each(["attached", "unflushed", "turn", "wake", "queued", "delivery", "prompt", "request"] as const)(
 	"keeps a retained worker with %s work out of early retirement",
 	async (reason) => {
