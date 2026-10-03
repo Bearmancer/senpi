@@ -4949,25 +4949,7 @@ export class AgentSession {
 			// Flush any pending bash messages before the new prompt
 			this._flushPendingBashMessages();
 
-			// Validate model
-			if (!this.model) {
-				throw new Error(formatNoModelSelectedMessage());
-			}
-
-			const hasConfiguredAuth =
-				this._modelRuntime.hasConfiguredAuth(this.model.provider) ||
-				(await this._modelRuntime.checkAuth(this.model.provider)) !== undefined;
-			if (!hasConfiguredAuth) {
-				const isOAuth = this._modelRuntime.isUsingOAuth(this.model.provider);
-				if (isOAuth) {
-					throw new Error(
-						`Authentication failed for "${this.model.provider}". ` +
-							`Credentials may have expired or network is unavailable. ` +
-							`Run '/login ${this.model.provider}' to re-authenticate.`,
-					);
-				}
-				throw new Error(formatNoApiKeyFoundMessage(this.model.provider));
-			}
+			await this._assertModelReadyForTurn();
 
 			// The user's new prompt is sent below, so do not call agent.continue() here.
 			await this._enforceCompactionBeforeProvider(this._findLastAssistantMessage(), false, "pre_prompt");
@@ -5554,6 +5536,7 @@ export class AgentSession {
 				};
 				this._triggerTurnAdmissionAbortGeneration = userAbortGeneration;
 				try {
+					await this._assertModelReadyForTurn();
 					await this._enforceCompactionBeforeProvider(this._findLastAssistantMessage(), false, "pre_prompt");
 					this._refreshToolDeclarationsForModel();
 					this._promptCachePrefixBuilds.cancelAll();
@@ -7683,6 +7666,29 @@ export class AgentSession {
 	}
 
 	/**
+	 * A turn needs a selected model whose provider has credentials. Every path that starts a turn checks
+	 * this before admission, so a first run with no provider reports how to log in instead of failing
+	 * deeper in compaction or the provider request.
+	 */
+	private async _assertModelReadyForTurn(): Promise<void> {
+		if (!this.model) {
+			throw new Error(formatNoModelSelectedMessage());
+		}
+		const hasConfiguredAuth =
+			this._modelRuntime.hasConfiguredAuth(this.model.provider) ||
+			(await this._modelRuntime.checkAuth(this.model.provider)) !== undefined;
+		if (hasConfiguredAuth) return;
+		if (this._modelRuntime.isUsingOAuth(this.model.provider)) {
+			throw new Error(
+				`Authentication failed for "${this.model.provider}". ` +
+					`Credentials may have expired or network is unavailable. ` +
+					`Run '/login ${this.model.provider}' to re-authenticate.`,
+			);
+		}
+		throw new Error(formatNoApiKeyFoundMessage(this.model.provider));
+	}
+
+	/**
 	 * Dispatch automatic compaction after `agent_end` or before prompt submission.
 	 * Manual compaction does not call this method; it enters through `compact()`.
 	 *
@@ -7737,12 +7743,13 @@ export class AgentSession {
 		}
 
 		// Under a virtual selection, the physical model of the latest response supplies the limits;
-		// before one, the virtual model's declared limits apply, and undeclared limits are unknown.
+		// before one, the virtual model's declared limits apply. An undeclared window (<= 0) is unknown for
+		// every model, never "already over the threshold".
 		const limitsModel = this._limitsModel();
 		if (
 			!settings.enabled ||
 			!limitsModel ||
-			(isVirtualModel(limitsModel) && limitsModel.contextWindow <= 0) ||
+			limitsModel.contextWindow <= 0 ||
 			!shouldCompact(contextTokens, limitsModel.contextWindow, settings)
 		) {
 			return false;
@@ -7805,9 +7812,9 @@ export class AgentSession {
 		const lateQueuedMessages = this._pendingQueuedInputMessages();
 		if (!messages.some((message) => message.role === "custom") && lateQueuedMessages.length === 0) return;
 
-		// Same limits rule as the pre-provider threshold check: a virtual selection without declared limits is unknown until routed.
+		// Same limits rule as the pre-provider threshold check: an undeclared window is unknown, never oversized.
 		const model = this._limitsModel();
-		if (!model || (isVirtualModel(model) && model.contextWindow <= 0)) return;
+		if (!model || model.contextWindow <= 0) return;
 		const settings = this._getCompactionSettings();
 		const reserveTokens = resolveEffectiveReserveTokens(model.contextWindow, settings);
 		const isOversized = (): boolean => {

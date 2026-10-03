@@ -16,6 +16,24 @@
 
 - LOW: the `AgentSessionLaunchProfile` fields in `agent-session-runtime.ts`.
 
+## 2026-10-03 - A first run with no provider gets the /login guidance, not a compaction error (senpi#2677)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `_assertModelReadyForTurn()` (no model, or no credentials for its provider) is shared by `prompt()` and the `triggerTurn` path of `sendCustomMessage`, which used to reach the compaction gate unchecked. `_enforceCompactionBeforeProvider` and `_enforceFinalProviderAdmission` treat a context window `<= 0` as unknown for every model, not only virtual ones.
+
+### Why
+
+- `packages/coding-agent/src/core/agent-session.ts`: with no provider the session runs on the agent's placeholder model (`contextWindow: 0`), where `shouldCompact(tokens, 0)` is always true, so a startup extension's triggered turn threw `RequiredCompactionError` before anything said no provider was configured. `test/suite/regressions/first-run-no-provider-not-compaction.test.ts` covers the typed prompt, the extension-triggered turn and a zero-window model; the last two fail on main.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/agent-session.ts`: turn admission and the compaction gate run inside the session before any extension hook can intervene.
+
+### Expected merge conflict zones
+
+- LOW: the pre-provider threshold condition and the start of the `triggerTurn` branch in `sendCustomMessage`.
+
 ## 2026-10-03 - Continue a session from its leaf with no new prompt (senpi#1930)
 
 ### What changed
