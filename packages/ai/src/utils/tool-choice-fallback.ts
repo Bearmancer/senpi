@@ -70,6 +70,45 @@ export function isForcedToolChoiceUnsupportedError(error: unknown, sentForcedToo
 	);
 }
 
+/** The tool a `tool_choice` forces, in the wire shapes senpi sends (Chat Completions, Responses, Messages). */
+function forcedToolName(toolChoice: unknown): string | undefined {
+	if (!isRecord(toolChoice)) return undefined;
+	const named = isRecord(toolChoice.function) ? toolChoice.function.name : toolChoice.name;
+	return typeof named === "string" && named.length > 0 ? named : undefined;
+}
+
+function toolNames(tools: unknown): readonly (string | undefined)[] {
+	if (!Array.isArray(tools)) return [];
+	return tools.map((tool) => {
+		if (!isRecord(tool)) return undefined;
+		const named = isRecord(tool.function) ? tool.function.name : tool.name;
+		return typeof named === "string" ? named : undefined;
+	});
+}
+
+function escapeRegExp(text: string): string {
+	return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
+ * A 400 to a request that forced a tool and whose message names that very tool: its `tools.N` /
+ * `tools[N]` position or its quoted name. Strict-schema gateways refuse the forced tool's schema this
+ * way (senpi#2648); the same request without the forced choice is accepted. A 400 that names
+ * no tool, or another one, is not this refusal.
+ */
+export function refusalNamesForcedTool(
+	error: unknown,
+	params: { readonly tool_choice?: unknown; readonly tools?: unknown },
+): boolean {
+	if (extractHttpStatus(error) !== 400) return false;
+	const name = forcedToolName(params.tool_choice);
+	if (name === undefined) return false;
+	const message = errorMessage(error);
+	const index = toolNames(params.tools).indexOf(name);
+	if (index >= 0 && new RegExp(`\\btools(?:\\.${index}|\\[${index}\\])(?!\\d)`).test(message)) return true;
+	return new RegExp(`['"\`]${escapeRegExp(name)}['"\`]`).test(message);
+}
+
 export function omitToolChoiceParam<TParams extends { tool_choice?: unknown }>(params: TParams): TParams {
 	const nextParams = { ...params };
 	delete nextParams.tool_choice;
@@ -116,7 +155,11 @@ export async function sendWithForcedToolChoiceFallback<TParams extends { tool_ch
 	try {
 		return { params: request.params, result: await request.send(request.params) };
 	} catch (error) {
-		if (!isForcedToolChoiceUnsupportedError(error, forced)) throw error;
+		if (
+			!isForcedToolChoiceUnsupportedError(error, forced) &&
+			!(forced && refusalNamesForcedTool(error, request.params))
+		)
+			throw error;
 		const params = omitToolChoiceParam(request.params);
 		const result = await request.send(params);
 		// A refusal that names thinking depends on the request's thinking setting, not on the model alone.

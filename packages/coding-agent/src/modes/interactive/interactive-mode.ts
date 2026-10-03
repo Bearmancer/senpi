@@ -78,6 +78,7 @@ import {
 	type TreeNavigationOptions,
 } from "../../core/agent-session.ts";
 import { type AgentSessionRuntime, SessionImportFileNotFoundError } from "../../core/agent-session-runtime.ts";
+import { formatNoModelsAvailableMessage } from "../../core/auth-guidance.ts";
 import { isApiKeyLoginProvider } from "../../core/auth-providers.ts";
 import { envValue } from "../../core/brand.ts";
 import {
@@ -916,6 +917,7 @@ export class InteractiveMode {
 	private readonly sessionShownTipIds = new Set<string>();
 	private shortcutOverlay: ShortcutOverlay | undefined;
 	private lastEditorText = "";
+	private startupProviderGuidanceShown = false;
 	private lastInputWasPaste = false;
 	private sessionLogger: SessionLogger | undefined;
 	private readonly continuityNotices = new ContinuityNoticeTracker();
@@ -1882,6 +1884,7 @@ export class InteractiveMode {
 
 		if (modelFallbackMessage) {
 			this.showWarning(modelFallbackMessage);
+			if (modelFallbackMessage === formatNoModelsAvailableMessage()) this.startupProviderGuidanceShown = true;
 		}
 
 		for (const warning of this.session.fallbackValidationWarnings) {
@@ -5178,6 +5181,16 @@ export class InteractiveMode {
 				break;
 
 			case "resume_context_reduced":
+				this.showWarning(event.notice);
+				break;
+
+			case "provider_required":
+				// The first notice repeats the startup "No models available" warning (same /login guidance), so it
+				// is absorbed by it; the session emits again only after a turn was admitted in between.
+				if (this.startupProviderGuidanceShown) {
+					this.startupProviderGuidanceShown = false;
+					break;
+				}
 				this.showWarning(event.notice);
 				break;
 

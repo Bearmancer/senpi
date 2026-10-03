@@ -209,7 +209,7 @@ async function executeCell(
 		const kernel = await execution.wait(options.kernelManager.getKernel(invocation.input.language, onMessage));
 		// Computed before the handler so its construction-time snapshot captures this cell's capability.
 		// Worker messages later restore that snapshot before calling host tools (#1754, #2512).
-		const kernelTools = jsKernelTools(kernel, invocation.input.language);
+		const kernelTools = kernelToolsFor(kernel);
 		const runBound = async (): Promise<AgentToolResult<EvalToolDetails>> => {
 			const queue = kernel.queueSnapshot();
 			state.queuedBehind = [...(queue.activeCellId === null ? [] : [queue.activeCellId]), ...queue.queuedCellIds];
@@ -292,16 +292,15 @@ async function executeCell(
 	}
 }
 
-function jsKernelTools(kernel: EvalKernel, language: string): KernelToolsCapability | undefined {
-	if (language !== "js") return undefined;
+function kernelToolsFor(kernel: EvalKernel): KernelToolsCapability | undefined {
 	if (!("describeKernelTools" in kernel) || typeof kernel.describeKernelTools !== "function") return undefined;
-	const js = kernel as EvalKernel & {
+	const withTools = kernel as EvalKernel & {
 		describeKernelTools: (names: readonly string[]) => Promise<KernelToolsDescribeResult>;
 		invokeKernelTool: ExtensionKernelTools["invoke"];
 	};
 	return {
 		capabilities: KERNEL_TOOLS_CAPABILITIES,
-		describe: (names) => js.describeKernelTools(names),
-		invoke: (request, options) => js.invokeKernelTool(request, options),
+		describe: (names) => withTools.describeKernelTools(names),
+		invoke: (request, options) => withTools.invokeKernelTool(request, options),
 	} satisfies ExtensionKernelTools;
 }

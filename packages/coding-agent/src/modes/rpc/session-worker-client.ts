@@ -1,6 +1,7 @@
 import { fileURLToPath } from "node:url";
 import { Worker } from "node:worker_threads";
 import { isBunBinary } from "../../config.ts";
+import type { BrowserEngine } from "../../core/browser-engine.ts";
 import type { PromptSurface } from "../../core/dynamic-prompt/types.ts";
 import { createWebViewBroker } from "../../core/webview/webview-broker.ts";
 import type { CliRuntimeConfiguration } from "../../main.ts";
@@ -94,6 +95,12 @@ export class SessionWorkerClient {
 	async setPromptSurface(surface: PromptSurface): Promise<void> {
 		const result = await this.request({ type: "prompt_surface", surface });
 		if (result.type !== "result") throw new Error("Invalid worker prompt_surface response");
+	}
+
+	/** Moves the worker's live session to another browser engine (a later `open_session.browserEngine`). */
+	async setBrowserEngine(engine: BrowserEngine): Promise<void> {
+		const result = await this.request({ type: "browser_engine", engine });
+		if (result.type !== "result") throw new Error("Invalid worker browser_engine response");
 	}
 
 	async commit(): Promise<WorkerSnapshot> {

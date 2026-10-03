@@ -1,3 +1,23 @@
+## 2026-10-03 - Cursor resource_exhausted signatures are Cursor-only; "reset in N minutes" is a retry hint (senpi#2660)
+
+### What changed
+
+- `packages/ai/src/utils/overflow.ts`: `isCursorPayloadResourceExhausted`, `isCursorQuotaResourceExhausted` and `isCursorZeroTokenResourceExhausted` return false unless the message's provider is `cursor` or `cursor-cli-oauth` (or unset, as in provider-agnostic callers).
+- `packages/ai/src/utils/retry-hint.ts`: `fromBodyProse` reads "reset(s) in N <unit>" when the body is already rate-limited.
+
+### Why
+
+- `packages/ai/src/utils/overflow.ts`: Devin rejects a turn over its free-model limit with a trailer-only `resource_exhausted`, so the message bills zero tokens and matched Cursor's zero-token signature. The session then compacted and re-minted on the refused model instead of reaching the fallback chain.
+- `packages/ai/src/utils/retry-hint.ts`: the same message says "Your limit will reset in 9 minutes", which the prose parser ignored, so the wait fell back to the 60 s cap.
+
+### Why an extension could not handle it
+
+- Both functions are the classification the session's retry loop calls before any extension sees the failure.
+
+### Expected merge conflict zones
+
+- LOW: the three Cursor functions in `overflow.ts` and the prose branch of `fromBodyProse`.
+
 ## 2026-10-03 - Model `supportsAssistantPrefill` (senpi#1930)
 
 ### What changed

@@ -6,11 +6,27 @@
 
 ### Added
 
+### Changed
+
+### Fixed
+
+- Cursor's `resource_exhausted` signatures (`isCursorZeroTokenResourceExhausted`, `isCursorPayloadResourceExhausted`, `isCursorQuotaResourceExhausted`) now match only the `cursor` and `cursor-cli-oauth` providers, so another provider's `resource_exhausted` rate or usage limit is no longer read as a Cursor payload overflow or re-mint; a rate-limited body that says its limit resets in N minutes now yields that wait as the retry hint ([#2660](https://github.com/code-yeongyu/senpi/issues/2660)).
+
+### Removed
+
+## [2026.10.5] - 2026-10-03
+
+### Breaking Changes
+
+### Added
+
 - Models can declare `supportsAssistantPrefill`, and `modelSupportsAssistantPrefill(model, { thinkingEnabled })` reports whether a request may end with an assistant message the model continues (never with extended thinking on the Anthropic Messages API); no built-in model declares it yet ([#1930](https://github.com/code-yeongyu/senpi/issues/1930)).
 
 ### Changed
 
 ### Fixed
+
+- A first-turn forced `tool_choice` that a strict-schema gateway refuses by naming the forced tool (its `tools.N` index or quoted name in a 400) is retried once without the forced choice, like the other forced-choice refusals, so a new session's first message no longer fails there; an unrelated 400 still fails ([#2648](https://github.com/code-yeongyu/senpi/issues/2648), reported by [@rhyme227](https://github.com/rhyme227) in code-yeongyu/oh-my-openagent#9507).
 
 ### Removed
 

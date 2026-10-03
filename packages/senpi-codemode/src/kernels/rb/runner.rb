@@ -1,6 +1,10 @@
+$stdout.write("{\"type\":\"status\",\"event\":{\"op\":\"kernel-startup\",\"stage\":\"stdlib-imports\"}}\n")
+$stdout.flush
 require "json"
 require "net/http"
 require "uri"
+$stdout.write("{\"type\":\"status\",\"event\":{\"op\":\"kernel-startup\",\"stage\":\"runtime-init\"}}\n")
+$stdout.flush
 
 $__senpi_binding = TOPLEVEL_BINDING
 $__senpi_frame_mutex = Mutex.new
@@ -191,6 +195,7 @@ $__senpi_protocol_stdin.each_line do |line|
   message = JSON.parse(line)
   case message["type"]
   when "init"
+    __senpi_emit({ "type" => "status", "event" => { "op" => "kernel-startup", "stage" => "host-init" } })
     $__senpi_connection = message["connection"]
     __senpi_emit({ "type" => "ready" })
   when "run"

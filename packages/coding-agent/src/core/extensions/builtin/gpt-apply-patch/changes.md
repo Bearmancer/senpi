@@ -1,5 +1,29 @@
 # changes
 
+## 2026-10-03 - Pin pi-apply-patch 0.1.4
+
+Upstream 0.1.4 carries three changes. The indented-header fix (pi-apply-patch#46) is ported by #2637, and the line-ending fix (pi-apply-patch#48) is ported here (#2638). The `constrainedSampling` grammar declaration (pi-apply-patch#43) needs no port: senpi already sends the Lark grammar natively (`tool.ts` `freeform`). Only `external-versions.json` changes for the pin.
+
+## 2026-10-03 - Preserve line endings on update (#2638)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/gpt-apply-patch/line-endings.ts` (new): `SourceText` parses a file into lines that keep their own ending (`\r\n`, `\n`, lone `\r`). `replace` rewrites only the replaced lines, giving inserted lines the file's first ending. `replacementsAroundContext` splits a matched chunk around its context lines so they stay untouched.
+- `packages/coding-agent/src/core/extensions/builtin/gpt-apply-patch/patch-replace.ts`: `replaceChunks` works on `SourceText` instead of an LF-normalized line array.
+- `packages/coding-agent/src/core/extensions/builtin/gpt-apply-patch/parser.ts`, `streaming-parser.ts`, `types.ts`: each chunk records `contextLineIndices`.
+
+### Why
+
+- Every update rewrote the whole file with LF, so a one-line change to a CRLF or mixed-ending file became a whole-file diff (Codex scenarios `023`/`024` failed). This is Codex's PreserveLineEndings model.
+
+### Why an extension could not handle it
+
+- The replace path is this builtin's own apply engine.
+
+### Expected merge conflict zones
+
+- LOW: `patch-replace.ts` `replaceChunks`; `parser.ts` `parseChunkLines`; `types.ts` `PatchChunk`.
+
 ## 2026-10-03 - Reject stray lines between file sections; shared header parsing (#2636)
 
 ### What changed
@@ -19,7 +43,6 @@
 ### Expected merge conflict zones
 
 - LOW: `parser.ts` top-level section loop and `parseAddHunk`/`parseUpdateHunk` signatures; `text.ts` `extractPatchedPaths`.
-
 ## 2026-09-24 - Pin pi-apply-patch 0.1.3, no port needed (senpi#2079)
 
 Every `src/index.ts` change between 0.1.2 and 0.1.3 is already in senpi's multi-file port: custom Responses API gating (`extension.ts`, broader than upstream's provider list), paths outside cwd (`workspace.ts`), final diff preview in result details (`tool.ts`), per-file mutation queues (`apply.ts`), and failure codes with `failedFiles` / reread classification (`recovery.ts`, `types.ts`). The sync report's single hunk is the whole upstream monolith against senpi's barrel `index.ts`. Only `external-versions.json` changes.

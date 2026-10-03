@@ -118,13 +118,19 @@ type SessionEnvSource = {
 	thinkingLevel?: string;
 	cwd?: string;
 	goalStoreFile?: string;
+	browserEngine?: string;
 };
 
 function sessionSpawnContext(ctx: TerminalToolContext): TerminalToolContext {
 	return {
 		...ctx,
 		// Explicit deletions survive backends that merge overrides with the host environment.
-		getEnv: () => ({ ...ctx.getEnv(), PI_SESSION_CWD: undefined, PI_GOAL_STORE_FILE: undefined }),
+		getEnv: () => ({
+			...ctx.getEnv(),
+			PI_SESSION_CWD: undefined,
+			PI_GOAL_STORE_FILE: undefined,
+			OMO_BROWSER_ENGINE: undefined,
+		}),
 	};
 }
 
@@ -142,6 +148,7 @@ function sessionEnvOverrides(ctx: TerminalToolContext, execCtx?: SessionEnvSourc
 		env.PI_MODEL = session.model.id;
 	}
 	if (session.thinkingLevel) env.PI_REASONING_LEVEL = session.thinkingLevel;
+	if (session.browserEngine) env.OMO_BROWSER_ENGINE = session.browserEngine;
 	return env;
 }
 

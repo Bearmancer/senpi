@@ -75,7 +75,13 @@ function assertNoSourcemaps(filePaths, packageName) {
 	}
 }
 
-export function assertPublishedWorkspacePackFiles(packed, sourcePackageName) {
+export function assertPublishedWorkspacePackFiles(packed, sourcePackageName, options = {}) {
+	const requiredNativePrebuildTargets = options.requiredNativePrebuildTargets ?? [];
+	for (const target of requiredNativePrebuildTargets) {
+		if (!SUPPORTED_NATIVE_PREBUILD_TARGETS.includes(target)) {
+			throw new Error(`Unsupported native prebuild target: ${target}`);
+		}
+	}
 	const check = publishedWorkspacePackageChecks().find(
 		(candidate) => candidate.packageName === sourcePackageName,
 	);
@@ -96,6 +102,15 @@ export function assertPublishedWorkspacePackFiles(packed, sourcePackageName) {
 	}
 	if (missing.length > 0) {
 		throw new Error(`${sourcePackageName} package tarball is missing loader-visible files: ${missing.join(", ")}`);
+	}
+	// A publish that explicitly requires release-built targets (the publish-only run of
+	// publish-npm.yml) must never ship a tarball that leaves those platforms on the pipe
+	// fallback; every other target keeps the warn-only fallback above (senpi#1193).
+	for (const target of requiredNativePrebuildTargets) {
+		if (!NATIVE_PREBUILD_FILE_NAMES.has(sourcePackageName)) continue;
+		const prebuild = nativePrebuildFile(target, sourcePackageName);
+		if (filePaths.has(prebuild)) continue;
+		throw new Error(`${sourcePackageName} package tarball is missing ${prebuild}; the publish requires this native prebuild. Stage packages/pty/native/prebuilds/${target}/ before publishing.`);
 	}
 }
 

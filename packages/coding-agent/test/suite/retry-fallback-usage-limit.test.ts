@@ -21,6 +21,10 @@ const USAGE_LIMITS: ReadonlyArray<readonly [string, string]> = [
 	],
 	["OpenCode Go monthly limit", "429 Monthly usage limit reached. It will reset in 2 days 8 hours"],
 	["Z.AI weekly/monthly exhaustion", "Weekly/Monthly Limit Exhausted. Your limit will reset at 2026-09-30 00:00:00"],
+	[
+		"Devin free model limit",
+		"Devin stream error resource_exhausted: Reached free model rate limit. Upgrade to Max for higher limits, or switch to a different model. Your limit will reset in 9 minutes (at 16:56 UTC).",
+	],
 ];
 
 function errorTurn(errorMessage: string) {

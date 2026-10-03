@@ -6,6 +6,28 @@
 
 ### Added
 
+- `open_session` accepts `retryFallback` (`{ modelFallback, fallbackChains }`) and hosts advertise the `retry_fallback_profile` capability: the chain is that session's own, applied as an in-memory override that is never written to a settings file and never seen by another session on the host, so a task child running on a shared host can fall back to its own models mid-turn ([code-yeongyu/oh-my-openagent#9512](https://github.com/code-yeongyu/oh-my-openagent/issues/9512)).
+
+### Changed
+
+- The Claude Fable 5.1 prompt preset now asks for a one-line progress update after each tool wave that changes what the agent knows (an instruction naming the moment and the shape, in place of a recommendation that produced no more updates than presets asking for none), and three rules the preset stated twice are stated once: the Style section no longer repeats Scope's proceed-without-asking rule, the Verification section keeps only the claim audit, and the fourth Hard Limit drops the tail Scope already carries. Every other preset and the default prompt render unchanged ([#2681](https://github.com/code-yeongyu/senpi/issues/2681)).
+
+### Fixed
+
+- A model whose free or plan limit is reached ("Reached free model rate limit ... switch to a different model", as Devin reports it) is now a model-scoped usage limit: the turn moves to the next model in the fallback chain at once, and the refused model stays cooled down for the stated reset window ("reset in 9 minutes") instead of being retried or restored early ([#2660](https://github.com/code-yeongyu/senpi/issues/2660)).
+- Quiet, detached worker sessions on the shared in-process RPC host now release their runtimes on the next occupancy sweep once their history is persisted, while active jobs, wake sources, queued deliveries, and requests remain protected. Observational session commands such as `get_state` and `memory_report` no longer prolong idle retention for detached sessions; attached clients polling `get_state` keep their session alive as before, and parked sessions reopen by path with their durable identity and history.
+- A first run with no provider configured no longer reports "Context remains above the compaction threshold" when a message is sent: a turn an extension triggers now checks the model and credentials first, as a typed prompt already did, and fails with the `/login` guidance; a model with an undeclared context window (0) is treated as unknown instead of always over the compaction threshold. A background turn refused that way is not reported as an extension error: the session emits `provider_required` (once, until a turn is admitted again) with the same guidance, for an extension's triggered turn and its `sendUserMessage` alike, and the TUI shows it unless the startup "No models available" warning has just said it ([#2677](https://github.com/code-yeongyu/senpi/issues/2677)).
+
+### Removed
+
+## [2026.10.5] - 2026-10-03
+
+### Breaking Changes
+
+### Added
+
+- `open_session` accepts `browserEngine` (`connected`, `builtin` or `none`) and hosts advertise the `browser_engine` capability: the choice is per session, so that session's tool subprocesses and eval kernels see `OMO_BROWSER_ENGINE` and no other session does, a reattach moves or keeps it, and `BSK_HOME` / `BSK_BIN` pass through unchanged ([#2611](https://github.com/code-yeongyu/senpi/issues/2611)).
+- A `media_placeholders` client now gets an `image_ref` placeholder whose `path` names the stored image (written before the placeholder is emitted under the session's `media/<durableSessionId>/` directory, private and read-only, deleted with the session), or an `unavailableReason` of `image_too_large`, `session_limit` or `storage_error`, so tool images other than `read` can be rendered from disk.
 - An edited assistant response can be continued with no new prompt: the RPC `continue_from_leaf` command (advertised as the `continue_from_leaf` capability) starts a turn from the session leaf through a hidden nudge the transcript never shows, refusing with `streaming`, `nothing_to_continue`, or `leaf_not_assistant` (the conversation ends on a user message). `get_available_models` rows report `supportsAssistantPrefill` (false for every model today) ([#1930](https://github.com/code-yeongyu/senpi/issues/1930)).
 
 ### Changed
@@ -13,6 +35,7 @@
 ### Fixed
 
 - `nvidia` starts on a model its catalog still has: the v2026.10.4 catalog no longer lists `nvidia/nemotron-3-super-120b-a12b`, so an NVIDIA-only user without a saved model silently started on the catalog's first entry (`deepseek-ai/deepseek-v4.1-flash`) instead of the provider default. The default is now `nvidia/nemotron-3-ultra-550b-a55b`, and a release now stops when a catalog regeneration drops any bundled provider's default ([#2645](https://github.com/code-yeongyu/senpi/issues/2645)).
+- `apply_patch` keeps each line's ending when it updates a file: CRLF and mixed-ending files are no longer rewritten to LF, inserted lines take the file's line ending, and context lines stay exactly as they were, so a one-line change is a one-line diff ([#2638](https://github.com/code-yeongyu/senpi/issues/2638)).
 - `apply_patch` no longer drops a file section whose header is indented while reporting success: indented headers apply as in Codex, any other line between file sections rejects the patch before anything changes, and the permission system's per-file approval lists exactly the files the patch writes ([#2636](https://github.com/code-yeongyu/senpi/issues/2636)).
 
 ### Removed

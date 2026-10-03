@@ -1748,3 +1748,21 @@ These card builders own the rendered details and cannot be corrected by an exter
 Detailed eval cells and fallback result blocks; no collector, output grouping, or model content changes.
 
 - Covered production paths: `packages/senpi-codemode/src/tool/render.ts`.
+
+## Eval kernels see the session's browser engine (2026-10-03)
+
+### What changed
+
+- `src/kernels/session-env.ts`, `src/kernels/js/worker-core.js`: `OMO_BROWSER_ENGINE` joins the session environment keys. A kernel gets the value of its own session (when the session chose one) and a value inherited from the host process is cleared for a session that chose none, in the cell and in every child it spawns.
+
+### Why
+
+`open_session.browserEngine` is per session (senpi#2611); an eval cell's `process.env` is the one place a skill reads it from.
+
+### Why an extension could not handle it
+
+The kernel environment is applied by the kernel worker before any cell runs.
+
+### Expected merge conflict zones
+
+`SESSION_ENVIRONMENT_KEYS` in both `session-env.ts` and the mirror list in `worker-core.js`.

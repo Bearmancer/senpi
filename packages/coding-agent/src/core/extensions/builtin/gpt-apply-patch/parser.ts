@@ -1,3 +1,4 @@
+import type { ContextLineIndex } from "./line-endings.ts";
 import { normalizePatchText, parseFileHeader, parseMoveTo, stripHeredoc } from "./text.ts";
 import type { ParsedPatch, PatchChunk } from "./types.ts";
 
@@ -47,6 +48,7 @@ function parseChunkLines(
 	const newLines: string[] = [];
 	let addedCount = 0;
 	let removedCount = 0;
+	const contextLineIndices: ContextLineIndex[] = [];
 	let isEndOfFile = false;
 	let parsedLines = 0;
 	let nextIndex = index;
@@ -62,9 +64,11 @@ function parseChunkLines(
 		const prefix = hunkLine[0];
 		const value = hunkLine.slice(1);
 		if (prefix === undefined) {
+			contextLineIndices.push([oldLines.length, newLines.length]);
 			oldLines.push("");
 			newLines.push("");
 		} else if (prefix === " ") {
+			contextLineIndices.push([oldLines.length, newLines.length]);
 			oldLines.push(value);
 			newLines.push(value);
 		} else if (prefix === "-") {
@@ -84,7 +88,7 @@ function parseChunkLines(
 		nextIndex++;
 	}
 	if (parsedLines === 0) throw new Error("Update hunk does not contain any lines");
-	return [{ oldLines, newLines, isEndOfFile, addedCount, removedCount }, nextIndex];
+	return [{ oldLines, newLines, contextLineIndices, isEndOfFile, addedCount, removedCount }, nextIndex];
 }
 
 function parseUpdateHunk(lines: string[], filePath: string, index: number, endIndex: number): [ParsedPatch, number] {

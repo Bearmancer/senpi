@@ -9,7 +9,9 @@ import { createConnection, type Socket } from "node:net";
 import type { AgentMessage, ThinkingLevel } from "@earendil-works/pi-agent-core";
 import type { ImageContent } from "@earendil-works/pi-ai";
 import type { PromptDisposition, QueuedInputDisposition, SessionStats } from "../../core/agent-session.ts";
+import type { SessionRetryFallbackProfile } from "../../core/agent-session-runtime.ts";
 import type { BashResult } from "../../core/bash-executor.ts";
+import type { BrowserEngine } from "../../core/browser-engine.ts";
 import { type ClientMessageIdentity, clientMessageIdentity } from "../../core/client-message-identity.ts";
 import type { CompactionResult } from "../../core/compaction/index.ts";
 import type { PromptSurface } from "../../core/dynamic-prompt/types.ts";
@@ -465,6 +467,10 @@ export class RpcClient {
 		auto_title?: boolean;
 		/** Where this session's replies render; needs the host's `prompt_surface` (`prompt_surface_chat` for `chat`). */
 		promptSurface?: PromptSurface;
+		/** Which browser this session's skills drive; needs the host's `browser_engine`. */
+		browserEngine?: BrowserEngine;
+		/** This session's own fallback policy, in memory only; needs the host's `retry_fallback_profile`. */
+		retryFallback?: SessionRetryFallbackProfile;
 	}): Promise<{ sessionId: string; state: RpcSessionState; attached?: boolean }> {
 		if (this.pendingOpenSession) throw new RpcClientOpenInFlightError();
 		this.pendingOpenSession = true;
