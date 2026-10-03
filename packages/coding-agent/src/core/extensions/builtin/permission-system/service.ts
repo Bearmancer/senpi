@@ -28,14 +28,26 @@ export class PermissionService {
 		this.emitter = emitter;
 	}
 
+	/** deny > ask > allow. */
+	private static readonly RESTRICTIVENESS: Readonly<Record<Rule["action"], number>> = { allow: 0, ask: 1, deny: 2 };
+
 	/**
-	 * The user's own `deny` or `ask` for the call (the last matching non-preset rule, any layer), if
-	 * that is what it is. A user `allow` returns undefined: it never lets a call skip the preset.
+	 * The preset's decision and the user's decision for one call, evaluated independently. For the
+	 * preset, the judge's approval turns its blanket ask into allow; a call no rule of a set matches
+	 * gets that set's default (ask for the preset, none for the user).
 	 */
-	private userRestrictionFor(permission: string, pattern: string | readonly string[]): Rule | undefined {
-		const userRules = [...this.staticRuleset, ...this.approved].filter((rule) => !isPresetRule(rule));
-		const matched = evaluate(permission, pattern, userRules);
-		return userRules.includes(matched) && matched.action !== "allow" ? matched : undefined;
+	private presetAndUserActions(
+		permission: string,
+		pattern: string | readonly string[],
+		approveBlanketAsk: boolean,
+	): { readonly preset: Rule["action"]; readonly user: Rule["action"] | undefined } {
+		const all = [...this.staticRuleset, ...this.approved];
+		const presetRules = all.filter((rule) => isPresetRule(rule));
+		const userRules = all.filter((rule) => !isPresetRule(rule));
+		const presetRule = evaluate(permission, pattern, presetRules);
+		const preset = presetRule.action === "ask" && approveBlanketAsk ? "allow" : presetRule.action;
+		const userRule = evaluate(permission, pattern, userRules);
+		return { preset, user: userRules.includes(userRule) ? userRule.action : undefined };
 	}
 
 	/** Request permission for a tool call. Resolves if allowed, throws on denial. */
@@ -44,13 +56,16 @@ export class PermissionService {
 		{
 			autoApproveAsk = false,
 			approveBlanketAsk = false,
-			userRulesBeatPreset = false,
+			presetBound = false,
 			ruleAliases,
 		}: {
 			readonly autoApproveAsk?: boolean;
 			readonly approveBlanketAsk?: boolean;
-			/** When the matching rule is the preset's own, a user deny or ask for the same call decides instead. */
-			readonly userRulesBeatPreset?: boolean;
+			/**
+			 * Decide as the more restrictive of the preset's decision and the user's (deny > ask > allow),
+			 * so no user rule, in any order or layer, can widen the preset.
+			 */
+			readonly presetBound?: boolean;
 			readonly ruleAliases?: readonly string[];
 		} = {},
 	): Promise<void> {
@@ -63,19 +78,27 @@ export class PermissionService {
 		let needsAsk = false;
 
 		for (const pattern of info.patterns) {
-			const matched = evaluate(info.permission, ruleAliases ?? pattern, this.staticRuleset, this.approved);
-			const rule =
-				userRulesBeatPreset && isPresetRule(matched)
-					? (this.userRestrictionFor(info.permission, ruleAliases ?? pattern) ?? matched)
-					: matched;
+			const target = ruleAliases ?? pattern;
+			let action: Rule["action"];
+			if (presetBound) {
+				// The more restrictive of the two decisions wins, whatever order or layer the rules come
+				// from: a user rule can narrow the preset, never widen it.
+				const { preset, user } = this.presetAndUserActions(info.permission, target, approveBlanketAsk);
+				action =
+					user === undefined ||
+					PermissionService.RESTRICTIVENESS[preset] >= PermissionService.RESTRICTIVENESS[user]
+						? preset
+						: user;
+			} else {
+				const rule = evaluate(info.permission, target, this.staticRuleset, this.approved);
+				action = approveBlanketAsk && isPresetRule(rule) && rule.action === "ask" ? "allow" : rule.action;
+			}
 
-			if (rule.action === "deny") {
+			if (action === "deny") {
 				deniedPatterns.push(pattern);
 				continue;
 			}
-
-			const approvedAsk = autoApproveAsk || (approveBlanketAsk && isPresetRule(rule));
-			if (rule.action === "ask" && !approvedAsk) {
+			if (action === "ask" && !autoApproveAsk) {
 				needsAsk = true;
 			}
 		}

@@ -31,7 +31,7 @@ const searchSpec =
 		return classifyWords(args, patternFromFlag ? { ...value, operand: all("read-file"), minOperands: 1 } : value);
 	};
 
-const READ_FILES: ProgramSpec = { flags: {}, operand: all("read-file") };
+const READ_FILES: ProgramSpec = { flags: {}, operand: all("read-file"), minOperands: 1 };
 
 const SPECS: ReadonlyArray<readonly [string, ProgramRule]> = [
 	["pwd", spec({ flags: {}, operand: all("text"), maxOperands: 0 })],
@@ -80,7 +80,7 @@ const SPECS: ReadonlyArray<readonly [string, ProgramRule]> = [
 				...flags("-e -m -A -B -C --regexp --max-count --after-context --before-context --context", "text"),
 			},
 			operand: firstIs("text", "read-file"),
-			minOperands: 1,
+			minOperands: 2,
 		}),
 	],
 	[
@@ -146,7 +146,7 @@ const gitRule: ProgramRule = (args) => {
 	const [sub, ...rest] = args;
 	if (sub === undefined) return undefined;
 	const subSpec = GIT_READ_SUBCOMMANDS[sub.text];
-	if (subSpec === undefined || rest.some((word) => word.text.includes(":") || /^[0-9a-f]{7,64}$/i.test(word.text))) {
+	if (subSpec === undefined || rest.some((word) => word.text.includes(":") || /^[0-9a-f]{4,64}$/i.test(word.text))) {
 		return undefined;
 	}
 	if (sub.text === "diff" && !rest.some((word) => SUMMARY_ONLY.has(word.text))) return undefined;

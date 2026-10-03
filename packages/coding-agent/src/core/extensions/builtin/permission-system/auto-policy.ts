@@ -16,7 +16,7 @@ export interface AutoDecision {
 	readonly approveBlanketAsk: boolean;
 }
 
-const WRITE_TOOLS = new Set(["write", "edit", "multiedit"]);
+const WRITE_TOOLS = new Set(["write", "edit"]);
 const LIST_TOOLS = new Set(["ls", "find"]);
 const NO: AutoDecision = { approveBlanketAsk: false };
 const YES: AutoDecision = { approveBlanketAsk: true };
@@ -71,7 +71,8 @@ function patchTargets(input: Record<string, unknown>, cwd: string): string[] | u
 	if (!patchText) return undefined;
 	try {
 		const hunks = parsePatch(patchText);
-		if (hunks.length === 0) return undefined;
+		// A delete asks, the same as `rm` in the shell.
+		if (hunks.length === 0 || hunks.some((hunk) => hunk.type === "delete")) return undefined;
 		return hunks.flatMap((hunk) => {
 			const targets = [resolvePatchPath(cwd, hunk.filePath)];
 			if (hunk.type === "update" && hunk.movePath) targets.push(resolvePatchPath(cwd, hunk.movePath));
@@ -85,7 +86,7 @@ function patchTargets(input: Record<string, unknown>, cwd: string): string[] | u
 /**
  * The `auto` preset's allowlist (decision table on senpi#2614). Each decision is made on the exact
  * target the tool will open, obtained from the tool's own resolver (`resolveReadPathAsync` for `read`,
- * `resolveToCwd` for the other file tools, `parsePatch` + `resolvePatchPath` for `apply_patch`).
+ * `resolveToCwd` for `write`, `edit`, `ls`, `find` and `grep`, `parsePatch` + `resolvePatchPath` for `apply_patch`).
  * Every other call keeps the preset's ask.
  */
 export async function decideAuto(

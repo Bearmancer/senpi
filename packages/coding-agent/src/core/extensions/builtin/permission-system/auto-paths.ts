@@ -32,8 +32,9 @@ const physicalPath = (target: string): string | undefined => {
 };
 
 /**
- * The project root `auto` works in, or undefined when the session root is `/`, the home directory or
- * any ancestor of it (`/Users`, `/home`): from there every login item and app store counts as project.
+ * The project root `auto` works in, or undefined when the session root is `/`, the home directory, any
+ * ancestor of it (`/Users`, `/home`), or inside a hidden directory (`~/.config`): from there login
+ * items, app stores and tool configs would count as project files.
  */
 function projectRoot(cwd: string): string | undefined {
 	const root = physicalPath(path.resolve(cwd));
@@ -41,7 +42,8 @@ function projectRoot(cwd: string): string | undefined {
 	if (root === undefined || home === undefined) return undefined;
 	const homeFromRoot = path.relative(root, home);
 	const rootContainsHome = homeFromRoot === "" || (!homeFromRoot.startsWith("..") && !path.isAbsolute(homeFromRoot));
-	return root === path.parse(root).root || rootContainsHome ? undefined : root;
+	const hiddenRoot = root.split(path.sep).some((segment) => segment.startsWith("."));
+	return root === path.parse(root).root || rootContainsHome || hiddenRoot ? undefined : root;
 }
 
 /** What is at `target` after following every symlink, without opening anything. */

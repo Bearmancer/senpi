@@ -1,5 +1,22 @@
 # Permission System Builtin Extension
 
+## 2026-10-03 - Auto: preset and user decisions combine as the more restrictive
+
+### What changed
+
+- `service.ts`: with `presetBound` (set by `index.ts` while `auto` is active), each call is decided twice, independently: the preset's rules alone (its blanket ask becomes allow when the judge approves) and the user's rules alone; the final action is the more restrictive of the two (deny > ask > allow). Rule order and layer no longer matter, so a user `allow` cannot widen `auto` and a user `deny`/`ask` always narrows it. This replaces the round-4 `userRestrictionFor` lookup, which still let a user `allow` ordered after the preset win.
+- `auto-paths.ts`: a session root inside a hidden directory (`~/.config/...`) approves nothing.
+- `auto-policy.ts`: `apply_patch` with a delete asks; `multiedit` (no such tool in senpi, so no resolver) asks.
+- `auto-program-rules.ts`: hex operands of 4+ characters count as object ids and ask; `cat`/`head`/`tail`/`wc`/`cut` need a file and `grep`/`rg` a pattern plus a file, so none waits on terminal input.
+
+### Why
+
+- Round 5 of the #2614 review: precedence was order-dependent (a user allow after the preset in the same settings file, or `--permission bash=allow`, deleted a file unprompted).
+
+### Must not break
+
+- A user rule may only narrow `auto`; the combination must not depend on rule order or layer.
+
 ## 2026-10-03 - Auto: a user allow never widens it; home-ancestor roots, git operands
 
 ### What changed

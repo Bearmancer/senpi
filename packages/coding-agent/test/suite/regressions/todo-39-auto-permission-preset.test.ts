@@ -336,6 +336,38 @@ describe("auto permission preset in a real host session", () => {
 		expect(await readFile(join(session.cwd, "notes.txt"), "utf8")).toBe("keep me\n");
 	});
 
+	it.each([
+		[
+			"allow in project settings, auto at session open",
+			undefined,
+			{ projectSettings: { permission: { bash: "allow" } } },
+			"auto",
+		],
+		[
+			"auto and allow in the same project settings file",
+			undefined,
+			{ projectSettings: { permissionPreset: "auto", permission: { bash: "allow" } } },
+			undefined,
+		],
+		[
+			"allow in global settings, auto at session open",
+			undefined,
+			{ globalSettings: { permission: { bash: "allow" } } },
+			"auto",
+		],
+		["--permission bash=allow, auto at session open", "bash=allow", {}, "auto"],
+		["--permission bash=allow with --permission-preset auto", "bash=allow", { presetFlag: "auto" }, undefined],
+	] as const)("a user allow never widens auto: %s", async (_label, flag, setup, sessionPreset) => {
+		// Given a user rule allowing every command, set in one layer, with auto chosen in another or the same.
+		const session = await host(flag, setup);
+		await writeFile(join(session.cwd, "notes.txt"), "keep me\n");
+		// When the agent deletes a file, which auto itself does not approve.
+		const result = await session.run(sessionPreset, { name: "bash", args: { command: "rm notes.txt" } });
+		// Then it still asks, and the denied command leaves the file.
+		expect(result.approvals.length).toBeGreaterThan(0);
+		expect(await readFile(join(session.cwd, "notes.txt"), "utf8")).toBe("keep me\n");
+	});
+
 	it("keeps asking for every command under accept-edits", async () => {
 		// Given the edit-only preset, where the auto judge must not apply.
 		const session = await host();

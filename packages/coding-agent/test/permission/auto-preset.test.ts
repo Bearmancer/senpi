@@ -8,6 +8,7 @@ import { rulesForPreset } from "../../src/core/extensions/builtin/permission-sys
 import { createLocalEventEmitter } from "../../src/core/extensions/builtin/permission-system/events.ts";
 import { PermissionService } from "../../src/core/extensions/builtin/permission-system/service.ts";
 import type { Ruleset } from "../../src/core/extensions/builtin/permission-system/types.ts";
+import { DeniedError } from "../../src/core/extensions/builtin/permission-system/types.ts";
 
 let scratch = "";
 let project = "";
@@ -124,6 +125,9 @@ describe("auto preset command judge: actions it always asks about", () => {
 		["git operand outside the project", "git diff --numstat /dev/null /etc/hosts"],
 		["git log of a dotfile path", "git log --oneline .env"],
 		["git diff that prints contents", "git diff src/index.ts"],
+		["a short object id", "git log --oneline abcd"],
+		["cat with no file reads the terminal", "cat"],
+		["grep with no file reads the terminal", "grep TODO"],
 	])("asks for %s: %s", (_label, command) => {
 		expect(judgeAutoCommand(command, project)).toBe("ask");
 	});
@@ -269,9 +273,16 @@ describe("auto preset tool decisions", () => {
 		["the home directory", () => homedir()],
 		["a parent of the home directory", () => dirname(homedir())],
 		["the filesystem root", () => "/"],
+		["a hidden directory such as ~/.config", () => join(scratch, ".config", "tool")],
 	])("asks for everything when the session root is %s", async (_label, root) => {
+		mkdirSync(join(scratch, ".config", "tool"), { recursive: true });
+		writeFileSync(join(scratch, ".config", "tool", "notes.txt"), "config\n");
 		const read = { permission: "read", patterns: ["notes.txt"], always: [] };
 		expect((await decideAuto("read", { path: "notes.txt" }, read, root())).approveBlanketAsk).toBe(false);
+		expect(
+			(await decideAuto("read", { path: join(scratch, ".config", "tool", "notes.txt") }, read, root()))
+				.approveBlanketAsk,
+		).toBe(false);
 		const write = { permission: "edit", patterns: ["x.plist"], always: [] };
 		expect(
 			(await decideAuto("write", { path: join(homedir(), "Library", "LaunchAgents", "x.plist") }, write, root()))
@@ -283,8 +294,8 @@ describe("auto preset tool decisions", () => {
 		mkdirSync(join(project, ".github", "workflows"), { recursive: true });
 		expect(await approves("find", { path: "src", pattern: "*.ts" }, "list")).toBe(true);
 		expect(await approves("find", { path: ".git", pattern: "*" }, "list")).toBe(false);
-		expect(await approves("multiedit", { path: "src/index.ts" }, "edit")).toBe(true);
-		expect(await approves("multiedit", { path: ".env" }, "edit")).toBe(false);
+		// senpi ships no multiedit tool, so auto has no resolver to judge it by and asks.
+		expect(await approves("multiedit", { path: "src/index.ts" }, "edit")).toBe(false);
 		expect(await approves("write", { path: ".github/workflows/ci.yml", content: "x" }, "edit")).toBe(true);
 		const edit = { permission: "edit", patterns: [], always: [] };
 		const move = (to: string) => ({
@@ -292,6 +303,8 @@ describe("auto preset tool decisions", () => {
 		});
 		expect((await decideAuto("apply_patch", move("src/moved.ts"), edit, project)).approveBlanketAsk).toBe(true);
 		expect((await decideAuto("apply_patch", move("../outside.ts"), edit, project)).approveBlanketAsk).toBe(false);
+		const remove = { input: "*** Begin Patch\n*** Delete File: src/old.ts\n*** End Patch" };
+		expect((await decideAuto("apply_patch", remove, edit, project)).approveBlanketAsk).toBe(false);
 	});
 
 	it("follows read's macOS name fallbacks to the file the tool would open", async () => {
@@ -354,66 +367,60 @@ describe("auto preset credential names", () => {
 
 describe("auto preset rule precedence", () => {
 	const shell = { permission: "bash", patterns: ["npm test"], always: [], metadata: {} };
-	const decision = { approveBlanketAsk: true } as const;
+	const userRule = (action: "allow" | "ask" | "deny", pattern = "*") => ({ permission: "bash", pattern, action });
 
-	it("lets the judge approve the preset's own blanket bash ask", async () => {
-		const { service, asked } = makeService([...rulesForPreset("auto")]);
-		await service.ask({ ...shell, sessionID: "s" }, decision);
-		expect(asked).toEqual([]);
+	/** Resolves "allowed", "denied" or "asked" from the service's own events, never from timing. */
+	const outcome = (ruleset: Ruleset, approveBlanketAsk: boolean) => {
+		const { service, emitter } = makeService(ruleset);
+		const asked = new Promise<"asked">((resolve) => emitter.onAsked(() => resolve("asked")));
+		const settled = service.ask({ ...shell, sessionID: "s" }, { approveBlanketAsk, presetBound: true }).then(
+			() => "allowed" as const,
+			(error: unknown) => (error instanceof DeniedError ? ("denied" as const) : Promise.reject(error)),
+		);
+		return Promise.race([asked, settled]);
+	};
+
+	it("lets the judge approve the preset's own blanket ask when no user rule matches", async () => {
+		expect(await outcome([...rulesForPreset("auto")], true)).toBe("allowed");
+	});
+
+	it("asks when the judge does not approve and no user rule matches", async () => {
+		expect(await outcome([...rulesForPreset("auto")], false)).toBe("asked");
 	});
 
 	it.each([
-		["a user's blanket ask", [{ permission: "bash", pattern: "*", action: "ask" as const }]],
-		["a user's pattern-specific ask", [{ permission: "bash", pattern: "npm *", action: "ask" as const }]],
-	])("keeps asking for %s placed after the preset", async (_label, userRules) => {
-		const { service, asked } = makeService([...rulesForPreset("auto"), ...userRules]);
-		void service.ask({ ...shell, sessionID: "s" }, decision).catch(() => undefined);
-		await Promise.resolve();
-		expect(asked).toHaveLength(1);
-	});
-
-	it.each([
-		["deny", "deny"],
-		["ask", "ask"],
-	] as const)("a user %s rule placed BEFORE the preset still wins", async (_label, action) => {
-		const { service, asked } = makeService([
-			{ permission: "bash", pattern: "npm *", action },
-			...rulesForPreset("auto"),
-		]);
-		const outcome = service.ask({ ...shell, sessionID: "s" }, { ...decision, userRulesBeatPreset: true });
-		if (action === "deny") {
-			await expect(outcome).rejects.toThrow();
-		} else {
-			void outcome.catch(() => undefined);
-			await Promise.resolve();
-			expect(asked).toHaveLength(1);
+		["allow", "*"],
+		["allow", "npm *"],
+	] as const)("a user %s rule (%s) never widens auto, in either order", async (action, pattern) => {
+		const preset = rulesForPreset("auto");
+		for (const ruleset of [
+			[userRule(action, pattern), ...preset],
+			[...preset, userRule(action, pattern)],
+		]) {
+			expect(await outcome(ruleset, false)).toBe("asked");
 		}
 	});
 
-	it("does not let a user allow rule placed BEFORE the preset skip the auto judge", async () => {
-		const { service, asked } = makeService([
-			{ permission: "bash", pattern: "*", action: "allow" },
-			...rulesForPreset("auto"),
-		]);
-		void service
-			.ask({ ...shell, sessionID: "s" }, { approveBlanketAsk: false, userRulesBeatPreset: true })
-			.catch(() => undefined);
-		await Promise.resolve();
-		expect(asked).toHaveLength(1);
-	});
-
-	it("denies a user's deny rule even when the judge approves", async () => {
-		const { service } = makeService([
-			...rulesForPreset("auto"),
-			{ permission: "bash", pattern: "*", action: "deny" },
-		]);
-		await expect(service.ask({ ...shell, sessionID: "s" }, decision)).rejects.toThrow();
-	});
+	it.each([
+		["ask", "asked"],
+		["deny", "denied"],
+	] as const)(
+		"a user %s rule narrows auto in either order, even when the judge approves",
+		async (action, expected) => {
+			const preset = rulesForPreset("auto");
+			for (const ruleset of [
+				[userRule(action), ...preset],
+				[...preset, userRule(action)],
+				[userRule(action, "npm *"), ...preset],
+				[...preset, userRule(action, "npm *")],
+			]) {
+				expect(await outcome(ruleset, true)).toBe(expected);
+			}
+		},
+	);
 });
 
 function makeService(ruleset: Ruleset) {
 	const emitter = createLocalEventEmitter();
-	const asked: unknown[] = [];
-	emitter.onAsked((request) => asked.push(request));
-	return { service: new PermissionService(ruleset, [], emitter), asked };
+	return { service: new PermissionService(ruleset, [], emitter), emitter };
 }
