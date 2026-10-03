@@ -174,7 +174,13 @@
 				"legacyContracts/test/config.test.ts/codemode settings Given a settings file with a key from a newer version when settings load then the other settings still apply and the unknown key gets one warning",
 				"legacyContracts/test/config.test.ts/codemode settings Given an unknown key inside a known setting when settings load then the file still falls back to defaults with a warning",
 				"imports/extension/packages/senpi-codemode/src/config/settings-constants.ts",
-				"imports/firstKernel/packages/senpi-codemode/src/config/settings-constants.ts"
+				"imports/firstKernel/packages/senpi-codemode/src/config/settings-constants.ts",
+				"legacyContracts/test/feature-settings.test.ts/codemode feature settings Given an unknown key inside environments when settings load then that object stays strict and the file falls back to defaults with a warning",
+				"legacyContracts/test/feature-settings.test.ts/codemode feature settings Given an unknown key inside isolation when settings load then that object stays strict and the file falls back to defaults with a warning",
+				"legacyContracts/test/feature-settings.test.ts/codemode feature settings Given an unknown key inside sandbox when settings load then that object stays strict and the file falls back to defaults with a warning",
+				"legacyContracts/test/feature-settings.test.ts/codemode feature settings Given an unknown key inside prompt when settings load then that object stays strict and the file falls back to defaults with a warning",
+				"legacyContracts/test/feature-settings.test.ts/codemode feature settings Given an unknown key inside kernelTools when settings load then that object stays strict and the file falls back to defaults with a warning",
+				"legacyContracts/test/feature-settings.test.ts/codemode feature settings Given an unknown key inside environments.js when settings load then that object stays strict and the file falls back to defaults with a warning"
 			],
 			"reason": "Settings keep the user's other keys when a newer key is present, and gain optional keys for later features with today's defaults; three new config modules in the scoped census and the new settings contracts. The contract that pinned the old whole-file fallback for an unknown key is renamed in the baseline to the warn-and-keep behaviour it now asserts (status unchanged)."
 		},
