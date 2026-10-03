@@ -76,4 +76,14 @@ describe("provider error episode marker", () => {
 		p.clear();
 		expect(p.awaitingRetryFinish).toBe(false);
 	});
+
+	test("after a successful retry + successful compaction, a terminal failure surfaces as an error", () => {
+		const p = new ProviderErrorPresentation(new Container());
+		p.retrying(envelope, false);
+		p.clearTransient(); // summarization_retry_finished (keeps the marker for the close-out)
+		// A successful compaction_end ends the episode via clear(); a later never-retried terminal
+		// failure must surface as an error, old notice untouched.
+		p.clear();
+		expect(p.awaitingRetryFinish).toBe(false);
+	});
 });
