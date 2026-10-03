@@ -1,3 +1,21 @@
+## 2026-10-03 - nvidia's default is a model its regenerated catalog still has (senpi#2645)
+
+### What changed
+
+- `packages/coding-agent/src/core/model-resolver.ts`: `defaultModelPerProvider.nvidia` is `nvidia/nemotron-3-ultra-550b-a55b` (was `nvidia/nemotron-3-super-120b-a12b`).
+
+### Why
+
+- `packages/coding-agent/src/core/model-resolver.ts`: the v2026.10.4 catalog regeneration dropped `nemotron-3-super-120b-a12b` (models.dev no longer lists it). `selectProviderDefault` found no `nvidia` default, so an NVIDIA-only user without a saved model started on the catalog's first entry (`deepseek-ai/deepseek-v4.1-flash`, provenance `first-available`), and the default-model tests failed on `main`. Same class as #2175/#2179, #2295 and #926.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/model-resolver.ts`: the built-in provider default table is core resolver data read before any extension runs.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/model-resolver.ts`: the `nvidia` row of `defaultModelPerProvider`.
+
 ## 2026-10-03 - session.log lines name their session, provider and model (senpi#2541)
 
 ### What changed

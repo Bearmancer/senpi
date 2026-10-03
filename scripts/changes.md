@@ -1,3 +1,27 @@
+## 2026-10-03 - A release stops when a catalog regeneration drops a provider default (senpi#2645)
+
+### What changed
+
+- `scripts/release-artifacts.mjs`: new `runProviderDefaultsCheck` runs `npm --prefix packages/coding-agent run check:provider-defaults` (the "default model selection" tests in `test/model-resolver.test.ts`, with `CI=1`).
+- `scripts/release.mjs`: runs it right after `runGenerateModels`.
+- `scripts/local-release.mjs`: runs the same check right after its own `generate-models`.
+- `scripts/release-test-gate.mjs`: new `catalogChangedSinceHead(cwd)` (`git status` over `packages/ai/src/models.generated.ts` and `packages/ai/src/providers`, untracked files included). `decideTestGate` takes `catalogChanged` and never skips when it is true.
+- `scripts/release.mjs`: reads `catalogChangedSinceHead` right after the regeneration, before anything is committed, and passes it to the test gate.
+
+### Why
+
+- `scripts/release.mjs`, `scripts/local-release.mjs`, `scripts/release-artifacts.mjs`: the release regenerates the model catalog from the network and then may skip its test gate because HEAD already has a green "Check and test" run, but that run tested the pre-regeneration catalog. v2026.10.4 shipped an `nvidia` default its new catalog no longer had, and `main` went red only after the release commit. The check runs on the regenerated catalog, before anything is committed or tagged. And whenever the regeneration changed the catalog, the test gate now runs the full suite instead of trusting HEAD's pre-regeneration CI, so every regeneration-induced failure, not just a dropped default, stops the release.
+
+### Why an extension could not handle it
+
+- `scripts/release.mjs`, `scripts/local-release.mjs`, `scripts/release-artifacts.mjs`: release tooling, not runtime behavior.
+
+### Expected merge conflict zones
+
+- `scripts/release.mjs`: the step list in `main()` around `runGenerateModels`, and `runTests`.
+- `scripts/release-test-gate.mjs`: `decideTestGate`'s branch order.
+- `scripts/local-release.mjs`: the `generate-models` block.
+
 ## 2026-10-03 - Release notes cover every published package (senpi#2585)
 
 ### What changed

@@ -1,3 +1,21 @@
+## 2026-10-03 - `check:provider-defaults` script for the release (senpi#2645)
+
+### What changed
+
+- `packages/coding-agent/package.json`: new script `check:provider-defaults` runs the "default model selection" tests of `test/model-resolver.test.ts`.
+
+### Why
+
+- `packages/coding-agent/package.json`: the release runs it right after regenerating the model catalog (`scripts/release.mjs`, `scripts/local-release.mjs`), so a regeneration that drops a bundled provider's default model stops the release instead of shipping it (v2026.10.4 shipped such an `nvidia` default).
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/package.json`: package scripts are release tooling, not something an extension can add to.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/package.json`: the `scripts` block.
+
 ## 2026-10-02 - Per-session heap split and render-cache accounting on the memory surfaces (senpi#1960)
 
 ### What changed
