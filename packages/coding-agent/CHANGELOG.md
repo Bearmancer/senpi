@@ -10,6 +10,8 @@
 
 ### Fixed
 
+- Quiet, detached worker sessions on the shared in-process RPC host now release their runtimes on the next occupancy sweep once their history is persisted, while active jobs, wake sources, queued deliveries, and requests remain protected. Observational session commands such as `get_state` and `memory_report` no longer prolong idle retention for detached sessions; attached clients polling `get_state` keep their session alive as before, and parked sessions reopen by path with their durable identity and history.
+
 ### Removed
 
 ## [2026.10.5] - 2026-10-03

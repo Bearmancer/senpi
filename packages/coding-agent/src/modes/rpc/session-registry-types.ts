@@ -54,6 +54,13 @@ export interface RpcSessionEntry {
 	retainOnDisconnect?: boolean;
 	/** Timestamp of the last routed command / observed activity; drives idle eviction. */
 	lastCommandAt: number;
+	/**
+	 * When the last attachment left (a retained session now standing detached), on the registry's
+	 * clock; `undefined` while anyone is attached. A detached observational read does not refresh
+	 * `lastCommandAt`, and the early-retirement sweep honors a minimum detach age so a transient
+	 * reconnect keeps its runtime instead of re-opening cold.
+	 */
+	detachedAt?: number;
 	lifecycleMutex: Promise<void>;
 	closeCompletion?: Promise<void>;
 	closeResolve?: () => void;

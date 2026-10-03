@@ -24,6 +24,7 @@ interface OpenFields {
 	cwd?: string;
 	sessionPath?: string;
 	retain_on_disconnect?: boolean;
+	kind?: "interactive" | "worker";
 }
 
 export interface TeardownGate {
