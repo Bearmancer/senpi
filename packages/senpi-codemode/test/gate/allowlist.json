@@ -104,7 +104,9 @@
     "legacyContracts/test/bench/threshold.test.ts/per-row A/A-calibrated thresholds detects a 1.25x head shift on the same noisy series and names the row",
     "legacyContracts/test/bench/threshold.test.ts/per-row A/A-calibrated thresholds reports a row whose calibration noise exceeds the cap as noise-limited, never as passed",
     "legacyContracts/test/bench/threshold.test.ts/per-row A/A-calibrated thresholds still fails a noise-limited row that regresses beyond its own noise band",
-    "legacyContracts/test/bench/threshold.test.ts/per-row A/A-calibrated thresholds switches to one shared band with the global scope knob"
+    "legacyContracts/test/bench/threshold.test.ts/per-row A/A-calibrated thresholds switches to one shared band with the global scope knob",
+    "legacyContracts/test/bench/sampler.test.ts/per-block host sampling records host load and the busiest real processes",
+    "legacyContracts/test/bench/sampler.test.ts/per-block host sampling samples at the start, on every interval and at the end, in order and never concurrently"
    ],
    "reason": "Plan node 2 (senpi#2534, refs #2452): contract tests for the eval timing benchmark - paired comparator, per-row A/A-calibrated thresholds capped at 0.05, rescoring, scheduler, CPU accounting and workload fixtures. Test-only; no prompt, schema, helper or runtime surface changes."
   }

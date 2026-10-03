@@ -2,6 +2,7 @@ import { loadavg } from "node:os";
 import { type Static, Type } from "typebox";
 import type { PairedBlock, RuntimeStatus, Series } from "./bench-compare.ts";
 import { hostIdleSeconds, powerSource } from "./bench-host.ts";
+import { type HostSample, sampleHost, startHostSampler, summarizeSamples } from "./bench-sampler.ts";
 import { implementedScenarios, plannedScenarios } from "./bench-scenarios.ts";
 import { runProcess } from "./bench-target.ts";
 import { BenchWorkerError, type RuntimeReport, startWorker } from "./bench-worker.ts";
@@ -39,6 +40,7 @@ export interface BlockRecord {
 	readonly idleSeconds: number | null;
 	readonly startedAt: string;
 	readonly endedAt: string;
+	readonly hostSamples: readonly HostSample[];
 	readonly measurements: readonly {
 		readonly runtimeId: string;
 		readonly scenario: string;
@@ -91,6 +93,7 @@ export async function runBlocks(plan: RunPlan): Promise<RunResult> {
 	blocksLoop: for (let index = 0; index < plan.blocks; index += 1) {
 		const comparisonOrder: Side[] = index % 2 === 0 ? ["base", "head"] : ["head", "base"];
 		const startedAt = new Date().toISOString();
+		const sampler = startHostSampler(sampleHost);
 		const startLoad = loadavg();
 		const power = await powerSource();
 		const idleSeconds = await hostIdleSeconds();
@@ -170,12 +173,28 @@ export async function runBlocks(plan: RunPlan): Promise<RunResult> {
 					idleSeconds,
 					startedAt,
 					endedAt: new Date().toISOString(),
+					hostSamples: await sampler.stop(),
 					measurements,
 				});
 				break blocksLoop;
 			}
 		}
-		blocks.push({ index, comparisonOrder, loadavg: startLoad, loadavgEnd: loadavg(), power, idleSeconds, startedAt, endedAt: new Date().toISOString(), measurements });
+		const endedAt = new Date().toISOString();
+		const hostSamples = await sampler.stop();
+		const loadavgEnd = loadavg();
+		blocks.push({
+			index,
+			comparisonOrder,
+			loadavg: startLoad,
+			loadavgEnd,
+			power,
+			idleSeconds,
+			startedAt,
+			endedAt,
+			hostSamples,
+			measurements,
+		});
+		plan.log(`block ${index + 1} host: ${startedAt} -> ${endedAt}, ${summarizeSamples(hostSamples)}`);
 	}
 	return {
 		reps: plan.reps,
