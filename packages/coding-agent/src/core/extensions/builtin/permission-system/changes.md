@@ -1,5 +1,21 @@
 # Permission System Builtin Extension
 
+## 2026-10-03 - Auto decides on the tool's own resolved target; user rules win from every layer
+
+### What changed
+
+- `auto-policy.ts`: each decision uses the target the tool itself computes: `resolveReadPath` for `read` (every quote layer and macOS name fallback the tool tries), `resolveToCwd` for `write`/`edit`/`multiedit`/`ls`/`find`/`grep`, and `parsePatch` + `resolvePatchPath` for `apply_patch`. `bash_input` and a `monitor` path always ask. Shell commands are judged only when made of plain words joined by `;` or `&&` (no quotes, escapes, expansions, redirects, pipes, `:` or `..`), and only for the read-only programs left in `auto-program-rules.ts` (`cp`, `mv`, `rm`, `mkdir`, `touch`, `sort`, `uniq`, `cd` and `git show` removed; full object ids ask).
+- `auto-paths.ts`: one resolver (`realpathWithoutOpenStrict`) instead of a second implementation; a session root equal to the home directory or `/` approves nothing; `.vscode` left the safe hidden list.
+- `service.ts` + `index.ts`: with `auto` active, when the matching rule is the preset's own, a user rule for the same call (from any layer, ordered before or after the preset) decides instead (`userRulesBeatPreset`).
+
+### Why
+
+- Round 3 of the #2614 review: the policy re-derived paths in parallel with the tools and missed nested quotes, macOS name fallbacks, a patch header with U+2028, a blob read through `git show`, a logical `cd`, and `cp` into a directory holding a symlink; a project rule ordered before a CLI/RPC-selected preset was shadowed by it.
+
+### Must not break
+
+- The judge must call the tools' resolvers, never a copy; if a tool changes how it resolves a path, the decision follows automatically. A user `deny`/`ask` beats the `auto` judge whatever layer it comes from.
+
 ## 2026-10-03 - Auto preset becomes an allowlist
 
 ### What changed

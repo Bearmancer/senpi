@@ -5,10 +5,6 @@ import type { ShellWord } from "./auto-shell-segments.ts";
 export type ProgramRule = (args: readonly ShellWord[]) => ClassifiedWord[] | undefined;
 
 const all = (role: WordRole) => (): WordRole => role;
-const lastIs =
-	(last: WordRole, rest: WordRole) =>
-	(index: number, count: number): WordRole =>
-		index === count - 1 ? last : rest;
 const firstIs =
 	(first: WordRole, rest: WordRole) =>
 	(index: number): WordRole =>
@@ -65,25 +61,6 @@ const SPECS: ReadonlyArray<readonly [string, ProgramRule]> = [
 	["stat", spec({ flags: flags("-L"), operand: all("list"), minOperands: 1 })],
 	["file", spec({ flags: flags("-b -i -L --brief --mime"), operand: all("read-file"), minOperands: 1 })],
 	[
-		"sort",
-		spec({
-			...READ_FILES,
-			flags: {
-				...flags("-r -n -u -f -b -d -h -V -s --reverse --numeric-sort --unique --ignore-case --stable"),
-				...flags("-k -t --key --field-separator", "text"),
-				...flags("-o --output", "write"),
-			},
-		}),
-	],
-	[
-		"uniq",
-		spec({
-			flags: flags("-c -d -u -i --count --repeated --unique --ignore-case"),
-			operand: firstIs("read-file", "write"),
-			maxOperands: 2,
-		}),
-	],
-	[
 		"cut",
 		spec({
 			...READ_FILES,
@@ -119,14 +96,6 @@ const SPECS: ReadonlyArray<readonly [string, ProgramRule]> = [
 			minOperands: 2,
 		}),
 	],
-	["mkdir", spec({ flags: flags("-p --parents"), operand: all("write"), minOperands: 1 })],
-	["touch", spec({ flags: {}, operand: all("write"), minOperands: 1 })],
-	[
-		"cp",
-		spec({ flags: flags("-p -n --preserve --no-clobber"), operand: lastIs("write", "read-file"), minOperands: 2 }),
-	],
-	["mv", spec({ flags: flags("-n --no-clobber"), operand: lastIs("write", "remove-file"), minOperands: 2 })],
-	["rm", spec({ flags: {}, operand: all("remove-file"), minOperands: 1 })],
 ];
 
 const GIT_READ_SUBCOMMANDS: Readonly<Record<string, ProgramSpec>> = {
@@ -142,7 +111,6 @@ const GIT_READ_SUBCOMMANDS: Readonly<Record<string, ProgramSpec>> = {
 		},
 		operand: all("text"),
 	},
-	show: { flags: flags("--stat --name-only --name-status --oneline --no-color"), operand: all("text") },
 	"rev-parse": { flags: flags("--abbrev-ref --short --show-toplevel --verify"), operand: all("text") },
 	"ls-files": {
 		flags: flags("-m -o -d -s --modified --others --deleted --stage --exclude-standard"),
@@ -164,14 +132,17 @@ const SUMMARY_ONLY = new Set(["--stat", "--name-only", "--name-status", "--numst
 
 /**
  * Read-only git subcommands only; any global option (`-c`, `-C`, `--git-dir`, a pager) asks.
- * `diff` and `show` print file contents, which can include a tracked secret, so they pass only in
- * a summary form, and no operand may name an object path (`HEAD:.env` prints that blob).
+ * `diff` prints file contents, which can include a tracked secret, so it passes only in a summary
+ * form; `show` is not listed (`git show <blob id>` prints any tracked file), and no operand may name
+ * an object path or a full object id.
  */
 const gitRule: ProgramRule = (args) => {
 	const [sub, ...rest] = args;
 	if (sub === undefined) return undefined;
 	const subSpec = GIT_READ_SUBCOMMANDS[sub.text];
-	if (subSpec === undefined || rest.some((word) => word.text.includes(":"))) return undefined;
+	if (subSpec === undefined || rest.some((word) => word.text.includes(":") || /^[0-9a-f]{7,64}$/i.test(word.text))) {
+		return undefined;
+	}
 	if ((sub.text === "diff" || sub.text === "show") && !rest.some((word) => SUMMARY_ONLY.has(word.text)))
 		return undefined;
 	return classifyWords(rest, subSpec);

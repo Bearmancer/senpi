@@ -1,3 +1,5 @@
+import { execFileSync } from "node:child_process";
+import { existsSync } from "node:fs";
 import { mkdir, readFile, symlink, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -8,8 +10,8 @@ afterEach(async () => {
 	for (const dispose of disposers.splice(0).reverse()) await dispose();
 });
 
-async function host(permissionFlag?: string) {
-	const created = await createPermissionP0Host([], permissionFlag);
+async function host(permissionFlag?: string, setup: Parameters<typeof createPermissionP0Host>[3] = {}) {
+	const created = await createPermissionP0Host([], permissionFlag, [], setup);
 	disposers.push(created.dispose);
 	return created;
 }
@@ -236,6 +238,91 @@ describe("auto permission preset in a real host session", () => {
 		const write = await session.run("auto", { name: "write", args: { path: "src/new.ts", content: "ok\n" } });
 		expect(write.approvals).toEqual([]);
 		expect(await readFile(join(session.cwd, "src", "new.ts"), "utf8")).toBe("ok\n");
+	});
+
+	it("asks before reading .env through a doubly quoted path", async () => {
+		const session = await host();
+		await writeFile(join(session.cwd, ".env"), "TOKEN=ENV-SECRET\n");
+		const result = await session.run("auto", { name: "read", args: { path: `"'.env'"` } });
+		expect(result.approvals.length).toBeGreaterThan(0);
+		expect(JSON.stringify(result.result ?? "")).not.toContain("ENV-SECRET");
+	});
+
+	it("asks before reading an outside file through a doubly quoted absolute path", async () => {
+		const session = await host();
+		const result = await session.run("auto", { name: "read", args: { path: `"'${session.outsidePath}'"` } });
+		expect(result.approvals.length).toBeGreaterThan(0);
+		expect(JSON.stringify(result.result ?? "")).not.toContain("private outside content");
+	});
+
+	it("asks before read's curly-apostrophe fallback opens a project symlink that leaves the project", async () => {
+		// Given a project symlink whose name uses a curly apostrophe and points outside.
+		const session = await host();
+		await symlink(session.outsidePath, join(session.cwd, "it\u2019s"));
+		// When the agent reads the straight-apostrophe spelling the tool falls back from.
+		const result = await session.run("auto", { name: "read", args: { path: "it's" } });
+		expect(result.approvals.length).toBeGreaterThan(0);
+		expect(JSON.stringify(result.result ?? "")).not.toContain("private outside content");
+	});
+
+	it("asks before printing a tracked .env through git show of its blob id", async () => {
+		const session = await host();
+		const git = (...args: string[]) =>
+			execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@example.com", ...args], {
+				cwd: session.cwd,
+				encoding: "utf8",
+			});
+		git("init", "-q");
+		await writeFile(join(session.cwd, ".env"), "TOKEN=GIT-SECRET\n");
+		git("add", ".env");
+		git("commit", "-q", "-m", "init");
+		const blob = git("rev-parse", "HEAD:.env").trim();
+		const result = await session.run("auto", { name: "bash", args: { command: `git show --stat ${blob}` } });
+		expect(result.approvals.length).toBeGreaterThan(0);
+		expect(JSON.stringify(result.result ?? "")).not.toContain("GIT-SECRET");
+	});
+
+	it("asks before a cd through a symlink and '..' lets a later relative write leave the project", async () => {
+		// Given an in-project link to a nested directory, the shape of workspace node_modules links.
+		const session = await host();
+		await mkdir(join(session.cwd, "a", "b"), { recursive: true });
+		await symlink(join(session.cwd, "a", "b"), join(session.cwd, "link"));
+		const escaped = join(dirname(session.cwd), "escaped.txt");
+		const result = await session.run("auto", {
+			name: "bash",
+			args: { command: "cd link/.. && touch ../escaped.txt" },
+		});
+		expect(result.approvals.length).toBeGreaterThan(0);
+		expect(existsSync(escaped)).toBe(false);
+	});
+
+	it("asks before cp into a directory writes through an existing symlink there", async () => {
+		const session = await host();
+		await mkdir(join(session.cwd, "dir"), { recursive: true });
+		await symlink(session.outsidePath, join(session.cwd, "dir", "payload.txt"));
+		await writeFile(join(session.cwd, "payload.txt"), "project payload\n");
+		const result = await session.run("auto", { name: "bash", args: { command: "cp payload.txt dir/" } });
+		expect(result.approvals.length).toBeGreaterThan(0);
+		expect(await readFile(session.outsidePath, "utf8")).toBe("private outside content\n");
+	});
+
+	it("denies a command the project denies even when auto is chosen at session open", async () => {
+		// Given a project deny rule and auto selected through RPC open_session, the desktop's path.
+		const session = await host(undefined, { projectSettings: { permission: { bash: { "cat *": "deny" } } } });
+		await writeFile(join(session.cwd, "notes.txt"), "NOTES-CONTENT\n");
+		// When the agent runs a command auto would otherwise approve.
+		const result = await session.run("auto", { name: "bash", args: { command: "cat notes.txt" } });
+		// Then the project's deny wins: no prompt, and the command does not run.
+		expect(result.approvals).toEqual([]);
+		expect(result.isError).toBe(true);
+		expect(JSON.stringify(result.result ?? "")).not.toContain("NOTES-CONTENT");
+	});
+
+	it("keeps asking for a command the project asks about even when auto is chosen at session open", async () => {
+		const session = await host(undefined, { projectSettings: { permission: { bash: { "cat *": "ask" } } } });
+		await writeFile(join(session.cwd, "notes.txt"), "NOTES-CONTENT\n");
+		const result = await session.run("auto", { name: "bash", args: { command: "cat notes.txt" } });
+		expect(result.approvals.length).toBeGreaterThan(0);
 	});
 
 	it("keeps asking for every command under accept-edits", async () => {

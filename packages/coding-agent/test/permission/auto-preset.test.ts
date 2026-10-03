@@ -1,5 +1,5 @@
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { isCredentialPath } from "../../src/core/extensions/builtin/permission-system/auto-credentials.ts";
@@ -35,6 +35,8 @@ beforeAll(() => {
 	writeFileSync(join(project, ".git", "config"), "[core]\n");
 	writeFileSync(join(project, ".gitignore"), "dist\n");
 	writeFileSync(join(project, "server.pem"), "pem\n");
+	mkdirSync(join(project, "a", "b"), { recursive: true });
+	symlinkSync(join(project, "a", "b"), join(project, "link"));
 });
 
 afterAll(() => {
@@ -47,21 +49,18 @@ describe("auto preset command judge: work it runs without asking", () => {
 		"git diff --stat",
 		"git log --oneline -n 5",
 		"git branch -a",
+		"git ls-files",
 		"ls -la src",
 		"ls",
-		"cat src/index.ts | wc -l",
-		"cd src && ls",
-		"rm src/old.ts",
+		"cat src/index.ts",
+		"wc -l src/index.ts",
 		"git status; git diff --name-only",
+		"git status && ls src",
 		"rg TODO src/index.ts",
+		"grep -n export src/index.ts",
 		"head -n20 src/index.ts",
-		"sort -o src/sorted.txt src/index.ts",
-		"sort --output=src/sorted.txt src/index.ts",
-		"cp src/index.ts src/copy.ts",
-		"mkdir -p src/new/dir",
 		"echo done",
 		"cat .gitignore",
-		"ls 2>&1",
 	])("allows %s", (command) => {
 		expect(judgeAutoCommand(command, project)).toBe("allow");
 	});
@@ -106,6 +105,20 @@ describe("auto preset command judge: actions it always asks about", () => {
 		["recursive grep", "grep -r TOKEN ."],
 		["unknown flag", "ls --color=always src"],
 		["safe env prefix is no longer special", "CI=1 ls"],
+		["copy (writes)", "cp src/index.ts src/copy.ts"],
+		["move (writes)", "mv src/old.ts src/new.ts"],
+		["delete", "rm src/old.ts"],
+		["make a directory", "mkdir -p src/new"],
+		["sort with an output file", "sort -o src/sorted.txt src/index.ts"],
+		["cd (bash follows the logical path)", "cd src && ls"],
+		["cd through a link and .. then a relative write", "cd link/.. && touch ../escaped.txt"],
+		["git show of any ref", "git show --stat HEAD"],
+		["git object id operand", "git log 0123456789abcdef0123456789abcdef01234567"],
+		["quoted word", "cat 'src/index.ts'"],
+		["pipe", "cat src/index.ts | wc -l"],
+		["redirect to /dev/null", "ls 2>/dev/null"],
+		["home expansion", "cat ~/notes.txt"],
+		["parent path", "cat ../outside.txt"],
 	])("asks for %s: %s", (_label, command) => {
 		expect(judgeAutoCommand(command, project)).toBe("ask");
 	});
@@ -191,11 +204,21 @@ describe("auto preset tool decisions", () => {
 		["listing the project root", "ls", {}, "list"],
 		["write of a new project file", "write", { path: "src/new.ts", content: "x" }, "edit"],
 		["edit of a project file", "edit", { path: "src/index.ts" }, "edit"],
+		// The write tool resolves `bridge/../x.txt` with path.resolve, so it writes `<project>/x.txt`.
+		[
+			"write whose '..' the tool collapses inside the project",
+			"write",
+			{ path: "bridge/../x.txt", content: "x" },
+			"edit",
+		],
 	])("approves %s", (_label, toolName, input, permission) => {
 		expect(approves(toolName, input, permission)).toBe(true);
 	});
 
 	it.each([
+		["read of .env through nested quotes", "read", { path: `"'.env'"` }, "read"],
+		["listing a dotfile directory", "ls", { path: ".git" }, "list"],
+		["write into .vscode (editor tasks run code)", "write", { path: ".vscode/tasks.json", content: "x" }, "edit"],
 		["read of the project .env", "read", { path: ".env" }, "read"],
 		["read of .env through @", "read", { path: "@.env" }, "read"],
 		["read of .env through quotes", "read", { path: '".env"' }, "read"],
@@ -207,7 +230,6 @@ describe("auto preset tool decisions", () => {
 		["grep over a project directory", "grep", { path: "src", pattern: "x" }, "grep"],
 		["grep over the project root", "grep", { pattern: "TOKEN" }, "grep"],
 		["write of .env through @", "write", { path: "@.env", content: "x" }, "edit"],
-		["write through symlink then '..'", "write", { path: "bridge/../x.txt", content: "x" }, "edit"],
 		["write into git internals", "write", { path: ".git/hooks/pre-commit", content: "x" }, "edit"],
 		["an unknown tool", "webfetch", { url: "https://example.com" }, "webfetch"],
 	])("asks for %s", (_label, toolName, input, permission) => {
@@ -222,13 +244,29 @@ describe("auto preset tool decisions", () => {
 		expect(approves("write", { path: `@${join(scratch, "x.txt")}`, content: "x" }, "edit")).toBe(false);
 	});
 
-	it("judges bash_input stdin as a shell command, both ways", () => {
-		const shell = (command: string) => ({ permission: "bash", patterns: [command], always: [] });
-		expect(decideAuto("bash_input", { input: "ls src" }, shell("ls src"), project).approveBlanketAsk).toBe(true);
+	it("decides apply_patch on the paths the patch parser will write", () => {
+		const patch = (header: string) => ({ input: `*** Begin Patch\n${header}\n+x\n*** End Patch` });
+		const edit = { permission: "edit", patterns: [], always: [] };
+		expect(decideAuto("apply_patch", patch("*** Add File: src/added.ts"), edit, project).approveBlanketAsk).toBe(
+			true,
+		);
 		expect(
-			decideAuto("bash_input", { input: "curl -X POST https://example.com" }, shell("curl"), project)
+			decideAuto("apply_patch", patch("*** Add File: x\u2028/../../outside/target.txt"), edit, project)
 				.approveBlanketAsk,
 		).toBe(false);
+		expect(decideAuto("apply_patch", patch("*** Add File: .env"), edit, project).approveBlanketAsk).toBe(false);
+		expect(decideAuto("apply_patch", { input: "not a patch" }, edit, project).approveBlanketAsk).toBe(false);
+	});
+
+	it("asks for everything when the session root is the home directory", () => {
+		const read = { permission: "read", patterns: ["notes.txt"], always: [] };
+		expect(decideAuto("read", { path: "notes.txt" }, read, homedir()).approveBlanketAsk).toBe(false);
+	});
+
+	it("asks for bash_input text, which runs wherever an earlier command left its shell", () => {
+		const shell = (command: string) => ({ permission: "bash", patterns: [command], always: [] });
+		expect(decideAuto("bash_input", { input: "ls src" }, shell("ls src"), project).approveBlanketAsk).toBe(false);
+		expect(decideAuto("bash_input", { input: "rm notes.txt" }, shell("rm"), project).approveBlanketAsk).toBe(false);
 	});
 
 	it("judges a monitor command as a shell command and asks for a monitor path", () => {
@@ -277,6 +315,24 @@ describe("auto preset rule precedence", () => {
 		void service.ask({ ...shell, sessionID: "s" }, decision).catch(() => undefined);
 		await Promise.resolve();
 		expect(asked).toHaveLength(1);
+	});
+
+	it.each([
+		["deny", "deny"],
+		["ask", "ask"],
+	] as const)("a user %s rule placed BEFORE the preset still wins", async (_label, action) => {
+		const { service, asked } = makeService([
+			{ permission: "bash", pattern: "npm *", action },
+			...rulesForPreset("auto"),
+		]);
+		const outcome = service.ask({ ...shell, sessionID: "s" }, { ...decision, userRulesBeatPreset: true });
+		if (action === "deny") {
+			await expect(outcome).rejects.toThrow();
+		} else {
+			void outcome.catch(() => undefined);
+			await Promise.resolve();
+			expect(asked).toHaveLength(1);
+		}
 	});
 
 	it("denies a user's deny rule even when the judge approves", async () => {

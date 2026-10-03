@@ -1,12 +1,11 @@
 import type { ShellWord } from "./auto-shell-segments.ts";
 
 /**
- * What a word means to the program, so the judge knows how to check it:
- * `read-file` is read from (must be a regular project file), `list` only has its name shown,
- * `write` is created, changed or removed, `remove-file` must be an existing regular file, and
- * `text` is never used as a path (a pattern, a count, a format).
+ * What a word means to the program, so the judge knows how to check it: `read-file` is read from
+ * (must be a regular project file), `list` only has its name shown, and `text` is never used as a
+ * path (a pattern, a count, a format).
  */
-export type WordRole = "read-file" | "list" | "write" | "remove-file" | "text";
+export type WordRole = "read-file" | "list" | "text";
 
 export interface ClassifiedWord {
 	readonly role: WordRole;
