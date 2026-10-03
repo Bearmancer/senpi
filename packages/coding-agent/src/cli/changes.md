@@ -1,3 +1,40 @@
+## 2026-10-02 - `host handoff --when idle` flags (desktop #1364)
+
+### What changed
+
+- `packages/coding-agent/src/cli/host-command.ts`: `host handoff` parses `--when idle --operation <id> --if-instance <id> --if-generation <n> --target-build <id>` (all five together, else a usage error) into the conditional idle handover terms of `HostRequest`.
+
+### Why
+
+The desktop asks the engine to replace a host on another runtime at its next idle point (see `src/modes/rpc/changes.md`, same date).
+
+### Why an extension could not handle it
+
+`senpi host` is the core host lifecycle command.
+
+### Expected merge conflict zones
+
+- Fork-only file. The handoff case of `hostRequest` and the flag loop of `parseHostArgs`.
+
+## 2026-09-30 - Sync with upstream v0.99.1 (6a4af07d6): settings, entrypoints and resource loading
+
+### What changed
+
+- `packages/coding-agent/src/cli/args.ts`: `packages/coding-agent/src/cli/args.ts`: upstream `--mode` validation diagnostics (#9045), `builtin:<name>` help text, `META_API_KEY` (D-8) adopted; upstream `mcp <command>` help lines removed (no fork `mcp` subcommand).
+- `packages/coding-agent/src/cli/startup-ui.ts`: Silent rows read and accepted as merged: `cli/startup-ui.ts` (system theme startup, D-14), `core/keybindings.ts` (descriptions), `core/prompt-templates.ts` (diagnostics result), `core/trust-manager.ts` (adds `mcp.json`; the fork MCP reads project `.senpi/mcp.json`; the `.pi` legacy-trust fix is untouched), `experimental/process.ts` (`--import` URL), `package-manager-cli.ts` (builtin names into config), tests `args`, `package-manager`, `stdout-cleanliness`, `5943-session-start-notify`.
+
+### Why
+
+Upstream v0.99.1 settings/resource-loading features are adopted where they carry no excluded subsystem; D-2/D-5/D-6 exclusions remove codemode, MCP, tool-search, cache-warming and /bug surfaces; fork runtime contracts (tool defaults, loader ordering, global-default shims, session profiles) win on conflict.
+
+### Why an extension could not handle it
+
+Settings layering, resource/extension resolution, the package barrel and CLI entrypoints are core loader/bootstrap code that runs before any extension loads.
+
+### Expected merge conflict zones
+
+`settings-manager.ts` Settings interface + deepMergeSettings + getDefaultTools; `resource-loader.ts` constructor, loadCurrentExtensionSet, loadExtensionPaths, loadFinalExtensionSet; `index.ts` extension type export block; `main.ts` createCliRuntimeFactory diagnostics; upstream re-adding cacheWarming/codemode/mcp settings or exports.
+
 ## 2026-09-29 - Help-flag extension loading drops `sharedHostEnabled` (senpi#2328)
 
 ### What changed
@@ -647,3 +684,21 @@ The divergence lives in core wiring, package identity, or build plumbing that ex
 ### Expected merge conflict zones
 
 - LOW: the `new TUI(...)`/`new ProcessTerminal(...)` construction in `showConfigSelector`.
+
+## Adopted upstream v1.0.0 CLI argument handling (2026-10-02)
+
+### What changed
+
+- `packages/coding-agent/src/cli/args.ts` — upstream argument parsing with the fork's rule that `--provider` requires `--model` (D-7).
+
+### Why
+
+The `--provider`/`--model` pairing is a fork behaviour; upstream's parser changes are adopted underneath it.
+
+### Why an extension could not handle it
+
+CLI argument semantics live in the executable entry, below any extension hook.
+
+### Expected merge conflict zones
+
+Upstream edits to cli/args.ts at the next sync.

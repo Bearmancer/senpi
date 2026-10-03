@@ -274,8 +274,9 @@ function decideFromBinding(input: ContinuityDecisionInput, binding: ContinuityBi
 }
 
 /**
- * Resume-first: a live session is never abandoned for a flattened re-send. Only a
- * missing transcript, an unrecoverable boundary, a model identity drift, or account
+ * Resume-first except after senpi compaction, which replaces the SDK transcript
+ * with the compacted context. Only compaction, a missing transcript, an
+ * unrecoverable boundary, a model identity drift, or account
  * drift on the config-dir lane on a persisted binding reaches `flatten`; every other
  * divergence resolves to `fork` (same lineage, new branch) or `reattach` (same
  * session, new query).
@@ -292,6 +293,9 @@ function decideFromState(input: ContinuityDecisionInput): ContinuityDecision {
 	}
 
 	const divergence = entry.pendingForkReason ?? entry.taintedReason;
+	// Forking retains the old SDK prefix: it cannot apply senpi's summary or
+	// remove the messages compaction discarded. Seed a fresh transcript instead.
+	if (divergence === "compaction") return { kind: "flatten", reason: "tainted_compaction" };
 	if (divergence) {
 		return forkOrFlatten(entry, entry.sentCount, PENDING_FORK_REASONS[divergence] ?? "other");
 	}

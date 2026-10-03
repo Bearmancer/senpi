@@ -1,3 +1,41 @@
+## 2026-10-01 - A failed assistant weighs nothing in the keep budget (senpi#2480)
+
+### What changed
+
+- `packages/coding-agent/src/core/compaction/compaction.ts`: `findCutPoint` and `findProjectedCutPoint` weigh only the messages `keepBudgetWeighted` keeps: `dropFailedAssistantTurns` over the walked range (error/aborted assistants and the tool results only they declared). Those weigh zero; they stay valid cut points. A truncated (`length`) response keeps its weight: it is real content, and the truncated-response retry depends on where it cuts.
+
+### Why
+
+- A failed assistant is never sent to the provider. The second overflow-recovery rung in `agent-session.ts` compacts with `keepRecentTokens: 0`, and walking that budget back from the newest entry stopped on the rejected attempts that followed the overflowing turn, so the kept tail held only the failure and the retry had no turn to answer. Weighing them zero lands the cut on the turn being answered.
+
+### Why an extension could not handle it
+
+- The cut-point walk is core preparation inside `prepareCompaction()`; extensions receive the finished preparation in `session_before_compact` and cannot move where the kept tail starts.
+
+### Expected merge conflict zones
+
+- LOW: the token sum inside the backward walk of `findCutPoint()` and `findProjectedCutPoint()`; keep `keepBudgetTokens` as the weight function if upstream reshapes the loop.
+
+## 2026-09-30 - Sync with upstream v0.99.1 (6a4af07d6): compaction
+
+### What changed
+
+- `packages/coding-agent/src/core/compaction/branch-summarization.ts`: resolved by L3b against upstream v0.99.1 (6a4af07d6): upstream constructs adopted, fork behavior kept.
+- `packages/coding-agent/src/core/compaction/compaction.ts`: resolved by L3b against upstream v0.99.1 (6a4af07d6): upstream constructs adopted, fork behavior kept.
+- `packages/coding-agent/src/core/compaction/utils.ts`: resolved by L3b against upstream v0.99.1 (6a4af07d6): upstream constructs adopted, fork behavior kept.
+
+### Why
+
+Upstream v0.99.1 (6a4af07d6) changed these paths while the fork carries its own behavior; compaction keeps the fork machinery and cache-friendly safety tokens and adopts upstream split-turn and retain-none fixes (plan D-15).
+
+### Why an extension could not handle it
+
+Compaction mechanics run inside the session core; the compaction extension only sets policy.
+
+### Expected merge conflict zones
+
+Every path listed above conflicts again where upstream edits the hunks named in its line; the fork-kept constructs named there are the anchors to preserve.
+
 ## 2026-09-16 - Bound one compaction and settle its stream inside the watchdog (#1741)
 
 ### What changed

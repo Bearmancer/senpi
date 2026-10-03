@@ -92,7 +92,7 @@ export async function startSuccessor(context: {
 			`${replaced.dev}:${replaced.ino}`,
 			...(options.hostArgs ?? []),
 		];
-		const launch = options._test?.launch?.(argv) ?? defaultHostLaunch(argv);
+		const launch = (options._test?.launch ?? options.launch)?.(argv) ?? defaultHostLaunch(argv);
 		const stderr = await open(paths.stderrLog, "a", 0o600);
 		const spawned = spawn(launch.command, [...launch.args], {
 			detached: true,
@@ -100,6 +100,7 @@ export async function startSuccessor(context: {
 			env: successorHostEnvironment({
 				agentDir: options.agentDir,
 				env: options.env,
+				expectedRuntimeBuildId: options.expectedRuntimeBuildId,
 				paths,
 				generation,
 				instanceId,
@@ -134,6 +135,7 @@ export async function startSuccessor(context: {
 		}
 		// The pointer moves to the successor only now: until the rename landed, the generation the
 		// clients reach is still the predecessor, and the pointer has to name whoever owns the socket.
+		await options._test?.beforeRegistration?.();
 		await writeHostRegistration(paths, registration);
 		child.unref();
 		// The successor owns the socket now: the predecessor may drain. SIGUSR1 is sent only here,

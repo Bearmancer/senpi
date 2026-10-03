@@ -3,6 +3,7 @@ import { getAgentDir } from "../../../../config.ts";
 import type { ExtensionAPI, ExtensionUIContext, SessionShutdownEvent, SessionStartEvent } from "../../types.ts";
 import {
 	getToolSearchService,
+	getToolSearchServiceForExtension,
 	resetToolSearchServiceForTests,
 	type ToolSearchService,
 } from "../tool-search/service.ts";
@@ -130,11 +131,17 @@ export class McpService {
 					getActiveTools: () => _pi.getActiveTools(),
 					setActiveTools: (names: readonly string[]) => _pi.setActiveTools([...names]),
 				};
-				try {
-					this.#toolSearchService = getToolSearchService();
-					this.#toolSearchService.bindActivationRuntime(activationRuntime);
-				} catch {
-					this.#toolSearchService = getToolSearchService({ getAllTools: () => [], ...activationRuntime });
+				const sessionToolSearch = getToolSearchServiceForExtension(_pi);
+				if (sessionToolSearch !== undefined) {
+					this.#toolSearchService = sessionToolSearch;
+					sessionToolSearch.bindActivationRuntime(activationRuntime);
+				} else {
+					try {
+						this.#toolSearchService = getToolSearchService();
+						this.#toolSearchService.bindActivationRuntime(activationRuntime);
+					} catch {
+						this.#toolSearchService = getToolSearchService({ getAllTools: () => [], ...activationRuntime });
+					}
 				}
 			}
 			this.#authAgentDir = sessionOptions.agentDir;

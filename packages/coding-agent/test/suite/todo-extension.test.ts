@@ -1,5 +1,5 @@
 import { fileURLToPath } from "node:url";
-import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
+import { fauxAssistantMessage, fauxToolCall, type JsonObject } from "@earendil-works/pi-ai";
 import type { Static } from "typebox";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import {
@@ -76,7 +76,7 @@ function getLatestTodoResult(harness: Harness) {
 
 function responsesForTodo(params: Record<string, unknown>, finalText = "done") {
 	return [
-		fauxAssistantMessage([fauxToolCall("todo", params)], { stopReason: "toolUse" }),
+		fauxAssistantMessage([fauxToolCall("todo", params as JsonObject)], { stopReason: "toolUse" }),
 		fauxAssistantMessage(finalText),
 	];
 }

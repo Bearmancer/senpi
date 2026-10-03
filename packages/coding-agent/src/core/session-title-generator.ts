@@ -1,4 +1,5 @@
 import type { StreamFn } from "@earendil-works/pi-agent-core";
+import { normalizeContext } from "@earendil-works/pi-ai";
 import type {
 	Api,
 	AssistantMessage,
@@ -180,7 +181,7 @@ async function completeTitle(
 	if (streamFn === undefined) {
 		return completeSimple(model, context, options);
 	}
-	const stream = await streamFn(model, context, options);
+	const stream = await streamFn(model, normalizeContext(context), options);
 	return stream.result();
 }
 

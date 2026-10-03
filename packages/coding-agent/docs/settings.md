@@ -123,9 +123,9 @@ When this value is anything other than `"auto"`, it overrides any model-level `p
 
 | Setting | Type | Default | Description |
 |---------|------|---------|-------------|
-| `theme` | string | `"dark"` | Theme name (`"dark"`, `"light"`, or custom) |
+| `theme` | string | `"system"` | Theme name (`"system"`, `"dark"`, `"light"`, a `light/dark` pair, or custom). `system` derives colors from the terminal's palette; see [Themes](themes.md#use-your-terminals-colors) |
 | `externalEditor` | string | `$VISUAL`, then `$EDITOR`, then Notepad on Windows or `nano` elsewhere | Command for Ctrl+G external editor; takes precedence over environment variables |
-| `quietStartup` | boolean | `false` | Hide startup header |
+| `quietStartup` | boolean \| `"header"` | `false` | `true` hides the startup header and loaded-resource listing. `"header"` keeps the header (version and key hints) but hides the model scope line and loaded-resource listing |
 | `tips` | boolean | `true` | Show the rotating startup and working-status tip lines |
 | `tipsHistory` | object | - | Internal record of which tips were shown last (managed automatically) |
 | `defaultProjectTrust` | string | `"ask"` | Fallback project trust behavior: `"ask"`, `"always"`, or `"never"`. Global setting only |
@@ -144,6 +144,7 @@ When this value is anything other than `"auto"`, it overrides any model-level `p
 | `fullscreenExitOutput` | string | `"transcript"` | Fullscreen exit output: `"transcript"` prints the final transcript and resume hint, while `"resume-hint"` restores the previous screen and prints only the resume hint. Has no effect in regular TUI mode |
 | `fullscreenScrollbar` | string | `"auto"` | Fullscreen transcript scrollbar: `"auto"` shows it temporarily while scrolling or while the pointer is over its rightmost-column track, `"always"` reserves that column and keeps it visible, and `"hidden"` hides it. Has no effect in regular TUI mode |
 | `fullscreenCopyOnSelect` | boolean | `true` | Automatically copy selected text in fullscreen mode. When disabled, selections stay highlighted and `Ctrl+X` copies the active selection |
+| `fullscreenWheelScrollLines` | `"auto"` or number | `"auto"` | Lines per mouse-wheel event in fullscreen mode, from 1 to 100. `"auto"` moves one line per event in local macOS terminals, which already accelerate wheel and trackpad input; elsewhere, and over SSH, it speeds up fast wheel spins to at most 6 lines per event. Alt+wheel moves five times as far |
 
 For VS Code, include `--wait` so senpi resumes after the editor exits:
 
@@ -371,7 +372,7 @@ For diagnostics, Senpi writes sanitized NDJSON records for candidate skips, cool
 
 | Setting | Type | Default | Description |
 |---------|------|---------|-------------|
-| `openai.serviceTier` | string | - | Injects OpenAI Responses `service_tier`: `"auto"`, `"flex"`, or `"priority"` |
+| `openai.serviceTier` | string | - | Injects OpenAI Responses `service_tier`: `"auto"`, `"flex"`, `"priority"`, or `"ultrafast"` |
 
 ```json
 {
@@ -500,7 +501,17 @@ On Windows, select `powershell` instead of `bash`, or include both:
 }
 ```
 
-An empty array starts with no built-in tools while preserving extension and SDK custom tools. `--tools` replaces this behavior with a strict allowlist for all tools, `--no-tools` disables all tools, and `--no-builtin-tools` disables the built-in defaults. `--exclude-tools` filters the resulting list. A project `defaultTools` array replaces the global array.
+A list of only `+name` and `-name` entries changes the inherited selection instead of replacing it. This replaces `bash` with `powershell` and enables `grep` on top of the defaults:
+
+```json
+{
+  "defaultTools": ["-bash", "+powershell", "+grep"]
+}
+```
+
+An empty array starts with no built-in tools while preserving extension and SDK custom tools. `--tools` replaces this behavior with a strict allowlist for all tools and does not accept `+name` or `-name`, `--no-tools` disables all tools, and `--no-builtin-tools` disables the built-in defaults. `--exclude-tools` filters the resulting list. A project `defaultTools` array of plain names replaces the global array; a project list of only `+name` and `-name` entries applies on top of the global selection.
+
+`/reload` enables tools newly added to `defaultTools`. It does not disable tools removed from it or re-enable unchanged tools you turned off. `--tools`, `--no-tools`, and `--no-builtin-tools` override `defaultTools`, also on reload.
 
 #### Eval-only tools
 
@@ -611,10 +622,11 @@ provider/model-id                  # bare pattern
 provider/model-id:high             # pin reasoning to high
 provider/model-id:priority         # pin service tier to priority
 provider/model-id:priority:high    # pin both tier and level
+chatgpt-subscription/gpt-6-astra:xhigh:ultrafast # Astra Ultrafast
 claude-*:xhigh                     # glob with level pin
 ```
 
-Decorators survive favorite toggling. A `:level` pin takes precedence over the per-model memory for reasoning, and a `:priority` pin takes precedence for the service tier. Under a pin, `/fast off` notifies that fast mode is fixed by the active model selection.
+Decorators survive favorite toggling. A `:level` pin takes precedence over the per-model memory for reasoning, and a `:priority` pin takes precedence for the service tier. Under a priority pin, `/fast off` notifies that fast mode is fixed by the active model selection. An `:ultrafast` pin takes precedence over remembered Fast mode; `/fast on` and `/fast off` leave that pin in place.
 
 #### Thinking level precedence
 
@@ -632,15 +644,31 @@ The resolved level is always clamped to what the model actually supports.
 
 The service tier on outgoing requests is resolved as:
 
-1. A scoped/favorite `:priority` pin
-2. The model catalog's `compat.serviceTier`
+1. A scoped/favorite service-tier pin (such as `:priority` or `:ultrafast`)
+2. The model catalog's `serviceTier`
 3. `openai.serviceTier` (the global OpenAI setting)
 
 The per-model `modelServiceTiers` memory is not part of that resolution: it applies to ChatGPT Subscription
 models only, through fast mode. It acts as the session-start default for `/fast` (a remembered
 `"priority"` starts the session fast) and as an explicit `"auto"` opt-out of a catalog-inherited
 priority tier, which keeps `service_tier` off the wire. Under a `:priority` pin the memory has no
-effect, because the pin outranks it.
+effect, because the pin outranks it. `ultrafast` is not a remembered value: a stored `ultrafast` is
+ignored. Select Ultrafast with a decorator, a `models.json` `serviceTier`, or `openai.serviceTier`.
+
+#### GPT-6 Astra Ultrafast
+
+Select Ultrafast independently of reasoning effort on either first-party lane:
+
+```bash
+senpi --model chatgpt-subscription/gpt-6-astra:xhigh:ultrafast
+senpi --model openai/gpt-6-astra:ultrafast:max
+```
+
+Astra supports `low`, `medium`, `high`, `xhigh`, and `max` with Ultrafast. The two decorators can appear in either order and work in `favoriteModels` and `--models` patterns too. A custom model entry can instead set `serviceTier: "ultrafast"` in `models.json`; keep its cost at Standard rates, since the adapter applies the Ultrafast multiplier. Astra Ultrafast costs 6x Standard, including cached input and long-context rates.
+
+This is an explicit request preference; availability is determined by the provider and account. Use it with GPT-6 Astra on OpenAI or ChatGPT Subscription. Senpi sends it only to the `openai` and `chatgpt-subscription` providers: selecting it on any other provider, including a gateway that serves GPT-6 Astra, prints a warning and the request goes out at that provider's default tier. On OpenAI or ChatGPT Subscription, selecting it for a model other than GPT-6 Astra prints a warning and still sends it, because the provider may accept it; other models keep their Standard price. `/fast` remains the Priority toggle. Switching between Ultrafast and another tier starts a fresh WebSocket response chain while retaining the conversation.
+
+See OpenAI's [Ultrafast guide](https://developers.openai.com/api/docs/guides/ultrafast-mode) and [Astra model page](https://developers.openai.com/api/docs/models/gpt-6-astra).
 
 ### Markdown
 
@@ -665,6 +693,7 @@ Paths in `~/.senpi/agent/settings.json` resolve relative to `~/.senpi/agent`. Pa
 | `prompts` | string[] | `[]` | Local prompt template paths or directories |
 | `themes` | string[] | `[]` | Local theme file paths or directories |
 | `enableSkillCommands` | boolean | `true` | Register skills as `/skill:name` commands |
+| `maxSkillExpansionsPerPrompt` | number | `5` | Distinct skills one prompt may expand; later skill commands stay literal. Must be a positive integer, otherwise the default applies. The parser reads at most 64 invocation tokens per prompt |
 
 Arrays support glob patterns and exclusions. Use `!pattern` to exclude. Use `+path` to force-include an exact path and `-path` to force-exclude an exact path.
 

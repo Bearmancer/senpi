@@ -32,6 +32,21 @@ it("routes all GitHub Copilot GPT models through the Responses API", () => {
 	expect(gptModels.length).toBeGreaterThan(0);
 	expect(gptModels.every((model) => model.api === "openai-responses")).toBe(true);
 	expectTypeOf(GITHUB_COPILOT_MODELS["gpt-6-astra"].api).toEqualTypeOf<"openai-responses">();
+	// D-9: the fork stamps each GPT-6 tier's prompt budget on every provider catalog
+	// (Sol 400,000, Luna 922,000; gpt-6-family-catalog), so Copilot does not ship 1,000,000.
+	for (const [modelId, contextWindow] of [
+		["gpt-6-sol", 400000],
+		["gpt-6-luna", 922000],
+	] as const) {
+		const model = GITHUB_COPILOT_MODELS[modelId];
+		expectTypeOf(model.api).toEqualTypeOf<"openai-responses">();
+		expect(model).toMatchObject({
+			api: "openai-responses",
+			contextWindow,
+			maxTokens: 128000,
+			thinkingLevelMap: { off: "none", max: "max" },
+		});
+	}
 });
 
 // Grok 4.7 and MiMo V2.6 Pro must be reachable on their DIRECT provider shards

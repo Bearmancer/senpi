@@ -88,8 +88,10 @@ describe("high-reasoning-warning", () => {
 			expect(shouldWarnHighReasoning(mkModel(id), "medium")).toBe(false);
 		});
 
-		it.each(ASTRA_MODEL_IDS)("warns for GPT-6 Astra only at max: %s", (id) => {
-			expect(shouldWarnHighReasoning(mkModel(id), "xhigh")).toBe(false);
+		it.each(ASTRA_MODEL_IDS)("warns for GPT-6 Astra only above high (xhigh and max): %s", (id) => {
+			expect(shouldWarnHighReasoning(mkModel(id), "high")).toBe(false);
+			expect(shouldWarnHighReasoning(mkModel(id), "medium")).toBe(false);
+			expect(shouldWarnHighReasoning(mkModel(id), "xhigh")).toBe(true);
 			expect(shouldWarnHighReasoning(mkModel(id), "max")).toBe(true);
 		});
 

@@ -12,6 +12,79 @@
 
 ### Removed
 
+## [2026.10.2] - 2026-10-02
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- In `one-at-a-time` follow-up and steering modes, consecutive queued non-user messages (custom notices) are delivered together in one turn; user messages are still delivered one per turn and in order ([#2508](https://github.com/code-yeongyu/senpi/issues/2508)).
+
+### Removed
+
+## [2026.10.1-3] - 2026-10-01
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.1-2] - 2026-10-01
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.1] - 2026-10-01
+
+### Breaking Changes
+
+- Removed the inherited `AgentOptions.shouldStopAfterTurn` and `AgentLoopConfig.shouldStopAfterTurn`. Use `finishTurn` and return `{ action: "end" }` to stop after the completed turn. `finishTurn` runs after the assistant message and every tool result are finalized and before `turn_end`, and its decision applies after `turn_end`. It also runs for error and aborted responses, which stay hard exits, so guard them to keep the old normal-response-only behavior:
+
+  ```ts
+  finishTurn: async (turn, signal) => {
+    if (turn.message.stopReason === "error" || turn.message.stopReason === "aborted") return;
+    return (await shouldStop(turn, signal)) ? { action: "end" } : undefined;
+  },
+  ```
+
+- The inherited `StreamFn` now receives the branded `TranscriptContext` instead of `Context`, so custom stream functions find the system prompt as the leading system message of `context.messages` (read it with `getCurrentSystemPrompt()`) because there is no `systemPrompt` field.
+
+### Added
+
+- Added the inherited `prepareRequest` hook, which runs before every provider request, including the first. Return `{ context: { ...context, messages: persistedMessages } }` to install canonical context after already-selected input is emitted, without another queue poll.
+
+- Added the inherited `finishTurn` hook. Return `{ action: "end" }` to end a normal run after `turn_end`, `undefined` to keep normal scheduling, or `{ action: "continue" }` to make sure one more provider request happens.
+
+- Added the inherited `Agent.peekQueuedMessages()`, which previews the next queue-selected batch without consuming it.
+
+- Added the inherited `onProviderStreamEvent` agent option, passed to provider streams so callers can observe parsed provider events before normalization ([#9784](https://github.com/earendil-works/pi/issues/9784), [#9901](https://github.com/earendil-works/pi/pull/9901) by [@davidbrai](https://github.com/davidbrai)).
+
+- The agent loop records the requested thinking level as `thinkingLevel` on each assistant message (inherited).
+
+### Changed
+
+### Fixed
+
+- Fixed inherited harness reads misclassifying text files that begin with `GIF` as images ([#9755](https://github.com/earendil-works/pi/issues/9755)).
+
+### Removed
+
 ## [2026.9.30] - 2026-09-30
 
 ### Breaking Changes

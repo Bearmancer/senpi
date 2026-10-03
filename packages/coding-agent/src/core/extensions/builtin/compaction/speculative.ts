@@ -274,11 +274,11 @@ export async function runExtensionCompaction(
 	if (signal?.aborted) return undefined;
 	const auth = await context.modelRegistry?.getApiKeyAndHeaders(snapshot.model);
 	if (signal?.aborted) return undefined;
-	// A provider is authenticated for summarization by either a resolved key or a
-	// credential request header: `headers`-authenticated providers (models.json and
-	// extension providers alike) never resolve an apiKey, yet their normal agent
-	// turns are fully authenticated.
-	if (!auth?.ok || !(auth.apiKey || hasCredentialHeaders(auth.headers))) {
+	// A provider is authenticated for summarization by a resolved key, a credential
+	// request header, or ambient request-time auth. The ambient marker comes from the
+	// same provider resolution normal turns use; an unconfigured keyed provider still
+	// has none of these and is rejected before a request.
+	if (!auth?.ok || !(auth.apiKey || hasCredentialHeaders(auth.headers) || auth.ambient)) {
 		const detail =
 			auth && !auth.ok ? auth.error : `no credentials resolved for provider "${snapshot.model.provider}"`;
 		throw new SummaryGenerationError("auth", `summarization credentials unavailable: ${detail}`);

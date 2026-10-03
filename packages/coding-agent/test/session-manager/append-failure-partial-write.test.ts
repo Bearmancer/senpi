@@ -130,37 +130,38 @@ describe("SessionManager after a write that failed part-way", () => {
 	});
 
 	it("removes a first flush that failed part-way so the next flush can create the file", () => {
-		// Given a new session whose user message is still buffered in memory
+		// Given a new session whose setup entry is still buffered in memory (the first user message
+		// itself flushes the file since #10000, so a setup entry is what stays buffered)
 		const session = newSession();
-		session.appendMessage({ role: "user", content: "hello", timestamp: 1 });
+		session.appendCustomEntry("setup", { n: 0 });
 		const file = session.getSessionFile();
 		if (!file) throw new Error("test setup: persisted session has no file path");
-		// When the first flush (header, user, assistant) runs out of space inside the assistant line
+		// When the first flush (header, setup, user) runs out of space inside the user line
 		fault.writeFailAtCall = 3;
-		const error = captureError(() => session.appendMessage(assistant("lost")));
+		const error = captureError(() => session.appendMessage({ role: "user", content: "lost", timestamp: 1 }));
 		const leftBehind = existsSync(file);
-		// And the reply is appended again once there is space
-		session.appendMessage(assistant("hi"));
+		// And the message is appended again once there is space
+		session.appendMessage({ role: "user", content: "hello", timestamp: 1 });
 		// Then the failed flush left no file behind and the retry wrote one complete transcript
 		expect(error).toMatchObject({ code: "ENOSPC" });
 		expect(leftBehind).toBe(false);
 		expectCompleteLinesMatchingMemory(session, file);
-		expect(session.getEntries().map((entry) => entry.type)).toEqual(["message", "message"]);
+		expect(session.getEntries().map((entry) => entry.type)).toEqual(["custom", "message"]);
 	});
 
 	it("still removes a failed first flush and reports the write error when closing the file fails too", () => {
-		// Given a new session whose user message is still buffered in memory
+		// Given a new session whose setup entry is still buffered in memory (see above, #10000)
 		const session = newSession();
-		session.appendMessage({ role: "user", content: "hello", timestamp: 1 });
+		session.appendCustomEntry("setup", { n: 0 });
 		const file = session.getSessionFile();
 		if (!file) throw new Error("test setup: persisted session has no file path");
 		// When the first flush runs out of space and closing the half-written file fails as well
 		fault.writeFailAtCall = 3;
 		fault.closeFails = true;
-		const error = captureError(() => session.appendMessage(assistant("lost")));
+		const error = captureError(() => session.appendMessage({ role: "user", content: "lost", timestamp: 1 }));
 		const leftBehind = existsSync(file);
-		// And the reply is appended again
-		session.appendMessage(assistant("hi"));
+		// And the message is appended again
+		session.appendMessage({ role: "user", content: "hello", timestamp: 1 });
 		// Then the caller got the write error with the close failure beside it, and no file was left behind
 		expect(error).toBeInstanceOf(AggregateError);
 		expect(error).toMatchObject({ errors: [{ code: "ENOSPC" }, { code: "EIO" }] });

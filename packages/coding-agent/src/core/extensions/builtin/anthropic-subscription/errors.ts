@@ -1,4 +1,5 @@
 import type { SDKAssistantMessageError } from "@anthropic-ai/claude-agent-sdk";
+import { rateLimitModelFamily } from "../../../credential-pool/model-scope.ts";
 import type { SDKMessage } from "./sdk-boundary.ts";
 
 export type SdkErrorKind =
@@ -13,6 +14,8 @@ export type SdkErrorKind =
 export type SdkErrorClassification = {
 	kind: SdkErrorKind;
 	retryable: boolean;
+	/** Set on a rate limit that binds one model family ("Fable limit"), so only that family is blocked. */
+	modelFamily?: string;
 };
 
 const SDK_ERROR_CLASSIFICATIONS: Partial<Record<SDKAssistantMessageError, SdkErrorClassification>> = {
@@ -101,6 +104,13 @@ export function sdkAssistantFailure(message: Extract<SDKMessage, { type: "assist
 
 /** Classifies Anthropic Subscription error codes and HTTP-shaped fallback text in one place. */
 export function classifySdkError(error: unknown): SdkErrorClassification {
+	const classification = classifyErrorKind(error);
+	if (classification.kind !== "rate_limit") return classification;
+	const modelFamily = rateLimitModelFamily(errorText(error));
+	return modelFamily === undefined ? classification : { ...classification, modelFamily };
+}
+
+function classifyErrorKind(error: unknown): SdkErrorClassification {
 	const text = errorText(error).toLowerCase();
 	if (
 		/\b(enotfound|eai_again|econnreset|econnrefused|etimedout|enetunreach|ehostunreach|und_err_connect_timeout|und_err_socket)\b|fetch failed|socket hang up|connection reset by peer/.test(

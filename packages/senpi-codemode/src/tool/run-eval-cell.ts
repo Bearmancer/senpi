@@ -207,8 +207,8 @@ async function executeCell(
 	};
 	try {
 		const kernel = await execution.wait(options.kernelManager.getKernel(invocation.input.language, onMessage));
-		// Computed before the handler so the cell's capability can be entered per host tool call from the
-		// worker's message loop, which runs outside the `kernelToolsStorage.run` context below (#1754).
+		// Computed before the handler so its construction-time snapshot captures this cell's capability.
+		// Worker messages later restore that snapshot before calling host tools (#1754, #2512).
 		const kernelTools = jsKernelTools(kernel, invocation.input.language);
 		const runBound = async (): Promise<AgentToolResult<EvalToolDetails>> => {
 			const queue = kernel.queueSnapshot();

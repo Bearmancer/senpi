@@ -284,28 +284,38 @@ describe("rejected model switch", () => {
 		// not turn every status snapshot of this session into a full entry dump.
 		expect(buildRpcSessionState(harness.session).entries).toBeUndefined();
 
-		harness.sessionManager.appendMessage({
-			role: "user",
-			content: [{ type: "text", text: "real content" }],
-			timestamp: Date.now(),
-		});
+		// Real content that is still buffered in memory: since #10000 the first user message itself
+		// flushes the file (and RPC clients then read the entries from disk), so a custom entry is
+		// what stays in memory only.
+		harness.sessionManager.appendCustomEntry("real-content", { n: 1 });
 
 		expect(buildRpcSessionState(harness.session).entries).toBeDefined();
 	});
 
-	it("#given a persisted session with no assistant reply yet #when a switch is refused #then the record flushes with the first reply", async () => {
-		const harness = await oversizedHarness({ persistSession: true });
+	it("#given a persisted session with no conversation yet #when a switch is refused #then the record flushes with the first message", async () => {
+		const harness = await createHarness({
+			models: [
+				{ id: "faux-roomy", name: "Roomy", contextWindow: 200_000 },
+				{ id: "faux-small", name: "Too Small", contextWindow: 5_120 },
+			],
+			persistSession: true,
+		});
+		harnesses.push(harness);
 		const sessionFile = harness.sessionManager.getSessionFile();
 		if (!sessionFile) throw new Error("expected a persisted session file");
 
 		await expect(harness.session.setModel(tooSmall(harness))).rejects.toBeInstanceOf(ModelUsabilityBudgetError);
 
 		// Documented limitation, not a special case: `_persist` buffers every entry
-		// until the branch holds an assistant message, so a pre-reply refusal is not
-		// yet on disk - but it is not lost either.
+		// until the branch holds a user or assistant message (#10000), so a refusal
+		// before the first message is not yet on disk - but it is not lost either.
 		expect(existsSync(sessionFile)).toBe(false);
 
-		appendAssistant(harness, "first reply");
+		harness.sessionManager.appendMessage({
+			role: "user",
+			content: [{ type: "text", text: "first message" }],
+			timestamp: Date.now(),
+		});
 
 		expect(existsSync(sessionFile)).toBe(true);
 		const persisted = readFileSync(sessionFile, "utf8")

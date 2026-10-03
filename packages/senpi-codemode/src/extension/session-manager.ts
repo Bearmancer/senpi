@@ -16,6 +16,7 @@ import { RubyKernel } from "../kernels/rb/kernel.ts";
 import type { SessionEnvironment } from "../kernels/session-env.ts";
 import { marshalToolResult } from "../tool/image.ts";
 import type { EvalKernel, EvalKernelManager, EvalLanguage, ExecuteTool } from "../tool/types.ts";
+import { assertSessionCwdAvailable } from "./session-cwd.ts";
 
 export interface CodemodeSessionManager extends EvalKernelManager {
 	dispose(): Promise<void>;
@@ -130,7 +131,10 @@ class DefaultCodemodeSessionManager implements CodemodeSessionManager {
 		// to the current cell, not the one that first created the kernel.
 		this.#onMessageRefs.set(language, onMessage);
 		const existing = this.#kernels.get(language);
-		if (existing) return existing;
+		if (existing) {
+			await assertSessionCwdAvailable(this.#options.cwd);
+			return existing;
+		}
 		const pending = this.#kernelCreations.get(language);
 		if (pending) return await pending;
 		// A bound method, never a closure in this frame: the dispatcher outlives every
@@ -204,12 +208,18 @@ class DefaultCodemodeSessionManager implements CodemodeSessionManager {
 		onMessage: (message: KernelToHostMessage) => void,
 		generation: number,
 	): Promise<EvalKernel> {
+		await assertSessionCwdAvailable(this.#options.cwd);
 		const kernel = await this.#createKernel(language, onMessage);
 		if (generation !== this.#generation) {
 			await kernel.close();
 			throw new CodemodeSessionDisposedError();
 		}
 		this.#kernels.set(language, kernel);
+		// The directory can vanish while the interpreter starts; every caller sharing this creation
+		// must see that, not only the next one. The kernel stays stored and dispose still closes it.
+		await assertSessionCwdAvailable(this.#options.cwd);
+		// A dispose that started during the check above already owns this stored kernel.
+		if (generation !== this.#generation) throw new CodemodeSessionDisposedError();
 		return kernel;
 	}
 

@@ -6,16 +6,296 @@
 
 ### Added
 
+- `maxSkillExpansionsPerPrompt` setting (default `5`) controls how many distinct explicitly invoked skills (`/skill:a /skill:b ...` or `$a $b ...`) one prompt may expand. Raise it in `settings.json` to compose more skills in one prompt; skill commands past the limit still stay literal and show the `Expanded at most N skills` warning.
+
 ### Changed
 
 ### Fixed
 
-- A fallback-chain entry whose provider answered one 429 with a very long `Retry-After` (a weekly window, or an API gateway replaying a stale wait of almost a day) is checked again after `fallback.circuitMaxCooldownMs` (30 minutes by default) instead of being skipped by every session until the whole hint elapsed. The circuit breaker now bounds the provider's wait by that ceiling like its own cooldown: once it passes, one half-open probe goes to the entry, a response closes the circuit, and another rate limit re-opens it with the fresh hint. Hints up to the ceiling are honored as before. ([#2446](https://github.com/code-yeongyu/senpi/issues/2446))
+- Fixed sessions on a provider lane that owns compaction (Anthropic subscription) refusing every prompt with "Context remains above the compaction threshold" after a resume, until restart: a resume compaction requirement is now re-checked against the current context and model, and a committed manual `/compact` clears it ([#2589](https://github.com/code-yeongyu/senpi/issues/2589), [#2488](https://github.com/code-yeongyu/senpi/issues/2488)).
+- Re-using an already loaded skill on a later line of the same prompt (for example `$review` on line 3 after the per-prompt skill cap was reached) no longer triggers the cap warning or stays as bare text: it keeps its `[skill: review]` marker where it was written.
+- Skills skipped by the per-prompt skill cap no longer reach the model as bare `$name` / `/skill:name` text: they become `[skill not loaded: name]` where they were written, so the model knows it does not have them. One warning per prompt names the skipped skills and the cap, for example `Skipped 2 skills (s6, s7): at most 5 skills load per prompt.` Thanks to @trac3r00.
+- A Chrome-backed `Bun.WebView` created from an eval cell no longer holds the cell until its timeout and leaves its Chrome running when that Chrome never attaches a session to the new view (seen on Windows with a freshly launched Chrome). The main-thread service now navigates each new view to `about:blank` before answering its creation: a launch that has not attached within 20 seconds is closed, its Chrome retired unless another view still uses it, and the view launched once more on a fresh Chrome; if that launch stalls too, `new Bun.WebView()` fails with `ERR_WEBVIEW_NOT_READY` naming the `cdp-target-attach` phase. A new view therefore reports `about:blank` as its URL and accepts `cdp()` before the cell's first `navigate()`; page loads the cell starts are not bounded ([#2353](https://github.com/code-yeongyu/senpi/issues/2353)).
+
+### Removed
+
+## [2026.10.2] - 2026-10-02
+
+### Breaking Changes
+
+### Added
+
+- Added inherited `quietStartup: "header"`, which keeps the startup header with version and key hints but hides the model scope line and loaded-resource listing. `true` and `false` keep their meaning. See [Settings](docs/settings.md).
+
+- Added an inherited copy code login method to Anthropic `/login` for headless setups where the browser runs on another machine ([#10194](https://github.com/earendil-works/pi/pull/10194) by [@lucasmeijer](https://github.com/lucasmeijer)).
+
+- Added inherited Anthropic workload identity federation from the `ANTHROPIC_FEDERATION_RULE_ID`, `ANTHROPIC_ORGANIZATION_ID`, and `ANTHROPIC_IDENTITY_TOKEN_FILE` environment variables (see [Providers](docs/providers.md)) ([#10177](https://github.com/earendil-works/pi/issues/10177), [#10242](https://github.com/earendil-works/pi/pull/10242) by [@philfreo](https://github.com/philfreo)).
+
+- `/reload` now enables tools newly added to the `defaultTools` setting (inherited). Tools removed from it stay enabled, tools turned off during the session stay off unless newly added, and `--tools`, `--no-tools`, and `--no-builtin-tools` still override the setting ([#10245](https://github.com/earendil-works/pi/issues/10245)).
+
+- Shared RPC hosts report `runtimeBuildId`, a content digest of the runtime they loaded at startup (engine files, plugins, flavour, platform), in `get_protocol_info` and `host status`, and `host ensure` reports the `clientRuntimeBuildId` it would launch, so a client can tell two builds of one version apart and see a bundle replaced in place. `senpi host handoff --when idle --operation <id> --if-instance <id> --if-generation <n> --target-build <id>` asks the running host to hand over to the caller's runtime at its next idle point: it stops admitting new work, lets running turns finish, never aborts one, answers `handover_pending` meanwhile, and keeps serving if the successor does not come up. A repeated operation id returns the existing operation.
+
+- Settled user questions identify their answering surface (`resolvedBy`) in tool results, `ask-user:settled` notifications, and RPC `question_resolved` frames. Extensions can also observe the new `ask-user:closed` event once for every terminal outcome, including silent cancellations; `ask-user:settled` keeps firing for the same outcomes as before ([#2533](https://github.com/code-yeongyu/senpi/issues/2533)).
+
+- RPC clients can retry prompts, steering, and follow-ups with durable client message and turn IDs without duplicating an accepted input. Admissions and prepared queues survive transcript reopen (including a started prompt displaced into the queue by a concurrent run, and a transcript holding an unreadable admission entry), conflicting payloads and a non-numeric `enqueueOrder` are rejected, and queue records and turn events echo the IDs. Hosts advertise `durable_client_message_id` ([#1971](https://github.com/code-yeongyu/senpi/issues/1971)).
+### Changed
+
+- `--provider` without `--model` now fails with an error instead of being ignored and running the default model of another provider (inherited, [#10236](https://github.com/earendil-works/pi/issues/10236)). `RpcClient` started with only `provider` keeps its previous behaviour: it forwards `--provider` only together with `--model`, so the spawned host still runs the default model.
+
+### Fixed
+
+- Anthropic sessions behind a relay that rejects replayed native tool-search results no longer stay stuck on `Tool reference '<name>' not found in available tools` (for example `generate_image` right after a `tool_search_tool_bm25` search). The rejected request is retried once with the search results replayed as text, the tools themselves stay available, and the rest of the session sends the text form directly ([#2568](https://github.com/code-yeongyu/senpi/issues/2568)).
+
+- After a shared RPC host handoff, the replaced generation no longer deletes the successor's registration or boot settings on its way out. A predecessor that noticed its socket taken over before the handoff recorded the successor could remove both, so the next client attached to the running successor reported `pid: 0`, and the next handoff lost the endpoint's lifecycle policy. A taken-over generation now removes only its own records ([#2536](https://github.com/code-yeongyu/senpi/issues/2536)).
+- RPC prompt acknowledgement waits now account for observed conversation compaction instead of reporting failure after 30 seconds while the same input can still be admitted later. The real host response remains authoritative, waiting stays bounded, and transport failures still reject immediately ([#2548](https://github.com/code-yeongyu/senpi/pull/2548) by [@namseokyoo](https://github.com/namseokyoo)).
+
+- When one model family's usage limit runs out on an Anthropic subscription account (for example "You've reached your Fable limit"), only that family is blocked on that account, until its own reset. Opus and Sonnet on the same account keep serving, the fallback chain moves only the limited model to its next rung, and `/claude-account` and `/account` show the block as "blocked for fable until ...". Session and weekly limits, auth failures and disabled accounts still block the whole account, and existing account-level cooldowns are honoured until they expire (reported in [oh-my-openagent#9421](https://github.com/code-yeongyu/oh-my-openagent/issues/9421) by [@hsnam-OBELAB](https://github.com/hsnam-OBELAB)) ([#2555](https://github.com/code-yeongyu/senpi/issues/2555)).
+
+- Reloading or replacing a session while a monitor is watching no longer kills the process with "This extension ctx is stale after session replacement or reload". The footer's once-a-second monitor ticker now stops when its session's context is retired and starts again with the next live session; any other footer error still surfaces. A context retired by a reload is now recognized as stale too, so the goal footer tickers also stop on a reload instead of rethrowing ([#2549](https://github.com/code-yeongyu/senpi/issues/2549) by [@rhyme227](https://github.com/rhyme227)).
+- The PR changelog gate no longer fails with `spawnSync git ENOBUFS` once a changelog grows past one mebibyte, which every pull request touching this changelog hit after the 2026.10.1-3 release.
+- Clipboard images pasted with Ctrl+V now attach in direct local Warp-on-WSL sessions by handling Warp's empty bracketed-paste event. Raw Ctrl+V and Alt+V remain supported, without changing non-empty text paste or other terminal defaults ([#2538](https://github.com/code-yeongyu/senpi/pull/2538) by [@deopa0402](https://github.com/deopa0402)).
+
+- Configuration hot-reload ignores creation of an empty project configuration directory or task runtime state, while still discovering real configuration added at the same time or later. It also waits for admitted first requests and rechecks readiness after asynchronous reload vetoes ([omo#9363](https://github.com/code-yeongyu/oh-my-openagent/issues/9363), [omo#9365](https://github.com/code-yeongyu/oh-my-openagent/issues/9365)).
+
+- Long sessions stay responsive: typing, streaming a reply and background events no longer re-render the whole transcript on every frame. Finished messages and tool cards are rendered once and reused, read cards no longer walk the filesystem per frame, and the footer no longer re-counts context tokens over every message. In a 10,000-entry session a keystroke now appears in about 4 ms at p95 instead of about 30 ms, and the event loop no longer stalls while typing. A burst of background events (monitor, task or background-command notices) arriving while the agent works is answered in one turn instead of one turn per event, and an animated entry that scrolled into the terminal history no longer forces the whole transcript to be rewritten. In the regular mode the terminal now keeps the recent history (its own scrollback size where readable, else about 2,000 lines) under a line such as "9,700 earlier messages · /tree to browse, or switch to fullscreen", so resuming a 10,000-entry session accepts typing in under 1 s instead of 2-4 s; the session, `/tree`, fullscreen, copy and export keep everything. Each background-triggered turn also stopped copying the whole session several times and re-parsing skill MCP declarations, so in a 10,000-entry session typing during a burst of 20 events per second stays responsive. A 50,000-entry session also uses about as much memory as a 10,000-entry one, and rows that scroll above the kept history drop their rendered lines; memory still grows with the entries a long event stream adds ([#2537](https://github.com/code-yeongyu/senpi/issues/2537)). Recording a shown tip no longer freezes typing while another senpi process holds the settings lock. Thanks @deadcode-walker, whose analysis in [#2219](https://github.com/code-yeongyu/senpi/pull/2219) helped locate the per-frame costs ([#2508](https://github.com/code-yeongyu/senpi/issues/2508)).
+
+- A long session that was compacted could later reuse the id of an entry that compaction had trimmed from memory; the next resume then hung on "opening session" forever. Ids now stay unique across the whole session file, and a file that already has a duplicated id opens normally and no longer freezes `/tree`. Thanks to @jc01rho for the report. ([#1247](https://github.com/code-yeongyu/senpi/issues/1247), [#2508](https://github.com/code-yeongyu/senpi/issues/2508))
+
+- Fixed inherited user messages in the transcript keeping two full-width copies of every rendered line; they keep one, with identical output.
+
+- Fixed inherited `system` theme making pastel palettes such as Catppuccin Frappe much more vivid; palette colors now keep their chroma ([#10255](https://github.com/earendil-works/pi/issues/10255), [#10293](https://github.com/earendil-works/pi/pull/10293) by [@dgtlntv](https://github.com/dgtlntv)).
+
+- Fixed inherited slash command autocompletion not triggering when the input starts with whitespace ([#10218](https://github.com/earendil-works/pi/pull/10218) by [@haoqixu](https://github.com/haoqixu)).
+
+- Fixed inherited color bleeding past mouse selections and search highlights in fullscreen mode when a styled token ends at the highlight boundary ([#10169](https://github.com/earendil-works/pi/issues/10169)).
+
+- Fixed inherited memory retained per rendered message in the transcript; a long assistant message keeps about a fifth of the heap it kept before.
+
+- Fixed inherited new sessions intermittently ignoring the saved default model, or warning that no models are available, when it belongs to an extension-registered native provider with a stored credential ([#9962](https://github.com/earendil-works/pi/issues/9962), [#10190](https://github.com/earendil-works/pi/pull/10190) by [@davidbrai](https://github.com/davidbrai)).
+
+- Fixed inherited prompt submission slowing down with session length, because resolving the session's model selection looked up the model catalog once per assistant message ([#10198](https://github.com/earendil-works/pi/issues/10198)).
+
+- Fixed inherited model lookups slowing down for providers with a refreshed remote catalog, because merging remote catalog models took quadratic time.
+
+- Fixed the inherited `built-in-tool-renderer.ts` and `minimal-mode.ts` extension examples removing the built-in tools' summaries and guidelines from the system prompt ([#10072](https://github.com/earendil-works/pi/issues/10072), [#10193](https://github.com/earendil-works/pi/pull/10193) by [@christianklotz](https://github.com/christianklotz)).
+
+- Fixed inherited context overflow detection for Z.AI CN endpoint `Prompt exceeds max length` errors ([#10208](https://github.com/earendil-works/pi/issues/10208)).
+
+- Fixed inherited Anthropic requests failing when a tool schema uses keywords Anthropic strict tool use rejects, such as `minimum`/`maximum`; such tools are now sent non-strict ([#9953](https://github.com/earendil-works/pi/issues/9953)).
+
+- Fixed inherited extension commands registered without a string name or handler crashing on `/`; the extension now fails to load with an error instead ([#10054](https://github.com/earendil-works/pi/issues/10054)).
+
+### Removed
+
+## [2026.10.1-3] - 2026-10-01
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+- GPT-6 Astra (and the GPT-6.1 Sol / GPT-5.6 test decision it shares) carries fewer verification gates: no pre-edit re-read, no pre-registered cell state, no edit-plus-proof todo pairing, no enumerated verification floor, no "read existing tests first" or "reproduce a bug before fixing it" openers, no verified/unverified report slots, and no confirm-each-item stop audit; checks run once at the scope the change calls for. The skill catalog asks for a skill read only when its instructions would change the work, the first-turn plan opener asks for the phases the request needs instead of always naming a verification phase, and the no-goal todo reminder registers a goal only for work that outlives the turn. Rendered Astra prompt is shorter ([#2505](https://github.com/code-yeongyu/senpi/issues/2505)).
+
+- Claude subscription sessions (`anthropic-subscription`) run Claude Code 2.1.286: the bundled `@anthropic-ai/claude-agent-sdk` moves from 0.3.285 to 0.3.286. ([#2481](https://github.com/code-yeongyu/senpi/issues/2481))
+- The GPT-6 Astra high-reasoning warning now shows at `xhigh` as well as `max`, the same rule as GPT-5.6 Sol and GPT-6 Sol: any effort above `high` warns, and `high` or below stays quiet ([#2496](https://github.com/code-yeongyu/senpi/issues/2496)).
+
+### Fixed
+
+- Remote compaction on the ChatGPT subscription lane no longer always times out on large sessions. The remote budget now grows with the size of the context being compacted (2 ms per token above a per-lane floor of 90 s on the subscription lane and 15 s on OpenAI and compatible gateways, capped at 15 minutes, with every remote route of one compaction sharing that 15-minute limit before the local summary starts), so a 383k-token compaction that takes about four minutes completes remotely instead of being cut at 90 s, while a hung request on a small session is still abandoned quickly. A remote attempt that does time out is no longer silent: a warning and the compaction status line say how long it waited, how many tokens it carried, and whether the next step is another remote route or the local summary; the fallback itself is unchanged. Thanks @rhyme227 for the measured report. ([#2434](https://github.com/code-yeongyu/senpi/issues/2434))
+
+- Reads of engine-shipped skills, prompts and resources no longer ask for permission in restricted modes, including packaged runtimes and compiled asset sidecars. Writes and outside reads retain their permission policy, and symlinks escaping a bundle remain outside paths ([#2513](https://github.com/code-yeongyu/senpi/issues/2513)).
+
+- The thinking selector now reflects toggle-only model capabilities: eligible GLM 4.7 and Qwen rows offer `off` and enabled thinking without unsupported effort levels, while models that publish explicit effort metadata retain their declared choices. Thanks to @effortprogrammer. ([#891](https://github.com/code-yeongyu/senpi/issues/891))
+
+- Internal bookkeeping, questions, memory, goals and terminal observation no longer ask for permission in restricted modes. Monitor commands and file watches retain execution and filesystem approval, and all tool-declared action permissions remain enforced ([#2511](https://github.com/code-yeongyu/senpi/issues/2511)).
+
+- Deferred extension tools, including computer use, keep working after hot-reload. The session now retires old lazy-tool activation callbacks before binding the replacement extension generation ([omo#9365](https://github.com/code-yeongyu/oh-my-openagent/issues/9365)).
+
+- Bash approvals from eval cells now reach the submitting RPC client instead of the persistent kernel's original connection, including detached cells that ask after their original turn completes. Approving returns command output to the cell; denying returns the ordinary permission error. ([#2512](https://github.com/code-yeongyu/senpi/issues/2512))
+
+- Tool search keeps working in an interactive, print or SDK session when another session in the same process closes, for example a task child or the session a `/new` or `/resume` replaced. Every session now has its own tool-search service instead of sharing one that was bound to whichever session loaded last, so its hooks no longer log `This extension ctx is stale` twice per request, the catalog refreshes, deferred tools rehydrate from history, and native Anthropic tool search is injected again. Using a closed session's service now fails with an error naming that session. Sessions on the RPC host already had their own service and behave as before. Thanks @jerilkuriakose for the report and the minimal reproduction on a clean 2026.10.1-2 install, which made this easy to confirm. ([#2509](https://github.com/code-yeongyu/senpi/issues/2509))
+
+- Manual and automatic compaction now accept Amazon Bedrock sessions authenticated through the ambient AWS credential chain, and other providers such as Google Vertex that explicitly resolve ambient request-time credentials, while providers that require a missing key are still rejected before a summary request. Thanks @jerilkuriakose for the report. ([#2441](https://github.com/code-yeongyu/senpi/issues/2441))
+
+- Fixed `/model`, `/thinking`, `/login`, `/rename` and optional builtin extension commands requiring a second Enter from the command picker. Commands, skills and prompt templates with an argument hint still complete and wait for input unless they opt out: extensions declare `requiresArguments: false`, skills and prompt templates `requires-arguments: false` ([#2479](https://github.com/code-yeongyu/senpi/issues/2479)).
+
+- When `auth.json` was locked by another process at the moment an app-server first listed models (for example right after `daemon restart`), `model/list` returned no models and kept returning none until the process was restarted. A read that finds the credential store locked before it has ever loaded no longer counts as model availability: the next `model/list` or availability refresh reads the store again and returns the full list in the same process once the lock is free, while a store that is readable but empty is still cached and not re-read. A second credential store opened on an `auth.json` the process had already loaded also no longer starts out empty, including when that load repaired or migrated the file and the second store's own read finds it locked. Thanks @jcwleo for the report and the locked-startup reproduction ([#2487](https://github.com/code-yeongyu/senpi/issues/2487)).
+
+- On the `anthropic-subscription` lane, re-sending the whole conversation (a cold seed or flatten) no longer presents images the agent read with a tool as new user attachments. Such an image stays attached to its tool result with a note that it is tool output, identical image bytes are sent once and later copies refer back to the first, at most 8 earlier images are replayed (your own uploads first, then the most recent), and missing or unreadable image data is dropped with a one-line note. Before, one uploaded screenshot read five times was re-sent as six images, the agent took them for new uploads and read them again, and the count kept growing with each cold seed. Thanks @willowite for the precise report and reproduction, and the community report that confirmed it. ([#2490](https://github.com/code-yeongyu/senpi/issues/2490))
+- Two processes on the same session (for example a terminal session and a desktop or daemon host, or a shell child using the goal store) no longer lose goal updates or revert a goal's status. Every goal change now holds a cross-process lock on the goal file for the whole read-modify-write, so token and time accounting, continuation counters, objective replacement, and `complete`/`blocked` transitions from one process are never overwritten by another process's stale copy, and importing a legacy goal joins the same lock. A process that was killed while holding the lock no longer wedges the goal: its lock is reclaimed within about 10 seconds and the waiting update goes through. A process that cannot get the lock within about 15 seconds fails with a `Goal store is busy` error instead of writing ([#2499](https://github.com/code-yeongyu/senpi/issues/2499)).
+
+- Binary sidecar staging now derives the codemode package's complete runtime dependency closure, including present optional dependencies, instead of copying only the parser. Staging preserves source dependency versions, skips host-provided virtual modules, dereferences symlinks, removes only the packages its ownership record lists (plus the codemode package an earlier version staged before that record existed), refuses to overwrite any other existing codemode package, refuses to follow a symlinked output `node_modules` or package path, refuses package output roots, and names unresolved dependencies during packaging. ([#2452](https://github.com/code-yeongyu/senpi/issues/2452))
+
+- A long run on `anthropic-subscription` no longer dies when the resident session is lost and the re-sent conversation is rejected as "Prompt is too long". Overflow recovery now climbs two compaction rungs inside the turn (the configured recent tail, then the summary alone) before giving up, a new prompt or goal continuation always gets its own attempt instead of the previous turn's "recovery failed" latch, and when the API reports how many tokens it counted, the lane sizes the next re-send from that count and refuses one that still cannot fit before dispatching it. ([#2480](https://github.com/code-yeongyu/senpi/issues/2480), [oh-my-openagent#8411](https://github.com/code-yeongyu/oh-my-openagent/issues/8411))
+
+### Removed
+
+## [2026.10.1-2] - 2026-10-01
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- In a compiled build with no Bun on `PATH` (for example a desktop app started from Finder, or a standalone binary on a machine without Bun), `bun` and `bunx` from an eval cell, the bash tool and the terminal now run Bun itself. Before this fix, an eval cell's `bun test` started a second agent and returned its reply as a passing result with exit code 0, and the bash tool reported `bun: command not found`. A Bun you installed and put on `PATH` is still used first. ([omo#9362](https://github.com/code-yeongyu/oh-my-openagent/issues/9362))
 
 - An explicitly requested thinking level that the model cannot use is no longer dropped silently. When `--thinking`, `/thinking`, RPC, or an extension asks for a level the model does not offer (every level except `off` on a model not marked `reasoning: true`), the session records the requested level and the reason beside the applied one (`thinkingSelection.requested` and `thinkingSelection.clampReason`), and shows one warning: on stderr for print, JSON, and RPC runs, and in the TUI. A level that only comes from the global `defaultThinkingLevel` setting is not treated as a request and does not warn. ([#2395](https://github.com/code-yeongyu/senpi/issues/2395))
 
 ### Removed
 
+## [2026.10.1] - 2026-10-01
+
+### Breaking Changes
+
+- `before_agent_start` extensions can now receive `event.trigger: "delivery"` when a turn starts from an admitted session-control delivery. Extensions with exhaustive trigger handling must add the new case; `"prompt"` and `"extension"` keep their existing meanings. ([#2424](https://github.com/code-yeongyu/senpi/issues/2424))
+
+- Removed the inherited `shouldStopAfterTurn` agent option. Use `finishTurn` and return `{ action: "end" }` instead; it runs before `turn_end`, applies its decision afterward, and also receives error and aborted responses, so return `undefined` for those hard exits. The `packages/agent` changelog has a before-and-after example.
+
+- Added the inherited `ContextEditEntry` to the exported `SessionEntry` union. Exhaustive entry switches must handle `context_edit`; `replacement: null` omits a message and a content replacement replaces it.
+
+- `SessionManager` is the inherited canonical source of `AgentSession` provider context. Assigning `session.agent.state.messages` no longer replaces future request history; restore with `SessionManager.inMemory(cwd, { id }, entries)`, navigate with `session.navigateTree()`, or append through `session.sessionManager` and call `session.refreshContext()`. The fork's write-before-commit persistence, write reservations and index-backed session listing are unchanged.
+
+- Expanded the inherited `TurnEndEvent` with required boundary fields and added `AgentBeforeSettleEvent` to the exported `ExtensionEvent` union. `ExtensionRunner.emit()` no longer accepts `turn_end`; hosts dispatch actionable boundaries with `emitBoundary(baseEvent, buildContext)`. Runs requested from `agent_settled` handlers wait until every settled handler finishes.
+
+- Changed the inherited provider stream inputs from `Context` to normalized `TranscriptContext` values, and restricted `ToolCall.arguments` and `ToolResultMessage.details` to JSON-compatible values. Custom providers read system prompts and tool declarations from `context.messages` with `getCurrentSystemPrompt()` and `getCurrentTools()`. See [Custom Providers](docs/custom-provider.md).
+
+- `user_bash` fails closed (inherited): an error or an invalid defined result aborts the command without running later handlers or executing locally. Return `undefined` to continue propagation, otherwise `{ operations }` or `{ result }` ([#9068](https://github.com/earendil-works/pi/issues/9068)).
+
+- `AgentSession.steer()` and `followUp()` now resolve to a `QueuedInputDisposition` and `RpcClient.prompt()` to a `PromptDisposition` instead of `void` (inherited from upstream v0.99.1), so SDK consumers that declare these calls as `Promise<void>` must widen their types.
+
+### Added
+
+- `web_search` has two new hosted routes. **ChatGPT subscription route:** a ChatGPT subscription session now searches through the subscription's own web search tool with your ChatGPT login, on by default for those sessions, ahead of the free engines; it uses subscription usage, not an API account. **Google Search grounding:** opt-in only; it runs when you list a `google` entry in `websearch.json` (without `apiKey` it uses your senpi Google API-key login) and may be billed by Google beyond its free allowance. A Google model session without that entry is unchanged. Both routes count a result only when the provider actually searched: its sources and citations are returned, never URLs typed into the answer, and Google results link through Google's grounding redirect. See [Web Search](docs/web-search.md). ([#2341](https://github.com/code-yeongyu/senpi/issues/2341))
+
+- Added explicit Ultrafast selection through model decorators (for example, `chatgpt-subscription/gpt-6-astra:xhigh:ultrafast`), `models.json`, and OpenAI settings. All five Astra reasoning efforts work; an Ultrafast model pin takes precedence over remembered Fast mode and `/fast` toggles. Selecting Ultrafast on any other OpenAI or ChatGPT Subscription model warns that the tier is documented for GPT-6 Astra only, and the request is still sent. Other providers, including gateways that serve GPT-6 Astra, never receive Ultrafast: selecting it there warns and the request uses that provider's default tier. ([#2410](https://github.com/code-yeongyu/senpi/pull/2410) by [@audreyt](https://github.com/audreyt))
+
+- Added inherited experimental virtual models: extensions register them with `pi.registerVirtualModel()` and pick a physical model and thinking level for each request. The footer shows the routed model, `/session` lists cost per physical model, and `examples/extensions/jev-router.ts` routes with the Jev classifier. See [Virtual Models](docs/virtual-models.md).
+
+- Added the inherited `system` theme, now the default, which derives colors from the terminal's reported foreground, background and ANSI palette and rebuilds them when the terminal switches between light and dark. The fork's grok themes stay available. See [Themes](docs/themes.md).
+
+- Added inherited `#rgb`, `oklch()` and `okhsl()` colors and an optional `appearance` field to theme files, plus `theme.style()`, `theme.colors` and `theme.appearance` for extensions. See [Themes](docs/themes.md) and [TUI](docs/tui.md).
+
+- Added inherited per-input disposition to successful RPC `prompt`, `steer` and `follow_up` responses (`data.disposition`), `AgentSession.steer()`/`followUp()`, and `RpcClient.prompt()`/`steer()`/`followUp()`; `RpcClient.prompt()` also accepts `streamingBehavior`. On `steer` and `follow_up` the disposition is optional data, like the fork's prompt response ([#9098](https://github.com/earendil-works/pi/issues/9098), [#9803](https://github.com/earendil-works/pi/issues/9803)). See [RPC Mode](docs/rpc.md).
+
+- Added inherited `+name` and `-name` entries to the `defaultTools` setting to add or remove tools without repeating the defaults, for example `["-bash", "+powershell"]`. Project entries of this form apply on top of the user setting. See [Settings](docs/settings.md).
+
+- Added inherited image generation and classification to `ModelRuntime`: `generateImages()` and `classify()` with runtime-resolved auth, plus `getModelsOfType()`, `getModelOfType()`, `getAvailableOfType()`, `getAllModels()` and `getAllAvailable()`. Remote catalog refreshes request every supported type (`types=chat,image,classifier`), and Jev classifier models are listed on TypeSafe, OpenRouter, Cloudflare Workers AI, Vercel AI Gateway and OpenCode Zen.
+
+- Added an inherited classifier model for every llama.cpp chat model, answered from next-token label probabilities. See [llama.cpp](docs/llama-cpp.md).
+
+- Added the inherited Meta (Muse subscription) login via `/login meta` with automatic Model API key refresh, plus `META_API_KEY` support ([#9096](https://github.com/earendil-works/pi/pull/9096) by [@xl0](https://github.com/xl0)).
+
+- Added inherited append-only model-context edits: `sessionManager.appendContextEdit(entryId, null)` omits one message from future provider context without changing raw history, usage or UI history. See [Session Format](docs/session-format.md).
+
+- Added inherited actionable `turn_end` and `agent_before_settle` extension boundaries. Return `{ entries: [...event.entries, draft], continue: true }` to persist structural entries in order and make sure one more provider request happens.
+
+- Added the inherited `context_with_system` extension event, which runs after `context` handlers on the full transcript including system messages and sends its result verbatim, and the `provider_stream_event` event for observing parsed provider events before normalization, with an opt-in `/debug-provider` example viewer ([#9784](https://github.com/earendil-works/pi/issues/9784), [#9901](https://github.com/earendil-works/pi/pull/9901) by [@davidbrai](https://github.com/davidbrai)). See [Extensions](docs/extensions.md).
+
+- Added inherited retain-none compaction input: `sessionManager.appendCompaction(summary, null, tokensBefore)` stores the compaction's own ID as its kept boundary.
+
+- Added inherited transcript-backed mid-conversation system prompt and tool changes, so instruction and tool updates survive resume and branch navigation while cached prefixes stay intact on supported models ([#9548](https://github.com/earendil-works/pi/pull/9548)).
+
+- Added inherited extension tool options `namespace`, `annotations`, `outputSchema` with `structuredContent`, and `isError` results. Nested `ctx.executeTool()` calls emit events with `parentToolCallId` and are recorded as bounded `nestedCalls` on the calling tool's result, and their usage counts toward the session cost. Tool exposure keeps the fork values `direct`, `search` and `eval` and accepts the upstream `model-only` and `hidden`; the upstream `deferred` and `codemode` literals map to `search` and `eval`.
+
+- Added an inherited unsubscribe function returned by `pi.on()`; handlers added or removed during a dispatch apply to later dispatches ([#8967](https://github.com/earendil-works/pi/issues/8967)). Extension hook event and result types that were missing from the package entry points are exported ([#9642](https://github.com/earendil-works/pi/pull/9642)).
+
+- Added an inherited warning when an extension that registers the same tool, command or flag replaces a built-in extension ([#10174](https://github.com/earendil-works/pi/pull/10174) by [@cristinaponcela](https://github.com/cristinaponcela)).
+
+- Added inherited per-model image resize profiles through `inputLimits.images.resize` in `models.json`, applied to file attachments, image reads and tool-result images ([#9631](https://github.com/earendil-works/pi/issues/9631)).
+
+- Added the inherited `fullscreenWheelScrollLines` setting and `/settings` entry for fullscreen mouse-wheel scrolling. The default `"auto"` speeds up fast wheel spins outside local macOS terminals ([#9758](https://github.com/earendil-works/pi/issues/9758)).
+
+- Added an inherited show/hide toggle (`H`) in HTML exports for custom messages marked `display: false` ([#8896](https://github.com/earendil-works/pi/issues/8896), [#10020](https://github.com/earendil-works/pi/pull/10020) by [@rwachtler](https://github.com/rwachtler)), and click toggling for branch summaries, compaction summaries and skill invocation entries.
+
+- Added the inherited public Radius model catalog for immediate and offline model selection, with cached and live gateway catalogs overlaid when available.
+
+### Changed
+
+- Leaner, stronger tests: 5 test files and 58 test cases that could not fail were removed (882 test lines net). Two deleted guards are back: one keeps `semver` out of the engine build identity, one keeps the legacy Claude SDK package name out of the package manifest. The image registry's import-failure test mock is repaired, and CI now runs the Bun provider-coverage and compiled provider-probe tests, which never ran there before. ([#2447](https://github.com/code-yeongyu/senpi/issues/2447), [#2458](https://github.com/code-yeongyu/senpi/pull/2458), [#2466](https://github.com/code-yeongyu/senpi/pull/2466), [#2468](https://github.com/code-yeongyu/senpi/pull/2468), [#2469](https://github.com/code-yeongyu/senpi/pull/2469), [#2470](https://github.com/code-yeongyu/senpi/pull/2470), [#2472](https://github.com/code-yeongyu/senpi/pull/2472), [#2474](https://github.com/code-yeongyu/senpi/pull/2474))
+
+- A session can hold any number of persistent monitors (`monitor({ persistent: true })`); the cap of 5 is gone by default. Set `terminal.maxDurableMonitors` to a positive integer to bring a cap back (`"unlimited"` is the default, and an invalid value means unlimited); past it, the next persistent monitor is refused before it starts, as before. The 7-day expiry and restart restore are unchanged. ([#2420](https://github.com/code-yeongyu/senpi/issues/2420))
+
+- Claude subscription sessions (`anthropic-subscription`) run Claude Code 2.1.285: the bundled `@anthropic-ai/claude-agent-sdk` moves from 0.3.284 to 0.3.285. ([#752](https://github.com/code-yeongyu/senpi/issues/752))
+
+- The built-in `dark` and `light` themes use the revised inherited colors written in OKHSL, and light/dark detection reads the reported background color first, then the terminal's light/dark report, then `COLORFGBG`. The `[Themes]` section is removed from the startup banner; custom themes remain in `/settings` and theme conflicts are still reported.
+
+- Built-in extensions and tools are named `builtin:<name>` in errors, diagnostics and RPC source info instead of `<inline:name>` and `<builtin:name>` (inherited).
+
+- Tool calls without a custom call renderer show their arguments: as `key=value` pairs on the title line when collapsed and one `key: value` line per argument when expanded (inherited).
+
+- `bash` and `powershell` structured results hold up to 1 MiB of output instead of the model-facing 2000 lines or 50KB, and add `truncated` and `full_output_path`; longer output keeps its first and last 512 KiB (inherited). Durations of at least one minute are shown as minutes and seconds ([#9628](https://github.com/earendil-works/pi/issues/9628)).
+
+- `--resume` results appear progressively and `--continue` checks candidate session headers newest first, stopping at the newest match (inherited), on top of the fork's index-backed session listing.
+
+- Replaced the inherited external native clipboard dependency with bundled asynchronous macOS, Windows and X11 helpers, keeping the platform command and OSC 52 fallbacks ([#9163](https://github.com/earendil-works/pi/pull/9163)).
+
+- The extension compiler and bundled virtual modules load only when a filesystem extension is loaded, reducing the baseline SDK import cost ([#9540](https://github.com/earendil-works/pi/issues/9540)).
+
+- Terminals with `TERM=*-direct` are treated as truecolor, and fuzzy search on long texts uses native substring search ([#9267](https://github.com/earendil-works/pi/issues/9267)) (inherited).
+
+### Fixed
+
+- Manual `/compact` on the `anthropic-subscription` lane now replaces the resident Claude transcript with the compacted summary and retained suffix instead of forking the old uncompressed transcript, so the next request actually uses the smaller context. Thanks to @ayalcoh for the fix and @Tinycute00 for the report. ([#2331](https://github.com/code-yeongyu/senpi/issues/2331))
+
+- An updated client can retire a shared host left running by an older release. While such a host was alive, every `host ensure` in the agent directory (including each desktop thread's own endpoint) was refused with `legacy_host`, and `host stop --drain` answered `unknown_owner`, so nothing short of killing the process by hand freed the machine. Now `host stop --drain` drains it when its old record still proves the process, and an ensure drains and replaces it on its own once it holds no session. With a session open the refusal says which process it is, which socket it serves, and the `host stop --drain --socket <socket>` that retires it. ([#2423](https://github.com/code-yeongyu/senpi/issues/2423))
+
+- `--model` and `--models` now honor a service-tier decorator (`:priority`, `:flex`, `:auto`, `:ultrafast`). Previously the decorator was parsed and then dropped before the session was created, so an explicit tier could run at the provider default. ([#2412](https://github.com/code-yeongyu/senpi/issues/2412))
+
+- A plain OmO helper file or artifact under `.omo/tools` no longer triggers the legacy custom-tools migration warning; the warning is now limited to the old `tools/<name>/index.ts` layout. Thanks @willowite for the report. ([#2451](https://github.com/code-yeongyu/senpi/issues/2451))
+
+- Resuming a long session no longer makes the transcript jump while older history loads in the background. The part already on screen now stays put, and the full history appears once it has finished loading, in a single repaint (#1076; thanks @effortprogrammer).
+
+- A session whose context has reached the hard limit no longer stays stuck when the summary for its pre-prompt compaction fails (for example the summary stream stalls past its time budget). senpi now applies the same deterministic fallback compaction that manual, threshold and overflow compaction already use, and when every earlier boundary would keep an unsafe tool result it keeps the earliest later suffix that passes the existing replay-safety, tool-chain and token-budget checks. A pre-prompt compaction that fails below the hard limit still keeps the full context. ([#1735](https://github.com/code-yeongyu/senpi/pull/1735) by [@GunP4ng](https://github.com/GunP4ng))
+
+- With two or more logins for one provider, a usage limit reported only in words now switches the request to the next account instead of failing it: Codex `The usage limit has been reached` (also the bare `usage_limit_reached` / `usage_not_included` codes), ChatGPT `You have hit your ChatGPT usage limit`, Claude `You've hit your session limit` / weekly / 5-hour limits and `blocking_limit`, OpenCode monthly and Go/free-tier limits, and `quota exceeded`. The spent account cools down until the reset time the provider gives (a reset header, a `resets_at` / `reset_after_seconds` field, or text such as `resets 12am (Asia/Seoul)` or `resets in 3 hours`), capped at 48 hours, or for 60 seconds when none is given. Only when every account is spent does the request move on to the model fallback chain, which is unchanged. A warning such as `You are approaching your usage limit` and context-overflow text still never switch accounts. Reported by @orientpine; fix by @orientpine with @tmdgusya. ([#1768](https://github.com/code-yeongyu/senpi/issues/1768))
+
+- A session opened on a multi-session host now runs with the permission preset its client asked for. `open_session.permissionPreset` was recorded and then ignored, so every host session ran as `full-access`: in the desktop app, "Ask first" and "Work in this project" asked for nothing, and a shell command or a read outside the project ran without approval. ([#2461](https://github.com/code-yeongyu/senpi/issues/2461))
+
+- With a ChatGPT subscription, image requests now use the subscription's own image generation instead of falling back to an unrelated OpenAI-compatible gateway that could answer 404. The native image tool used to be enabled only for the plain OpenAI Responses API, so subscription models on the Codex route never qualified; it now also qualifies on the subscription's own host. Thanks [@DevNewbie1826](https://github.com/DevNewbie1826). ([#2432](https://github.com/code-yeongyu/senpi/issues/2432))
+- Package operations no longer flash a visible console window on Windows when the package manager starts install, update or discovery subprocesses. Thanks @willowite. ([#2450](https://github.com/code-yeongyu/senpi/issues/2450))
+
+- A fallback-chain entry whose provider answered one 429 with a very long `Retry-After` (a weekly window, or an API gateway replaying a stale wait of almost a day) is checked again after `fallback.circuitMaxCooldownMs` (30 minutes by default) instead of being skipped by every session until the whole hint elapsed. The circuit breaker now bounds the provider's wait by that ceiling like its own cooldown: once it passes, one half-open probe goes to the entry, a response closes the circuit, and another rate limit re-opens it with the fresh hint. Hints up to the ceiling are honored as before. ([#2446](https://github.com/code-yeongyu/senpi/issues/2446))
+
+- Fixed inherited new sessions being lost when the process exits before the first assistant response. The session file is now created when the first user message is sent ([#10000](https://github.com/earendil-works/pi/issues/10000)).
+- When an extension command starts a deferred turn, `--print` now waits before choosing the final answer and exit status, rather than finishing with empty or stale output. Thanks to @effortprogrammer. ([#2436](https://github.com/code-yeongyu/senpi/pull/2436))
+
+- Fixed inherited split-turn compaction summaries being refused by Claude Fable 5.1, mid-run threshold compaction silently skipping oversized trailing tool results ([#9740](https://github.com/earendil-works/pi/issues/9740)), and cancellation races that could start automatic compaction, leave stale retry state or miss cancellation during summarization auth ([#9340](https://github.com/earendil-works/pi/issues/9340), [#9777](https://github.com/earendil-works/pi/issues/9777)) ([#9908](https://github.com/earendil-works/pi/pull/9908) by [@davidbrai](https://github.com/davidbrai)).
+
+- Fixed inherited model-context edits: string replacements now produce text blocks, context-invisible boundary metadata no longer gets new input summarized before its first request, edited-context usage accounting stays correct across compaction, and abandoned retry and recovery attempts stay out of future provider context.
+
+- Fixed inherited `context` handlers that filter or slice messages dropping the prompt and tool declarations. Handlers no longer see system messages, and the prompt and tool state is restored after they run ([#9789](https://github.com/earendil-works/pi/issues/9789), [#9822](https://github.com/earendil-works/pi/issues/9822)).
+
+- Fixed inherited pinned git extensions loaded with `-e` continuing to use the first downloaded commit after the ref changes ([#9982](https://github.com/earendil-works/pi/issues/9982)), and managed git packages installing peer dependencies automatically, with warnings for extension packages that list host-provided modules in `dependencies` ([#9863](https://github.com/earendil-works/pi/issues/9863)).
+
+- Fixed inherited `RpcClient` skipping the next event listener when a listener unsubscribes while handling an event ([#9990](https://github.com/earendil-works/pi/issues/9990)).
+
+- Fixed inherited full-file `read` calls rendering as `:1` when models send `null` for `offset` and `limit` ([#9996](https://github.com/earendil-works/pi/issues/9996)), and text files beginning with `GIF` being misclassified as images in `read` and `@file` input ([#9755](https://github.com/earendil-works/pi/issues/9755)).
+
+- Fixed inherited custom themes ignoring `terminal.trueColor` and other capability overrides ([#9973](https://github.com/earendil-works/pi/issues/9973), [#10039](https://github.com/earendil-works/pi/pull/10039) by [@christianklotz](https://github.com/christianklotz)), and the startup header, loaded resources and chat notices keeping their old colors after a theme change.
+
+- Fixed inherited clipboard handling: X11 clipboard text misidentified as an image ([#9786](https://github.com/earendil-works/pi/issues/9786)), Finder file copies pasting the icon image instead of the file paths ([#9999](https://github.com/earendil-works/pi/issues/9999), [#10136](https://github.com/earendil-works/pi/pull/10136) by [@christianklotz](https://github.com/christianklotz)), copy failing in containers and WSL without WSLg ([#9688](https://github.com/earendil-works/pi/issues/9688)), and failures reporting success when the terminal ignored the OSC 52 fallback ([#9618](https://github.com/earendil-works/pi/issues/9618)).
+
+- Reduced inherited CPU use while streaming in long sessions and when previewing themes: the footer caches session usage totals, collapsed bash results cache their preview, and `sanitizeBinaryOutput()` no longer splits output into per-character arrays.
+
+- Fixed inherited session tree navigation racing with active compaction ([#9179](https://github.com/earendil-works/pi/pull/9179) by [@acmerfight](https://github.com/acmerfight)), exact session ID lookup reading full transcripts instead of session headers ([#9601](https://github.com/earendil-works/pi/pull/9601) by [@metaist](https://github.com/metaist)), and repeated Anthropic thinking-drop notices for the same blocks ([#9391](https://github.com/earendil-works/pi/issues/9391)).
+
+- Fixed inherited signal-terminated local shell commands being reported as successful with partial output ([#9577](https://github.com/earendil-works/pi/issues/9577)), and asynchronous Kitty image conversion replacing newer partial tool output images ([#8743](https://github.com/earendil-works/pi/pull/8743) by [@wutongyuonce](https://github.com/wutongyuonce)).
+
+- Fixed inherited missing or invalid `--mode` values being ignored instead of reported with a nonzero exit ([#9045](https://github.com/earendil-works/pi/issues/9045)), and malformed prompt template frontmatter being ignored instead of reported as a resource warning ([#9830](https://github.com/earendil-works/pi/pull/9830) by [@christianklotz](https://github.com/christianklotz)).
+
+- Crash diagnostics name loaded extensions that appear in the stack trace (inherited).
+
+- Fixed inherited llama.cpp handling: unloaded autoload presets no longer overwrite a cached runtime context window with the GGUF training context ([#10077](https://github.com/earendil-works/pi/issues/10077), [#10158](https://github.com/earendil-works/pi/pull/10158) by [@cristinaponcela](https://github.com/cristinaponcela)), and loaded models with `enable_thinking` chat templates follow the requested thinking level ([#9528](https://github.com/earendil-works/pi/issues/9528)).
+
+- Fixed inherited terminal UI issues: `/skill` autocomplete appearing empty ([#9944](https://github.com/earendil-works/pi/issues/9944)), path and `@` autocomplete after opening wrappers, skill autocomplete ranking ([#9120](https://github.com/earendil-works/pi/pull/9120) by [@yearth](https://github.com/yearth)), CJK file autocomplete boundaries ([#9746](https://github.com/earendil-works/pi/pull/9746) by [@haoqixu](https://github.com/haoqixu)), Kitty image stretching ([#8938](https://github.com/earendil-works/pi/issues/8938), [#9957](https://github.com/earendil-works/pi/pull/9957) by [@rwachtler](https://github.com/rwachtler)), WezTerm Kitty images erased by row clears ([#9169](https://github.com/earendil-works/pi/issues/9169)), the shell cursor staying hidden after an overlay closed during shutdown ([#10026](https://github.com/earendil-works/pi/issues/10026)), keyboard input lost after a mouse click in a `/settings` submenu, and LaTeX legacy font switches, `cases` layouts and nested display scripts ([#8827](https://github.com/earendil-works/pi/issues/8827), [#9564](https://github.com/earendil-works/pi/issues/9564), [#7929](https://github.com/earendil-works/pi/issues/7929)).
+
+- Fixed inherited provider issues: Vercel AI Gateway 1-hour Anthropic cache writes ([#9210](https://github.com/earendil-works/pi/issues/9210)) and Bedrock one-hour cache writes ([#9457](https://github.com/earendil-works/pi/issues/9457)) priced at the 5-minute rate, model-level `samplingParams` dropped by direct calls ([#9506](https://github.com/earendil-works/pi/issues/9506)), Mistral GLM empty-delta failures ([#9674](https://github.com/earendil-works/pi/issues/9674)) and ignored Mistral thinking levels ([#9678](https://github.com/earendil-works/pi/issues/9678)), OpenAI Fast mode priced at the standard rate ([#10034](https://github.com/earendil-works/pi/issues/10034)), `qwen3.8-flash` thinking replayed as text ([#10047](https://github.com/earendil-works/pi/issues/10047)), Responses streams from servers that omit `output_index` running mixed-up tool calls ([#9974](https://github.com/earendil-works/pi/issues/9974)), GitHub Copilot Claude Opus 5.5 thinking levels and GPT adapter selection ([#9253](https://github.com/earendil-works/pi/pull/9253) by [@petrroll](https://github.com/petrroll)), image-only user messages with an empty text part ([#9797](https://github.com/earendil-works/pi/issues/9797)), strict tool schemas on unknown endpoints ([#9816](https://github.com/earendil-works/pi/issues/9816)) and Cerebras ([#9804](https://github.com/earendil-works/pi/pull/9804) by [@EdenGottlieb](https://github.com/EdenGottlieb)), z.ai and bodyless overflow classification ([#9805](https://github.com/earendil-works/pi/issues/9805), [#9482](https://github.com/earendil-works/pi/issues/9482)), DeepSeek V4.1, Vercel and Google thinking handling ([#9485](https://github.com/earendil-works/pi/issues/9485), [#9676](https://github.com/earendil-works/pi/issues/9676), [#9455](https://github.com/earendil-works/pi/issues/9455)), relay signed-thinking replay ([#9188](https://github.com/earendil-works/pi/issues/9188)), Responses error provider labels ([#9298](https://github.com/earendil-works/pi/issues/9298)), Baseten session affinity ([#9629](https://github.com/earendil-works/pi/issues/9629)), and Cloudflare 520 and Azure peak-load retries ([#9627](https://github.com/earendil-works/pi/issues/9627), [#9669](https://github.com/earendil-works/pi/issues/9669)).
+
+### Removed
 ## [2026.9.30] - 2026-09-30
 
 ### Breaking Changes

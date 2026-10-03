@@ -1,5 +1,6 @@
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it } from "vitest";
+import toolSearchExtension from "../../src/core/extensions/builtin/tool-search/index.ts";
 import { getToolSearchService } from "../../src/core/extensions/builtin/tool-search/service.ts";
 import type { SelectorCooldowns } from "../../src/core/retry-fallback/cooldown.ts";
 import { createHarness, type Harness } from "./harness.ts";
@@ -412,6 +413,7 @@ describe("retry fallback hard errors", () => {
 			settings: {
 				retry: { enabled: true, maxRetries: 3, baseDelayMs: 60_000, fallbackChains: { [primary]: [fallback] } },
 			},
+			extensionFactories: [{ factory: toolSearchExtension, path: "<builtin:tool-search>" }],
 		});
 		harnesses.push(harness);
 		getToolSearchService(testToolSearchRuntime).noteNativeInjectionFailure("native tool-search 400");
@@ -440,6 +442,7 @@ describe("retry fallback hard errors", () => {
 			settings: {
 				retry: { enabled: true, maxRetries: 3, baseDelayMs: 60_000, fallbackChains: { [primary]: [fallback] } },
 			},
+			extensionFactories: [{ factory: toolSearchExtension, path: "<builtin:tool-search>" }],
 		});
 		harnesses.push(harness);
 		getToolSearchService(testToolSearchRuntime).noteNativeInjectionFailure("native tool-search 400");

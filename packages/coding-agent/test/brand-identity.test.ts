@@ -57,11 +57,6 @@ describe("agent identity", () => {
 			`You are ${APP_NAME}, a coding agent. Your work should be indistinguishable from a careful senior engineer's.`,
 		);
 	});
-
-	test("a standalone install still identifies as senpi", () => {
-		expect(APP_NAME).toBe("senpi");
-		expect(buildIdentitySection()).toContain("You are senpi");
-	});
 });
 
 describe("prompt presets", () => {

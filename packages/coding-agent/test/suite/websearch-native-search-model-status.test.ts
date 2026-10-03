@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import websearchExtension from "../../src/core/extensions/builtin/websearch/index.ts";
 import { loadWebsearchConfig } from "../../src/core/extensions/builtin/websearch/websearch/config.ts";
 import type { createWebSearchTool } from "../../src/core/extensions/builtin/websearch/websearch/tool.ts";
-import type { ExtensionAPI } from "../../src/core/extensions/types.ts";
+import type { ExtensionAPI, ExtensionToolContext } from "../../src/core/extensions/types.ts";
 import {
 	anthropicSearchResponse,
 	captureFetch,
@@ -122,7 +122,7 @@ describe("websearch nativeModel config and status (senpi#2340)", () => {
 			{ query: "status search" },
 			undefined,
 			undefined,
-			toolContext(sessionOpus, registry),
+			toolContext(sessionOpus, registry) as ExtensionToolContext,
 		);
 		const notify = vi.fn();
 

@@ -1,23 +1,25 @@
 import type {
 	AnthropicMessagesCompat,
 	Api,
+	BaseModel,
 	BedrockCompat,
 	CacheRetention,
-	ModelCost,
+	MistralConversationsCompat,
+	ModelPromptCache,
 	ModelThinkingLevel,
 	OpenAICompletionsCompat,
 	OpenAIResponsesCompat,
-	ProviderId,
 	ThinkingLevelMap,
 } from "./types.ts";
 
-/** Model interface for the unified model system. */
-export interface Model<TApi extends Api> {
-	id: string;
-	name: string;
-	api: TApi;
-	provider: ProviderId;
-	baseUrl: string;
+/** Chat model: usable with `stream()` and friends. */
+export interface Model<TApi extends Api> extends BaseModel<TApi> {
+	/**
+	 * Optional: chat is the default model type, so models without `type` are chat
+	 * models. Narrow mixed model lists with `isModelType()` instead of comparing
+	 * `type` directly.
+	 */
+	type?: "chat";
 	reasoning: boolean;
 	/**
 	 * Maps pi thinking levels to provider/model-specific values.
@@ -30,13 +32,12 @@ export interface Model<TApi extends Api> {
 	 * OpenAI-compatible endpoint advertises. Clamped to the supported levels like any other request.
 	 */
 	defaultThinkingLevel?: ModelThinkingLevel;
-	input: ("text" | "image" | "video")[];
-	cost: ModelCost;
+	/** Prompt cache lifetimes per retention tier. Unset when the provider's cache behavior is unknown. */
+	promptCache?: ModelPromptCache;
 	contextWindow: number;
 	maxTokens: number;
 	/** Default sampling parameters; per-request values override these by key. */
 	samplingParams?: Record<string, unknown>;
-	headers?: Record<string, string>;
 	/** Default prompt-cache retention preference when the request omits one. */
 	cacheRetention?: CacheRetention;
 	/**
@@ -45,7 +46,7 @@ export interface Model<TApi extends Api> {
 	 */
 	upstreamModelId?: string;
 	/** Service tier requested by default for this model (for example `-fast` variants). */
-	serviceTier?: "auto" | "flex" | "priority";
+	serviceTier?: "auto" | "flex" | "priority" | "ultrafast";
 	/** Whether to recover supported text-encoded tool calls from assistant text. */
 	recoverTextToolCalls?: boolean;
 	/** Compatibility overrides for OpenAI-compatible APIs. If not set, auto-detected from baseUrl. */
@@ -57,11 +58,13 @@ export interface Model<TApi extends Api> {
 				? AnthropicMessagesCompat
 				: TApi extends "bedrock-converse-stream"
 					? BedrockCompat
-					: TApi extends "cursor-agent"
-						? CursorAgentCompat
-						: TApi extends "devin-agent"
-							? DevinAgentCompat
-							: never;
+					: TApi extends "mistral-conversations"
+						? MistralConversationsCompat
+						: TApi extends "cursor-agent"
+							? CursorAgentCompat
+							: TApi extends "devin-agent"
+								? DevinAgentCompat
+								: never;
 }
 
 /** Devin (Cascade) model metadata the transport branches on. */

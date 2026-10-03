@@ -414,8 +414,12 @@ export function getPackageDir(): string {
 		// Bun binary: process.execPath points to the compiled executable
 		return dirname(process.execPath);
 	}
-	return findNodePackageDir(__dirname);
+	// The module does not move while the process runs, and renderers ask for this per tool card per frame.
+	nodePackageDir ??= findNodePackageDir(__dirname);
+	return nodePackageDir;
 }
+
+let nodePackageDir: string | undefined;
 
 /**
  * Where the package manager installed this package. Equals `getPackageDir()` except in a process

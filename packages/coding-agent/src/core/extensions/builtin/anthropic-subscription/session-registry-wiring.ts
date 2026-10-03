@@ -2,6 +2,7 @@ import type { AssistantMessage } from "@earendil-works/pi-ai";
 import { convertToLlm } from "../../../messages.ts";
 import type { ExtensionAPI, ExtensionContext } from "../../types.ts";
 import { ANTHROPIC_SUBSCRIPTION_PROVIDER_ID } from "./account-management.ts";
+import { restoreColdSeedCalibration } from "./cold-seed-budget.ts";
 import {
 	BINDING_ENTRY_TYPE,
 	BINDING_MARKER,
@@ -89,6 +90,7 @@ export function registerSessionRegistry(
 		// says whether a cause is still pending (invalidation) or was retired (marker).
 		const branch = ctx.sessionManager.getBranch();
 		rememberBindingInvalidation(sessionId, invalidationReasonFromBranch(branch));
+		restoreColdSeedCalibration(sessionId, branch);
 		const stored = await readStoredBinding(sessionFile);
 		if (!stored) return;
 		if (stored.sessionId !== sessionId) {

@@ -34,13 +34,15 @@ export function defaultSpawn(options: KernelSpawnOptions): KernelChild {
 	// watch for a parent that is already gone by the time the interpreter boots.
 	const env =
 		process.platform === "win32" ? options.env : { ...options.env, SENPI_PY_KERNEL_PARENT_PID: String(process.pid) };
-	return spawn(options.command, [...options.args], {
+	const child = spawn(options.command, [...options.args], {
 		cwd: options.cwd,
 		env,
 		stdio: "pipe",
 		detached: process.platform !== "win32",
 		windowsHide: true,
 	});
+	globalThis.__senpiCodemodeGateObserveResource?.("processes", child, "close");
+	return child;
 }
 
 export function splitCommand(commandLine: string): { readonly command: string; readonly args: readonly string[] } {

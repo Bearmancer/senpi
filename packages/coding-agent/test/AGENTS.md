@@ -24,7 +24,7 @@ support/           Shared test support modules
 helpers/           Shared subprocess/QA/fixture helpers
 benchmarks/        Perf-oriented probes (not part of the default correctness gate)
 examples/          Coverage for the shipped `examples/` extensions
-manual-qa/         Explicit manual QA scripts (not part of default suite)
+manual-qa/         Explicit manual QA scripts (excluded from the default suite; SENPI_MANUAL_QA=1 to run a *.test.ts)
 qa/app-server/     Real app-server surface drivers (own AGENTS.md)
 integration/       Explicitly gated real-provider tests
 fixtures/, goldens/ Shared deterministic inputs and snapshots

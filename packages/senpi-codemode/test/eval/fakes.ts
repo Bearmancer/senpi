@@ -1,4 +1,4 @@
-import { DEFAULT_COMPACTION_SETTINGS, type ExtensionContext } from "@code-yeongyu/senpi";
+import { DEFAULT_COMPACTION_SETTINGS, type ExtensionToolContext } from "@code-yeongyu/senpi";
 import { createInMemoryExtensionSessionSettings } from "../../../coding-agent/test/helpers/extension-session-settings.ts";
 import type { KernelToHostMessage } from "../../src/bridge/protocol.ts";
 import type { EvalKernel, EvalKernelManager } from "../../src/tool/eval-tool.ts";
@@ -261,8 +261,10 @@ export function errorResult(cellId: string, message: string): Extract<KernelToHo
 	return { type: "result", cellId, ok: false, error: { message }, durationMs: 5 };
 }
 
-export function fakeExtensionContext(): ExtensionContext {
+export function fakeExtensionContext(): ExtensionToolContext {
 	return {
+		tools: [],
+		executeTool: () => Promise.reject(new Error("fakeExtensionContext has no nested tool executor")),
 		ui: Object.create(null),
 		mode: "print",
 		hasUI: false,

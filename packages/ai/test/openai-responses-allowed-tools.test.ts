@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { stream as streamOpenAIResponses } from "../src/api/openai-responses.ts";
 import { getModel } from "../src/compat.ts";
 import type { AssistantMessage, Context, Model, Tool } from "../src/types.ts";
+import { normalizeContext } from "../src/utils/transcript.ts";
 
 interface CapturedPayload {
 	tools?: Array<{ type: string; name?: string }>;
@@ -32,7 +33,7 @@ async function captureRequestBody(
 	};
 	const events = streamOpenAIResponses(
 		model,
-		{ systemPrompt: "sys", messages: [{ role: "user", content: "hi", timestamp: 1 }], ...context },
+		normalizeContext({ systemPrompt: "sys", messages: [{ role: "user", content: "hi", timestamp: 1 }], ...context }),
 		{ apiKey: "test-key", fetch: fetchStub, toolChoice: options?.toolChoice, onPayload: options?.onPayload },
 	);
 	for await (const event of events) {

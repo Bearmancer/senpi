@@ -4,6 +4,8 @@ import { getModels } from "../src/compat.ts";
 import type { BuiltinProvider } from "../src/providers/all.ts";
 import type { Context, Model, ModelThinkingLevel, SimpleStreamOptions } from "../src/types.ts";
 
+import { normalizeContext } from "../src/utils/transcript.ts";
+
 type CapturedPayload = {
 	reasoning?: { effort?: string };
 	reasoning_effort?: string;
@@ -30,7 +32,7 @@ async function capturePayload(
 		baseUrl: "http://127.0.0.1:9",
 	};
 
-	const result = streamSimple(payloadCaptureModel, context, {
+	const result = streamSimple(payloadCaptureModel, normalizeContext(context), {
 		apiKey: "fake-key",
 		...(reasoning === undefined ? {} : { reasoning }),
 		onPayload: (payload) => {
@@ -58,7 +60,7 @@ async function captureDirectPayload(
 		baseUrl: "http://127.0.0.1:9",
 	};
 
-	const result = stream(payloadCaptureModel, context, {
+	const result = stream(payloadCaptureModel, normalizeContext(context), {
 		apiKey: "fake-key",
 		reasoningEffort: reasoningEffort as Exclude<ModelThinkingLevel, "off">,
 		onPayload: (payload) => {

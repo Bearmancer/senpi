@@ -153,6 +153,9 @@ export function buildToolContext(pi: ExtensionAPI, state: TerminalExtensionState
 		get timeoutAction() {
 			return state.settings.timeoutAction;
 		},
+		get maxDurableMonitors() {
+			return state.settings.maxDurableMonitors;
+		},
 		get monitorRegistry() {
 			return requireBundle().monitors;
 		},

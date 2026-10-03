@@ -1,15 +1,16 @@
+// allow: SIZE_OK — one persistent Python lifecycle state machine owns queue, generation, and retirement.
 import type { KernelInterruptHandle } from "../../tool/types.ts";
 import type { KernelToolsInvokeOptions } from "../js/kernel-tools-types.ts";
 import { rejectKernelToolsUnavailable } from "../kernel-tools-unavailable.ts";
 import { KernelMemoryHost } from "../shared/kernel-memory-host.ts";
 import { KernelPreludeTracker } from "../shared/kernel-prelude-plan.ts";
 import type { PendingRun, PythonKernelRunOptions, PythonKernelStartOptions, ResultMessage } from "./kernel-contract.ts";
+import { pythonStartupHangGuardMs } from "./startup.ts";
 import { failedPythonResult, PythonKernelTransport } from "./transport.ts";
 
 export type { PythonKernelRunOptions, PythonKernelStartOptions } from "./kernel-contract.ts";
 export type { KernelChild, KernelSpawnOptions, KernelSpawnProcess } from "./process.ts";
 
-const startupTimeoutMs = 5_000;
 const interruptEscalationMs = 5_000;
 
 export class PythonKernel {
@@ -229,7 +230,7 @@ export class PythonKernel {
 						: (this.#active?.input.onMessage ?? this.#options.onMessage);
 				callback?.(message);
 			},
-			startupTimeoutMs: this.#options.startupTimeoutMs ?? startupTimeoutMs,
+			startupTimeoutMs: this.#options.startupTimeoutMs ?? pythonStartupHangGuardMs,
 			isOwned: () => !this.#closed && generation === this.#generation,
 			onRetirementFailure: (transport, error) => {
 				if (!this.#transport) this.#transport = transport;

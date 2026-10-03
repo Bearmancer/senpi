@@ -1,6 +1,6 @@
 import type { Uploadable } from "openai";
 import type { ImageGenerateParamsNonStreaming } from "openai/resources/images.js";
-import type { ImageContent, ImagesContext, ImagesModel, ImagesOptions } from "../types.ts";
+import type { ImageApi, ImageContent, ImageModel, ImagesContext, ImagesOptions } from "../types.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
 
 const MAX_PROMPT_CHARS = 32_000;
@@ -95,7 +95,7 @@ export function parseOpenAIImageOutputOptions(input: OpenAIImageOutputOptionsInp
 }
 
 export function buildParams(
-	model: ImagesModel<"openai-images">,
+	model: ImageModel<ImageApi>,
 	context: ImagesContext,
 	options?: OpenAIImagesOptions,
 ): OpenAIImageParams {

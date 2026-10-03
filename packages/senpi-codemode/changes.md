@@ -1,5 +1,147 @@
 # senpi-codemode fork changes
 
+
+## 2026-10-02 - Display images are validated before they are kept (upstream v1.0.0 sync)
+
+### What changed
+
+- `packages/senpi-codemode/src/tool/image.ts`: an image `display()` payload is kept only when it is valid base64 with a PNG, JPEG (not JPEG-LS), GIF or WebP signature; line breaks are dropped, the detected type replaces the declared one, and invalid data is dropped with a `[display: image dropped — <reason>]` line in the output.
+
+### Why
+
+Upstream fixed the same defect in its codemode `image()` helper (d2931ad3d): providers reject a whole request on a bad image, and a kept image block is resent on every later turn, so one corrupted image broke the session. Providers also reject a declared type that does not match the bytes.
+
+### Why an extension could not handle it
+
+This is the eval extension's own output collector.
+
+### Expected merge conflict zones
+
+None from upstream (fork-only package).
+
+## 2026-09-30 - Self-contained eval action schemas (senpi#2240)
+
+### What changed
+
+- `packages/senpi-codemode/src/tool/types.ts`: each action branch declares its own properties. Runs require `language`, `code`, and `summary`, including when `action` is omitted. `list` requires only its action; `peek` and `stop` require `cell_id`.
+- `packages/senpi-codemode/test/eval-schema-required-fields.test.ts`: covers missing run fields, implicit runs, enabled languages, control calls, branch-local field declarations, provider schema conversions, and OpenAI strict-mode fallback.
+- `packages/senpi-codemode/scripts/qa-e2e-eval.ts`: expects incomplete runs to fail schema validation before execution. The README describes the action-specific requirements.
+
+### Why
+
+- With the issue's forced `tool_choice: "any"`, Mistral-hosted GLM 5.3 returned only `{"action":"run"}` with the constraint-only branches. Adding `required` without declaring the fields inside the branch still failed in a live reproduction. Self-contained branches let the provider generate complete calls.
+
+### Why an extension could not handle it
+
+- This package is the extension that owns the eval schema.
+
+### Expected merge conflict zones
+
+- LOW: `createEvalInputSchema` in `packages/senpi-codemode/src/tool/types.ts`.
+## 2026-10-02 - Detached-cell footer ticker retires on a stale context (senpi#2549)
+
+### What changed
+
+- `packages/senpi-codemode/src/extension/stale-context.ts` (new): `isStaleExtensionContextError` matches the two messages the host retires a context with (replacement prefix and reload message), mirroring the host's `builtin/goal/stale-context.ts`. The host keeps that module internal to its builtins (the `@code-yeongyu/senpi` package does not export it) and older host versions predate the reload message, so codemode carries the two messages locally for compatibility.
+- `packages/senpi-codemode/src/extension/eval-status-ticker.ts`: `tick()` catches that error, stops the ticker and returns `false`; `sync()` does not re-arm after a stale immediate render; the next live `sync()` re-arms. Other render errors are rethrown.
+- Tests: `test/eval-status-ticker-stale-context.test.ts` (retire on both messages, re-arm, no re-arm on a stale first render, non-stale error surfaces) and `test/eval-status-wiring-stale-context.test.ts` (a reload, new session and switch while a detached cell ticks: no throw, and the next session's cell renders and advances).
+
+### Why
+
+- The render reads the captured `activeContext`, whose `ui` getter throws once its session is retired, from inside the 1 s interval callback, which ended the process (senpi#2549).
+
+### Why an extension could not handle it
+
+- The ticker is codemode's own footer wiring.
+
+### Expected merge conflict zones
+
+- `eval-status-ticker.ts` `sync()`/`tick()`. Fork-only surface.
+## 2026-10-01 - Explicit state-loss notice for Stop during a native shell wait (senpi#2453)
+
+### What changed
+
+- `packages/senpi-codemode/src/kernels/js/worker-shell-capture.js` and `packages/senpi-codemode/src/kernels/js/worker-shell-capture.d.ts` track active native promise waits without starting lazy commands.
+- `packages/senpi-codemode/src/kernels/js/worker-runtime.js` and `packages/senpi-codemode/src/kernels/js/worker-core.js` report shell-wait changes through the existing acknowledgement while interruption is in flight, including waits entered during cooperative grace.
+- `packages/senpi-codemode/src/kernels/js/run-queue.ts`, `packages/senpi-codemode/src/kernels/js/context-manager.ts`, and `packages/senpi-codemode/src/kernels/js/interrupt-bounds.ts` retain the cell-fenced shell-wait state and report cleared variables with Bun.spawn/bash guidance only on a forced restart.
+- Cooperative interrupts, successful cells, native shell interpretation, and the default eval prompt are unchanged.
+- Event-ordered real-kernel tests observe command connection and exit, cleared globals, retained non-shell globals, and successful native read paths.
+
+### Why
+
+- Lead decision A keeps native shell behavior while making forced-restart state loss explicit. Thanks to floweredao's investigation in senpi#2475. Native cancellation remains tracked in oven-sh/bun#11868.
+
+### Why an extension could not handle it
+
+- The kernel owns shell capture and the forced-restart outcome.
+
+### Expected merge conflict zones
+
+- JS shell capture, interrupt acknowledgements, and run settlement.
+
+## 2026-10-01 - Event-driven Python bootstrap with stage-specific hang detection (senpi#2452)
+
+### What changed
+
+- `src/kernels/py/prelude.py` emits bootstrap status frames before stdlib imports, runtime initialization, and the host init loop; `ready` remains the only admission event.
+- `src/kernels/py/startup.ts` owns a per-stage inactivity guard. The default 11 seconds is twice the measured fresh-cache Windows p99 of 5,220 ms, rounded up to a second (Actions run 36882163342, 30 samples). Only forward stage transitions refresh it.
+- `src/kernels/py/transport.ts` waits for that ready event and retains the stalled stage, interpreter stderr, and original error cause. `startupTimeoutMs` is now a per-stage override.
+- `src/kernels/py/kernel.ts` applies the measured default guard; `src/kernels/py/kernel-contract.ts` documents per-stage `startupTimeoutMs` and exposes the separate `onStartupProgress` observer.
+- Bootstrap control frames stay out of ordinary cell output and status-disabled sessions. The optional `onStartupProgress` diagnostic callback observes accepted stage transitions separately.
+- `test/py-kernel-startup.test.ts` covers progressing startup beyond the former total deadline, hung imports, and duplicate or unknown progress that cannot postpone a hang.
+- The direct prelude SIGINT regression subscribes to ready and running-cell display events without chunk-order assumptions or timing sleeps.
+- `scripts/qa-python-startup.ts` bounds its post-ready cell and records the error class separately, retaining a failing exit code for retirement failures.
+
+### Why
+
+- A healthy cold interpreter exceeded the five-second total readiness deadline on Windows; the host killed it before it could report ready. Warm starts passed.
+
+### Why an extension could not handle it
+
+- The interpreter bootstrap and child retirement belong to the Python transport.
+
+### Expected merge conflict zones
+
+- LOW: Python transport initialization and prelude imports; no prompt or eval schema changes.
+
+## 2026-10-01 - The bun-1-4 pointer names the cells that need the skill (senpi#2505)
+
+### What changed
+
+- `packages/senpi-codemode/src/prompt/eval-prompt-template.ts`: on a Bun kernel with the skill active, the runtime line says "Before a cell that installs a package, spawns a server or PTY, or starts a long run, read the bun-1-4 skill at <path> - its builtins replace the npm packages you would otherwise install" instead of "MUST READ the bun-1-4 skill at <path> before your first js cell - ...".
+- `packages/senpi-codemode/src/skill/bun-1-4/SKILL.md`: the frontmatter description opens with the same condition instead of "MUST READ before your first js eval cell".
+- `test/prompt.test.ts`, `test/eval-tool-prompt-runtime.test.ts`: assert the new sentence and that "before your first js cell" is gone; the no-skill and Node branches still assert the pointer is absent.
+
+### Why
+
+- Every GPT-6 Astra session paid one 8 KB skill read before its first cell, including cells that only read two files; a 2026-09-27 A/B found this read was the only skill read left once the catalog was removed. The condition now sits where the skill's content matters (dependency, server, PTY, long run).
+
+### Why an extension could not handle it
+
+- This is the eval tool's own description.
+
+### Expected merge conflict zones
+
+- `eval-prompt-template.ts` line 32; the skill frontmatter.
+
+## 2026-10-01 - Animate quiet running eval cells (senpi#2503)
+
+### What changed
+
+- `packages/senpi-codemode/src/tool/render.ts`: derive missing host spinner frames from the cell's render-time elapsed clock and repaint live cards every 100 ms. Keep the abandoned-row timeout at 60 seconds.
+
+### Why
+
+- Running eval cells otherwise stay on the first spinner frame while only elapsed time advances.
+
+### Why an extension could not handle it
+
+- The eval extension owns its renderer and live repaint ticker.
+
+### Expected merge conflict zones
+
+- LOW: live ticker constants and `cellHeader` in `src/tool/render.ts`.
+
 ## 2026-09-29 - Eval return values reach the model whole, and every cut says so (senpi#2402)
 
 ### What changed

@@ -24,6 +24,7 @@ export interface ResidentStringStoreOptions {
 }
 
 export class ResidentStringStore {
+	private readonly tokenFree = new WeakSet<object>();
 	// Keyed by content hash: the id IS the reverse index, so the same text always
 	// resolves to the same token and the same blob file, across store instances
 	// sharing a backing directory and across eviction/spill cycles.
@@ -85,10 +86,23 @@ export class ResidentStringStore {
 	}
 
 	externalize<T>(value: T): T {
-		return transformJson(value, (text) => this.externalizeString(text));
+		let tokenized = false;
+		const externalized = transformJson(value, (text) => {
+			const stored = this.externalizeString(text);
+			if (stored.startsWith(RESIDENT_STRING_PREFIX)) tokenized = true;
+			return stored;
+		});
+		if (!tokenized && typeof externalized === "object" && externalized !== null) this.tokenFree.add(externalized);
+		return externalized;
 	}
 
+	/**
+	 * An externalized value without resident tokens is already the store's own JSON-normalized copy,
+	 * so it is returned as is; copying every entry on every read made each context build copy the
+	 * whole session. Readers must not mutate what they get, as `getEntries()` already documents.
+	 */
 	materialize<T>(value: T, onMissing?: (id: string) => string | undefined): T {
+		if (typeof value === "object" && value !== null && this.tokenFree.has(value)) return value;
 		return transformJson(value, (text) => this.materializeString(text, onMissing));
 	}
 

@@ -144,8 +144,9 @@ for platform in "${PLATFORMS[@]}"; do
     fi
 
     # Bun compiled executables only embed worker scripts when they are passed as
-    # explicit build entrypoints. The runtime can still use new URL(...), but the
-    # worker must be present in the compiled executable.
+    # explicit build entrypoints. Bun places them at their path relative to the
+    # common directory of all entrypoints, so the main entry must stay in dist/
+    # for the worker specifiers in the runtime to resolve.
     #
     # Disable cwd bunfig.toml autoload so project preload scripts cannot crash the
     # standalone binary before pi starts (see #7684).
@@ -164,7 +165,6 @@ echo "==> Creating release archives..."
 
 # Copy shared files to each platform directory
 for platform in "${PLATFORMS[@]}"; do
-    cp package.json "$OUTPUT_DIR/$platform/"
     cp README.md "$OUTPUT_DIR/$platform/"
     cp CHANGELOG.md "$OUTPUT_DIR/$platform/"
     cp ../../node_modules/@silvia-odwyer/photon-node/photon_rs_bg.wasm "$OUTPUT_DIR/$platform/"
@@ -176,6 +176,7 @@ for platform in "${PLATFORMS[@]}"; do
     cp -r docs "$OUTPUT_DIR/$platform/"
     cp -r examples "$OUTPUT_DIR/$platform/"
     node "../../scripts/copy-codemode-sidecar.mjs" "$OUTPUT_DIR/$platform"
+    cp package.json "$OUTPUT_DIR/$platform/"
 
     # Copy the persistent-terminal PTY native prebuild next to the compiled binary at the
     # sidecar path its loader probes: native/prebuilds/<platform>-<arch>/senpi_pty.<host>.node.

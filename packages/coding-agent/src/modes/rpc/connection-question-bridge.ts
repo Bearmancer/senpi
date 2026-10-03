@@ -47,7 +47,7 @@ export class ConnectionQuestionBridge {
 			let timer: ReturnType<typeof setTimeout> | undefined;
 			let finished = false;
 			const unanswered = () => unansweredQuestionIds(request.questions, answers);
-			const finish = (status: QuestionResponse["status"]) => {
+			const finish = (status: QuestionResponse["status"], resolvedBy?: QuestionResponse["resolvedBy"]) => {
 				if (finished) return;
 				finished = true;
 				clearTimeout(timer);
@@ -56,6 +56,7 @@ export class ConnectionQuestionBridge {
 				this.resolved.add(id);
 				const result: QuestionResponse = {
 					status,
+					...(resolvedBy !== undefined ? { resolvedBy } : {}),
 					answers,
 					comment,
 					unanswered: unanswered(),
@@ -67,6 +68,7 @@ export class ConnectionQuestionBridge {
 					requestId: frame.requestId,
 					toolCallId: frame.toolCallId,
 					outcome: status,
+					...(result.resolvedBy !== undefined ? { resolvedBy: result.resolvedBy } : {}),
 					answers,
 					comment,
 					unanswered: result.unanswered,
@@ -113,7 +115,7 @@ export class ConnectionQuestionBridge {
 					comment = response.comment;
 					const status = settledQuestionStatus(answers, comment);
 					if (status === undefined) return false;
-					finish(status);
+					finish(status, "rpc_connection");
 					return true;
 				},
 			});
@@ -158,6 +160,7 @@ export async function degradeQuestion(
 	const unanswered = request.questions.filter((q) => !answers[q.id]).map((q) => q.id);
 	return {
 		status: comment?.trim() ? "comment-submitted" : unanswered.length ? "cancelled" : "answered",
+		...(comment?.trim() || unanswered.length === 0 ? { resolvedBy: "rpc_connection" as const } : {}),
 		answers,
 		comment,
 		unanswered,

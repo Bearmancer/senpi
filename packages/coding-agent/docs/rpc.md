@@ -27,6 +27,20 @@ A label is stored NFC-normalized with internal whitespace collapsed, must contai
 
 `RpcClient` accepts an `onDisconnect` callback for an established socket and rejects subsequent transport operations with the typed `RpcTransportGoneError` (also detectable with `isTransportGoneError`). Callers should use the callback to begin recovery and keep the error text out of user-facing output.
 
+Prompt acceptance can require compaction before the host emits its response. After observing
+`compaction_start` for its session, `RpcClient` gives pending and subsequent prompts a bounded
+45-minute-and-30-second acknowledgement budget: up to 15 minutes of remote compaction, a
+30-minute maximum local-summary override, and the ordinary response allowance. A matching
+`compaction_end` restores the 30-second response deadline. Each compaction operation is tracked by
+its operation ID (older hosts that omit IDs remain supported), so a stale or overlapping start never
+hides another operation's end, and a start whose end never arrives stops counting once it is older
+than that budget. However many compactions start and end while a prompt waits, it never waits more
+than 46 minutes from when it was sent. Outstanding prompts retain their originating session, so
+another lease's compaction does not change their deadlines. Other commands retain their normal
+deadlines, and a disconnected transport still rejects immediately. Compaction events do not
+themselves acknowledge a prompt: its actual response determines success and disposition.
+A timeout does not establish that the host rejected the input, so do not automatically resend it.
+
 ```bash
 senpi --mode rpc [options]
 ```
@@ -298,6 +312,54 @@ A host that reports memory pressure (`SENPI_RPC_HOST_RSS_WARN_MB`, 4096 by defau
 logs one line naming its RSS, and drains when it is also superseded: memory a daemon cannot attribute to a
 session is memory nothing will return, and a generation nobody can reach is pure cost.
 
+#### Runtime identity and the conditional idle handover
+
+A version string cannot say which runtime a host loaded: a development checkout and a packaged install can
+share one version, and a reinstall replaces a bundle at the same path. Every host therefore reports
+`runtimeBuildId: "sha256:<64 hex>"` in `get_protocol_info`, computed ONCE at startup from the runtime it is
+about to serve with: the runtime flavour (`compiled`, `packaged`, `dev`), platform and architecture, the engine
+build text, the digests of the runtime files (`dist/bundle`, `dist`, `src`, or the compiled executable) sorted
+by their relative path, one digest per launch-profile extension, and the profile's `multi_session` and
+`session_runtime`. Absolute paths never enter it, so one build installed in two places has one id; dot-entries,
+nested `node_modules`, `.d.ts`/`.map` files and the build/snapshot manifests are left out. A bundle replaced
+after the host started leaves the host's id unchanged, while a client started from the new bundle computes a
+different one. A host whose runtime cannot be read reports no id (unverified) and still starts.
+
+`host ensure` and `host handoff` also print `clientRuntimeBuildId`: the id a host launched from that launch
+spec by THIS client would report. A client compares it with `runtimeBuildId` to know whether the host serving
+the socket runs its runtime.
+
+A POSIX socket host with an id advertises `runtime_identity_handover` and accepts the conditional handover
+`senpi host handoff --when idle --operation <id> --if-instance <instanceId> --if-generation <n>
+--target-build <runtimeBuildId>`. The CLI refuses `target_build_mismatch` unless the target is its own
+`clientRuntimeBuildId` (the successor runs the CLI's runtime), `stale_generation` unless the socket is served
+by the named generation, and `handover_unsupported` when the host does not advertise the capability. It then
+sends the host `begin_handover`, and the HOST owns the operation:
+
+1. a request with an `operationId` it already holds answers with that operation when the terms match (and
+   `operation_conflict` when they do not); a new operation is checked first against the named generation
+   (`stale_generation`);
+2. it stops admitting new work: `prompt`, `steer`, `follow_up`, `send_custom_message`, `append_user_message`,
+   `bash`, `compact`, `wake` and the two message edits answer `success: false` with an error starting
+   `handover_pending:`. Running turns keep running and keep their control traffic (`abort` included);
+3. it waits for its next safe idle point: no request in flight and no open session busy by the same activity
+   judgement a drain parks by. A retained session with no work is idle. The wait has no deadline; a long turn
+   delays the handover and is never aborted for it;
+4. it hands the socket over through the generation handoff above, launched from the CLI's runtime with the
+   CLI's daemon environment, and drains. The successor is told the target id and exits before it listens when
+   its own runtime digests to another one (its files changed since the request). A successor that never
+   answers is stopped, the host keeps serving and admits work again (`handover_blocked`).
+
+The answer is exit 0 `{ action: "handover_completed" | "handover_pending", operationId, handover, ... }`: a host
+idle at once hands over before answering, and a request whose target already serves the socket answers
+`handover_completed` without touching anything. A repeated `operationId` answers with the operation that
+already exists; another id for the same target joins the pending operation (the answer names its id), and
+one for another target while one is pending refuses `handover_in_progress`. A
+blocked operation refuses `handover_blocked` with the successor's failure in `detail`; a lost reply exits 1
+`handover_reply_lost` after checking whether the target now serves the socket. `host status` shows the
+operation as `handover: { operation_id, state, target_runtime_build_id, reason?, successor? }` with `state`
+`handover_pending`, `handover_switching`, `handover_completed` or `handover_blocked`.
+
 #### Daemon state directory (layout 2)
 
 Every endpoint gets its own directory, named by the socket it serves, so two sockets in one agent
@@ -339,7 +401,18 @@ path (a desktop reader that finds one takes the host over; a `senpi` from before
 client's sessions. Without it those clients fail CLOSED - they find no host of their own, refuse, and leave
 the daemon alone. Nothing here ever writes a legacy-shaped file, and nothing here ever REMOVES one: a flat
 `host.pid` that does exist belongs to a legacy host, is read-only to this build, and while the process it
-names is alive an ensure refuses (`legacy_host`) rather than starting a second host beside it.
+names is alive an ensure never starts a second host beside it.
+
+That record is still the proof that retires a legacy host (`host-legacy.ts`). It describes the endpoint it
+stamps as `socket`, or, when unstamped, the agent directory's default socket `<agentDir>/rpc/rpc.sock`; its
+pid and start time must match the live process, so a recycled pid proves nothing:
+
+- `stopHost({ drain: true })` (`host stop --drain`) accepts it when that endpoint is the target socket and
+  the host advertises `generation_handoff`, and sends the drain. A hard stop still needs a layout-2 owner.
+- An ensure on ANY endpoint of the agent directory drains a live legacy host and waits for it to exit when
+  its endpoint answers with `generation_handoff` and `list_sessions` (workers included) lists no session.
+  Otherwise it refuses `legacy_host`, and the CLI refusal carries `detail`: the pid, its endpoint, how many
+  sessions it holds and the `host stop --drain --socket <endpoint>` that retires it.
 
 `ensureHost` fails with a typed `HostDaemonStateError` naming the directory it could not create or write,
 and starts no host in that case.
@@ -356,7 +429,10 @@ socket hashing to this directory (torn by a crash of an older build, or foreign)
 leave the endpoint listed as `socket: null` and kept by `gc` as `unknown_identity` forever. It is the one file a generation's release
 leaves behind: a supervisor that exits (idle, drained, or after its host child crashed) removes the pointer,
 `settings.json` and its generation directory, and without `endpoint.json` such an endpoint could not even be
-enumerated. `stderr.log` and `crashes.jsonl` stay too. The only thing that ever removes an endpoint directory
+enumerated. A generation that exits because another entry TOOK its public socket removes only its own
+generation directory: the pointer and `settings.json` then belong to whoever replaced it (a handoff rewrites
+the settings before its successor boots and moves the pointer once the rename landed), and removing them could
+delete the successor's freshly written registration. `stderr.log` and `crashes.jsonl` stay too. The only thing that ever removes an endpoint directory
 (`endpoint.json` included) is the explicit `senpi host gc` below, and only on proof that nothing runs behind it.
 
 The directory is PRUNED of what is no longer running on every registration write and on every single-socket
@@ -399,6 +475,7 @@ senpi host ensure     [--json] [--launch-spec <file>] [--policy upgrade|fallback
 senpi host status     [--json] [--include-workers] [--all] [--socket <path>]
 senpi host stop       [--json] [--drain] [--force] [--socket <path>]
 senpi host handoff    [--json] [--launch-spec <file>] [--socket <path>]
+                      [--when idle --operation <id> --if-instance <id> --if-generation <n> --target-build <id>]
 senpi host shard-path --kind <p|i> --owner <id> [--root <dir>] [--json]
 senpi host gc         [--json] [--agent-dir <dir>]
 ```
@@ -419,7 +496,7 @@ symmetry with other commands; the answer is always JSON (the one exception is `s
 which prints the bare socket path).
 
 - `ensure` prints `{ action, socket, pid, instanceId, generation, engineVersion, engineOrdinal,
-  capabilities, launchProfileId, reused, upgradeable }`. `--policy upgrade` (the default) allows a
+  capabilities, launchProfileId, runtimeBuildId, clientRuntimeBuildId, reused, upgradeable }`. `--policy upgrade` (the default) allows a
   generation handoff, `never` only attaches or starts, and `fallback` answers exit 4 rather than attaching
   to a host this build disagrees with. `action` is `handoff` exactly when the socket was already served and
   the process behind it changed. An ensure invoked by an in-process session inside a multi-session host is
@@ -427,7 +504,7 @@ which prints the bare socket path).
   This is process-local state, not an environment marker, so a shell child remains free to run the explicit
   `senpi host handoff` command.
 - `status` prints `{ reachable, socket, pid, instanceId, generation, engineVersion, capabilities,
-  launchProfile, sessions: { total, interactive, worker, retained, foreign_attached, foreign_retained },
+  launchProfile, runtimeBuildId, handover, sessions: { total, interactive, worker, retained, foreign_attached, foreign_retained },
   zombies, rss_mb, host_rss_mb, open_fds, memory_pressure, env_keys, generations, crashes, shard, session_rows,
   claims_live, claims }` and exits 3 when nothing answers - with the same
   field set, so a caller parses one shape and branches on one boolean. `sessions` is what `list_sessions`
@@ -1375,6 +1452,58 @@ In particular, Node `readline` is not protocol-compliant for RPC mode because it
 
 ### Prompting
 
+#### Durable client identity
+
+Hosts advertising `durable_client_message_id` in `get_protocol_info` accept optional
+`clientMessageId` and `clientTurnId` on `prompt`, `steer`, and `follow_up`. Each is a
+non-empty string of at most 256 characters. Keep these IDs unchanged when retrying
+after a disconnect; the transport `id` and routing `sessionId` may change.
+
+```json
+{"id":"request-2","type":"prompt","message":"Hello","clientMessageId":"message-1","clientTurnId":"turn-1"}
+```
+
+Admission is deduplicated by the durable session header ID and `clientMessageId`.
+Repeating a delivery returns the existing admission without running input handlers,
+appending another user message, or starting another answer. Changing the input kind,
+text, images, prompt options, or `clientTurnId` under that key fails with
+`errorCode: "client_message_id_conflict"`. Recovery `enqueueOrder` is not part of
+payload identity; the first admission's order stays authoritative. When present it must
+be a finite number; any other value is refused before admission.
+
+Successful responses echo both IDs in `data` and, when `clientMessageId` is present,
+include `data.admission`:
+
+```json
+{"durableSessionId":"session-id","clientMessageId":"message-1","clientTurnId":"turn-1","state":"running","disposition":"started"}
+```
+
+`state` is `queued`, `running`, or `completed`. Completed means the admission settled,
+including handled or cleared input; it is not a claim that a provider answered
+successfully. The existing `disposition` remains `started`, `queued`, or `handled`.
+Preflight or storage rejection creates no accepted admission, so the same delivery
+can be retried after the failure is repaired.
+
+Accepted queues and their prepared content survive reopening the transcript. They
+are restored in the original enqueue order without rerunning input transforms, and a
+delivery that arrives while they are being restored is queued behind them. A prompt
+that was acknowledged as `started` but displaced into the steering queue by a run that
+began first is stored as queued input too, so it survives a host restart. A transcript
+entry that does not parse as an admission is ignored rather than blocking the session.
+Running or completed admissions are never replayed, and `clear_queue` retires its
+admissions before returning. Native steering priority and drain behavior are unchanged.
+Durability requires a persistent session; `--no-session` retains deduplication only
+for that runtime's lifetime.
+
+The IDs appear on persisted user messages, `turn_start`, message and tool execution
+events, `turn_end`, and `agent_end`. A turn consuming several identified inputs adds
+`clientMessages` with their identities; top-level IDs identify the most recently
+consumed input. `turn_start` identifies the first consumed input. A turn whose input is a custom
+message, such as a `send_custom_message` trigger turn, carries no client IDs. The `ordered`
+records in `queue_update`, `get_state`, `clear_queue`, `get_steering_messages`, and
+`get_follow_up_messages` carry IDs too. The legacy string `messages`, `steering`,
+and `followUp` arrays remain available.
+
 #### prompt
 
 Send a user prompt to the agent. The command response is emitted after the prompt is accepted, queued, or handled. Events continue streaming asynchronously after acceptance.
@@ -1455,8 +1584,10 @@ The `images` field is optional. Each image uses `ImageContent` format (same as `
 
 Response:
 ```json
-{"type": "response", "command": "steer", "success": true}
+{"type": "response", "command": "steer", "success": true, "data": {"disposition": "queued"}}
 ```
+
+`data.disposition` is `"handled"` if an input handler consumed this steer, or `"queued"` if senpi queued it (including after a handler transformed it). It does not guarantee the message stays queued. Like the prompt response, `data` is optional: older hosts omit it.
 
 See [set_steering_mode](#set_steering_mode) for controlling how steering messages are processed.
 
@@ -1477,8 +1608,10 @@ The `images` field is optional. Each image uses `ImageContent` format (same as `
 
 Response:
 ```json
-{"type": "response", "command": "follow_up", "success": true}
+{"type": "response", "command": "follow_up", "success": true, "data": {"disposition": "queued"}}
 ```
+
+`data.disposition` has the same optional `"handled"` or `"queued"` meaning as for `steer`, applied to this follow-up.
 
 See [set_follow_up_mode](#set_follow_up_mode) for controlling how follow-up messages are processed.
 
@@ -3443,6 +3576,7 @@ When the question resolves (answered, comment-submitted, timed_out, or cancelled
   "requestId": "ask-user-1",
   "toolCallId": "call_abc123",
   "outcome": "answered",
+  "resolvedBy": "rpc_connection",
   "answers": { "q1": { "selected": ["PostgreSQL"] } },
   "comment": "",
   "unanswered": []
@@ -3450,6 +3584,22 @@ When the question resolves (answered, comment-submitted, timed_out, or cancelled
 ```
 
 A late answer after resolution receives a `question_already_resolved` error.
+
+`resolvedBy` identifies the surface that submitted the winning answer: `local_ui` for the terminal
+widget or composer, `rpc_connection` for an RPC client (including the sequential dialog fallback),
+and `control_endpoint` for an answer received through the session's terminal control endpoint.
+It is omitted for `timed_out` and `cancelled`, the frame's outcomes with no answering surface.
+Restart orphaning and unavailable UI never reach `question_resolved` with their own status: an
+extension that aborts the dialog for either is reported to connections as `cancelled`, and only the
+tool result and the `ask-user:closed` extension event carry the true status. Clients do not supply
+this field; the answering bridge sets it. Competing or late answers do not change the winner's surface.
+
+The built-in `ask_user_question` and `request_user_input` tools retain the field in blocking
+`tool_execution_end` result details and in the `response` of `ask-user:settled`. Extensions can
+subscribe to `pi.events.on("ask-user:closed", handler)` for `{ requestId, status, resolvedBy? }`,
+emitted once for every terminal outcome, including silent cancellations. `ask-user:settled`
+continues to skip cancellation. A reload that preserves a pending question does not close it;
+a terminal outcome while detached is published once through the next bound extension runner.
 
 `RpcSessionState.pendingQuestions` (returned by `open_session` and `get_state`) lists any questions still waiting for an answer. Connections that attach after the question was asked receive the pending record immediately.
 

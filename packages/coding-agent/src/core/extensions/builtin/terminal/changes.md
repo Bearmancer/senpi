@@ -1,3 +1,45 @@
+## 2026-10-02 - Monitor footer ticker retires on a stale context (senpi#2549)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/terminal/monitor-status-ticker.ts`: `tick()` catches the error a retired extension context throws (`isStaleExtensionContextError` from `../goal/stale-context.ts`), stops the ticker and returns `false`; `sync()` returns early on `false`, so a sync whose immediate render hits the retired context does not re-arm the interval. The next `sync()` with a live context re-arms it. Any other render error is rethrown unchanged.
+- Tests (`packages/coding-agent/test/suite/regressions/2549-monitor-status-ticker-stale-context.test.ts`): the ticker retires on both retirement messages, re-arms on the next live sync, does not re-arm a sync whose first render is stale, and still throws a non-stale render error; through the real extension and a real `cat` monitor, a reload and a disposed new/fork session leave no throw and the next session renders and advances the watch.
+
+### Why
+
+- The render reads the extension's captured `state.ctx`, whose guarded `ui` getter throws once the session is retired. The throw ran inside the 1 s `setInterval` callback, where nothing catches it, so the process exited with an `uncaughtException` (senpi#2549). `session_shutdown` stops the ticker, but a session disposed without `session_shutdown` (app-server thread unload/delete, `modes/app-server/threads/registry.ts`) leaves it armed, and #1028 already established that shutdown ordering is not a guarantee for tickers.
+
+### Why an extension could not handle it
+
+- The ticker and its render closure are the terminal builtin's own footer wiring.
+
+### Expected merge conflict zones
+
+- `monitor-status-ticker.ts` `sync()`/`tick()`. Fork-only surface.
+
+## 2026-09-30 - Persistent monitors: no per-session cap by default (senpi#2420)
+
+### What changed
+
+- `settings.ts` / `core/terminal-settings.ts`: new `terminal.maxDurableMonitors` setting, a positive integer or `"unlimited"` (the default). Zero, negative, non-numeric and unknown string values resolve to `"unlimited"`; a fractional number is truncated like the other integer settings.
+- `tools/monitor-manifest-binding.ts`: `durableAdmissionError` reads the resolved setting through the new optional `TerminalToolContext.maxDurableMonitors` (wired in `extension-state.ts`) instead of the removed `MAX_DURABLE_MONITORS = 5` constant in `shared.ts`. With no setting every durable create is admitted; with a number it refuses exactly as before (before any spawn or registration), and the message names the limit and the setting.
+- `prompt.ts` and `tools/monitor-schema.ts`: the model-visible text no longer claims a cap of 5; it states the default (no cap) and names the setting.
+- Unchanged: the 7-day absolute expiry (`DURABLE_MONITOR_EXPIRY_MS`), the restart re-run/rescan, the restart-report line, and the per-monitor wake and fire budgets.
+
+- Tests (`packages/coding-agent/test/suite/terminal-durable-admission.test.ts`): 12 persistent monitors are admitted with no setting; with `maxDurableMonitors: 3` the 4th is refused with no spawn and no registration; `"unlimited"`, an unknown string, zero and a negative number all behave as no cap. The ephemeral-exclusion and queued-before-bind tests now run against a configured cap of 3.
+
+### Why
+
+- Long-running orchestration sessions need more standing watches than 5 (CI settles, base-branch moves, release checks, reminders), and the fixed cap forced them to kill one watch to arm another. The owner wants no cap by default, with an opt-in limit for anyone who wants one.
+
+### Why an extension could not handle it
+
+- The cap lives inside the builtin terminal extension's own admission path (`tools/monitor-manifest-binding.ts`), which runs before any spawn or registration; another extension cannot widen or replace that check.
+
+### Expected merge conflict zones
+
+- `settings.ts` (`ResolvedTerminalSettings` and the resolver), `tools/context.ts`, `extension-state.ts` (tool-context getters), and the persistent-monitor paragraph in `prompt.ts`. Fork-only surfaces.
+
 ## 2026-09-24 - Monitor resume durability: identity leases, grace-window restores, one digest (senpi#2108)
 
 ### What changed

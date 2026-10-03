@@ -7,7 +7,7 @@
  */
 
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { ExtensionContext, QuestionResponse } from "../../src/core/extensions/types.ts";
+import type { ExtensionContext, ExtensionToolContext, QuestionResponse } from "../../src/core/extensions/types.ts";
 import { ApprovalBridge, createAppServerUIContext } from "../../src/modes/app-server/server/approvals.ts";
 import { UserInputBridge } from "../../src/modes/app-server/server/user-input-bridge.ts";
 import type { UserInputOutboundMessage } from "../../src/modes/app-server/server/user-input-types.ts";
@@ -39,7 +39,7 @@ async function askAsync(
 		{ questions: ASYNC_QUESTIONS, waitForAnswer: false },
 		undefined,
 		undefined,
-		ctx,
+		ctx as ExtensionToolContext,
 	);
 	expect(result.details).toMatchObject({ accepted: true, status: "pending" });
 	return { settled: delivery.settled(ctx, requestId) };

@@ -1,8 +1,9 @@
 import { existsSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ExtensionAPI, ExtensionContext } from "../../types.ts";
 import { resolveImageGenAuth } from "./auth.ts";
+import { imagegenSkillPath } from "./skill-path.ts";
 import { imageGenRegistryOverride } from "./state.ts";
 import { generateImageTool } from "./tool.ts";
 
@@ -36,7 +37,7 @@ async function embeddedSkillPath(): Promise<string | undefined> {
 }
 
 async function bundledSkillPath(baseDir: string): Promise<string | undefined> {
-	const skillPath = join(baseDir, "skill", "SKILL.md");
+	const skillPath = imagegenSkillPath(baseDir);
 	if (existsSync(skillPath)) return skillPath;
 	if (baseDir === IMAGEGEN_BASE_DIR) {
 		const embeddedPath = await embeddedSkillPath();

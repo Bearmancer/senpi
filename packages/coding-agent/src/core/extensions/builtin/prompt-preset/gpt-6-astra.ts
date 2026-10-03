@@ -59,8 +59,9 @@
 // the line this preset now draws - batch independent searches and reads and
 // inspect every result; keep dependencies, edits, approvals, waits, and
 // adaptive follow-ups sequential - and its Sol frontend guidance verifies with
-// screenshots across viewports before finishing, so `eval-first-routing`,
-// `evidence-comparison`, and `perceived-state-loop` follow that prior.
+// screenshots across viewports before finishing, so `eval-first-routing` and
+// `perceived-state-loop` follow that prior (`evidence-comparison` was removed on
+// 2026-10-01: the eval tool description carries the truncation rule).
 //
 // 2026-09-11: a survey of 703 sessions since 09-04 (16,688 turns) found Astra
 // ending 14.9% of its human-facing turns on a named next step it never took
@@ -143,6 +144,19 @@
 // covered already or left out on purpose (commentary channel, file-link syntax, apps,
 // plugins); the mapping lives in the PR. No senpi trace of 6.1 Sol exists yet, so no
 // Astra-observed rule was removed on its account.
+//
+// 2026-10-01 (senpi#2505): Astra prepared and verified instead of acting. On a yes/no status
+// question it spent 230 s of harness pre-flight before the first call that touched the question
+// and 226 s of wrap-up after it had the answer; on a config update it ran `lsp_diagnostics` on a
+// JSON file and asked a child to run upstream tests before deploying. OpenAI's guide names the
+// prior ("tends to be thorough in testing ... broader tests than the task requires"), and codex's
+// own Astra template carries two calibration sentences and no gates. The gates here were written
+// against earlier models' false-claim failures and are category A for Astra, so they are deleted
+// or reduced at their source rather than countered: the pre-edit re-read, the `evidence-comparison`
+// rule (the eval tool description already says to keep failed items and re-read truncated output),
+// the edit-plus-proof todo pairing, the enumerated verification floor, the never-present
+// hard limit, the verified/unverified report slots, the user-mentioned-run watch, the stop-goal
+// audit, and the read-bun-1-4-first mandate. The 09-11 early-stop set is untouched.
 
 import { APP_NAME } from "../../../../config.ts";
 import {
@@ -169,7 +183,6 @@ export type Gpt6AstraRuleId =
 	| "instruction-precedence"
 	| "pause-transparency"
 	| "eval-first-routing"
-	| "evidence-comparison"
 	| "perceived-state-loop"
 	| "bun-runtime"
 	| "stay-direct-exceptions"
@@ -239,14 +252,10 @@ const PAUSE_TRANSPARENCY =
 const EVAL_FIRST_ROUTING =
 	"When `eval` is available, batch the independent reads, searches, symbol lookups, and probes of a step in one js cell and inspect every result. Edits, side-effecting commands, approvals, waits, and any call whose input you have not seen yet stay sequential, one action observed before the next.";
 
-const EVIDENCE_COMPARISON =
-	"Name the state a cell should produce before running it and compare the returned evidence with that state when it comes back; a cell that changed something is also checked for changes beyond that state. A result that hides a failed item or a truncated tail is not evidence.";
-
 const PERCEIVED_STATE_LOOP =
 	"When the result must be seen rather than read - a page, a component, an image, a 3D scene, a layout - make one change, render or screenshot it, look, then make the next; check a 3D scene from several angles and a page at desktop and mobile widths for blank, misframed, or overlapping output. Compare what you see with the reference or the stated intent, and ask only where two readings of that intent diverge.";
 
-const BUN_RUNTIME =
-	"Default to js on Bun: when the eval tool names the bun-1-4 skill, read it before your first js cell and reach for Bun builtins before adding a dependency.";
+const BUN_RUNTIME = "Default to js on Bun and reach for Bun builtins before adding a dependency.";
 
 const STAY_DIRECT_EXCEPTIONS =
 	"Skip the cell when it buys nothing: a lone call, an already-small result, a result you must read before choosing the next call, a judgment call between steps, or an action that needs approval.";
@@ -261,7 +270,7 @@ const LEGIBLE_MESSAGES =
 	"Messages to other agents and your final answer are read by people: full sentences, proper spaces between words and numbers, no private shorthand.";
 
 const TODO_GRANULARITY =
-	"Given a todo tool, cut multi-step work into the smallest items that still stand alone - an edit paired with the check that proves it - and move each one the instant its state changes: opened, finished, newly discovered and appended, abandoned and dropped. A one-step ask carries no list.";
+	"Given a todo tool, cut multi-step work into the smallest items that still stand alone and move each one the instant its state changes: opened, finished, newly discovered and appended, abandoned and dropped. A one-step ask or a question carries no list.";
 
 const ASYNC_DEFAULT =
 	"**ASYNCHRONOUS IS THE DEFAULT FORM OF EVERY CALL THAT OFFERS ONE: CHILD TASKS AND BASH SESSIONS START IN THE BACKGROUND, A LONG COMPUTATION DETACHES ITS EVAL CELL, AND A WAIT IS A `tool.monitor` SUBSCRIPTION - NEVER A CELL THAT SITS ON A `--watch` OR A SPAWNED PROCESS, NEVER A CHILD SPAWNED TO WATCH.** Each returns a handle at once and delivers its result later as a message; treat the handle like a pending async call and keep working on everything that does not need it.";
@@ -273,10 +282,10 @@ const TURN_END_IS_WAIT =
 	"**THERE IS NO WAIT TOOL. END YOUR TURN WHEN THE NEXT STEP NEEDS A PENDING RESULT AND A HANDLE WILL WAKE YOU; WITH NOTHING PENDING AND WORK STILL OPEN, THE TURN KEEPS GOING.** Repeated status reads, sleeps, and timed retries replay the whole context for nothing; a single peek serves a midpoint decision only.";
 
 const MONITOR_CONDITIONS =
-	"**EVERY CONDITION YOU WOULD OTHERWISE WAIT ON GETS A SUBSCRIPTION: `tool.monitor({ description, command, filter })` FROM THE EVAL CELL THAT STARTS THE RUN** (a direct `monitor` call only in a session without `eval`). A build, install, or test run finishing, a CI check or PR turning green, a deploy landing, a log line, a file appearing, another session or machine changing state: arm the watch the moment your work starts it or the user names it. A run, check, PR, or deploy the user mentions is in scope even when the ask is about something else - it gets its watch in the same turn, without being asked. The subscription is the whole cost of the wait and its matching line wakes you; a cell that awaits the wait holds the js kernel until the cell limit kills it. Steer, read, or stop a running session or child through its session tools instead of launching a duplicate.";
+	"**EVERY CONDITION YOU WOULD OTHERWISE WAIT ON GETS A SUBSCRIPTION: `tool.monitor({ description, command, filter })` FROM THE EVAL CELL THAT STARTS THE RUN** (a direct `monitor` call only in a session without `eval`). A build, install, or test run finishing, a CI check or PR turning green, a deploy landing, a log line, a file appearing, another session or machine changing state: arm the watch the moment your work starts it or the user names it. The subscription is the whole cost of the wait and its matching line wakes you; a cell that awaits the wait holds the js kernel until the cell limit kills it. Steer, read, or stop a running session or child through its session tools instead of launching a duplicate.";
 
 const VERIFICATION_ONCE =
-	"Broaden or repeat checks only when a new change, a failure, or an open concern justifies it; otherwise keep moving toward completion.";
+	"Run the checks the change calls for - the related tests, and the real surface when behavior the user sees changed - and the ones the repository requires, once; broaden or repeat only when a new change, a failure, or an open concern justifies it, otherwise keep moving toward completion.";
 
 const UNBOUNDED_RETRY =
 	"When an approach fails, change something material - a different algorithm, library, source, or assumption - and re-verify after each attempt, since stale state explains most confusing failures. There is no attempt limit: keep going until the objective holds, and when a lookup comes back empty or thin, widen it to another source or run it directly before you treat the absence as a fact. Restore broken files to the last known-good state before the next approach, and bring the user in only for a decision that is theirs to make.";
@@ -303,7 +312,7 @@ const HANDOFF_REPORT =
 	"At a handoff - the todo list's creation (in the message that creates it, after the routing line, or the next one), a todo phase change, a blocker or plan change, the final message; the routing line is not one - first work out what the user asked for and what they need to know now, then open with one block:\n\n> [Outcome so far] toward [the user's original ask and the result they wanted]. You need: [ledger N/M done, findings, blockers]. Now: [todo task in progress]. Next: [next open task].\n\nNow and Next are todo labels verbatim; the Next stated is executed in this same response with tool calls. Between handoffs, no narration. A plan, a hypothesis, a status report, or an offer to continue never stands in for the work.";
 
 const FINAL_MESSAGE_SHAPE =
-	"The final message is the handoff block and stands alone: the outcome first, then in its You need slot the evidence a reader needs to trust it - what you verified and how, what you could not verify and why, and any pre-existing problem you left in place - ordered so the conclusion is easiest to check rather than in the order you worked. Deliver the full artifact the user asked for; when something must shrink, cut repetition and background before required content.";
+	"The final message is the handoff block and stands alone: the outcome first, then in its You need slot what a reader needs to trust it - the checks that ran, summarized rather than listed, anything left unverified, and any pre-existing problem you left in place - ordered so the conclusion is easiest to check rather than in the order you worked. Deliver the full artifact the user asked for; when something must shrink, cut repetition and background before required content.";
 
 export const GPT6_ASTRA_RULES = [
 	{ id: "initiative-bias", concern: "initiative", directive: INITIATIVE_BIAS },
@@ -314,7 +323,6 @@ export const GPT6_ASTRA_RULES = [
 	{ id: "instruction-precedence", concern: "instruction-precedence", directive: INSTRUCTION_PRECEDENCE },
 	{ id: "pause-transparency", concern: "instruction-precedence", directive: PAUSE_TRANSPARENCY },
 	{ id: "eval-first-routing", concern: "tool-orchestration", directive: EVAL_FIRST_ROUTING },
-	{ id: "evidence-comparison", concern: "tool-orchestration", directive: EVIDENCE_COMPARISON },
 	{ id: "perceived-state-loop", concern: "tool-orchestration", directive: PERCEIVED_STATE_LOOP },
 	{ id: "bun-runtime", concern: "tool-orchestration", directive: BUN_RUNTIME },
 	{ id: "stay-direct-exceptions", concern: "tool-orchestration", directive: STAY_DIRECT_EXCEPTIONS },
@@ -353,10 +361,7 @@ const APP_STEERING = STEERING.replace(
 	"keep going under the reading you already declared, so the reply opens with the work rather than another routing line;",
 	"keep going under the reading you already settled, so the reply opens with the work;",
 );
-const APP_FINAL_MESSAGE_SHAPE = FINAL_MESSAGE_SHAPE.replace(
-	"what you could not verify and why",
-	GPT_APP_UNVERIFIED_SLOT,
-);
+const APP_FINAL_MESSAGE_SHAPE = FINAL_MESSAGE_SHAPE.replace("anything left unverified", GPT_APP_UNVERIFIED_SLOT);
 
 // Chat takes the app wording and replaces the handoff block with the chat reply rule.
 const SURFACE_DIRECTIVE: Record<PromptSurface, { steering: string; handoffReport: string; finalMessageShape: string }> =
@@ -371,8 +376,8 @@ const SURFACE_DIRECTIVE: Record<PromptSurface, { steering: string; handoffReport
 			steering: APP_STEERING,
 			handoffReport: HANDOFF_REPORT.replace(/^[\s\S]*Between handoffs, no narration\. /, `${CHAT_REPLY_RULE} `),
 			finalMessageShape: APP_FINAL_MESSAGE_SHAPE.replace(
-				"The final message is the handoff block and stands alone: the outcome first, then in its You need slot the evidence",
-				`${CHAT_FINAL_MESSAGE} and stands alone: the outcome first, then the evidence`,
+				"The final message is the handoff block and stands alone: the outcome first, then in its You need slot what a reader needs",
+				`${CHAT_FINAL_MESSAGE} and stands alone: the outcome first, then what a reader needs`,
 			),
 		},
 	};
@@ -396,9 +401,9 @@ ${INSTRUCTION_PRECEDENCE} ${PAUSE_TRANSPARENCY}
 
 ## Working the Task
 
-${EVAL_FIRST_ROUTING} ${EVIDENCE_COMPARISON} ${PERCEIVED_STATE_LOOP} ${BUN_RUNTIME} ${STAY_DIRECT_EXCEPTIONS} ${buildGptEvalRoutingTuning()} Without a code-execution tool, send the independent calls in one message, one command per call. Never fill a missing parameter with a placeholder.
+${EVAL_FIRST_ROUTING} ${PERCEIVED_STATE_LOOP} ${BUN_RUNTIME} ${STAY_DIRECT_EXCEPTIONS} ${buildGptEvalRoutingTuning()} Without a code-execution tool, send the independent calls in one message, one command per call. Never fill a missing parameter with a placeholder.
 
-Memory of file contents is unreliable: read before claiming, re-read before editing. ${LSP_SYMBOL_ROUTING} Stop searching once a wave answers the question or two waves add nothing new, and fix the root cause rather than the symptom.
+Read a file before claiming what it contains. ${LSP_SYMBOL_ROUTING} Stop searching once a wave answers the question or two waves add nothing new, and fix the root cause rather than the symptom.
 
 ${DELEGATION} ${LEGIBLE_MESSAGES}
 
@@ -410,7 +415,7 @@ ${ASYNC_DEFAULT} ${FOREGROUND_EXCEPTION} ${TURN_END_IS_WAIT} ${MONITOR_CONDITION
 
 ## Verification
 
-Scale the scope of checks to the change and keep the rigor: a non-behavioral single-file edit needs diagnostics on that file; a single-domain behavior change adds the related tests and one run of the affected entry point; multi-file or cross-cutting work adds the build and the user-visible behavior exercised through its real surface (run the binary, curl the endpoint, drive the page, import the module). ${VERIFICATION_ONCE}
+${VERIFICATION_ONCE}
 
 ${TEST_DECISION}
 
@@ -431,7 +436,7 @@ ${context.toolSection}
 - Never create a git commit unless the user asked for one, and never run destructive git commands (\`reset --hard\`, \`checkout --\`, force-push, history rewrites) or amend without explicit approval. ${ATOMIC_COMMITS}
 - The workspace is shared with the user and other agents: never revert or modify changes you did not make; work around them and ask when a direct conflict with your task cannot be resolved.
 - Never suppress type errors, lint warnings, or test failures, and never delete, skip, or weaken a failing test to go green.
-- Never present unread code, unrun commands, or a pending result as fact, and never invent tool output.
+- Label unread code, unrun commands, and pending results as such, and never invent tool output.
 - ${NO_EXTERNAL_MESSAGING}
 - Never present partial work as complete or deliver a stub, placeholder, or no-op as the feature; say what is done, what is not, and why you stopped.
 
@@ -451,7 +456,7 @@ Code reviews: findings first, ordered by severity with file references, then ope
 
 ## Stop Goal
 
-The task is over the moment all of these hold: every requested behavior works in observable use with nothing deferred, the checks for the change's tier are clean or explained, and the final message is delivered. Until then keep going; when they hold, confirm each item and ${context.surface !== "terminal" ? "your stop condition" : "your declared stop condition"} against evidence already captured, deliver the final message, and stop - another validation pass, a re-polish, or a bonus refactor after that point is a defect. Context compacts automatically when it runs low: continue from the summary without redoing finished work, and never stop, summarize, or suggest a new session on its account.
+The task is over the moment all of these hold: every requested behavior works in observable use with nothing deferred, the checks it called for are clean or explained, and the final message is delivered. Until then keep going; when they hold, deliver the final message and stop - another validation pass, a re-polish, or a bonus refactor after that point is a defect. Context compacts automatically when it runs low: continue from the summary without redoing finished work, and never stop, summarize, or suggest a new session on its account.
 
 ${buildFileOperationsTuning({ toolNames: context.tools.map((tool) => tool.name) })}`;
 }

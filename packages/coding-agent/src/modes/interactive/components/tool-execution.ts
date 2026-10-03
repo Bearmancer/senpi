@@ -1,4 +1,4 @@
-import { Container, Spacer, type TUI } from "@earendil-works/pi-tui";
+import { Container, nextRenderRevision, Spacer, type TUI } from "@earendil-works/pi-tui";
 import { isModelOnlyText } from "../../../core/tools/model-only-text.ts";
 import { getTextOutput as getRenderedTextOutput } from "../../../core/tools/render-utils.ts";
 import { GrokToolRow } from "../grok/tool-row.ts";
@@ -69,6 +69,8 @@ export class ToolExecutionComponent extends Container {
 	private cachedSignature?: string;
 	private cachedWidth?: number;
 	private lastDisplaySignature?: string;
+	/** Changes with every state change that can alter this card's output (see `getRenderRevision`). */
+	private revision = nextRenderRevision();
 
 	constructor(
 		toolName: string,
@@ -190,6 +192,25 @@ export class ToolExecutionComponent extends Container {
 		super.invalidate();
 		this.lastDisplaySignature = undefined;
 		this.updateDisplay();
+	}
+
+	/**
+	 * A finished card renders from state that only changes through this class's setters, each of which
+	 * moves the revision. Cards still streaming arguments, running, animating, or in the grok
+	 * presentation keep rendering every frame because their output can change between setter calls.
+	 */
+	override getRenderRevision(): number | undefined {
+		if (
+			this.presentation === "grok" ||
+			this.isPartial ||
+			!this.argsComplete ||
+			this.result === undefined ||
+			this.spinnerInterval !== undefined ||
+			this.todoStrikeInterval !== undefined
+		) {
+			return undefined;
+		}
+		return this.revision;
 	}
 
 	override render(width: number): string[] {
@@ -343,5 +364,6 @@ export class ToolExecutionComponent extends Container {
 		this.cachedLines = undefined;
 		this.cachedSignature = undefined;
 		this.cachedWidth = undefined;
+		this.revision = nextRenderRevision();
 	}
 }

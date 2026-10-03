@@ -3,6 +3,9 @@ import { DEFAULT_SLOT_BLOCK_MS, MAX_SLOT_BLOCK_MS } from "@earendil-works/pi-ai/
 import { normalizeProviderError } from "@earendil-works/pi-ai/utils/error-body";
 import { getOverflowPatterns } from "@earendil-works/pi-ai/utils/overflow";
 import { extract429RetryAfterMs } from "@earendil-works/pi-ai/utils/retry-hint";
+import { rateLimitModelFamily } from "./model-scope.ts";
+import { usageLimitResetMs } from "./reset-time.ts";
+import { isAccountUsageLimitText } from "./usage-limit.ts";
 
 export const COOLDOWN_BASE_MS = DEFAULT_SLOT_BLOCK_MS;
 export const COOLDOWN_CAP_MS = MAX_SLOT_BLOCK_MS;
@@ -11,7 +14,13 @@ export const RETRY_SAME_MAX_ATTEMPTS = 2;
 export type CredentialBlock =
 	| { reason: "auth_error" }
 	| { reason: "account_disabled" }
-	| { reason: "rate_limit"; cooldownMs: number; retryAfterWasCapped: boolean };
+	| {
+			reason: "rate_limit";
+			cooldownMs: number;
+			retryAfterWasCapped: boolean;
+			/** Set when the limit names the one model family it binds ("Fable limit"). */
+			modelFamily?: string;
+	  };
 
 export type CredentialAction =
 	| { kind: "failover"; block: CredentialBlock }
@@ -76,7 +85,7 @@ function isOverflowText(text: string): boolean {
  */
 export function classifyCredentialFailure(
 	error: unknown,
-	context: { failureCount?: number; cooldownBaseMs?: number; cooldownCapMs?: number } = {},
+	context: { failureCount?: number; cooldownBaseMs?: number; cooldownCapMs?: number; nowMs?: number } = {},
 ): CredentialAction {
 	const normalized = normalizeProviderError(error);
 	const text = normalized.messageCarriesBody ? normalized.message : `${normalized.message} ${normalized.body ?? ""}`;
@@ -102,11 +111,19 @@ export function classifyCredentialFailure(
 	if (status === 402 || BILLING_TEXT.test(text)) {
 		return { kind: "failover", block: { reason: "account_disabled" } };
 	}
-	if (status === 429 || RATE_LIMIT_TEXT.test(text)) {
-		const hint = extract429RetryAfterMs({
-			status: status ?? 429,
-			bodyText: text,
-		});
+	// Subscription usage limits often arrive as prose with no status (#1768).
+	// Overflow prose is excluded here because this branch runs before the
+	// overflow branch below.
+	const usageLimit = isAccountUsageLimitText(text) && !isOverflowText(text);
+	if (status === 429 || RATE_LIMIT_TEXT.test(text) || usageLimit) {
+		const nowMs = context.nowMs ?? Date.now();
+		// A spent account is out until its reset time, so that time (a reset
+		// header, a reset field or reset prose) floors its cooldown; without one,
+		// the default cooldown stands. Plain rate limits keep today's hint only.
+		const hint =
+			extract429RetryAfterMs({ status: status ?? 429, bodyText: text }, nowMs) ??
+			(usageLimit ? (normalized.retryAfterMs ?? usageLimitResetMs(text, nowMs)) : undefined);
+		const modelFamily = rateLimitModelFamily(text);
 		return {
 			kind: "failover",
 			block: {
@@ -115,6 +132,7 @@ export function classifyCredentialFailure(
 					baseMs: context.cooldownBaseMs,
 					capMs: context.cooldownCapMs,
 				}),
+				...(modelFamily === undefined ? {} : { modelFamily }),
 			},
 		};
 	}

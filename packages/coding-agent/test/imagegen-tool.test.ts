@@ -1,6 +1,12 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { AssistantImages, ImagesContext, ImagesModel, ProviderImagesOptions } from "@earendil-works/pi-ai/compat";
+import type {
+	AssistantImages,
+	ImageApi,
+	ImageModel,
+	ImagesContext,
+	ProviderImagesOptions,
+} from "@earendil-works/pi-ai/compat";
 import { registerImagesApiProvider, unregisterImagesApiProviders } from "@earendil-works/pi-ai/compat";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { setImageGenRegistry, setNativeBypass } from "../src/core/extensions/builtin/imagegen/state.ts";
@@ -18,7 +24,7 @@ const harnesses: Harness[] = [];
 
 function registerStubImagesProvider() {
 	const controller = {
-		calls: [] as Array<{ model: ImagesModel<"openai-images">; options?: ProviderImagesOptions }>,
+		calls: [] as Array<{ model: ImageModel<ImageApi>; options?: ProviderImagesOptions }>,
 		images: 1,
 		revisedPrompts: [] as string[],
 		usage: undefined as AssistantImages["usage"],
@@ -29,7 +35,7 @@ function registerStubImagesProvider() {
 		{
 			api: "openai-images" as const,
 			async generateImages(
-				model: ImagesModel<"openai-images">,
+				model: ImageModel<ImageApi>,
 				_context: ImagesContext,
 				options?: ProviderImagesOptions,
 			): Promise<AssistantImages> {

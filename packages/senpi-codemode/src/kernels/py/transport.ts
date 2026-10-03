@@ -23,8 +23,8 @@ import {
 	splitCommand,
 	sweepProcessGroup,
 	waitForExit,
-	withTimeout,
 } from "./process.ts";
+import { PythonStartup, type PythonStartupStage } from "./startup.ts";
 
 export type PythonTransportResult = Extract<KernelToHostMessage, { type: "result" }>;
 
@@ -44,6 +44,7 @@ export interface PythonTransportOptions {
 	/** Per-session PI_* values merged into the interpreter environment at spawn. */
 	readonly sessionEnv?: SessionEnvironment;
 	readonly startupTimeoutMs: number;
+	readonly onStartupProgress?: (stage: PythonStartupStage) => void;
 	readonly memory?: KernelMemoryThresholds;
 	readonly onMessage?: (message: KernelToHostMessage) => void;
 	readonly spawnProcess?: KernelSpawnProcess;
@@ -73,7 +74,7 @@ export class PythonKernelTransport {
 	readonly #child: KernelChild;
 	#stdoutBuffer = "";
 	#stderrTail = "";
-	#settleReady: ((error?: Error) => void) | null = null;
+	#startup: PythonStartup | null = null;
 	#detachChildListeners: (() => void) | null = null;
 	#active = true;
 	#exited = false;
@@ -173,9 +174,8 @@ export class PythonKernelTransport {
 	}
 
 	async #initialize(): Promise<void> {
-		const ready = new Promise<void>((resolve, reject) => {
-			this.#settleReady = (error) => (error ? reject(error) : resolve());
-		});
+		const startup = new PythonStartup(this.#options.startupTimeoutMs, () => this.#stderrTail);
+		this.#startup = startup;
 		const onStdout = (chunk: unknown) => this.#onStdout(String(chunk));
 		const onStderr = (chunk: unknown) => this.#onStderr(String(chunk));
 		const onError = (error: unknown) => this.#onError(error instanceof Error ? error : new Error(String(error)));
@@ -192,7 +192,7 @@ export class PythonKernelTransport {
 		this.#child.on("exit", onExit);
 		const { sessionId, connection, memory } = this.#options;
 		this.#write({ type: "init", sessionId, connection, ...(memory === undefined ? {} : { memory }) });
-		await withTimeout(ready, this.#options.startupTimeoutMs, "Python kernel did not become ready");
+		await startup.ready;
 	}
 
 	#write(message: HostToKernelMessage): void {
@@ -225,6 +225,11 @@ export class PythonKernelTransport {
 		}
 		if (!isKernelToHostMessage(decoded.message)) return;
 		const message = decoded.message;
+		if (message.type === "status" && message.event.op === "kernel-startup") {
+			const stage = this.#startup?.progress(message);
+			if (stage !== undefined) this.#options.onStartupProgress?.(stage);
+			return;
+		}
 		if (message.type === "ready") this.#settleStartup();
 		else if (message.type === "init-failed") this.#settleStartup(new Error(message.error.message));
 		else if (message.type === "result") this.#options.onResult(this, message);
@@ -258,11 +263,7 @@ export class PythonKernelTransport {
 	}
 
 	#settleStartup(error?: Error): boolean {
-		const settle = this.#settleReady;
-		if (!settle) return false;
-		this.#settleReady = null;
-		settle(error);
-		return true;
+		return this.#startup?.settle(error) ?? false;
 	}
 }
 

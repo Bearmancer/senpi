@@ -22,7 +22,6 @@ import {
 } from "./host-daemon-paths.ts";
 import {
 	clearHostRegistration,
-	legacyHostIsLive,
 	type RegisteredHost,
 	readHostRegistration,
 	writeHostRegistration,
@@ -41,6 +40,7 @@ import {
 import { hostEnsureLockOptions, hostEnsureLockTarget } from "./host-ensure-lock.ts";
 import { HANDOFF_LOCK_HOLD_MS, handoffHostLocked } from "./host-handoff.ts";
 import { defaultHostLaunch, PINNED_HOST_CLIENT_CAPABILITIES } from "./host-launch.ts";
+import { retireIdleLegacyHost } from "./host-legacy.ts";
 import { DEFAULT_HOST_IDLE_EXIT_MS, type HostColdStart, type HostLifecyclePolicyInput } from "./host-lifecycle.ts";
 import { holdProtocolInfo, probeSocketReachable } from "./host-probe.ts";
 import { isHostGenerationProcess } from "./host-process-role.ts";
@@ -223,9 +223,14 @@ async function ensureHostLocked(
 		}
 	}
 	// A host from before this layout registered itself in the FLAT directory. Its files are another
-	// process's state: never read as ours, never signalled, never removed - and while it is alive,
-	// this ensure refuses instead of binding a socket it may still be serving.
-	if (await legacyHostIsLive(paths, probe)) throw new HostEnsureRefusedError(socket, "legacy_host", protocol);
+	// process's state: never read as ours, never removed. While it is alive this ensure never starts
+	// beside it: an idle one is drained and waited out (#2423), a busy or unprovable one is refused.
+	const legacyRefusal = await retireIdleLegacyHost(
+		paths,
+		probe,
+		testOptions?.stopTimeoutMs ?? DEFAULT_STOP_TIMEOUT_MS,
+	);
+	if (legacyRefusal !== undefined) throw new HostEnsureRefusedError(socket, "legacy_host", protocol, legacyRefusal);
 	if (stranded !== undefined) return startHost(paths, socket, options, stranded.generation + 1);
 	if (registeredHere) await clearHostRegistration(paths);
 	return startHost(paths, socket, options);

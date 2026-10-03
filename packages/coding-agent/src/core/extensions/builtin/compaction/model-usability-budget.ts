@@ -1,4 +1,4 @@
-import { type Api, estimateContextTokens, type Model, type Tool } from "@earendil-works/pi-ai";
+import { type Api, estimateContextTokens, type Model, normalizeContext, type Tool } from "@earendil-works/pi-ai";
 import { type CompactionPreparation, DEFAULT_COMPACTION_SETTINGS } from "../../../compaction/index.ts";
 import { getPromptContextWindow } from "./extension-wiring.ts";
 import { resolveCompactionGeometry } from "./orchestration.ts";
@@ -89,16 +89,12 @@ export function projectModelUsabilityBudget<TApi extends Api>(
 	input: ModelUsabilityBudgetInput<TApi>,
 ): ModelUsabilityBudgetProjection {
 	const liveContextTokens = input.liveContextTokens ?? 0;
-	const systemPromptTokens = estimateContextTokens({
-		systemPrompt: input.systemPrompt,
-		messages: [],
-		tools: [],
-	}).tokens;
-	const promptAndToolsTokens = estimateContextTokens({
-		systemPrompt: input.systemPrompt,
-		messages: [],
-		tools: [...input.tools],
-	}).tokens;
+	const systemPromptTokens = estimateContextTokens(
+		normalizeContext({ systemPrompt: input.systemPrompt, messages: [], tools: [] }),
+	).tokens;
+	const promptAndToolsTokens = estimateContextTokens(
+		normalizeContext({ systemPrompt: input.systemPrompt, messages: [], tools: [...input.tools] }),
+	).tokens;
 	const activeToolSchemaTokens = promptAndToolsTokens - systemPromptTokens;
 	const outputReserveTokens =
 		input.model.contextWindow - getPromptContextWindow(input.model.contextWindow, input.model.maxTokens);

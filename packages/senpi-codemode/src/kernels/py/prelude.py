@@ -1,6 +1,13 @@
 from __future__ import annotations
 
 # noqa: SIZE_OK — this dependency-free subprocess prelude must ship as one file.
+import sys
+
+# Emit before importing the stdlib graph: a cold interpreter can still be making
+# progress after the former five-second total startup deadline.
+sys.__stdout__.write('{"type":"status","event":{"op":"kernel-startup","stage":"stdlib-imports"}}\n')
+sys.__stdout__.flush()
+
 import ast
 import asyncio  # noqa: ANYIO_OK — stdlib-only embedded kernel runner.
 import base64
@@ -15,7 +22,6 @@ import os
 import re
 import signal
 import subprocess
-import sys
 import time
 import traceback
 import types
@@ -28,6 +34,9 @@ from pathlib import Path
 from threading import Lock, Thread
 from typing import Any, Callable, Union
 from urllib.parse import unquote
+
+sys.__stdout__.write('{"type":"status","event":{"op":"kernel-startup","stage":"runtime-init"}}\n')
+sys.__stdout__.flush()
 
 CONNECTION: dict[str, Any] = {}
 USER_NS: dict[str, Any] = {"__name__": "__main__", "__doc__": None, "__builtins__": __builtins__}
@@ -1463,6 +1472,7 @@ def _start_parent_watch() -> None:
 
 
 def main() -> None:
+    emit_status("kernel-startup", force=True, stage="host-init")
     signal.signal(signal.SIGINT, signal.SIG_IGN)
     _start_parent_watch()
     host_closed = False

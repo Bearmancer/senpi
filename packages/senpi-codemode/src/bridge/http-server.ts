@@ -49,6 +49,7 @@ export async function startBridgeServer(options: BridgeServerOptions): Promise<B
 	const server = createServer((request, response) => {
 		void handleRequest(request, response, token, options);
 	});
+	globalThis.__senpiCodemodeGateObserveResource?.("handles", server, "close");
 	server.on("connection", (socket) => {
 		sockets.add(socket);
 		socket.on("close", () => sockets.delete(socket));

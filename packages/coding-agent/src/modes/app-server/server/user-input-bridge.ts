@@ -109,7 +109,7 @@ export class UserInputBridge {
 			this.finish(response.id, pending.state.cancel());
 			return true;
 		}
-		const submitted = pending.state.submit(draft.answers, draft.comment);
+		const submitted = pending.state.submit(draft.answers, draft.comment, "rpc_connection");
 		if (submitted) this.finish(response.id, submitted);
 		else {
 			// A submit may intentionally leave questions unanswered; it is not a draft.
@@ -117,7 +117,10 @@ export class UserInputBridge {
 			const hasAnswer = Object.values(draft.answers).some(
 				(answer) => answer.selected.length > 0 || answer.text?.trim(),
 			);
-			this.finish(response.id, hasAnswer ? { ...cancelled, status: "answered" } : cancelled);
+			this.finish(
+				response.id,
+				hasAnswer ? { ...cancelled, status: "answered", resolvedBy: "rpc_connection" } : cancelled,
+			);
 		}
 		return true;
 	}

@@ -1,0 +1,64 @@
+{
+ "version": 1,
+ "nodes": {
+  "1": {
+   "additions": [],
+   "reason": "The initial harness preserves the merge-base surfaces without additive production changes."
+  },
+  "32": {
+   "additions": [
+    "legacyContracts/test/js-kernel-shell-stop-bun.test.ts/Bun shell Stop reports state loss when Stop interrupts a native shell wait",
+    "legacyContracts/test/js-kernel-shell-stop-bun.test.ts/Bun shell Stop reports state loss when Stop interrupts a native text wait",
+    "legacyContracts/test/js-kernel-shell-stop-bun.test.ts/Bun shell Stop reports state loss when Stop interrupts a native lines wait",
+    "legacyContracts/test/js-kernel-shell-stop-bun.test.ts/Bun shell Stop reports state loss when Stop interrupts a native late wait",
+    "legacyContracts/test/js-kernel-shell-stop-bun.test.ts/Bun shell Stop keeps globals without a shell restart notice when Stop interrupts a normal await",
+    "legacyContracts/test/js-kernel-shell-stop-bun.test.ts/Bun shell Stop keeps normal shell output and globals when the cell finishes",
+    "legacyContracts/test/js-kernel-shell-stop-bun.test.ts/Bun shell Stop cleans up when the shell exits before connecting"
+   ],
+   "reason": "Lead decision A (2026-10-01), node 32: add event-ordered shell restart notice and preservation witnesses without changing default prompts, schemas, helpers, or native shell semantics."
+  },
+  "senpi#2444": {
+   "additions": [
+    "legacyContracts/test/eval-schema-required-fields.test.ts/eval action schemas preserves valid runs and controls through provider schema conversions",
+    "legacyContracts/test/eval-schema-required-fields.test.ts/eval action schemas keeps every root anyOf branch free of enum in each provider's wire schema",
+    "legacyContracts/test/eval-schema-required-fields.test.ts/eval action schemas falls back from preferred OpenAI strict sampling without requiring run fields on controls",
+    "legacyContracts/test/eval-schema-required-fields.test.ts/eval action schemas requires every run field with an explicit or omitted action",
+    "legacyContracts/test/eval-schema-required-fields.test.ts/eval action schemas keeps list, peek and stop usable without run fields",
+    "legacyContracts/test/eval-schema-required-fields.test.ts/eval action schemas declares every required field inside the branch that requires it"
+   ],
+   "reason": "Reviewed with senpi#2444 (fixes #2240 and #2569): contract tests for the self-contained, const-typed eval action branches, including the gateway-safe no-enum-in-root-anyOf check. The intended eval schema change is recorded in baseline.json in the same PR."
+  },
+  "senpi#2557": {
+   "additions": [
+    "legacyContracts/test/eval-display-image-check.test.ts/eval display image validation Given image data with a length that is not a multiple of four when displayed then no image block is kept and the output says why",
+    "legacyContracts/test/eval-display-image-check.test.ts/eval display image validation Given image data with a non-base64 character when displayed then no image block is kept and the output says why",
+    "legacyContracts/test/eval-display-image-check.test.ts/eval display image validation Given image data with a truncation marker appended when displayed then no image block is kept and the output says why",
+    "legacyContracts/test/eval-display-image-check.test.ts/eval display image validation Given image data with no data when displayed then no image block is kept and the output says why",
+    "legacyContracts/test/eval-display-image-check.test.ts/eval display image validation Given image data with padding in the middle when displayed then no image block is kept and the output says why",
+    "legacyContracts/test/eval-display-image-check.test.ts/eval display image validation Given image/gif declared over data whose signature is R0lGODlh when displayed then the detected type is kept",
+    "legacyContracts/test/eval-display-image-check.test.ts/eval display image validation Given image/jpeg declared over data whose signature is /9j/4A== when displayed then the detected type is kept",
+    "legacyContracts/test/eval-display-image-check.test.ts/eval display image validation Given image/jpeg declared over data whose signature is iVBORw0KGgo= when displayed then the detected type is kept",
+    "legacyContracts/test/eval-display-image-check.test.ts/eval display image validation Given image/png declared over data whose signature is UklGRgAAAABXRUJQ when displayed then the detected type is kept",
+    "legacyContracts/test/eval-display-image-check.test.ts/eval display image validation Given image/png declared over data whose signature is iVBORw0KGgo= when displayed then the detected type is kept",
+    "legacyContracts/test/eval-display-image-check.test.ts/eval display image validation Given valid base64 of a BMP signature when displayed as an image then it is dropped with a clear reason",
+    "legacyContracts/test/eval-display-image-check.test.ts/eval display image validation Given valid base64 of a JPEG-LS signature when displayed as an image then it is dropped with a clear reason",
+    "legacyContracts/test/eval-display-image-check.test.ts/eval display image validation Given valid base64 of plain text bytes when displayed as an image then it is dropped with a clear reason",
+    "legacyContracts/test/eval-display-image-check.test.ts/eval display image validation Given valid base64 of zero bytes when displayed as an image then it is dropped with a clear reason",
+    "legacyContracts/test/eval-display-image-check.test.ts/eval display image validation Given wrapped base64 when displayed then the line breaks are dropped and the image is kept",
+    "legacyContracts/test/upstream-v1-codemode-parity.test.ts/Windows Bun binary worker path inline worker entry under a Windows B:\\~BUN virtual path resolves to the on-disk sidecar",
+    "legacyContracts/test/upstream-v1-codemode-parity.test.ts/Windows Bun binary worker path worker entry under a Windows B:\\~BUN virtual path resolves to the on-disk sidecar",
+    "legacyContracts/test/upstream-v1-codemode-parity.test.ts/collapsed preview counts wrapped lines one long JSON line does not fill the screen when collapsed"
+   ],
+   "reason": "senpi#2557 (upstream v1.0.0 sync), lead+release-senpi approved: new tests from the sync only. The eval display-image validation tests cover the ported upstream fix d2931ad3d (invalid base64 dropped, detected type kept); the parity tests cover upstream v1.0.0 behaviours the fork already has (Windows Bun worker path, wrapped-line preview). No prompt, schema, invariant, census or import change, and no existing contract changed."
+  },
+  "29": {
+   "additions": [
+    "legacyContracts/test/js-kernel-webview-readiness.test.ts/a Chrome launch that never becomes ready retires the stalled launch and answers the create from a fresh Chrome",
+    "legacyContracts/test/js-kernel-webview-readiness.test.ts/a Chrome launch that never becomes ready fails the create naming the phase, with no Chrome left, once every launch stalled",
+    "legacyContracts/test/js-kernel-webview-readiness.test.ts/a Chrome launch that never becomes ready keeps another kernel's ready view on the shared Chrome while a stalled create fails",
+    "legacyContracts/test/js-kernel-webview-readiness.test.ts/a Chrome launch that never becomes ready does not relaunch for a client released while its launch stalls, and leaves no Chrome behind"
+   ],
+   "reason": "Node 29 (senpi#2353): RED/GREEN regressions for a Chrome-backed WebView launch whose CDP attach never completes (bounded readiness, retire, one relaunch, sibling views kept). No prompt, schema, helper, or default changes."
+  }
+ }
+}

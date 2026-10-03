@@ -1,4 +1,10 @@
-import { type AgentToolResult, type ExtensionContext, kernelToolsStorage } from "@code-yeongyu/senpi";
+import { AsyncResource } from "node:async_hooks";
+import {
+	type AgentToolResult,
+	type ExtensionContext,
+	type ExtensionToolContext,
+	kernelToolsStorage,
+} from "@code-yeongyu/senpi";
 import { afterEach, describe, expect, it } from "vitest";
 import type { KernelToHostMessage } from "../src/bridge/protocol.ts";
 import { JavaScriptKernel } from "../src/kernels/js/context-manager.ts";
@@ -22,7 +28,7 @@ type HostObservation = {
  * `kernelToolsStorage.getStore()` in packages/coding-agent/src/core/extensions/runner.ts, resolved
  * when a tool's `execute` touches it.
  */
-function hostContext(): ExtensionContext {
+function hostContext(): ExtensionToolContext {
 	return {
 		...fakeExtensionContext(),
 		get kernelTools() {
@@ -209,6 +215,9 @@ describe("kernel tools on the real worker tool-call path", () => {
 			{ type: "tool-call", callId: "py-1", toolName: "probe", args: { phase: "py" } },
 			result("kernel-tools-host-dispatch-py", "done"),
 		]);
+		const workerContext = new AsyncResource("non-js-worker");
+		const run = kernel.run.bind(kernel);
+		kernel.run = (...args) => workerContext.runInAsyncScope(run, kernel, ...args);
 		const ctx = hostContext();
 		const observations: HostObservation[] = [];
 		const executeTool = async (_toolName: string, params: unknown): Promise<AgentToolResult<unknown>> => {
@@ -223,17 +232,26 @@ describe("kernel tools on the real worker tool-call path", () => {
 			executeTool,
 		});
 
-		const cell = await tool.execute(
-			"kernel-tools-host-dispatch-py",
+		const cell = await kernelToolsStorage.run(
 			{
-				language: "py",
-				code: "tool.probe(phase='py')",
-				summary: "call a host tool from a python cell",
+				capabilities: { invokeScope: true },
+				describe: async () => undefined,
+				invoke: async () => undefined,
 			},
-			undefined,
-			undefined,
-			ctx,
+			() =>
+				tool.execute(
+					"kernel-tools-host-dispatch-py",
+					{
+						language: "py",
+						code: "tool.probe(phase='py')",
+						summary: "call a host tool from a python cell",
+					},
+					undefined,
+					undefined,
+					ctx,
+				),
 		);
+		workerContext.emitDestroy();
 
 		expect(observations).toEqual([{ phase: "py", kernelToolsDefined: false }]);
 		expect(cell.details.toolCalls[0]).toMatchObject({ name: "probe", ok: true });

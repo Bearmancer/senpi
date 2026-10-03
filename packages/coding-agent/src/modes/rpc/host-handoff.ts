@@ -53,7 +53,14 @@ export interface HandoffHostOptions {
 	readonly hostArgs?: readonly string[];
 	/** Environment for the successor; a `null` value removes an inherited variable. */
 	readonly env?: Readonly<Record<string, string | null>>;
+	/** The runtimeBuildId the successor must compute; set on its environment, never inherited by later daemons. */
+	readonly expectedRuntimeBuildId?: string;
 	readonly policy?: HostLifecyclePolicyInput;
+	/**
+	 * How the successor is launched from supervisor argv. Defaults to THIS process's runtime; a
+	 * running host performing an idle handover passes the runtime of the CLI that asked for it.
+	 */
+	readonly launch?: (args: readonly string[]) => { command: string; args: readonly string[] };
 	readonly _test?: {
 		readonly readinessTimeoutMs?: number;
 		/** Builds the spawnable command from supervisor argv; tests point it at the source entry. */
@@ -62,6 +69,8 @@ export interface HandoffHostOptions {
 		readonly beforeSpawn?: () => Promise<void>;
 		/** Runs once the successor is spawned and its generation recorded, before its answer is awaited. */
 		readonly afterSpawn?: (pid: number) => Promise<void>;
+		/** Runs once the successor answered on the public socket, before the pointer is moved onto it. */
+		readonly beforeRegistration?: () => Promise<void>;
 		readonly platform?: NodeJS.Platform;
 	};
 }

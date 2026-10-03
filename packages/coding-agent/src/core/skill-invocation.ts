@@ -174,12 +174,22 @@ function stripLeadingInvocationSeparators(text: string): string {
 	return text.slice(cursor);
 }
 
-export function removeSkillInvocationTokens(text: string, tokens: readonly SkillInvocationToken[]): string {
+/**
+ * Remove expanded invocation tokens, leaving `[skill: name]` where an inline one stood. Tokens in
+ * `unloaded` were not expanded (per-prompt cap) and leave `[skill not loaded: name]` in either position,
+ * so the model is told it does not have that skill instead of seeing a bare command.
+ */
+export function removeSkillInvocationTokens(
+	text: string,
+	tokens: readonly SkillInvocationToken[],
+	unloaded: ReadonlySet<SkillInvocationToken> = new Set(),
+): string {
 	let cursor = 0;
 	let result = "";
 	for (const token of tokens) {
 		result += text.slice(cursor, token.start);
-		if (token.position === "inline") result += `[skill: ${token.name}]`;
+		if (unloaded.has(token)) result += `[skill not loaded: ${token.name}]`;
+		else if (token.position === "inline") result += `[skill: ${token.name}]`;
 		cursor = token.end;
 		if (
 			token.position === "inline" &&
@@ -193,5 +203,8 @@ export function removeSkillInvocationTokens(text: string, tokens: readonly Skill
 	return tokens.some((token) => token.position === "leading") ? stripLeadingInvocationSeparators(result) : result;
 }
 
-/** Caps explicit skill expansion so one prompt cannot consume unbounded context. */
+/**
+ * Default cap on explicit skill expansion so one prompt cannot consume unbounded context.
+ * Users who compose more skills raise it with the `maxSkillExpansionsPerPrompt` setting.
+ */
 export const MAX_SKILL_EXPANSIONS_PER_PROMPT = 5;

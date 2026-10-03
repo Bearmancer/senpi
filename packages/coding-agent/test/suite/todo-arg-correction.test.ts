@@ -3,7 +3,7 @@
 
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { type Tool, validateToolArguments } from "@earendil-works/pi-ai";
+import { type JsonObject, type Tool, validateToolArguments } from "@earendil-works/pi-ai";
 import type { Static } from "typebox";
 import { describe, expect, it } from "vitest";
 import {
@@ -17,6 +17,7 @@ import type {
 	AgentToolResult,
 	ExtensionAPI,
 	ExtensionContext,
+	ExtensionToolContext,
 	ToolDefinition,
 } from "../../src/core/extensions/types.ts";
 
@@ -140,7 +141,13 @@ async function executeTodo(
 	context: ExtensionContext,
 ): Promise<AgentToolResult<TodoToolDetails>> {
 	if (!tool.execute) throw new Error("Expected todo execute");
-	return tool.execute("todo-arg-correction", rawArgs as TodoParams, undefined, undefined, context);
+	return tool.execute(
+		"todo-arg-correction",
+		rawArgs as TodoParams,
+		undefined,
+		undefined,
+		context as ExtensionToolContext,
+	);
 }
 
 async function executeError(
@@ -272,7 +279,7 @@ describe("todo argument correction fixture replay", () => {
 					type: "toolCall",
 					id: fixture.id,
 					name: "todo",
-					arguments: fixture.raw_args,
+					arguments: fixture.raw_args as JsonObject,
 				}),
 			).toThrow("op: must be equal to constant");
 			expect(captured.getCurrentPhases()).toEqual([]);

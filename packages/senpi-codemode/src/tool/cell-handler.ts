@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import {
 	type AgentToolResult,
 	type ExtensionContext,
@@ -54,11 +55,18 @@ export class CellHandler {
 	readonly #state: CellState;
 	readonly #runtime: CellBridgeRuntime;
 	readonly #resultBuilder: CellResultBuilder;
+	readonly #dispatchContext: ReturnType<typeof AsyncLocalStorage.snapshot>;
 
 	constructor(kernel: EvalKernel, state: CellState, runtime: CellBridgeRuntime) {
 		this.#kernel = kernel;
 		this.#state = state;
 		this.#runtime = runtime;
+		// Construct in the submitting cell's host context; worker callbacks cannot supply it (#2512).
+		// Bind this cell's capability once; undefined clears any enclosing JS grant for non-JS cells.
+		this.#dispatchContext =
+			runtime.kernelTools === undefined
+				? kernelToolsStorage.exit(() => AsyncLocalStorage.snapshot())
+				: kernelToolsStorage.run(runtime.kernelTools, () => AsyncLocalStorage.snapshot());
 		const settings = runtime.settings.outputSink;
 		this.#resultBuilder = new CellResultBuilder({
 			state,
@@ -89,7 +97,8 @@ export class CellHandler {
 				this.#resultBuilder.display(message);
 				return;
 			case "tool-call": {
-				const pending = this.#dispatchToolCall(message);
+				// A retained worker carries its creation context, not this cell's RPC connection.
+				const pending = this.#dispatchContext(() => this.#handleToolCall(message));
 				this.#state.pendingBridgeCalls.push(pending);
 				await pending;
 				return;
@@ -120,19 +129,6 @@ export class CellHandler {
 
 	liveResult(): AgentToolResult<EvalToolDetails> {
 		return this.#resultBuilder.liveResult();
-	}
-
-	/**
-	 * The worker's message loop fires outside the async context `run-eval-cell.ts` enters around the
-	 * awaited run chain, so the capability has to be entered here — around the whole dispatch, including
-	 * the reserved agent()/output() bridges where a host task tool resolves the parent's kernel tools —
-	 * for exactly the duration of each host tool call this cell makes (#1754). Without a capability
-	 * (py/rb/jl) the store stays empty and `ctx.kernelTools` remains undefined.
-	 */
-	async #dispatchToolCall(message: Extract<KernelToHostMessage, { type: "tool-call" }>): Promise<void> {
-		const kernelTools = this.#runtime.kernelTools;
-		if (kernelTools === undefined) return await this.#handleToolCall(message);
-		return await kernelToolsStorage.run(kernelTools, async () => await this.#handleToolCall(message));
 	}
 
 	async #handleToolCall(message: Extract<KernelToHostMessage, { type: "tool-call" }>): Promise<void> {

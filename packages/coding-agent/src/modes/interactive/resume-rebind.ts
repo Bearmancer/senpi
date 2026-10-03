@@ -17,10 +17,11 @@ function sharedSessionDir(source: SessionScopeSource): { readonly sessionDir?: s
 export function currentScopeSessions(
 	source: SessionScopeSource,
 	onProgress?: SessionListProgress,
+	signal?: AbortSignal,
 ): Promise<SessionInfo[]> {
 	const cwd = source.getCwd();
 	return withMovedSessions(
-		SessionManager.list(cwd, source.getSessionDir(), onProgress),
+		SessionManager.list(cwd, source.getSessionDir(), onProgress, signal),
 		cwd,
 		sharedSessionDir(source),
 	);
@@ -29,10 +30,11 @@ export function currentScopeSessions(
 export async function allScopeSessions(
 	source: SessionScopeSource,
 	onProgress?: SessionListProgress,
+	signal?: AbortSignal,
 ): Promise<SessionInfo[]> {
 	const sessions = source.usesDefaultSessionDir()
-		? await SessionManager.listAll(onProgress)
-		: await SessionManager.listAll(source.getSessionDir(), onProgress);
+		? await SessionManager.listAll(onProgress, signal)
+		: await SessionManager.listAll(source.getSessionDir(), onProgress, signal);
 	return markMovedSessions(sessions, source.getCwd());
 }
 
