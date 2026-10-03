@@ -1,5 +1,24 @@
 # TUI delta rendering fork changes
 
+## 2026-10-02 - Frame-line byte accounting for the memory report (senpi#1960)
+
+### What changed
+
+- `packages/tui/src/tui.ts`: `TuiBase.setPreviousLines` maintains a process-global frame-line byte total (`senpi.tui.frame-line-bytes`), released on stop/forced reset; `frameLineBytesTotals()` reports the sum over live TUIs.
+- `packages/tui/src/index.ts`: exports `frameLineBytesTotals` and `FrameLineBytesTotals`.
+
+### Why
+
+- senpi#1960: the TUI holds the whole frame in `previousLines` for the differential pass, so a long session's transcript cost lives there. Making it measurable lets the memory report attribute the growth; no eviction is added (the terminal has no per-card visibility to evict on).
+
+### Why an extension could not handle it
+
+- Frame retention is renderer-internal; only the renderer can measure it without changing render output.
+
+### Expected merge conflict zones
+
+- LOW: additive module-level counter and the accounting inside `setPreviousLines`; no render-path behavior changes.
+
 ## 2026-10-01 - Bound the line normalization memo (senpi#2508)
 
 ### What changed
