@@ -6,6 +6,7 @@ import { Type } from "typebox";
 import { Check } from "typebox/value";
 import { type CodemodeFeatureSettings, featureSettingsProperties, pickFeatureSettings } from "./feature-settings.ts";
 import { type CodemodeMemorySettings, memorySettingsSchema, validatedMemorySettings } from "./memory-settings.ts";
+import { DEFAULT_MAX_DETACHED_CELLS } from "./settings-constants.ts";
 import { withoutUnknownTopLevelKeys } from "./unknown-settings.ts";
 
 export const codemodeSettingsSchema = Type.Object(
@@ -124,8 +125,6 @@ export interface LoadedCodemodeSettings {
  */
 export const DEFAULT_HARD_LIMIT_SECONDS = 1800;
 
-export const HARD_LIMIT_ENVIRONMENT_FLAG = "SENPI_CODEMODE_HARD_LIMIT_SECONDS";
-
 /**
  * Bash parity: `terminal/tools/foreground-window.ts` auto-detaches a still-running bash command to a
  * background session at 60s regardless of its `timeout` kill deadline. An eval cell gets the same
@@ -134,19 +133,12 @@ export const HARD_LIMIT_ENVIRONMENT_FLAG = "SENPI_CODEMODE_HARD_LIMIT_SECONDS";
  */
 export const DEFAULT_FOREGROUND_WINDOW_SECONDS = 60;
 
-export const FOREGROUND_WINDOW_ENVIRONMENT_FLAG = "SENPI_CODEMODE_FOREGROUND_SECONDS";
-
 /**
  * One language kernel runs one cell at a time and a killed JavaScript cell that cannot settle
  * cooperatively restarts its worker, so a runaway cell costs far more than a runaway bash command:
  * five minutes of own execution time is the default before the cell is killed.
  */
 export const DEFAULT_RUN_BUDGET_SECONDS = 300;
-
-export const DEFAULT_MAX_DETACHED_CELLS = 15;
-
-export const RUN_BUDGET_ENVIRONMENT_FLAG = "SENPI_CODEMODE_RUN_BUDGET_SECONDS";
-export const MAX_DETACHED_CELLS_ENVIRONMENT_FLAG = "SENPI_CODEMODE_MAX_DETACHED_CELLS";
 
 // OMP settings-schema.ts:3211-3299 has language/path settings only; eval.ts:427
 // defaults timeout to 30s, and codemode pins concurrency-bridge.ts:30 width to 4.
@@ -174,8 +166,6 @@ export const defaultCodemodeSettings: ResolvedCodemodeSettings = {
 	statusEvents: true,
 	memory: validatedMemorySettings(undefined).settings,
 };
-
-export type Environment = Readonly<Record<string, string | undefined>>;
 
 export async function loadCodemodeSettings(options: LoadCodemodeSettingsOptions = {}): Promise<LoadedCodemodeSettings> {
 	const cwd = options.cwd ?? process.cwd();
@@ -261,6 +251,14 @@ async function fileExists(path: string): Promise<boolean> {
 	}
 }
 
+export {
+	DEFAULT_MAX_DETACHED_CELLS,
+	type Environment,
+	FOREGROUND_WINDOW_ENVIRONMENT_FLAG,
+	HARD_LIMIT_ENVIRONMENT_FLAG,
+	MAX_DETACHED_CELLS_ENVIRONMENT_FLAG,
+	RUN_BUDGET_ENVIRONMENT_FLAG,
+} from "./settings-constants.ts";
 export {
 	resolveEnabledLanguages,
 	resolveForegroundWindowSeconds,

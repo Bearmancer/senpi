@@ -36,11 +36,43 @@ describe("codemode feature settings", () => {
 
 	it("Given a file without the new keys when settings load then the resolved settings equal the previous defaults object exactly", async () => {
 		const loaded = await loadFile({ runBudgetSeconds: 300 });
+		// The defaults as they were before these keys existed, written out so a change to both the defaults and
+		// the merge cannot pass unnoticed.
+		const previousDefaults = {
+			languages: { py: true, js: true, rb: false, jl: false },
+			cellTimeoutSeconds: 30,
+			foregroundWindowSeconds: 60,
+			runBudgetSeconds: 300,
+			hardLimitSeconds: 1800,
+			maxDetachedCells: 15,
+			parallelPoolWidth: 4,
+			taskTools: { task: "task", output: "task_output" },
+			outputSink: { headBytes: 20_480, maxColumns: 768 },
+			statusEvents: true,
+			memory: defaultCodemodeSettings.memory,
+		};
 
 		expect(loaded.warnings).toEqual([]);
-		expect(loaded.settings).toEqual(defaultCodemodeSettings);
-		expect(Object.keys(loaded.settings).sort()).toEqual(Object.keys(defaultCodemodeSettings).sort());
+		expect(loaded.settings).toEqual(previousDefaults);
+		expect(Object.keys(loaded.settings).sort()).toEqual(Object.keys(previousDefaults).sort());
 	});
+
+	it.each([
+		["environments", { environments: { futureNested: true } }],
+		["isolation", { isolation: { futureNested: true } }],
+		["sandbox", { sandbox: { futureNested: true } }],
+		["prompt", { prompt: { futureNested: true } }],
+		["kernelTools", { kernelTools: { futureNested: true } }],
+		["environments.js", { environments: { js: { installer: "bun", futureNested: true } } }],
+	])(
+		"Given an unknown key inside %s when settings load then that object stays strict and the file falls back to defaults with a warning",
+		async (_name, contents) => {
+			const loaded = await loadFile({ ...contents, runBudgetSeconds: 120 });
+
+			expect(loaded.settings.runBudgetSeconds).toBe(defaultCodemodeSettings.runBudgetSeconds);
+			expect(loaded.warnings.some((warning) => warning.includes("Falling back to codemode defaults"))).toBe(true);
+		},
+	);
 
 	it("Given every new key set in the file when settings load then each value is kept and resolves", async () => {
 		const loaded = await loadFile({

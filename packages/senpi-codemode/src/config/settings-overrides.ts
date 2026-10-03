@@ -1,12 +1,12 @@
+import type { CodemodeSettings } from "./settings.ts";
 import {
-	type CodemodeSettings,
 	DEFAULT_MAX_DETACHED_CELLS,
 	type Environment,
 	FOREGROUND_WINDOW_ENVIRONMENT_FLAG,
 	HARD_LIMIT_ENVIRONMENT_FLAG,
 	MAX_DETACHED_CELLS_ENVIRONMENT_FLAG,
 	RUN_BUDGET_ENVIRONMENT_FLAG,
-} from "./settings.ts";
+} from "./settings-constants.ts";
 
 const languageEnvironmentFlags = {
 	py: "SENPI_CODEMODE_PY",

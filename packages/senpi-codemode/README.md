@@ -161,13 +161,24 @@ Configuration is loaded in this order:
 | `memory.retainedResultsMb` | `32` | In-memory byte budget (MiB) for the settled cells kept for `peek`/`list`, on top of the 32-cell count cap; the oldest go first and the newest is always kept. `0` keeps only the count cap. Env override: `SENPI_CODEMODE_RETAINED_RESULTS_MB` (a non-negative integer). |
 | `memory.retainedImagesMb` | `256` | Disk budget (MiB) for settled-cell images. Images of settled cells (foreground and detached) are written as base64 files under `<session artifacts>/settled-images/` instead of staying in memory, and `peek` reads them back, so it returns the full result. Beyond the budget the oldest files are deleted first; an evicted cell's files are deleted with it; the directory is removed when the session ends. A `peek` whose image file is gone returns the text plus a one-line note. `0` keeps only the count cap. Env override: `SENPI_CODEMODE_RETAINED_IMAGES_MB` (a non-negative integer). |
 | `memory.idleParkMinutes` | `0` | Off by default. When greater than 0, a kernel with no cell running or queued for this many minutes is closed to give its memory back, and the next cell for that language starts a fresh one; that cell's result says the kernel was restarted and every earlier global is lost. Applies to every language. |
+| `languages.pyInterpreter` | unset | Explicit Python interpreter path. Unset keeps today's `PATH` detection. |
+| `environments.managedRoot` | unset | Root directory for managed per-session environments; unset uses the session's default location. |
+| `environments.autoProvision` | `true` | Lets installs provision a managed environment. `false` makes installs refuse with `environment_installer_unavailable`. |
+| `environments.js.installer` | `auto` | Installer for the managed JavaScript environment: `auto`, `bun` or `npm`. |
+| `environments.py.installer` | `pip` | Installer for the managed Python environment. |
+| `isolation.js` | `worker` | JavaScript kernel isolation: `worker` (today's worker thread) or `process`. Env override: `SENPI_CODEMODE_JS_ISOLATION`. |
+| `sandbox.enabled` | `false` | Allows sandbox cells. While `false` the sandbox option is neither accepted nor advertised. |
+| `sandbox.memoryMb` | `64` | Memory cap (MiB) for a sandbox cell. Env override: `SENPI_CODEMODE_SANDBOX_MEMORY_MB` (a positive integer wins). |
+| `sandbox.timeoutSeconds` | `300` | Time limit for a sandbox cell. |
+| `prompt.advertiseHelpers` | `false` | When `true`, one pointer line to `tool_schema('eval:helpers')` is appended to the eval description. |
+| `kernelTools.enabled` | `true` | Allows cells to define kernel tools (`tool(fn)`, `@tool`). `false` makes them refuse with `tools_unavailable`. |
 
 `SENPI_CODEMODE_PY`, `SENPI_CODEMODE_JS`, `SENPI_CODEMODE_RB`, and
 `SENPI_CODEMODE_JL` override the corresponding file setting. `1` or `true`
 enables; `0` or `false` disables. Any other value leaves the file setting in
 effect.
 
-Malformed JSON or invalid settings fall back to defaults with a warning.
+A top-level key this version does not know is ignored with one warning naming it, and the rest of the file still applies, so a settings file written for a newer senpi keeps working. Malformed JSON, or an invalid value or an unknown key inside a known setting, falls back to all defaults with a warning.
 The detached-cell environment override uses the run-budget parser: a positive
 base-10 integer wins over the file value; zero, negative, and malformed values
 leave the file value in effect.
