@@ -51,8 +51,9 @@ const TERMINAL: ReadonlySet<HandlePhase> = new Set(["succeeded", "failed", "canc
 
 /**
  * The in-cell barrier. Subscribes once per distinct ref, keeps duplicate slots, settles according to the
- * mode, and never cancels work: a timeout only closes the subscription. Parked time is the caller's
- * concern (the bridge-call path pauses the run budget around this call).
+ * mode, and never cancels work: a timeout only closes the subscription. The timeout runs from entry and,
+ * like cancelling the cell, also ends a wait that is still subscribing or fetching a result. Parked time
+ * is the caller's concern (the bridge-call path pauses the run budget around this call).
  */
 export async function waitForHandles(request: WaitRequest, backend: WaitBackend): Promise<unknown> {
 	const { refs, mode } = request;
@@ -63,7 +64,8 @@ export async function waitForHandles(request: WaitRequest, backend: WaitBackend)
 	const unique = [...new Map(refs.map((ref) => [refKey(ref), ref])).values()];
 	const outcomes = new Map<string, HandleOutcome>();
 	const revisions = new Map<string, number>();
-	const watch = await backend.watch(unique);
+	const stop = interruption(request.timeoutSeconds, backend.signal, refs, outcomes);
+	let watch: HandleWatch | undefined;
 	const finish = (): unknown => {
 		switch (mode) {
 			case "all":
@@ -89,40 +91,55 @@ export async function waitForHandles(request: WaitRequest, backend: WaitBackend)
 			);
 		}
 		if (!TERMINAL.has(snapshot.phase) || outcomes.has(key)) return false;
-		const outcome = await backend.result(snapshot.ref);
+		const outcome = await stop.race(backend.result(snapshot.ref));
 		outcomes.set(key, outcome);
 		if (mode === "all" && outcome.status === "rejected") throw new HandleOutcomeError(outcome);
 		if (mode === "any" && outcome.status === "fulfilled") return true;
 		return outcomes.size === unique.length;
 	};
 	try {
+		const subscribing = backend.watch(unique);
+		// A watch that resolves after the wait already ended is closed, so its subscription never leaks.
+		void subscribing.then(
+			(late) => {
+				if (stop.ended) late.close();
+			},
+			() => undefined,
+		);
+		watch = await stop.race(subscribing);
 		for (const snapshot of watch.initial) {
 			if (await absorb(snapshot)) return finish();
 		}
 		if (outcomes.size === unique.length) return finish();
-		if (request.timeoutSeconds === 0) throw timeoutError(request.timeoutSeconds, refs, outcomes);
-		for await (const snapshot of bounded(watch, request.timeoutSeconds, backend.signal, refs, outcomes)) {
-			if (await absorb(snapshot)) return finish();
+		if (request.timeoutSeconds === 0) throw timeoutError(0, refs, outcomes);
+		const iterator = watch.updates[Symbol.asyncIterator]();
+		try {
+			while (true) {
+				const step = await stop.race(iterator.next());
+				if (step.done) return finish();
+				if (await absorb(step.value)) return finish();
+			}
+		} finally {
+			await iterator.return?.();
 		}
-		return finish();
 	} finally {
-		watch.close();
+		stop.end();
+		watch?.close();
 	}
 }
 
-/** Pulls updates until the watch ends, the wait deadline passes, or the cell's signal aborts. */
-async function* bounded(
-	watch: HandleWatch,
+/** One deadline armed at entry plus the cell's abort; `race` rejects any pending step once either fires. */
+function interruption(
 	timeoutSeconds: number | undefined,
 	signal: AbortSignal | undefined,
 	refs: readonly HandleRef[],
 	outcomes: ReadonlyMap<string, HandleOutcome>,
-): AsyncGenerator<HandleSnapshot> {
-	const iterator = watch.updates[Symbol.asyncIterator]();
+) {
 	let timer: ReturnType<typeof setTimeout> | undefined;
 	let onAbort: (() => void) | undefined;
-	const interruption = new Promise<never>((_resolve, reject) => {
-		if (timeoutSeconds !== undefined) {
+	let ended = false;
+	const fired = new Promise<never>((_resolve, reject) => {
+		if (timeoutSeconds !== undefined && timeoutSeconds > 0) {
 			timer = setTimeout(() => reject(timeoutError(timeoutSeconds, refs, outcomes)), timeoutSeconds * 1_000);
 		}
 		if (signal !== undefined) {
@@ -132,19 +149,20 @@ async function* bounded(
 			else signal.addEventListener("abort", onAbort, { once: true });
 		}
 	});
-	// Never left unhandled: the race below always observes it while the loop runs.
-	interruption.catch(() => undefined);
-	try {
-		while (true) {
-			const step = await Promise.race([iterator.next(), interruption]);
-			if (step.done) return;
-			yield step.value;
-		}
-	} finally {
-		if (timer !== undefined) clearTimeout(timer);
-		if (signal !== undefined && onAbort !== undefined) signal.removeEventListener("abort", onAbort);
-		await iterator.return?.();
-	}
+	fired.catch(() => undefined);
+	return {
+		get ended(): boolean {
+			return ended;
+		},
+		race<T>(step: Promise<T>): Promise<T> {
+			return Promise.race([step, fired]);
+		},
+		end(): void {
+			ended = true;
+			if (timer !== undefined) clearTimeout(timer);
+			if (signal !== undefined && onAbort !== undefined) signal.removeEventListener("abort", onAbort);
+		},
+	};
 }
 
 function timeoutError(seconds: number, refs: readonly HandleRef[], outcomes: ReadonlyMap<string, HandleOutcome>) {

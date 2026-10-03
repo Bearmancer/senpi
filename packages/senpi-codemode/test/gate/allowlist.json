@@ -228,7 +228,9 @@
 				"legacyContracts/test/wait-cell.test.ts/wait() through a cell wait-detaches-past-foreground: a long barrier detaches like any bridge-parked cell and still settles",
 				"legacyContracts/test/wait-cell.test.ts/wait() through a cell a wait in flight in a kernel that dies ends with its cell and its subscription is closed",
 				"legacyContracts/test/wait-cell.test.ts/wait() through a cell unavailable runtime: without ctx.evalHandleHost an agent ref fails with eval_wait_unavailable and no task_output call",
-				"legacyContracts/test/wait-cell.test.ts/wait() through a cell rebinds a saved ref after a kernel reset while the owner and run epoch are valid"
+				"legacyContracts/test/wait-cell.test.ts/wait() through a cell rebinds a saved ref after a kernel reset while the owner and run epoch are valid",
+				"legacyContracts/test/wait-barrier.test.ts/wait() barrier over the handle registry times out from entry even when the host is still subscribing, and closes the late subscription",
+				"legacyContracts/test/wait-barrier.test.ts/wait() barrier over the handle registry ends with its cell when the cell is cancelled while a settled handle's result is still being fetched"
 			]
 		},
 		"13": {

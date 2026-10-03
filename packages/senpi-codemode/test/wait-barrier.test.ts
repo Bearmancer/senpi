@@ -4,6 +4,7 @@ import { FakeEvalHandleHost } from "../../coding-agent/test/suite/fakes/eval-han
 import { RESERVED_WAIT_TOOL } from "../src/bridge/reserved.ts";
 import { runReservedTool } from "../src/bridges/reserved-dispatch.ts";
 import { HandleRegistry } from "../src/handles/handle-registry.ts";
+import { waitForHandles } from "../src/handles/wait.ts";
 import { Deferred } from "./eval/fakes.ts";
 
 const OWNER = "session-owner";
@@ -189,5 +190,51 @@ describe("wait() barrier over the handle registry", () => {
 			code: "eval_handle_invalid_arguments",
 		});
 		await expect(wait([foreign], { timeout: -1 })).rejects.toMatchObject({ code: "eval_handle_invalid_arguments" });
+	});
+
+	it("times out from entry even when the host is still subscribing, and closes the late subscription", async () => {
+		vi.useFakeTimers();
+		const subscribing = Promise.withResolvers<import("@code-yeongyu/senpi").HandleWatch>();
+		const closed = vi.fn();
+		const pending = waitForHandles(
+			{ refs: [{ kind: "agent", id: "slow", run_epoch: 1 }], mode: "all", timeoutSeconds: 2 },
+			{ watch: () => subscribing.promise, result: () => new Promise(() => {}) },
+		);
+		const settled = expect(pending).rejects.toMatchObject({ code: "eval_wait_timeout" });
+
+		await vi.advanceTimersByTimeAsync(2_000);
+		await settled;
+		subscribing.resolve({
+			initial: [],
+			updates: { [Symbol.asyncIterator]: () => ({ next: () => new Promise(() => {}) }) },
+			close: closed,
+		});
+		await vi.advanceTimersByTimeAsync(0);
+
+		expect(closed).toHaveBeenCalledTimes(1);
+	});
+
+	it("ends with its cell when the cell is cancelled while a settled handle's result is still being fetched", async () => {
+		const controller = new AbortController();
+		const ref = { kind: "agent" as const, id: "done", run_epoch: 1 };
+		const closed = vi.fn();
+		const pending = waitForHandles(
+			{ refs: [ref], mode: "all" },
+			{
+				watch: async () => ({
+					initial: [{ ref, phase: "succeeded", host_status: "done", revision: 1 }],
+					updates: { [Symbol.asyncIterator]: () => ({ next: () => new Promise(() => {}) }) },
+					close: closed,
+				}),
+				result: () => new Promise(() => {}),
+				signal: controller.signal,
+			},
+		);
+		await vi.waitFor(() => expect(closed).not.toHaveBeenCalled());
+
+		controller.abort(new Error("cell cancelled"));
+
+		await expect(pending).rejects.toThrow("cell cancelled");
+		expect(closed).toHaveBeenCalledTimes(1);
 	});
 });
