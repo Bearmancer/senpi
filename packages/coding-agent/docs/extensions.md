@@ -2153,6 +2153,16 @@ pi.registerMarkdownTransformer((markdown, { messageType, isStreaming }) => {
 
 If a transformer throws, senpi keeps the Markdown produced so far and continues with the next transformer. The hook is display-only: the original message remains unchanged in the session and model context. It runs for new user messages, assistant streaming updates, restored session messages, and terminal width changes, so transformers should remain synchronous and inexpensive.
 
+### pi.registerMemoryReporter(name, reporter)
+
+Contribute figures to the on-demand memory report (`SENPI_MEMORY_REPORT=1`, see [RPC](rpc.md#memory_report)). The report carries the numbers `reporter()` returns under `name`; non-finite values are dropped, and a reporter that throws is listed under `reporterErrors` instead. The reporter runs only when a report is taken, never on a timer, so keep it synchronous and O(1): return counters you already maintain.
+
+```typescript
+pi.registerMemoryReporter("myCache", () => ({ entries: cache.size, approxBytes: cacheBytes }));
+```
+
+Names the report owns (`sessionId`, `takenAt`, `pid`, `main`, `kernels`, `residentStore`, `tuiRenderCache`, `heapSnapshot`, `reporterErrors`) throw at registration. When two extensions register the same name, the first loaded wins.
+
 ### pi.registerEntryRenderer(customType, renderer)
 
 Register a custom TUI renderer for custom entries with your `customType`. Custom entries are created with `pi.appendEntry()` and do not participate in LLM context.

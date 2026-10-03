@@ -651,3 +651,115 @@ describe("StdinBuffer", () => {
 		});
 	});
 });
+
+describe("StdinBuffer unbracketed paste bursts", () => {
+	let burst: StdinBuffer;
+	let burstData: string[];
+	let burstPastes: string[];
+	let now: number;
+
+	beforeEach(() => {
+		now = 1000;
+		burstData = [];
+		burstPastes = [];
+		burst = new StdinBuffer({ timeout: 10, burstWindowMs: 20, now: () => now });
+		burst.on("data", (sequence) => {
+			burstData.push(sequence);
+		});
+		burst.on("paste", (content) => {
+			burstPastes.push(content);
+		});
+	});
+
+	it("emits a one-chunk multiline burst as a single paste and submits nothing", () => {
+		burst.process("line1\nline2\nline3");
+		assert.deepStrictEqual(burstPastes, ["line1\nline2\nline3"]);
+		assert.deepStrictEqual(burstData, []);
+	});
+
+	it("coalesces a burst split across chunks within the window into one block", () => {
+		burst.process("line1\nline2\n");
+		burst.process("line3\n");
+		assert.deepStrictEqual(burstPastes, ["line1\nline2\n"]);
+		assert.deepStrictEqual(burstData, ["l", "i", "n", "e", "3"]);
+		burst.flush();
+		assert.deepStrictEqual(burstPastes, ["line1\nline2\n", "\n"]);
+		assert.deepStrictEqual(burstData, ["l", "i", "n", "e", "3"]);
+	});
+
+	it("submits a keystroke-paced Enter immediately without holding", () => {
+		burst.process("a");
+		now += 1000;
+		burst.process("\n");
+		assert.deepStrictEqual(burstData, ["a", "\n"]);
+		assert.deepStrictEqual(burstPastes, []);
+	});
+
+	it("holds a burst-paced trailing newline until flush, then submits once", () => {
+		burst.process("a");
+		now += 5;
+		burst.process("b\n");
+		assert.deepStrictEqual(burstData, ["a", "b"]);
+		burst.flush();
+		assert.deepStrictEqual(burstData, ["a", "b", "\n"]);
+		assert.deepStrictEqual(burstPastes, []);
+	});
+
+	it("forwards a bare Enter read at once even right after other input", () => {
+		burst.process("\n");
+		burst.process("\r");
+		assert.deepStrictEqual(burstData, ["\n", "\r"]);
+		assert.deepStrictEqual(burstPastes, []);
+	});
+
+	it("emits a first-ever single-line input immediately", () => {
+		burst.process("solo\n");
+		assert.deepStrictEqual(burstData, ["s", "o", "l", "o", "\n"]);
+		assert.deepStrictEqual(burstPastes, []);
+	});
+
+	it("keeps a fast double Enter as two submits instead of a paste", () => {
+		burst.process("a");
+		burst.process("\n");
+		burst.process("\n");
+		assert.deepStrictEqual(burstPastes, []);
+		burst.flush();
+		assert.deepStrictEqual(burstData, ["a", "\n", "\n"]);
+	});
+
+	it("leaves bracketed pastes on the existing marker path", () => {
+		burst.process("\x1b[200~a\nb\x1b[201~");
+		assert.deepStrictEqual(burstPastes, ["a\nb"]);
+		assert.deepStrictEqual(burstData, []);
+	});
+
+	it("treats a one-chunk two-line paste as a paste instead of submitting its first line", () => {
+		burst.process("first\nsecond");
+		assert.deepStrictEqual(burstPastes, ["first\nsecond"]);
+		assert.deepStrictEqual(burstData, []);
+	});
+
+	it("keeps the newline that ends a paste split across reads inside the paste", () => {
+		burst.process("line1\nline2\n");
+		now += 5;
+		burst.process("line3\n");
+		burst.flush();
+		assert.deepStrictEqual(burstData, ["l", "i", "n", "e", "3"]);
+		assert.deepStrictEqual(burstPastes, ["line1\nline2\n", "\n"]);
+	});
+
+	it("submits exactly once when a lone Enter follows a paste after a pause", () => {
+		burst.process("line1\nline2\nline3");
+		now += 1000;
+		burst.process("\r");
+		assert.deepStrictEqual(burstPastes, ["line1\nline2\nline3"]);
+		assert.deepStrictEqual(burstData, ["\r"]);
+	});
+
+	it("treats CRLF and CR-only bursts like LF bursts", () => {
+		burst.process("l1\r\nl2\r\n");
+		assert.deepStrictEqual(burstPastes, ["l1\r\nl2\r\n"]);
+		burst.process("m1\rm2\r");
+		assert.deepStrictEqual(burstPastes, ["l1\r\nl2\r\n", "m1\rm2\r"]);
+	});
+});

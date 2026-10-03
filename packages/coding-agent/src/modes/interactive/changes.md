@@ -1,3 +1,40 @@
+## 2026-10-03 - Exact tool-card result bytes for the memory report (senpi#1960)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/components/tool-execution.ts`: a card's final `updateResult` measures its retained result once (`serializedToolResultBytes`) and records it in the render cache (`finalizeResult`); a streaming card keeps its last figure.
+
+### Why
+
+- The memory report's `tuiRenderCache` reports exact `resultBytes` and `finishedCards`, so a later bound on the cache is designed from a measurement.
+
+### Why an extension could not handle it
+
+- The card and its render cache are private to the core interactive mode.
+
+### Expected merge conflict zones
+
+- LOW: `ToolExecutionComponent.updateResult()` in `tool-execution.ts`.
+
+## 2026-10-02 - Tool-card render cache totals (senpi#2561)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/components/tool-execution-cache.ts` (new): each tool card's rendered-lines cache and render revision, with process-wide O(1) totals (components, cached lines, images) published to the memory report.
+- `tool-execution-animation.ts` (new): the spinner and todo-strike timers and when a card animates; `tool-execution-fallback-preview.ts` (new): the collapsed fallback preview. `tool-execution.ts` delegates to them; rendering is unchanged.
+
+### Why
+
+- The on-demand memory report (`SENPI_MEMORY_REPORT=1`) needs the terminal render cache's size without walking components.
+
+### Why an extension could not handle it
+
+- The cache is private to the core tool card.
+
+### Expected merge conflict zones
+
+- `components/tool-execution.ts` (cache fields, animation timers, `render`).
+
 ## 2026-10-02 - Question answer provenance (senpi#2533)
 
 ### What changed

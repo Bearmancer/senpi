@@ -531,9 +531,13 @@ which prints the bare socket path).
   - `shard`: `{ kind: "p" | "i", key }` when the socket's basename is `<kind>-<16 hex>.sock` (the naming
     contract below), else `null`.
   - `session_rows`: under `--include-workers` only (else `[]`), every row of that same `list_sessions
-    { include_workers: true }` reply as `{ id, kind, session_path, cwd, name, attachments, context }`. `session_path` is
+    { include_workers: true }` reply as `{ id, kind, session_path, cwd, name, attachments, context, memory }`. `session_path` is
     the host's canonical path, the key a client matches a session by; `context` is the published labels
-    including the host's own `host_socket`/`host_instance`, `null` where none were published.
+    including the host's own `host_socket`/`host_instance`, `null` where none were published. `memory` is the
+    per-session heap split the host published on the listing, as `{ main_heap_mb, kernel_heap_mb, kernel_count }`:
+    the host's main-thread heap (the same host-wide number on every row), the sum of this session's kernel
+    heaps, and how many kernels that is. All three are `0` for a session holding no kernel, and for every row
+    of a host released before the field - never `null`.
   - `claims_live`: session-path claims in `reservations/` whose owner process is still running, `0` when the
     directory is absent.
   - `claims`: under `--include-workers` only (else `[]`), every claim in `reservations/` whichever generation
@@ -881,6 +885,8 @@ The command response reports only `{ cancelled }`, so this event is the only pus
 ### Multi-session host lifecycle (cold start + idle exit)
 
 The lifecycle supervisor is also available to bundled/rebranded runtimes through the hidden internal launch route `--internal-rpc-host-supervisor`. This route is wire-invisible and intended only for desktop launchers: it receives the public socket, ownership directory, and the runtime command/arguments to wrap, then runs the same `host-lifecycle.ts` implementation used by `ensureHost()`. Normal CLI modes do not use or advertise this route. Compiled standalone binaries also re-enter themselves through this route automatically: a bun executable always boots its embedded entrypoint, so the script-path re-entry used under a JS runtime would be parsed as CLI arguments (`Unknown option: --socket`) and the host could never start.
+
+When a Node.js or Bun caller starts a host, both spawn levels retain runtime options such as loaders and memory limits, but remove eval/print expressions, `--input-type`, and interactive mode from `process.execArgv`. This lets embedding code launched with `node -e` or `bun -e` start the intended host entry instead of replaying itself. Under Bun, any token beginning with `-e` or `-p` is removed as well, because Bun reads it as code glued to the flag (`-eCODE`, `-e=CODE`, `-pCODE`); Node rejects those forms, so single-dash V8 options such as `-expose-gc` are kept there. Explicit child commands keep their supplied arguments.
 
 On win32 the supervisor's internal hop lives under `<daemonDir>/internal-<uuid>`, and that directory is created recursively. Before allocating the internal hop or spawning a child, the supervisor ensures `<publicSocket>.secret` exists, creating its parent directories and a 32-byte secret with mode `0600` when needed. An existing valid secret, including one written by `ensureHost()`, is reused unchanged. Direct launch therefore works on a fresh profile without caller-side secret provisioning. Provisioning failures identify the bootstrap step and secret path; the public endpoint still requires the secret handshake before forwarding RPC traffic.
 
@@ -1235,9 +1241,18 @@ REPORT: nothing here aborts a turn, kills a session, or refuses an `open_session
   decides: it keeps counting memory the host already returned (after a collection or an eval kernel reset it stayed
   at gigabytes while the footprint was back near 150 MB, senpi#2261). Above `SENPI_RPC_HOST_RSS_WARN_MB` (default 4096,
   compared with the footprint despite its name) it broadcasts `host_memory_pressure`
-  (`{ type, rssMb, footprintMb, measure, sessions }`) on every sample, writes one stderr line per five minutes naming
+  (`{ type, rssMb, footprintMb, measure, sessions, main, kernels }`) on every sample, writes one stderr line per five minutes naming
   both numbers, and HALVES the idle-eviction window above while the host stays above the threshold, so idle sessions
-  return their memory sooner. It is released as soon as the footprint falls back under the threshold. Memory never refuses an open: the
+  return their memory sooner. `main` is `{ heapBytes }`, the host's main-thread heap in bytes (`bun:jsc heapSize()` when
+  the runtime offers it, else `process.memoryUsage().heapUsed` - on Bun that counts the main thread only, never a kernel
+  worker's heap, which is also why the loop-lag watchdog's `heapDeltaMb` is a main-thread figure). `kernels` lists every
+  live kernel as `{ sessionId, language, liveBytes, measure }`, so the record names which sessions own the pressure:
+  `measure: "heap"` for a JS kernel's own estimate, `"footprint"` for an interpreter process's footprint; a kernel
+  without a reading yet reports `liveBytes: 0`, and one that crashed between samples is absent rather than repeated
+  with a stale number. `list_sessions` rows carry the same split per session as `memory`
+  (`{ main_heap_bytes, kernel_heap_bytes, kernel_count }`, zeros for a session holding no kernel), which is what
+  `host status --all --include-workers --json` reports as `{ main_heap_mb, kernel_heap_mb, kernel_count }` on
+  `session_rows`. It is released as soon as the footprint falls back under the threshold. Memory never refuses an open: the
   host has no resource caps, so every `open_session` is admitted whatever the host holds (#2207). Hosts released
   before #2207 had a second admission watermark; current hosts have no such admission path.
 - **Per-endpoint pressure under sharding**: an agent directory may contain many independent hosts, so each endpoint
@@ -1256,7 +1271,13 @@ REPORT: nothing here aborts a turn, kills a session, or refuses an `open_session
 - **Teardown order**: a session's provider scope closes only after its runtime disposal settles, on the graceful path
   and at the close grace deadline alike; a config-reload watcher callback bound to a closed scope is a no-op (#1905).
 
-`host_stalled` and `host_memory_pressure` are additive records: a client that does not know them ignores them.
+- **Zero-session trim**: when a host that held sessions drops to zero (opening and closing ones included), it runs one
+  full collection (`Bun.gc(true)`; `gc()` on Node only with `--expose-gc`) and, one second later, broadcasts
+  `host_trimmed { footprintBeforeMb, footprintAfterMb, measure, collected }` - the allocator returns freed pages lazily,
+  so the after reading waits for it. At most one trim per minute; never while a session exists; idle exit is unchanged.
+  That single collection is the only synchronous work the no-sync rule allows, and the record is its log.
+
+`host_stalled`, `host_memory_pressure` and `host_trimmed` are additive records: a client that does not know them ignores them.
 
 #### The no-sync rule
 
@@ -1709,7 +1730,7 @@ Response:
 }
 ```
 
-The `model` field is a full [Model](#model) object or `null`. The `sessionName` field is the display name set via `set_session_name`, or omitted if not set.
+The `model` field is a full [Model](#model) object or `null`. `pendingModelSwitch` is always present: `null` means no held switch, while an object with `provider` and `id` identifies a switch that applies after the next compaction. The `sessionName` field is the display name set via `set_session_name`, or omitted if not set.
 
 `serviceTier` is the tier a request would carry right now (`"auto"`, `"flex"`, or `"priority"`), omitted when no tier applies. `fastMode` is `true` when the active model is served at the priority ("fast") tier — either because fast mode is on for this session or because the model selection itself pins `priority`. The two never disagree: whenever `fastMode` is `true`, `serviceTier` is `"priority"`.
 
@@ -2224,6 +2245,34 @@ Response:
 `tokens` and `cost` include assistant messages, usage reported by tools, and compaction/branch-summary generation across the full session. `contextUsage` contains the actual current context-window estimate used for compaction and footer display.
 
 `contextUsage` is omitted when no model or context window is available. `contextUsage.tokens` and `contextUsage.percent` are `null` immediately after compaction until a fresh post-compaction assistant response provides valid usage data.
+
+#### memory_report
+
+Write a per-layer memory report for this session on demand. Available only when the host process runs with `SENPI_MEMORY_REPORT=1`; without it nothing is installed and the request fails with `memory_report_disabled`. On POSIX the same report is also written when the process receives `SIGUSR2`, for every live session registered in that process: a TUI, print, or single-session RPC host, or a multi-session host with the in-process runtime (`--listen`, the shared daemon default), reports all of its sessions. On a worker-runtime multi-session host (the stdio default), sessions live in worker isolates the signalled main isolate cannot see, so the signal writes nothing; send the `memory_report` request to each session instead. Nothing runs on a timer.
+
+```json
+{"type": "memory_report"}
+```
+
+Response:
+```json
+{
+  "type": "response",
+  "command": "memory_report",
+  "success": true,
+  "data": { "path": "/path/to/session-artifacts/memory/2026-10-02T11-30-00.000Z.json" }
+}
+```
+
+The file is written to `<session>-artifacts/memory/<iso>.json` beside the session file and holds:
+
+- `main`: the process's main-thread memory: `jscHeapSize` (Bun only), `heapUsed`, `external`, and `footprint` (`bytes`, `measure`).
+- `kernels`: every live eval kernel in the process with `language`, `measure` (`heap` or `footprint`), `lastLiveBytes`, and `stale: true` when a cell was running so the reading predates the cell.
+- `residentStore`: `entries` and `approxBytes` of the session's in-memory resident strings.
+- `tuiRenderCache` (terminal UI only): `components`, `cachedLines`, `images` across live tool cards.
+- one object per extension memory reporter, under its registered name (for example `taskChildren`), and `reporterErrors` for reporters that threw.
+
+With `SENPI_MEMORY_REPORT_SNAPSHOT=1` a heap snapshot of the main thread is written beside the report and `data.heapSnapshot` (and the report's `heapSnapshot`) names it. A report that cannot be written answers `memory_report_failed: <reason>`, logs one stderr line, and leaves the session running.
 
 #### export_html
 
@@ -2798,6 +2847,7 @@ Events are streamed to stdout as JSON lines during agent operation. Events do no
 | `session_parked` | Multi-session host: a retained session was released to disk at the idle window (`sessionId`, `sessionPath`). Replaces `session_closed` for that handle |
 | `host_stalled` | Multi-session host: the event loop was blocked past `SENPI_RPC_LOOP_LAG_ERROR_MS`, with the drift and the session/tool blamed for it |
 | `host_memory_pressure` | Multi-session host: the memory footprint is above `SENPI_RPC_HOST_RSS_WARN_MB`, with RSS beside it and the live session count |
+| `host_trimmed` | Multi-session host: it dropped to zero sessions and collected, with the footprint before and after |
 | `session_opened` | Multi-session host: a session was opened on this host (content-free lifecycle record) |
 | `session_closed` | Multi-session host: a routing handle ended, with an optional `reason` (`handoff_parked` = a generation handoff put the session back on disk; reopen it by `sessionPath`) |
 | `session_parked` | Multi-session host: a retained session's handle was released while the session itself stays on disk (`{ sessionId, sessionPath }`); reopen it with `open_session { sessionPath }` |
@@ -2805,7 +2855,7 @@ Events are streamed to stdout as JSON lines during agent operation. Events do no
 
 Event types are additive: a client that does not recognise a type must ignore that record rather than fail. `model_changed`
 and `service_tier_changed` were added after the initial protocol and are safe to ignore. `session_parked`, `host_stalled`,
-and `host_memory_pressure` are the same: ignore them if unknown. `session_closed.reason` is optional; ignore an unknown
+`host_memory_pressure` and `host_trimmed` are the same: ignore them if unknown. `session_closed.reason` is optional; ignore an unknown
 value the same way.
 
 ### session_closed.reason
@@ -2857,6 +2907,15 @@ Informational. Capacity is memory, never a refusal: the host reports the pressur
 `footprintMb` is the number compared with the threshold and `measure` names its kernel counter (`phys_footprint`,
 `rss_anon`, `private_usage`, or `rss` where none is readable); `rssMb` is what `ps` shows and can stay high after
 the memory was returned. Hosts released before senpi#2261 send `rssMb` and `sessions` only.
+
+### host_trimmed
+
+```json
+{ "type": "host_trimmed", "footprintBeforeMb": 442, "footprintAfterMb": 237, "measure": "phys_footprint", "collected": true }
+```
+
+Informational, at most once a minute: the host's last session closed and it ran one full collection. `collected` is
+`false` where the runtime exposes none (Node without `--expose-gc`); the record is still sent, with the two readings.
 
 ### model_changed
 
@@ -2960,6 +3019,10 @@ Emitted after the full session-level run settles. At this point senpi will not c
 ```json
 {"type": "agent_settled"}
 ```
+
+A multi-session host that closes, parks or releases a session mid-turn first publishes the settle that turn will now
+never write, with `"reason": "session_closed"`, on the same broadcast as every `agent_settled`: whoever counted the
+`agent_start` (the supervisor's idle-exit observer included) sees it end. Older hosts never send `reason`.
 
 ### turn_start / turn_end
 

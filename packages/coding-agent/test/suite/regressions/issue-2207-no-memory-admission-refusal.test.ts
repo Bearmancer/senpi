@@ -133,6 +133,8 @@ describe("issue 2207: memory never refuses an open", () => {
 				footprintMb: rssMb,
 				measure: "phys_footprint",
 				sessions: 0,
+				main: { heapBytes: expect.any(Number) },
+				kernels: [],
 			});
 		} finally {
 			await host.router.dispose();

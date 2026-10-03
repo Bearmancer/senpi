@@ -1,3 +1,21 @@
+## 2026-10-03 - The release body includes every published package's notes (senpi#2585)
+
+### What changed
+
+- `.github/workflows/build-binaries.yml`: the `release-notes.mjs extract` step passes `--published`, so `RELEASE_NOTES.md` holds the section of every published package (the workspace packages in `scripts/registry-packages.mjs`), coding-agent first, each under its published name (`scripts/changes.md` records the extractor change). A newly published package is included without editing the workflow.
+
+### Why
+
+- The step named no changelog, so the extractor's coding-agent default was the whole release body and the other packages' notes and contributor credits were dropped.
+
+### Why an extension could not handle it
+
+- The release body is produced by the tag workflow, outside any runtime.
+
+### Expected merge conflict zones
+
+- LOW: the `release-notes.mjs extract` command in the `build-binaries.yml` release-assets step.
+
 ## 2026-10-02 - The WebView job runs the readiness regression and prints the readiness log (senpi#2353)
 
 ### What changed

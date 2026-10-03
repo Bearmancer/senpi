@@ -496,7 +496,7 @@ export class RpcClient {
 	async closeSession(sessionId = this.sessionId): Promise<void> {
 		if (!sessionId) return;
 		try {
-			await this.send({ type: "close_session", sessionId }, false);
+			this.getData(await this.send({ type: "close_session", sessionId }, false));
 		} catch (error) {
 			if (!isTransportGoneError(error)) throw error;
 		}

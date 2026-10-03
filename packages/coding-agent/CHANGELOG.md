@@ -6,7 +6,30 @@
 
 ### Added
 
-- `maxSkillExpansionsPerPrompt` setting (default `5`) controls how many distinct explicitly invoked skills (`/skill:a /skill:b ...` or `$a $b ...`) one prompt may expand. Raise it in `settings.json` to compose more skills in one prompt; skill commands past the limit still stay literal and show the `Expanded at most N skills` warning.
+- Shared RPC hosts now report the per-session memory split: the `host_memory_pressure` record carries `main` (the main-thread heap) and `kernels` (every live eval kernel's heap by session), and `list_sessions` rows carry `memory` (`main_heap_bytes`, `kernel_heap_bytes`, `kernel_count`), surfaced on `host status --all --include-workers --json` as `{ main_heap_mb, kernel_heap_mb, kernel_count }`. The terminal tool-card render cache and the TUI frame are now measurable too: the memory report's `tuiRenderCache` gains `finishedCards`, exact `cachedLinesBytes` and `resultBytes`, and a new `tui.previousLinesBytes` reports the frame's line bytes, so a later bound is designed from the measurement ([#1960](https://github.com/code-yeongyu/senpi/issues/1960)).
+- A running session can report where its memory goes, on demand and only when started with `SENPI_MEMORY_REPORT=1`: `SIGUSR2` (POSIX; reports every session registered in the signalled process, so a worker-runtime multi-session host's sessions answer only over RPC) or the RPC `memory_report` request writes `<session>-artifacts/memory/<iso>.json` with the main thread's heap and footprint, every live eval kernel's last-known heap (marked stale while a cell runs), the resident session-string store, the terminal tool-card render cache, and figures extensions add through `pi.registerMemoryReporter(name, reporter)`. `SENPI_MEMORY_REPORT_SNAPSHOT=1` adds a heap snapshot. Without the flag nothing is installed and `SIGUSR2` keeps its default behaviour ([#2561](https://github.com/code-yeongyu/senpi/issues/2561)).
+- RPC session state now reports a model switch that is held until the next compaction: `pendingModelSwitch` is the held model's `{ provider, id }`, or `null` when nothing is held, so a client can tell a held switch from one a later selection superseded. The key is always present on current hosts, so a missing key identifies an older host.
+
+### Changed
+
+- The bundled Claude Agent SDK is updated to 0.3.288 (from 0.3.286), so the Anthropic subscription lane runs Claude Code 2.1.288 and the models it knows.
+
+### Fixed
+
+- An idle shared RPC host now gives its cost back. A session closed, parked or released mid-turn no longer pins the host's idle exit forever: the host publishes the turn's `agent_settled` (`reason: "session_closed"`) before it seals the session. A host whose last session closes collects once and reports the footprint it returned (`host_trimmed`, at most once a minute), and each `host ensure` schedules a bounded background `host gc` pass (at most every 5 minutes per agent directory, never on the awaited path) so dead endpoint records stop accumulating ([#2567](https://github.com/code-yeongyu/senpi/issues/2567)).
+- A client attaching to a host built from the same plugin set installed under a different directory no longer logs a profile mismatch on every ensure, and a build that loads a proper superset of the host's extensions can take over from it: host launch profiles now compare the plugin's extensions by role instead of by absolute path.
+- `logs/session.log` lines written by a session now carry its `sessionId` and the active `provider` and `model`, and `provider_error` names the provider and model of the failing response, so lines from parent and child sessions sharing one agent dir can be told apart ([#2541](https://github.com/code-yeongyu/senpi/issues/2541))
+- `RpcClient.closeSession` now rejects with `RpcCommandError` when the host refuses `close_session` (`success: false`), instead of resolving as if the session had closed. A gone transport still counts as closed ([#2572](https://github.com/code-yeongyu/senpi/issues/2572))
+
+### Removed
+
+## [2026.10.3] - 2026-10-03
+
+### Breaking Changes
+
+### Added
+
+- `maxSkillExpansionsPerPrompt` setting (default `5`) controls how many distinct explicitly invoked skills (`/skill:a /skill:b ...` or `$a $b ...`) one prompt may expand. Raise it in `settings.json` to compose more skills in one prompt; skill commands past the limit still stay literal and show the `Expanded at most N skills` warning. Thanks to @trac3r00. ([#2588](https://github.com/code-yeongyu/senpi/pull/2588))
 
 ### Changed
 
@@ -15,7 +38,10 @@
 - Fixed sessions on a provider lane that owns compaction (Anthropic subscription) refusing every prompt with "Context remains above the compaction threshold" after a resume, until restart: a resume compaction requirement is now re-checked against the current context and model, and a committed manual `/compact` clears it ([#2589](https://github.com/code-yeongyu/senpi/issues/2589), [#2488](https://github.com/code-yeongyu/senpi/issues/2488)).
 - Re-using an already loaded skill on a later line of the same prompt (for example `$review` on line 3 after the per-prompt skill cap was reached) no longer triggers the cap warning or stays as bare text: it keeps its `[skill: review]` marker where it was written.
 - Skills skipped by the per-prompt skill cap no longer reach the model as bare `$name` / `/skill:name` text: they become `[skill not loaded: name]` where they were written, so the model knows it does not have them. One warning per prompt names the skipped skills and the cap, for example `Skipped 2 skills (s6, s7): at most 5 skills load per prompt.` Thanks to @trac3r00.
+- MCP tools no longer fail with `MCP server <name> is disabled` once a child or background session ends. Sessions in one process share their MCP connections, but each session now has its own binding to them: a session that quits releases only its own binding, and the shared servers stay up for every other session (for example, the parent of a finished task or memory child). Tools from a catalog that arrives late, or from a `list_changed` refresh, also register in every live session, not just the newest one ([#2514](https://github.com/code-yeongyu/senpi/issues/2514), [#2524](https://github.com/code-yeongyu/senpi/pull/2524)). Thanks to @Tygb99 for the report.
+- RPC hosts launched from a Bun or Node eval/print caller (`bun -e CODE`, `bun -eCODE`, `node -p CODE`) no longer re-run that caller's code: the host launch drops eval/print code, input-type and interactive flags from the forwarded runtime options, including Bun's glued `-eCODE` / `-pCODE` forms. Thanks to @mastertyko.
 - A Chrome-backed `Bun.WebView` created from an eval cell no longer holds the cell until its timeout and leaves its Chrome running when that Chrome never attaches a session to the new view (seen on Windows with a freshly launched Chrome). The main-thread service now navigates each new view to `about:blank` before answering its creation: a launch that has not attached within 20 seconds is closed, its Chrome retired unless another view still uses it, and the view launched once more on a fresh Chrome; if that launch stalls too, `new Bun.WebView()` fails with `ERR_WEBVIEW_NOT_READY` naming the `cdp-target-attach` phase. A new view therefore reports `about:blank` as its URL and accepts `cdp()` before the cell's first `navigate()`; page loads the cell starts are not bounded ([#2353](https://github.com/code-yeongyu/senpi/issues/2353)).
+- Reloading with the MCP builtin removed, or quitting while MCP servers are still connecting, now waits for that connect to settle and then shuts the servers down, instead of returning with them still running. The wait is bounded (15 s by default, `SENPI_MCP_DEFERRED_DISPOSE_TIMEOUT_MS`); past it the servers are shut down anyway and a warning is logged.
 
 ### Removed
 

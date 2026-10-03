@@ -28,6 +28,12 @@
    ],
    "reason": "Reviewed with senpi#2444 (fixes #2240 and #2569): contract tests for the self-contained, const-typed eval action branches, including the gateway-safe no-enum-in-root-anyOf check. The intended eval schema change is recorded in baseline.json in the same PR."
   },
+  "senpi#2564": {
+   "additions": [
+    "legacyContracts/test/js-kernel-crash-lifecycle.test.ts/JavaScriptKernel worker crash lifecycle settles a memory query with the crash error when the worker dies answering it"
+   ],
+   "reason": "senpi#2564 (live kernel registry, fixes #2561): the crash-lifecycle suite gains the memory-query crash-settlement cell covering this PR's queryMemory crash path. No prompt, schema, invariant, census or import change, and no existing contract changed; the cell is absorbed into baseline.json on the next main re-record."
+  },
   "senpi#2557": {
    "additions": [
     "legacyContracts/test/eval-display-image-check.test.ts/eval display image validation Given image data with a length that is not a multiple of four when displayed then no image block is kept and the output says why",
@@ -59,6 +65,74 @@
     "legacyContracts/test/js-kernel-webview-readiness.test.ts/a Chrome launch that never becomes ready does not relaunch for a client released while its launch stalls, and leaves no Chrome behind"
    ],
    "reason": "Node 29 (senpi#2353): RED/GREEN regressions for a Chrome-backed WebView launch whose CDP attach never completes (bounded readiness, retire, one relaunch, sibling views kept). No prompt, schema, helper, or default changes."
+  },
+  "2": {
+   "additions": [
+    "legacyContracts/test/bench/accounting.test.ts/benchmark process accounting drains a registered interpreter whose receipt is announced while teardown waits",
+    "legacyContracts/test/bench/accounting.test.ts/benchmark process accounting rejects an incomplete window when the old interpreter disappears",
+    "legacyContracts/test/bench/accounting.test.ts/benchmark process accounting counts the exited interpreter and its replacement once",
+    "legacyContracts/test/bench/compare.test.ts/paired benchmark verdicts detects an injected head slowdown without widening calibration",
+    "legacyContracts/test/bench/compare.test.ts/paired benchmark verdicts passes when paired ratios stay inside each row's measured band",
+    "legacyContracts/test/bench/compare.test.ts/paired benchmark verdicts names the regressed workload when paired CPU increases",
+    "legacyContracts/test/bench/compare.test.ts/paired benchmark verdicts returns inconclusive when calibration is too noisy",
+    "legacyContracts/test/bench/compare.test.ts/paired benchmark verdicts invalidates the run when required js-node is missing",
+    "legacyContracts/test/bench/compare.test.ts/paired benchmark verdicts invalidates the run when required jl is missing",
+    "legacyContracts/test/bench/compare.test.ts/paired benchmark verdicts invalidates a comparison across different interpreter versions",
+    "legacyContracts/test/bench/compare.test.ts/paired benchmark verdicts invalidates a scenario missing only on one side",
+    "legacyContracts/test/bench/compare.test.ts/paired benchmark verdicts invalidates a required scenario absent on both sides",
+    "legacyContracts/test/bench/compare.test.ts/paired benchmark verdicts skips only an explicitly optional scenario absent on both sides",
+    "legacyContracts/test/bench/compare.test.ts/paired benchmark verdicts refuses before measurement when injected host load is 81",
+    "legacyContracts/test/bench/compare.test.ts/paired benchmark verdicts refuses when load crosses the ceiling between measurements",
+    "legacyContracts/test/bench/compare.test.ts/paired benchmark verdicts invalidates truncated samples instead of comparing the surviving minima",
+    "legacyContracts/test/bench/compare.test.ts/paired benchmark verdicts rejects a regression in wallMs even when CPU is unchanged",
+    "legacyContracts/test/bench/compare.test.ts/paired benchmark verdicts rejects a regression in p95Ms even when CPU is unchanged",
+    "legacyContracts/test/bench/crash.test.ts/retains real interpreter CPU when a cell kills it",
+    "legacyContracts/test/bench/crash.test.ts/retains CPU when forced retirement kills the entire kernel group",
+    "legacyContracts/test/bench/fixtures.test.ts/benchmark fixtures in js streams the ten-mebibyte workload into a real spill file",
+    "legacyContracts/test/bench/fixtures.test.ts/benchmark fixtures in js reads the actual one-kibibyte fixture through the host bridge",
+    "legacyContracts/test/bench/fixtures.test.ts/benchmark fixtures in js composes four host results in input order",
+    "legacyContracts/test/bench/fixtures.test.ts/benchmark fixtures in js probes optional capabilities without executing a missing helper",
+    "legacyContracts/test/bench/fixtures.test.ts/benchmark fixtures in py streams the ten-mebibyte workload into a real spill file",
+    "legacyContracts/test/bench/fixtures.test.ts/benchmark fixtures in py reads the actual one-kibibyte fixture through the host bridge",
+    "legacyContracts/test/bench/fixtures.test.ts/benchmark fixtures in py composes four host results in input order",
+    "legacyContracts/test/bench/fixtures.test.ts/benchmark fixtures in py probes optional capabilities without executing a missing helper",
+    "legacyContracts/test/bench/fixtures.test.ts/benchmark fixtures in rb streams the ten-mebibyte workload into a real spill file",
+    "legacyContracts/test/bench/fixtures.test.ts/benchmark fixtures in rb reads the actual one-kibibyte fixture through the host bridge",
+    "legacyContracts/test/bench/fixtures.test.ts/benchmark fixtures in rb composes four host results in input order",
+    "legacyContracts/test/bench/fixtures.test.ts/benchmark fixtures in rb probes optional capabilities without executing a missing helper",
+    "legacyContracts/test/bench/fixtures.test.ts/benchmark fixtures in jl streams the ten-mebibyte workload into a real spill file",
+    "legacyContracts/test/bench/fixtures.test.ts/benchmark fixtures in jl reads the actual one-kibibyte fixture through the host bridge",
+    "legacyContracts/test/bench/fixtures.test.ts/benchmark fixtures in jl composes four host results in input order",
+    "legacyContracts/test/bench/fixtures.test.ts/benchmark fixtures in jl probes optional capabilities without executing a missing helper",
+    "legacyContracts/test/bench/fixtures.test.ts/collects the existing 150 MiB fixture and reports released live memory",
+    "legacyContracts/test/bench/fixtures.test.ts/allocates, touches, and releases the Julia GC workload",
+    "legacyContracts/test/bench/rescore.test.ts/rescoring a saved measurement passes identical code and prints the per-row table without new samples",
+    "legacyContracts/test/bench/rescore.test.ts/rescoring a saved measurement detects the 1.3x head injection on the saved samples and names the row",
+    "legacyContracts/test/bench/rescore.test.ts/rescoring a saved measurement rejects a mistyped injection scenario instead of applying it as a silent no-op",
+    "legacyContracts/test/bench/rescore.test.ts/rescoring a saved measurement refuses an injection that matches no measured series",
+    "legacyContracts/test/bench/rescore.test.ts/rescoring a saved measurement reports a forced excessive A/A band as inconclusive",
+    "legacyContracts/test/bench/rescore.test.ts/rescoring a saved measurement scores the same samples with one global band through the scope knob",
+    "legacyContracts/test/bench/rescore.test.ts/rescoring a saved measurement refuses to rescore a report that already carries injected samples",
+    "legacyContracts/test/bench/run.test.ts/paired runtime scheduling keeps each paired repetition adjacent when runtime processes are retained",
+    "legacyContracts/test/bench/run.test.ts/paired runtime scheduling refuses the run end to end when host load crosses 80 between measurements",
+    "legacyContracts/test/bench/run.test.ts/paired runtime scheduling marks a block contaminated when load exceeds the core count during measurement",
+    "legacyContracts/test/bench/run.test.ts/paired runtime scheduling keeps a block clean when load stays at the core count",
+    "legacyContracts/test/bench/run.test.ts/paired runtime scheduling invalidates a run when a runtime exits before its requested sample",
+    "legacyContracts/test/bench/threshold.test.ts/per-row A/A-calibrated thresholds derives every row's band from its own calibration pairs through one shared rule",
+    "legacyContracts/test/bench/threshold.test.ts/per-row A/A-calibrated thresholds keeps a quiet row's tighter threshold and caps a noisy row at the ceiling",
+    "legacyContracts/test/bench/threshold.test.ts/per-row A/A-calibrated thresholds passes matching code whose paired noise meets the bound despite large host drift",
+    "legacyContracts/test/bench/threshold.test.ts/per-row A/A-calibrated thresholds detects a 1.25x head shift on the same noisy series and names the row",
+    "legacyContracts/test/bench/threshold.test.ts/per-row A/A-calibrated thresholds reports a row whose calibration noise exceeds the cap as noise-limited, never as passed",
+    "legacyContracts/test/bench/threshold.test.ts/per-row A/A-calibrated thresholds still fails a noise-limited row that regresses beyond its own noise band",
+    "legacyContracts/test/bench/threshold.test.ts/per-row A/A-calibrated thresholds derives each row's minimum detectable effect from that row's own band, not a constant",
+    "legacyContracts/test/bench/threshold.test.ts/per-row A/A-calibrated thresholds states an MDE above five percent for a noise-limited row and the honest no-regression claim",
+    "legacyContracts/test/bench/threshold.test.ts/per-row A/A-calibrated thresholds keeps a clean row's MDE within its threshold",
+    "legacyContracts/test/bench/threshold.test.ts/per-row A/A-calibrated thresholds switches to one shared band with the global scope knob",
+    "legacyContracts/test/bench/threshold.test.ts/per-row A/A-calibrated thresholds never fails a clean self-vs-self run of many rows under the global scope",
+    "legacyContracts/test/bench/sampler.test.ts/per-block host sampling records host load and the busiest real processes",
+    "legacyContracts/test/bench/sampler.test.ts/per-block host sampling samples at the start, on every interval and at the end, in order and never concurrently"
+   ],
+   "reason": "Plan node 2 (senpi#2534, refs #2452): contract tests for the eval timing benchmark - paired comparator, per-row A/A-calibrated thresholds capped at 0.05, rescoring, scheduler, CPU accounting and workload fixtures. Test-only; no prompt, schema, helper or runtime surface changes."
   }
  }
 }

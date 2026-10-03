@@ -1,3 +1,23 @@
+## 2026-10-02 - Extension memory reporters (senpi#2561)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts`: `ExtensionAPI.registerMemoryReporter(name, reporter)` and `MemoryReporter` (`() => Readonly<Record<string, number>>`); `Extension.memoryReporters` is optional for records built before it.
+- `packages/coding-agent/src/core/extensions/loader.ts`: the API stores reporters per extension and refuses the report's reserved names.
+- `packages/coding-agent/src/core/extensions/runner.ts`: `getMemoryReporters()` returns every extension's reporters in load order.
+
+### Why
+
+- Layers owned by extensions (task children, caches) must appear in the on-demand memory report; only the extension knows their size.
+
+### Why an extension could not handle it
+
+- The report is assembled by the host; an extension needs a registration surface to contribute to it.
+
+### Expected merge conflict zones
+
+- `types.ts` beside `registerMarkdownTransformer`; `loader.ts` `createExtensionAPI` and the extension record literal; `runner.ts` beside `getMarkdownTransformers`.
+
 ## 2026-10-02 - Ask-user answer provenance (senpi#2533)
 
 ### What changed

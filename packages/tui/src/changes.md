@@ -1,5 +1,43 @@
 # TUI delta rendering fork changes
 
+## 2026-10-03 - Coalesce marker-free paste bursts into one paste event (senpi#2600)
+
+### What changed
+
+- `packages/tui/src/stdin-buffer.ts`: `StdinBuffer` recognises a marker-free paste from stdin framing. A read with no ESC bytes that carries two or more line breaks (`\n`, `\r\n`, `\r`), or text after a line break, plus pasted text emits one `paste` event instead of per-character `data` events; typing delivers one key per read, so a read of bare Enters stays keystrokes and is forwarded at once. Text plus a trailing line break that arrives inside `burstWindowMs` (default 20ms) of the previous input holds the line break until the next read, a flush or the timeout, so a paste split across reads still lands as one block; a line break held within the window right after such a paste is released as part of the paste, never as Enter. Keystroke-paced input (gap above the window, first-ever input, ESC-bearing sequences, bracketed pastes) flows through the previous paths byte-identically. New options `burstWindowMs` and `now` (clock injection for tests).
+
+### Why
+
+- Terminals that do not send bracketed-paste markers deliver a multiline paste as plain text with newline bytes, so every line submitted as its own prompt: a 50-line paste became about 50 messages and the agent answered the last line (reported downstream in code-yeongyu/oh-my-openagent#9463).
+
+### Why an extension could not handle it
+
+- By the time an `input` event reaches an extension the host has already admitted one message per line: `agent-session.ts` awaits `emitInput` per message, so a later fragment is never dispatched until the earlier one resolves, and `InputEventResult` (`continue` | `transform` | `handled`) can only pass, rewrite, or consume that single event. Only stdin framing sees the burst before it becomes messages.
+
+### Expected merge conflict zones
+
+- `packages/tui/src/stdin-buffer.ts`: the `process` framing tail around `extractCompleteSequences`, the `pasteMode` marker block, `flush`/`clear`.
+- `packages/tui/test/stdin-buffer.test.ts`: the `StdinBuffer unbracketed paste bursts` block.
+
+## 2026-10-02 - Frame-line byte accounting for the memory report (senpi#1960)
+
+### What changed
+
+- `packages/tui/src/tui.ts`: `TuiBase.setPreviousLines` maintains a process-global frame-line byte total (`senpi.tui.frame-line-bytes`), released on stop/forced reset; `frameLineBytesTotals()` reports the sum over live TUIs.
+- `packages/tui/src/index.ts`: exports `frameLineBytesTotals` and `FrameLineBytesTotals`.
+
+### Why
+
+- senpi#1960: the TUI holds the whole frame in `previousLines` for the differential pass, so a long session's transcript cost lives there. Making it measurable lets the memory report attribute the growth; no eviction is added (the terminal has no per-card visibility to evict on).
+
+### Why an extension could not handle it
+
+- Frame retention is renderer-internal; only the renderer can measure it without changing render output.
+
+### Expected merge conflict zones
+
+- LOW: additive module-level counter and the accounting inside `setPreviousLines`; no render-path behavior changes.
+
 ## 2026-10-01 - Bound the line normalization memo (senpi#2508)
 
 ### What changed

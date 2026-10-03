@@ -73,6 +73,7 @@ import { createRpcEventOutputBuffer } from "./event-output-buffer.ts";
 import { settleExtensionUiResponse } from "./extension-ui-response.ts";
 import { HostSessionControl } from "./host-session-control.ts";
 import { createRpcLoginPromptCallbacks } from "./login-prompts.ts";
+import { answerMemoryReport } from "./memory-report-command.ts";
 import { protocolIdentity } from "./protocol-identity.ts";
 import { buildRpcCommandsForSession, createCommandsChangedEvent, rpcCommandListDigest } from "./rpc-command-surface.ts";
 import { rpcCommandPayloadError, rpcCommandShapeError, rpcMessageLengthError } from "./rpc-input-validation.ts";
@@ -1323,6 +1324,11 @@ export function createRpcConnectionHandler(
 			case "get_session_stats": {
 				const stats = session.getSessionStats();
 				return success(id, "get_session_stats", stats);
+			}
+
+			case "memory_report": {
+				const answer = await answerMemoryReport(session);
+				return answer.ok ? success(id, "memory_report", answer.data) : error(id, "memory_report", answer.error);
 			}
 
 			case "export_html": {

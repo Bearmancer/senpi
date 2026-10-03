@@ -1,3 +1,42 @@
+## 2026-10-03 - session.log lines name their session, provider and model (senpi#2541)
+
+### What changed
+
+- `packages/coding-agent/src/core/session-log.ts`: `provider` and `model` join the content-free field allowlist, and `createSessionLogger` takes an optional `context` callback whose fields (same allowlist) are stamped on every line at write time; an event's own fields win over the context.
+- `packages/coding-agent/src/core/agent-session.ts`: the session's logger context is its current `sessionId` plus the active model's `provider` and `model`, so every line the session writes (compaction, provider errors, prompt rejections, queue and resume events) is attributable. `provider_error` also passes the failing message's own `provider` and `model`.
+
+### Why
+
+- `packages/coding-agent/src/core/session-log.ts`, `packages/coding-agent/src/core/agent-session.ts`: every session in an agent dir appends to one `logs/session.log`, so with a parent and its task children (or several TUIs) running, a `provider_error` such as a billing 400 could not be traced to the session or provider that hit it. `sessionId` was allowlisted but never passed, and `provider`/`model` were stripped.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/session-log.ts`, `packages/coding-agent/src/core/agent-session.ts`: the session writes these lines from its own event path with its private logger; extensions never see or wrap it.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/session-log.ts`: `ALLOWED_DATA_KEY`, `SessionLoggerOptions` and the `formatLine` call in `log`.
+- `packages/coding-agent/src/core/agent-session.ts`: the `createSessionLogger` call in the constructor and the `provider_error` branch of `_logSessionEvent`.
+
+## 2026-10-02 - On-demand memory report (senpi#2561)
+
+### What changed
+
+- `packages/coding-agent/src/core/memory-report/` (new): `memory-report-registry.ts` (flag readers for `SENPI_MEMORY_REPORT` / `SENPI_MEMORY_REPORT_SNAPSHOT`, a process-global map of live sessions, the TUI render-cache source, reserved report keys), `kernel-registry-read.ts` (the one structural reader of the codemode kernel registry's process-global listing and of the `bun:jsc` main-heap figure; the RPC host and the report both consume it), `memory-report-build.ts` (report sections: main-thread heap and footprint, the codemode kernel registry listing, resident store, extension reporters), `memory-report-write.ts` (writes `<session>-artifacts/memory/<iso>.json` — unsaved sessions fall back to `<tmpdir>/senpi-memory-report-<pid>-<sessionId>/` so same-process sessions never overwrite each other — the optional heap snapshot, and installs the `SIGUSR2` trigger only under the flag).
+- `packages/coding-agent/src/core/agent-session.ts`: the constructor registers the session for reports (a no-op without the flag); `dispose()` removes it.
+- `packages/coding-agent/src/core/session-resident-store.ts`: `size()` returns `{ entries, approxBytes }` from incremental byte accounting; the accounting moved to `session-resident-store-size.ts` and the JSON copy helper to `session-resident-json.ts` (behaviour unchanged).
+
+### Why
+
+- Long sessions held 0.5-3.8 GiB with no way to tell which layer from the shipped binary; diagnosis needs a per-layer reading taken on demand without rebuilding.
+
+### Why an extension could not handle it
+
+- The report reads the session's resident store, every extension's reporters, and the main thread's heap; it must exist in every mode before any extension loads.
+
+### Expected merge conflict zones
+
+- LOW: the end of the `AgentSession` constructor and `dispose()`; `session-resident-store.ts` (fork-only).
 ## 2026-10-02 - Mark repeated and cap-skipped skill invocations in place
 
 ### What changed

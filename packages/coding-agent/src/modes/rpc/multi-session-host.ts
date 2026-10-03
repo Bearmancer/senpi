@@ -23,12 +23,11 @@ import { performIdleHandover } from "./host-handover-wire.ts";
 import { EXPECTED_RUNTIME_BUILD_ID_ENV } from "./host-idle-handover.ts";
 import { type HostIdleOverrides, RPC_CLOSE_GRACE_MS_ENV, resolveHostIdlePolicy } from "./host-idle-policy.ts";
 import { parseIdleExitMs } from "./host-lifecycle.ts";
-import { type HostMemoryReading, HostMemorySampler } from "./host-memory-sampler.ts";
+import { createZeroSessionTrim, startHostObservers } from "./host-observers.ts";
 import { runAsHostGenerationProcess } from "./host-process-role.ts";
 import { createEndpointReservations } from "./host-reservations.ts";
 import { armHostWatchdog, readHostWatchdogConfigFromBrandEnv } from "./host-watchdog.ts";
 import { attachJsonlLineReader, MAX_RPC_LINE_CHARACTERS } from "./jsonl.ts";
-import { LoopLagWatchdog } from "./loop-lag-watchdog.ts";
 import { hostGeneration, hostInstanceId, protocolIdentity } from "./protocol-identity.ts";
 import { rpcCommandShapeError } from "./rpc-input-validation.ts";
 import type { RpcCommand, RpcResponse } from "./rpc-types.ts";
@@ -81,33 +80,6 @@ export {
 /** Win32 named-pipe close can leave libuv's server callback pending after handles are destroyed. */
 const WINDOWS_SHUTDOWN_HARD_EXIT_MS = 2_000;
 
-/**
- * Arm the host's self-observation: event-loop stall detection with per-session
- * attribution, and RSS reporting that tightens idle parking under pressure. Both run on
- * unref'd timers, and neither refuses, aborts or kills anything (#2207).
- */
-function startHostObservers(
-	router: SessionCommandRouter,
-	writer: SessionEventWriter,
-	options: { onIdlePressure?: (reading: HostMemoryReading) => void } = {},
-): { stop: () => void } {
-	const loopLag = new LoopLagWatchdog({ emit: (record) => writer.broadcastHostRecord(record) });
-	const memory = new HostMemorySampler({
-		emit: (record) => writer.broadcastHostRecord(record),
-		sessions: () => router.sessionCount,
-		onPressure: (pressure) => router.setMemoryPressure(pressure),
-		...(options.onIdlePressure ? { onIdlePressure: options.onIdlePressure } : {}),
-	});
-	loopLag.start();
-	memory.start();
-	return {
-		stop: () => {
-			loopLag.stop();
-			memory.stop();
-		},
-	};
-}
-
 interface Connection {
 	readonly id: string;
 	readonly sink: RpcConnectionSink;
@@ -152,6 +124,7 @@ export function createHostCore(
 				closeGraceMs: idle.closeGraceMs ?? parseIdleExitMs(process.env[RPC_CLOSE_GRACE_MS_ENV]) ?? 10_000,
 				// Two generations of this daemon can be alive at once during a handoff; the claims
 				// they publish here are what keeps them off one session file.
+				...(hooks.onSessionCountChange ? { onSizeChange: hooks.onSessionCountChange } : {}),
 				pathReservations: createEndpointReservations({
 					agentDir: options.agentDir,
 					socket: listenSocketPath(options),
@@ -203,15 +176,19 @@ async function runStdioHost(options: MultiSessionHostOptions): Promise<never> {
 	// An empty host (no session ever opened, or all closed) must not stay resident
 	// forever: exit through the normal shutdown path once the window elapses.
 	const runtimeBuildId = await startupRuntimeBuildId();
+	const trim = createZeroSessionTrim(writer, () => router.sessionCount);
 	const { router, handle } = createHostCore(
 		options,
 		writer,
 		undefined,
 		{ onEmptyExit: () => void shutdown(0) },
 		undefined,
-		runtimeBuildId === undefined ? {} : { runtimeBuildId },
+		{
+			...(runtimeBuildId === undefined ? {} : { runtimeBuildId }),
+			onSessionCountChange: (size) => trim.observe(size),
+		},
 	);
-	const observers = startHostObservers(router, writer);
+	const observers = startHostObservers(router, writer, { trim });
 	let shuttingDown = false;
 	const shutdown = async (exitCode = 0): Promise<never> => {
 		if (shuttingDown) process.exit(exitCode);
@@ -259,6 +236,7 @@ async function runSocketHost(options: MultiSessionHostOptions, socketPath: strin
 		process.exit(1);
 	}
 	const canHandOver = runtimeBuildId !== undefined && process.platform !== "win32";
+	const trim = createZeroSessionTrim(writer, () => router.sessionCount);
 	const { router, handle, handover, handoverAnswered } = createHostCore(
 		options,
 		writer,
@@ -292,6 +270,7 @@ async function runSocketHost(options: MultiSessionHostOptions, socketPath: strin
 		},
 		hostContext,
 		{
+			onSessionCountChange: (size) => trim.observe(size),
 			...(runtimeBuildId !== undefined && { runtimeBuildId }),
 			...(canHandOver && {
 				handover: {
@@ -312,6 +291,7 @@ async function runSocketHost(options: MultiSessionHostOptions, socketPath: strin
 		},
 	);
 	const observers = startHostObservers(router, writer, {
+		trim,
 		// The shape #1893 measured: gigabytes resident with `sessions.total 0`. Say it once, and when
 		// this generation no longer owns the endpoint, leave - nobody can reach it to ask.
 		onIdlePressure: ({ footprintMb, measure, rssMb }) => {

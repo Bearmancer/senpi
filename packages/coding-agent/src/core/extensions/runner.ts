@@ -20,6 +20,7 @@ import type { ResourceDiagnostic } from "../diagnostics.ts";
 import type { DiscoveredResourceEntry } from "../discovered-resource-scope.ts";
 import { createEventBus, type EventBus, EXTENSION_RPC_EVENT_CHANNEL, type ExtensionRpcEvent } from "../event-bus.ts";
 import type { KeybindingsConfig } from "../keybindings.ts";
+import type { NamedMemoryReporter } from "../memory-report/memory-report-registry.ts";
 import type { ModelRegistry } from "../model-registry.ts";
 import type { ScopedModel } from "../model-resolver.ts";
 import { getSessionContextEntryId, SESSION_CONTEXT_ENTRY_ID, type SessionManager } from "../session-manager.ts";
@@ -1115,6 +1116,13 @@ export class ExtensionRunner {
 			}
 		}
 		return undefined;
+	}
+
+	/** Every loaded extension's memory reporters, in load order; the report keeps the first of a name. */
+	getMemoryReporters(): NamedMemoryReporter[] {
+		return this.extensions.flatMap((ext) =>
+			[...(ext.memoryReporters ?? new Map())].map(([name, reporter]) => ({ name, reporter })),
+		);
 	}
 
 	getMarkdownTransformers(): MarkdownTransformer[] {

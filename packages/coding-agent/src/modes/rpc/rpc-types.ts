@@ -17,7 +17,6 @@ import type { PromptSurface } from "../../core/dynamic-prompt/types.ts";
 import type { EngineOrdinal } from "../../core/engine-build-identity.ts";
 import type { ServiceTier } from "../../core/extensions/builtin/service-tier.ts";
 import type { ContextUsage, SessionControlAdmission, SessionKind } from "../../core/extensions/types.ts";
-import type { ProcessFootprintMeasure } from "../../core/process-footprint.ts";
 import type { SessionEntry, SessionMessageEntry, SessionTreeNode, UsageTotals } from "../../core/session-manager.ts";
 import type { SourceInfo } from "../../core/source-info.ts";
 import type { ClientMessageAdmission } from "./client-admission-record.ts";
@@ -26,6 +25,14 @@ import type { RpcSlashCommand } from "./rpc-command-surface.ts";
 export type { SessionContext, SessionKind } from "../../core/extensions/types.ts";
 export type { RpcCommandInvocationEvent } from "./rpc-command-invocation.ts";
 export type { RpcCommandsChangedEvent, RpcSlashCommand } from "./rpc-command-surface.ts";
+export type {
+	RpcHostKernelMemory,
+	RpcHostLifecycleEvent,
+	RpcHostMemoryPressureEvent,
+	RpcHostStalledEvent,
+	RpcHostSupersededEvent,
+	RpcHostTrimmedEvent,
+} from "./rpc-host-lifecycle-types.ts";
 
 // ============================================================================
 // RPC Commands (stdin)
@@ -171,6 +178,7 @@ type RpcSessionCommand =
 
 	// Session
 	| { id?: string; type: "get_session_stats" }
+	| { id?: string; type: "memory_report" }
 	| { id?: string; type: "export_html"; outputPath?: string; themeName?: string }
 	| { id?: string; type: "export_jsonl"; outputPath?: string }
 	| { id?: string; type: "switch_session"; sessionPath: string; cwdOverride?: string }
@@ -534,6 +542,11 @@ export interface RpcSessionModelEntry {
 
 export interface RpcSessionState {
 	model?: Model<any>;
+	/**
+	 * Model switch held until the next compaction, or `null` when no switch is held.
+	 * This key is always present so clients can distinguish no hold from an older host.
+	 */
+	pendingModelSwitch: { provider: string; id: string } | null;
 	thinkingLevel: ThinkingLevel;
 	/**
 	 * Explicit selector provenance for `thinkingLevel`, absent for SDK-defaulted
@@ -854,6 +867,13 @@ export type RpcResponse =
 
 	// Session
 	| { id?: string; type: "response"; command: "get_session_stats"; success: true; data: SessionStats }
+	| {
+			id?: string;
+			type: "response";
+			command: "memory_report";
+			success: true;
+			data: { path: string; heapSnapshot?: string };
+	  }
 	| { id?: string; type: "response"; command: "export_html"; success: true; data: { path: string } }
 	| { id?: string; type: "response"; command: "export_jsonl"; success: true; data: { path: string } }
 	| { id?: string; type: "response"; command: "switch_session"; success: true; data: { cancelled: boolean } }
@@ -1280,17 +1300,6 @@ export type RpcSessionClosedEvent = {
 	sessionPath?: string;
 };
 
-/** Sent once to every connection before this generation starts parking for a handoff. */
-export interface RpcHostSupersededEvent {
-	type: "host_superseded";
-	instanceId: string;
-	generation: number;
-	/** Public endpoint of the successor, or null for a drain without a known successor. */
-	successor: { socket: string } | null;
-}
-
-export type RpcHostLifecycleEvent = RpcHostSupersededEvent | RpcHostStalledEvent | RpcHostMemoryPressureEvent;
-
 /** Emitted after the loaded skill, extension, or MCP inventory changes. */
 export interface RpcLoadedSurfacesChangedEvent {
 	type: "loaded_surfaces_changed";
@@ -1302,11 +1311,6 @@ export interface RpcAuthAccountsChangedEvent {
 	provider: string;
 }
 
-/**
- * Emitted when the host's event loop was blocked long enough to stall every session it
- * serves, naming the routing handle and tool whose work held it when that can be
- * attributed. Informational: the host never aborts or refuses anything because of it.
- */
 /**
  * Sent to ONE opener the moment its `open_session` is accepted, before the open enters the
  * session loop. The in-process host serves opens one at a time, so a burst queues; without this
@@ -1324,43 +1328,6 @@ export interface RpcOpenQueuedEvent {
 	position: number;
 	/** Opens already in flight when this one arrived; `position` is this plus one. */
 	in_flight: number;
-}
-
-export interface RpcHostStalledEvent {
-	type: "host_stalled";
-	/** How late the host's own 200ms timer was invoked, i.e. how long the loop was held. */
-	driftMs: number;
-	/** Routing handle blamed for the stall, absent when no session work was running. */
-	sessionId?: string;
-	/** Tool that session was executing, when the stall happened inside one. */
-	tool?: string;
-	/**
-	 * Process CPU time spent during the stalled window, in milliseconds. Near `driftMs`: the host
-	 * was busy (JS work or a collection). Near zero: the process did not run (starved or waiting).
-	 */
-	processCpuMs?: number;
-	/** JS heap change across the stalled window, in megabytes; a large drop means a collection ran. */
-	heapDeltaMb?: number;
-}
-
-/**
- * Emitted while the host process's memory footprint is above its warning threshold. Capacity is memory,
- * never a refusal: the host reports the pressure and parks idle sessions sooner, and
- * never declines or kills a session because of it.
- */
-export interface RpcHostMemoryPressureEvent {
-	type: "host_memory_pressure";
-	/** Resident set size of the host process, in megabytes (what `ps` shows; it stays high after memory is returned). */
-	rssMb: number;
-	/**
-	 * Memory footprint of the host process, in megabytes: the number compared with the threshold (senpi#2261).
-	 * Hosts released before it omit this and `measure`.
-	 */
-	footprintMb?: number;
-	/** Kernel counter behind `footprintMb`; `"rss"` when the platform exposes no footprint counter. */
-	measure?: ProcessFootprintMeasure;
-	/** Live sessions the host is holding, including ones opening or closing. */
-	sessions: number;
 }
 
 /** Emitted when the SDK failover engine advances to a different account slot. */

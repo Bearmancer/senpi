@@ -11,6 +11,7 @@ import type {
 	RpcSessionParkedEvent,
 } from "./rpc-types.ts";
 import { SessionEventFanout, type SessionEventWriterConnection } from "./session-event-fanout.ts";
+import { SessionOpenTurns } from "./session-open-turns.ts";
 import type { SocketEventSinkActor } from "./socket-event-fanout.ts";
 
 export type { SessionEventWriterConnection } from "./session-event-fanout.ts";
@@ -103,6 +104,7 @@ export class SessionEventWriter {
 	private readonly sealedSessions = new Set<string>();
 	/** Sessions whose lifecycle records stay on their attached connections (`kind: "worker"`). */
 	private readonly workerSessions = new Set<string>();
+	private readonly openTurns = new SessionOpenTurns();
 	private readonly writeRaw: RawWriter;
 	private readonly waitForBackpressure?: BackpressureWaiter;
 	private readonly scheduleFlush: FlushScheduler;
@@ -246,6 +248,7 @@ export class SessionEventWriter {
 			);
 			return false;
 		}
+		this.openTurns.note(sessionId, record.type);
 		const targets = this.fanout.targets(sessionId, targetId, isTargeted, record.type);
 		// A record is only walked and re-serialized when a target asked for placeholders;
 		// otherwise this is byte-for-byte today's path, with serializeJsonLine called once.
@@ -382,6 +385,17 @@ export class SessionEventWriter {
 					...(record.footprintMb !== undefined ? { footprintMb: record.footprintMb } : {}),
 					...(record.measure !== undefined ? { measure: record.measure } : {}),
 					sessions: record.sessions,
+					...(record.main !== undefined ? { main: record.main } : {}),
+					...(record.kernels !== undefined ? { kernels: record.kernels } : {}),
+				};
+				break;
+			case "host_trimmed":
+				wire = {
+					type: "host_trimmed",
+					footprintBeforeMb: record.footprintBeforeMb,
+					footprintAfterMb: record.footprintAfterMb,
+					measure: record.measure,
+					collected: record.collected,
 				};
 				break;
 			default: {
@@ -402,7 +416,7 @@ export class SessionEventWriter {
 	 * session's final stdout record.
 	 */
 	closeSession(sessionId: string, response: object, reason?: RpcSessionClosedReason, sessionPath?: string): void {
-		if (this.sealedSessions.has(sessionId)) return;
+		if (!this.settleBeforeSeal(sessionId)) return;
 		this.sealedSessions.add(sessionId);
 		this.fanout.forgetSession(sessionId);
 		const targetId = this.connectionContext.getStore();
@@ -451,7 +465,7 @@ export class SessionEventWriter {
 	}
 
 	private sealWithLifecycle(sessionId: string, lifecycle: RpcSessionParkedEvent | RpcSessionClosedEvent): void {
-		if (this.sealedSessions.has(sessionId)) return;
+		if (!this.settleBeforeSeal(sessionId)) return;
 		this.sealedSessions.add(sessionId);
 		this.fanout.forgetSession(sessionId);
 		if (this.fanout.isEmpty()) this.appendSessionRecord(sessionId, lifecycle);
@@ -537,6 +551,18 @@ export class SessionEventWriter {
 	}
 
 	/**
+	 * Publishes the settles a seal would strand (session-open-turns.ts) while the session can still write;
+	 * false when the session is sealed already, or became sealed by a settle that overflowed the stdio lane.
+	 */
+	private settleBeforeSeal(sessionId: string): boolean {
+		if (this.sealedSessions.has(sessionId)) return false;
+		for (let owed = this.openTurns.take(sessionId); owed > 0; owed -= 1) {
+			this.enqueue(sessionId, { type: "agent_settled", reason: "session_closed" });
+		}
+		return !this.sealedSessions.has(sessionId);
+	}
+
+	/**
 	 * Drops per-session bookkeeping for a handle whose runtime is fully disposed.
 	 * Routing handles are unique per process epoch, so nothing can legitimately
 	 * emit under this id again; without this every host-closed session would
@@ -544,6 +570,7 @@ export class SessionEventWriter {
 	 */
 	forgetSession(sessionId: string): void {
 		this.sealedSessions.delete(sessionId);
+		this.openTurns.take(sessionId);
 		this.workerSessions.delete(sessionId);
 		this.fanout.forgetSession(sessionId);
 	}

@@ -2,8 +2,10 @@
  * `senpi host gc`: reclaims the endpoint directories of hosts that are PROVABLY gone, and nothing else.
  *
  * Endpoint state accumulates by design - `endpoint.json` outlives every generation so `status --all`
- * can still name an endpoint whose host exited - and this is the only path that ever removes it. It
- * never runs implicitly (not inside `ensure`, not inside `status`), it never signals a process, and it
+ * can still name an endpoint whose host exited - and this is the only code that ever removes it. It has
+ * two entry points on the same evidence: the operator command, and the budgeted pass `ensureHost`
+ * schedules AFTER it returned a host (`host-gc-pass.ts`; never inside the ensure lock, never awaited
+ * by the ensure, never from `status`). It never signals a process, and it
  * removes an endpoint only on three-part evidence evaluated INSIDE that endpoint's ensure lock, the one
  * `ensureHost` serializes on (`hostEnsureLockTarget`), so an ensure can neither start a host into a
  * directory being removed nor have its fresh registration removed under it. Every endpoint that fails
@@ -96,7 +98,8 @@ export async function gcHostEndpoints(agentDir: string, options: HostGcOptions =
 	return { removed, kept };
 }
 
-async function gcEndpoint(
+/** One endpoint, judged and removed exactly as a full run does; the budgeted pass (`host-gc-pass.ts`) reuses it. */
+export async function gcEndpoint(
 	socket: string,
 	dir: string,
 	options: HostGcOptions,

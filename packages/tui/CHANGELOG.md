@@ -10,6 +10,20 @@
 
 ### Fixed
 
+- A multiline paste that arrives without bracketed-paste markers no longer submits one prompt per line: newline-bearing stdin bursts coalesce into a single `paste` event, so the editor receives one block ([#2600](https://github.com/code-yeongyu/senpi/issues/2600)).
+
+### Removed
+
+## [2026.10.3] - 2026-10-03
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
 ### Removed
 
 ## [2026.10.2] - 2026-10-02

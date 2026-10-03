@@ -1,3 +1,22 @@
+## 2026-10-03 - Release notes cover every published package (senpi#2585)
+
+### What changed
+
+- `scripts/release-notes.mjs`: `extract` accepts `--changelog` more than once. With several changelogs, each package's non-empty section for the version is emitted in the given order under `## <published package name>` (the registry name from `registry-packages.mjs`, else the manifest name), and relative links resolve against that package's directory. A single `--changelog` (or the default) produces the same output as before, and a version with no section in any changelog still yields `Release <version>`. `--published` selects the changelog of every workspace package (`release-packages.mjs`) that `registry-packages.mjs` publishes, coding-agent first, so the release list has one source of truth.
+- `scripts/release-notes.test.mjs`: fixture-monorepo tests for the single and combined output, and for `--published` including every published package's section while leaving an unpublished package out.
+
+### Why
+
+- `scripts/release-notes.mjs`: the GitHub release body held only the coding-agent section, so the other packages' notes and contributor credits for the same version were dropped (v2026.10.2 lost 24 bullets across ai, senpi-codemode, tui and agent).
+
+### Why an extension could not handle it
+
+- Release tooling, not runtime behavior; no extension surface reaches the tag pipeline.
+
+### Expected merge conflict zones
+
+- LOW: `scripts/release-notes.mjs`, `parseOptions` and `extractReleaseNotes`.
+
 ## 2026-10-01 - Changelog gate reads changelogs larger than one mebibyte
 
 ### What changed

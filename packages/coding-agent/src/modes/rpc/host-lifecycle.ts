@@ -51,6 +51,7 @@ import { getAgentDir, isBunBinary, isBundledNode } from "../../config.ts";
 import { processIsLive, readProcessStartTime } from "../app-server/daemon/process.ts";
 import { classifyChildExit, noteChildExit } from "./host-child-exit.ts";
 import { ClientOccupancy } from "./host-client-occupancy.ts";
+import { rpcHostExecArgv } from "./host-exec-argv.ts";
 import {
 	DEFAULT_HANDOFF_GRACE_MS,
 	HANDOFF_GRACE_MS_ENV,
@@ -344,7 +345,7 @@ export function resolveHostChildLaunch(
 	return {
 		command: process.execPath,
 		args: [
-			...(compiled ? [] : [...process.execArgv, resolveCliMainPath()]),
+			...(compiled ? [] : [...rpcHostExecArgv(), resolveCliMainPath()]),
 			"--mode",
 			"rpc",
 			"--multi-session",

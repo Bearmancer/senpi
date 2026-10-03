@@ -33,6 +33,12 @@ export function buildRpcSessionState(session: AgentSession, lastAbortSource?: Ag
 	return {
 		pendingQuestions: sessionQuestionBridges.get(session)?.pendingQuestions(),
 		model: session.model,
+		pendingModelSwitch: session.pendingModelSwitch
+			? {
+					provider: session.pendingModelSwitch.model.provider,
+					id: session.pendingModelSwitch.model.id,
+				}
+			: null,
 		thinkingLevel: session.thinkingLevel,
 		...(session.thinkingSelection ? { thinkingSelection: session.thinkingSelection } : {}),
 		...(lastAbortSource ? { lastAbortSource } : {}),

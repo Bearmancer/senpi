@@ -2,7 +2,12 @@ import { createHash, randomBytes, randomUUID, timingSafeEqual } from "node:crypt
 import { type Static, Type } from "typebox";
 import { Value } from "typebox/value";
 import { kernelToolHostToKernelSchemas, kernelToolKernelToHostSchemas } from "./kernel-tools-protocol.ts";
-import { kernelMemoryReportSchema, kernelMemoryThresholdsSchema } from "./memory-protocol.ts";
+import {
+	kernelMemoryQueryHostToKernelSchemas,
+	kernelMemoryQueryKernelToHostSchemas,
+	kernelMemoryReportSchema,
+	kernelMemoryThresholdsSchema,
+} from "./memory-protocol.ts";
 
 export const BRIDGE_FRAME_MAX_BYTES = 10 * 1024 * 1024;
 
@@ -82,6 +87,7 @@ const hostToKernelMessageSchema = Type.Union([
 		error: bridgeErrorSchema,
 	}),
 	...kernelToolHostToKernelSchemas,
+	...kernelMemoryQueryHostToKernelSchemas,
 ]);
 
 const kernelToHostMessageSchema = Type.Union([
@@ -125,6 +131,7 @@ const kernelToHostMessageSchema = Type.Union([
 	Type.Object({ type: Type.Literal("closed") }),
 	Type.Object({ type: Type.Literal("webview-connect"), requestId: Type.String({ minLength: 1 }) }),
 	...kernelToolKernelToHostSchemas,
+	...kernelMemoryQueryKernelToHostSchemas,
 ]);
 
 const bridgeMessageSchema = Type.Union([hostToKernelMessageSchema, kernelToHostMessageSchema]);
