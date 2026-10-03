@@ -95,6 +95,23 @@
 			],
 			"reason": "Node 5 (senpi#2452): RED/GREEN witnesses for replacing a dead py/rb/jl kernel once with its queue, the eval_kernel_unavailable double-death path, retirement-failure recovery, and the detached kernel-state notes; no prompt, schema, helper or default change. The session manager now imports the replaceable kernel and its death vocabulary (two small lifecycle modules, no installer or sandbox runtime) on the extension and first-kernel paths."
 		},
+		"6": {
+			"additions": [
+				"imports/extension/packages/senpi-codemode/src/kernels/shared/subprocess-startup.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/kernels/shared/subprocess-startup.ts",
+				"imports/extension/packages/senpi-codemode/src/kernels/shared/process-group-cpu.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/kernels/shared/process-group-cpu.ts",
+				"legacyContracts/test/kernels/rb/subprocess-startup.test.ts/SubprocessStartupWatchdog Given a runner that prints nothing but keeps using CPU when the no-progress window passes again and again then it never stalls",
+				"legacyContracts/test/kernels/rb/subprocess-startup.test.ts/SubprocessStartupWatchdog Given a runner that is silent and uses no CPU after reaching runtime-init when the window passes then it stalls once, naming that stage",
+				"legacyContracts/test/kernels/rb/subprocess-startup.test.ts/SubprocessStartupWatchdog Given a runner whose CPU stopped moving after a burst when the next window passes then it stalls",
+				"legacyContracts/test/kernels/rb/subprocess-startup.test.ts/SubprocessStartupWatchdog Given output lines keep arriving with no CPU reader when the window passes between them then it never stalls",
+				"legacyContracts/test/kernels/rb/subprocess-startup.test.ts/SubprocessKernel startup Given an interpreter stuck silent and idle in runtime-init when a cell is waiting then the cell fails with a startup error naming the stage",
+				"legacyContracts/test/kernels/rb/subprocess-startup.test.ts/SubprocessKernel startup Given an interpreter that becomes ready after a long silent but CPU-busy start when a cell runs then it runs normally",
+				"legacyContracts/test/kernel-replacement.test.ts/a replaceable kernel Given five cells submitted while a dead kernel's replacement is still starting when it becomes ready then exactly one replacement spawned and all five ran on it in order",
+				"legacyContracts/test/kernel-replacement.test.ts/a replaceable kernel Given cells submitted after a death whose replacement failed to start when the next replacement starts then they share one spawn"
+			],
+			"reason": "Ruby and Julia kernels get a no-progress startup watchdog (two new modules in the scoped census) with its contracts; two tests pin the one-spawn replacement node 5 already delivers."
+		},
 		"9": {
 			"additions": [
 				"legacyContracts/test/kernel-tools-descriptor-language.test.ts/kernel tool descriptors name any eval language Given a descriptor from a Python kernel when it is typed and validated then it is accepted",
