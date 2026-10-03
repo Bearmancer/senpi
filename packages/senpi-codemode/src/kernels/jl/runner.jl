@@ -1,4 +1,6 @@
 # allow: SIZE_OK — parser, stream capture, bridge calls, and the persistent execution loop share Main globals.
+write(stdout, "{\"type\":\"status\",\"event\":{\"op\":\"kernel-startup\",\"stage\":\"stdlib-imports\"}}\n")
+flush(stdout)
 using Sockets
 
 const SENPI_ORIGINAL_STDOUT = stdout
@@ -7,6 +9,8 @@ out_read, out_write = redirect_stdout()
 err_read, err_write = redirect_stderr()
 redirect_stdin(devnull)
 
+write(SENPI_ORIGINAL_STDOUT, "{\"type\":\"status\",\"event\":{\"op\":\"kernel-startup\",\"stage\":\"runtime-init\"}}\n")
+flush(SENPI_ORIGINAL_STDOUT)
 include("prelude.jl")
 
 const senpi_connection = Dict{String, Any}()
@@ -313,6 +317,7 @@ while !eof(SENPI_ORIGINAL_STDIN)
         message isa AbstractDict || error("Bridge frame must be an object")
         kind = get(message, "type", nothing)
         if kind == "init"
+            senpi_emit(Dict("type" => "status", "event" => Dict("op" => "kernel-startup", "stage" => "host-init")))
             senpi_set_connection(get(message, "connection", nothing))
             senpi_emit(Dict("type" => "ready"))
         elseif kind == "run"
