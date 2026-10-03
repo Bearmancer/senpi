@@ -10,6 +10,7 @@ import {
 	DEFAULT_BAND_SCOPE,
 	globalNoiseBand,
 	MAX_BAND,
+	minimumDetectableEffect,
 	rowNoiseBand,
 } from "./bench-threshold.ts";
 import { invalidations, metricsOf } from "./bench-validate.ts";
@@ -69,6 +70,8 @@ export interface SeriesResult {
 	readonly pairedRatios: readonly number[];
 	readonly band: number;
 	readonly threshold: number;
+	/** Smallest slowdown this row can detect at its measured band (`minimumDetectableEffect`). */
+	readonly mde: number;
 	readonly ratio: number;
 	readonly medianPairedRatio: number;
 	readonly verdict: RowVerdict;
@@ -141,6 +144,7 @@ function judge(row: Row, band: number): SeriesResult {
 		pairedRatios: row.comparison.map(Math.exp),
 		band,
 		threshold,
+		mde: minimumDetectableEffect(band),
 		ratio,
 		medianPairedRatio: Math.exp(median(row.comparison)),
 		verdict,
@@ -150,6 +154,10 @@ function judge(row: Row, band: number): SeriesResult {
 function percent(value: number): string {
 	return Number.isFinite(value) ? value.toFixed(3) : String(value);
 }
+
+/** The honest claim of a run with no FAIL row and at least one noise-limited row. */
+export const NOISE_LIMITED_CLAIM =
+	"no regression detected; rows marked noise-limited can only detect slowdowns above their stated MDE";
 
 export function decide(input: BenchInput): Decision {
 	const refusal = admitHost(Math.max(...input.blockLoads));
@@ -193,10 +201,13 @@ export function decide(input: BenchInput): Decision {
 		return {
 			exitCode: 3,
 			verdict: "INCONCLUSIVE",
-			lines: limited.map(
-				(result) =>
-					`INCONCLUSIVE: ${named(result)}: ${result.metric} A/A noise band ${percent(result.band)} > ${MAX_BAND.toFixed(2)} (noise-limited); repeat on a quieter host`,
-			),
+			lines: [
+				...limited.map(
+					(result) =>
+						`INCONCLUSIVE: ${named(result)}: ${result.metric} A/A noise band ${percent(result.band)} > ${MAX_BAND.toFixed(2)} (noise-limited); can only detect slowdowns above MDE ${percent(result.mde)}`,
+				),
+				NOISE_LIMITED_CLAIM,
+			],
 			...base,
 		};
 	return { exitCode: 0, verdict: "PASS", lines: [], ...base };

@@ -5,7 +5,13 @@ import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { Check } from "typebox/value";
 import { admitHost, type Decision, decide } from "./bench-compare.ts";
-import { injectCalibrationOffset, injectSlow, parseInjection, type SlowInjection } from "./bench-inject.ts";
+import {
+	injectCalibrationOffset,
+	injectSlow,
+	parseInjection,
+	type SlowInjection,
+	unmatchedInjections,
+} from "./bench-inject.ts";
 import { loadSavedReport, RescoreError } from "./bench-rescore.ts";
 import { type RunResult, runBlocks, runtimesSchema, type Side } from "./bench-run.ts";
 import type { Series } from "./bench-compare.ts";
@@ -31,18 +37,26 @@ function refused(line: string): Decision {
 	};
 }
 
+function noInjectionTarget(unmatched: readonly string[]): string {
+	return `--inject-slow ${unmatched.join(", ")} matches no series measured on both sides; refusing a vacuous injection`;
+}
+
 const fixed = (value: number) => (Number.isFinite(value) ? value.toFixed(3) : String(value));
 
 function printDecision(decision: Decision, out: string): void {
 	console.log(
-		`A/A bands (${decision.bandScope} scope): gate = trimmed-mean paired ratio <= 1.00 + band; band = |A/A offset| + ${THRESHOLD_Z} SE, threshold capped at ${MAX_BAND.toFixed(2)}; a row whose band exceeds the cap is NOISE-LIMITED (INCONCLUSIVE)`,
+		`A/A bands (${decision.bandScope} scope): gate = trimmed-mean paired ratio <= 1.00 + band; band = |A/A offset| + ${THRESHOLD_Z} SE, threshold capped at ${MAX_BAND.toFixed(2)}; a row whose band exceeds the cap is NOISE-LIMITED (INCONCLUSIVE); MDE = band, the smallest slowdown the row can detect`,
 	);
-	console.log("  row | threshold | band | ratio | median paired ratio | verdict");
+	console.log("  row | threshold | band | MDE | ratio | median paired ratio | verdict");
 	for (const result of decision.results) {
 		console.log(
-			`  ${result.scenario} ${result.runtimeId} ${result.metric} | ${fixed(result.threshold)} | ${fixed(result.band)} | ${fixed(result.ratio)} | ${fixed(result.medianPairedRatio)} | ${result.verdict}`,
+			`  ${result.scenario} ${result.runtimeId} ${result.metric} | ${fixed(result.threshold)} | ${fixed(result.band)} | ${fixed(result.mde)} | ${fixed(result.ratio)} | ${fixed(result.medianPairedRatio)} | ${result.verdict}`,
 		);
 	}
+	const count = (verdict: string) => decision.results.filter((result) => result.verdict === verdict).length;
+	console.log(
+		`rows: ${count("PASS")} PASS, ${count("NOISE-LIMITED")} NOISE-LIMITED, ${count("FAIL")} FAIL of ${decision.results.length}`,
+	);
 	for (const skip of decision.skipped) console.log(`  skipped ${skip}`);
 	for (const line of decision.lines) console.error(line);
 	console.log(`Bench report: ${out}`);
@@ -110,12 +124,26 @@ async function main(): Promise<number> {
 		env: benchEnv(),
 		log: (line) => console.log(line),
 	});
-	const series = injected(run.series);
 	const blockLoads = [
 		...run.admissionLoads,
 		...run.blocks.map((block) => block.loadavg[0] ?? 0),
 		...Object.values(run.reports).flatMap((reports) => reports.map(({ report }) => report.loadavg[0] ?? 0)),
 	];
+	const unmatched = unmatchedInjections(run.series, injections);
+	// The raw samples are kept un-injected, so the refused measurement can still be rescored.
+	if (unmatched.length > 0)
+		return finish(refused(noInjectionTarget(unmatched)), out, {
+			targets,
+			revisions,
+			blocks,
+			reps,
+			blockLoads,
+			injections: [],
+			refusedInjections: injections,
+			run,
+			series: run.series,
+		});
+	const series = injected(run.series);
 	const decision = decide({ runtimes: run.runtimes, reps, bandScope, blockLoads, series, failures: run.failures });
 	const context = { targets, revisions, blocks, reps, bandScope, injections, calibrationOffset, blockLoads };
 	return finish(decision, out, { ...context, run, series });
@@ -136,6 +164,9 @@ async function rescore(source: string, out: string, options: Rescoring): Promise
 	});
 	if (saved instanceof RescoreError) return finish(refused(saved.message), out, { rescoredFrom: source });
 	const { bandScope, injections, calibrationOffset } = options;
+	const unmatched = unmatchedInjections(saved.series, injections);
+	if (unmatched.length > 0)
+		return finish(refused(noInjectionTarget(unmatched)), out, { rescoredFrom: source, injections });
 	const series = options.injected(saved.series);
 	const decision = decide({ ...saved, bandScope, series });
 	console.log(`rescored ${source} (${saved.reps} repetitions per side; no new samples)`);
@@ -161,7 +192,7 @@ async function finish(decision: Decision, out: string, context: Readonly<Record<
 		package: "@code-yeongyu/senpi-codemode",
 		createdAt: new Date().toISOString(),
 		policy:
-			`paired interleaved repetitions, trimmed mean (25%) of paired log ratios per row <= 1.00 + A/A band; band = |A/A offset| + ${THRESHOLD_Z} SE of that row's calibration pairs (or one p95 band with --band-scope global), threshold capped at ${MAX_BAND}; noise-limited rows inconclusive`,
+			`paired interleaved repetitions, trimmed mean (25%) of paired log ratios per row <= 1.00 + A/A band; band = |A/A offset| + ${THRESHOLD_Z} SE of that row's calibration pairs (or the largest row band for every row with --band-scope global), threshold capped at ${MAX_BAND}; per-row MDE = band; noise-limited and host-contaminated runs inconclusive`,
 		...rest,
 		hostLoadavg: loadavg(),
 		hostRuntime: {

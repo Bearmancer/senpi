@@ -74,6 +74,33 @@ describe("rescoring a saved measurement", () => {
 		expect(result.output).toContain("FAIL: warm-cell py: paired cpu ratio 1.3");
 	}, 30_000);
 
+	it("rejects a mistyped injection scenario instead of applying it as a silent no-op", async () => {
+		// When the injection names a scenario that does not exist.
+		const source = join(dir, "measured.json");
+		await writeFile(source, JSON.stringify(saved));
+		const result = await bench([
+			"--rescore",
+			source,
+			"--out",
+			join(dir, "out.json"),
+			"--inject-slow",
+			"head:warm-cel:1.3",
+		]);
+		// Then the run errors out and never reports a pass.
+		expect(result.code).not.toBe(0);
+		expect(result.code).not.toBeNull();
+		expect(result.output).toContain("unknown scenario warm-cel");
+		expect(result.output).not.toContain("bench: PASS");
+	}, 30_000);
+
+	it("refuses an injection that matches no measured series", async () => {
+		// When a real scenario is injected that this measurement never ran.
+		const result = await rescore("--inject-slow", "head:detach:1.3");
+		// Then the vacuous injection is refused rather than judged.
+		expect(result.code).toBe(2);
+		expect(result.output).toContain("head:detach:1.3 matches no series measured on both sides");
+	}, 30_000);
+
 	it("reports a forced excessive A/A band as inconclusive", async () => {
 		// When every row's calibration carries an eight-percent offset.
 		const result = await rescore("--inject-aa-offset", "1.08");

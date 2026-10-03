@@ -1,6 +1,7 @@
-import { loadavg } from "node:os";
+import { availableParallelism, loadavg } from "node:os";
 import { type Static, Type } from "typebox";
 import type { PairedBlock, RuntimeStatus, Series } from "./bench-compare.ts";
+import { contaminationCeiling, contaminationFailures } from "./bench-contamination.ts";
 import { hostIdleSeconds, powerSource } from "./bench-host.ts";
 import { type HostSample, sampleHost, startHostSampler, summarizeSamples } from "./bench-sampler.ts";
 import { implementedScenarios, plannedScenarios } from "./bench-scenarios.ts";
@@ -31,9 +32,9 @@ export interface RunPlan {
 	readonly log: (line: string) => void;
 }
 
+/** `measurements` is the actual measurement order; the scheduler alternates which side goes first per repetition. */
 export interface BlockRecord {
 	readonly index: number;
-	readonly comparisonOrder: readonly Side[];
 	readonly loadavg: readonly number[];
 	readonly loadavgEnd: readonly number[];
 	readonly power: string;
@@ -91,7 +92,6 @@ export async function runBlocks(plan: RunPlan): Promise<RunResult> {
 			...assemble(plan, available, collected),
 		};
 	blocksLoop: for (let index = 0; index < plan.blocks; index += 1) {
-		const comparisonOrder: Side[] = index % 2 === 0 ? ["base", "head"] : ["head", "base"];
 		const startedAt = new Date().toISOString();
 		const sampler = startHostSampler(sampleHost);
 		const startLoad = loadavg();
@@ -166,7 +166,6 @@ export async function runBlocks(plan: RunPlan): Promise<RunResult> {
 			if (failures.length > 0) {
 				blocks.push({
 					index,
-					comparisonOrder,
 					loadavg: startLoad,
 					loadavgEnd: loadavg(),
 					power,
@@ -184,7 +183,6 @@ export async function runBlocks(plan: RunPlan): Promise<RunResult> {
 		const loadavgEnd = loadavg();
 		blocks.push({
 			index,
-			comparisonOrder,
 			loadavg: startLoad,
 			loadavgEnd,
 			power,
@@ -196,6 +194,7 @@ export async function runBlocks(plan: RunPlan): Promise<RunResult> {
 		});
 		plan.log(`block ${index + 1} host: ${startedAt} -> ${endedAt}, ${summarizeSamples(hostSamples)}`);
 	}
+	failures.push(...contaminationFailures(blocks, contaminationCeiling(availableParallelism())));
 	return {
 		reps: plan.reps,
 		blocks,

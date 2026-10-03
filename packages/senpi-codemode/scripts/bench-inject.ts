@@ -1,4 +1,5 @@
 import type { Rep, Series } from "./bench-compare.ts";
+import { implementedScenarios } from "./bench-scenarios.ts";
 
 export interface SlowInjection {
 	readonly side: "head";
@@ -12,7 +13,24 @@ export function parseInjection(spec: string): SlowInjection {
 	const factor = Number(match?.[2]);
 	if (!match?.[1] || !(factor > 0))
 		throw new RangeError(`--inject-slow expects head:<scenario>:<factor>, got ${spec}`);
-	return { side: "head", scenario: match[1], factor };
+	const scenario = match[1];
+	if (!implementedScenarios.some((entry) => entry.name === scenario))
+		throw new RangeError(
+			`--inject-slow names unknown scenario ${scenario}; known: ${implementedScenarios.map((entry) => entry.name).join(", ")}`,
+		);
+	return { side: "head", scenario, factor };
+}
+
+/** Injections that would scale no series measured on both sides: applying them would be a silent no-op. */
+export function unmatchedInjections(series: readonly Series[], injections: readonly SlowInjection[]): string[] {
+	return injections
+		.filter(
+			(injection) =>
+				!series.some(
+					(entry) => entry.scenario === injection.scenario && entry.present.base && entry.present.head,
+				),
+		)
+		.map((injection) => `head:${injection.scenario}:${injection.factor}`);
 }
 
 function scaled(rep: Rep, factor: number): Rep {

@@ -36,11 +36,51 @@ between rows; the rule is the same for all of them. The threshold is the band
 capped at `MAX_BAND` (0.05). A row FAILs when its paired ratio exceeds
 `1 + band`. A row whose band is above 0.05 is NOISE-LIMITED: it can still fail
 beyond its own noise, but it never passes, and the run is INCONCLUSIVE. The
-report prints threshold, band, ratio, median paired ratio and verdict per row.
+report prints threshold, band, minimum detectable effect (MDE), ratio, median
+paired ratio and verdict per row, then the PASS / NOISE-LIMITED / FAIL counts.
 
-`--band-scope global` switches to one band for every row (the 95th percentile
-over rows of the A/A trimmed-mean deviation) with the same estimator, cap and
-verdicts. It is the only knob between the two policies.
+Each row's MDE is derived from its own measured A/A band:
+`minimumDetectableEffect(band) = band` (the floor variant; no extra z). A row
+FAILs only when its paired ratio exceeds `1 + band`, so a true slowdown below the
+band is not flagged on average and one at the band is flagged about half the
+time. A clean row's MDE equals its threshold (at most 0.05); a noise-limited row's
+MDE is above 0.05 and states the largest slowdown that row could miss. A run with
+no FAIL row and at least one noise-limited row ends with the claim "no regression
+detected; rows marked noise-limited can only detect slowdowns above their stated
+MDE".
+
+## What a run can claim on available hardware
+
+The acceptance self-vs-self run (3 blocks x 15 repetitions, a quiet host on AC,
+every block clear of other measured load) ended INCONCLUSIVE with 63 PASS, 57
+NOISE-LIMITED and 0 FAIL of 120 rows. The noise-limited MDEs range from 0.052 to
+0.503 (18 rows above 0.10, 8 above 0.20); every PASS row's MDE is at most 0.05.
+The same measurement on a loaded host gave 23 PASS, 97 NOISE-LIMITED, 0 FAIL:
+quieting the host halves the noise-limited count but does not reach exit 0, so
+exit 0 is not reachable on the hardware available. Rescoring that quiet run with
+`--inject-slow head:warm-cell-1000:1.25` (and `1.3`) exits 1 and names the
+warm-cell-1000 rows (15 FAIL rows), and the forced A/A offset exits 3. Rescoring
+it with `--band-scope global` gives 0 FAIL and exit 3: the shared band is the
+noisiest row's 0.503, so every row is noise-limited. No block exceeded the
+18-core ceiling (peak 1-minute load 13.36). The honest ceiling is therefore 0
+FAIL plus noise-limited labels plus each row's MDE: a true 1.25x regression is
+caught, and a slowdown below a noise-limited row's MDE can go unnoticed.
+
+`--band-scope global` switches to one band for every row: the largest
+`rowNoiseBand` over all rows. The statistic is the same as row scope; only the
+scope differs, so every row's shared band is at least its own and the global
+scope never fails a clean row that row scope passes. (A percentile of the bare
+A/A offsets would fail a fixed share of clean rows by construction.) It is the
+only knob between the two policies.
+
+A block is contaminated when any measurement's start or end 1-minute load, or
+any of the block's host samples, exceeds the host's core count: beyond it,
+runnable threads queue for a core and the measured time absorbs scheduler wait.
+(macOS load also counts I/O-blocked threads, so a fractional ceiling would flag
+quiet hosts.) A contaminated block is named in an INCONCLUSIVE line with its
+peak load and first affected measurement, so a load burst on one side can never
+feed a FAIL. Each measurement's side, repetition and order are retained in the
+block's `measurements` list; the first side alternates on every repetition.
 
 Exit codes: 0 PASS, 1 regression, 2 refused (load above 80 or stale build),
 3 INCONCLUSIVE (missing runtime/scenario/sample, version mismatch, unavailable
@@ -109,6 +149,8 @@ is inconclusive even when both sides omit it.
 
 `--inject-slow head:warm-cell-1000:1.3` scales only that workload's head comparison
 samples after measurement. It is a comparator fault injection, not a CPU burner.
+An unknown scenario name is rejected, and an injection that matches no series
+measured on both sides is refused (exit 2), so a typo can never pass vacuously.
 `--inject-loadavg 81` exercises refusal without starting a workload.
 `--inject-aa-offset 1.08` scales the second calibration instance of every row,
 forcing an eight-percent A/A offset (an excessive band, so INCONCLUSIVE).

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
 	type BenchInput,
 	decide,
+	NOISE_LIMITED_CLAIM,
 	type PairedBlock,
 	pairedLogRatios,
 	type Series,
@@ -107,17 +108,77 @@ describe("per-row A/A-calibrated thresholds", () => {
 		expect(result.exitCode).toBe(1);
 	});
 
+	it("derives each row's minimum detectable effect from that row's own band, not a constant", () => {
+		// Given rows of three different calibration noise levels.
+		const result = run([
+			row("warm-cell", "py", noisyBlocks(3, 0.02)),
+			row("cold-start", "rb", noisyBlocks(9, 0.1)),
+			row("interrupt", "jl", noisyBlocks(4, 0.6)),
+		]);
+		// Then every row's MDE is its own band, so the MDEs differ as the bands do.
+		for (const entry of result.results) expect(entry.mde).toBe(entry.band);
+		const cpu = result.results.filter((entry) => entry.metric === "cpu");
+		expect(cpu).toHaveLength(3);
+		expect(new Set(cpu.map((entry) => entry.mde)).size).toBe(3);
+	});
+
+	it("states an MDE above five percent for a noise-limited row and the honest no-regression claim", () => {
+		// Given identical code with one row whose A/A noise is far above five percent.
+		const result = run([row("warm-cell", "py", noisyBlocks(3, 0.02)), row("interrupt", "rb", noisyBlocks(4, 0.6))]);
+		const noisy = result.results.filter((entry) => entry.verdict === "NOISE-LIMITED");
+		// Then that row shows the largest slowdown it could miss, and the run claims only what it measured.
+		expect(noisy.length).toBeGreaterThan(0);
+		for (const entry of noisy) expect(entry.mde).toBeGreaterThan(MAX_BAND);
+		const cpu = noisy.find((entry) => entry.metric === "cpu");
+		expect(result.lines).toContain(
+			`INCONCLUSIVE: interrupt rb: cpu A/A noise band ${cpu?.band.toFixed(3)} > 0.05 (noise-limited); can only detect slowdowns above MDE ${cpu?.mde.toFixed(3)}`,
+		);
+		expect(result.lines.at(-1)).toBe(NOISE_LIMITED_CLAIM);
+	});
+
+	it("keeps a clean row's MDE within its threshold", () => {
+		// Given a quiet row that passes.
+		const result = run([row("warm-cell", "py", noisyBlocks(11, 0.04))]);
+		// Then each row can detect any slowdown its threshold gates.
+		expect(result.exitCode).toBe(0);
+		for (const entry of result.results) expect(entry.mde).toBeLessThanOrEqual(entry.threshold);
+	});
+
 	it("switches to one shared band with the global scope knob", () => {
 		// Given rows of different noise judged with the global scope.
 		const series = [row("warm-cell", "py", noisyBlocks(3, 0.02)), row("cold-start", "rb", noisyBlocks(9, 0.1))];
 		const result = run(series, { bandScope: "global" });
-		// Then every row carries the same band, the p95 over rows of the A/A deviation.
+		// Then every row carries the same band: the row rule's largest band over all rows.
 		const shared = globalNoiseBand(
 			series.flatMap((entry) =>
 				(["cpu", "wall"] as const).map((metric) => pairedLogRatios(entry.calibration, metric)),
 			),
 		);
+		const rowBands = series.flatMap((entry) =>
+			(["cpu", "wall"] as const).map((metric) => rowNoiseBand(pairedLogRatios(entry.calibration, metric))),
+		);
+		expect(shared).toBe(Math.max(...rowBands));
 		expect(result.bandScope).toBe("global");
 		expect(new Set(result.results.map((entry) => entry.band))).toEqual(new Set([shared]));
+	});
+
+	it("never fails a clean self-vs-self run of many rows under the global scope", () => {
+		// Given 60 clean series (120 rows) of identical code over five independent noise draws.
+		for (const seed of [1, 2, 3, 4, 5]) {
+			const series = Array.from({ length: 60 }, (_, index) => ({
+				scenario: `scenario-${index}`,
+				runtimeId: "py",
+				present: { base: true, head: true },
+				calibration: noisyBlocks(seed * 1000 + index, 0.03),
+				comparison: noisyBlocks(seed * 1000 + index + 500, 0.03),
+			}));
+			// When both scopes judge it.
+			const row = run(series);
+			const global = run(series, { bandScope: "global" });
+			// Then neither scope reports a regression on identical code.
+			expect(row.results.filter((entry) => entry.verdict === "FAIL")).toEqual([]);
+			expect(global.results.filter((entry) => entry.verdict === "FAIL")).toEqual([]);
+			expect(global.exitCode).not.toBe(1);
+		}
 	});
 });
