@@ -93,6 +93,17 @@ describe("apply_patch streaming render is bounded and incremental", () => {
 		expect(out).toContain("• Edited src/a.ts (+0 -1)");
 	});
 
+	test("a + line whose text equals a context line still counts as an addition", () => {
+		const state: ApplyPatchRenderState = {};
+		// The added line's text is identical to an existing context line; a set-based count would
+		// treat it as context and report (+0 -0), but it is a real insertion.
+		const input = ["*** Begin Patch", "*** Update File: src/a.ts", " ctx1", "+ctx1", " ctx2", "*** End Patch"].join(
+			"\n",
+		);
+		const out = render(renderStreamingPatchCall({ input }, THEME, state));
+		expect(out).toContain("• Edited src/a.ts (+1 -0)");
+	});
+
 	test("a delta that changes nothing keeps the rendered box instead of blanking it", () => {
 		const state: ApplyPatchRenderState = {};
 		const input = patchFor([{ path: "src/a.ts", body: "+one" }]);

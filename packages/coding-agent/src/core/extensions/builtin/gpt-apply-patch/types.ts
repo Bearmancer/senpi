@@ -11,6 +11,10 @@ export type PatchChunk = {
 	oldLines: string[];
 	newLines: string[];
 	isEndOfFile: boolean;
+	/** Real added/removed line counts by prefix, tracked at parse time (context lines excluded,
+	 * so a `+` line whose text equals a context line still counts as an addition). */
+	addedCount: number;
+	removedCount: number;
 };
 
 export type ApplyPatchWireMode = "freeform" | "json" | "none";

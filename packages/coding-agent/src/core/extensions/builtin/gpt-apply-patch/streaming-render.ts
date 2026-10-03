@@ -36,19 +36,14 @@ function hunkDiffLines(hunk: ParsedPatch): string[] {
 function hunkChangeCounts(hunk: ParsedPatch): { added: number; removed: number } {
 	if (hunk.type === "add") return { added: hunk.content.split("\n").filter(Boolean).length, removed: 0 };
 	if (hunk.type === "delete") return { added: 0, removed: 0 };
+	// addedCount/removedCount are tracked by prefix at parse time, so context lines are excluded
+	// and a + line whose text equals a context line still counts as an addition (no set-membership
+	// or positional undercount).
 	let added = 0;
 	let removed = 0;
 	for (const chunk of hunk.chunks) {
-		// oldLines and newLines both include unchanged context lines. A line present in BOTH is
-		// context, not an add or a remove; a positional (index-by-index) comparison miscounts a
-		// mid-chunk insert/delete, so use set membership. Removed lines that reappear in newLines
-		// (a move-within-hunk) are context too, matching how the diff pairs them.
-		const newSet = new Set(chunk.newLines);
-		const oldSet = new Set(chunk.oldLines);
-		const contextInOld = chunk.oldLines.filter((line) => newSet.has(line)).length;
-		const contextInNew = chunk.newLines.filter((line) => oldSet.has(line)).length;
-		removed += chunk.oldLines.length - contextInOld;
-		added += chunk.newLines.length - contextInNew;
+		added += chunk.addedCount;
+		removed += chunk.removedCount;
 	}
 	return { added, removed };
 }

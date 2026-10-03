@@ -120,7 +120,7 @@ export class StreamingPatchParser {
 		const hunk = this.currentUpdate();
 		let chunk = hunk.chunks[hunk.chunks.length - 1];
 		if (!chunk || chunk.isEndOfFile) {
-			chunk = { changeContexts: [], oldLines: [], newLines: [], isEndOfFile: false };
+			chunk = { changeContexts: [], oldLines: [], newLines: [], isEndOfFile: false, addedCount: 0, removedCount: 0 };
 			hunk.chunks.push(chunk);
 		}
 		return chunk;
@@ -203,8 +203,10 @@ export class StreamingPatchParser {
 			chunk.newLines.push(value);
 		} else if (prefix === "-") {
 			chunk.oldLines.push(value);
+			chunk.removedCount++;
 		} else if (prefix === "+") {
 			chunk.newLines.push(value);
+			chunk.addedCount++;
 		} else if (prefix === undefined) {
 			chunk.oldLines.push("");
 			chunk.newLines.push("");
