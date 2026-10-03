@@ -19,6 +19,7 @@ import { createEventBus } from "../src/core/event-bus.ts";
 import { registerTodoTool, type TODO_PARAMS_SCHEMA } from "../src/core/extensions/builtin/todotools/tools/todo.ts";
 import { createExtensionRuntime, loadExtensionFromFactory } from "../src/core/extensions/loader.ts";
 import type { ExtensionAPI, ToolDefinition } from "../src/core/extensions/types.ts";
+import { tuiRenderCacheTotals } from "../src/core/memory-report/memory-report-registry.ts";
 import { type BashOperations, createBashToolDefinition } from "../src/core/tools/bash.ts";
 import { renderToolDiff } from "../src/core/tools/diff-render.ts";
 import { createReadTool, createReadToolDefinition } from "../src/core/tools/read.ts";
@@ -1360,5 +1361,51 @@ describe("ToolExecutionComponent parity", () => {
 		} finally {
 			vi.useRealTimers();
 		}
+	});
+});
+
+describe("tool card render cache totals (#2561)", () => {
+	test("Given rendered tool cards when one is disposed then the memory report totals drop its lines and images", () => {
+		initTheme("dark");
+		const before = tuiRenderCacheTotals() ?? { components: 0, cachedLines: 0, images: 0 };
+		const text = new ToolExecutionComponent(
+			"custom_tool",
+			"cache-text",
+			{},
+			{},
+			undefined,
+			createFakeTui(),
+			process.cwd(),
+		);
+		const image = new ToolExecutionComponent(
+			"custom_tool",
+			"cache-image",
+			{},
+			{ showImages: false },
+			undefined,
+			createFakeTui(),
+			process.cwd(),
+		);
+		text.updateResult({ content: [{ type: "text", text: "one\ntwo\nthree" }], isError: false });
+		image.updateResult({ content: [{ type: "image", data: "png", mimeType: "image/png" }], isError: false });
+		const textLines = text.render(80).length;
+		const imageLines = image.render(80).length;
+
+		const rendered = tuiRenderCacheTotals();
+		text.dispose();
+		const afterDispose = tuiRenderCacheTotals();
+
+		expect(rendered).toEqual({
+			components: before.components + 2,
+			cachedLines: before.cachedLines + textLines + imageLines,
+			images: before.images + 1,
+		});
+		expect(afterDispose).toEqual({
+			components: before.components + 1,
+			cachedLines: before.cachedLines + imageLines,
+			images: before.images + 1,
+		});
+		image.dispose();
+		expect(tuiRenderCacheTotals()).toEqual(before);
 	});
 });

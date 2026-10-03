@@ -72,6 +72,7 @@ export async function createRuntime(
 	const parallelPoolWidth = Number.isFinite(configuredPoolWidth) ? Math.max(1, Math.trunc(configuredPoolWidth)) : 1;
 	const manager = await create({
 		sessionId,
+		ownerSessionId: ctx.sessionManager.getSessionId(),
 		cwd: ctx.cwd,
 		sessionEnv,
 		settings,

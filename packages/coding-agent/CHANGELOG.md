@@ -6,11 +6,14 @@
 
 ### Added
 
+- A running session can report where its memory goes, on demand and only when started with `SENPI_MEMORY_REPORT=1`: `SIGUSR2` (POSIX; reports every session registered in the signalled process, so a worker-runtime multi-session host's sessions answer only over RPC) or the RPC `memory_report` request writes `<session>-artifacts/memory/<iso>.json` with the main thread's heap and footprint, every live eval kernel's last-known heap (marked stale while a cell runs), the resident session-string store, the terminal tool-card render cache, and figures extensions add through `pi.registerMemoryReporter(name, reporter)`. `SENPI_MEMORY_REPORT_SNAPSHOT=1` adds a heap snapshot. Without the flag nothing is installed and `SIGUSR2` keeps its default behaviour ([#2561](https://github.com/code-yeongyu/senpi/issues/2561)).
 - RPC session state now reports a model switch that is held until the next compaction: `pendingModelSwitch` is the held model's `{ provider, id }`, or `null` when nothing is held, so a client can tell a held switch from one a later selection superseded. The key is always present on current hosts, so a missing key identifies an older host.
 
 ### Changed
 
 ### Fixed
+
+- A shared RPC host that the engine stops on purpose is now recorded in the endpoint's `crashes.jsonl`, naming who stopped it and why (an ensure replacing an unreachable host, `host stop`, a failed start or handoff, the supervisor's own idle exit), and a host killed from outside is recorded as `external` instead of being indistinguishable from a crash; `host status` keeps counting only real deaths. An ensure no longer stops or replaces a host that is alive but measurably stalled - it refuses with `host_stalled` - and a graceful stop waits out a measured stall (up to `SENPI_RPC_CHILD_STALLED_STOP_MAX_MS`, 60 s by default) before escalating to SIGKILL ([#2566](https://github.com/code-yeongyu/senpi/issues/2566)).
 
 ### Removed
 
@@ -64,9 +67,6 @@
 - Anthropic sessions behind a relay that rejects replayed native tool-search results no longer stay stuck on `Tool reference '<name>' not found in available tools` (for example `generate_image` right after a `tool_search_tool_bm25` search). The rejected request is retried once with the search results replayed as text, the tools themselves stay available, and the rest of the session sends the text form directly ([#2568](https://github.com/code-yeongyu/senpi/issues/2568)).
 
 - After a shared RPC host handoff, the replaced generation no longer deletes the successor's registration or boot settings on its way out. A predecessor that noticed its socket taken over before the handoff recorded the successor could remove both, so the next client attached to the running successor reported `pid: 0`, and the next handoff lost the endpoint's lifecycle policy. A taken-over generation now removes only its own records ([#2536](https://github.com/code-yeongyu/senpi/issues/2536)).
-
-- A shared RPC host that the engine stops on purpose is now recorded in the endpoint's `crashes.jsonl`, naming who stopped it and why (an ensure replacing an unreachable host, `host stop`, a failed start or handoff, the supervisor's own idle exit), and a host killed from outside is recorded as `external` instead of being indistinguishable from a crash; `host status` keeps counting only real deaths. An ensure no longer stops or replaces a host that is alive but measurably stalled - it refuses with `host_stalled` - and a graceful stop waits out a measured stall (up to `SENPI_RPC_CHILD_STALLED_STOP_MAX_MS`, 60 s by default) before escalating to SIGKILL ([#2566](https://github.com/code-yeongyu/senpi/issues/2566)).
-
 - RPC prompt acknowledgement waits now account for observed conversation compaction instead of reporting failure after 30 seconds while the same input can still be admitted later. The real host response remains authoritative, waiting stays bounded, and transport failures still reject immediately ([#2548](https://github.com/code-yeongyu/senpi/pull/2548) by [@namseokyoo](https://github.com/namseokyoo)).
 
 - When one model family's usage limit runs out on an Anthropic subscription account (for example "You've reached your Fable limit"), only that family is blocked on that account, until its own reset. Opus and Sonnet on the same account keep serving, the fallback chain moves only the limited model to its next rung, and `/claude-account` and `/account` show the block as "blocked for fable until ...". Session and weekly limits, auth failures and disabled accounts still block the whole account, and existing account-level cooldowns are honoured until they expire (reported in [oh-my-openagent#9421](https://github.com/code-yeongyu/oh-my-openagent/issues/9421) by [@hsnam-OBELAB](https://github.com/hsnam-OBELAB)) ([#2555](https://github.com/code-yeongyu/senpi/issues/2555)).

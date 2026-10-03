@@ -29,6 +29,7 @@ import { resolvePath } from "../../utils/paths.ts";
 import { createEventBus, type EventBus, EXTENSION_RPC_EVENT_CHANNEL, type ExtensionRpcEvent } from "../event-bus.ts";
 import type { ExecOptions } from "../exec.ts";
 import { execCommand } from "../exec.ts";
+import { RESERVED_MEMORY_REPORT_KEYS } from "../memory-report/memory-report-registry.ts";
 import { readPiManifest } from "../pi-manifest.ts";
 import { unboundSessionControlActions } from "../session-control-actions.ts";
 import { createSyntheticSourceInfo, getSyntheticPathSource, isSyntheticPath } from "../source-info.ts";
@@ -57,6 +58,7 @@ import type {
 	LazyToolActivator,
 	LoadExtensionsResult,
 	MarkdownTransformer,
+	MemoryReporter,
 	MessageRenderer,
 	PendingProviderRegistration,
 	ProviderConfig,
@@ -521,6 +523,15 @@ function createExtensionAPI(
 			extension.messageRenderers.set(customType, renderer as MessageRenderer);
 		},
 
+		registerMemoryReporter(name: string, reporter: MemoryReporter): void {
+			assertActive();
+			if (RESERVED_MEMORY_REPORT_KEYS.has(name)) {
+				throw new Error(`Memory reporter name "${name}" is reserved by the memory report`);
+			}
+			extension.memoryReporters ??= new Map();
+			extension.memoryReporters.set(name, reporter);
+		},
+
 		registerMarkdownTransformer(transformer: MarkdownTransformer): void {
 			assertActive();
 			extension.markdownTransformer = transformer;
@@ -835,6 +846,7 @@ function createExtension(extensionPath: string, resolvedPath: string, registrati
 		lazyToolActivators: [],
 		filesystemPolicies: [],
 		messageRenderers: new Map(),
+		memoryReporters: new Map(),
 		entryRenderers: undefined,
 		commands: new Map(),
 		rpcHandlers: new Map(),

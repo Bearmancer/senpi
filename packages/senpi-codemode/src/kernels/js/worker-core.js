@@ -3,6 +3,7 @@ import { kernelToolError } from "./kernel-tools-errors.js";
 import { createKernelToolPump } from "./kernel-tools-pump.js";
 import { hostDeniedError, hostToolRefusal } from "./kernel-tools-scope.js";
 import { installSessionCwd } from "./worker-cwd.js";
+import { createHeapProbe } from "./worker-heap.js";
 import { createWorkerMemory } from "./worker-memory.js";
 import { JsWorkerRuntime } from "./worker-runtime.js";
 import { installKernelWebView } from "./worker-webview.js";
@@ -28,6 +29,7 @@ const SESSION_ENVIRONMENT_KEYS = [
 export function createWorkerCore(transport, options) {
 	let runtime = null;
 	let memory = null;
+	let heapProbe = null;
 	let activeCell = null;
 	const pendingTools = new Map();
 	const pendingWebViewPorts = new Map();
@@ -144,6 +146,11 @@ export function createWorkerCore(transport, options) {
 				memory.captureBaseline();
 			}
 			emit({ type: "ready" });
+			return;
+		}
+		if (message.type === "memory-query") {
+			heapProbe ??= createHeapProbe();
+			emit({ type: "memory-query-result", requestId: message.requestId, liveBytes: Math.round(heapProbe.estimate()), measure: "heap" });
 			return;
 		}
 		if (message.type === "run") {

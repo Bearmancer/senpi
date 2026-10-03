@@ -239,6 +239,7 @@ import {
 	MANUAL_CONTINUE_CUSTOM_TYPE,
 	MANUAL_CONTINUE_DIRECTIVE,
 } from "./manual-continue.ts";
+import { registerMemoryReportSession } from "./memory-report/memory-report-registry.ts";
 import {
 	type BashExecutionMessage,
 	type CustomMessage,
@@ -997,6 +998,7 @@ export class AgentSession {
 	// Event subscription state
 	private _unsubscribeAgent?: () => void;
 	private _unsubscribeSettingsSource?: () => void;
+	private _unregisterMemoryReport: () => void = () => {};
 	private _eventListeners: AgentSessionEventListener[] = [];
 	private _agentEventQueue: Promise<void> = Promise.resolve();
 	/**
@@ -1370,6 +1372,13 @@ export class AgentSession {
 			this._releaseToolSearchService("session construction failed");
 			throw error;
 		}
+		// A no-op unless SENPI_MEMORY_REPORT=1: the report reads these only when it is requested.
+		this._unregisterMemoryReport = registerMemoryReportSession(this, {
+			sessionId: () => this.sessionId,
+			sessionFile: () => this.sessionManager.getSessionFile(),
+			residentStore: () => this.sessionManager.getResidentStore().size(),
+			reporters: () => this._extensionRunner.getMemoryReporters(),
+		});
 	}
 
 	get modelRuntime(): ModelRuntime {
@@ -3742,6 +3751,7 @@ export class AgentSession {
 		this._disconnectFromAgent();
 		this._unsubscribeSettingsSource?.();
 		this._unsubscribeSettingsSource = undefined;
+		this._unregisterMemoryReport();
 		this._unsubscribeWakeSources?.();
 		this._unsubscribeWakeSources = undefined;
 		this._eventListeners = [];
