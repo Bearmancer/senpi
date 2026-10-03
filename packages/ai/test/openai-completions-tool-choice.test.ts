@@ -205,6 +205,95 @@ describe("openai-completions forced tool_choice refusal memory (senpi#2218)", ()
 	});
 });
 
+// senpi#2648 (reported in oh-my-openagent#9507): a strict-schema gateway refuses the forced tool's
+// schema, naming that tool by its tools index. The first-turn todo force must degrade to auto.
+const STRICT_SCHEMA_REFUSAL =
+	'400 {"code":null,"message":"<provider>: tools.1.custom: For \'object\' type, \'additionalProperties\' must be explicitly set to false","param":null,"type":"invalid_request_error"}';
+
+function streamTodoBehindPing(model: Model<"openai-completions">, toolChoice?: unknown) {
+	return stream(
+		model,
+		{
+			messages: [{ role: "user", content: "Plan the work", timestamp: Date.now() }],
+			tools: [
+				{ name: "ping", description: "Ping tool", parameters: Type.Object({ value: Type.String() }) },
+				{ name: "todo", description: "Todo tool", parameters: Type.Object({ op: Type.String() }) },
+			],
+		},
+		{ apiKey: "test", ...(toolChoice === undefined ? {} : { toolChoice: toolChoice as typeof FORCED_TODO }) },
+	).result();
+}
+
+describe("openai-completions refusal that names the forced tool (senpi#2648)", () => {
+	const gateway: Model<"openai-completions"> = {
+		...localOpenAICompletionsModel,
+		id: "group/auto-claude",
+		name: "Gateway group",
+	};
+
+	beforeEach(() => {
+		clearForcedToolChoiceRefusals();
+		mockState.calls.length = 0;
+		mockState.createErrors.length = 0;
+		mockState.chunks = undefined;
+	});
+
+	it("retries once without the forced choice when the 400 names the forced tool's index, and the turn succeeds", async () => {
+		mockState.createErrors.push(new HttpStatusError(400, STRICT_SCHEMA_REFUSAL));
+
+		const response = await streamTodoBehindPing(gateway, FORCED_TODO);
+
+		expect(response.stopReason).toBe("stop");
+		expect(mockState.calls.map((_, index) => recordAt(mockState.calls, index).tool_choice)).toEqual([
+			FORCED_TODO,
+			undefined,
+		]);
+	});
+
+	it("retries once when the 400 names the forced tool by its quoted name", async () => {
+		mockState.createErrors.push(
+			new HttpStatusError(400, "400 Invalid schema for function 'todo': object properties must be closed"),
+		);
+
+		const response = await streamTodoBehindPing(gateway, FORCED_TODO);
+
+		expect(response.stopReason).toBe("stop");
+		expect(mockState.calls).toHaveLength(2);
+	});
+
+	it("does not retry a 400 that names a different tool", async () => {
+		mockState.createErrors.push(
+			new HttpStatusError(
+				400,
+				"400 tools.0.custom: For 'object' type, 'additionalProperties' must be explicitly set to false",
+			),
+		);
+
+		const response = await streamTodoBehindPing(gateway, FORCED_TODO);
+
+		expect(response.stopReason).toBe("error");
+		expect(mockState.calls).toHaveLength(1);
+	});
+
+	it("does not retry an unrelated 400 on a forced request", async () => {
+		mockState.createErrors.push(new HttpStatusError(400, "400 messages.0.content: field required"));
+
+		const response = await streamTodoBehindPing(gateway, FORCED_TODO);
+
+		expect(response.stopReason).toBe("error");
+		expect(mockState.calls).toHaveLength(1);
+	});
+
+	it("does not retry a 400 naming the tool when nothing was forced", async () => {
+		mockState.createErrors.push(new HttpStatusError(400, STRICT_SCHEMA_REFUSAL));
+
+		const response = await streamTodoBehindPing(gateway);
+
+		expect(response.stopReason).toBe("error");
+		expect(mockState.calls).toHaveLength(1);
+	});
+});
+
 describe("openai-completions tool_choice", () => {
 	beforeEach(() => {
 		clearForcedToolChoiceRefusals();

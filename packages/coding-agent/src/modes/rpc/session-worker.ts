@@ -203,6 +203,11 @@ async function handle(message: HostToSessionWorker): Promise<void> {
 			entry.runtime.setPromptSurface(message.surface);
 			send({ type: "result", request: message.request });
 			return;
+		case "browser_engine":
+			if (!entry?.runtime) throw new Error("session_closing");
+			entry.runtime.setBrowserEngine(message.engine);
+			send({ type: "result", request: message.request });
+			return;
 		case "cancel_ui":
 			binding?.cancelPendingExtensionUiRequests?.();
 			send({ type: "control_done", control: "cancel_ui" });

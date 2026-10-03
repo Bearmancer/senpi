@@ -8,6 +8,7 @@ import { resolveKernelMemoryThresholds } from "../config/memory-settings.ts";
 import { defaultCodemodeSettings } from "../config/settings.ts";
 import { collectOrphanedChildren } from "../host-sdk.ts";
 import { JavaScriptKernel } from "../kernels/js/context-manager.ts";
+import type { KernelLifecycle } from "../kernels/shared/kernel-death.ts";
 import { marshalToolResult } from "../tool/image.ts";
 import type { EvalKernel, EvalLanguage } from "../tool/types.ts";
 import {
@@ -16,7 +17,8 @@ import {
 	type StartedKernel,
 	startSubprocessKernel,
 } from "./kernel-registration.ts";
-import { kernelRegistry } from "./kernel-registry.ts";
+import { kernelRegistry, type RegisteredKernelSource } from "./kernel-registry.ts";
+import { ReplaceableKernel } from "./kernel-replacement.ts";
 import { assertSessionCwdAvailable } from "./session-cwd.ts";
 import type {
 	BridgeEndpoint,
@@ -192,27 +194,48 @@ class DefaultCodemodeSessionManager implements CodemodeSessionManager {
 		generation: number,
 	): Promise<EvalKernel> {
 		await assertSessionCwdAvailable(this.#options.cwd);
-		const { kernel, memory } = await this.#createKernel(language, onMessage);
+		// py/rb/jl instances can die; the session holds one replaceable kernel per language so every
+		// cell that kept a reference to it survives the death (JS heals its own worker).
+		let memory: RegisteredKernelSource | undefined;
+		const kernel =
+			language === "js"
+				? (() => {
+						return this.#createKernel(language, onMessage).then((created) => {
+							memory = created.memory;
+							return created.kernel;
+						});
+					})()
+				: ReplaceableKernel.create(language, async (lifecycle) => {
+						const created = await this.#createKernel(language, onMessage, lifecycle);
+						memory ??= created.memory;
+						return created.kernel;
+					});
+		const resolvedKernel = await kernel;
 		if (generation !== this.#generation) {
-			await kernel.close();
+			await resolvedKernel.close();
 			throw new CodemodeSessionDisposedError();
 		}
-		this.#kernels.set(language, kernel);
+		this.#kernels.set(language, resolvedKernel);
 		this.#registrations.set(
 			language,
-			registerKernel(this.#options.ownerSessionId ?? this.#options.sessionId, language, memory),
+			registerKernel(
+				this.#options.ownerSessionId ?? this.#options.sessionId,
+				language,
+				memory as RegisteredKernelSource,
+			),
 		);
 		// The directory can vanish while the interpreter starts; every caller sharing this creation
 		// must see that, not only the next one. The kernel stays stored and dispose still closes it.
 		await assertSessionCwdAvailable(this.#options.cwd);
 		// A dispose that started during the check above already owns this stored kernel.
 		if (generation !== this.#generation) throw new CodemodeSessionDisposedError();
-		return kernel;
+		return resolvedKernel;
 	}
 
 	async #createKernel(
 		language: EvalLanguage,
 		onMessage: (message: KernelToHostMessage) => void,
+		lifecycle: KernelLifecycle = {},
 	): Promise<StartedKernel> {
 		const bridge = this.#bridge;
 		if (!bridge) throw new Error("codemode bridge server is not running");
@@ -255,6 +278,7 @@ class DefaultCodemodeSessionManager implements CodemodeSessionManager {
 			...(this.#options.sessionEnv ? { sessionEnv: this.#options.sessionEnv } : {}),
 			connection,
 			onMessage,
+			...lifecycle,
 		};
 		const memory = resolveKernelMemoryThresholds(this.#options.settings.memory);
 		return await startSubprocessKernel({ language, interpreterPath: detected.path, memory, shared });

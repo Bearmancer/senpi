@@ -95,6 +95,7 @@ export {
 export * from "./endpoint-reasoning-efforts.ts";
 export * from "./env-api-keys.ts";
 export * from "./legacy-provider-ids.ts";
+export { modelSupportsAssistantPrefill } from "./model.ts";
 export * from "./models.ts";
 export * from "./models-store.ts";
 export { supportsAllowedToolChoice } from "./openai-responses-compat.ts";

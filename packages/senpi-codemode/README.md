@@ -339,6 +339,17 @@ bash tool for long-running commands you may want to stop. Native `Bun.$`
 cancellation is tracked in [Bun #11868](https://github.com/oven-sh/bun/issues/11868);
 the shell's interpretation and object redirects are not replaced.
 
+When a Python, Ruby, or Julia interpreter dies on its own (a crash, an OOM kill,
+`os.kill(os.getpid(), 9)`), the cell it was running fails once and is never run
+again: its side effects may already have happened. Cells queued behind it keep
+their order, callbacks, and deadlines and run on one fresh interpreter started
+for that death; the first result there carries
+`[<language> kernel was restarted after <reason>; every global is lost]`. If the
+fresh interpreter dies too before it finished a cell, the queued cells fail with
+`eval_kernel_unavailable` naming the reason, and the next cell you run starts
+another. An interpreter whose exit cannot be confirmed is reported, never
+replaced by a second one. The JavaScript worker keeps its own restart path.
+
 Commands a cell runs through `Bun.$` never read the host's terminal: the worker
 thread shares the TUI's stdin, so the shell wrapper hands every template an
 empty pipe (`true | ( … )`) while a cell is active. Output, exit codes, `cwd`,

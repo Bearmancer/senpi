@@ -765,3 +765,21 @@ An extension cannot change the built-in return contract or reliably distinguish 
 Built-in tool output assembly, grep formatting, and getTextOutput.
 
 - Covered production paths: `packages/coding-agent/src/core/tools/model-only-text.ts`, `packages/coding-agent/src/core/tools/read.ts`, `packages/coding-agent/src/core/tools/bash.ts`, `packages/coding-agent/src/core/tools/find.ts`, `packages/coding-agent/src/core/tools/ls.ts`, `packages/coding-agent/src/core/tools/grep/format.ts`, `packages/coding-agent/src/core/tools/grep/index.ts`, `packages/coding-agent/src/core/tools/render-utils.ts`.
+
+## Core bash exports the session's browser engine (2026-10-03)
+
+### What changed
+
+- `packages/coding-agent/src/core/tools/bash.ts`: `resolveSpawnContext` removes any inherited `OMO_BROWSER_ENGINE` and, when session exposure is on, sets it from `ctx.browserEngine`.
+
+### Why
+
+A shell child of a session that chose `connected`, `builtin` or `none` must see that choice, and a session that chose nothing must not inherit the host process's value (senpi#2611).
+
+### Why an extension could not handle it
+
+The bash tool's spawn environment is assembled in this function.
+
+### Expected merge conflict zones
+
+The `delete env.PI_*` block and the session-exposure block in `resolveSpawnContext`.

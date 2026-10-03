@@ -40,6 +40,10 @@ export async function attachToOpenSession(
 		entry.profile = frozenProfile({ ...entry.profile, promptSurface: profile.promptSurface });
 		entry.runtime?.setPromptSurface(profile.promptSurface);
 	}
+	if (profile.browserEngine !== undefined && profile.browserEngine !== entry.profile.browserEngine) {
+		entry.profile = frozenProfile({ ...entry.profile, browserEngine: profile.browserEngine });
+		entry.runtime?.setBrowserEngine(profile.browserEngine);
+	}
 	entry.lastCommandAt = now;
 	if (wasParked) {
 		entry.lifecycleMutex = entry.lifecycleMutex.then(() => entry.runtime?.emitAttachmentEvent("session_resumed"));

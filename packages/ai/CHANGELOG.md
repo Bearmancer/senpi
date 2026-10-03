@@ -6,9 +6,13 @@
 
 ### Added
 
+- Models can declare `supportsAssistantPrefill`, and `modelSupportsAssistantPrefill(model, { thinkingEnabled })` reports whether a request may end with an assistant message the model continues (never with extended thinking on the Anthropic Messages API); no built-in model declares it yet ([#1930](https://github.com/code-yeongyu/senpi/issues/1930)).
+
 ### Changed
 
 ### Fixed
+
+- A first-turn forced `tool_choice` that a strict-schema gateway refuses by naming the forced tool (its `tools.N` index or quoted name in a 400) is retried once without the forced choice, like the other forced-choice refusals, so a new session's first message no longer fails there; an unrelated 400 still fails ([#2648](https://github.com/code-yeongyu/senpi/issues/2648), reported by [@rhyme227](https://github.com/rhyme227) in code-yeongyu/oh-my-openagent#9507).
 
 ### Removed
 

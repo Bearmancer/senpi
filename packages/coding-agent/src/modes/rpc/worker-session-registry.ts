@@ -1,6 +1,5 @@
 import { isAbsolute } from "node:path";
 import { ProviderScope } from "@earendil-works/pi-ai/node/provider-scope";
-import type { PromptSurface } from "../../core/dynamic-prompt/types.ts";
 import { assertValidSessionId } from "../../core/session-manager.ts";
 import type { CliRuntimeConfiguration } from "../../main.ts";
 import { refreshesSessionActivity } from "./session-command-activity.ts";
@@ -81,7 +80,7 @@ export class WorkerSessionRegistry {
 		if (profile.sessionPath) {
 			const key = this.knownReservationKey(profile.sessionPath);
 			const owner = key ? this.reservations.owner(key) : undefined;
-			if (key && owner) return this.attach(owner, key, options, profile.promptSurface);
+			if (key && owner) return this.attach(owner, key, options, profile);
 		}
 		if (this.size >= SESSION_WORKER_LIMITS.workers) throw new Error("too_many_sessions");
 		const handle = `rpc-${++this.serial}`;
@@ -127,7 +126,7 @@ export class WorkerSessionRegistry {
 			const path = await worker.prepare(this.options.configuration, profile);
 			const owner = this.reservations.owner(path);
 			if (owner) {
-				const attached = await this.attach(owner, path, options, profile.promptSurface);
+				const attached = await this.attach(owner, path, options, profile);
 				entry.state = "quarantined";
 				worker.quarantine();
 				return attached;
@@ -261,8 +260,9 @@ export class WorkerSessionRegistry {
 		owner: string,
 		path: string,
 		options?: RpcSessionOpenOptions,
-		promptSurface?: PromptSurface,
+		requested: RpcSessionLaunchProfile = { cwd: "" },
 	): Promise<OpenRpcSession> {
+		const { promptSurface, browserEngine } = requested;
 		const entry = this.entries.get(owner);
 		if (entry?.state !== "open" || !entry.worker?.bindingReady || entry.worker.snapshot?.sessionPath !== path)
 			throw new RpcSessionRegistryError("session_path_in_use");
@@ -270,6 +270,10 @@ export class WorkerSessionRegistry {
 		if (promptSurface !== undefined && promptSurface !== entry.profile.promptSurface) {
 			entry.profile = frozenProfile({ ...entry.profile, promptSurface });
 			await entry.worker.setPromptSurface(promptSurface);
+		}
+		if (browserEngine !== undefined && browserEngine !== entry.profile.browserEngine) {
+			entry.profile = frozenProfile({ ...entry.profile, browserEngine });
+			await entry.worker.setBrowserEngine(browserEngine);
 		}
 		const result = this.openResult(owner, entry);
 		entry.attachments++;

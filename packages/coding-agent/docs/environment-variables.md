@@ -30,6 +30,7 @@ Commands run by the `bash` and `powershell` tools receive the current Pi session
 | `PI_PROVIDER` | Currently selected model provider |
 | `PI_MODEL` | Currently selected model ID |
 | `PI_REASONING_LEVEL` | Current effective reasoning level: `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `max` |
+| `OMO_BROWSER_ENGINE` | Browser the opener chose for this session: `connected` (the user's own browser), `builtin` (the app's in-app browser) or `none`. Set only for a session opened with `open_session.browserEngine`; a session that chose none never sees the variable, even if the host process has one |
 
 The values are resolved when each command starts. Switching models or changing the reasoning level therefore affects the next shell command without restarting Pi. `PI_PROVIDER` and `PI_MODEL` identify the selected Pi model, not a different upstream model that a router may choose internally.
 

@@ -99,6 +99,7 @@ import { resolveAssistantUsageScope } from "./assistant-usage-scope.ts";
 import { formatNoApiKeyFoundMessage, formatNoModelSelectedMessage } from "./auth-guidance.ts";
 import { type BashResult, executeBashWithOperations } from "./bash-executor.ts";
 import { envValue } from "./brand.ts";
+import type { BrowserEngine } from "./browser-engine.ts";
 import {
 	type ClientMessageIdentity,
 	clientMessageIdentity,
@@ -124,6 +125,11 @@ import { CompactionLifecycleCoordinator, type CompactionLifecycleState } from ".
 import { isTurnStuckOnContextOverflow } from "./compaction/stuck-overflow.ts";
 import { isWarmSummaryAnchorValid } from "./compaction/warm-anchor.ts";
 import type { CompactionModelSelector } from "./compaction-settings-access.ts";
+import {
+	CONTINUE_FROM_LEAF_CUSTOM_TYPE,
+	CONTINUE_FROM_LEAF_DIRECTIVE,
+	ContinueFromLeafError,
+} from "./continue-from-leaf.ts";
 import { admitCursorHistory, cursorAdmissionBudgetBytes } from "./cursor-history-admission.ts";
 import { DEFAULT_THINKING_LEVEL } from "./defaults.ts";
 import { resolveDiscoveredResourcePaths } from "./discovered-resource-scope.ts";
@@ -663,6 +669,8 @@ export interface AgentSessionConfig {
 	autoTitleSessions?: boolean;
 	/** Where this session's replies render; omitted means `SENPI_PROMPT_SURFACE` decides. */
 	promptSurface?: PromptSurface;
+	/** Browser engine this session's skills drive; omitted means none was chosen. */
+	browserEngine?: BrowserEngine;
 }
 
 type SessionModelEntry = {
@@ -1242,9 +1250,11 @@ export class AgentSession {
 	};
 	private _systemPromptOverride?: string;
 	private _promptSurface: PromptSurface | undefined;
+	private _browserEngine: BrowserEngine | undefined;
 
 	constructor(config: AgentSessionConfig) {
 		this._promptSurface = config.promptSurface;
+		this._browserEngine = config.browserEngine;
 		this.agent = config.agent;
 		this.sessionManager = config.sessionManager;
 		this.settingsManager = config.settingsManager;
@@ -3932,6 +3942,15 @@ export class AgentSession {
 		if (current === surface) return;
 		this._systemPromptOverride = undefined;
 		this._applyToolDeclarations(this.getActiveToolNames());
+	}
+
+	/** Moves this session to another browser engine (a later `open_session.browserEngine`); the next tool call sees it. */
+	setBrowserEngine(engine: BrowserEngine): void {
+		this._browserEngine = engine;
+	}
+
+	get browserEngine(): BrowserEngine | undefined {
+		return this._browserEngine;
 	}
 
 	/** Current effective system prompt (includes any per-turn extension modifications) */
@@ -8809,6 +8828,7 @@ export class AgentSession {
 					};
 				},
 				getAskUserSettings: () => this.settingsManager.getAskUserSettings(),
+				getBrowserEngine: () => this._browserEngine,
 				getImageSettings: () => ({
 					autoResize: this.settingsManager.getImageAutoResize(),
 					blockImages: this.settingsManager.getBlockImages(),
@@ -10333,6 +10353,28 @@ export class AgentSession {
 		summaryEntry?: BranchSummaryEntry;
 	}> {
 		return this._navigateTree(targetId, options);
+	}
+
+	/**
+	 * Start a turn from the current leaf with no new user prompt (senpi #1930): after an edited
+	 * assistant response becomes the leaf, the model continues from its edited text. Delivered as a
+	 * hidden custom message, never as a trailing assistant message (see continue-from-leaf.ts).
+	 * Refuses while streaming and on a session with no messages; resolves once the turn starts.
+	 */
+	async continueFromLeaf(): Promise<void> {
+		if (this.isStreaming) throw new ContinueFromLeafError("streaming");
+		if (this.agent.state.messages.length === 0) throw new ContinueFromLeafError("nothing_to_continue");
+		// Only an answer can be continued; a prompt left as the leaf (an edited one) is retried, not continued.
+		const leaf = this.agent.state.messages[this.agent.state.messages.length - 1];
+		if (leaf?.role !== "assistant") throw new ContinueFromLeafError("leaf_not_assistant");
+		await this.sendCustomMessage(
+			{
+				customType: CONTINUE_FROM_LEAF_CUSTOM_TYPE,
+				content: CONTINUE_FROM_LEAF_DIRECTIVE,
+				display: false,
+			},
+			{ triggerTurn: true },
+		);
 	}
 
 	/**

@@ -38,6 +38,16 @@ The target is Node.js 24+ and Senpi extension APIs. Bun-only worker mechanics, O
 | `test/eval/worker-core.test.ts` | `test/js-kernel.test.ts`; `test/js-kernel-interrupt.test.ts`; `test/js-kernel-crash-lifecycle.test.ts`; `test/js-runtime-isolation.test.ts` | covered | Protocol init/run/close, independent workers, queueing, timeout restart, crash restart, and isolation replace OMP same-realm conflict handling. |
 | `test/core/eval-workflow-helpers.integration.test.ts` | `test/py-kernel.test.ts`; `test/py-prelude-parity.test.ts`; `test/status-events.test.ts` | covered | Real-kernel parallel order/concurrency/errors, pipeline barriers, log/phase events, and local roots are covered; OMP-only `append()` is outside the documented Senpi helper surface. |
 
+## Dead-kernel replacement
+
+oh-my-pi's kernel session registry (`packages/coding-agent/src/eval/kernel-session-registry.ts`) evicts a dead kernel and recreates it. Here the session manager holds one replaceable kernel per subprocess language, so every cell that kept a reference survives the death; JavaScript keeps its worker self-heal (`test/js-kernel-crash-lifecycle.test.ts`).
+
+| Language | Interpreter death between cells | Queue kept, in order | Restart notice | Second death fails queued cells | Tests |
+| --- | --- | --- | --- | --- | --- |
+| py | replaced | yes | yes | `eval_kernel_unavailable` | `test/kernel-death-recovery.test.ts`, `test/py-kernel-retirement-recovery.test.ts` |
+| rb | replaced | yes | yes | `eval_kernel_unavailable` | `test/kernel-death-recovery.test.ts`, `test/kernel-replacement.test.ts` |
+| jl | replaced | yes | yes | `eval_kernel_unavailable` | `test/kernel-death-recovery.test.ts`, `test/kernel-replacement.test.ts` |
+
 ## Kernel memory contract (senpi-only)
 
 The memory report, large-globals notice, and ceiling restart (senpi#2261) have no oh-my-pi counterpart; this table records how far each language implements them.
