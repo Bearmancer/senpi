@@ -144,6 +144,28 @@ describe("JuliaKernel", () => {
 					const sizedRows = rows.memory?.globals?.find((global) => global.name === "rows");
 					expect(sizedRows?.bytes).toBeGreaterThanOrEqual(25 * MiB);
 					expect(sizedRows?.approximate).toBe(true);
+
+					// names(Main) is alphabetical: a deep global sorted first must not hide the flat ones after it, and a
+					// user AbstractDict is never iterated by the report.
+					const deep = await kernel.run({
+						cellId: "deep",
+						code: [
+							"aaa_deep = [[[1] for _ in 1:30] for _ in 1:1000]",
+							'zzz_flat = repeat("z", 30_000_000)',
+							"const user_touched = Ref(false)",
+							"struct UserDict <: AbstractDict{Int, Int} end",
+							"Base.length(::UserDict) = (user_touched[] = true; 3)",
+							"Base.iterate(::UserDict, s = 1) = (user_touched[] = true; nothing)",
+							"user_dict = UserDict()",
+							"nothing",
+						].join("\n"),
+						timeoutMs: 120_000,
+					});
+					const deepNames = deep.memory?.globals?.map((global) => global.name) ?? [];
+					expect(deepNames).toContain("zzz_flat");
+					expect(deepNames).toContain("rows");
+					const touched = await kernel.run({ cellId: "touched", code: "user_touched[]", timeoutMs: 120_000 });
+					expect(touched).toMatchObject({ ok: true, valueRepr: "false" });
 				} finally {
 					await kernel.close();
 				}
