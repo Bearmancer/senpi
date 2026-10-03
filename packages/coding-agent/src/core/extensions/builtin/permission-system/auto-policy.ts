@@ -3,6 +3,7 @@ import { resolveReadPathAsync, resolveToCwd } from "../../../tools/path-utils.ts
 import { normalizeApplyPatchArguments } from "../gpt-apply-patch/params.ts";
 import { parsePatch } from "../gpt-apply-patch/parser.ts";
 import { resolvePatchPath } from "../gpt-apply-patch/workspace.ts";
+import { isCredentialPath } from "./auto-credentials.ts";
 import { isApprovableTarget, isProjectSession, type TargetKind, targetKind } from "./auto-paths.ts";
 import { PROGRAM_RULES } from "./auto-program-rules.ts";
 import type { ClassifiedWord } from "./auto-shell-grammar.ts";
@@ -21,12 +22,6 @@ const LIST_TOOLS = new Set(["ls", "find"]);
 const NO: AutoDecision = { approveBlanketAsk: false };
 const YES: AutoDecision = { approveBlanketAsk: true };
 
-/**
- * A command `auto` may judge at all: plain words joined by `;` or `&&`. Quotes, escapes,
- * expansions (`$`, `~`, globs), redirects, pipes, subshells and object paths (`:`) all ask.
- */
-const PLAIN_COMMAND = /^[A-Za-z0-9_\-.,/=+ \t;]*$/;
-
 const approvedTarget = (target: string, cwd: string, kinds: readonly TargetKind[]): boolean =>
 	isApprovableTarget(target, cwd) && kinds.includes(targetKind(target));
 
@@ -37,6 +32,10 @@ function shellWordAllowed(entry: ClassifiedWord, cwd: string): boolean {
 	const target = path.resolve(cwd, text);
 	if (entry.role === "read-file") return approvedTarget(target, cwd, ["file"]);
 	if (entry.role === "list") return approvedTarget(target, cwd, ["file", "directory"]);
+	if (entry.role === "ref-or-path") {
+		if (isCredentialPath(target)) return false;
+		return targetKind(target) === "missing" || approvedTarget(target, cwd, ["file", "directory"]);
+	}
 	return false;
 }
 
@@ -46,7 +45,6 @@ function shellWordAllowed(entry: ClassifiedWord, cwd: string): boolean {
  * path word must name an approvable project file or directory. Anything else asks.
  */
 export function judgeAutoCommand(command: string, cwd: string): AutoCommandVerdict {
-	if (!PLAIN_COMMAND.test(command.replaceAll("&&", ";"))) return "ask";
 	const segments = splitShellSegments(command);
 	if (!segments || segments.length === 0) return "ask";
 	for (const segment of segments) {
@@ -107,6 +105,7 @@ export async function decideAuto(
 	}
 	if (toolName === "grep") {
 		const raws = stringPaths(input.path);
+		if (raws?.length === 0) return NO;
 		return raws?.every((raw) => approvedTarget(resolveToCwd(raw, cwd), cwd, ["file"])) ? YES : NO;
 	}
 	if (LIST_TOOLS.has(toolName)) {

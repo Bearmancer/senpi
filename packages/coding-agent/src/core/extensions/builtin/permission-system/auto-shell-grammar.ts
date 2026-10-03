@@ -2,10 +2,11 @@ import type { ShellWord } from "./auto-shell-segments.ts";
 
 /**
  * What a word means to the program, so the judge knows how to check it: `read-file` is read from
- * (must be a regular project file), `list` only has its name shown, and `text` is never used as a
- * path (a pattern, a count, a format).
+ * (must be a regular project file), `list` only has its name shown, `text` is never used as a path
+ * (a pattern, a count, a format), and `ref-or-path` is a git revision unless something exists at
+ * that name, in which case it is checked like `list` (git reads it as a path).
  */
-export type WordRole = "read-file" | "list" | "text";
+export type WordRole = "read-file" | "list" | "text" | "ref-or-path";
 
 export interface ClassifiedWord {
 	readonly role: WordRole;
@@ -24,7 +25,7 @@ export interface ProgramSpec {
 /**
  * Classifies every word of one simple command against `spec`, or returns undefined when any word
  * is not understood: an unknown flag (short or long), a flag in a form the spec does not list, a
- * value-taking flag with no value, a glob, or an operand count out of range. Short flags may be
+ * value-taking flag with no value, or an operand count out of range. Short flags may be
  * clustered (`-la`), and a value-taking short flag takes the rest of its word as the value
  * (`-o/x`, `-ro/x`) or else the next word; a long flag takes `--name=value` or `--name value`.
  */
@@ -34,7 +35,6 @@ export function classifyWords(words: readonly ShellWord[], spec: ProgramSpec): C
 	let optionsEnded = false;
 	for (let index = 0; index < words.length; index += 1) {
 		const word = words[index];
-		if (word.hasGlob) return undefined;
 		const text = word.text;
 		if (optionsEnded || text === "-" || !text.startsWith("-")) {
 			operands.push(word);
@@ -54,11 +54,11 @@ export function classifyWords(words: readonly ShellWord[], spec: ProgramSpec): C
 				continue;
 			}
 			if (separator >= 0) {
-				classified.push({ role: flag, word: { text: text.slice(separator + 1), hasGlob: false } });
+				classified.push({ role: flag, word: { text: text.slice(separator + 1) } });
 				continue;
 			}
 			const value = words[index + 1];
-			if (value === undefined || value.hasGlob) return undefined;
+			if (value === undefined) return undefined;
 			classified.push({ role: flag, word: value });
 			index += 1;
 			continue;
@@ -69,10 +69,10 @@ export function classifyWords(words: readonly ShellWord[], spec: ProgramSpec): C
 			if (flag === true) continue;
 			const attached = text.slice(position + 1);
 			if (attached !== "") {
-				classified.push({ role: flag, word: { text: attached, hasGlob: false } });
+				classified.push({ role: flag, word: { text: attached } });
 			} else {
 				const value = words[index + 1];
-				if (value === undefined || value.hasGlob) return undefined;
+				if (value === undefined) return undefined;
 				classified.push({ role: flag, word: value });
 				index += 1;
 			}

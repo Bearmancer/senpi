@@ -100,9 +100,12 @@ const SPECS: ReadonlyArray<readonly [string, ProgramRule]> = [
 
 const GIT_REF = /^[A-Za-z0-9_][A-Za-z0-9_.@-]*$/;
 
-/** A git operand that is not a plain ref (`HEAD`, `main`, `v1.2`) is a path and is checked as one. */
+/**
+ * A git operand that is not shaped like a ref is a path; a ref-shaped one (`HEAD`, `main`, `notes`)
+ * is still a path when something exists at that name, which the judge checks.
+ */
 const gitOperand = (_index: number, _count: number, text: string): WordRole =>
-	GIT_REF.test(text) && !text.includes("..") ? "text" : "list";
+	GIT_REF.test(text) && !text.includes("..") ? "ref-or-path" : "list";
 
 const GIT_READ_SUBCOMMANDS: Readonly<Record<string, ProgramSpec>> = {
 	status: { flags: flags("-s -b -u --short --branch --porcelain --untracked-files"), operand: all("list") },

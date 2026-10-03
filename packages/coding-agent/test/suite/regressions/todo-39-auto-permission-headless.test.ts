@@ -1,4 +1,5 @@
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai/compat";
 import { afterEach, describe, expect, it } from "vitest";
@@ -49,17 +50,27 @@ describe("auto permission preset with no UI to ask (print mode, unbound SDK)", (
 		30_000,
 	);
 
-	it("outside auto, a user allow still runs the command with no UI", async () => {
-		// Given the ask preset with a user allow for every command and no approver.
-		const { harness, result } = await headless(
-			[
-				["permission-preset", "ask"],
-				["permission", "bash=allow"],
-			],
-			"rm notes.txt",
-		);
-		// Then the allowed command runs.
-		expect(result).not.toContain("Permission required");
-		expect(existsSync(join(harness.tempDir, "notes.txt"))).toBe(false);
+	it("outside auto, refuses a call whose later path no rule allows, though its first path is allowed", async () => {
+		// Given the ask preset, a user allow for one outside folder, and no approver.
+		const safe = mkdtempSync(join(tmpdir(), "auto-noui-safe-"));
+		const other = mkdtempSync(join(tmpdir(), "auto-noui-other-"));
+		writeFileSync(join(safe, "a.txt"), "SAFE-CONTENT\n");
+		writeFileSync(join(other, "b.txt"), "OTHER-CONTENT\n");
+		try {
+			// When the agent reads a file there together with a file from a folder no rule allows.
+			const { result } = await headless(
+				[
+					["permission-preset", "ask"],
+					["permission", `bash=allow,external_directory:${safe}/*=allow`],
+				],
+				`cat ${join(safe, "a.txt")} ${join(other, "b.txt")}`,
+			);
+			// Then the call is refused at once and nothing of the other folder is read.
+			expect(result).not.toContain("OTHER-CONTENT");
+			expect(result).toMatch(/Permission (required|denied)/);
+		} finally {
+			rmSync(safe, { recursive: true, force: true });
+			rmSync(other, { recursive: true, force: true });
+		}
 	}, 30_000);
 });

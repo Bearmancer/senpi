@@ -128,6 +128,8 @@ describe("auto preset command judge: actions it always asks about", () => {
 		["git diff that prints contents", "git diff src/index.ts"],
 		["a short object id", "git log --oneline abcd"],
 		["an object id after a flag value", "git log -n 1000 abcd"],
+		["a ref-shaped name that is a symlink out of the project", "git log --oneline innocent-name"],
+		["a ref-shaped name that is a credential file", "git log --stat server.pem"],
 		["cat with no file reads the terminal", "cat"],
 		["grep with no file reads the terminal", "grep TODO"],
 	])("asks for %s: %s", (_label, command) => {

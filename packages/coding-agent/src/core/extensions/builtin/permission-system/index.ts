@@ -189,19 +189,24 @@ export default function permissionSystemExtension(pi: ExtensionAPI): void {
 				const reply = await showPermissionPrompt(ctx, request);
 				service.reply(reply);
 			} else {
-				const reply = handleNoUI(
-					request,
+				const reply = handleNoUI(request, {
 					staticRuleset,
-					cliRuleset,
-					(eventName, data) => {
+					cliOverride: cliRuleset,
+					emitEvent: (eventName, data) => {
 						if (eventName !== "permission_asked") {
 							pi.events.emit(eventName, data);
 						}
 					},
-					activePreset === "auto",
+					presetBound: activePreset === "auto",
+				});
+				// The service already decided this call needs asking; with no UI it is refused, never allowed.
+				service.reply(
+					reply ?? {
+						requestID: request.id,
+						reply: "reject",
+						message: `Permission required for ${request.permission} (${request.patterns.join(", ")}), and there is no UI to ask.`,
+					},
 				);
-				// No reply means a configured rule allows it: answer, or the call waits forever.
-				service.reply(reply ?? { requestID: request.id, reply: "once" });
 			}
 
 			const askResult = await askResultPromise;

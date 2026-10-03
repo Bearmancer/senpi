@@ -1,5 +1,22 @@
 # Permission System Builtin Extension
 
+## 2026-10-04 - No-UI requests fail closed; plain-word shell splitter
+
+### What changed
+
+- `non-interactive.ts`: `handleNoUI(request, options)` judges every pattern of the request (CLI override before the static ruleset), allows only when all are allowed, and rejects on any deny; `index.ts` refuses whenever it does not allow, so a request the service still asks about is never answered "once" without a UI.
+- `auto-shell-segments.ts`: only plain words joined by `;` or `&&` (the same character set the judge accepted before); the unreachable quote, redirect, pipe and glob handling and `ShellWord.hasGlob` are gone.
+- `auto-program-rules.ts` + `auto-policy.ts`: a ref-shaped git operand (`ref-or-path`) asks when something exists at that name and is not an approvable project path, or when it is credential-shaped.
+- `auto-policy.ts`: `grep` with an empty path list asks. `service.ts`: the unreachable judge branch outside `presetBound` is gone.
+
+### Why
+
+- Round 7 of the #2614 review: the round-6 "answer a no-UI allow" approved a multi-path `external_directory` request whose later path no rule allowed (`handleNoUI` judged only the first pattern).
+
+### Must not break
+
+- No-UI mode never allows what the service asked about; every pattern of a request is judged.
+
 ## 2026-10-03 - Auto: one decision for ask, the pending re-check and no-UI
 
 ### What changed
