@@ -18,6 +18,24 @@
 
 - `packages/coding-agent/src/core/extensions/builtin/permission-system/index.ts`: the `session_start` handler (now a wrapper around `startPermissionSession`) and the first lines of the `tool_call` handler.
 
+## 2026-10-03 - Auto preset judges commands against a fixed policy
+
+### What changed
+
+- `types.ts`, `cli.ts`, `settings.ts`, `config.ts`: a sixth preset, `auto`, whose static rules match `accept-edits`. `PERMISSION_PRESET_NAMES` is the one list the flag, settings and error messages read. `loadPermissionSettings` also returns the effective preset (CLI, then project, then global, then the default).
+- `auto-policy.ts`, `auto-shell-segments.ts`, `auto-program-rules.ts`, `auto-credentials.ts`: under `auto`, a bash command is split into simple commands (`;`, `&&`, `||`, `|`, newlines) and allowed only when every one is on the fixed program list, stays inside the project (paths resolved through symlinks, `cd` tracked) and touches no credential path. The splitter fails closed: substitutions, variables, escapes, subshells, groups, input redirects, here-docs, background jobs, globs in a program name, `~user`, and output redirects other than `/dev/null` all ask. Outside reads (read/grep/find/ls) are approved; a credential path asks even when a rule allows it.
+- `service.ts`: `ask` takes `approveBlanketAsk` (approves an ask that comes only from a `*` rule, so a user's specific ask rule still asks) and `requireApproval` (asks even when a rule allows). Deny rules always win.
+- `index.ts`: calls the auto judge only when the effective preset is `auto`.
+- `../../../modes/rpc/session-command-router.ts`: advertises `permission_preset_auto`.
+
+### Why
+
+- desktop-fixall todo 39: an Auto mode that approves safe actions on the user's behalf and asks for the rest, judged by a fixed, reviewable policy rather than a model.
+
+### Must not break
+
+- `auto` is never the default. Every other preset behaves exactly as before. A command the judge cannot fully read asks; widening the program list or the splitter must keep the bypass tests in `test/permission/auto-preset.test.ts` asking.
+
 ## 2026-10-01 - Read shipped resources without approval (#2513)
 
 ### What changed

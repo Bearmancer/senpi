@@ -1,7 +1,8 @@
 import { SettingsManager } from "../../../settings-manager.ts";
 import type { ExtensionAPI } from "../../types.ts";
 import { extractPatchedPaths } from "../gpt-apply-patch/index.ts";
-import { parsePermissionFlag, parsePermissionPresetFlag } from "./cli.ts";
+import { decideAuto } from "./auto-policy.ts";
+import { PERMISSION_PRESET_NAMES, parsePermissionFlag, parsePermissionPresetFlag } from "./cli.ts";
 import { disabled } from "./config.ts";
 import { createEventEmitter } from "./events.ts";
 import { INTERNAL_PERMISSION_TOOLS } from "./internal-tools.ts";
@@ -11,7 +12,14 @@ import { showPermissionPrompt } from "./prompt.ts";
 import { PermissionService } from "./service.ts";
 import { loadPermissionSettings } from "./settings.ts";
 import { appendApproved } from "./storage.ts";
-import { CorrectedError, DeniedError, RejectedError, type Request, type Ruleset } from "./types.ts";
+import {
+	CorrectedError,
+	DeniedError,
+	type PermissionPresetName,
+	RejectedError,
+	type Request,
+	type Ruleset,
+} from "./types.ts";
 
 function createRequestIDFactory(): () => string {
 	let counter = 0;
@@ -60,6 +68,7 @@ export default function permissionSystemExtension(pi: ExtensionAPI): void {
 	let parserRegistry: ParserRegistry | null = null;
 	let cliRuleset: Ruleset = [];
 	let staticRuleset: Ruleset = [];
+	let activePreset: PermissionPresetName | null = null;
 	let initialApprovedCount = 0;
 	let setupError: string | null = null;
 
@@ -70,7 +79,7 @@ export default function permissionSystemExtension(pi: ExtensionAPI): void {
 		type: "string",
 	});
 	pi.registerFlag("permission-preset", {
-		description: "Set permission preset (full-access, workspace, accept-edits, read-only, or ask)",
+		description: `Set permission preset (${PERMISSION_PRESET_NAMES.join(", ")})`,
 		type: "string",
 	});
 
@@ -97,12 +106,13 @@ export default function permissionSystemExtension(pi: ExtensionAPI): void {
 
 		if (typeof permissionPresetFlag === "string" && !cliPreset) {
 			throw new Error(
-				`Invalid --permission-preset "${permissionPresetFlag}". Expected one of: full-access, workspace, accept-edits, read-only, ask.`,
+				`Invalid --permission-preset "${permissionPresetFlag}". Expected one of: ${PERMISSION_PRESET_NAMES.join(", ")}.`,
 			);
 		}
 
 		const loadedSettings = loadPermissionSettings(settingsManager, cliRuleset, cwd, cliPreset);
 		staticRuleset = loadedSettings.staticRuleset;
+		activePreset = loadedSettings.preset;
 		const approved = loadedSettings.approved;
 		parserRegistry = createBuiltinParserRegistry();
 		service = new PermissionService(staticRuleset, approved, createEventEmitter(pi));
@@ -150,9 +160,13 @@ export default function permissionSystemExtension(pi: ExtensionAPI): void {
 				metadata: createRequestMetadata(event.toolName, event.input),
 			};
 
+			const auto =
+				activePreset === "auto" ? decideAuto(event.toolName, event.input, permissionRequest, ctx.cwd) : undefined;
 			const askResultPromise = service
 				.ask(request, {
 					autoApproveAsk: permissionRequest.autoApproveAsk ?? false,
+					approveBlanketAsk: auto?.approveBlanketAsk ?? false,
+					requireApproval: auto?.requireApproval ?? false,
 					...(permissionRequest.ruleAliases ? { ruleAliases: permissionRequest.ruleAliases } : {}),
 				})
 				.then(

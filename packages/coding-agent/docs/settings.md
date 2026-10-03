@@ -27,7 +27,7 @@ Senpi includes a built-in permission system for tool calls. It evaluates a prese
 
 | Setting | Type | Default | Description |
 |---------|------|---------|-------------|
-| `permissionPreset` | string | `"full-access"` | Permission preset: `"full-access"`, `"workspace"`, `"read-only"`, or `"ask"` |
+| `permissionPreset` | string | `"full-access"` | Permission preset: `"full-access"`, `"workspace"`, `"accept-edits"`, `"auto"`, `"read-only"`, or `"ask"` |
 | `permission` | object | - | Explicit permission rules that override the selected preset |
 
 Presets:
@@ -36,6 +36,8 @@ Presets:
 |--------|----------|
 | `full-access` | Allow all permission checks without prompting |
 | `workspace` | Allow `read`, `list`, `grep`, `edit`, and `bash`; ask for `external_directory` |
+| `accept-edits` | Allow project `read`, `list`, `grep`, and `edit`; ask for `bash`, `external_directory`, and other tools |
+| `auto` | Everything `accept-edits` allows, plus reads outside the project and shell commands on a fixed safe list (tests, builds, linters, project package installs, read-only git and file commands) that stay inside the project. Asks for anything else: destructive or forced deletes, pushes, network tools, global or URL installs, credential files (`.env`, keys, `~/.ssh`), writes outside the project, and every command it cannot read word by word (substitutions, variables, subshells, redirects other than `/dev/null`) |
 | `read-only` | Allow `read`, `list`, and `grep`; ask for `edit`, `bash`, and `external_directory` |
 | `ask` | Restore prompt-on-unknown behavior |
 

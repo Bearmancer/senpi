@@ -31,8 +31,15 @@ export class PermissionService {
 		request: RequestInput,
 		{
 			autoApproveAsk = false,
+			approveBlanketAsk = false,
+			requireApproval = false,
 			ruleAliases,
-		}: { readonly autoApproveAsk?: boolean; readonly ruleAliases?: readonly string[] } = {},
+		}: {
+			readonly autoApproveAsk?: boolean;
+			readonly approveBlanketAsk?: boolean;
+			readonly requireApproval?: boolean;
+			readonly ruleAliases?: readonly string[];
+		} = {},
 	): Promise<void> {
 		const info: Request = {
 			...request,
@@ -50,7 +57,8 @@ export class PermissionService {
 				continue;
 			}
 
-			if (rule.action === "ask" && !autoApproveAsk) {
+			const approvedAsk = autoApproveAsk || (approveBlanketAsk && rule.pattern === "*");
+			if ((rule.action === "ask" && !approvedAsk) || requireApproval) {
 				needsAsk = true;
 			}
 		}
