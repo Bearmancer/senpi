@@ -11,6 +11,53 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  codemode-gate:
+    name: codemode-gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: "1.4.2"
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+      - name: Setup Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.13"
+      - name: Setup Ruby
+        uses: ruby/setup-ruby@14594264cd68ce8a2345dd349bc3d138a4ef85c8 # v1.327.0
+        with:
+          ruby-version: "4.0"
+      - name: Setup Julia
+        uses: julia-actions/setup-julia@e89cce584bf1958661244c90fdf08fea80dadbd1 # v3.0.2 + 16 commits (includes upstream #416)
+        with:
+          version: "1.12"
+      - name: Install Ruby prelude dependency
+        run: gem install base64 --version 0.3.0 --no-document
+      - name: Install dependencies
+        run: bun install --ignore-scripts --frozen-lockfile
+      - name: Build workspace entries
+        run: bun packages/senpi-codemode/scripts/gate-build.ts
+      - name: Eval regression gate
+        run: bun run --cwd packages/senpi-codemode gate --baseline test/gate/baseline.json
+      - name: Codemode package tests (including gate regressions)
+        run: bun run --cwd packages/senpi-codemode test -- test/gate
+      - name: Gate harness types
+        run: bunx tsc --noEmit --project packages/senpi-codemode/scripts/tsconfig.gate.json
+      - name: Upload gate report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: codemode-gate-report
+          path: packages/senpi-codemode/gate-report.json
+          if-no-files-found: error
+
   check:
     name: Static checks
     runs-on: ubuntu-latest
@@ -46,6 +93,11 @@ jobs:
 
       - name: Build workspace package entries
         run: npm run build
+
+      # The publish workflow's release step refuses a dirty tree after `npm run build`, so a committed
+      # dist file that the build rewrites (the bin stubs kept by .gitignore) must match the build output.
+      - name: Committed dist files match the build
+        run: git diff --exit-code -- ':(glob)packages/*/dist/**'
 
       - name: Workflow summary
         if: always()
@@ -251,27 +303,59 @@ jobs:
       - name: Build workspace package entries
         run: npm run build
 
-      # Each suite runs in its own process; lifecycle failures are not retried in-process.
+      # Each suite runs in its own process; lifecycle failures are not retried in-process. The verbose
+      # reporter names every test in the log, so a Windows-only case is provably run, not just counted.
       - name: Run RPC host ensure tests
-        run: bunx vitest run test/rpc-host-ensure.test.ts
+        run: bunx vitest run test/rpc-host-ensure.test.ts --reporter=verbose
         working-directory: packages/coding-agent
 
       - name: Run RPC host lifecycle tests
-        run: bunx vitest run test/rpc-host-lifecycle.test.ts
+        run: bunx vitest run test/rpc-host-lifecycle.test.ts --reporter=verbose
         working-directory: packages/coding-agent
 
       - name: Run RPC socket transport tests
-        run: bunx vitest run test/rpc-socket-transport.test.ts
+        shell: bash
+        run: bunx vitest run test/rpc-socket-transport.test.ts --reporter=verbose --reporter=json --outputFile=vitest-socket-transport.json
         working-directory: packages/coding-agent
 
       # The `senpi host` contract over the named-pipe transport: a second ensure reuses the daemon
       # on the pipe, and a generation handoff refuses (a pipe can be neither renamed nor drained).
       - name: Run senpi host CLI tests (named pipes)
-        run: bunx vitest run test/suite/host-cli-win32.test.ts
+        run: bunx vitest run test/suite/host-cli-win32.test.ts --reporter=verbose
         working-directory: packages/coding-agent
 
       - name: Run app-server daemon tests
-        run: bunx vitest run test/suite/app-server-daemon.test.ts
+        run: bunx vitest run test/suite/app-server-daemon.test.ts --reporter=verbose
+        working-directory: packages/coding-agent
+
+      # endpoint.json written and read back on Windows paths: registry_version, endpoint_kind, and a
+      # legacy record read as rpc_host.
+      - name: Run endpoint registry tests
+        run: bunx vitest run test/suite/rpc-endpoint-registry.test.ts --reporter=verbose
+        working-directory: packages/coding-agent
+
+      # The session gateway is POSIX-only: an interactive TUI on win32 starts normally, its endpoint
+      # request answers unsupported_platform, and nothing is registered.
+      - name: Run interactive TUI control endpoint tests (win32)
+        shell: bash
+        run: bunx vitest run test/suite/interactive-session-control-win32.test.ts --reporter=verbose --reporter=json --outputFile=vitest-tui-control-win32.json
+        working-directory: packages/coding-agent
+
+      # A skipped suite exits 0: fail unless the win32-only cases (the named-pipe wrong-secret test and
+      # the TUI no-registration suite) executed and every test in those files passed.
+      - name: Require the win32 gateway parity tests to have executed
+        shell: bash
+        run: |
+          for pair in vitest-socket-transport.json:rpc-socket-transport.test.ts vitest-tui-control-win32.json:interactive-session-control-win32.test.ts; do
+            node -e '
+              const r = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
+              const file = r.testResults.find((t) => t.name.replace(/\\/g, "/").endsWith(process.argv[2]));
+              const passed = file ? file.assertionResults.filter((a) => a.status === "passed").length : 0;
+              const other = file ? file.assertionResults.filter((a) => a.status !== "passed").length : 0;
+              console.log(process.argv[1] + ": " + process.argv[2] + " passed=" + passed + " other=" + other);
+              if (passed === 0 || other !== 0) process.exit(1);
+            ' "${pair%%:*}" "${pair#*:}"
+          done
         working-directory: packages/coding-agent
 
   compiled-extensions-windows:
@@ -390,10 +474,39 @@ jobs:
       - name: Install dependencies
         run: npm ci --ignore-scripts
 
+      # senpi#2353: a hung suite must not run into the job timeout: GitHub discards a cancelled job's
+      # log, and a runner that stops answering never enforces a step timeout either. The step watches
+      # the suite itself and, after 9 minutes (a normal Windows run takes about 3), prints what it has,
+      # the processes still running, and the readiness log, then fails.
       - name: Run eval kernel WebView suites (Bun)
         shell: bash
-        run: bunx --bun vitest run test/js-kernel-webview.test.ts test/js-kernel-webview-lifecycle.test.ts test/js-kernel-webview-resilience.test.ts test/js-kernel-webview-launch.test.ts --reporter=default --reporter=json --outputFile=vitest-webview.json
+        timeout-minutes: 12
+        env:
+          SENPI_WEBVIEW_READINESS_LOG: ${{ runner.temp }}/webview-readiness.log
+        run: |
+          out="$RUNNER_TEMP/vitest-webview.txt"
+          bunx --bun vitest run test/js-kernel-webview.test.ts test/js-kernel-webview-lifecycle.test.ts test/js-kernel-webview-resilience.test.ts test/js-kernel-webview-launch.test.ts test/js-kernel-webview-readiness.test.ts --reporter=verbose --reporter=hanging-process --reporter=json --outputFile=vitest-webview.json > "$out" 2>&1 &
+          suite=$!
+          for _ in $(seq 1 540); do kill -0 "$suite" 2>/dev/null || break; sleep 1; done
+          if kill -0 "$suite" 2>/dev/null; then
+            cat "$out"
+            echo "::error::WebView suites still running after 9 minutes; the last finished test is above"
+            if command -v tasklist >/dev/null; then tasklist //FO CSV | grep -iE 'chrome|bun|node|powershell|tasklist|taskkill' || true; else ps -axo pid,ppid,etime,command | grep -iE 'chrom|bun|node' || true; fi
+            cat "$SENPI_WEBVIEW_READINESS_LOG" 2>/dev/null || true
+            kill "$suite" 2>/dev/null || true
+            exit 1
+          fi
+          wait "$suite"
+          status=$?
+          cat "$out"
+          exit "$status"
         working-directory: packages/senpi-codemode
+
+      # senpi#2353: one line per Chrome launch (time to attach, or the stalled phase and the retirement).
+      - name: Show the WebView readiness log
+        if: always()
+        shell: bash
+        run: cat "$RUNNER_TEMP/webview-readiness.log" 2>/dev/null || echo "no readiness log"
 
       - name: Require the WebView suites to have executed
         shell: bash
@@ -409,6 +522,39 @@ jobs:
             if (passed < 10 || failed !== 0 || skipped > allowedSkips) process.exit(1);
           '
         working-directory: packages/senpi-codemode
+
+  python-kernel-windows:
+    name: Python kernel cold startup (Windows)
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.12.10"
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: "1.4.2"
+      - name: Install dependencies
+        run: bun install --frozen-lockfile --ignore-scripts
+      - name: Slow and hung bootstrap regressions
+        working-directory: packages/senpi-codemode
+        run: bun ../../node_modules/vitest/vitest.mjs run test/py-kernel-startup.test.ts test/py-kernel.test.ts test/py-kernel-child-error.test.ts
+      - name: Build isolated packaged Python host
+        shell: pwsh
+        run: |
+          $hostRoot = "$env:RUNNER_TEMP/python-host"
+          New-Item -ItemType Directory -Force $hostRoot | Out-Null
+          bun build --compile --target bun-windows-x64 packages/senpi-codemode/scripts/qa-python-startup.ts --outfile "$hostRoot/python-host.exe"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $sidecar = "$hostRoot/node_modules/@code-yeongyu/senpi-codemode/src/kernels/py"
+          New-Item -ItemType Directory -Force $sidecar | Out-Null
+          Copy-Item packages/senpi-codemode/src/kernels/py/prelude.py "$sidecar/prelude.py"
+      - name: Packaged cold and warm Python cells
+        shell: pwsh
+        run: |
+          & "$env:RUNNER_TEMP/python-host/python-host.exe"
+          exit $LASTEXITCODE
 
   test-workspaces:
     name: Test (workspaces + scripts)
@@ -453,6 +599,8 @@ jobs:
           bun test scripts/node-bundle-smoke.test.ts
           bun test scripts/node-bundle-cursor-exec.test.ts
           bun test scripts/node-bundle-reinstall.test.ts
+          bun test scripts/bun-bundle-provider-coverage.test.ts
+          bun test scripts/compiled-provider-probe.test.ts
 
       - name: Script tests
         run: npm run test:scripts
@@ -494,6 +642,7 @@ jobs:
     needs:
       [
         check,
+        codemode-gate,
         test-coding-agent,
         grep-native-contract,
         hooks-trust-storage-windows,
@@ -502,6 +651,7 @@ jobs:
         compiled-extensions-windows,
         claude-executable-windows,
         webview-kernel,
+        python-kernel-windows,
         test-workspaces,
       ]
     if: always()
@@ -527,6 +677,7 @@ jobs:
           {
             echo "## Check and test (fan-in)"
             echo "- check: ${{ needs.check.result }}"
+            echo "- codemode-gate: ${{ needs.codemode-gate.result }}"
             echo "- test-coding-agent: ${{ needs.test-coding-agent.result }}"
             echo "- grep-native-contract: ${{ needs.grep-native-contract.result }}"
             echo "- hooks-trust-storage-windows: ${{ needs.hooks-trust-storage-windows.result }}"
@@ -535,6 +686,7 @@ jobs:
             echo "- compiled-extensions-windows: ${{ needs.compiled-extensions-windows.result }}"
             echo "- claude-executable-windows: ${{ needs.claude-executable-windows.result }}"
             echo "- webview-kernel: ${{ needs.webview-kernel.result }}"
+            echo "- python-kernel-windows: ${{ needs.python-kernel-windows.result }}"
             echo "- test-workspaces: ${{ needs.test-workspaces.result }}"
           } >> "$GITHUB_STEP_SUMMARY"
 

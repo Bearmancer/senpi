@@ -6,6 +6,7 @@ import {
 	stream as streamOpenAICodexResponses,
 } from "../src/api/openai-codex-responses.ts";
 import type { Context, Model } from "../src/types.ts";
+import { normalizeContext } from "../src/utils/transcript.ts";
 
 const FALLBACK_COOLDOWN_MS = 60_000;
 
@@ -168,7 +169,7 @@ function installTransportHarness(): { connections: () => number; fetches: () => 
 }
 
 async function runSession(sessionId: string): Promise<void> {
-	await streamOpenAICodexResponses(model, context, {
+	await streamOpenAICodexResponses(model, normalizeContext(context), {
 		apiKey: mockToken(),
 		sessionId,
 		transport: "auto",

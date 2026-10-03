@@ -52,6 +52,32 @@
 - MEDIUM: `performSearch` in `websearch/search.ts` (the per-route loop now calls `searchRoute`) and `formatSearchText`.
 - LOW: the `buildNativeEntries` signature and its active-entry push in `websearch/native.ts`; the `NativeModelInfo` fields; `configFromObject` and `loadWebsearchConfig` in `websearch/config.ts`; the status handler in `index.ts`. Re-vendoring must carry `route-attempts.ts` and `search-model.ts`, or restore `providerEntryLabel` in `search.ts`.
 
+## 2026-09-29 - ChatGPT subscription hosted search and opt-in Google Search grounding (senpi#2341)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/websearch/websearch/hosted-routes.ts` (new): `hostedRouteMapping` maps `openai-codex-responses` models (except `-spark`) to the `chatgpt-subscription` search provider at `<baseUrl>/codex/responses`; it is the only new automatic route. Google Search grounding is opt-in, so no Google model maps automatically: `googleLoginEndpoint` gives the API root of a `google`-provider Google model and is used only for a `google` entry listed in `websearch.json`. `credentialHeaders` merges catalog `model.headers` with the registry's credential headers, a `null` credential header deleting the catalog one.
+- `packages/coding-agent/src/core/extensions/builtin/websearch/websearch/native.ts`: `nativeMapping` consults `hostedRouteMapping` first; mappings may carry an `endpoint` builder (`mappingEndpointUrl`) instead of the `/v1/<resource>` rule; `NativeModelInfo` gains `headers`, and every native entry now carries the merged credential `headers` (only the two new provider modules send them). The active-provider discovery rule is unchanged.
+- `packages/coding-agent/src/core/extensions/builtin/websearch/websearch/providers/chatgpt-subscription.ts` (new): streaming, `store: false` Responses request with the `web_search` tool, `tool_choice: { type: "web_search" }`, bearer token, `chatgpt-account-id` from the token, `OpenAI-Beta: responses=experimental`, the wire-identity `originator`/`User-Agent`, and the credential headers. Results only when the output has a `web_search_call`: `url_citation` annotations first, then `action.sources`; answer-text URLs never count.
+- `packages/coding-agent/src/core/extensions/builtin/websearch/websearch/providers/response-stream.ts` (new): folds the SSE stream into `{ output }`; `error`/`response.failed` events become `error.message`.
+- `packages/coding-agent/src/core/extensions/builtin/websearch/websearch/providers/google.ts` (new): `POST <root>/models/<model>:generateContent` with `x-goog-api-key`, the `google_search` tool, domain filters folded into the query; results are `groundingMetadata.groundingChunks[].web` (`uri`, `title`), snippets from `groundingSupports`. No grounding chunks means zero results.
+- `packages/coding-agent/src/core/extensions/builtin/websearch/websearch/session-login-entries.ts` (new) and `websearch/tool.ts`: a `websearch.json` `chatgpt-subscription` or `google` entry without `apiKey` resolves the matching senpi login (same-provider model, the entry's `model` preferred; `google` resolves only the `google` API-key login, never Vertex) and is sent to that login's endpoint; an entry with no matching login is dropped, and a config left empty that way returns an explicit error.
+- `packages/coding-agent/src/core/extensions/builtin/websearch/websearch/types.ts`, `websearch/config.ts`, `websearch/provider-endpoints.ts`, `websearch/providers.ts`, `websearch/providers/shared.ts`: the two provider ids, their defaults, `headers` on entries (never read from `websearch.json`), apiKey-optional validation for both, `ProviderModule.parseBody`, `parseProviderBody`, and `withConfigHeaders`.
+- `packages/coding-agent/src/core/extensions/builtin/websearch/websearch/search.ts`: `responsePayload` asks the provider's own `parseBody` first (the subscription's full SSE stream), before the `responseFormat` handling added by senpi#2339; a successful response with zero results and an `error` field reports that error instead of "returned no results".
+
+### Why
+
+- ChatGPT subscription and Google model sessions had no hosted search and fell back to the scraper (senpi#2341). The existing `codex` provider id stays the API-key Responses route. Google Search grounding is opt-in by owner decision so nobody is billed by Google without asking.
+
+### Why an extension could not handle it
+
+- The provider registry, native mapping and entry construction are private to this builtin.
+
+### Expected merge conflict zones
+
+- MEDIUM: `nativeMapping` head, `mappingEndpointUrl` call sites and the end of `buildNativeEntryForModel` in `websearch/native.ts` (senpi#2340 edits the same file).
+- LOW: one line each in `types.ts`, `config.ts` `PROVIDERS`, `provider-endpoints.ts`, `providers.ts`; the payload/zero-result block in `search.ts`; the native-route call in `tool.ts`.
+
 
 ## 2026-09-29 - Answer-text URLs are not search sources (senpi#2337)
 
@@ -115,8 +141,8 @@ The provider registry and `SearchProvider` union are private to this builtin; an
 ## Senpi merge repair (2026-08-13)
 
 - Native route discovery accepts registry `ProviderHeaders`, preserving nullable deletion markers while it
-  resolves credentials. Web search currently consumes only the resolved API key, so no premature header
-  materialization is required.
+  resolves credentials. Since senpi#2341 the entry carries the merged headers (`credentialHeaders`), and the
+  `chatgpt-subscription` and `google` modules send them.
 - This remains a Senpi adaptation because the builtin bridges Senpi's model registry into the vendored
   extension; re-vendoring can overwrite `native.ts` and `tool.ts`.
 

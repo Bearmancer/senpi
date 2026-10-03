@@ -144,3 +144,11 @@ export interface SessionControlDeliveryDetails {
 	readonly source: "session_control";
 	readonly deliverAs: ExternalDeliverAs;
 }
+
+/** Whether a custom-message `details` value proves it came through session-control admission. */
+export function isSessionControlDeliveryDetails(value: unknown): value is SessionControlDeliveryDetails {
+	if (typeof value !== "object" || value === null) return false;
+	if (!("delivery_id" in value) || typeof value.delivery_id !== "string") return false;
+	if (!("source" in value) || value.source !== "session_control") return false;
+	return "deliverAs" in value && (value.deliverAs === "steer" || value.deliverAs === "followUp");
+}

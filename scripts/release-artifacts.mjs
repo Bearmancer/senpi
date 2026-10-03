@@ -30,6 +30,18 @@ export function runGenerateModels(dryRun, runCommand, log, dryRunLog) {
 	runCommand("npm", ["--prefix", "packages/ai", "run", "generate-models"]);
 }
 
+// senpi#2645: a regeneration can drop the model a bundled provider names as its default (#2175, #2295, #926).
+// The release test gate may skip on HEAD's green CI, which ran before the regen, so check the defaults here,
+// right after it: the release stops instead of shipping a default its own catalog no longer has.
+export function runProviderDefaultsCheck(dryRun, runCommand, log, dryRunLog) {
+	if (dryRun) {
+		dryRunLog("npm --prefix packages/coding-agent run check:provider-defaults");
+		return;
+	}
+	log("npm --prefix packages/coding-agent run check:provider-defaults");
+	runCommand("npm", ["--prefix", "packages/coding-agent", "run", "check:provider-defaults"], { CI: "1" });
+}
+
 // omo#8700: the catalog just regenerated from the network may carry a Claude id the pinned Claude Code
 // predates. Report it in the release log; the blocking check is the promoted-model regression test.
 export function runClaudeCodeModelSupportReport(dryRun, runCommand, log, dryRunLog) {
@@ -39,15 +51,6 @@ export function runClaudeCodeModelSupportReport(dryRun, runCommand, log, dryRunL
 	}
 	log("node scripts/check-claude-code-model-support.mjs");
 	runCommand("node", ["scripts/check-claude-code-model-support.mjs"]);
-}
-
-export function runGenerateImageModels(dryRun, runCommand, log, dryRunLog) {
-	if (dryRun) {
-		dryRunLog("npm --prefix packages/ai run generate-image-models");
-		return;
-	}
-	log("npm --prefix packages/ai run generate-image-models");
-	runCommand("npm", ["--prefix", "packages/ai", "run", "generate-image-models"]);
 }
 
 export function runInstallLock(dryRun, runCommand, log, dryRunLog) {

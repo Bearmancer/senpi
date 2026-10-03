@@ -6,6 +6,7 @@ import {
 	convertResponsesMessages,
 	getContextProvenance,
 	type Model,
+	normalizeContext,
 	type ProviderHeaders,
 } from "@earendil-works/pi-ai";
 import { streamSimple } from "@earendil-works/pi-ai/compat";
@@ -56,7 +57,13 @@ import {
 	supportsOpenAiResponsesRemoteCompactionV2,
 	supportsOpenAiResponsesWebSocket,
 } from "./openai-remote-responses-v2.ts";
-import { openAiRemoteCompactionTimeoutMs, runWithRemoteTimeout } from "./openai-remote-timeout.ts";
+import {
+	createRemoteCompactionDeadline,
+	openAiRemoteCompactionTimeoutMs,
+	type RemoteCompactionTimeout,
+	type RemoteCompactionTimeoutNextStep,
+	runWithRemoteTimeout,
+} from "./openai-remote-timeout.ts";
 
 export type {
 	OpenAiRemoteCompactionDetails,
@@ -149,6 +156,8 @@ type OpenAiRemoteCompactionEvent =
 			modelId?: string;
 			reason: string;
 			transport?: OpenAiRemoteTransport;
+			/** Present when the attempt ran out of its budget, so the user can be told what happens next. */
+			timeout?: RemoteCompactionTimeout;
 	  }
 	| {
 			version: 1;
@@ -162,6 +171,7 @@ type OpenAiRemoteCompactionEvent =
 type EmitCompactionEvent = (event: OpenAiRemoteCompactionEvent) => void;
 
 const REMOTE_COMPACTION_TIMEOUT_REASON = "remote-compaction-timeout";
+const REMOTE_COMPACTION_BUDGET_EXHAUSTED_REASON = "remote-compaction-budget-exhausted";
 const INVALID_COMPACT_REQUEST_PAYLOAD_REASON = "invalid-compact-request-payload";
 const MISSING_REMOTE_REPLAY_ORIGIN_REASON = "missing-remote-replay-origin-provenance";
 const REMOTE_REPLAY_ORIGIN_MISMATCH_REASON = "remote-replay-origin-mismatch";
@@ -611,7 +621,27 @@ export async function runOpenAiRemoteCompaction(
 		});
 		return undefined;
 	}
-	const remoteTimeoutMs = dependencies.remoteTimeoutMs ?? openAiRemoteCompactionTimeoutMs(requestModel);
+	const remoteTimeoutMs =
+		dependencies.remoteTimeoutMs ?? openAiRemoteCompactionTimeoutMs(requestModel, request.tokensBefore);
+	const remoteDeadline = createRemoteCompactionDeadline(remoteTimeoutMs);
+	const timedOut = (waitedMs: number, next: RemoteCompactionTimeoutNextStep): RemoteCompactionTimeout => ({
+		waitedMs,
+		tokens: request.tokensBefore,
+		next: remoteDeadline.remainingMs() > 0 ? next : "local-summary",
+	});
+	const remoteBudgetExhausted = (transport: OpenAiRemoteTransport): boolean => {
+		if (remoteDeadline.remainingMs() > 0) return false;
+		emit?.({
+			version: 1,
+			action: "remote_fallback",
+			route: "builtin.compaction.openai_remote",
+			requestId: event.requestId,
+			modelId: requestModel.id,
+			reason: REMOTE_COMPACTION_BUDGET_EXHAUSTED_REASON,
+			transport,
+		});
+		return true;
+	};
 	// Normal provider requests transform configured headers before the Codex
 	// transport applies its canonical auth/account fields. Mirror that ordering
 	// so extension routing choices are retained but cannot impersonate another
@@ -668,12 +698,21 @@ export async function runOpenAiRemoteCompaction(
 			sessionId: ctx.sessionManager.getSessionId(),
 			stream: resolveRemoteStreamRunner(ctx, dependencies),
 			systemPrompt: ctx.getSystemPrompt(),
-			timeoutMs: remoteTimeoutMs,
+			timeoutMs: remoteDeadline.nextAttemptMs(),
+			describeTimeout: (waitedMs) =>
+				timedOut(
+					waitedMs,
+					requestModel.api === "openai-codex-responses"
+						? "local-summary"
+						: supportsOpenAiResponsesWebSocket(requestModel)
+							? "websocket"
+							: "compact-endpoint",
+				),
 		});
 		if (result || requestModel.api === "openai-codex-responses") return result;
 	}
 
-	if (supportsOpenAiResponsesWebSocket(requestModel)) {
+	if (supportsOpenAiResponsesWebSocket(requestModel) && !remoteBudgetExhausted("websocket")) {
 		const websocketHeaders = Object.fromEntries(requestHeaders.entries());
 		emit?.({
 			version: 1,
@@ -687,8 +726,8 @@ export async function runOpenAiRemoteCompaction(
 		try {
 			const result = await runWithRemoteTimeout({
 				signal: event.signal,
-				timeoutMs: remoteTimeoutMs,
-				onTimeout: () =>
+				timeoutMs: remoteDeadline.nextAttemptMs(),
+				onTimeout: (waitedMs) =>
 					emit?.({
 						version: 1,
 						action: "remote_fallback",
@@ -697,6 +736,7 @@ export async function runOpenAiRemoteCompaction(
 						modelId: requestModel.id,
 						reason: REMOTE_COMPACTION_TIMEOUT_REASON,
 						transport: "websocket",
+						timeout: timedOut(waitedMs, "compact-endpoint"),
 					}),
 				run: (signal) =>
 					runOpenAiResponsesStreamCompaction({
@@ -763,11 +803,12 @@ export async function runOpenAiRemoteCompaction(
 		return undefined;
 	}
 	const transformedRequest = { ...request, body: transformedPayload };
+	if (remoteBudgetExhausted("compact-endpoint")) return undefined;
 
 	return runWithRemoteTimeout({
 		signal: event.signal,
-		timeoutMs: remoteTimeoutMs,
-		onTimeout: () =>
+		timeoutMs: remoteDeadline.nextAttemptMs(),
+		onTimeout: (waitedMs) =>
 			emit?.({
 				version: 1,
 				action: "remote_fallback",
@@ -776,6 +817,7 @@ export async function runOpenAiRemoteCompaction(
 				modelId: requestModel.id,
 				reason: REMOTE_COMPACTION_TIMEOUT_REASON,
 				transport: "compact-endpoint",
+				timeout: timedOut(waitedMs, "local-summary"),
 			}),
 		run: (signal) =>
 			runOpenAiCompactEndpointCompaction({
@@ -937,7 +979,7 @@ export function markOpenAiRemoteReplayBoundary(
 	});
 	const baseline = convertResponsesMessages(
 		options.model,
-		{ messages: convertToLlm(marked) },
+		normalizeContext({ messages: convertToLlm(marked) }),
 		OPENAI_RESPONSES_TOOL_CALL_PROVIDERS,
 		{ ...replayBoundaryConversionOptions(options.model), sealContextProvenance: true },
 	);

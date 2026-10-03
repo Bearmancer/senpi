@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { readMcpCatalogCache } from "../../src/core/extensions/builtin/mcp/catalog-cache.ts";
 import { getMcpService, resetMcpServiceForTests } from "../../src/core/extensions/builtin/mcp/service.ts";
+import type { ExtensionToolContext } from "../../src/core/extensions/types.ts";
 import { capturingPi, registeredTool, testContext, withoutMcpUtilityTools } from "./fixtures/register-call.ts";
 import { cleanupRoots, makeRoot, setConfig } from "./fixtures/service-lifecycle.ts";
 import { sharingHttpFixture } from "./fixtures/sharing-http.ts";
@@ -49,7 +50,13 @@ describe("MCP list_changed on a non-shared connection (#2188)", () => {
 		expect(withoutMcpUtilityTools(pi.registeredTools)).toContain("mcp_fx_after_change");
 		expect(pi.activeTools).not.toContain("mcp_fx_echo");
 		await expect(
-			registeredTool(pi, "mcp_fx_echo").execute("call-1", {}, undefined, undefined, testContext()),
+			registeredTool(pi, "mcp_fx_echo").execute(
+				"call-1",
+				{},
+				undefined,
+				undefined,
+				testContext() as ExtensionToolContext,
+			),
 		).rejects.toThrow(/no longer available on fx/);
 		const cache = await readMcpCatalogCache(root.agentDir);
 		expect(cache.servers.fx?.tools.map((tool) => tool.name)).toEqual(["after_change"]);

@@ -232,31 +232,44 @@ async function buildBundle() {
 	// These implementations are reached through variable-specifier imports or a
 	// worker URL, so the main bundle cannot follow them. Emit one self-contained
 	// file per implementation beside the code that resolves it.
+	const lazyEntryPoints = {
+		anthropic: join(aiDistDir, "auth", "oauth", "anthropic.js"),
+		"bedrock-converse-stream": join(aiDistDir, "api", "bedrock-converse-stream.js"),
+		cursor: join(aiDistDir, "auth", "oauth", "cursor.js"),
+		"cursor-agent": join(aiDistDir, "api", "cursor-agent.js"),
+		devin: join(aiDistDir, "auth", "oauth", "devin.js"),
+		"devin-agent": join(aiDistDir, "api", "devin-agent.js"),
+		"github-copilot": join(aiDistDir, "auth", "oauth", "github-copilot.js"),
+		// `supervisor-route.js` defers this with a dynamic `import("./host-lifecycle.js")`
+		// so the RPC host graph stays out of every launch. `session-worker` is bundled
+		// here with splitting off, which leaves that specifier unresolved beside the
+		// emitted file - so the implementation has to exist there under that exact name,
+		// or `host ensure` dies with "Module not found .../chunks/host-lifecycle.js".
+		"host-lifecycle": join(codingAgentDistDir, "modes", "rpc", "host-lifecycle.js"),
+		"image-resize-worker": join(codingAgentDistDir, "utils", "image-resize-worker.js"),
+		"session-worker": join(codingAgentDistDir, "modes", "rpc", "session-worker.js"),
+		"kimi-coding": join(aiDistDir, "auth", "oauth", "kimi-coding.js"),
+		meta: join(aiDistDir, "auth", "oauth", "meta.js"),
+		"openai-chatgpt": join(aiDistDir, "auth", "oauth", "openai-chatgpt.js"),
+		"chatgpt-subscription": join(aiDistDir, "auth", "oauth", "chatgpt-subscription.js"),
+		openrouter: join(aiDistDir, "auth", "oauth", "openrouter.js"),
+		radius: join(aiDistDir, "auth", "oauth", "radius.js"),
+		xai: join(aiDistDir, "auth", "oauth", "xai.js"),
+	};
+
+	// Every OAuth flow loaded through importOAuthModule() must have a lazy entry,
+	// otherwise the flow fails at runtime with a missing module error.
+	const oauthLoadSource = readFileSync(join(repoRoot, "packages", "ai", "src", "auth", "oauth", "load.ts"), "utf8");
+	for (const match of oauthLoadSource.matchAll(/importOAuthModule\("\.\/([^"]+)\.ts"\)/g)) {
+		if (!(match[1] in lazyEntryPoints)) {
+			throw new Error(`OAuth flow "${match[1]}" is lazily imported but has no lazy bundle entry`);
+		}
+	}
+
 	const lazyResult = await build({
 		...commonBuildOptions(),
 		entryNames: "[name]",
-		entryPoints: {
-			anthropic: join(aiDistDir, "auth", "oauth", "anthropic.js"),
-			"bedrock-converse-stream": join(aiDistDir, "api", "bedrock-converse-stream.js"),
-			cursor: join(aiDistDir, "auth", "oauth", "cursor.js"),
-			"cursor-agent": join(aiDistDir, "api", "cursor-agent.js"),
-			devin: join(aiDistDir, "auth", "oauth", "devin.js"),
-			"devin-agent": join(aiDistDir, "api", "devin-agent.js"),
-			"github-copilot": join(aiDistDir, "auth", "oauth", "github-copilot.js"),
-			// `supervisor-route.js` defers this with a dynamic `import("./host-lifecycle.js")`
-			// so the RPC host graph stays out of every launch. `session-worker` is bundled
-			// here with splitting off, which leaves that specifier unresolved beside the
-			// emitted file - so the implementation has to exist there under that exact name,
-			// or `host ensure` dies with "Module not found .../chunks/host-lifecycle.js".
-			"host-lifecycle": join(codingAgentDistDir, "modes", "rpc", "host-lifecycle.js"),
-			"image-resize-worker": join(codingAgentDistDir, "utils", "image-resize-worker.js"),
-			"session-worker": join(codingAgentDistDir, "modes", "rpc", "session-worker.js"),
-			"kimi-coding": join(aiDistDir, "auth", "oauth", "kimi-coding.js"),
-			"chatgpt-subscription": join(aiDistDir, "auth", "oauth", "chatgpt-subscription.js"),
-			openrouter: join(aiDistDir, "auth", "oauth", "openrouter.js"),
-			radius: join(aiDistDir, "auth", "oauth", "radius.js"),
-			xai: join(aiDistDir, "auth", "oauth", "xai.js"),
-		},
+		entryPoints: lazyEntryPoints,
 		outdir: dirname(bedrockLoaderOutput),
 		splitting: false,
 	});

@@ -12,8 +12,8 @@
  */
 
 import type { IncomingMessage, Server, ServerResponse } from "node:http";
+import { oauthErrorHtml, oauthSuccessHtml } from "../../utils/oauth-page.ts";
 import { formatErrorDetails } from "./error-details.ts";
-import { oauthErrorHtml, oauthSuccessHtml } from "./oauth-page.ts";
 
 export type CallbackCode = { code: string; state: string };
 

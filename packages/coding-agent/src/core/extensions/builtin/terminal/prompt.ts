@@ -47,8 +47,8 @@ manual \`&\` backgrounding — use the built-in session tools:
     directory too. This branch takes no \`filter\`.
   A standing watch is marked \`persistent: true\`: it has no deadline, survives a session restart
   (the file is rescanned and any change missed while detached reported), expires 7 days after
-  creation, is capped at 5 per session, and is accounted for in one restart-report line on
-  session start.
+  creation, has no per-session cap unless the \`terminal.maxDurableMonitors\` setting sets one,
+  and is accounted for in one restart-report line on session start.
   Identical updates are deduped; repeated monitor-only wakes pause the noisy monitor(s) that
   caused them, not all monitors. Completion still wakes the session, and
   \`${monitor}({ action: "rearm", bash_id })\` resumes one while \`${monitor}({ action: "rearm" })\`

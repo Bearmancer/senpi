@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { activeModelBlockUntil, pruneModelBlocks } from "../../../credential-pool/model-scope.ts";
 import type { AccountSlot } from "./accounts.ts";
 
 export const DEFAULT_AFFINITY_KEY = "claude-sdk-oauth-default";
@@ -8,6 +9,8 @@ export type AffinityOptions = {
 	sessionId?: string;
 	pinnedAccount?: string;
 	now?: number;
+	/** The requested model; an account blocked only for another model stays eligible for it. */
+	model?: string;
 };
 
 export class AllAccountsBlockedError extends Error {
@@ -18,13 +21,23 @@ export class AllAccountsBlockedError extends Error {
 	 * of guessing it from prose (omo#8383).
 	 */
 	readonly blockReason: "auth_error" | undefined;
+	/**
+	 * The requested model when a usage limit on that model, not the accounts, is
+	 * what blocks it somewhere: the message then names the model, so the fallback
+	 * chain moves only this model and keeps the provider for the others.
+	 */
+	readonly limitedModel: string | undefined;
 
-	constructor(soonestUnblockAt: number | undefined, blockReason?: "auth_error") {
+	constructor(soonestUnblockAt: number | undefined, blockReason?: "auth_error", limitedModel?: string) {
+		const until = soonestUnblockAt === undefined ? undefined : new Date(soonestUnblockAt).toISOString();
 		super(
-			soonestUnblockAt === undefined
-				? "All Anthropic Subscription accounts are blocked until re-login."
-				: `All Anthropic Subscription accounts are blocked until ${new Date(soonestUnblockAt).toISOString()}.`,
+			limitedModel !== undefined && until !== undefined
+				? `All Anthropic Subscription accounts have hit the usage limit for model ${limitedModel} until ${until}.`
+				: until === undefined
+					? "All Anthropic Subscription accounts are blocked until re-login."
+					: `All Anthropic Subscription accounts are blocked until ${until}.`,
 		);
+		this.limitedModel = limitedModel;
 		this.name = "AllAccountsBlockedError";
 		this.soonestUnblockAt = soonestUnblockAt;
 		this.blockReason = blockReason;
@@ -50,18 +63,27 @@ export function rendezvousOrder(key: string, accounts: readonly AccountSlot[]): 
 		.map(({ account }) => account);
 }
 
-function isBlocked(account: AccountSlot, now: number): boolean {
+function isAccountBlocked(account: AccountSlot, now: number): boolean {
 	return account.blockReason === "auth_error" || (account.blockedUntil !== undefined && account.blockedUntil > now);
+}
+
+/** Whether the account can serve `model` now: no account-level block and no live block on that model. */
+export function isBlockedFor(account: AccountSlot, now: number, model?: string): boolean {
+	return isAccountBlocked(account, now) || activeModelBlockUntil(account.modelBlocks, model, now) !== undefined;
 }
 
 /** Removes elapsed rate/capacity blocks but deliberately retains auth blocks until login refreshes the slot. */
 export function clearExpiredBlocks(accounts: readonly AccountSlot[], now = Date.now()): AccountSlot[] {
 	return accounts.map((account) => {
+		let available = account;
 		if (account.blockReason !== "auth_error" && account.blockedUntil !== undefined && account.blockedUntil <= now) {
-			const { blockedUntil: _blockedUntil, blockReason: _blockReason, ...available } = account;
-			return available;
+			const { blockedUntil: _blockedUntil, blockReason: _blockReason, ...rest } = account;
+			available = rest;
 		}
-		return account;
+		if (available.modelBlocks === undefined) return available;
+		const { modelBlocks, ...rest } = available;
+		const live = pruneModelBlocks(modelBlocks, now);
+		return live === undefined ? rest : { ...rest, modelBlocks: live };
 	});
 }
 
@@ -74,15 +96,37 @@ function selectUnblocked(
 		options.pinnedAccount === undefined
 			? undefined
 			: accounts.find((account) => account.name === options.pinnedAccount);
-	if (pinned && !isBlocked(pinned, now)) return pinned;
-	return rendezvousOrder(getAffinityKey(options), accounts).find((account) => !isBlocked(account, now));
+	if (pinned && !isBlockedFor(pinned, now, options.model)) return pinned;
+	return rendezvousOrder(getAffinityKey(options), accounts).find(
+		(account) => !isBlockedFor(account, now, options.model),
+	);
 }
 
-function soonestUnblockAt(accounts: readonly AccountSlot[], now: number): number | undefined {
+function unblockAt(account: AccountSlot, now: number, model: string | undefined): number | undefined {
+	const accountUntil =
+		account.blockedUntil !== undefined && account.blockedUntil > now ? account.blockedUntil : undefined;
+	const modelUntil = activeModelBlockUntil(account.modelBlocks, model, now);
+	if (accountUntil === undefined) return modelUntil;
+	return modelUntil === undefined ? accountUntil : Math.max(accountUntil, modelUntil);
+}
+
+function soonestUnblockAt(
+	accounts: readonly AccountSlot[],
+	now: number,
+	model: string | undefined,
+): number | undefined {
 	const candidates = accounts
-		.map((account) => account.blockedUntil)
-		.filter((value): value is number => value !== undefined && value > now);
+		.map((account) => unblockAt(account, now, model))
+		.filter((value): value is number => value !== undefined);
 	return candidates.length === 0 ? undefined : Math.min(...candidates);
+}
+
+function limitedModel(accounts: readonly AccountSlot[], now: number, model: string | undefined): string | undefined {
+	const modelOnly = accounts.some(
+		(account) =>
+			!isAccountBlocked(account, now) && activeModelBlockUntil(account.modelBlocks, model, now) !== undefined,
+	);
+	return modelOnly ? model : undefined;
 }
 
 /** Selects a pinned or HRW-ranked account with no provider-global selection state. */
@@ -97,7 +141,8 @@ export function selectAccount(accounts: readonly AccountSlot[], options: Affinit
 	const afterClear = selectUnblocked(cleared, options, now);
 	if (afterClear) return afterClear;
 	throw new AllAccountsBlockedError(
-		soonestUnblockAt(accounts, now),
+		soonestUnblockAt(accounts, now, options.model),
 		accounts.some((account) => account.blockReason === "auth_error") ? "auth_error" : undefined,
+		limitedModel(accounts, now, options.model),
 	);
 }

@@ -8,8 +8,10 @@ import { type ChildProcess, spawn } from "node:child_process";
 import { createConnection, type Socket } from "node:net";
 import type { AgentMessage, ThinkingLevel } from "@earendil-works/pi-agent-core";
 import type { ImageContent } from "@earendil-works/pi-ai";
-import type { PromptDisposition, SessionStats } from "../../core/agent-session.ts";
+import type { PromptDisposition, QueuedInputDisposition, SessionStats } from "../../core/agent-session.ts";
 import type { BashResult } from "../../core/bash-executor.ts";
+import type { BrowserEngine } from "../../core/browser-engine.ts";
+import { type ClientMessageIdentity, clientMessageIdentity } from "../../core/client-message-identity.ts";
 import type { CompactionResult } from "../../core/compaction/index.ts";
 import type { PromptSurface } from "../../core/dynamic-prompt/types.ts";
 import type { ServiceTier } from "../../core/extensions/builtin/service-tier.ts";
@@ -36,6 +38,8 @@ import {
 	armRequestDeadline,
 	OPEN_AFTER_QUEUED_DEADLINE_MS,
 	openStalledMessage,
+	PROMPT_ACK_MAX_WAIT_MS,
+	PROMPT_COMPACTION_DEADLINE_MS,
 	REQUEST_DEADLINE_MS,
 } from "./rpc-request-deadline.ts";
 import type {
@@ -103,7 +107,7 @@ export interface ModelInfo {
 	supportedThinkingLevels?: ThinkingLevel[];
 }
 
-type PromptOptions = {
+type PromptOptions = ClientMessageIdentity & {
 	images?: ImageContent[];
 	streamingBehavior?: "steer" | "followUp";
 	thinkingLevel?: ThinkingLevel;
@@ -116,7 +120,7 @@ type PromptOptions = {
 
 export type RpcProviderAccountEvent = RpcAuthAccountsChangedEvent | RpcAccountFailoverEvent;
 export type RpcClientEvent =
-	| JsonAgentSessionEvent
+	| (JsonAgentSessionEvent & ClientMessageIdentity & { readonly clientMessages?: readonly ClientMessageIdentity[] })
 	| RpcProviderAccountEvent
 	| RpcExtensionEvent
 	| RpcExtensionUIRequest
@@ -185,15 +189,23 @@ export class RpcClient {
 	private pendingRequests: Map<
 		string,
 		{
+			readonly sessionId: string | undefined;
 			resolve: (response: RpcResponse) => void;
 			reject: (error: Error) => void;
 			onResponse?: (response: RpcResponse) => void;
 			onReject?: (error: Error) => void;
 			onQueued?: (position: unknown) => void;
+			onCompaction?: (compacting: boolean) => void;
 		}
 	> = new Map();
 	private requestId = 0;
 	private sessionId: string | undefined;
+	/**
+	 * Compactions observed for this client's session and not yet ended, keyed by operation id (`""` for
+	 * hosts that send none), with the time each started. Tracking each operation separately means a
+	 * stale or overlapping start never hides another operation's end.
+	 */
+	private readonly compactions = new Map<string, number>();
 	private pendingOpenSession = false;
 	private pendingSessionEvents: Array<{ sessionId: string; event: RpcClientEvent; bytes: number }> = [];
 	private pendingSessionEventBytes = 0;
@@ -205,6 +217,29 @@ export class RpcClient {
 
 	constructor(options: RpcClientOptions = {}) {
 		this.options = options;
+		// The event stream is already scoped to this client's session, including
+		// pre-lease events replayed after open_session.
+		this.onEvent((event) => {
+			switch (event.type) {
+				case "compaction_start": {
+					const key = event.requestId ?? "";
+					if (this.compactions.has(key)) return;
+					this.compactions.set(key, Date.now());
+					break;
+				}
+				case "compaction_end":
+					if (!this.compactions.delete(event.requestId ?? "")) return;
+					break;
+				case "session_replaced":
+					this.compactions.clear();
+					break;
+				default:
+					return;
+			}
+			for (const pending of this.pendingRequests.values()) {
+				if (pending.sessionId === this.sessionId) pending.onCompaction?.(this.isCompacting());
+			}
+		});
 	}
 
 	/**
@@ -216,6 +251,7 @@ export class RpcClient {
 		}
 
 		this.exitError = null;
+		this.compactions.clear();
 		this.stopping = false;
 		this.disconnectNotified = false;
 		if (this.options.socketPath) {
@@ -226,7 +262,8 @@ export class RpcClient {
 		const cliPath = this.options.cliPath ?? "dist/cli.js";
 		const args = ["--mode", "rpc"];
 
-		if (this.options.provider) {
+		// A lone --provider is a CLI error; without a model the host keeps its default model, as before.
+		if (this.options.provider && this.options.model) {
 			args.push("--provider", this.options.provider);
 		}
 		if (this.options.model) {
@@ -298,9 +335,23 @@ export class RpcClient {
 	}
 
 	/**
+	 * Whether a compaction is in progress for this client's session. A start whose end never arrives (a
+	 * dropped frame, or a host that stopped without one) stops counting once it is older than the
+	 * compaction budget, so it cannot leave every later prompt on the long wait.
+	 */
+	private isCompacting(): boolean {
+		const now = Date.now();
+		for (const [key, startedAt] of this.compactions) {
+			if (now - startedAt >= PROMPT_COMPACTION_DEADLINE_MS) this.compactions.delete(key);
+		}
+		return this.compactions.size > 0;
+	}
+
+	/**
 	 * Stop the RPC agent process.
 	 */
 	async stop(): Promise<void> {
+		this.compactions.clear();
 		this.pendingOpenSession = false;
 		this.pendingSessionEvents = [];
 		this.pendingSessionEventBytes = 0;
@@ -415,6 +466,8 @@ export class RpcClient {
 		auto_title?: boolean;
 		/** Where this session's replies render; needs the host's `prompt_surface` (`prompt_surface_chat` for `chat`). */
 		promptSurface?: PromptSurface;
+		/** Which browser this session's skills drive; needs the host's `browser_engine`. */
+		browserEngine?: BrowserEngine;
 	}): Promise<{ sessionId: string; state: RpcSessionState; attached?: boolean }> {
 		if (this.pendingOpenSession) throw new RpcClientOpenInFlightError();
 		this.pendingOpenSession = true;
@@ -422,6 +475,7 @@ export class RpcClient {
 			const response = await this.send({ type: "open_session", ...options }, false);
 			const opened = this.getData<{ sessionId: string; state: RpcSessionState; attached?: boolean }>(response);
 			this.sessionId = opened.sessionId;
+			this.compactions.clear();
 			this.pendingOpenSession = false;
 			this.flushPendingSessionEvents();
 			return opened;
@@ -445,11 +499,14 @@ export class RpcClient {
 	async closeSession(sessionId = this.sessionId): Promise<void> {
 		if (!sessionId) return;
 		try {
-			await this.send({ type: "close_session", sessionId }, false);
+			this.getData(await this.send({ type: "close_session", sessionId }, false));
 		} catch (error) {
 			if (!isTransportGoneError(error)) throw error;
 		}
-		if (this.sessionId === sessionId) this.sessionId = undefined;
+		if (this.sessionId === sessionId) {
+			this.sessionId = undefined;
+			this.compactions.clear();
+		}
 	}
 
 	async listSessions(): Promise<
@@ -480,8 +537,8 @@ export class RpcClient {
 
 	/**
 	 * Send a prompt to the agent.
-	 * Returns immediately after sending; use onEvent() to receive streaming events.
-	 * Use waitForIdle() to wait for completion.
+	 * Returns the prompt's disposition after acceptance; use onEvent() to receive streaming events.
+	 * If the disposition is "handled", no run started for this prompt, so don't wait for agent_settled.
 	 *
 	 * The disposition/preflight callbacks mirror AgentSession's local prompt contract:
 	 * they fire synchronously while the response frame is dispatched — before any
@@ -489,9 +546,9 @@ export class RpcClient {
 	 * order. A success response without a disposition (older host) maps to "handled"
 	 * so the echo degrades to canonical-only rendering instead of double-rendering.
 	 */
-	async prompt(message: string, images?: ImageContent[]): Promise<void>;
-	async prompt(message: string, options?: PromptOptions): Promise<void>;
-	async prompt(message: string, optionsOrImages?: PromptOptions | ImageContent[]): Promise<void> {
+	async prompt(message: string, images?: ImageContent[]): Promise<PromptDisposition>;
+	async prompt(message: string, options?: PromptOptions): Promise<PromptDisposition>;
+	async prompt(message: string, optionsOrImages?: PromptOptions | ImageContent[]): Promise<PromptDisposition> {
 		const options: PromptOptions = Array.isArray(optionsOrImages)
 			? { images: optionsOrImages }
 			: (optionsOrImages ?? {});
@@ -499,6 +556,7 @@ export class RpcClient {
 			{
 				type: "prompt",
 				message,
+				...clientMessageIdentity(options),
 				...(options.images ? { images: options.images } : {}),
 				...(options.streamingBehavior ? { streamingBehavior: options.streamingBehavior } : {}),
 				...(options.thinkingLevel ? { thinkingLevel: options.thinkingLevel } : {}),
@@ -530,8 +588,10 @@ export class RpcClient {
 				failure.errorCode === RPC_ERROR_UNKNOWN_COMMAND
 					? unknownCommandErrorFromWire(failure.errorData)
 					: undefined;
-			throw unknownCommand ?? new Error(failure.error);
+			throw unknownCommand ?? new RpcCommandError(failure.error, failure.errorCode, failure.errorData);
 		}
+		// Older hosts omit the disposition; "handled" matches the promptDisposition callback fallback.
+		return (response as { data?: { disposition?: PromptDisposition } }).data?.disposition ?? "handled";
 	}
 
 	async appendUserMessage(content: unknown): Promise<void> {
@@ -550,17 +610,50 @@ export class RpcClient {
 	}
 
 	/**
+	 * Start a turn from the current leaf with no new prompt (#1930), for example after an
+	 * edited assistant response. Refused with `streaming` or `nothing_to_continue`.
+	 */
+	async continueFromLeaf(): Promise<void> {
+		const response = await this.send({ type: "continue_from_leaf" });
+		this.getData(response);
+	}
+
+	/**
 	 * Queue a steering message to interrupt the agent mid-run.
 	 */
-	async steer(message: string, images?: ImageContent[], recovery?: { enqueueOrder?: number }): Promise<void> {
-		await this.send({ type: "steer", message, images, enqueueOrder: recovery?.enqueueOrder });
+	async steer(
+		message: string,
+		images?: ImageContent[],
+		recovery?: ClientMessageIdentity & { enqueueOrder?: number },
+	): Promise<QueuedInputDisposition> {
+		const response = await this.send({
+			type: "steer",
+			message,
+			images,
+			enqueueOrder: recovery?.enqueueOrder,
+			...clientMessageIdentity(recovery),
+		});
+		// Older hosts omit the disposition; degrade like prompt() so clients render only canonical events.
+		return this.getData<{ disposition?: QueuedInputDisposition } | undefined>(response)?.disposition ?? "handled";
 	}
 
 	/**
 	 * Queue a follow-up message to be processed after the agent finishes.
 	 */
-	async followUp(message: string, images?: ImageContent[], recovery?: { enqueueOrder?: number }): Promise<void> {
-		await this.send({ type: "follow_up", message, images, enqueueOrder: recovery?.enqueueOrder });
+	async followUp(
+		message: string,
+		images?: ImageContent[],
+		recovery?: ClientMessageIdentity & { enqueueOrder?: number },
+	): Promise<QueuedInputDisposition> {
+		const response = await this.send({
+			type: "follow_up",
+			message,
+			images,
+			enqueueOrder: recovery?.enqueueOrder,
+			...clientMessageIdentity(recovery),
+		});
+		// Older hosts omit the disposition; degrade like prompt() so clients render only canonical events.
+		return this.getData<{ disposition?: QueuedInputDisposition } | undefined>(response)?.disposition ?? "handled";
 	}
 
 	/**
@@ -1121,7 +1214,9 @@ export class RpcClient {
 				}
 				return;
 			}
-			for (const listener of this.eventListeners) {
+			// Iterate a snapshot so listeners that unsubscribe during dispatch
+			// do not cause later listeners to miss this event.
+			for (const listener of [...this.eventListeners]) {
 				listener(data as RpcClientEvent);
 			}
 		} catch {
@@ -1135,7 +1230,7 @@ export class RpcClient {
 		this.pendingSessionEventBytes = 0;
 		for (const { sessionId, event } of pending) {
 			if (sessionId !== this.sessionId) continue;
-			for (const listener of this.eventListeners) listener(event);
+			for (const listener of [...this.eventListeners]) listener(event);
 		}
 	}
 
@@ -1198,27 +1293,53 @@ export class RpcClient {
 			stream.write(serializeJsonLine(fullCommand));
 			return Promise.resolve({ type: "response", command: command.type, success: true } as RpcResponse);
 		}
+		const sessionId = "sessionId" in fullCommand ? fullCommand.sessionId : undefined;
 		return new Promise((resolve, reject) => {
+			const timeoutMessage = () => `Timeout waiting for response to ${command.type}. Stderr: ${this.stderr}`;
+			let promptCap: ReturnType<typeof setTimeout> | undefined;
+			const expire = (timeoutError: Error) => {
+				clearTimeout(promptCap);
+				const pending = this.pendingRequests.get(id);
+				this.pendingRequests.delete(id);
+				pending?.onReject?.(timeoutError);
+				reject(timeoutError);
+			};
 			const deadline = armRequestDeadline(
-				REQUEST_DEADLINE_MS,
-				() => `Timeout waiting for response to ${command.type}. Stderr: ${this.stderr}`,
-				(timeoutError) => {
-					const pending = this.pendingRequests.get(id);
-					this.pendingRequests.delete(id);
-					pending?.onReject?.(timeoutError);
-					reject(timeoutError);
-				},
+				command.type === "prompt" && sessionId === this.sessionId && this.isCompacting()
+					? PROMPT_COMPACTION_DEADLINE_MS
+					: REQUEST_DEADLINE_MS,
+				timeoutMessage,
+				expire,
 			);
+			// Compaction events extend a prompt's wait, but never past this cap from when it was sent.
+			if (command.type === "prompt") {
+				promptCap = setTimeout(() => {
+					deadline.clear();
+					expire(new Error(timeoutMessage()));
+				}, PROMPT_ACK_MAX_WAIT_MS);
+			}
 
 			this.pendingRequests.set(id, {
+				sessionId,
 				resolve: (response) => {
 					deadline.clear();
+					clearTimeout(promptCap);
 					resolve(response);
 				},
 				reject: (error) => {
 					deadline.clear();
+					clearTimeout(promptCap);
 					reject(error);
 				},
+				...(command.type === "prompt"
+					? {
+							onCompaction: (compacting: boolean) =>
+								deadline.extend(
+									compacting ? PROMPT_COMPACTION_DEADLINE_MS : REQUEST_DEADLINE_MS,
+									timeoutMessage,
+								),
+						}
+					: {}),
 				...(command.type === "open_session"
 					? {
 							onQueued: (position: unknown) =>

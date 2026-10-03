@@ -84,6 +84,8 @@ export const COMPLETIONS_COMPAT = {
 	supportsMaxOutputTokens: true,
 	supportsForcedToolChoice: true,
 	supportsLongCacheRetention: true,
+	supportsMidConvoSystemMessages: false,
+	supportsMidConvoToolAdditions: false,
 } satisfies Omit<
 	Required<OpenAICompletionsCompat>,
 	| "cacheControlFormat"

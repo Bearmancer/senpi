@@ -19,11 +19,13 @@ function hasJulia(): boolean {
 describe("JuliaKernel", () => {
 	it("routes tool calls through the authenticated loopback bridge contract", async () => {
 		const runner = await readFile(join(import.meta.dirname, "..", "src", "kernels", "jl", "runner.jl"), "utf8");
-		expect(runner).toContain('connect(ip"127.0.0.1", port)');
-		expect(runner).toContain('"POST " * path * " HTTP/1.1"');
-		expect(runner).toContain('"Authorization: Bearer " * string(token)');
-		expect(runner).toContain('"callId" => "jl-" * string(time_ns())');
-		expect(runner).toContain('"toolName" => name');
+		// The wire bytes the host reads: loopback POST, a bearer token, and the callId/toolName keys.
+		// CI has no Julia, so this is the only CI guard for the Julia side of the contract.
+		expect(runner).toContain('ip"127.0.0.1"');
+		expect(runner).toContain('"POST "');
+		expect(runner).toContain('"Authorization: Bearer "');
+		expect(runner).toContain('"callId" =>');
+		expect(runner).toContain('"toolName" =>');
 		expect(runner).not.toContain('"type" => "tool-call"');
 	});
 

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { convertMessages } from "../src/api/google-shared.ts";
 import type { Context, Model } from "../src/types.ts";
+import { normalizeContext } from "../src/utils/transcript.ts";
 
 function makeModel<TApi extends "google-generative-ai">(
 	api: TApi,
@@ -79,7 +80,7 @@ describe("google-shared image tool result routing", () => {
 	// #2114: the synthetic image parts join the single tool-result user turn instead of opening adjacent user turns.
 	it("keeps synthetic image parts inside the single tool-result turn for Gemini 2.x Google API models", () => {
 		const model = makeModel("google-generative-ai", "google", "gemini-2.5-flash");
-		const contents = convertMessages(model, makeContext(model));
+		const contents = convertMessages(model, normalizeContext(makeContext(model)));
 
 		expect(contents.map((content) => content.role)).toEqual(["user", "model", "user"]);
 		const parts = contents[2].parts ?? [];
@@ -93,7 +94,7 @@ describe("google-shared image tool result routing", () => {
 
 	it("nests image tool results for Gemini 3 Google API models", () => {
 		const model = makeModel("google-generative-ai", "google", "gemini-3-pro-preview");
-		const contents = convertMessages(model, makeContext(model));
+		const contents = convertMessages(model, normalizeContext(makeContext(model)));
 
 		expect(contents).toHaveLength(3);
 		const toolResultTurn = contents[2];

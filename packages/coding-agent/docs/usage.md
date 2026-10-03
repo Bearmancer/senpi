@@ -123,6 +123,8 @@ Useful session commands:
 - `/compact` summarizes older messages to free context.
 
 See [Sessions](sessions.md) and [Compaction](compaction.md) for details.
+To see where a long session's memory goes, start senpi with `SENPI_MEMORY_REPORT=1` and send the process `SIGUSR2` from another terminal (`kill -USR2 <pid>`): it writes a per-layer report (main thread, eval kernels, resident session strings, tool-card render cache, extension figures) to `<session>-artifacts/memory/<iso>.json` and keeps running. Add `SENPI_MEMORY_REPORT_SNAPSHOT=1` for a heap snapshot beside it. Nothing is installed without the flag; see [RPC](rpc.md#memory_report) for the report fields.
+
 
 ## Context Files
 
@@ -217,7 +219,7 @@ cat README.md | senpi -p "Summarize this text"
 
 | Option | Description |
 |--------|-------------|
-| `--provider <name>` | Provider, such as `anthropic`, `openai`, or `google` |
+| `--provider <name>` | Provider, such as `anthropic`, `openai`, or `google`; requires `--model` |
 | `--model <pattern>` | Model pattern or ID; supports `provider/id` and optional `:<thinking>` |
 | `--api-key <key>` | API key, overriding environment variables |
 | `--thinking <level>` | `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max` |

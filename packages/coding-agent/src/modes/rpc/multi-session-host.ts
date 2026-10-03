@@ -17,18 +17,21 @@ import { startHostChildReaper } from "./child-reaper.ts";
 import type { RpcConnectionSink } from "./connection-handler.ts";
 import { parseClientCapabilities } from "./custom-capability.ts";
 import { ClientOccupancy } from "./host-client-occupancy.ts";
+import { HostCoreGate, type HostCoreHooks } from "./host-core-gate.ts";
 import { GENERATION_HANDOFF_CAPABILITY } from "./host-decision.ts";
+import { performIdleHandover } from "./host-handover-wire.ts";
+import { EXPECTED_RUNTIME_BUILD_ID_ENV } from "./host-idle-handover.ts";
 import { type HostIdleOverrides, RPC_CLOSE_GRACE_MS_ENV, resolveHostIdlePolicy } from "./host-idle-policy.ts";
 import { parseIdleExitMs } from "./host-lifecycle.ts";
-import { type HostMemoryReading, HostMemorySampler } from "./host-memory-sampler.ts";
+import { createZeroSessionTrim, startHostObservers } from "./host-observers.ts";
 import { runAsHostGenerationProcess } from "./host-process-role.ts";
 import { createEndpointReservations } from "./host-reservations.ts";
 import { armHostWatchdog, readHostWatchdogConfigFromBrandEnv } from "./host-watchdog.ts";
 import { attachJsonlLineReader, MAX_RPC_LINE_CHARACTERS } from "./jsonl.ts";
-import { LoopLagWatchdog } from "./loop-lag-watchdog.ts";
-import { hostGeneration, hostInstanceId } from "./protocol-identity.ts";
+import { hostGeneration, hostInstanceId, protocolIdentity } from "./protocol-identity.ts";
 import { rpcCommandShapeError } from "./rpc-input-validation.ts";
 import type { RpcCommand, RpcResponse } from "./rpc-types.ts";
+import { computeRuntimeBuildId, RUNTIME_IDENTITY_HANDOVER_CAPABILITY } from "./runtime-build-id.ts";
 import { type RpcBindingFactory, SessionCommandRouter } from "./session-command-router.ts";
 import { SessionEventWriter } from "./session-event-writer.ts";
 import { canonicalSessionPath } from "./session-path-key.ts";
@@ -77,33 +80,6 @@ export {
 /** Win32 named-pipe close can leave libuv's server callback pending after handles are destroyed. */
 const WINDOWS_SHUTDOWN_HARD_EXIT_MS = 2_000;
 
-/**
- * Arm the host's self-observation: event-loop stall detection with per-session
- * attribution, and RSS reporting that tightens idle parking under pressure. Both run on
- * unref'd timers, and neither refuses, aborts or kills anything (#2207).
- */
-function startHostObservers(
-	router: SessionCommandRouter,
-	writer: SessionEventWriter,
-	options: { onIdlePressure?: (reading: HostMemoryReading) => void } = {},
-): { stop: () => void } {
-	const loopLag = new LoopLagWatchdog({ emit: (record) => writer.broadcastHostRecord(record) });
-	const memory = new HostMemorySampler({
-		emit: (record) => writer.broadcastHostRecord(record),
-		sessions: () => router.sessionCount,
-		onPressure: (pressure) => router.setMemoryPressure(pressure),
-		...(options.onIdlePressure ? { onIdlePressure: options.onIdlePressure } : {}),
-	});
-	loopLag.start();
-	memory.start();
-	return {
-		stop: () => {
-			loopLag.stop();
-			memory.stop();
-		},
-	};
-}
-
 interface Connection {
 	readonly id: string;
 	readonly sink: RpcConnectionSink;
@@ -131,30 +107,33 @@ export function createHostCore(
 	capabilities = parseClientCapabilities(envValue("RPC_CLIENT_CAPABILITIES")),
 	idle: HostIdleOverrides = {},
 	hostContext?: SessionContext,
+	hooks: HostCoreHooks = {},
 ) {
 	const policy = resolveHostIdlePolicy(process.env, idle);
-	const router = new SessionCommandRouter(
-		options.workerConfiguration
-			? new WorkerSessionRegistry({
-					configuration: options.workerConfiguration,
-					now: policy.now,
-					closeGraceMs: idle.closeGraceMs ?? parseIdleExitMs(process.env[RPC_CLOSE_GRACE_MS_ENV]) ?? 10_000,
-				})
-			: new RpcSessionRegistry({
+	const registry = options.workerConfiguration
+		? new WorkerSessionRegistry({
+				configuration: options.workerConfiguration,
+				now: policy.now,
+				closeGraceMs: idle.closeGraceMs ?? parseIdleExitMs(process.env[RPC_CLOSE_GRACE_MS_ENV]) ?? 10_000,
+			})
+		: new RpcSessionRegistry({
+				agentDir: options.agentDir,
+				createRuntime: options.createRuntime,
+				mcpRegistry: new HostMcpRegistry(),
+				now: policy.now,
+				closeGraceMs: idle.closeGraceMs ?? parseIdleExitMs(process.env[RPC_CLOSE_GRACE_MS_ENV]) ?? 10_000,
+				// Two generations of this daemon can be alive at once during a handoff; the claims
+				// they publish here are what keeps them off one session file.
+				...(hooks.onSessionCountChange ? { onSizeChange: hooks.onSessionCountChange } : {}),
+				pathReservations: createEndpointReservations({
 					agentDir: options.agentDir,
-					createRuntime: options.createRuntime,
-					mcpRegistry: new HostMcpRegistry(),
-					now: policy.now,
-					closeGraceMs: idle.closeGraceMs ?? parseIdleExitMs(process.env[RPC_CLOSE_GRACE_MS_ENV]) ?? 10_000,
-					// Two generations of this daemon can be alive at once during a handoff; the claims
-					// they publish here are what keeps them off one session file.
-					pathReservations: createEndpointReservations({
-						agentDir: options.agentDir,
-						socket: listenSocketPath(options),
-						instanceId: hostInstanceId(),
-						onFailure: hostLog,
-					}),
+					socket: listenSocketPath(options),
+					instanceId: hostInstanceId(),
+					onFailure: hostLog,
 				}),
+			});
+	const router = new SessionCommandRouter(
+		registry,
 		writer,
 		hostContext ? { ...options, hostContext } : options,
 		options.createBinding,
@@ -168,6 +147,7 @@ export function createHostCore(
 			canExitWhenEmpty: idle.canExitWhenEmpty,
 		},
 	);
+	const gate = new HostCoreGate(registry, (command) => router.handle(command), hooks);
 	const handle = async (line: string): Promise<void> => {
 		let parsed: unknown;
 		try {
@@ -176,15 +156,16 @@ export function createHostCore(
 			await writer.enqueueControl(parseError(`Failed to parse command: ${errorMessage(cause)}`));
 			return;
 		}
+		if (await gate.intercept(parsed, (answer) => writer.enqueueControl(answer))) return;
 		const shapeError = rpcCommandShapeError(parsed);
 		if (shapeError) {
 			await writer.enqueueControl(parseError(shapeError));
 			return;
 		}
-		const response = await router.handle(parsed as RpcCommand);
+		const response = await gate.dispatch(parsed as RpcCommand);
 		if (response) await writer.enqueueControl(response);
 	};
-	return { router, handle };
+	return { router, handle, handover: gate.handover, handoverAnswered: () => gate.answered() };
 }
 
 /** Plain-stdio host with no eagerly-created AgentSessionRuntime. */
@@ -194,10 +175,20 @@ async function runStdioHost(options: MultiSessionHostOptions): Promise<never> {
 	const writer = new SessionEventWriter(sink.writeRaw, sink.waitForBackpressure);
 	// An empty host (no session ever opened, or all closed) must not stay resident
 	// forever: exit through the normal shutdown path once the window elapses.
-	const { router, handle } = createHostCore(options, writer, undefined, {
-		onEmptyExit: () => void shutdown(0),
-	});
-	const observers = startHostObservers(router, writer);
+	const runtimeBuildId = await startupRuntimeBuildId();
+	const trim = createZeroSessionTrim(writer, () => router.sessionCount);
+	const { router, handle } = createHostCore(
+		options,
+		writer,
+		undefined,
+		{ onEmptyExit: () => void shutdown(0) },
+		undefined,
+		{
+			...(runtimeBuildId === undefined ? {} : { runtimeBuildId }),
+			onSessionCountChange: (size) => trim.observe(size),
+		},
+	);
+	const observers = startHostObservers(router, writer, { trim });
 	let shuttingDown = false;
 	const shutdown = async (exitCode = 0): Promise<never> => {
 		if (shuttingDown) process.exit(exitCode);
@@ -236,7 +227,17 @@ async function runSocketHost(options: MultiSessionHostOptions, socketPath: strin
 	let draining = false;
 	let handoffAnnounced = false;
 	const hostContext = hostSessionContext(socketPath);
-	const { router, handle } = createHostCore(
+	const runtimeBuildId = await startupRuntimeBuildId();
+	const expected = process.env[EXPECTED_RUNTIME_BUILD_ID_ENV];
+	if (expected !== undefined && expected !== runtimeBuildId) {
+		// An idle handover started this host for a runtime it does not run (the files changed since the
+		// request). Exiting before it listens leaves the predecessor serving, and the handover blocked.
+		hostLog(`runtime ${runtimeBuildId ?? "unreadable"} is not the handover target ${expected}; exiting`);
+		process.exit(1);
+	}
+	const canHandOver = runtimeBuildId !== undefined && process.platform !== "win32";
+	const trim = createZeroSessionTrim(writer, () => router.sessionCount);
+	const { router, handle, handover, handoverAnswered } = createHostCore(
 		options,
 		writer,
 		[
@@ -245,6 +246,8 @@ async function runSocketHost(options: MultiSessionHostOptions, socketPath: strin
 			// generation instead of being killed. A host that does not advertise this is never
 			// signalled - SIGUSR1 would simply terminate it, sessions and all.
 			GENERATION_HANDOFF_CAPABILITY,
+			// The host reports the runtime it loaded and can hand over at its next idle point.
+			...(canHandOver ? [RUNTIME_IDENTITY_HANDOVER_CAPABILITY] : []),
 		],
 		// Supervised hosts idle-exit via the supervisor, but a socket host that
 		// outlives its supervisor (or is started bare) still self-exits when empty.
@@ -266,8 +269,29 @@ async function runSocketHost(options: MultiSessionHostOptions, socketPath: strin
 			},
 		},
 		hostContext,
+		{
+			onSessionCountChange: (size) => trim.observe(size),
+			...(runtimeBuildId !== undefined && { runtimeBuildId }),
+			...(canHandOver && {
+				handover: {
+					identity: () => ({
+						instanceId: hostInstanceId(),
+						generation: hostGeneration(process.env),
+						runtimeBuildId,
+					}),
+					perform: (request) =>
+						performIdleHandover({
+							request,
+							socket: readHostWatchdogConfigFromBrandEnv()?.publicSocket ?? socketPath,
+							agentDir: options.agentDir,
+						}),
+					log: hostLog,
+				},
+			}),
+		},
 	);
 	const observers = startHostObservers(router, writer, {
+		trim,
 		// The shape #1893 measured: gigabytes resident with `sessions.total 0`. Say it once, and when
 		// this generation no longer owns the endpoint, leave - nobody can reach it to ask.
 		onIdlePressure: ({ footprintMb, measure, rssMb }) => {
@@ -370,7 +394,10 @@ async function runSocketHost(options: MultiSessionHostOptions, socketPath: strin
 		if (shuttingDown) process.exit(exitCode);
 		shuttingDown = true;
 		observers.stop();
+		handover?.dispose();
 		stopChildReaper();
+		// A handover that completed at once drains this host; its caller still gets the answer.
+		await handoverAnswered();
 		// On Windows, destroying named-pipe sockets does not always make libuv's
 		// server.close callback fire: connected pipe instances can remain in the
 		// kernel after the JavaScript handles are destroyed. Keep the normal drain
@@ -486,6 +513,20 @@ async function runSocketHost(options: MultiSessionHostOptions, socketPath: strin
 	// Opt-in only: set by the lifecycle supervisor so this host can never outlive
 	// it, including when the supervisor is SIGKILLed and runs no handler at all.
 	return new Promise(() => {});
+}
+
+/**
+ * The runtime this process loaded, digested once before it serves anything. A runtime that cannot
+ * be read leaves the host unverified (no `runtimeBuildId`, no handover capability) instead of
+ * keeping it from starting.
+ */
+async function startupRuntimeBuildId(): Promise<string | undefined> {
+	try {
+		return await computeRuntimeBuildId({ profile: protocolIdentity().launch_profile.core });
+	} catch (cause) {
+		hostLog(`runtime identity unreadable: ${errorMessage(cause)}`);
+		return undefined;
+	}
 }
 
 function delay(ms: number): Promise<void> {

@@ -67,7 +67,8 @@ a `"user"` mutation. `active`/`complete` never prompt.
   `executePreparedToolCall`). A returned `isError` property is silently ignored.
 - **Persistence**: `GoalFile{version:1, goal}` at `<sessionDir>/extensions/goal/<threadId>.json`,
   falling back to `getAgentDir()/extensions/goal/no-session/<sha256(cwd)[:24]>/` when the
-  session has no file. Writes are atomic, mutations serialize per goal path via promise tails,
+  session has no file. Writes are atomic, mutations serialize per goal path via the in-process promise tail
+  plus a cross-process proper-lockfile lock (`goal-file-lock.ts`, senpi#2499),
   and legacy `pi-goal` stores/status spellings migrate on read. Objectives trim and cap at
   4,000 code points with a truncation marker plus full-text sidecar.
 - **Continuation is opt-in by state**: hidden prompts queue only while the goal is `active`,

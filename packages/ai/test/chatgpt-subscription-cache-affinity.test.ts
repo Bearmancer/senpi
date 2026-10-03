@@ -6,6 +6,7 @@ import {
 	stream as streamOpenAICodexResponses,
 } from "../src/api/openai-codex-responses.ts";
 import type { Context, Model } from "../src/types.ts";
+import { normalizeContext } from "../src/utils/transcript.ts";
 
 const SESSION_ID = "issue-589-session";
 
@@ -101,7 +102,7 @@ describe("OpenAI Codex cache affinity", () => {
 			}),
 		);
 
-		await streamOpenAICodexResponses(model, context, {
+		await streamOpenAICodexResponses(model, normalizeContext(context), {
 			apiKey: mockToken(),
 			sessionId: SESSION_ID,
 			transport: "sse",
@@ -187,7 +188,7 @@ describe("OpenAI Codex cache affinity", () => {
 		);
 		vi.stubGlobal("WebSocket", MockWebSocket);
 
-		await streamOpenAICodexResponses(model, context, {
+		await streamOpenAICodexResponses(model, normalizeContext(context), {
 			apiKey: mockToken(),
 			sessionId: SESSION_ID,
 			transport: "auto",
@@ -219,7 +220,7 @@ describe("OpenAI Codex cache affinity", () => {
 			}),
 		);
 
-		await streamOpenAICodexResponses(model, context, {
+		await streamOpenAICodexResponses(model, normalizeContext(context), {
 			apiKey: mockToken(),
 			cacheRetention: "none",
 			sessionId: "one-off-summary",

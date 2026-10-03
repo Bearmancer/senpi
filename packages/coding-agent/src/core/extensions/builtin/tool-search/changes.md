@@ -1,5 +1,25 @@
 # Tool Search Builtin Changes
 
+## 2026-10-01 - Each session owns its tool-search service (senpi#2509)
+
+### What changed
+
+- `service.ts`: the module-level singleton that sessions shared is gone. Services are registered per extension load, `dispose(sessionId, reason)` makes every later use throw an error naming the session, and `getToolSearchService()` remains only for session-free callers (provider scope, else the only live session, else a standalone service; several live sessions throw).
+- `index.ts`: every load creates its own service (the RPC provider-scope install is unchanged), and a retired generation's lazy activator declines.
+
+### Why
+
+- Outside the RPC host, `toolSearchExtension` fell back to the module-level service from `getToolSearchService(runtime)` and `createToolSearchExtension` rebound it to each loading session's `pi`. When another in-process session (a task child, a replaced session) closed, the live session's `context` and `before_provider_request` hooks threw the stale-ctx error from `getCatalog` and its tool search stopped working.
+
+### Why an extension could not handle it
+
+- The fix is in the builtin itself; the session that binds each extension load adopts and retires its service (`core/changes.md`, same date).
+
+### Expected merge conflict zones
+
+- `service.ts`: the service fields, the disposal guard at each public entry point, and the module-level registry functions at the end of the file.
+- `index.ts`: the lazy activator registration and the default factory.
+
 ## 2026-09-14 - Side-effect-free tool_search with precision gating and hidden-tool hints (senpi #1682)
 
 ### What changed

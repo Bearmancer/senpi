@@ -671,13 +671,14 @@ The host budgets each handler separately: a handler still running after `session
 
 #### before_agent_start
 
-Fired after user submits prompt, before agent loop. Can inject a message and/or modify the system prompt.
+Fired before an agent turn starts. Can inject a message and/or modify the system prompt.
 
 ```typescript
 pi.on("before_agent_start", async (event, ctx) => {
-  // event.prompt - user's prompt text
-  // event.trigger - "prompt" for a user prompt, "extension" for a turn an extension triggered
-  //   with sendMessage(..., { triggerTurn: true }) (event.prompt is then that message's text)
+  // event.prompt - user text for "prompt"; admitted/custom message text for the other triggers
+  // event.trigger - "prompt" for a user prompt, "delivery" for an admitted session-control
+  //   delivery, or "extension" for any other turn an extension triggered with
+  //   sendMessage(..., { triggerTurn: true }) (event.prompt is then that message's text)
   // event.images - attached images (if any)
   // event.systemPrompt - current chained system prompt for this handler
   //   (includes changes from earlier before_agent_start handlers)
@@ -746,6 +747,8 @@ pi.on("agent_settled", async (_event, ctx) => {
 });
 ```
 
+`agent_before_settle` fires just before `agent_settled` and is the final actionable boundary: like `turn_end`, its handlers can append entries and request one continuation (see [turn_start / turn_end](#turn_start--turn_end)). `agent_settled` stays notification-only. Runs requested from `agent_settled` handlers start after every settled handler has finished, so handlers never see a reentrant `agent_start` during the same notification.
+
 #### ui_prompt_start / ui_prompt_end
 
 Notification-only lifecycle events for blocking user-facing extension UI prompts. They fire around `ctx.ui.select()`, `ctx.ui.confirm()`, `ctx.ui.input()`, `ctx.ui.editor()`, and `ctx.ui.custom()` so host/status integrations can report "waiting for user" instead of just "running".
@@ -771,11 +774,19 @@ These additive events use `pi.events.on(...)`, not `pi.on(...)`:
 | Channel | Payload | Meaning |
 |---------|---------|---------|
 | `ask-user:asked` | `{ ctx, request, variant }` | One fresh runtime registration of a built-in question, in either `waitForAnswer` mode. The hooks builtin dispatches a `Notification` with `kind: "ask-user-asked"`, the request ID and question headers. |
+| `ask-user:settled` | `{ ctx, request, response, variant }` | The existing answer notification, still skipped for `cancelled`. `response.resolvedBy` identifies the answering surface when present. |
+| `ask-user:closed` | `{ requestId, status, resolvedBy? }` | Exactly one terminal outcome per question, including cancellation, timeout, orphaned restart recovery and unavailable UI. |
 | `herdr:blocked` | `{ active: true, label, id }` or `{ active: false, id }` | A built-in question or host select/confirm/input/editor dialog opens or settles. Question labels are `<header> — <question>`; dialog labels are their titles. |
 
 Track blocked IDs as a set, not a boolean: requests can overlap. Each question registration emits one active/inactive pair, including cancellation, timeout, abort and orphaned restart recovery. A dangling disk call recovered after restart gets one new runtime registration; its persisted recovery marker prevents registering it again. Reconnect replay and UI hydration reuse an existing registration and do not repeat arrival events or the terminal bell. The builtin owns question events, so UI integrations must not emit a second pair when resolving the question.
 
 Question registration also retains an `ask-user:question` custom session entry containing `{ requestId, headers }`. This is display-only metadata, excluded from model context, for labeling compact answer chips during replay; it is not another bus event. The model-facing `[Answer to question ...]` message stays unchanged.
+
+`resolvedBy` is `local_ui` for a terminal answer, `rpc_connection` for an RPC client answer, and
+`control_endpoint` for an answer through the terminal control endpoint. It is absent for a question
+that ends without an answer. Blocking tool results carry it in their details too. Reload preserves
+pending questions and does not emit `closed` merely for detaching the old UI; an outcome that ends
+while detached is published once on the next live binding.
 
 #### turn_start / turn_end
 
@@ -787,9 +798,11 @@ pi.on("turn_start", async (event, ctx) => {
 });
 
 pi.on("turn_end", async (event, ctx) => {
-  // event.turnIndex, event.message, event.toolResults
+  // event.turnIndex, event.message, event.toolResults, event.entries
 });
 ```
+
+`turn_end` and `agent_before_settle` are actionable boundaries. Their handlers can chain proposed `custom`, `custom_message`, `context_edit`, or `compaction` entries and return `continue: true` for one next model request, for example `return { entries: [...event.entries, draft], continue: true }`. Entries persist in order, and the continuation does not change steering or follow-up scheduling. Guard continuation conditions, because an unconditional continuation loops. The exported `TurnEndEvent` and `AgentBeforeSettleEvent` declarations carry the full validation and ordering contract.
 
 #### message_start / message_update / message_end
 
@@ -862,6 +875,23 @@ pi.on("context", async (event, ctx) => {
   return { messages: filtered };
 });
 ```
+
+`context` handlers see conversation messages without the prompt and tool system messages; senpi restores that state after they run, so filtering or slicing messages no longer drops the system prompt or tool declarations.
+
+#### context_with_system
+
+Runs after `context` handlers on the full transcript, including system messages, and sends the result verbatim. Use it only when a request-local transformation must own the complete transcript, and keep a system message at index zero.
+
+```typescript
+pi.on("context_with_system", async (event, ctx) => {
+  // event.messages - full transcript, system messages included
+  return { messages: event.messages };
+});
+```
+
+#### provider_stream_event
+
+Fires for each parsed provider stream event before senpi normalizes it. The event identifies the provider, API, and model; `event.data` is the earliest structured value available, not necessarily the original HTTP bytes or SSE frame. Treat it as read-only, because mutation can affect normalization. The event is notification-only and is not persisted. Handlers are awaited in stream order, so slow handlers delay stream consumption; handler errors are reported without changing the provider response. See [`debug-provider.ts`](../examples/extensions/debug-provider.ts) for an opt-in viewer.
 
 #### before_provider_headers
 
@@ -1068,7 +1098,7 @@ pi.on("tool_result", async (event, ctx) => {
 
 #### user_bash
 
-Fired when user executes `!` or `!!` commands. **Can intercept.**
+Fired when user executes `!` or `!!` commands. **Can intercept.** A handler that returns `undefined` passes the command to the next handler, and then to local execution if no handler takes it. Returning `operations` or `result` stops propagation. `user_bash` fails closed: a handler error or an invalid defined result blocks the command instead of falling through to later handlers or local execution.
 
 ```typescript
 import { createLocalBashOperations } from "@earendil-works/pi-coding-agent";
@@ -1676,7 +1706,12 @@ export default function ({ pi }) {
 
 ### pi.on(event, handler)
 
-Subscribe to events. See [Events](#events) for event types and return values.
+Subscribe to events. See [Events](#events) for event types and return values. `pi.on()` returns a function that unsubscribes that registration. Handlers added or removed during a dispatch apply to later dispatches, not the one in progress.
+
+```typescript
+const off = pi.on("turn_end", () => {});
+off();
+```
 
 ### pi.rpc.emit(name, data)
 
@@ -2024,6 +2059,11 @@ Labels persist in the session and survive restarts. Use them to mark important p
 
 Register a command.
 
+`argumentHint` is shown next to the command in the picker. A command with an `argumentHint`
+expects input: picker Enter completes `/command ` and waits for arguments. Set
+`requiresArguments: false` when the arguments are optional so Enter submits immediately,
+or `requiresArguments: true` to wait without a hint. Without either, Enter submits.
+
 If multiple extensions register the same command name, senpi keeps them all and assigns numeric invocation suffixes in load order, for example `/review:1` and `/review:2`.
 
 ```typescript
@@ -2112,6 +2152,16 @@ pi.registerMarkdownTransformer((markdown, { messageType, isStreaming }) => {
 ```
 
 If a transformer throws, senpi keeps the Markdown produced so far and continues with the next transformer. The hook is display-only: the original message remains unchanged in the session and model context. It runs for new user messages, assistant streaming updates, restored session messages, and terminal width changes, so transformers should remain synchronous and inexpensive.
+
+### pi.registerMemoryReporter(name, reporter)
+
+Contribute figures to the on-demand memory report (`SENPI_MEMORY_REPORT=1`, see [RPC](rpc.md#memory_report)). The report carries the numbers `reporter()` returns under `name`; non-finite values are dropped, and a reporter that throws is listed under `reporterErrors` instead. The reporter runs only when a report is taken, never on a timer, so keep it synchronous and O(1): return counters you already maintain.
+
+```typescript
+pi.registerMemoryReporter("myCache", () => ({ entries: cache.size, approxBytes: cacheBytes }));
+```
+
+Names the report owns (`sessionId`, `takenAt`, `pid`, `main`, `kernels`, `residentStore`, `tuiRenderCache`, `heapSnapshot`, `reporterErrors`) throw at registration. When two extensions register the same name, the first loaded wins.
 
 ### pi.registerEntryRenderer(customType, renderer)
 
@@ -2446,6 +2496,10 @@ pi.registerCommand("my-setup-teardown", {
   },
 });
 ```
+
+### pi.registerVirtualModel(definition)
+
+Register an experimental virtual model: a selectable model whose `route(request, ctx)` picks a physical model and thinking level for each request. It appears in `/model`, `--model`, and settings like any other model, and the footer shows the routed model. `pi.unregisterVirtualModel(provider, id)` removes it. See [Virtual Models](virtual-models.md) for the routing contract, router state, and a complete example.
 
 ## State Management
 
@@ -2973,13 +3027,17 @@ Tools promoted via search are tied to your extension's identity. If your extensi
 
 Add these fields to `pi.registerTool(...)`:
 
-- **`exposure`**: `"direct" | "search" | "eval"`. Default is `"direct"` (tool is auto-activated immediately). Use `"search"` for large catalogs. Use `"eval"` to keep a tool registered and enabled while withholding it from the model's direct tool list whenever `eval` is available. It remains callable as `tool.<name>(...)` inside eval and discoverable through `tool_schema`; direct model calls return an eval-form hint instead of executing it. Without `eval` (including a child allowlist that omits it), otherwise enabled tools stay directly callable. Built-in `bash`, `powershell` and `grep` declare `"eval"`. The SDK's explicit `evalOnlyToolNames` override still replaces the default policy.
+- **`exposure`**: `"direct" | "search" | "eval" | "model-only" | "hidden"`. `"model-only"` declares the tool to the model while active but never lets other tools call it; `"hidden"` keeps it registered but unreachable. The upstream literals `"deferred"` and `"codemode"` are accepted and normalized to `"search"` and `"eval"`. Default is `"direct"` (tool is auto-activated immediately). Use `"search"` for large catalogs. Use `"eval"` to keep a tool registered and enabled while withholding it from the model's direct tool list whenever `eval` is available. It remains callable as `tool.<name>(...)` inside eval and discoverable through `tool_schema`; direct model calls return an eval-form hint instead of executing it. Without `eval` (including a child allowlist that omits it), otherwise enabled tools stay directly callable. Built-in `bash`, `powershell` and `grep` declare `"eval"`. The SDK's explicit `evalOnlyToolNames` override still replaces the default policy.
 - **`searchText`**: Supplemental text indexed by `tool_search`. Never sent to the model. Useful for domain terms that don't belong in the tool description.
 - **`searchKeywords`**: Synonyms or domain terms, indexed with the same weight as the tool name. Never sent to the model.
 - **`searchGroup`**: Organizational filter group. Defaults to your extension's label.
+- **`namespace`** and **`annotations`**: Optional grouping and behavior hints, for example from an MCP server.
+- **`outputSchema`**: Optional schema for `structuredContent`; a result can also set `isError`.
 - **`allowLazyActivation`**: Default `true`. If `false`, the tool is hidden from `tool_search` completely and cannot be lazily activated during code mode execution. Explicit activation via `pi.setActiveTools()` is still allowed.
 
 **Important:** You cannot register a tool named `tool_search` yourself; it is a reserved name.
+
+A tool can run other tools with `ctx.executeTool(name, args, { signal, onUpdate })`. Nested calls go through argument validation and the `tool_call` and `tool_result` handlers like model-issued calls; their events carry `parentToolCallId` and ids of the form `<calling id>/<n>`. They do not appear in the transcript: a bounded record is kept as `nestedCalls` on the calling tool's result, and their usage counts toward the session cost.
 
 #### Prompt Cache Warning
 

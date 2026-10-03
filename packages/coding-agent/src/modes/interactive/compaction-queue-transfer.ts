@@ -28,7 +28,8 @@ type TransferDependencies = {
 	readonly isCommand: (message: CompactionQueuedMessage) => boolean;
 	readonly deliverCommand: (message: CompactionQueuedMessage) => Promise<void>;
 	readonly deliverFirstPrompt: (message: CompactionQueuedMessage) => Promise<PromptDisposition>;
-	readonly deliverQueued: (message: CompactionQueuedMessage) => Promise<void>;
+	/** Steer/follow-up now report a per-input disposition; the transfer only waits for delivery. */
+	readonly deliverQueued: (message: CompactionQueuedMessage) => Promise<unknown>;
 	readonly reportFailure: (error: unknown, undeliveredCount: number) => void;
 };
 

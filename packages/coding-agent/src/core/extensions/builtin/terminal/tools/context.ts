@@ -15,6 +15,8 @@ export interface TerminalToolContext {
 	readonly defaultRows: number;
 	/** Configured foreground deadline behavior; omitted direct contexts default to background. */
 	readonly timeoutAction?: TimeoutAction;
+	/** Resolved `terminal.maxDurableMonitors`; omitted contexts admit any number of persistent monitors. */
+	readonly maxDurableMonitors?: number | "unlimited";
 	/** Resolve the environment for spawned sessions (mirrors core bash `getShellEnv`). */
 	readonly getEnv: () => NodeJS.ProcessEnv;
 	/**

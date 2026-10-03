@@ -6,6 +6,7 @@ import {
 } from "./schema.ts";
 
 export type CodexResultDetails = {
+	resolvedBy?: QuestionResponse["resolvedBy"];
 	answers: Record<string, { answers: string[] }>;
 	comment?: string;
 	unanswered: string[];
@@ -13,6 +14,7 @@ export type CodexResultDetails = {
 };
 
 export type ClaudeResultDetails = {
+	resolvedBy?: QuestionResponse["resolvedBy"];
 	questions: QuestionRequest["questions"];
 	answers: Record<string, string>;
 	freeText?: string;
@@ -129,6 +131,7 @@ export function formatResultDetails(
 			answers[id] = { answers: selectedAnswers(answer) };
 		}
 		const details: CodexResultDetails = {
+			...(response.resolvedBy !== undefined ? { resolvedBy: response.resolvedBy } : {}),
 			answers,
 			unanswered: response.unanswered,
 			status: response.status,
@@ -142,6 +145,7 @@ export function formatResultDetails(
 		if (body !== undefined) answers[questionTextFor(id, questions)] = body;
 	}
 	const details: ClaudeResultDetails = {
+		...(response.resolvedBy !== undefined ? { resolvedBy: response.resolvedBy } : {}),
 		questions,
 		answers,
 		unanswered: response.unanswered.map((id) => questionTextFor(id, questions)),

@@ -9,6 +9,7 @@ import type {
 	ContextEvent,
 	ExtensionAPI,
 	ExtensionContext,
+	ExtensionToolContext,
 	SessionStartEvent,
 	ToolInfo,
 } from "../../src/core/extensions/types.ts";
@@ -191,7 +192,7 @@ describe("ToolSearchService", () => {
 			{ query: "nothing matches" },
 			undefined,
 			undefined,
-			{} as ExtensionContext,
+			{} as ExtensionToolContext,
 		);
 		expect(result.content).toEqual([
 			expect.objectContaining({ type: "text", text: expect.stringContaining("No catalog tools matched") }),

@@ -1,54 +1,37 @@
 import { join } from "node:path";
-import { type ExtensionContext, readProcessFootprint } from "@code-yeongyu/senpi";
+import type { ExtensionContext } from "@code-yeongyu/senpi";
 import { type BridgeServerHandle, startBridgeServer } from "../bridge/http-server.ts";
 import type { KernelToHostMessage } from "../bridge/protocol.ts";
 import { isReservedToolName, runReservedTool } from "../bridges/reserved-dispatch.ts";
-import type { EvalSchemaToolInfo } from "../bridges/schema-bridge.ts";
 import type { CompletionRequest, CompletionResult } from "../completion/handler.ts";
 import { resolveKernelMemoryThresholds } from "../config/memory-settings.ts";
-import { type CodemodeSettings, defaultCodemodeSettings } from "../config/settings.ts";
+import { defaultCodemodeSettings } from "../config/settings.ts";
 import { collectOrphanedChildren } from "../host-sdk.ts";
-import type { InterpreterAvailability } from "../interpreters/detect.ts";
-import { JuliaKernel } from "../kernels/jl/kernel.ts";
 import { JavaScriptKernel } from "../kernels/js/context-manager.ts";
-import { PythonKernel } from "../kernels/py/kernel.ts";
-import { RubyKernel } from "../kernels/rb/kernel.ts";
-import type { SessionEnvironment } from "../kernels/session-env.ts";
+import type { KernelLifecycle } from "../kernels/shared/kernel-death.ts";
 import { marshalToolResult } from "../tool/image.ts";
-import type { EvalKernel, EvalKernelManager, EvalLanguage, ExecuteTool } from "../tool/types.ts";
+import type { EvalKernel, EvalLanguage } from "../tool/types.ts";
+import {
+	javaScriptKernelMemory,
+	registerKernel,
+	type StartedKernel,
+	startSubprocessKernel,
+} from "./kernel-registration.ts";
+import { kernelRegistry, type RegisteredKernelSource } from "./kernel-registry.ts";
+import { ReplaceableKernel } from "./kernel-replacement.ts";
+import { assertSessionCwdAvailable } from "./session-cwd.ts";
+import type {
+	BridgeEndpoint,
+	CodemodeSessionManager,
+	CreateCodemodeSessionManagerOptions,
+} from "./session-manager-contract.ts";
 
-export interface CodemodeSessionManager extends EvalKernelManager {
-	dispose(): Promise<void>;
-	complete(request: CompletionRequest, ctx: ExtensionContext): Promise<CompletionResult>;
-	setContext?(ctx: ExtensionContext): void;
-	bridgeEndpoint?(): BridgeEndpoint;
-}
-
-export interface BridgeEndpoint {
-	readonly port: number;
-	readonly token: string;
-}
-
-export interface EvalExecutionTracker {
-	assertEvalExecutionAllowed(): void;
-	trackEvalExecution<Result>(execution: Promise<Result>, controller: AbortController): Promise<Result>;
-}
-
-export interface CreateCodemodeSessionManagerOptions {
-	readonly sessionId: string;
-	readonly cwd: string;
-	readonly settings: CodemodeSettings;
-	readonly availability: InterpreterAvailability;
-	/** Session-scoped roots exposed to kernel helpers such as local://. */
-	readonly localRoots?: Readonly<Record<string, string>>;
-	/** Session-adjacent directory used for persisted eval artifacts. */
-	readonly artifactsDir?: string;
-	/** Per-session PI_* values exposed to every kernel and the children it spawns. */
-	readonly sessionEnv?: SessionEnvironment;
-	readonly executeTool: ExecuteTool;
-	readonly listTools?: () => readonly EvalSchemaToolInfo[];
-	readonly complete: (request: CompletionRequest, ctx: ExtensionContext) => Promise<CompletionResult>;
-}
+export type {
+	BridgeEndpoint,
+	CodemodeSessionManager,
+	CreateCodemodeSessionManagerOptions,
+	EvalExecutionTracker,
+} from "./session-manager-contract.ts";
 
 export async function createCodemodeSessionManager(
 	options: CreateCodemodeSessionManagerOptions,
@@ -78,6 +61,7 @@ class DefaultCodemodeSessionManager implements CodemodeSessionManager {
 	readonly #options: CreateCodemodeSessionManagerOptions;
 	#bridge: BridgeServerHandle | undefined;
 	#kernels = new Map<EvalLanguage, EvalKernel>();
+	readonly #registrations = new Map<EvalLanguage, string>();
 	#kernelCreations = new Map<EvalLanguage, Promise<EvalKernel>>();
 	#onMessageRefs = new Map<EvalLanguage, (message: KernelToHostMessage) => void>();
 	#context: ExtensionContext | undefined;
@@ -130,7 +114,10 @@ class DefaultCodemodeSessionManager implements CodemodeSessionManager {
 		// to the current cell, not the one that first created the kernel.
 		this.#onMessageRefs.set(language, onMessage);
 		const existing = this.#kernels.get(language);
-		if (existing) return existing;
+		if (existing) {
+			await assertSessionCwdAvailable(this.#options.cwd);
+			return existing;
+		}
 		const pending = this.#kernelCreations.get(language);
 		if (pending) return await pending;
 		// A bound method, never a closure in this frame: the dispatcher outlives every
@@ -183,6 +170,8 @@ class DefaultCodemodeSessionManager implements CodemodeSessionManager {
 		const kernels = [...this.#kernels.values()];
 		const bridge = this.#bridge;
 		this.#kernels.clear();
+		for (const id of this.#registrations.values()) kernelRegistry.unregister(id);
+		this.#registrations.clear();
 		this.#onMessageRefs.clear();
 		this.#bridge = undefined;
 		this.#context = undefined;
@@ -204,16 +193,50 @@ class DefaultCodemodeSessionManager implements CodemodeSessionManager {
 		onMessage: (message: KernelToHostMessage) => void,
 		generation: number,
 	): Promise<EvalKernel> {
-		const kernel = await this.#createKernel(language, onMessage);
+		await assertSessionCwdAvailable(this.#options.cwd);
+		// py/rb/jl instances can die; the session holds one replaceable kernel per language so every
+		// cell that kept a reference to it survives the death (JS heals its own worker).
+		let memory: RegisteredKernelSource | undefined;
+		const kernel =
+			language === "js"
+				? (() => {
+						return this.#createKernel(language, onMessage).then((created) => {
+							memory = created.memory;
+							return created.kernel;
+						});
+					})()
+				: ReplaceableKernel.create(language, async (lifecycle) => {
+						const created = await this.#createKernel(language, onMessage, lifecycle);
+						memory ??= created.memory;
+						return created.kernel;
+					});
+		const resolvedKernel = await kernel;
 		if (generation !== this.#generation) {
-			await kernel.close();
+			await resolvedKernel.close();
 			throw new CodemodeSessionDisposedError();
 		}
-		this.#kernels.set(language, kernel);
-		return kernel;
+		this.#kernels.set(language, resolvedKernel);
+		this.#registrations.set(
+			language,
+			registerKernel(
+				this.#options.ownerSessionId ?? this.#options.sessionId,
+				language,
+				memory as RegisteredKernelSource,
+			),
+		);
+		// The directory can vanish while the interpreter starts; every caller sharing this creation
+		// must see that, not only the next one. The kernel stays stored and dispose still closes it.
+		await assertSessionCwdAvailable(this.#options.cwd);
+		// A dispose that started during the check above already owns this stored kernel.
+		if (generation !== this.#generation) throw new CodemodeSessionDisposedError();
+		return resolvedKernel;
 	}
 
-	async #createKernel(language: EvalLanguage, onMessage: (message: KernelToHostMessage) => void): Promise<EvalKernel> {
+	async #createKernel(
+		language: EvalLanguage,
+		onMessage: (message: KernelToHostMessage) => void,
+		lifecycle: KernelLifecycle = {},
+	): Promise<StartedKernel> {
 		const bridge = this.#bridge;
 		if (!bridge) throw new Error("codemode bridge server is not running");
 		const configuredPoolWidth = this.#options.settings.parallelPoolWidth;
@@ -225,7 +248,7 @@ class DefaultCodemodeSessionManager implements CodemodeSessionManager {
 			this.#options.localRoots ??
 			(this.#options.artifactsDir ? { local: join(this.#options.artifactsDir, "local") } : undefined);
 		if (language === "js") {
-			return new JavaScriptKernel({
+			const kernel = new JavaScriptKernel({
 				sessionId: this.#options.sessionId,
 				cwd: this.#options.cwd,
 				parallelPoolWidth,
@@ -238,6 +261,7 @@ class DefaultCodemodeSessionManager implements CodemodeSessionManager {
 				...(localRoots ? { localRoots: { ...localRoots } } : {}),
 				...(this.#options.artifactsDir ? { artifactsDir: this.#options.artifactsDir } : {}),
 			});
+			return { kernel, memory: javaScriptKernelMemory(kernel) };
 		}
 		const detected = this.#options.availability[language].detected;
 		if (!detected.ok) throw new Error(`No ${language} interpreter is available`);
@@ -254,13 +278,10 @@ class DefaultCodemodeSessionManager implements CodemodeSessionManager {
 			...(this.#options.sessionEnv ? { sessionEnv: this.#options.sessionEnv } : {}),
 			connection,
 			onMessage,
+			...lifecycle,
 		};
 		const memory = resolveKernelMemoryThresholds(this.#options.settings.memory);
-		if (language === "py") return await PythonKernel.start({ ...shared, interpreterPath: detected.path, memory });
-		// rb/jl runners report no memory: the host reads the interpreter footprint for the ceiling only.
-		const hostMeasured = { thresholds: memory, readFootprint: readProcessFootprint };
-		if (language === "rb") return RubyKernel.start({ ...shared, command: detected.path, memory: hostMeasured });
-		return JuliaKernel.start({ ...shared, command: detected.path, memory: hostMeasured });
+		return await startSubprocessKernel({ language, interpreterPath: detected.path, memory, shared });
 	}
 
 	#foreignKernelToolNames(): string[] {

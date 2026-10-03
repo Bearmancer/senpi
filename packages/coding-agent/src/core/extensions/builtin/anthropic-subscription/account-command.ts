@@ -1,5 +1,6 @@
 import type { AccountLoginReceipt, Credential } from "@earendil-works/pi-ai";
 import { accountLabel } from "@earendil-works/pi-ai/auth/pool/slots";
+import { describeModelBlocks } from "../../../credential-pool/model-scope.ts";
 import type { ExtensionAPI, ExtensionCommandContext } from "../../types.ts";
 import { accountDisplayNameCommand, promptAccountDisplayName } from "../account-display-name.ts";
 import { createExtensionLoginInteraction, LOGIN_CANCELLED_MESSAGE } from "../oauth-login-interaction.ts";
@@ -29,12 +30,19 @@ function asCredential(value: Credential | undefined): AnthropicSubscriptionCrede
 	return value?.type === "oauth" ? (value as AnthropicSubscriptionCredential) : undefined;
 }
 
-function slotStatus(slot: AccountSlot): string {
+function accountStatus(slot: AccountSlot, now: number): string | undefined {
 	if (slot.blockReason === "auth_error") return "blocked until re-login";
-	if (slot.blockedUntil !== undefined && slot.blockedUntil > Date.now()) {
+	if (slot.blockedUntil !== undefined && slot.blockedUntil > now) {
 		return `blocked until ${new Date(slot.blockedUntil).toISOString()}`;
 	}
-	return "available";
+	return undefined;
+}
+
+function slotStatus(slot: AccountSlot): string {
+	const now = Date.now();
+	const states = [accountStatus(slot, now), ...describeModelBlocks(slot.modelBlocks, now)];
+	const blocked = states.filter((state): state is string => state !== undefined);
+	return blocked.length === 0 ? "available" : blocked.join(", ");
 }
 
 function readAccounts(
@@ -92,6 +100,7 @@ export function registerClaudeAccountCommand(pi: ExtensionAPI, deps: ClaudeAccou
 	pi.registerCommand("claude-account", {
 		description: "List and manage Anthropic Subscription accounts.",
 		argumentHint: "[add | remove <id> | pin <id> | unpin | rename <id> <display name...> | clear-name <id>]",
+		requiresArguments: false,
 		handler: async (rawArgs, ctx) => {
 			if (await accountDisplayNameCommand(ctx, ANTHROPIC_SUBSCRIPTION_PROVIDER_ID, rawArgs)) return;
 			const args = parseArgs(rawArgs);

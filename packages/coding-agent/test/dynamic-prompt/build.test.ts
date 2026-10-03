@@ -175,19 +175,6 @@ describe("buildDynamicSystemPrompt", () => {
 		expect(prompt).not.toContain("hidden-skill");
 	});
 
-	test("does NOT accept customPrompt (SYSTEM.md removed)", () => {
-		const prompt = buildDynamicSystemPrompt(baseOptions);
-
-		expect(prompt).toContain("## Intent Gate");
-		expect(prompt).toContain("once context is sufficient, act");
-	});
-
-	test("does NOT accept appendSystemPrompt (APPEND_SYSTEM.md removed)", () => {
-		const prompt = buildDynamicSystemPrompt(baseOptions);
-
-		expect(prompt).toBeTruthy();
-	});
-
 	test("includes custom prompt guidelines", () => {
 		const prompt = buildDynamicSystemPrompt({
 			...baseOptions,

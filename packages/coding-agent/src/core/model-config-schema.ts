@@ -86,6 +86,41 @@ const ChatTemplateKwargVariableSchema = Type.Object({
 });
 const ChatTemplateKwargSchema = Type.Union([ChatTemplateKwargScalarSchema, ChatTemplateKwargVariableSchema]);
 
+const ModelCostRatesSchema = {
+	input: Type.Number(),
+	output: Type.Number(),
+	cacheRead: Type.Number(),
+	cacheWrite: Type.Number(),
+};
+const ModelCostTierSchema = Type.Object({
+	inputTokensAbove: Type.Number(),
+	...ModelCostRatesSchema,
+});
+const ModelCostSchema = Type.Object({
+	...ModelCostRatesSchema,
+	tiers: Type.Optional(Type.Array(ModelCostTierSchema)),
+});
+const ModelPromptCacheSchema = Type.Object({
+	short: Type.Optional(Type.Number({ exclusiveMinimum: 0 })),
+	long: Type.Optional(Type.Number({ exclusiveMinimum: 0 })),
+});
+const ImageResizeSchema = Type.Object({
+	maxWidth: Type.Optional(Type.Integer({ minimum: 1 })),
+	maxHeight: Type.Optional(Type.Integer({ minimum: 1 })),
+	maxBytes: Type.Optional(Type.Integer({ minimum: 1 })),
+	jpegQuality: Type.Optional(Type.Integer({ minimum: 1, maximum: 100 })),
+});
+const ModelInputLimitsSchema = Type.Object({
+	maxRequestBytes: Type.Optional(Type.Integer({ minimum: 1 })),
+	images: Type.Optional(
+		Type.Object({
+			resize: Type.Optional(ImageResizeSchema),
+			maxPerMessage: Type.Optional(Type.Integer({ minimum: 1 })),
+			maxPerRequest: Type.Optional(Type.Integer({ minimum: 1 })),
+		}),
+	),
+});
+
 const OpenAICompletionsCompatSchema = Type.Object({
 	supportsStore: Type.Optional(Type.Boolean()),
 	supportsDeveloperRole: Type.Optional(Type.Boolean()),
@@ -154,6 +189,16 @@ const AnthropicMessagesCompatSchema = Type.Object({
 	allowEmptySignature: Type.Optional(Type.Boolean()),
 	supportsToolReferences: Type.Optional(Type.Boolean()),
 	supportsWebSearch: Type.Optional(Type.Boolean()),
+	allowedFallbackModels: Type.Optional(
+		Type.Array(
+			Type.Object({
+				provider: Type.String({ minLength: 1 }),
+				model: Type.String({ minLength: 1 }),
+				cost: ModelCostSchema,
+			}),
+			{ maxItems: 3 },
+		),
+	),
 });
 
 const ProviderCompatSchema = Type.Union([
@@ -162,27 +207,15 @@ const ProviderCompatSchema = Type.Union([
 	AnthropicMessagesCompatSchema,
 ]);
 
-const ModelCostRatesSchema = {
-	input: Type.Number(),
-	output: Type.Number(),
-	cacheRead: Type.Number(),
-	cacheWrite: Type.Number(),
-};
-const ModelCostTierSchema = Type.Object({
-	inputTokensAbove: Type.Number(),
-	...ModelCostRatesSchema,
-});
-const ModelCostSchema = Type.Object({
-	...ModelCostRatesSchema,
-	tiers: Type.Optional(Type.Array(ModelCostTierSchema)),
-});
 const ExtraBodySchema = Type.Record(Type.String(), Type.Unknown());
 
 const ModelDefinitionSchema = Type.Object({
 	id: Type.String({ minLength: 1 }),
 	name: Type.Optional(Type.String({ minLength: 1 })),
 	upstreamModelId: Type.Optional(Type.String({ minLength: 1 })),
-	serviceTier: Type.Optional(Type.Union([Type.Literal("auto"), Type.Literal("flex"), Type.Literal("priority")])),
+	serviceTier: Type.Optional(
+		Type.Union([Type.Literal("auto"), Type.Literal("flex"), Type.Literal("priority"), Type.Literal("ultrafast")]),
+	),
 	promptPreset: Type.Optional(Type.String({ minLength: 1 })),
 	recoverTextToolCalls: Type.Optional(Type.Boolean()),
 	api: Type.Optional(Type.String({ minLength: 1 })),
@@ -191,7 +224,9 @@ const ModelDefinitionSchema = Type.Object({
 	thinkingLevelMap: Type.Optional(ThinkingLevelMapSchema),
 	defaultThinkingLevel: Type.Optional(ThinkingLevelSchema),
 	input: Type.Optional(Type.Array(Type.Union([Type.Literal("text"), Type.Literal("image"), Type.Literal("video")]))),
+	inputLimits: Type.Optional(ModelInputLimitsSchema),
 	cost: Type.Optional(ModelCostSchema),
+	promptCache: Type.Optional(ModelPromptCacheSchema),
 	contextWindow: Type.Optional(Type.Number()),
 	maxTokens: Type.Optional(Type.Number()),
 	headers: Type.Optional(Type.Record(Type.String(), Type.String())),
@@ -208,6 +243,7 @@ const ModelOverrideSchema = Type.Object({
 	thinkingLevelMap: Type.Optional(ThinkingLevelMapSchema),
 	thinkingLevelMapMode: Type.Optional(Type.Union([Type.Literal("merge"), Type.Literal("replace")])),
 	input: Type.Optional(Type.Array(Type.Union([Type.Literal("text"), Type.Literal("image"), Type.Literal("video")]))),
+	inputLimits: Type.Optional(ModelInputLimitsSchema),
 	cost: Type.Optional(
 		Type.Object({
 			input: Type.Optional(Type.Number()),
@@ -217,6 +253,7 @@ const ModelOverrideSchema = Type.Object({
 			tiers: Type.Optional(Type.Array(ModelCostTierSchema)),
 		}),
 	),
+	promptCache: Type.Optional(ModelPromptCacheSchema),
 	contextWindow: Type.Optional(Type.Number()),
 	maxTokens: Type.Optional(Type.Number()),
 	headers: Type.Optional(Type.Record(Type.String(), Type.String())),

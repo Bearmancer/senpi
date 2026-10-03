@@ -51,6 +51,7 @@ import { getAgentDir, isBunBinary, isBundledNode } from "../../config.ts";
 import { processIsLive, readProcessStartTime } from "../app-server/daemon/process.ts";
 import { classifyChildExit, noteChildExit } from "./host-child-exit.ts";
 import { ClientOccupancy } from "./host-client-occupancy.ts";
+import { rpcHostExecArgv } from "./host-exec-argv.ts";
 import {
 	DEFAULT_HANDOFF_GRACE_MS,
 	HANDOFF_GRACE_MS_ENV,
@@ -344,7 +345,7 @@ export function resolveHostChildLaunch(
 	return {
 		command: process.execPath,
 		args: [
-			...(compiled ? [] : [...process.execArgv, resolveCliMainPath()]),
+			...(compiled ? [] : [...rpcHostExecArgv(), resolveCliMainPath()]),
 			"--mode",
 			"rpc",
 			"--multi-session",
@@ -445,6 +446,8 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 	let stopSupersessionWatch: (() => void) | undefined;
 	let shuttingDown = false;
 	let draining = false;
+	/** Another generation's entry replaced the public socket this one bound: its registration is the replacer's now. */
+	let endpointReplaced = false;
 	let handoffGraceTimer: ReturnType<typeof setTimeout> | undefined;
 	let shutdownPromise: Promise<never> | undefined;
 
@@ -624,8 +627,9 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 			}
 			// The registration describes a LIVE host only; the stderr log stays for diagnostics.
 			// After a handoff the pointer describes the SUCCESSOR, so this drops only the generation
-			// directory of the process that is leaving, and the pointer only while it still names it.
-			await releaseGeneration(paths, { instanceId, pid: process.pid });
+			// directory of the process that is leaving, and the pointer only while it still names it. A
+			// generation whose socket was taken over leaves the pointer and settings to the replacer (#2536).
+			await releaseGeneration(paths, { instanceId, pid: process.pid, superseded: endpointReplaced });
 		} finally {
 			if (hardExit) clearTimeout(hardExit);
 			// Explicitly terminate after every supervisor shutdown trigger. Windows
@@ -696,6 +700,7 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 		stopSupersessionWatch = watchForSupersession(
 			{ path: publicSocket, identity: publicSocketIdentity, settled: () => shuttingDown || draining },
 			(loss) => {
+				if (loss === "replaced") endpointReplaced = true;
 				supervisorLog(
 					loss === "absent"
 						? "the public socket entry is gone; nothing can reach this generation; draining"

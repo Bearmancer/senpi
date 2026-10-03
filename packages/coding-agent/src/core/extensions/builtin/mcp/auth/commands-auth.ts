@@ -147,8 +147,8 @@ async function runInteractive(deps: AuthCommandDeps): Promise<void> {
 			}
 			return;
 		}
-		const { code } = await (loopbackResult ?? channel.waitForCode());
-		await finishAuthorization(provider, code, deps.flow);
+		const { code, iss } = await (loopbackResult ?? channel.waitForCode());
+		await finishAuthorization(provider, code, deps.flow, iss);
 		await deps.onReconnect();
 		deps.notify(`MCP server ${deps.serverName} authorized`);
 	} finally {

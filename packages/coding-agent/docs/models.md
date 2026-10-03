@@ -9,6 +9,7 @@ Add custom providers and models (Ollama, vLLM, LM Studio, proxies) via `~/.senpi
 - [Supported APIs](#supported-apis)
 - [Provider Configuration](#provider-configuration)
 - [Model Configuration](#model-configuration)
+- [Classifier Models](#classifier-models)
 - [Overriding Built-in Providers](#overriding-built-in-providers)
 - [Per-model Overrides](#per-model-overrides)
 - [Anthropic Messages Compatibility](#anthropic-messages-compatibility)
@@ -201,6 +202,8 @@ If your command is slow, expensive, rate-limited, or should keep using a previou
 | Field | Required | Default | Description |
 |-------|----------|---------|-------------|
 | `id` | Yes | — | Model identifier (passed to the API) |
+| `upstreamModelId` | No | `id` | Request model id when this entry is a local alias |
+| `serviceTier` | No | omitted | OpenAI Responses tier: `auto`, `flex`, `priority`, or `ultrafast` |
 | `name` | No | `id` | Human-readable model label. Used for matching (`--model` patterns) and shown as secondary model detail text. |
 | `api` | No | provider's `api` | Override provider's API for this model |
 | `reasoning` | No | `false` | Supports extended thinking |
@@ -210,6 +213,7 @@ If your command is slow, expensive, rate-limited, or should keep using a previou
 | `contextWindow` | No | `128000` | Context window size in tokens |
 | `maxTokens` | No | `16384` | Maximum output tokens |
 | `samplingParams` | No | omitted | Sampling parameters merged verbatim into every request body (see below) |
+| `inputLimits` | No | omitted | Image resize profile and request limits (see [Image Input Limits](#image-input-limits)) |
 | `cost` | No | all zeros | Per-million-token rates with optional request-wide input pricing tiers |
 | `recoverTextToolCalls` | No | Claude ID default | Enables or disables recovery of leaked Claude XML tool calls from streamed assistant text. This is a top-level model field, not a `compat` field. |
 | `compat` | No | provider `compat` | Provider compatibility overrides. Merged with provider-level `compat` when both are set. |
@@ -429,6 +433,45 @@ When the provider sets `"compat": { "supportsReasoningEffort": true }`, discover
 ```
 
 For a model whose entry advertises `reasoning_efforts`, discovery owns `reasoning`, `thinkingLevelMap`, and `defaultThinkingLevel`: it sets `reasoning` to `true` (overriding an explicit `false`), replaces the map, and replaces the default, removing a previous `defaultThinkingLevel` when the listing marks none. Values that name no senpi level are reported and not used; if none of the advertised values is usable, the model's reasoning controls are turned off (`reasoning: false`, no map, no default) instead of keeping an old map. A model whose entry has no `reasoning_efforts` field keeps its reasoning fields as they are. Without the compat flag, advertised efforts are ignored and only the model ids are added.
+
+### Image Input Limits
+
+Use `inputLimits.images.resize` to control how senpi encodes new image attachments, `read` results, and tool-result images before storing them in conversation history:
+
+```json
+{
+  "id": "vision-model",
+  "input": ["text", "image"],
+  "inputLimits": {
+    "images": {
+      "resize": {
+        "maxWidth": 1568,
+        "maxHeight": 1568,
+        "maxBytes": 524288,
+        "jpegQuality": 75
+      }
+    }
+  }
+}
+```
+
+`maxBytes` limits the base64-encoded payload. Omitted resize fields use conservative defaults of 2000 by 2000 pixels, 4.5 MiB encoded, and JPEG quality 80. Images are encoded once, so changing models does not rewrite historical images. A `modelOverrides` entry can set `inputLimits` for a built-in or extension model.
+
+## Classifier Models
+
+Classifier models do not chat. They answer typed questions about JSON state: pick one of several choices, answer yes or no, or give a score, each with probabilities. senpi includes TypeSafe's Jev model from these providers:
+
+| Provider | Model IDs | Authentication |
+|---|---|---|
+| `typesafe` | `jev-latest` | `TYPESAFE_API_KEY` |
+| `openrouter` | `typesafe/jev-1.13`, `~typesafe/jev-latest` | `OPENROUTER_API_KEY` or `/login` |
+| `cloudflare-workers-ai` | `typesafe/jev` | `CLOUDFLARE_API_KEY` and `CLOUDFLARE_ACCOUNT_ID` |
+| `vercel-ai-gateway` | `typesafe-ai/jev` | `AI_GATEWAY_API_KEY` |
+| `opencode` | `jev-1.13`, `jev-1.13-free` | `OPENCODE_API_KEY` |
+
+Chat models on a [llama.cpp router](llama-cpp.md#classification) are also listed as classifier models.
+
+Classifier models do not appear in `/model`. Extensions call them through `ctx.modelRegistry.classify()`, and [virtual models](virtual-models.md#route-requests) can use them to route requests; see the `jev-router.ts` example. When the service reports token counts, `result.usage` carries them with their cost at the model's catalog price.
 
 ## Overriding Built-in Providers
 

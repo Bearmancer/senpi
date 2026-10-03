@@ -1,6 +1,6 @@
 import { setKeybindings } from "@earendil-works/pi-tui";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
-import type { QuestionRequest } from "../../src/core/extensions/types.ts";
+import type { ExtensionToolContext, QuestionRequest } from "../../src/core/extensions/types.ts";
 import { KeybindingsManager } from "../../src/core/keybindings.ts";
 import { askUserAnswerKeyHint } from "../../src/modes/interactive/components/ask-user-answer-key.ts";
 import { ASK_USER_WIDGET_KEY } from "../../src/modes/interactive/components/ask-user-async-widget.ts";
@@ -169,7 +169,7 @@ describe("async ask-user question in the interactive TUI", () => {
 			{ questions: ASYNC_QUESTIONS, waitForAnswer: false },
 			undefined,
 			undefined,
-			ctx,
+			ctx as ExtensionToolContext,
 		);
 		expect(result.details).toMatchObject({ accepted: true, status: "pending" });
 		expect(delivery.wakeEvents).toEqual([
@@ -214,7 +214,7 @@ describe("async ask-user question in the interactive TUI", () => {
 			{ questions: ASYNC_QUESTIONS, waitForAnswer: false },
 			undefined,
 			undefined,
-			ctx,
+			ctx as ExtensionToolContext,
 		);
 		const settled = delivery.settled(ctx, "tc-timeout");
 		await vi.advanceTimersByTimeAsync(60_000);

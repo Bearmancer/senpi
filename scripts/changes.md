@@ -1,3 +1,171 @@
+## 2026-10-03 - A release stops when a catalog regeneration drops a provider default (senpi#2645)
+
+### What changed
+
+- `scripts/release-artifacts.mjs`: new `runProviderDefaultsCheck` runs `npm --prefix packages/coding-agent run check:provider-defaults` (the "default model selection" tests in `test/model-resolver.test.ts`, with `CI=1`).
+- `scripts/release.mjs`: runs it right after `runGenerateModels`.
+- `scripts/local-release.mjs`: runs the same check right after its own `generate-models`.
+- `scripts/release-test-gate.mjs`: new `catalogChangedSinceHead(cwd)` (`git status` over `packages/ai/src/models.generated.ts` and `packages/ai/src/providers`, untracked files included). `decideTestGate` takes `catalogChanged` and never skips when it is true.
+- `scripts/release.mjs`: reads `catalogChangedSinceHead` right after the regeneration, before anything is committed, and passes it to the test gate.
+
+### Why
+
+- `scripts/release.mjs`, `scripts/local-release.mjs`, `scripts/release-artifacts.mjs`: the release regenerates the model catalog from the network and then may skip its test gate because HEAD already has a green "Check and test" run, but that run tested the pre-regeneration catalog. v2026.10.4 shipped an `nvidia` default its new catalog no longer had, and `main` went red only after the release commit. The check runs on the regenerated catalog, before anything is committed or tagged. And whenever the regeneration changed the catalog, the test gate now runs the full suite instead of trusting HEAD's pre-regeneration CI, so every regeneration-induced failure, not just a dropped default, stops the release.
+
+### Why an extension could not handle it
+
+- `scripts/release.mjs`, `scripts/local-release.mjs`, `scripts/release-artifacts.mjs`: release tooling, not runtime behavior.
+
+### Expected merge conflict zones
+
+- `scripts/release.mjs`: the step list in `main()` around `runGenerateModels`, and `runTests`.
+- `scripts/release-test-gate.mjs`: `decideTestGate`'s branch order.
+- `scripts/local-release.mjs`: the `generate-models` block.
+
+## 2026-10-03 - Release notes cover every published package (senpi#2585)
+
+### What changed
+
+- `scripts/release-notes.mjs`: `extract` accepts `--changelog` more than once. With several changelogs, each package's non-empty section for the version is emitted in the given order under `## <published package name>` (the registry name from `registry-packages.mjs`, else the manifest name), and relative links resolve against that package's directory. A single `--changelog` (or the default) produces the same output as before, and a version with no section in any changelog still yields `Release <version>`. `--published` selects the changelog of every workspace package (`release-packages.mjs`) that `registry-packages.mjs` publishes, coding-agent first, so the release list has one source of truth.
+- `scripts/release-notes.test.mjs`: fixture-monorepo tests for the single and combined output, and for `--published` including every published package's section while leaving an unpublished package out.
+
+### Why
+
+- `scripts/release-notes.mjs`: the GitHub release body held only the coding-agent section, so the other packages' notes and contributor credits for the same version were dropped (v2026.10.2 lost 24 bullets across ai, senpi-codemode, tui and agent).
+
+### Why an extension could not handle it
+
+- Release tooling, not runtime behavior; no extension surface reaches the tag pipeline.
+
+### Expected merge conflict zones
+
+- LOW: `scripts/release-notes.mjs`, `parseOptions` and `extractReleaseNotes`.
+
+## 2026-10-01 - Changelog gate reads changelogs larger than one mebibyte
+
+### What changed
+
+- `scripts/changes-md-git.mjs`: `runGit` gives git an explicit 64 MiB output budget and names that budget if output ever exceeds it.
+
+### Why
+
+- The 2026.10.1-3 release grew `packages/coding-agent/CHANGELOG.md` past spawnSync's 1 MiB default buffer, so the PR gate's `git show HEAD:<changelog>` failed with ENOBUFS on every PR that touched that changelog.
+
+### Why an extension could not handle it
+
+- Repository tooling, not runtime behavior; no extension surface reaches the changelog gate.
+
+### Expected merge conflict zones
+
+- LOW: `scripts/changes-md-git.mjs`, `runGit`.
+
+## 2026-10-01 - Preserve sidecar dependency resolution and staging ownership (senpi#2452)
+
+### What changed
+
+- `scripts/copy-codemode-sidecar.mjs` mirrors source package nesting, audits every staged dependency edge, follows present optional dependencies, and tracks staged package paths rather than clearing the entire output install. Before removing or writing anything it refuses a symlinked segment on any owned path (including `node_modules` itself), and it removes `node_modules/@code-yeongyu/senpi-codemode` only when the ownership journal lists it or, with no journal, when it is the earlier copier's layout (a codemode manifest with `@babel/parser` nested inside); any other existing codemode package is refused.
+- `scripts/copy-codemode-sidecar.test.mjs` and `scripts/copy-codemode-sidecar-closure.test.mjs` cover nested shadowing, workspace resolution, selected-file links, diagnostics, optional payloads, owned cleanup, store-linked dependencies that the edge audit must reject, diamond graphs that share one staged package, host virtual packages reached transitively, and tampered ownership journals. `scripts/copy-codemode-sidecar-ownership.test.mjs` covers a symlinked output `node_modules`, an unowned codemode package with no journal, and replacement of the earlier journal-less layout.
+- The ownership journal `.codemode-sidecar.json` (a JSON list of relative `node_modules` paths) is written next to the staged `node_modules`, so it now ships in `packages/coding-agent/dist` and in every release platform directory. This is intended: a rerun into the same output, including an extracted or reused release directory, removes only the paths it staged before and never touches packages it did not stage.
+- `scripts/build-binaries.sh` copies the archive manifest after guarded sidecar staging. `scripts/build-binaries-staging.test.mjs` executes that staging block against an isolated filesystem fixture.
+
+### Why
+
+- Traversal-order hoisting could silently change a descendant's resolved version; whole-install cleanup could delete unrelated output packages.
+
+### Why an extension could not handle it
+
+- Release asset staging runs before runtime extensions load.
+
+### Expected merge conflict zones
+
+- The dependency traversal and sidecar cleanup in `scripts/copy-codemode-sidecar.mjs`.
+
+## 2026-10-01 - Release path stops running the removed image-model generator (senpi#2484)
+
+### What changed
+
+- `scripts/release.mjs` and `scripts/release-artifacts.mjs`: `runGenerateImageModels` (`npm --prefix packages/ai run generate-image-models`) is removed from the release sequence.
+
+### Why
+
+- The upstream v0.99.1 sync folded image models into `generate-models` and removed the `generate-image-models` script and `image-models.generated.ts`, so the release would fail at that step; `generate-models` already regenerates the image models.
+
+### Why an extension could not handle it
+
+- Repository release scripts.
+
+### Expected merge conflict zones
+
+- LOW: the step list in `release.mjs` main and the `release-artifacts.mjs` exports.
+
+## 2026-09-30 - Drop the dead deletions input and a test-only pack-check seam (senpi#2447)
+
+### What changed
+
+- `scripts/changes-md-git.mjs` `parseNameStatus` no longer returns `deletions`, and `check-pr-changelog.mjs` and `audit-changes-md.mjs` stop passing it. Deleted paths stay in `changedFiles`.
+- `scripts/senpi-publish-pack-checks.mjs`: `assertPublishedWorkspacePackFiles` drops its `options.nativePrebuildTargets` argument, and `publishedWorkspacePackageChecks` its `nativeTargets` parameter. Neither is exported any more, and nor is `SUPPORTED_NATIVE_PREBUILD_TARGETS`.
+
+### Why
+
+- `normalizeTrackerPolicy` never read `deletions`, so it was dead data.
+- The only production caller (`scripts/publish.mjs`) passes two arguments, so the all-OS target seam and both exports existed only for tests.
+- Gate verdicts are unchanged.
+
+### Why an extension could not handle it
+
+- Repository scripts, CI and native crate test code.
+
+### Expected merge conflict zones
+
+- LOW: `parseNameStatus` in `changes-md-git.mjs` and the `publishedWorkspacePackageChecks` signature.
+
+## 2026-09-30 - Sync with upstream v0.99.1 (6a4af07d6): manifests, build and check scripts
+
+### What changed
+
+- `scripts/build-binaries.sh`: `scripts/build-binaries.sh`: fork compile flags kept; no codemode worker entrypoint.
+- `scripts/build-coding-agent-bundle.mjs`: `scripts/build-coding-agent-bundle.mjs`: fork `buildBundle()` kept; adopted the `meta` and `openai-chatgpt` lazy OAuth entries and the check that every `importOAuthModule()` flow in `packages/ai/src/auth/oauth/load.ts` has a lazy entry; no codemode worker; upstream compile-cache launcher not adopted.
+- `scripts/check-browser-smoke.mjs`: `scripts/check-browser-smoke.mjs`, `scripts/check-entry-graphs.mjs`: OURS; upstream durable browser-bundle smoke and the durable/codemode/mcp workspace entries dropped (D-2, D-7).
+- `scripts/check-entry-graphs.mjs`: `scripts/check-browser-smoke.mjs`, `scripts/check-entry-graphs.mjs`: OURS; upstream durable browser-bundle smoke and the durable/codemode/mcp workspace entries dropped (D-2, D-7).
+- `scripts/check-runtime-deps.mjs`: `scripts/check-ts-relative-imports.mjs`, `scripts/check-runtime-deps.mjs`: OURS (classic TypeScript API via @typescript/typescript6).
+- `scripts/check-ts-relative-imports.mjs`: `scripts/check-ts-relative-imports.mjs`, `scripts/check-runtime-deps.mjs`: OURS (classic TypeScript API via @typescript/typescript6).
+- `scripts/local-release.mjs`: `scripts/local-release.mjs`: fork package list kept; no durable/codemode/mcp packages.
+
+### Why
+
+- The fork builds through `scripts/build-all.mjs` and runs sources with tsx (D-11); upstream's plain-node source execution and TypeScript-7 script rewrites are mechanism changes the fork already covers.
+- Upstream codemode, MCP, tool-search and durable are excluded (D-2, D-7), so their workspace packages, dependencies, build phases, tsconfig/vitest aliases and smoke checks stay out.
+- The `openai` 6.26.0 hold had no failing check behind it and the adopted upstream OpenAI adapters target 7.19.0 (D-10).
+- chord follows upstream 0.99.1 with exact pins (D-12, check:pinned-deps).
+
+### Why an extension could not handle it
+
+Workspace manifests, tsconfig and build/check scripts are repository build infrastructure, outside any runtime extension.
+
+### Expected merge conflict zones
+
+Every path listed above conflicts again where upstream edits the hunks named in its line; the fork-kept constructs named there are the anchors to preserve.
+
+## 2026-09-30 - Sync with upstream v0.99.1 (6a4af07d6): upstream features excluded on record
+
+### What changed
+
+Upstream paths below are not added (or stay deleted) in this sync; `.github/agent/upstream-exclusions.txt` lists them for mechanical re-exclusion after every upstream merge.
+
+- `scripts/durable-browser-smoke-entry.ts` (not added / kept deleted)
+
+### Why
+
+The fork keeps one implementation per capability: its own builtin mcp, tool-search and senpi-codemode instead of upstream's codemode/MCP/tool-search built-ins and packages (plan D-2, owner default Q1); builtin cache-keepalive instead of upstream cache warming, whose default spends paid refreshes (D-5, Q3); report-bug skills instead of `/bug` uploads to Radius (D-6, Q4); no `packages/durable`, which nothing in the fork imports (D-7). Paths the fork had already deleted (core/index.ts, core/radius.ts, session-share.ts, tui latex.ts, providers/openai-codex.ts, npm-shrinkwrap.json) stay deleted.
+
+### Why an extension could not handle it
+
+Exclusion is a repository-level decision about which upstream files exist at all; an extension can add behavior but cannot remove files an upstream merge adds.
+
+### Expected merge conflict zones
+
+Every upstream release that touches these paths re-adds or modifies them: re-run `git rm -rqf --ignore-unmatch $(cat .github/agent/upstream-exclusions.txt)` after the merge and extend the list (with a dated block here) when upstream adds a new file to an excluded feature.
+
 ## 2026-09-29 - Published packages ship no sourcemaps (senpi#2362)
 
 ### What changed
@@ -246,6 +414,24 @@ The bundle script runs at build time, outside the extension runtime entirely.
 ### Expected merge conflict zones
 
 - The assertion block at the end of `compiledLoaderProbeSource`, whenever upstream changes loader caching.
+
+## 2026-09-21 - Reject changes to released changelog sections (#1884)
+
+### What changed
+
+- `scripts/check-pr-changelog.mjs` compares committed CHANGELOG sections against the PR merge base, rejecting released additions, edits and deletions with their path, line and section.
+
+### Why
+
+- `scripts/check-pr-changelog.mjs` previously accepted any changed changelog filename, including entries that could never appear in a future release. Only the existing Unreleased block's release stamp may introduce a new released section.
+
+### Why an extension could not handle it
+
+- `scripts/check-pr-changelog.mjs` runs in CI, outside the agent runtime.
+
+### Expected merge conflict zones
+
+- LOW: `scripts/check-pr-changelog.mjs` fact collection and verdict composition.
 
 ## 2026-09-21 - run-workspaces gains --parallel with prefixed lanes and shared signal forwarding (senpi#1895)
 
@@ -1570,3 +1756,62 @@ pid), stop -> `stopped` (socket removed).
 ### Expected merge conflict zones
 
 - NONE: fork-only scripts.
+
+## 2026-10-02 - Fork budget for the lightweight models entry (upstream v1.0.0 sync)
+
+### What changed
+
+- `scripts/check-entry-graphs.mjs`: the upstream `packages/ai` `./models` entry budget is kept with its forbid list, and its `maxFiles` is set to 21 instead of upstream's 15.
+
+### Why
+
+The fork's `packages/ai/src/models.ts` also carries credential-pool slots, the models store, the catalog max lookup and credential refresh, so the entry reaches 21 files. The forbid list still holds (no providers, generated catalog, index, validation or TypeBox helpers) and the lightweight entry still runs a faux completion without TypeBox, catalogs or SDKs. The budget stops further growth.
+
+### Why an extension could not handle it
+
+The entry-graph budgets are a repository check script, not runtime behaviour.
+
+### Expected merge conflict zones
+
+The `BUDGETS["packages/ai"]["./models"]` object when upstream retunes its budget.
+
+## 2026-10-02 - Fork browser smoke entry kept; codemode binary smoke not taken (upstream v1.0.0 sync)
+
+### What changed
+
+- `scripts/browser-smoke-entry.ts`
+- `scripts/smoke-test-codemode-binary.mjs`
+
+`browser-smoke-entry.ts` stays as in the fork (upstream added durable entries to it). `smoke-test-codemode-binary.mjs` smoke-tests upstream's codemode package, which the fork excludes, and is not added.
+
+### Why
+
+The fork's browser smoke covers the fork's packages; upstream's codemode package is replaced by the fork's own eval extension.
+
+### Why an extension could not handle it
+
+These are repository check scripts, not runtime behaviour.
+
+### Expected merge conflict zones
+
+Upstream edits to the browser smoke entry list; keep the fork's entries.
+
+## 2026-10-02 - Adopted upstream binary build script (upstream v1.0.0 sync)
+
+### What changed
+
+- `scripts/build-binaries.sh`
+
+The upstream build script change is kept.
+
+### Why
+
+Repository build tooling from upstream; the fork does not modify it.
+
+### Why an extension could not handle it
+
+Build tooling is not an extension surface.
+
+### Expected merge conflict zones
+
+Upstream edits to scripts/build-binaries.sh at the next sync.

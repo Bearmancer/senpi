@@ -1,7 +1,7 @@
 // Refs #1645: arrival notification and exactly-once blocked lifetime.
 import { setKeybindings } from "@earendil-works/pi-tui";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { QuestionResponse } from "../../src/core/extensions/types.ts";
+import type { ExtensionToolContext, QuestionResponse } from "../../src/core/extensions/types.ts";
 import { KeybindingsManager } from "../../src/core/keybindings.ts";
 import { SettingsManager } from "../../src/core/settings-manager.ts";
 import { initTheme } from "../../src/modes/interactive/theme/theme.ts";
@@ -76,9 +76,9 @@ describe("ask-user arrival signals", () => {
 		const controller = new AbortController();
 		cleanups.push(() => controller.abort());
 		const args = { questions: ASYNC_QUESTIONS, waitForAnswer: false };
-		await delivery.tool.execute("replayed", args, controller.signal, undefined, ctx);
+		await delivery.tool.execute("replayed", args, controller.signal, undefined, ctx as ExtensionToolContext);
 		const settled = delivery.settled(ctx, "replayed");
-		await delivery.tool.execute("replayed", args, controller.signal, undefined, ctx);
+		await delivery.tool.execute("replayed", args, controller.signal, undefined, ctx as ExtensionToolContext);
 		expect(asked).toHaveLength(1);
 		expect(blocked).toHaveLength(1);
 		controller.abort();
@@ -105,7 +105,7 @@ describe("ask-user arrival signals", () => {
 					{ questions: ASYNC_QUESTIONS, waitForAnswer },
 					controller.signal,
 					undefined,
-					ctx,
+					ctx as ExtensionToolContext,
 				);
 				const settled = delivery.settled(ctx, "arrival");
 				expect(asked).toHaveLength(1);

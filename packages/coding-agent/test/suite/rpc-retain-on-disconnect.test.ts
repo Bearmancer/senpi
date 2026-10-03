@@ -86,6 +86,7 @@ async function retainHost(options: { idleEvictionMs?: number } = {}) {
 			case "bind":
 			case "command":
 			case "prompt_surface":
+			case "browser_engine":
 				queueMicrotask(() => this.emit("message", { type: "result", request: message.request }));
 				break;
 			case "close":

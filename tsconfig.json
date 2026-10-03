@@ -54,6 +54,9 @@
 			"@earendil-works/pi-agent-core/harness/session/testing": [
 				"./packages/agent/src/harness/session/testing/index.ts"
 			],
+			"@earendil-works/pi-agent-core/experimental/pico3": [
+				"./packages/agent/src/harness/pico3/index.ts"
+			],
 			"@earendil-works/pi-agent-core/*": [
 				"./packages/agent/src/*.ts",
 				"./packages/agent/src/*/index.ts",
@@ -137,6 +140,8 @@
 		}
 	},
 	"include": [
+		"scripts/model-catalog-protocol.ts",
+		"scripts/model-catalog-protocol.test.ts",
 		"packages/*/src/**/*",
 		"packages/*/test/**/*",
 		"packages/session-backends/*/src/**/*",

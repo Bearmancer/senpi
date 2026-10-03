@@ -11,6 +11,7 @@
  */
 import type { EngineOrdinal } from "../../core/engine-build-identity.ts";
 import type { RpcLaunchProfile } from "./rpc-types.ts";
+import { parseRuntimeBuildId } from "./runtime-build-id.ts";
 
 /**
  * A `get_protocol_info` answer as a CLIENT reads it. Every identity field is optional because a
@@ -30,6 +31,10 @@ export interface HostProtocolInfo {
 	readonly launch_profile?: RpcLaunchProfile;
 	/** Whether the answering host's memory sampler reads pressure right now; absent on classic and older hosts. */
 	readonly memory_pressure?: boolean;
+	/** Content digest of the runtime the host loaded at startup (`sha256:<64 hex>`); absent on older hosts. */
+	readonly runtimeBuildId?: string;
+	/** The conditional idle handover this host holds, as it reported it. */
+	readonly handover?: Readonly<Record<string, unknown>>;
 }
 
 /** Parses the `data` of a `get_protocol_info` reply. Unknown or malformed identity fields are dropped, not guessed. */
@@ -40,6 +45,7 @@ export function parseHostProtocolInfo(data: unknown): HostProtocolInfo | undefin
 	}
 	const ordinal = parseOrdinal(data.engineOrdinal);
 	const launchProfile = parseLaunchProfile(data.launch_profile);
+	const runtimeBuildId = parseRuntimeBuildId(data.runtimeBuildId);
 	return {
 		// A reply without a protocol version predates the field; 0 never matches, so it fails closed.
 		protocolVersion: typeof data.protocolVersion === "number" ? data.protocolVersion : 0,
@@ -52,6 +58,8 @@ export function parseHostProtocolInfo(data: unknown): HostProtocolInfo | undefin
 		...(ordinal && { engineOrdinal: ordinal }),
 		...(launchProfile && { launch_profile: launchProfile }),
 		...(typeof data.memory_pressure === "boolean" && { memory_pressure: data.memory_pressure }),
+		...(runtimeBuildId !== undefined && { runtimeBuildId }),
+		...(isRecord(data.handover) && { handover: data.handover }),
 	};
 }
 

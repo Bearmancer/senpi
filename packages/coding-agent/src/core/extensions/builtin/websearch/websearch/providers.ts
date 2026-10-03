@@ -1,11 +1,13 @@
 import { parseHtmlDocument } from "./html-document.lazy.ts";
 import { anthropicProvider } from "./providers/anthropic.ts";
 import { braveProvider } from "./providers/brave.ts";
+import { chatgptSubscriptionProvider } from "./providers/chatgpt-subscription.ts";
 import { deepseekProvider } from "./providers/deepseek.ts";
 import { duckDuckGoHtmlProvider } from "./providers/duckduckgo-html.ts";
 import { ecosiaProvider } from "./providers/ecosia.ts";
 import { exaProvider } from "./providers/exa.ts";
 import { exaMcpProvider } from "./providers/exa-mcp.ts";
+import { googleProvider } from "./providers/google.ts";
 import { googleCseProvider } from "./providers/google-cse.ts";
 import { googleHtmlProvider } from "./providers/google-html.ts";
 import { kagiProvider } from "./providers/kagi.ts";
@@ -24,6 +26,7 @@ import { xaiProvider } from "./providers/xai.ts";
 import { zAiProvider } from "./providers/z-ai.ts";
 import type {
 	BuiltSearchRequest,
+	JsonObject,
 	SearchProvider,
 	SearchProviderConfig,
 	SearchRequest,
@@ -42,6 +45,8 @@ const PROVIDER_MODULES: Record<SearchProvider, ProviderModule> = {
 	"z-ai": zAiProvider,
 	openai: openAiResponsesProvider,
 	codex: openAiResponsesProvider,
+	"chatgpt-subscription": chatgptSubscriptionProvider,
+	google: googleProvider,
 	anthropic: anthropicProvider,
 	perplexity: perplexityProvider,
 	xai: xaiProvider,
@@ -58,6 +63,11 @@ const PROVIDER_MODULES: Record<SearchProvider, ProviderModule> = {
 function buildContext(config: SearchProviderConfig, request: SearchRequest): BuildContext {
 	const { allowedDomains, blockedDomains } = resolveDomainFilters(config, request);
 	return { config, request, maxResults: config.maxResults ?? request.maxResults, allowedDomains, blockedDomains };
+}
+
+/** A provider's own body parser (for example a full server-sent event stream), or undefined to use its response format. */
+export function parseProviderBody(provider: SearchProvider, bodyText: string): JsonObject | undefined {
+	return PROVIDER_MODULES[provider].parseBody?.(bodyText);
 }
 
 export function buildSearchRequest(config: SearchProviderConfig, request: SearchRequest): BuiltSearchRequest {

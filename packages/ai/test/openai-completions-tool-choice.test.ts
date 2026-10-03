@@ -1,7 +1,7 @@
 import { Type } from "typebox";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { convertMessages } from "../src/api/openai-completions.ts";
-import { getModel, stream, streamSimple } from "../src/compat.ts";
+import { getModel, normalizeContext, stream, streamSimple } from "../src/compat.ts";
 import type { AssistantMessage, Model, SimpleStreamOptions, Tool, ToolResultMessage } from "../src/types.ts";
 import { clearForcedToolChoiceRefusals } from "../src/utils/tool-choice-fallback.ts";
 
@@ -205,6 +205,95 @@ describe("openai-completions forced tool_choice refusal memory (senpi#2218)", ()
 	});
 });
 
+// senpi#2648 (reported in oh-my-openagent#9507): a strict-schema gateway refuses the forced tool's
+// schema, naming that tool by its tools index. The first-turn todo force must degrade to auto.
+const STRICT_SCHEMA_REFUSAL =
+	'400 {"code":null,"message":"<provider>: tools.1.custom: For \'object\' type, \'additionalProperties\' must be explicitly set to false","param":null,"type":"invalid_request_error"}';
+
+function streamTodoBehindPing(model: Model<"openai-completions">, toolChoice?: unknown) {
+	return stream(
+		model,
+		{
+			messages: [{ role: "user", content: "Plan the work", timestamp: Date.now() }],
+			tools: [
+				{ name: "ping", description: "Ping tool", parameters: Type.Object({ value: Type.String() }) },
+				{ name: "todo", description: "Todo tool", parameters: Type.Object({ op: Type.String() }) },
+			],
+		},
+		{ apiKey: "test", ...(toolChoice === undefined ? {} : { toolChoice: toolChoice as typeof FORCED_TODO }) },
+	).result();
+}
+
+describe("openai-completions refusal that names the forced tool (senpi#2648)", () => {
+	const gateway: Model<"openai-completions"> = {
+		...localOpenAICompletionsModel,
+		id: "group/auto-claude",
+		name: "Gateway group",
+	};
+
+	beforeEach(() => {
+		clearForcedToolChoiceRefusals();
+		mockState.calls.length = 0;
+		mockState.createErrors.length = 0;
+		mockState.chunks = undefined;
+	});
+
+	it("retries once without the forced choice when the 400 names the forced tool's index, and the turn succeeds", async () => {
+		mockState.createErrors.push(new HttpStatusError(400, STRICT_SCHEMA_REFUSAL));
+
+		const response = await streamTodoBehindPing(gateway, FORCED_TODO);
+
+		expect(response.stopReason).toBe("stop");
+		expect(mockState.calls.map((_, index) => recordAt(mockState.calls, index).tool_choice)).toEqual([
+			FORCED_TODO,
+			undefined,
+		]);
+	});
+
+	it("retries once when the 400 names the forced tool by its quoted name", async () => {
+		mockState.createErrors.push(
+			new HttpStatusError(400, "400 Invalid schema for function 'todo': object properties must be closed"),
+		);
+
+		const response = await streamTodoBehindPing(gateway, FORCED_TODO);
+
+		expect(response.stopReason).toBe("stop");
+		expect(mockState.calls).toHaveLength(2);
+	});
+
+	it("does not retry a 400 that names a different tool", async () => {
+		mockState.createErrors.push(
+			new HttpStatusError(
+				400,
+				"400 tools.0.custom: For 'object' type, 'additionalProperties' must be explicitly set to false",
+			),
+		);
+
+		const response = await streamTodoBehindPing(gateway, FORCED_TODO);
+
+		expect(response.stopReason).toBe("error");
+		expect(mockState.calls).toHaveLength(1);
+	});
+
+	it("does not retry an unrelated 400 on a forced request", async () => {
+		mockState.createErrors.push(new HttpStatusError(400, "400 messages.0.content: field required"));
+
+		const response = await streamTodoBehindPing(gateway, FORCED_TODO);
+
+		expect(response.stopReason).toBe("error");
+		expect(mockState.calls).toHaveLength(1);
+	});
+
+	it("does not retry a 400 naming the tool when nothing was forced", async () => {
+		mockState.createErrors.push(new HttpStatusError(400, STRICT_SCHEMA_REFUSAL));
+
+		const response = await streamTodoBehindPing(gateway);
+
+		expect(response.stopReason).toBe("error");
+		expect(mockState.calls).toHaveLength(1);
+	});
+});
+
 describe("openai-completions tool_choice", () => {
 	beforeEach(() => {
 		clearForcedToolChoiceRefusals();
@@ -365,6 +454,82 @@ describe("openai-completions tool_choice", () => {
 		expect(tool).toBeTruthy();
 		expect(tool?.strict).toBeUndefined();
 		expect("strict" in (tool ?? {})).toBe(false);
+	});
+
+	it("defaults unknown OpenAI-compatible endpoints to non-strict tools", async () => {
+		// Regression test for #9816.
+		const model = {
+			...localOpenAICompletionsModel,
+			id: "local-model",
+			name: "Local Model",
+		} satisfies Model<"openai-completions">;
+		const tool: Tool = {
+			name: "ping",
+			description: "Ping tool",
+			parameters: Type.Object({
+				required: Type.String(),
+				optional: Type.Optional(Type.String()),
+			}),
+			constrainedSampling: { type: "json_schema", strict: "prefer" },
+		};
+		let payload: unknown;
+
+		await streamSimple(
+			model,
+			{
+				messages: [{ role: "user", content: "Call ping", timestamp: Date.now() }],
+				tools: [tool],
+			},
+			{
+				apiKey: "test",
+				onPayload: (params: unknown) => {
+					payload = params;
+				},
+			},
+		).result();
+
+		const params = (payload ?? mockState.lastParams) as {
+			tools?: Array<{ function?: { strict?: boolean; parameters?: { required?: string[] } } }>;
+		};
+		const functionTool = params.tools?.[0]?.function;
+		expect(functionTool).not.toHaveProperty("strict");
+		expect(functionTool?.parameters?.required).toEqual(["required"]);
+	});
+
+	it("preserves strict tools for capable built-in Chat Completions models", async () => {
+		const model = getModel("groq", "openai/gpt-oss-20b")!;
+		expect(model.compat?.supportsStrictMode).toBe(true);
+		const tool: Tool = {
+			name: "ping",
+			description: "Ping tool",
+			parameters: Type.Object({
+				required: Type.String(),
+				optional: Type.Optional(Type.String()),
+			}),
+			constrainedSampling: { type: "json_schema", strict: "prefer" },
+		};
+		let payload: unknown;
+
+		await streamSimple(
+			model,
+			{
+				messages: [{ role: "user", content: "Call ping", timestamp: Date.now() }],
+				tools: [tool],
+			},
+			{
+				apiKey: "test",
+				onPayload: (params: unknown) => {
+					payload = params;
+				},
+			},
+		).result();
+
+		const params = (payload ?? mockState.lastParams) as {
+			tools?: Array<{ function?: { strict?: boolean; parameters?: { required?: string[] } } }>;
+		};
+		const functionTool = params.tools?.[0]?.function;
+		expect(functionTool?.strict).toBe(true);
+		expect(functionTool?.parameters?.required).toEqual(["required", "optional"]);
 	});
 
 	it("maps Groq Qwen reasoning levels to default reasoning_effort", async () => {
@@ -1567,7 +1732,7 @@ describe("openai-completions tool_choice", () => {
 		const model = { ...baseModel, api: "openai-completions" } as Model<"openai-completions">;
 		const messages = convertMessages(
 			model,
-			{
+			normalizeContext({
 				messages: [
 					{
 						role: "assistant",
@@ -1590,7 +1755,7 @@ describe("openai-completions tool_choice", () => {
 						timestamp: Date.now(),
 					},
 				],
-			},
+			}),
 			{
 				...model.compat,
 				supportsStore: false,
@@ -1616,6 +1781,8 @@ describe("openai-completions tool_choice", () => {
 				sessionAffinityFormat: "openai",
 				supportsMaxOutputTokens: true,
 				supportsLongCacheRetention: true,
+				supportsMidConvoSystemMessages: false,
+				supportsMidConvoToolAdditions: false,
 			},
 		);
 
@@ -2077,7 +2244,7 @@ describe("openai-completions tool_choice", () => {
 			thinkingFormat: "ant-ling",
 			supportsLongCacheRetention: false,
 		});
-		expect(model.compat?.supportsStrictMode).toBeUndefined();
+		expect(model.compat?.supportsStrictMode).toBe(true);
 		expect(model.compat?.requiresReasoningContentOnAssistantMessages).toBeUndefined();
 
 		await streamSimple(

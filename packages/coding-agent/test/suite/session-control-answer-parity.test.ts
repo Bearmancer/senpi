@@ -6,7 +6,12 @@
  * interactive TUI does.
  */
 import { afterEach, describe, expect, it } from "vitest";
-import type { ExtensionContext, QuestionRequest, QuestionResponse } from "../../src/core/extensions/types.ts";
+import type {
+	ExtensionContext,
+	ExtensionToolContext,
+	QuestionRequest,
+	QuestionResponse,
+} from "../../src/core/extensions/types.ts";
 import type { TuiControlSurface } from "../../src/modes/interactive/session-control-commands.ts";
 import { ConnectionQuestionBridge } from "../../src/modes/rpc/connection-question-bridge.ts";
 import { settleExtensionUiResponse } from "../../src/modes/rpc/extension-ui-response.ts";
@@ -53,7 +58,13 @@ async function askAsync(
 	ctx: ExtensionContext,
 	questions: AskedQuestions,
 ): Promise<{ readonly settled: Promise<QuestionResponse> }> {
-	await delivery.tool.execute(REQUEST_ID, { questions, waitForAnswer: false }, undefined, undefined, ctx);
+	await delivery.tool.execute(
+		REQUEST_ID,
+		{ questions, waitForAnswer: false },
+		undefined,
+		undefined,
+		ctx as ExtensionToolContext,
+	);
 	return { settled: delivery.settled(ctx, REQUEST_ID) };
 }
 

@@ -230,7 +230,11 @@ describe("real AgentSession vertical-jitter lifecycle", () => {
 
 	it("C4 clears retained Working when a locally buffered prompt is handled", async () => {
 		const harness = await createHarness({
-			extensionFactories: [(pi) => pi.on("input", () => ({ action: "handled" }))],
+			extensionFactories: [
+				(pi) => {
+					pi.on("input", () => ({ action: "handled" }));
+				},
+			],
 		});
 		harnesses.push(harness);
 		const surface = createSurface(harness.session);
@@ -278,7 +282,11 @@ describe("real AgentSession vertical-jitter lifecycle", () => {
 
 	it("C7 keeps the dock when a handled prompt is not the last buffered input", async () => {
 		const harness = await createHarness({
-			extensionFactories: [(pi) => pi.on("input", () => ({ action: "handled" }))],
+			extensionFactories: [
+				(pi) => {
+					pi.on("input", () => ({ action: "handled" }));
+				},
+			],
 		});
 		harnesses.push(harness);
 		const surface = createSurface(harness.session);

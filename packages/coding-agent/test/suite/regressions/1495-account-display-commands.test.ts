@@ -1,4 +1,4 @@
-import { createModels, createProvider, type OAuthAuth } from "@earendil-works/pi-ai";
+import { createModels, createProvider, type OAuthAuth, type ProviderStreams } from "@earendil-works/pi-ai";
 import { listSlots } from "@earendil-works/pi-ai/auth/pool/slots";
 import { describe, expect, it } from "vitest";
 import { AuthStorage } from "../../../src/core/auth-storage.ts";
@@ -18,6 +18,16 @@ const flow: OAuthAuth = {
 	login: async () => fresh,
 	refresh: async (current) => current,
 	toAuth: async (current) => ({ apiKey: current.access }),
+};
+// createProvider requires a concrete api/images/classifiers implementation (upstream v6 provider
+// shape; empty maps are rejected). These auth-only fixtures carry no models, so nothing ever streams.
+const authOnlyStreams: ProviderStreams = {
+	stream: () => {
+		throw new Error("auth-only fixture provider has no models to stream");
+	},
+	streamSimple: () => {
+		throw new Error("auth-only fixture provider has no models to stream");
+	},
 };
 function command(name: string): Command {
 	const commands = new Map<string, Command>();
@@ -100,7 +110,7 @@ describe("chatgpt-subscription optional post-login naming", () => {
 					baseUrl: "https://example.invalid",
 					auth: { oauth: flow },
 					models: [],
-					api: {},
+					api: authOnlyStreams,
 				}),
 			);
 			let persistedAtPrompt = false;

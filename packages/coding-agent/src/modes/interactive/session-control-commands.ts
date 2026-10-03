@@ -156,5 +156,11 @@ function questionResponse(
 	const status = settledQuestionStatus(parsed, comment);
 	if (status === undefined) return "question_incomplete";
 	const unanswered = unansweredQuestionIds(questions, parsed);
-	return { status, answers: parsed, unanswered, ...(comment === undefined ? {} : { comment }) };
+	return {
+		status,
+		resolvedBy: "control_endpoint",
+		answers: parsed,
+		unanswered,
+		...(comment === undefined ? {} : { comment }),
+	};
 }

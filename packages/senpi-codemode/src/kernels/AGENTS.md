@@ -36,6 +36,10 @@ runner/prelude assets).
   sees. The JS worker applies it at init (`worker-core.js`; shell capture pins
   the env view under Bun because `delete process.env.X` does not unsetenv),
   and py/rb/jl spawn with it merged into the interpreter environment.
+- Every kernel runs in the session cwd. py/rb/jl spawn there; the JS worker cannot
+  chdir, so `js/worker-cwd.js` applies the cwd to `process.cwd`, `path.resolve`,
+  `fs`, `child_process`, and `Bun.file`/`write`/`$`/`spawn`/`Glob` at init. The
+  session manager rejects a cell whose cwd is missing (`extension/session-cwd.ts`).
 
 ## ANTI-PATTERNS
 

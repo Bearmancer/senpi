@@ -149,7 +149,11 @@ describe("build-all", () => {
 		assert.match(buildScript, /shx cp -r src\/providers\/data dist\/providers\/data$/);
 		assert.match(scripts["generate-models"], /generate-models\.ts/);
 		assert.match(prepublishScript, /generate-models\.ts/);
-		assert.match(prepublishScript, /generate-image-models\.ts/);
+		// D-3: generate-models.ts now emits the image catalog (including the fork OpenAI image rows) itself.
+		assert.match(
+			readFileSync(join(root, "packages/ai/scripts/generate-models.ts"), "utf8"),
+			/const OPENAI_IMAGE_MODELS: ImageModel<"openai-images">\[\]/,
+		);
 		assert.notEqual(ignoreCheck.status, 0);
 		assert.ok(readdirSync(join(root, "packages/ai/src/providers/data")).some((file) => file.endsWith(".json")));
 	});

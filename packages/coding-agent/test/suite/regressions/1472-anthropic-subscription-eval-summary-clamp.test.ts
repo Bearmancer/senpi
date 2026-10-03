@@ -1,5 +1,5 @@
 import { prepareToolArguments } from "@earendil-works/pi-agent-core";
-import type { AssistantMessage } from "@earendil-works/pi-ai";
+import type { AssistantMessage, JsonObject } from "@earendil-works/pi-ai";
 import { describe, expect, it } from "vitest";
 import { createEvalTool } from "../../../../senpi-codemode/src/tool/eval-tool.ts";
 import { ANTHROPIC_SUBSCRIPTION_PROVIDER_ID } from "../../../src/core/extensions/builtin/anthropic-subscription/account-management.ts";
@@ -22,7 +22,7 @@ function evalAssistant(args: Record<string, unknown>): AssistantMessage {
 		api: CLAUDE_SDK_OAUTH_API_ID,
 		provider: ANTHROPIC_SUBSCRIPTION_PROVIDER_ID,
 		model: MODEL_ID,
-		content: [{ type: "toolCall", id: "call-1", name: "eval", arguments: args }],
+		content: [{ type: "toolCall", id: "call-1", name: "eval", arguments: args as JsonObject }],
 		stopReason: "toolUse",
 		timestamp: 1,
 		usage: {

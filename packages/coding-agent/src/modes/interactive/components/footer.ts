@@ -257,6 +257,15 @@ export class FooterComponent implements Component {
 			{ text: modelName, color: "accent" as const },
 			...(thinkingSuffix ? [{ text: thinkingSuffix, color: "dim" as const }] : []),
 		];
+		// A virtual model routes each request; show where the latest response went.
+		const routed = this.session.routedModel;
+		if (routed) {
+			const routedSuffix = ` → ${routed.model.id}`;
+			const routedLevel = routed.thinkingLevel ? `:${routed.thinkingLevel}` : "";
+			minimalRight += `${routedSuffix}${routedLevel}`;
+			modelRuns.push({ text: routedSuffix, color: "accent" });
+			if (routedLevel) modelRuns.push({ text: routedLevel, color: "dim" });
+		}
 		const minimal: FooterSegment = { plain: minimalRight, colored: colorRightSide(modelRuns, minimalRight) };
 		let accountSuffix = "";
 		if (state.model) {

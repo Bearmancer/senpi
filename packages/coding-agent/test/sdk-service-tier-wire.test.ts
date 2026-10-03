@@ -6,6 +6,7 @@ import {
 	type AssistantMessage,
 	createAssistantMessageEventStream,
 	type Model,
+	normalizeContext,
 	type SimpleStreamOptions,
 } from "@earendil-works/pi-ai";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -18,7 +19,8 @@ import { SettingsManager } from "../src/core/settings-manager.ts";
 import { createModelRegistry, getModelRuntime } from "./model-runtime-test-utils.ts";
 import { createTestResourceLoader } from "./utilities.ts";
 
-type RegisteredModel = NonNullable<ProviderConfigInput["models"]>[number];
+// Chat member of the chat/image/classifier model-config union.
+type RegisteredModel = Extract<NonNullable<ProviderConfigInput["models"]>[number], { type?: "chat" }>;
 
 const PROVIDER = "tier-provider";
 const BASE_MODEL_ID = "tier-base";
@@ -57,9 +59,11 @@ describe("createAgentSession request service tier without extensions", () => {
 			models: { readonly base: Model<Api>; readonly fast: Model<Api> },
 			captured: Captured,
 		) => Promise<void>,
+		serviceTier?: ServiceTier,
+		provider: string = PROVIDER,
 	): Promise<void> {
 		const authStorage = AuthStorage.create(join(agentDir, "auth.json"));
-		await authStorage.modify(PROVIDER, async () => ({ type: "api_key", key: "test-api-key" }));
+		await authStorage.modify(provider, async () => ({ type: "api_key", key: "test-api-key" }));
 		const modelRegistry = await createModelRegistry(authStorage, join(agentDir, "models.json"));
 		const captured: { options: SimpleStreamOptions | undefined } = { options: undefined };
 		const modelShape = {
@@ -69,7 +73,7 @@ describe("createAgentSession request service tier without extensions", () => {
 			contextWindow: 128000,
 			maxTokens: 4096,
 		} satisfies Omit<RegisteredModel, "id" | "name">;
-		modelRegistry.registerProvider(PROVIDER, {
+		modelRegistry.registerProvider(provider, {
 			api,
 			baseUrl: "https://tier.invalid/v1",
 			models: [
@@ -87,14 +91,15 @@ describe("createAgentSession request service tier without extensions", () => {
 				return doneStream(api);
 			},
 		});
-		const base = modelRegistry.find(PROVIDER, BASE_MODEL_ID);
-		const fast = modelRegistry.find(PROVIDER, FAST_MODEL_ID);
+		const base = modelRegistry.find(provider, BASE_MODEL_ID);
+		const fast = modelRegistry.find(provider, FAST_MODEL_ID);
 		if (!base || !fast) throw new Error("test provider models did not register");
 
 		const { session } = await createAgentSession({
 			cwd,
 			agentDir,
 			model: base,
+			serviceTier,
 			modelRuntime: getModelRuntime(modelRegistry),
 			settingsManager: SettingsManager.inMemory({}),
 			sessionManager: SessionManager.inMemory(cwd),
@@ -104,7 +109,7 @@ describe("createAgentSession request service tier without extensions", () => {
 			await run(session, { base, fast }, captured);
 		} finally {
 			session.dispose();
-			modelRegistry.unregisterProvider(PROVIDER);
+			modelRegistry.unregisterProvider(provider);
 		}
 	}
 
@@ -114,10 +119,40 @@ describe("createAgentSession request service tier without extensions", () => {
 		captured: Captured,
 		requestOptions: SimpleStreamOptions = {},
 	): Promise<ServiceTier | undefined> {
-		const stream = await session.agent.streamFunction(model, { messages: [] }, requestOptions);
+		const stream = await session.agent.streamFunction(model, normalizeContext({ messages: [] }), requestOptions);
 		await stream.result();
 		return captured.options?.serviceTier;
 	}
+
+	it.each(["openai-responses", "openai-codex-responses"] as const)(
+		"sends an initial Ultrafast tier on %s",
+		async (api) => {
+			await withSession(
+				api,
+				async (session, models, captured) => {
+					expect(session.serviceTier).toBe("ultrafast");
+					session.setSessionFastMode(true);
+					expect(session.isFastModeActive()).toBe(false);
+					expect(await requestTier(session, models.base, captured)).toBe("ultrafast");
+				},
+				"ultrafast",
+				"openai",
+			);
+		},
+	);
+
+	it("never sends Ultrafast to a provider other than OpenAI and ChatGPT Subscription", async () => {
+		await withSession(
+			"openai-responses",
+			async (session, models, captured) => {
+				expect(session.serviceTier).toBe("ultrafast");
+				expect(await requestTier(session, models.base, captured)).toBeUndefined();
+				expect(await requestTier(session, models.base, captured, { serviceTier: "ultrafast" })).toBeUndefined();
+				expect(await requestTier(session, models.base, captured, { serviceTier: "priority" })).toBe("priority");
+			},
+			"ultrafast",
+		);
+	});
 
 	it("sends the catalog priority tier of a -fast variant selected on an extension-less session", async () => {
 		await withSession("openai-codex-responses", async (session, models, captured) => {

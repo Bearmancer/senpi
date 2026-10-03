@@ -235,6 +235,7 @@ export function convertToLlm(messages: AgentMessage[]): Message[] {
 					});
 				case "configurationUpdate":
 					return m;
+				case "system":
 				case "user":
 				case "assistant":
 				case "toolResult":

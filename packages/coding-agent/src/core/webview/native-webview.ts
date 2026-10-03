@@ -7,6 +7,7 @@ export interface NativeWebView extends EventTarget {
 	readonly loading: boolean;
 	onNavigated: ((url: string, title: string) => void) | null;
 	onNavigationFailed: ((error: Error) => void) | null;
+	navigate(url: string): Promise<void>;
 	close(): void;
 }
 

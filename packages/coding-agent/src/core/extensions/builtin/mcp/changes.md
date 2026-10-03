@@ -1,4 +1,141 @@
+## 2026-10-03 - A deferred MCP dispose settles before its release returns
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/service.ts`: when `releaseSession()` has to defer the dispose behind pending attaches, it now waits for them, then disposes (or settles without disposing if a live session bound meanwhile). The wait is bounded by `SENPI_MCP_DEFERRED_DISPOSE_TIMEOUT_MS` (default 15 s); past it the service disposes anyway and logs a warning.
+
+### Why
+
+- `session_start` starts the attach without awaiting it. Removing the MCP builtin during a reload while that attach was in flight returned with the service and its servers still alive and disposed them only later, so `test/mcp/extension-load.test.ts` ("disposes the preserved classic singleton...") failed nondeterministically (17 of 50 local runs). A caller awaiting a release now sees the servers gone.
+
+### Why an extension could not handle it
+
+- The disposal order lives inside the builtin MCP service; no extension hook can wait on its attach queue.
+
+### Expected merge conflict zones
+
+- LOW: `releaseSession()` and `#disposeIfDeferredAndIdle()` in `service.ts`.
+
 # mcp Extension Changes
+
+## 2026-10-01 - Give each session its own binding to the shared MCP service (senpi#2514)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/service.ts`: the single `#pi` / `#toolSearchService` / `#tierBRegistration` binding is replaced by one `McpSessionBinding` per attaching extension API, keyed by that `pi`. Only the process-wide service `getMcpService()` builds (`servesManySessions: true`) holds several bindings; a session-owned service (the RPC host, a host registry, provider scopes) keeps exactly one, and a new attach takes it over as before. Each binding resolves its session's tool-search service per call (`getToolSearchServiceForExtension(pi)`, with the old sessionless fallback for hosts without one) and keeps its own registration and per-server registered identity. A late startup catalog and every list_changed refresh register on all live bindings; a binding whose session retired its tool-search service is dropped. `releaseSession(pi, disposeReason?)` releases one binding and disposes only when no live binding remains. The binding-reading methods (`getTierBSearchable`, `getMcpPromptServers`, `getMcpResourceServers`, `activateSkillMcpTools`, `attachSkillMcpServers`, `rehydrateActiveToolsFromHistory`, `maybeRehydrateFromHistory`) take the caller's `pi`; without one they read the most recently attached live session, for single-session SDK and test callers.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/index.ts`: the classic (non-provider-scoped) path passes its own `pi` to those methods and releases its binding on `session_shutdown` and on `session_extensions_removed`, disposing only for the last live session (`quit`, or `reload` when the builtin is removed). The provider-scoped path is unchanged.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/service-tools-changed.ts`: `refreshMcpToolsOnListChanged` takes a resolver of the live sessions and re-registers the sessions whose registered identity is stale. It resolves again after registering, so a session that attached while the refresh was listing tools also gets the refreshed catalog. One session's registration failure is collected and reported after the others registered, never aborting them.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/service.ts` (review follow-ups): a session whose extension load owns no tool-search service takes the process-wide fallback only when no other live session holds it, and otherwise gets its own `ToolSearchService`. Attaches are counted from the moment they queue (`#pendingAttaches`), so `releaseSession` never disposes the service under an attach that has not bound yet. An attach that reaches a disposed service throws instead of opening connections nobody owns. The late startup catalog registers on each live session independently and reports failures together.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/service-register.ts`, `packages/coding-agent/src/core/extensions/builtin/mcp/service-types.ts`: the registered catalog identity moves from the shared connection entry to the session binding (`onRegistered` option).
+
+- Review follow-up: a catalog that lands after the startup window registers in every live session unless the service was disposed or the connection replaced (a later attach no longer cancels it), and a session that quits while its own attach is still queued is not bound; the last pending attach disposes the service once no session is left.
+
+### Why
+
+- Outside the RPC host every session shares the module-level service, and each attach overwrote the one binding. A catalog that landed late or changed reached only the last session; after that session was replaced the others resolved through its stale context; and one session's quit disposed the servers every other session was using. Connections stay shared on purpose: a session that resolves the same server config (same `configHash`) reuses the existing connection, so it neither re-spawns the server nor re-runs OAuth; only the binding becomes per session. Sharing is per config: an attaching session whose resolved config for a server differs (for example another project's `.senpi/mcp.json`) still makes `#syncFromConfig` replace that server's connection, as before this change.
+
+### Why an extension could not handle it
+
+- The binding is internal state of the MCP builtin's service.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/service.ts`: the field block, `attachSession`, the startup-race `registerDirectTools` callback, `#handleServerToolsChanged`, `#registerDirectTools`, and the rehydration methods.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/index.ts`: the `session_shutdown` and `session_extensions_removed` handlers.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/service-tools-changed.ts`: the target loop in `refreshMcpToolsOnListChanged`.
+
+
+## 2026-10-02 - Optional OAuth fields and list cursors sent as null (upstream v1.0.0 sync)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/auth/oauth-fetch.ts` (new): wraps the fetch used for OAuth discovery, registration, token and refresh calls and drops optional fields (`expires_in`, `refresh_token`, `scope`, `id_token`, `client_secret` and registration metadata) whose value is `null` or `""`.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/auth/oauth.ts`, `packages/coding-agent/src/core/extensions/builtin/mcp/auth/oauth-refresh.ts`: every SDK OAuth call goes through that fetch.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/transport-sdk.ts`: stdio and HTTP transports drop `nextCursor: null` from list results before the client parses them.
+
+### Why
+
+Upstream fixed the same server quirks in its MCP package (8ce69e9d2). The SDK rejects `null` for these fields, and coerces `expires_in: null` to 0, which stored an already-expired token; a `nextCursor: null` failed the whole tool listing.
+
+### Why an extension could not handle it
+
+The OAuth calls and transports are built inside this builtin.
+
+### Expected merge conflict zones
+
+The fetch wiring in `oauth.ts`/`oauth-refresh.ts` and transport construction in `transport-sdk.ts`.
+
+## 2026-10-02 - RFC 9207 issuer check on MCP authorization responses (upstream v1.0.0 sync)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/auth/oauth.ts`: before the authorization code is exchanged, an `iss` that differs from the discovered issuer, or a missing `iss` when the authorization server advertises `authorization_response_iss_parameter_supported`, fails the sign-in.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/auth/callback.ts`, `packages/coding-agent/src/core/extensions/builtin/mcp/auth/commands-auth.ts`: the loopback callback and the pasted redirect carry `iss` to that check.
+
+### Why
+
+Upstream added the same check (d850edee9) to block authorization-server mix-up attacks. Its `oauth.authServerMetadataUrl` setting is an upstream MCP-extension feature and is not taken.
+
+### Why an extension could not handle it
+
+The authorization response is handled inside this builtin's OAuth flow.
+
+### Expected merge conflict zones
+
+`finishAuthorization` and `parseRedirect` in `oauth.ts`.
+
+## 2026-10-02 - OAuth credentials per server name and URL (upstream v1.0.0 sync)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/auth/token-store.ts`: the credential directory is keyed by server name and URL; a record stored by URL alone moves to the first server that reads it, and signing out also removes the URL-keyed record that server would take over.
+
+### Why
+
+Upstream fixed the same defect (5806068c2): two servers with the same URL (for example a work and a personal account) shared one token, and signing out of one signed the other out.
+
+### Why an extension could not handle it
+
+The token store is this builtin's own persistence.
+
+### Expected merge conflict zones
+
+The directory key in `McpTokenStore`.
+
+## 2026-10-01 - Skill MCP declarations are cached by file stamp (senpi#2508)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/skills.ts`: `readSkillServers` keeps each skill's parsed declarations keyed by the mtime and size of its `mcp.json` sidecar and `SKILL.md`, and re-reads only when either changes.
+
+### Why
+
+`before_agent_start` parses every skill's declarations on every turn; re-reading and re-parsing each file stalled each background-triggered turn.
+
+### Why an extension could not handle it
+
+This is the builtin MCP extension's own skill scan.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/skills.ts`: `readSkillServers`.
+## 2026-10-01 - Feed the attaching session's tool-search service (senpi#2509)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/service.ts`: `attachSession` resolves the attaching session's tool-search service; the fallback for callers without a loaded extension is unchanged.
+
+### Why
+
+- The tool-search builtin no longer keeps one module-level service for every session, so the MCP service must feed the catalog of the session it attaches to. This change only plumbs that lookup; the MCP service itself is still shared in-process (follow-up senpi#2514).
+
+### Why an extension could not handle it
+
+- The tool-search lookup is internal to the MCP builtin.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/service.ts`: the tool-search import and the activation-runtime block in `attachSession`.
 
 ## 2026-09-29 - list_changed re-registers a non-shared connection's current listing (#2188)
 
@@ -803,3 +940,24 @@ loader's auto-activation of newly registered tools.
 ### Expected merge conflict zones
 
 - LOW: `index.ts` `session_start` registration block; new `test/suite/mcp-reload-deferral.test.ts`.
+
+
+## 2026-10-02 - Claim legacy MCP credentials under a shared migration lock
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/auth/token-store.ts`
+
+`read()` migrated a URL-keyed legacy record (read/copy/delete) without a lock, so two processes could both read it before either removed it and persist the same rotating grant under two different server-name keys. The claim is now serialized on a lock file created with O_EXCL and keyed on the legacy hash (shared by every consumer of that URL), with the legacy record and the destination both re-checked under the lock before writing.
+
+### Why
+
+Duplicating a single-use refresh-token family across identities defeats the new per-server account isolation and can invalidate the grant on the next refresh. The per-server update locks are keyed by destination and cannot serialize this migration.
+
+### Why an extension could not handle it
+
+The token store is the fork's credential-persistence layer; no extension hook sits between read() and the on-disk legacy record.
+
+### Expected merge conflict zones
+
+Upstream edits to `token-store.ts` legacy migration at the next sync.

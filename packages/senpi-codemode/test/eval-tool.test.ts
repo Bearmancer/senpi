@@ -168,7 +168,7 @@ describe("createEvalTool", () => {
 		const big = `${Array.from({ length: 8_010 }, (_, index) => `line-${index}`).join("\n")}\n`;
 		const kernel = new FakeKernel([
 			{ type: "text", stream: "stdout", data: big },
-			{ type: "display", mimeType: "image/png", dataBase64: "abc123" },
+			{ type: "display", mimeType: "image/png", dataBase64: "iVBORw0KGgo=" },
 			result("cell-5", "tail"),
 		]);
 		const tool = createEvalTool({

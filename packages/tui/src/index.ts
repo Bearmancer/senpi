@@ -20,6 +20,33 @@ export {
 	CombinedAutocompleteProvider,
 	type SlashCommand,
 } from "./autocomplete.ts";
+// Colors and styling
+export {
+	backgroundAnsi,
+	type Color,
+	type ColorMixSpace,
+	colorToHex,
+	colorToOkhsl,
+	colorToOklch,
+	colorToRgb,
+	foregroundAnsi,
+	type IndexedColor,
+	indexedColor,
+	mixColors,
+	type OkhslChannels,
+	type OklchChannels,
+	type OklchColorValue,
+	okhslColor,
+	oklchColor,
+	parseColor,
+	type RgbColorValue,
+	rgbColor,
+	styleText,
+	styleTextWithAnsi,
+	type TerminalColorMode,
+	type TextAttributes,
+	type TextStyle,
+} from "./colors.ts";
 // Components
 export { Box } from "./components/box.ts";
 export { CancellableLoader } from "./components/cancellable-loader.ts";
@@ -123,17 +150,25 @@ export {
 } from "./mouse-input.ts";
 // Native platform integration
 export { getNativeClipboard, type NativeClipboard } from "./native-platform.ts";
+export { oklabToOkhslLightness } from "./oklab.ts";
 export { type EditorPasteState, expandPasteMarkers } from "./paste-markers.ts";
 // Input buffering for batch splitting
 export { StdinBuffer, type StdinBufferEventMap, type StdinBufferOptions } from "./stdin-buffer.ts";
 // Terminal interface and implementations
-export { type CursorPosition, ProcessTerminal, type ProcessTerminalOptions, type Terminal } from "./terminal.ts";
+export {
+	type CursorPosition,
+	isAppleTerminalSession,
+	isWarpWslSession,
+	ProcessTerminal,
+	type ProcessTerminalOptions,
+	type Terminal,
+} from "./terminal.ts";
 // Terminal colors
 export {
-	parseOsc11BackgroundColor,
 	parseTerminalColorSchemeReport,
 	type RgbColor,
 	type TerminalColorScheme,
+	type TerminalColors,
 } from "./terminal-colors.ts";
 // Terminal image support
 export function calculateImageRows(
@@ -158,6 +193,7 @@ export {
 	getImageDimensions,
 	getJpegDimensions,
 	getPngDimensions,
+	getTerminalColorMode,
 	getWebpDimensions,
 	hyperlink,
 	type ImageDimensions,
@@ -178,24 +214,38 @@ export {
 export { sanitizeTerminalLabel, shortenImagePath } from "./terminal-text.ts";
 export {
 	type Component,
+	CompositeRevision,
 	Container,
 	CURSOR_MARKER,
+	claimFrameRow,
 	compositeTuiLine,
+	currentRenderRevision,
+	dispatchMouseEvent,
 	type Focusable,
+	type FrameLineBytesTotals,
+	frameLineBytesTotals,
+	frameMode,
+	frameScrollbackRows,
 	isFocusable,
 	isViewportTUI,
+	joinLineArrays,
+	mainScreenHistoryLines,
+	nextRenderRevision,
 	type OverlayAnchor,
 	type OverlayBounds,
 	type OverlayHandle,
 	type OverlayMargin,
 	type OverlayOptions,
 	type OverlayUnfocusOptions,
+	renderAtFrameRow,
+	resetMainScreenHistoryLines,
 	type SizeValue,
 	TUI,
 	type TuiInputListener,
 	type TuiInputListenerResult,
 	type TuiMode,
 	type TuiMouseButton,
+	type TuiMouseDispatchResult,
 	type TuiMouseEvent,
 	type TuiMouseEventResult,
 	type TuiMouseEventType,
@@ -215,3 +265,4 @@ export {
 	visibleWidth,
 	wrapTextWithAnsi,
 } from "./utils.ts";
+export type { WheelScrollLines } from "./wheel-scroll.ts";

@@ -135,7 +135,7 @@ export class ToolExecutionRenderer extends Container {
 	}
 
 	private renderCall(container: RenderContainer): void {
-		const fallback = createToolCallFallback(this.identity.toolName);
+		const fallback = createToolCallFallback(this.identity.toolName, this.state.args, this.state.expanded);
 		const renderer = this.getCallRenderer();
 		if (!renderer) {
 			container.addChild(this.clickToExpand(fallback));

@@ -1,5 +1,45 @@
 # prompt-preset Extension Changes
 
+## 2026-10-03 - GPT-6 Astra: keep few-call reading and own-change checks; a subagent only for a track that lands the task sooner (senpi#2630)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/prompt-preset/gpt-6-astra.ts`: three rules are replaced at their source, none added. `DELEGATION` keeps reading, lookups and checks on your own change "however many calls they take" (was: "whatever closes in a handful of calls is yours"), and hands out only "a track that runs beside yours and lands the task sooner - a wide investigation across many files, or an implementation unit beyond one coherent edit in files you are not touching" (was: "Only a sizeable track independent of your own earns a subagent"); the brief clause shrinks to its four nouns. `ASYNC_DEFAULT` drops "CHILD TASKS AND" from its bold lead. `FOREGROUND_EXCEPTION` ends "A child task never meets the first test; it runs in the background and its completion delivers its result." (was: "... when its result would be your next input, either the work was small enough to do yourself or the child runs in the background and its completion delivers it").
+- Rule ids, concerns, sections and the bold set are unchanged; `test/suite/prompt-presets-gpt-6-astra.test.ts` passes as is. The preset loses four words net.
+
+### Why
+
+- Astra handed few-call reading, credential lookups and the checks on its own change to subagents on executable lanes, then ended its turn to wait for them. A 10-day session survey put its delegation share level with the Claude and Kimi presets (the 2026-09-08 reframe did its job by count), but 86% of its spawns went to executable categories against 30-50% for the others, nine were read-only investigations, and in the trigger session the main thread idled 90 s for a child whose evidence memory already held. The model's stated reasons repeated the rule's words ("independent", "non-overlapping"), so the defect is the rule's framing (prompt-engineering category B): a six-call investigation failed the call-count keep-it test and passed the independence spawn test, the loudest rule in the file named child tasks first, and the foreground exception sanctioned the result-needed-next -> background child -> turn-end path. The replacement carries the clauses the Opus 5.5 preset already had (a parallel run must finish the task sooner; your own verification is yours) in the hephaestus prompts' terms (direct execution by default; a category only for a unit beyond one coherent edit). The 2026-09-11 early-stop set is untouched.
+
+### Why an extension could not handle it
+
+- These sentences are the preset core itself.
+
+### Expected merge conflict zones
+
+- `gpt-6-astra.ts` header comment, `DELEGATION`, `ASYNC_DEFAULT`, `FOREGROUND_EXCEPTION`.
+
+## 2026-10-01 - GPT-6 Astra: delete the verification gates codex does not carry (senpi#2505)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/prompt-preset/gpt-6-astra.ts`: nine rules are reduced or removed at their source, none added. The `evidence-comparison` rule is deleted (rule id, table row, render): its surviving sentence was byte-identical to GPT-5.6's and the eval tool description already says to keep every failed item and re-read truncated output before deciding. `TODO_GRANULARITY` drops "an edit paired with the check that proves it" and says a question carries no list. `MONITOR_CONDITIONS` drops "A run, check, PR, or deploy the user mentions is in scope even when the ask is about something else - it gets its watch in the same turn, without being asked". `VERIFICATION_ONCE` is now the whole `## Verification` paragraph: run the checks the change calls for and the ones the repository requires, once; broaden or repeat only on a new change, a failure, or an open concern. The enumerated tier floor ("keep the rigor ... diagnostics on that file ... related tests and one run ... the build and the user-visible behavior exercised through its real surface") is deleted. `BUN_RUNTIME` drops "read it before your first js cell". `FINAL_MESSAGE_SHAPE` (and its app/chat variants) says "the checks that ran, summarized rather than listed, anything left unverified" instead of "what you verified and how, what you could not verify and why". Working the Task opens with "Read a file before claiming what it contains" instead of "Memory of file contents is unreliable: read before claiming, re-read before editing". The hard limit "Never present unread code, unrun commands, or a pending result as fact" is "Label unread code, unrun commands, and pending results as such". The Stop Goal drops "confirm each item and your declared stop condition against evidence already captured" and says "the checks it called for" instead of "the checks for the change's tier".
+- `packages/coding-agent/src/core/extensions/builtin/prompt-preset/test-decision.ts`: `TEST_DECISION` (shared with GPT-5.6 and GPT-6.1 Sol) drops the two openers "Read existing tests first - the behavior of record" and "Reproduce a bug before fixing it"; the stale-test, wrong-test and add-a-test-only-where clauses are unchanged.
+- Concerns, sections and the bold set are unchanged; `test/suite/prompt-presets-gpt-6-astra.test.ts` drops the `evidence-comparison` row from its rule tables; `test/suite/prompt-presets-app-surface.test.ts` keeps passing because the app slot is still spliced through `GPT_APP_UNVERIFIED_SLOT`.
+
+### Why
+
+- Astra prepared and verified instead of acting: 230 s of pre-flight before the first call that touched a yes/no status question and 226 s of wrap-up after the answer was known; `lsp_diagnostics` on a JSON config and upstream tests requested from a child before a config deploy. OpenAI's Astra guide names the prior ("tends to be thorough in testing before considering a task complete ... broader tests than the task requires"), and codex's own Astra template carries two calibration sentences and no gates. Each deleted gate was written against an earlier model's false-claim failure, which Astra does not have (prompt-engineering category A), so it is removed rather than countered. Rendered Astra terminal prompt: measured o200k token delta in the PR.
+- Same follow-up line as #2256: the 2026-09-11 early-stop set (`turn-end-is-wait` condition, `unbounded-retry`, `approval-last`, the handoff block) is untouched.
+
+### Why an extension could not handle it
+
+- These sentences are the preset core itself.
+
+### Expected merge conflict zones
+
+- `gpt-6-astra.ts` rule constants, `## Verification`, `## Hard Limits`, `## Stop Goal`, `SURFACE_DIRECTIVE`; `test-decision.ts`.
+
 ## 2026-09-30 - Chat surface for every core (senpi#2398)
 
 ### What changed

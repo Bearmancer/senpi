@@ -27,7 +27,13 @@ export class PermissionService {
 	}
 
 	/** Request permission for a tool call. Resolves if allowed, throws on denial. */
-	async ask(request: RequestInput): Promise<void> {
+	async ask(
+		request: RequestInput,
+		{
+			autoApproveAsk = false,
+			ruleAliases,
+		}: { readonly autoApproveAsk?: boolean; readonly ruleAliases?: readonly string[] } = {},
+	): Promise<void> {
 		const info: Request = {
 			...request,
 			id: request.id ?? this.nextRequestID(),
@@ -37,14 +43,14 @@ export class PermissionService {
 		let needsAsk = false;
 
 		for (const pattern of info.patterns) {
-			const rule = evaluate(info.permission, pattern, this.staticRuleset, this.approved);
+			const rule = evaluate(info.permission, ruleAliases ?? pattern, this.staticRuleset, this.approved);
 
 			if (rule.action === "deny") {
 				deniedPatterns.push(pattern);
 				continue;
 			}
 
-			if (rule.action === "ask") {
+			if (rule.action === "ask" && !autoApproveAsk) {
 				needsAsk = true;
 			}
 		}

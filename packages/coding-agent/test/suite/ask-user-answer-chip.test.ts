@@ -6,7 +6,7 @@ import { Container, type TuiMouseEvent, visibleWidth } from "@earendil-works/pi-
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { dispatchMouseEvent } from "../../../tui/src/tui.ts";
 import { formatUserMessage } from "../../src/core/extensions/builtin/ask-user/format.ts";
-import type { QuestionResponse } from "../../src/core/extensions/types.ts";
+import type { ExtensionToolContext, QuestionResponse } from "../../src/core/extensions/types.ts";
 import { type SessionEntry, SessionManager } from "../../src/core/session-manager.ts";
 import { SettingsManager } from "../../src/core/settings-manager.ts";
 import { UserMessageComponent } from "../../src/modes/interactive/components/user-message.ts";
@@ -166,7 +166,7 @@ describe("ask-user answer chips", () => {
 			{ questions, waitForAnswer: false },
 			controller.signal,
 			undefined,
-			ctx,
+			ctx as ExtensionToolContext,
 		);
 		const settled = delivery.settled(ctx, "chip-request");
 		await execution;

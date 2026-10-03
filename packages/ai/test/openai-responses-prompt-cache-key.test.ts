@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { stream as streamOpenAIResponses } from "../src/api/openai-responses.ts";
 import { getModel } from "../src/compat.ts";
 import type { Model } from "../src/types.ts";
+import { normalizeContext } from "../src/utils/transcript.ts";
 
 interface CapturedResponsesPayload {
 	prompt_cache_key?: string;
@@ -23,10 +24,10 @@ async function capturePromptCacheKey(
 
 	const stream = streamOpenAIResponses(
 		model,
-		{
+		normalizeContext({
 			systemPrompt: "sys",
 			messages: [{ role: "user", content: "hi", timestamp: Date.now() }],
-		},
+		}),
 		{
 			apiKey: "test-key",
 			sessionId: options?.sessionId ?? SESSION_ID,

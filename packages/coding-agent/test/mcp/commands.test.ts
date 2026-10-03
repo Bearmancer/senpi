@@ -1,7 +1,7 @@
 import { mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
-import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
+import { fauxAssistantMessage, fauxToolCall, getCurrentTools } from "@earendil-works/pi-ai";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ENV_AGENT_DIR } from "../../src/config.ts";
 import { AuthStorage } from "../../src/core/auth-storage.ts";
@@ -121,7 +121,11 @@ describe("/mcp command suite", () => {
 
 		harness.setResponses([
 			(context) => {
-				providerToolNames.push((context.tools ?? []).map((toolInfo) => toolInfo.name).sort());
+				providerToolNames.push(
+					getCurrentTools(context.messages)
+						.map((toolInfo) => toolInfo.name)
+						.sort(),
+				);
 				return fauxAssistantMessage(fauxToolCall("mcp_fx_tool_2", { value: "added" }), { stopReason: "toolUse" });
 			},
 			fauxAssistantMessage("done"),
@@ -174,7 +178,11 @@ describe("/mcp command suite", () => {
 
 		harness.setResponses([
 			(context) => {
-				providerToolNames.push((context.tools ?? []).map((toolInfo) => toolInfo.name).sort());
+				providerToolNames.push(
+					getCurrentTools(context.messages)
+						.map((toolInfo) => toolInfo.name)
+						.sort(),
+				);
 				return fauxAssistantMessage("initial");
 			},
 		]);
@@ -188,7 +196,11 @@ describe("/mcp command suite", () => {
 		setConfig(root, { fx: stdioServer(["--tools", "2"]) });
 		harness.setResponses([
 			(context) => {
-				providerToolNames.push((context.tools ?? []).map((toolInfo) => toolInfo.name).sort());
+				providerToolNames.push(
+					getCurrentTools(context.messages)
+						.map((toolInfo) => toolInfo.name)
+						.sort(),
+				);
 				return fauxAssistantMessage("disabled");
 			},
 		]);
@@ -199,7 +211,11 @@ describe("/mcp command suite", () => {
 		await awaitMcpToolRegistration("fx");
 		harness.setResponses([
 			(context) => {
-				providerToolNames.push((context.tools ?? []).map((toolInfo) => toolInfo.name).sort());
+				providerToolNames.push(
+					getCurrentTools(context.messages)
+						.map((toolInfo) => toolInfo.name)
+						.sort(),
+				);
 				return fauxAssistantMessage(fauxToolCall("mcp_fx_tool_2", { value: "fresh" }), { stopReason: "toolUse" });
 			},
 			fauxAssistantMessage("done"),

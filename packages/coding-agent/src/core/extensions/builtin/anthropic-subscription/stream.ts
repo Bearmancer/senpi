@@ -61,6 +61,7 @@ export function streamAnthropicSubscription(
 		else options?.signal?.addEventListener("abort", onAbort, { once: true });
 		let claudeCodeRun: ClaudeCodeRun | undefined;
 		let coldSeedAttempt = false;
+		let coldSeedEstimate: number | undefined;
 
 		try {
 			// Resident before the synchronous SDK member below (getSdkBoundary().query)
@@ -133,8 +134,9 @@ export function streamAnthropicSubscription(
 						customToolNameToSdk: resolvedTools.customToolNameToSdk,
 						toolWatchNote,
 						onContinuityDecision: recordContinuity,
-						onDispatchShape: (coldSeed) => {
+						onDispatchShape: (coldSeed, estimatedTokens) => {
 							coldSeedAttempt = coldSeed;
+							coldSeedEstimate = estimatedTokens;
 						},
 						onResumeFallback: (error) => {
 							output.diagnostics = [
@@ -153,6 +155,7 @@ export function streamAnthropicSubscription(
 						env: options?.env,
 						signal: options?.signal,
 						sessionId: affinityKey,
+						model: model.id,
 						pinnedAccount: getSessionClaudeAccountPin(options?.sessionId),
 						onQuery: (query) => {
 							sdkQuery = query;
@@ -234,7 +237,7 @@ export function streamAnthropicSubscription(
 			const billed = sdkResultFailureUsage(error);
 			if (billed) updateUsage(model, output, billed);
 			output.errorMessage = withAuthGuidance(error, errorMessage(error), claudeCodeRun);
-			markColdSeedOverflow(output, model, coldSeedAttempt);
+			markColdSeedOverflow(output, model, coldSeedAttempt, coldSeedEstimate, options?.sessionId);
 			stream.push({ type: "error", reason: output.stopReason, error: output });
 		} finally {
 			options?.signal?.removeEventListener("abort", onAbort);

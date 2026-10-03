@@ -1,6 +1,6 @@
 // allow: SIZE_OK — parity cases stay beside the live kernel harness they exercise.
 import { execFileSync } from "node:child_process";
-import { access, mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -17,9 +17,10 @@ function hasRuby(): boolean {
 	}
 }
 
+/** Runners this test file started: other files' kernels run in parallel workers and are not its leaks. */
 function runnerProcessIds(runnerPath: string): Set<string> {
 	try {
-		const output = execFileSync("pgrep", ["-fl", escapeRegExp(runnerPath)], {
+		const output = execFileSync("pgrep", ["-P", String(process.pid), "-fl", escapeRegExp(runnerPath)], {
 			encoding: "utf8",
 			stdio: ["ignore", "pipe", "ignore"],
 			timeout: 3_000,
@@ -47,17 +48,12 @@ describe("RubyKernel", () => {
 	it("routes tool calls through the authenticated loopback bridge contract", async () => {
 		const prelude = await readFile(join(import.meta.dirname, "..", "src", "kernels", "rb", "prelude.rb"), "utf8");
 		const runner = await readFile(runnerPath, "utf8");
-		expect(prelude).toContain('URI("http://127.0.0.1:#{port}#{path}")');
-		expect(prelude).toContain('request["authorization"] = "Bearer #{token}"');
-		expect(prelude).toContain('"callId" => "rb-#{Process.pid}-#{rand(1_000_000)}"');
-		expect(prelude).toContain('"toolName" => name');
+		// The wire bytes the host reads: loopback /call, a bearer token, and the callId/toolName keys.
+		expect(prelude).toContain("http://127.0.0.1:");
+		expect(prelude).toContain("Bearer ");
+		expect(prelude).toContain('"callId" =>');
+		expect(prelude).toContain('"toolName" =>');
 		expect(runner).not.toContain('"type" => "tool-call"');
-	});
-
-	it("ships the stdlib-only prelude asset", async () => {
-		await expect(
-			access(join(import.meta.dirname, "..", "src", "kernels", "rb", "prelude.rb")),
-		).resolves.toBeUndefined();
 	});
 
 	it.skipIf(!hasRuby())(

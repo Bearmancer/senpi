@@ -1,5 +1,20 @@
+import {
+	SUMMARIZATION_MAX_DURATION_CAP_MS,
+	SUMMARIZATION_TOTAL_BUDGET_MS,
+} from "../../core/compaction/stream-watchdog.ts";
+
 /** How long any request waits for the host's answer - for an open, for its `queued` acknowledgement. */
 export const REQUEST_DEADLINE_MS = 30_000;
+
+/** Remote compaction may exhaust its budget before a local summary uses its maximum override. */
+export const PROMPT_COMPACTION_DEADLINE_MS =
+	SUMMARIZATION_TOTAL_BUDGET_MS + SUMMARIZATION_MAX_DURATION_CAP_MS + REQUEST_DEADLINE_MS;
+
+/**
+ * The longest a prompt waits for its acknowledgement, however many compactions start and end while it
+ * is pending: one full compaction budget plus the ordinary allowance it may already have spent first.
+ */
+export const PROMPT_ACK_MAX_WAIT_MS = PROMPT_COMPACTION_DEADLINE_MS + REQUEST_DEADLINE_MS;
 
 /**
  * How long an open the host acknowledged with `queued` may take to answer. The host is building the

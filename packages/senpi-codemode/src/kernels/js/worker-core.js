@@ -2,6 +2,8 @@ import { kernelToolCallContext } from "./kernel-tools-context.js";
 import { kernelToolError } from "./kernel-tools-errors.js";
 import { createKernelToolPump } from "./kernel-tools-pump.js";
 import { hostDeniedError, hostToolRefusal } from "./kernel-tools-scope.js";
+import { installSessionCwd } from "./worker-cwd.js";
+import { createHeapProbe } from "./worker-heap.js";
 import { createWorkerMemory } from "./worker-memory.js";
 import { JsWorkerRuntime } from "./worker-runtime.js";
 import { installKernelWebView } from "./worker-webview.js";
@@ -22,11 +24,13 @@ const SESSION_ENVIRONMENT_KEYS = [
 	"PI_PROVIDER",
 	"PI_MODEL",
 	"PI_REASONING_LEVEL",
+	"OMO_BROWSER_ENGINE",
 ];
 
 export function createWorkerCore(transport, options) {
 	let runtime = null;
 	let memory = null;
+	let heapProbe = null;
 	let activeCell = null;
 	const pendingTools = new Map();
 	const pendingWebViewPorts = new Map();
@@ -91,7 +95,7 @@ export function createWorkerCore(transport, options) {
 
 	function interruptCell(reason) {
 		if (!activeCell || !runtime) return;
-		emit({ type: "status", event: { op: INTERRUPT_ACK_OP, cellId: activeCell.cellId } });
+		acknowledgeInterrupt();
 		const interruption = cellInterruptedError(reason);
 		activeCell.interruption = interruption;
 		for (const [callId, pending] of pendingTools) {
@@ -100,6 +104,11 @@ export function createWorkerCore(transport, options) {
 		}
 		kernelTools.abortAll(kernelToolError("kernel_tool_stale", interruption.message));
 		runtime.interrupt();
+	}
+
+	function acknowledgeInterrupt() {
+		if (!activeCell || !runtime) return;
+		emit({ type: "status", event: { op: INTERRUPT_ACK_OP, cellId: activeCell.cellId, shellWaitActive: runtime.shellWaitActive } });
 	}
 
 	function onMessage(message) {
@@ -118,6 +127,7 @@ export function createWorkerCore(transport, options) {
 		}
 		if (message.type === "init") {
 			applySessionEnvironment(message.sessionEnv);
+			installSessionCwd(options.cwd);
 			installKernelWebView(requestWebViewPort);
 			runtime = new JsWorkerRuntime({
 				cwd: options.cwd,
@@ -128,12 +138,20 @@ export function createWorkerCore(transport, options) {
 				hostToolNames: message.hostToolNames ?? [],
 				foreignLanguageNames: message.foreignLanguageNames ?? [],
 				onChildEvent: (event) => emit({ type: "status", event: { op: CHILD_LIFECYCLE_OP, ...event } }),
+				onShellWaitChange: () => {
+					if (activeCell?.interruption) acknowledgeInterrupt();
+				},
 			});
 			if (message.memory) {
 				memory = createWorkerMemory(message.memory, (report) => emit({ type: "status", event: { op: MEMORY_COLLECTED_OP, ...report } }));
 				memory.captureBaseline();
 			}
 			emit({ type: "ready" });
+			return;
+		}
+		if (message.type === "memory-query") {
+			heapProbe ??= createHeapProbe();
+			emit({ type: "memory-query-result", requestId: message.requestId, liveBytes: Math.round(heapProbe.estimate()), measure: "heap" });
 			return;
 		}
 		if (message.type === "run") {

@@ -3,6 +3,23 @@ import { MessageChannel, type MessagePort } from "node:worker_threads";
 import { retireBunChrome, settleDeadBunChrome } from "./bun-chrome.ts";
 import { mainThreadWebViewClass, type NativeWebView, type NativeWebViewClass } from "./native-webview.ts";
 import { closeQuietly, WebViewServiceClient } from "./webview-client.ts";
+import {
+	type AttachDeadline,
+	attachedWithin,
+	DEFAULT_READINESS,
+	type ReadinessEvent,
+	readinessLogFromEnvironment,
+	timedDeadline,
+	WebViewNotReadyError,
+	type WebViewReadinessPolicy,
+} from "./webview-readiness.ts";
+
+export interface WebViewServiceOptions {
+	readonly readiness?: Partial<WebViewReadinessPolicy>;
+	readonly onReadiness?: (event: ReadinessEvent) => void;
+	/** The readiness bound of each launch; defaults to `attachBoundMs`. Tests signal it instead of waiting. */
+	readonly attachDeadline?: (launch: number) => AttachDeadline;
+}
 
 export interface WebViewClientGrant {
 	readonly clientId: string;
@@ -16,14 +33,21 @@ export interface WebViewClientGrant {
  */
 export class WebViewService {
 	readonly #webViewClass: NativeWebViewClass;
+	readonly #readiness: WebViewReadinessPolicy;
+	readonly #onReadiness: (event: ReadinessEvent) => void;
+	readonly #attachDeadline: (launch: number) => AttachDeadline;
 	readonly #clients = new Map<string, WebViewServiceClient>();
 	#retiring: Promise<void> = Promise.resolve();
 	#chromeInUse = false;
 	// Views being constructed and not yet adopted by their client: Chrome must outlive them.
 	#launching = 0;
 
-	constructor(webViewClass: NativeWebViewClass) {
+	constructor(webViewClass: NativeWebViewClass, options: WebViewServiceOptions = {}) {
 		this.#webViewClass = webViewClass;
+		this.#readiness = { ...DEFAULT_READINESS, ...options.readiness };
+		this.#onReadiness = options.onReadiness ?? (() => {});
+		const boundMs = this.#readiness.attachBoundMs;
+		this.#attachDeadline = options.attachDeadline ?? (() => timedDeadline(boundMs));
 	}
 
 	get viewCount(): number {
@@ -36,7 +60,7 @@ export class WebViewService {
 		const clientId = randomUUID();
 		const channel = new MessageChannel();
 		const client = new WebViewServiceClient(clientId, owner, channel.port1, {
-			createView: (options, onConsole, adopt) => this.#createView(options, onConsole, adopt),
+			createView: (options, onConsole, adopt, wanted) => this.#createView(options, onConsole, adopt, wanted),
 			onClientClosed: (closed) => void this.#drop(closed),
 		});
 		this.#clients.set(clientId, client);
@@ -61,29 +85,62 @@ export class WebViewService {
 	}
 
 	/**
-	 * Launches a view and hands it to `adopt` in the same turn, so no retirement can slip between the
-	 * launch and the client's bookkeeping. A launch that fails, or whose client was released while it
-	 * was in flight, retires the Chrome it started unless another view still needs it.
+	 * Launches a view, waits until it is ready, and hands it to `adopt` in the same turn, so no
+	 * retirement can slip between the launch and the client's bookkeeping. A launch that fails, never
+	 * becomes ready, or whose client was released while it was in flight, retires the Chrome it started
+	 * unless another view still needs it; a launch that never became ready is retried once on a fresh
+	 * Chrome before the create fails naming the phase it stalled in.
 	 */
 	async #createView(
 		options: Readonly<Record<string, unknown>>,
 		onConsole: ((...args: unknown[]) => void) | undefined,
 		adopt: (view: NativeWebView) => boolean,
+		wanted: () => boolean,
 	): Promise<NativeWebView> {
-		this.#launching++;
-		let view: NativeWebView;
-		try {
-			view = await this.#launch(onConsole ? { ...options, console: onConsole } : options);
-		} catch (error) {
+		const viewOptions = onConsole ? { ...options, console: onConsole } : options;
+		for (let launch = 1; ; launch++) {
+			this.#launching++;
+			let view: NativeWebView | undefined;
+			try {
+				view = await this.#launchReady(viewOptions, launch);
+			} catch (error) {
+				this.#launching--;
+				await this.#retireIfIdle();
+				throw error;
+			}
 			this.#launching--;
+			if (view) {
+				if (adopt(view)) return view;
+				closeQuietly(view);
+				await this.#retireIfIdle();
+				throw new Error("WebView client released");
+			}
 			await this.#retireIfIdle();
+			if (!wanted()) throw new Error("WebView client released");
+			if (launch >= this.#readiness.launchAttempts) throw new WebViewNotReadyError(launch, this.#readiness);
+		}
+	}
+
+	/** A launched view whose readiness navigation settled, or undefined (the view closed) when it stalled. */
+	async #launchReady(
+		viewOptions: Readonly<Record<string, unknown>>,
+		launch: number,
+	): Promise<NativeWebView | undefined> {
+		const view = await this.#launch(viewOptions);
+		let attachMs: number | undefined;
+		try {
+			attachMs = await attachedWithin(view, this.#attachDeadline(launch));
+		} catch (error) {
+			closeQuietly(view);
 			throw error;
 		}
-		this.#launching--;
-		if (adopt(view)) return view;
+		if (attachMs !== undefined) {
+			this.#onReadiness({ type: "ready", launch, attachMs });
+			return view;
+		}
 		closeQuietly(view);
-		await this.#retireIfIdle();
-		throw new Error("WebView client released");
+		this.#onReadiness({ type: "stalled", phase: "cdp-target-attach", launch });
+		return undefined;
 	}
 
 	async #launch(viewOptions: Readonly<Record<string, unknown>>): Promise<NativeWebView> {
@@ -144,7 +201,8 @@ export function mainThreadWebViewService(): WebViewService | undefined {
 	if (isWebViewService(existing)) return existing;
 	const webViewClass = mainThreadWebViewClass();
 	if (!webViewClass) return undefined;
-	const service = new WebViewService(webViewClass);
+	const onReadiness = readinessLogFromEnvironment();
+	const service = new WebViewService(webViewClass, onReadiness ? { onReadiness } : {});
 	Reflect.set(globalThis, SERVICE_KEY, service);
 	return service;
 }

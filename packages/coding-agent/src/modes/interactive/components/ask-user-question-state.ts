@@ -247,6 +247,7 @@ export class AskUserQuestionState {
 		const comment = this.comment !== undefined && this.comment.trim() !== "" ? this.comment : undefined;
 		return {
 			status,
+			...(status === "answered" || status === "comment-submitted" ? { resolvedBy: "local_ui" as const } : {}),
 			answers: this.answers(),
 			...(comment !== undefined ? { comment } : {}),
 			unanswered: this.unanswered(),

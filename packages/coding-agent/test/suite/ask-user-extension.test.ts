@@ -4,7 +4,12 @@ import askUserExtension from "../../src/core/extensions/builtin/ask-user/index.t
 import { getPendingQuestions } from "../../src/core/extensions/builtin/ask-user/registry.ts";
 import { askUserRenderers } from "../../src/core/extensions/builtin/ask-user/render.ts";
 import { WAIT_FLAG_STEER_TEXT } from "../../src/core/extensions/builtin/ask-user/schema.ts";
-import type { ExtensionAPI, ExtensionContext, QuestionResponse } from "../../src/core/extensions/types.ts";
+import type {
+	ExtensionAPI,
+	ExtensionContext,
+	ExtensionToolContext,
+	QuestionResponse,
+} from "../../src/core/extensions/types.ts";
 import { createHarness, type Harness } from "./harness.ts";
 
 const args = {
@@ -104,7 +109,7 @@ describe("ask-user builtin", () => {
 	);
 	it("returns blocking answers through the formatter", async () => {
 		const { tool, ctx, deliveries } = await setup();
-		const result = await required(tool).execute("blocking", args, undefined, undefined, ctx);
+		const result = await required(tool).execute("blocking", args, undefined, undefined, ctx as ExtensionToolContext);
 		expect(result.content).toEqual([{ type: "text", text: "Library: A" }]);
 		expect(result.details).toMatchObject({ status: "answered", answers: { "Which library?": "A" } });
 		// A blocking answer travels as the tool result only.
@@ -121,7 +126,7 @@ describe("ask-user builtin", () => {
 			{ ...args, waitForAnswer: false },
 			undefined,
 			undefined,
-			ctx,
+			ctx as ExtensionToolContext,
 		);
 		expect(result.details).toMatchObject({ accepted: true, requestId: "async", status: "pending" });
 		expect(ctx.ui.question).toHaveBeenCalledWith(
@@ -150,7 +155,9 @@ describe("ask-user builtin", () => {
 		ctx.hasUI = false;
 		const question = ctx.ui.question;
 		if (mode === "tui") ctx.ui.question = undefined;
-		expect((await required(tool).execute("none", args, undefined, undefined, ctx)).details).toMatchObject({
+		expect(
+			(await required(tool).execute("none", args, undefined, undefined, ctx as ExtensionToolContext)).details,
+		).toMatchObject({
 			status: "unavailable",
 		});
 		expect(h.session.getActiveToolNames()).not.toContain("ask_user_question");
@@ -159,7 +166,9 @@ describe("ask-user builtin", () => {
 	it("calls a supplied question bridge even when hasUI is false", async () => {
 		const { tool, ctx } = await setup();
 		ctx.hasUI = false;
-		expect((await required(tool).execute("bridge", args, undefined, undefined, ctx)).details).toMatchObject({
+		expect(
+			(await required(tool).execute("bridge", args, undefined, undefined, ctx as ExtensionToolContext)).details,
+		).toMatchObject({
 			status: "answered",
 		});
 	});
@@ -170,7 +179,9 @@ describe("ask-user builtin", () => {
 		ctx.ui.question = vi.fn(
 			async (): Promise<QuestionResponse> => ({ status: "unavailable", answers: {}, unanswered: ["q1"] }),
 		);
-		expect((await required(tool).execute("rpc", args, undefined, undefined, ctx)).details).toMatchObject({
+		expect(
+			(await required(tool).execute("rpc", args, undefined, undefined, ctx as ExtensionToolContext)).details,
+		).toMatchObject({
 			status: "unavailable",
 		});
 		expect(ctx.ui.question).toHaveBeenCalledOnce();
@@ -182,13 +193,21 @@ describe("ask-user builtin", () => {
 		const wireName = mapped.customToolNameToSdk.get(definition.name);
 		expect(wireName).toBe("mcp__custom-tools__ask_user_question");
 		expect(mapSdkToolNameToPi(required(wireName), mapped.customToolNameToPi)).toBe(definition.name);
-		expect((await definition.execute("sdk", args, undefined, undefined, ctx)).details).toMatchObject({
+		expect(
+			(await definition.execute("sdk", args, undefined, undefined, ctx as ExtensionToolContext)).details,
+		).toMatchObject({
 			status: "answered",
 		});
 	});
 	it("rejects a missing wait flag before opening UI", async () => {
 		const { tool, ctx } = await setup();
-		const result = await required(tool).execute("missing", { questions: args.questions }, undefined, undefined, ctx);
+		const result = await required(tool).execute(
+			"missing",
+			{ questions: args.questions },
+			undefined,
+			undefined,
+			ctx as ExtensionToolContext,
+		);
 		expect(result.content).toEqual([{ type: "text", text: WAIT_FLAG_STEER_TEXT }]);
 		expect(ctx.ui.question).not.toHaveBeenCalled();
 	});
@@ -196,7 +215,13 @@ describe("ask-user builtin", () => {
 		const { tool, ctx } = await setup();
 		const controller = new AbortController();
 		ctx.ui.question = vi.fn(() => new Promise<QuestionResponse>(() => {}));
-		const execution = required(tool).execute("abort", args, controller.signal, undefined, ctx);
+		const execution = required(tool).execute(
+			"abort",
+			args,
+			controller.signal,
+			undefined,
+			ctx as ExtensionToolContext,
+		);
 		controller.abort();
 		expect((await execution).details).toMatchObject({ status: "cancelled" });
 		expect(getPendingQuestions(ctx.sessionManager.getSessionId())).toEqual([]);
@@ -209,7 +234,7 @@ describe("ask-user builtin", () => {
 			progress = opts;
 			return new Promise<QuestionResponse>(() => {});
 		});
-		const execution = required(tool).execute("progress", args, undefined, undefined, ctx);
+		const execution = required(tool).execute("progress", args, undefined, undefined, ctx as ExtensionToolContext);
 		for (let n = 0; n < 4; n++) {
 			await vi.advanceTimersByTimeAsync(29 * 60_000);
 			required(progress).onProgress?.({ answers: { q1: { selected: ["A"] } } });
@@ -226,16 +251,20 @@ describe("ask-user builtin", () => {
 		vi.useFakeTimers();
 		const { tool, ctx, runner } = await setup();
 		ctx.ui.question = vi.fn(() => new Promise<QuestionResponse>(() => {}));
-		const first = required(tool).execute("timeout", args, undefined, undefined, ctx);
+		const first = required(tool).execute("timeout", args, undefined, undefined, ctx as ExtensionToolContext);
 		await vi.advanceTimersByTimeAsync(1_800_000);
 		expect((await first).details).toMatchObject({ status: "timed_out" });
-		expect((await required(tool).execute("again", args, undefined, undefined, ctx)).details).toMatchObject({
+		expect(
+			(await required(tool).execute("again", args, undefined, undefined, ctx as ExtensionToolContext)).details,
+		).toMatchObject({
 			status: "unavailable",
 		});
 		expect(ctx.ui.question).toHaveBeenCalledTimes(1);
 		await runner.emit({ type: "agent_end", messages: [] });
 		ctx.ui.question = vi.fn(async () => answer);
-		expect((await required(tool).execute("next", args, undefined, undefined, ctx)).details).toMatchObject({
+		expect(
+			(await required(tool).execute("next", args, undefined, undefined, ctx as ExtensionToolContext)).details,
+		).toMatchObject({
 			status: "answered",
 		});
 	});

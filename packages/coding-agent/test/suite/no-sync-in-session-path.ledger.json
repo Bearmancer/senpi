@@ -303,6 +303,27 @@
 			"symbol": "backupAuthFile",
 			"count": 1,
 			"note": "one-shot timestamped auth.json backup taken before the senpi#1989 provider-key migration rewrites it; runs once per install (KB-scale)"
+		},
+		{
+			"file": "src/modes/rpc/tool-media-store.ts",
+			"api": "writeFileSync",
+			"symbol": "writeImage",
+			"count": 1,
+			"note": "one tool-result image (at most 20 MiB) written before the placeholder naming it is emitted; the publish-after-write contract needs the file to exist first, and a re-emitted image is memoized so it is written once"
+		},
+		{
+			"file": "src/utils/bundled-bun.ts",
+			"api": "readFileSync",
+			"symbol": "writeIfChanged",
+			"count": 1,
+			"note": "bundled bun/bunx script (~80 bytes) compared before writing (omo#9362); bundledBunDir memoizes per executable, so it runs at most twice per process (bun + bunx) and only inside a compiled executable"
+		},
+		{
+			"file": "src/utils/bundled-bun.ts",
+			"api": "writeFileSync",
+			"symbol": "writeIfChanged",
+			"count": 1,
+			"note": "bundled bun/bunx script (~80 bytes) written only when missing or stale (omo#9362); bundledBunDir memoizes per executable, so it runs at most twice per process (bun + bunx) and only inside a compiled executable"
 		}
 	]
 }

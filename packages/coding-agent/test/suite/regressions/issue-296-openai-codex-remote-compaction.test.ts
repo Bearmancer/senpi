@@ -1,6 +1,12 @@
 import { arch, platform, release } from "node:os";
 import { zstdDecompressSync } from "node:zlib";
-import { type Api, type AssistantMessage, convertResponsesMessages, type Model } from "@earendil-works/pi-ai";
+import {
+	type Api,
+	type AssistantMessage,
+	convertResponsesMessages,
+	type Model,
+	normalizeContext,
+} from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { streamSimple as streamCodex } from "../../../../ai/src/api/openai-codex-responses.ts";
 import { DEFAULT_COMPACTION_SETTINGS } from "../../../src/core/compaction/index.ts";
@@ -202,7 +208,7 @@ function finalCodexReplayPayload(branchEntries: SessionEntry[]) {
 		model: CODEX_MODEL.id,
 		input: convertResponsesMessages(
 			CODEX_MODEL,
-			{ messages: convertToLlm(markedContext) },
+			normalizeContext({ messages: convertToLlm(markedContext) }),
 			new Set(["chatgpt-subscription"]),
 			{ includeSystemPrompt: false, preserveTextSignatures: true },
 		),
@@ -277,7 +283,7 @@ describe("issue #296 ChatGPT Subscription remote compaction", () => {
 				model: CODEX_MODEL.id,
 				input: convertResponsesMessages(
 					CODEX_MODEL,
-					{ messages: convertToLlm(markedContext) },
+					normalizeContext({ messages: convertToLlm(markedContext) }),
 					new Set(["chatgpt-subscription"]),
 					{ includeSystemPrompt: false, preserveTextSignatures: true },
 				),
@@ -419,7 +425,10 @@ describe("issue #296 ChatGPT Subscription remote compaction", () => {
 				compactionEvent(CODEX_MODEL.api, branch),
 				undefined,
 				// The harness installs a faux transport for this api; compaction must reach the real one.
-				{ streamRunner: (model, context, options) => streamCodex(model as typeof CODEX_MODEL, context, options) },
+				{
+					streamRunner: (model, context, options) =>
+						streamCodex(model as typeof CODEX_MODEL, normalizeContext(context), options),
+				},
 			);
 			if (!result) throw new Error("Expected Codex remote compaction result");
 

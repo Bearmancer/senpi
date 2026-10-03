@@ -3,6 +3,7 @@ import type { FetchedPage } from "./providers/shared.ts";
 import {
 	detectSearchChallenge,
 	normalizeSearchResponse,
+	parseProviderBody,
 	prepareSearchRequest,
 	searchResponseError,
 	searchResponseFormat,
@@ -210,6 +211,8 @@ function parseEventStream(text: string): unknown {
 }
 
 function responsePayload(provider: SearchProvider, page: FetchedPage): unknown {
+	const parsed = parseProviderBody(provider, page.body);
+	if (parsed) return parsed;
 	const format = searchResponseFormat(provider);
 	if (format === "html") return { html: page.body, url: page.url };
 	if (page.body.length === 0) return {};
@@ -303,7 +306,13 @@ async function performProviderSearch(
 		durationMs: Date.now() - startedAt,
 		truncated: results.length > max,
 	};
-	if (limitedResults.length === 0) details.error = noResultsMessage(config, request);
+	if (limitedResults.length === 0) {
+		const payloadError =
+			isJsonObject(payload) && payload.error !== undefined ? extractErrorDetail({ error: payload.error }, "") : "";
+		details.error = payloadError
+			? `Search provider ${providerEntryLabel(config)} failed: ${payloadError}`
+			: noResultsMessage(config, request);
+	}
 	if (config.id !== undefined) details.entryId = config.id;
 	return details;
 }

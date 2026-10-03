@@ -220,7 +220,8 @@ describe("runSideQuery", () => {
 		expect(result.replyText).toBe("the answer is 4");
 		expect(deltas.join("")).toBe("the answer is 4");
 		const call = faux.getCallLog().at(-1);
-		expect(call?.context.tools).toEqual([]);
+		// The faux call log replays tools from the transcript and omits them when none are declared (L2a decision 56).
+		expect(call?.context.tools).toBeUndefined();
 		expect(call?.options?.sessionId).toMatch(/^session-1:btw:/);
 	});
 
@@ -317,7 +318,8 @@ describe("/btw extension command", () => {
 
 		expect(harness.session.messages.length).toBe(messagesBefore);
 		const sideCall = harness.faux.getCallLog().at(-1);
-		expect(sideCall?.context.tools).toEqual([]);
+		// The faux call log replays tools from the transcript and omits them when none are declared (L2a decision 56).
+		expect(sideCall?.context.tools).toBeUndefined();
 		const sideMessages = sideCall?.context.messages ?? [];
 		expect(getMessageText(sideMessages.at(-1))).toBe("what did I just ask?");
 		expect(sideMessages.some((message) => getMessageText(message) === "main question")).toBe(true);

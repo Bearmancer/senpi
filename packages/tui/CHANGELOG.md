@@ -12,6 +12,135 @@
 
 ### Removed
 
+## [2026.10.5] - 2026-10-03
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.4] - 2026-10-03
+
+### Breaking Changes
+
+### Added
+
+- `PI_TUI_BURST_WINDOW_MS` sets how long a line break ending a read with text is held in case the rest of a paste follows, when the terminal sends no bracketed-paste markers. It defaults to `100` ms over SSH and `20` ms otherwise, and `0` never holds a line break ([#2622](https://github.com/code-yeongyu/senpi/issues/2622), reported by [@Bearmancer](https://github.com/Bearmancer)).
+
+### Changed
+
+### Fixed
+
+- A multiline paste that arrives without bracketed-paste markers no longer submits one prompt per line: newline-bearing stdin bursts coalesce into a single `paste` event, so the editor receives one block ([#2600](https://github.com/code-yeongyu/senpi/issues/2600), [#2606](https://github.com/code-yeongyu/senpi/pull/2606) by [@Bearmancer](https://github.com/Bearmancer)).
+- An Enter typed right after other input is no longer lost when the next stdin read is half of a multibyte character (an emoji over SSH): the held line break is released on time, and a read that arrives after the paste window releases it as Enter instead of joining it to a later paste ([#2621](https://github.com/code-yeongyu/senpi/issues/2621), reported by [@Bearmancer](https://github.com/Bearmancer)).
+
+### Removed
+
+## [2026.10.3] - 2026-10-03
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.2] - 2026-10-02
+
+### Breaking Changes
+
+### Added
+
+- Exported `isWarpWslSession()` so clipboard handling can reuse the hardened direct-local Warp-on-WSL predicate without duplicating terminal detection; existing Shift+Enter normalization remains unchanged ([#2538](https://github.com/code-yeongyu/senpi/pull/2538) by [@deopa0402](https://github.com/deopa0402)).
+
+### Changed
+
+### Fixed
+
+- Frames over long output no longer re-scan every line: a frame whose line count changed reuses the unchanged normalized prefix, image presence is measured once per frame, and the main-screen renderer no longer walks the whole component tree and copies every line on each frame. Components can report `getRenderRevision()`, a change signal that containers caching their children's output use to tell when a child must render again ([#2508](https://github.com/code-yeongyu/senpi/issues/2508)).
+
+- Fixed inherited color bleeding past mouse selections and search highlights in fullscreen mode when a styled token ends at the highlight boundary ([#10169](https://github.com/earendil-works/pi/issues/10169)).
+
+- Fixed inherited memory retained per rendered message: `Markdown` holds its parsed tokens weakly, and `Markdown`, `Text`, and `Box` flatten their cached lines. A long assistant message keeps about a fifth of the heap it kept before.
+
+- Fixed inherited slash command autocompletion not triggering when the input starts with whitespace ([#10218](https://github.com/earendil-works/pi/pull/10218) by [@haoqixu](https://github.com/haoqixu)).
+
+### Removed
+
+## [2026.10.1-3] - 2026-10-01
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.1-2] - 2026-10-01
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.1] - 2026-10-01
+
+### Breaking Changes
+
+- Replaced the inherited `TUI.queryTerminalColorScheme()` and `TUI.queryTerminalBackgroundColor()` with `TUI.queryTerminalColors()`, which reads the default foreground, background and 16 ANSI colors (OSC 10, 11 and 4) in one round trip and returns `TerminalColors`. `parseOsc11BackgroundColor()` is removed.
+
+### Added
+
+- Added inherited color values and styling: the `Color` type (indexed ANSI, sRGB or OKLCH), `parseColor()` for `#rgb`, `#rrggbb`, `oklch()` and `okhsl()` values, `indexedColor()`, `rgbColor()`, `oklchColor()`, `okhslColor()`, `mixColors()`, `colorToHex()`, `colorToRgb()`, `colorToOklch()`, `colorToOkhsl()`, `styleText()` and `getTerminalColorMode()`.
+
+- Added inherited `"auto"` for `TuiAltScreenOptions.wheelScrollLines`, which speeds up fast wheel spins on terminals that send one event per notch, and `TuiAltScreen.setWheelScrollLines()` for runtime updates ([#9758](https://github.com/earendil-works/pi/issues/9758)).
+
+- Added the inherited bundled asynchronous native clipboard readers for macOS, Windows and X11 through `getNativeClipboard()` ([#9163](https://github.com/earendil-works/pi/pull/9163)), and `NativeClipboard.getFilePaths()`, which reads file URLs from the macOS clipboard ([#9999](https://github.com/earendil-works/pi/issues/9999), [#10136](https://github.com/earendil-works/pi/pull/10136) by [@christianklotz](https://github.com/christianklotz)).
+
+### Changed
+
+- Terminals with `TERM=*-direct` are detected as truecolor (inherited).
+
+- Reduced inherited fuzzy search latency for long texts by using native substring search ([#9267](https://github.com/earendil-works/pi/issues/9267)).
+
+### Fixed
+
+- Fixed optional-argument command picker rows requiring two Enter presses. A command that declares `requiresArguments: false` submits on the first Enter; a row with an argument hint and no explicit flag still completes and waits ([#2479](https://github.com/code-yeongyu/senpi/issues/2479)).
+
+- Fixed inherited `/skill` autocomplete appearing empty when loaded skill names did not contain the letters in `skill` ([#9944](https://github.com/earendil-works/pi/issues/9944)), and skill slash-command autocomplete ranking the `skill:` prefix instead of the bare skill name ([#9120](https://github.com/earendil-works/pi/pull/9120) by [@yearth](https://github.com/yearth)).
+
+- Fixed inherited path and `@` autocomplete not working after opening wrappers such as `(`, `[`, `{`, `<` or a backtick, and file autocomplete boundaries and path quoting around CJK punctuation ([#9746](https://github.com/earendil-works/pi/pull/9746) by [@haoqixu](https://github.com/haoqixu)).
+
+- Fixed inherited image stretching in terminals that use the Kitty graphics protocol ([#8938](https://github.com/earendil-works/pi/issues/8938), [#9957](https://github.com/earendil-works/pi/pull/9957) by [@rwachtler](https://github.com/rwachtler)), and fullscreen Kitty images being erased by later row clears in WezTerm ([#9169](https://github.com/earendil-works/pi/issues/9169)).
+
+- Fixed inherited keyboard input being lost after a component that forwarded a mouse event to a child, such as `SettingsList` with an open submenu, removed that child.
+
+- Fixed the inherited shell cursor staying hidden after exit when an extension closed an overlay during shutdown ([#10026](https://github.com/earendil-works/pi/issues/10026)).
+
+- Fixed inherited fullscreen clipboard failures hiding actionable backend error messages behind a generic notice, and extended failure notices to five seconds ([#9618](https://github.com/earendil-works/pi/issues/9618)).
+
+- Fixed inherited LaTeX legacy font switches falling back to raw source, centered `cases` layouts, and nested display scripts, ported into the fork's `components/latex.ts` ([#8827](https://github.com/earendil-works/pi/issues/8827), [#9564](https://github.com/earendil-works/pi/issues/9564), [#7929](https://github.com/earendil-works/pi/issues/7929)).
+
+- Improved inherited rendering performance for styled text: `visibleWidth()` measures ANSI-styled ASCII without grapheme segmentation, `Box` checks its render cache without re-padding every line, and `Markdown` reuses parsed tokens across theme and width changes.
+
+### Removed
+
 ## [2026.9.30] - 2026-09-30
 
 ### Breaking Changes

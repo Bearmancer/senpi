@@ -25,9 +25,9 @@ import type {
 	SimpleStreamOptions,
 	StreamFunction,
 	StreamOptions,
+	TranscriptContext,
 	Usage,
 } from "../types.ts";
-import { splitDeferredTools } from "../utils/deferred-tools.ts";
 import { formatProviderError, normalizeProviderError } from "../utils/error-body.ts";
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import {
@@ -44,6 +44,7 @@ import {
 import { getProviderEnvValue } from "../utils/provider-env.ts";
 import { retryProviderRequest } from "../utils/provider-retry.ts";
 import { sendWithForcedToolChoiceFallback } from "../utils/tool-choice-fallback.ts";
+import { getCurrentTools, getDeclaredTools, normalizeContext, resolveTranscript } from "../utils/transcript.ts";
 import { isCloudflareProvider, resolveCloudflareBaseUrl } from "./cloudflare.ts";
 import { createGrammarToolInputProperties } from "./constrained-sampling.ts";
 import { withGitHubCopilotFailureNote } from "./github-copilot-errors.ts";
@@ -55,7 +56,13 @@ import {
 	type OpenAIPromptCacheOptionsPayload,
 	withPromptCacheComparison,
 } from "./openai-responses-prompt-cache.ts";
-import { convertResponsesMessages, convertResponsesTools, processResponsesStream } from "./openai-responses-shared.ts";
+import {
+	convertResponsesMessages,
+	convertResponsesTools,
+	processResponsesStream,
+	resolveResponsesDeferredToolsMode,
+	resolveResponsesToolPlacement,
+} from "./openai-responses-shared.ts";
 import { buildBaseOptions, clampMaxForOpenAI, OPENAI_RESPONSES_RESERVED_BODY_KEYS } from "./simple-options.ts";
 import { startWebSocketLiveness } from "./websocket-liveness.ts";
 import { createWebSocketTransportFailure } from "./websocket-transport-failure.ts";
@@ -67,6 +74,7 @@ const SESSION_WEBSOCKET_CACHE_TTL_MS = 5 * 60 * 1000;
 // OpenAI Responses rejects max_output_tokens below 16: https://github.com/earendil-works/pi/issues/6265
 const OPENAI_RESPONSES_MIN_OUTPUT_TOKENS = 16;
 const PROMPT_CACHE_PREWARM_TIMEOUT_MS = 30_000;
+const CHATGPT_USAGE_URL = "https://chatgpt.com/settings/usage";
 
 type WebSocketEventType = "open" | "message" | "error" | "close" | "ping" | "pong";
 type WebSocketListener = (event: unknown) => void;
@@ -123,6 +131,7 @@ function getCompat(model: Model<"openai-responses">, env?: ProviderEnv): Require
 	const isNativeEndpoint = isOpenAIResponsesNativeEndpoint(model, env);
 	return {
 		supportsDeveloperRole: model.compat?.supportsDeveloperRole ?? true,
+		supportsMidConvoSystemMessages: model.compat?.supportsMidConvoSystemMessages ?? false,
 		sessionAffinityFormat: model.compat?.sessionAffinityFormat ?? detectSessionAffinityFormat(model),
 		supportsLongCacheRetention: model.compat?.supportsLongCacheRetention ?? true,
 		supportsWebSocket: model.compat?.supportsWebSocket ?? isNativeEndpoint,
@@ -162,7 +171,7 @@ function getPromptCacheRetention(
 function getPromptCacheOptions(
 	compat: Required<OpenAIResponsesCompat>,
 	cacheRetention: CacheRetention,
-): { mode?: "explicit"; ttl?: "30m" } | undefined {
+): OpenAIPromptCacheOptionsPayload | undefined {
 	if (!compat.supportsExplicitPromptCacheMode) return undefined;
 	if (cacheRetention === "none") return { mode: "explicit" };
 	if (cacheRetention === "long" && compat.supportsLongCacheRetention) return { ttl: "30m" };
@@ -231,13 +240,6 @@ function allowedReference(tool: OpenAITool): AllowedToolReference {
 	return { type: tool.type };
 }
 
-function resolveDeferredToolsMode(
-	compat: Required<OpenAIResponsesCompat>,
-): "additional-tools" | "tool-search" | undefined {
-	if (compat.supportsAdditionalTools) return "additional-tools";
-	return compat.supportsToolSearch ? "tool-search" : undefined;
-}
-
 /**
  * senpi#2095: `tools` carries every tool declared this session, so removing a tool never rewrites the
  * cached prefix; the callable subset rides `tool_choice: allowed_tools` instead. Hosted tools a payload
@@ -247,15 +249,15 @@ function resolveDeferredToolsMode(
  */
 function applyAllowedToolsChoice<TParams extends ResponseCreateParamsStreaming>(
 	params: TParams,
-	context: Context,
+	context: TranscriptContext,
+	activeToolNames: readonly string[] | undefined,
 	compat: Required<OpenAIResponsesCompat>,
 ): TParams {
-	const activeToolNames = context.activeToolNames;
 	if (!compat.supportsAllowedTools || activeToolNames === undefined || params.tool_choice !== undefined) {
 		return params;
 	}
 	const active = new Set(activeToolNames);
-	const declaredTools = context.tools ?? [];
+	const declaredTools = getCurrentTools(context.messages);
 	if (declaredTools.every((tool) => active.has(tool.name))) return params;
 
 	const allowed: AllowedToolReference[] = [];
@@ -267,9 +269,15 @@ function applyAllowedToolsChoice<TParams extends ResponseCreateParamsStreaming>(
 		}
 		allowed.push(allowedReference(tool));
 	}
-	const deferredTools = splitDeferredTools(context, resolveDeferredToolsMode(compat) !== undefined).deferred;
+	// Tools missing from the request-level `tools` placement are the ones transcript items load in place.
+	const requestToolNames = new Set(
+		resolveResponsesToolPlacement(
+			context.messages,
+			resolveResponsesDeferredToolsMode(compat) !== undefined,
+		).requestTools.map((tool) => tool.name),
+	);
 	for (const tool of declaredTools) {
-		if (namedInTools.has(tool.name) || !active.has(tool.name) || !deferredTools.has(tool.name)) continue;
+		if (namedInTools.has(tool.name) || !active.has(tool.name) || requestToolNames.has(tool.name)) continue;
 		const [converted] = convertResponsesTools([tool], {
 			supportsStrictMode: compat.supportsStrictMode,
 			supportsOpenAIGrammarTools: compat.supportsOpenAIGrammarTools,
@@ -282,15 +290,22 @@ function applyAllowedToolsChoice<TParams extends ResponseCreateParamsStreaming>(
 	return { ...params, tool_choice: toolChoice };
 }
 
-function formatOpenAIResponsesError(error: unknown): string {
-	return formatProviderError(normalizeProviderError(error), "OpenAI API error");
+function formatOpenAIResponsesError(error: unknown, provider: string): string {
+	const errorMessage = formatProviderError(
+		normalizeProviderError(error),
+		`${provider === "openai" ? "OpenAI" : provider} API error`,
+	);
+	// Sign in with ChatGPT shares the subscription's usage limit with other apps.
+	return errorMessage.includes("subscription_sharing_usage_limit_exceeded")
+		? `${errorMessage}\nCheck your ChatGPT usage: ${CHATGPT_USAGE_URL}`
+		: errorMessage;
 }
 
 // OpenAI Responses-specific options
 export interface OpenAIResponsesOptions extends StreamOptions {
 	reasoningEffort?: "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 	reasoningSummary?: "auto" | "detailed" | "concise" | null;
-	serviceTier?: ResponseCreateParamsStreaming["service_tier"] | "fast";
+	serviceTier?: ResponseCreateParamsStreaming["service_tier"] | "fast" | "ultrafast";
 	toolChoice?: ResponseCreateParamsStreaming["tool_choice"];
 }
 
@@ -299,10 +314,11 @@ export interface OpenAIResponsesOptions extends StreamOptions {
  */
 export const stream: StreamFunction<"openai-responses", OpenAIResponsesOptions> = (
 	model: Model<"openai-responses">,
-	context: Context,
+	context: TranscriptContext,
 	options?: OpenAIResponsesOptions,
 ): AssistantMessageEventStream => {
 	const stream = new AssistantMessageEventStream();
+	const normalizedContext = resolveTranscript(context, getCompat(model).supportsMidConvoSystemMessages);
 
 	// Start async processing
 	(async () => {
@@ -330,26 +346,26 @@ export const stream: StreamFunction<"openai-responses", OpenAIResponsesOptions> 
 			const cacheSessionId = cacheRetention === "none" ? undefined : options?.sessionId;
 			const compat = getCompat(model, options?.env);
 			const grammarToolInputProperties = createGrammarToolInputProperties(
-				context.tools,
+				getDeclaredTools(normalizedContext.messages),
 				compat.supportsOpenAIGrammarTools,
 			);
 			const client = createClient(
 				model,
-				context,
+				normalizedContext,
 				clientAuth.apiKey,
 				clientAuth.headers,
 				options?.fetch,
 				cacheSessionId,
 				options?.env,
 			);
-			let params = buildParams(model, context, options, compat, grammarToolInputProperties);
+			let params = buildParams(model, normalizedContext, options, compat, grammarToolInputProperties);
 			const nextParams = await options?.onPayload?.(params, model);
 			if (nextParams !== undefined) {
 				params = nextParams as MutableResponsesPayload;
 			}
 
 			params = sanitizeUnsupportedNativeTools(params, compat);
-			params = applyAllowedToolsChoice(params, context, compat);
+			params = applyAllowedToolsChoice(params, normalizedContext, context.activeToolNames, compat);
 			const limitedTools = limitGitHubCopilotTools(model.provider, params.tools, params.tool_choice);
 			if (limitedTools.omittedCount > 0) {
 				params = { ...params, tools: limitedTools.tools };
@@ -364,7 +380,7 @@ export const stream: StreamFunction<"openai-responses", OpenAIResponsesOptions> 
 						params,
 						buildWebSocketHeaders(
 							model,
-							context,
+							normalizedContext,
 							clientAuth.apiKey,
 							clientAuth.headers,
 							cacheSessionId,
@@ -426,6 +442,7 @@ export const stream: StreamFunction<"openai-responses", OpenAIResponsesOptions> 
 			stream.push({ type: "start", partial: output });
 
 			await processResponsesStream(openaiStream, output, stream, model, {
+				onProviderStreamEvent: options?.onProviderStreamEvent,
 				serviceTier: options?.serviceTier,
 				grammarToolInputProperties,
 				applyServiceTierPricing: (usage, serviceTier) => applyServiceTierPricing(usage, serviceTier, model),
@@ -458,7 +475,7 @@ export const stream: StreamFunction<"openai-responses", OpenAIResponsesOptions> 
 					: undefined;
 			if (providerDiagnostic !== undefined) output.providerDiagnostic = providerDiagnostic;
 			output.errorMessage = withGitHubCopilotFailureNote(
-				formatGitHubCopilotToolLimitError(output, formatOpenAIResponsesError(error)),
+				formatGitHubCopilotToolLimitError(output, formatOpenAIResponsesError(error, model.provider)),
 				model.provider,
 				error,
 			);
@@ -472,7 +489,7 @@ export const stream: StreamFunction<"openai-responses", OpenAIResponsesOptions> 
 
 export const streamSimple: StreamFunction<"openai-responses", SimpleStreamOptions> = (
 	model: Model<"openai-responses">,
-	context: Context,
+	context: TranscriptContext,
 	options?: SimpleStreamOptions,
 ): AssistantMessageEventStream => {
 	resolveOpenAIClientAuth(model.provider, options?.apiKey, options?.headers);
@@ -481,7 +498,7 @@ export const streamSimple: StreamFunction<"openai-responses", SimpleStreamOption
 
 function resolveSimpleOptions(
 	model: Model<"openai-responses">,
-	context: Context,
+	context: TranscriptContext,
 	options: SimpleStreamOptions | undefined,
 ): OpenAIResponsesOptions {
 	const base = {
@@ -511,12 +528,15 @@ export async function warmOpenAIResponsesPromptCache(
 	context: Context,
 	options?: SimpleStreamOptions,
 ): Promise<{ usage: Usage; usageRaw: unknown }> {
-	const prefix: Context = { ...context, messages: [] };
+	const prefix = normalizeContext({ ...context, messages: [] });
 	const resolved = resolveSimpleOptions(model, prefix, options);
 	const clientAuth = resolveOpenAIClientAuth(model.provider, resolved.apiKey, resolved.headers);
 	const cacheRetention = resolveCacheRetention(resolved.cacheRetention, resolved.env);
 	const compat = getCompat(model, resolved.env);
-	const grammarToolInputProperties = createGrammarToolInputProperties(prefix.tools, compat.supportsOpenAIGrammarTools);
+	const grammarToolInputProperties = createGrammarToolInputProperties(
+		getDeclaredTools(prefix.messages),
+		compat.supportsOpenAIGrammarTools,
+	);
 	const client = createClient(
 		model,
 		prefix,
@@ -563,7 +583,7 @@ export async function warmOpenAIResponsesPromptCache(
 
 function createClient(
 	model: Model<"openai-responses">,
-	context: Context,
+	context: TranscriptContext,
 	apiKey: string,
 	optionsHeaders?: ProviderHeaders,
 	fetch?: typeof globalThis.fetch,
@@ -608,16 +628,18 @@ function createClient(
 
 function buildParams(
 	model: Model<"openai-responses">,
-	context: Context,
+	context: TranscriptContext,
 	options: OpenAIResponsesOptions | undefined,
 	compat: Required<OpenAIResponsesCompat> = getCompat(model, options?.env),
 	grammarToolInputProperties: ReadonlyMap<string, string> = createGrammarToolInputProperties(
-		context.tools,
+		getDeclaredTools(context.messages),
 		compat.supportsOpenAIGrammarTools,
 	),
 ) {
-	const deferredToolsMode = resolveDeferredToolsMode(compat);
-	const toolPlacement = splitDeferredTools(context, deferredToolsMode !== undefined);
+	const toolPlacement = resolveResponsesToolPlacement(
+		context.messages,
+		resolveResponsesDeferredToolsMode(compat) !== undefined,
+	);
 	const requestedReasoningEffort = options?.reasoningEffort ?? (options?.reasoningSummary ? "medium" : undefined);
 	const thinkingLevelMap = inferOpenAIThinkingLevelMap(model);
 	const mappedReasoningEffort =
@@ -632,8 +654,9 @@ function buildParams(
 		// nor a previous prefix unless the system prompt carries an explicit breakpoint.
 		systemPromptCacheBreakpoint: compat.supportsExplicitPromptCacheMode && cacheRetention !== "none",
 		grammarToolInputProperties,
-		deferredTools: toolPlacement.deferred,
-		deferredToolsMode,
+		supportsMidConvoSystemMessages: compat.supportsMidConvoSystemMessages,
+		supportsAdditionalTools: compat.supportsAdditionalTools,
+		supportsToolSearch: compat.supportsToolSearch,
 		toolOptions: {
 			supportsStrictMode: compat.supportsStrictMode,
 			supportsOpenAIGrammarTools: compat.supportsOpenAIGrammarTools,
@@ -675,8 +698,8 @@ function buildParams(
 		params.service_tier = options.serviceTier as ResponseCreateParamsStreaming["service_tier"];
 	}
 
-	if (toolPlacement.immediate.length > 0) {
-		params.tools = convertResponsesTools(toolPlacement.immediate, {
+	if (toolPlacement.requestTools.length > 0) {
+		params.tools = convertResponsesTools(toolPlacement.requestTools, {
 			supportsStrictMode: compat.supportsStrictMode,
 			supportsOpenAIGrammarTools: compat.supportsOpenAIGrammarTools,
 		});
@@ -703,10 +726,8 @@ function buildParams(
 
 	applyExtraBodyToResponsesParams(params, options?.extraBody);
 
-	// Last so custom keys override the named request fields.
-	if (options?.samplingParams) {
-		Object.assign(params, options.samplingParams);
-	}
+	// Last so custom keys override the named request fields. Per-request keys override model defaults.
+	Object.assign(params, model.samplingParams, options?.samplingParams);
 
 	return params;
 }
@@ -1045,7 +1066,7 @@ function resolveOpenAIResponsesWebSocketUrl(model: Model<"openai-responses">, en
 
 function buildWebSocketHeaders(
 	model: Model<"openai-responses">,
-	context: Context,
+	context: TranscriptContext,
 	apiKey: string,
 	optionsHeaders?: ProviderHeaders,
 	sessionId?: string,
@@ -1092,9 +1113,13 @@ function buildWebSocketHeaders(
 
 function getServiceTierCostMultiplier(
 	model: Pick<Model<"openai-responses">, "id">,
-	serviceTier: ResponseCreateParamsStreaming["service_tier"] | "fast" | undefined,
+	serviceTier: ResponseCreateParamsStreaming["service_tier"] | "fast" | "ultrafast" | undefined,
 ): number {
 	switch (serviceTier) {
+		case "ultrafast":
+			// OpenAI publishes an Ultrafast price for GPT-6 Astra only: 6x Standard on every
+			// token class and context tier. Any other model keeps its base rate.
+			return model.id === "gpt-6-astra" ? 6 : 1;
 		case "flex":
 			return 0.5;
 		case "priority":
@@ -1107,7 +1132,7 @@ function getServiceTierCostMultiplier(
 
 function applyServiceTierPricing(
 	usage: Usage,
-	serviceTier: ResponseCreateParamsStreaming["service_tier"] | "fast" | undefined,
+	serviceTier: ResponseCreateParamsStreaming["service_tier"] | "fast" | "ultrafast" | undefined,
 	model: Pick<Model<"openai-responses">, "id">,
 ) {
 	const multiplier = getServiceTierCostMultiplier(model, serviceTier);

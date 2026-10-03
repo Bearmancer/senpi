@@ -1,11 +1,9 @@
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import {
-	SUPPORTED_NATIVE_PREBUILD_TARGETS,
 	assertPublishedWorkspacePackFiles,
 	nativePrebuildFile,
 	nativePrebuildTarget,
-	publishedWorkspacePackageChecks,
 } from "./senpi-publish-pack-checks.mjs";
 
 const AGENT_CORE = "@earendil-works/pi-agent-core";
@@ -92,18 +90,6 @@ describe("assertPublishedWorkspacePackFiles", () => {
 		assert.match(warnings[0], new RegExp(`no native prebuild ${hostPrebuild.replaceAll(".", "\\.")}`));
 	});
 
-	it("warns once per absent target in an all-OS check", () => {
-		// Given: the darwin-arm64 prebuild is present, linux-x64 is not.
-		const tarball = packed([...PTY_LOADER_FILES, nativePrebuildFile("darwin-arm64", PTY)]);
-
-		// When / Then
-		assert.doesNotThrow(() =>
-			assertPublishedWorkspacePackFiles(tarball, PTY, { nativePrebuildTargets: ["darwin-arm64", "linux-x64"] }),
-		);
-		assert.equal(warnings.length, 1);
-		assert.match(warnings[0], /native\/prebuilds\/linux-x64\/senpi_pty\.linux-x64\.node/);
-	});
-
 	for (const packageName of [AGENT_CORE, "@earendil-works/pi-telemetry"]) {
 		it(`rejects a ${packageName} tarball that ships sourcemaps (senpi#2362)`, () => {
 			// Given: every published package, not only senpi, must leave its maps out.
@@ -117,28 +103,9 @@ describe("assertPublishedWorkspacePackFiles", () => {
 		});
 	}
 
-	it("ignores packages outside the published workspace checks", () => {
+	it("ignores packages outside the published workspace checks, including the vendored client and protocol", () => {
 		assert.doesNotThrow(() => assertPublishedWorkspacePackFiles(packed([]), "@earendil-works/pi-client"));
-	});
-
-	it("keeps the vendored client and protocol out of the published workspace checks", () => {
-		const packageNames = publishedWorkspacePackageChecks().map((check) => check.packageName);
-
-		assert.equal(packageNames.includes("@earendil-works/pi-client"), false);
-		assert.equal(packageNames.includes("@earendil-works/pi-protocol"), false);
-	});
-
-	it("publishes the supported native target list through the pty package check", () => {
-		// When
-		const ptyCheck = publishedWorkspacePackageChecks(SUPPORTED_NATIVE_PREBUILD_TARGETS).find(
-			(check) => check.packageName === PTY,
-		);
-
-		// Then
-		assert.ok(ptyCheck);
-		const expected = SUPPORTED_NATIVE_PREBUILD_TARGETS.map((target) => `native/prebuilds/${target}/senpi_pty.${target}.node`);
-		assert.deepEqual(ptyCheck.prebuildFiles, expected);
-		assert.deepEqual(ptyCheck.requiredFiles, [...PTY_LOADER_FILES, ...expected]);
+		assert.doesNotThrow(() => assertPublishedWorkspacePackFiles(packed([]), "@earendil-works/pi-protocol"));
 	});
 
 	it("rejects an unsupported native prebuild target", () => {

@@ -105,7 +105,8 @@ describe("persistHeaderNow's asynchronous header write", () => {
 
 	it("owns the file while it runs: an assistant message appended meanwhile lands once, in order", async () => {
 		const { manager, file } = freshSession();
-		manager.appendMessage({ role: "user", content: "u1", timestamp: 1 });
+		// A setup entry stays buffered: the first user message itself would flush the file (#10000).
+		manager.appendCustomEntry("setup", { n: 0 });
 		hooks.beforeClose = () => {
 			hooks.beforeClose = undefined;
 			manager.appendMessage(assistant("a1-during-close"));
@@ -116,16 +117,15 @@ describe("persistHeaderNow's asynchronous header write", () => {
 
 		expect(manager.isTranscriptFlushed()).toBe(true);
 		expect(idsOnDisk(file)).toEqual(manager.getEntries().map((entry) => entry.id));
-		expect(manager.getEntries().map((entry) => entry.type === "message" && entry.message.role)).toEqual([
-			"user",
-			"assistant",
-			"user",
-		]);
+		expect(manager.getEntries().map((entry) => (entry.type === "message" ? entry.message.role : entry.type))).toEqual(
+			["custom", "assistant", "user"],
+		);
 	});
 
 	it("removes the file it part-wrote when it fails, so the next write persists every entry memory holds", async () => {
 		const { manager, file } = freshSession();
-		manager.appendMessage({ role: "user", content: "u1", timestamp: 1 });
+		// A setup entry stays buffered: the first user message itself would flush the file (#10000).
+		manager.appendCustomEntry("setup", { n: 0 });
 		manager.appendCustomEntry("pad", { text: "y".repeat(400) });
 		hooks.writeFails = Object.assign(new Error("ENOSPC: no space left on device, write"), { code: "ENOSPC" });
 

@@ -5,6 +5,8 @@
 // minus `input` — including `model` and `tools` — so any model/api switch already
 // invalidates the cached continuation in buildCachedWebSocketRequestBody and falls
 // back to a full client-side replay without `previous_response_id`.
+
+import { normalizeContext } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
@@ -137,7 +139,7 @@ async function establishContinuation(
 		messages: [{ role: "user", content: "Say hello", timestamp: 1 }],
 		tools,
 	};
-	const first = await streamOpenAICodexResponses(model, firstContext, {
+	const first = await streamOpenAICodexResponses(model, normalizeContext(firstContext), {
 		apiKey: mockToken(),
 		sessionId,
 		transport: "websocket-cached",
@@ -153,11 +155,11 @@ async function sendFollowUp(
 ): Promise<void> {
 	await streamOpenAICodexResponses(
 		model,
-		{
+		normalizeContext({
 			systemPrompt: "You are a helpful assistant.",
 			messages: [...messages, { role: "user", content: "Now finish", timestamp: 2 }],
 			tools,
-		},
+		}),
 		{ apiKey: mockToken(), sessionId, transport: "websocket-cached" },
 	).result();
 }

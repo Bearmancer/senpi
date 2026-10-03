@@ -17,7 +17,7 @@ type ToolContextFactory = (signal: AbortSignal | undefined) => {
 
 /**
  * Wrap a RegisteredTool into an AgentTool.
- * Uses the runner's createContext() for consistent context across tools and event handlers.
+ * Uses the runner's createToolContext() for consistent context across tools and event handlers.
  */
 export function wrapRegisteredTool(
 	registeredTool: RegisteredTool,
@@ -37,7 +37,7 @@ export function wrapRegisteredTool(
 					params,
 					signal,
 					onUpdate,
-					invocation?.context ?? runner.createContext(),
+					runner.createToolContext(toolCallId, signal, invocation?.context),
 				);
 			} finally {
 				invocation?.dispose();
@@ -58,7 +58,7 @@ export function wrapRegisteredTool(
 
 /**
  * Wrap all registered tools into AgentTools.
- * Uses the runner's createContext() for consistent context across tools and event handlers.
+ * Uses the runner's createToolContext() for consistent context across tools and event handlers.
  */
 export function wrapRegisteredTools(
 	registeredTools: RegisteredTool[],

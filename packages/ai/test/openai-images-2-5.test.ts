@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { generateImages, type OpenAIImagesOptions, parseOpenAIImageSize } from "../src/api/openai-images.ts";
-import type { ImageContent, ImagesContext, ImagesModel } from "../src/types.ts";
+import type { ImageContent, ImageModel, ImagesContext } from "../src/types.ts";
 
 const mockState = vi.hoisted(() => ({
 	generate: vi.fn(),
@@ -18,7 +18,8 @@ vi.mock("openai", () => ({
 }));
 
 const image: ImageContent = { type: "image", data: "iVBORw0KGgo=", mimeType: "image/png" };
-const model: ImagesModel<"openai-images"> = {
+const model: ImageModel<"openai-images"> = {
+	type: "image",
 	id: "gpt-image-2.5-sunburst",
 	name: "GPT Image 2.5 Sunburst",
 	api: "openai-images",

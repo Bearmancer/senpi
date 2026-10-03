@@ -17,7 +17,7 @@ import type {
 	SearchRenderDetails,
 	WebsearchConfig,
 } from "../../src/core/extensions/builtin/websearch/websearch/types.ts";
-import type { ExtensionContext } from "../../src/core/extensions/types.ts";
+import type { ExtensionContext, ExtensionToolContext } from "../../src/core/extensions/types.ts";
 
 function fixture(name: string): string {
 	return readFileSync(join(import.meta.dirname, "..", "fixtures", "websearch", name), "utf8");
@@ -321,11 +321,17 @@ describe("web_search tool keeps cooldowns for the session", () => {
 		let config = freeChain();
 		const tool = createWebSearchTool(() => ({ ok: true, config, source: "test" }));
 		stubEngines({ "html.duckduckgo.com": ddgChallenged, "www.startpage.com": startpageAnswers });
-		await tool.execute("call-1", { query: REQUEST.query }, undefined, undefined, context());
+		await tool.execute("call-1", { query: REQUEST.query }, undefined, undefined, context() as ExtensionToolContext);
 
 		config = { ...freeChain(), providers: [...freeChain().providers, { provider: "mojeek" }] };
 		const { hosts } = stubEngines({ "www.startpage.com": startpageAnswers });
-		const result = await tool.execute("call-2", { query: REQUEST.query }, undefined, undefined, context());
+		const result = await tool.execute(
+			"call-2",
+			{ query: REQUEST.query },
+			undefined,
+			undefined,
+			context() as ExtensionToolContext,
+		);
 
 		expect(hosts).not.toContain("html.duckduckgo.com");
 		const details = result.details as SearchRenderDetails & SearchDetails;

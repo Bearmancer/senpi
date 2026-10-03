@@ -1,3 +1,196 @@
+## 2026-10-03 - Exact tool-card result bytes for the memory report (senpi#1960)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/components/tool-execution.ts`: a card's final `updateResult` measures its retained result once (`serializedToolResultBytes`) and records it in the render cache (`finalizeResult`); a streaming card keeps its last figure.
+
+### Why
+
+- The memory report's `tuiRenderCache` reports exact `resultBytes` and `finishedCards`, so a later bound on the cache is designed from a measurement.
+
+### Why an extension could not handle it
+
+- The card and its render cache are private to the core interactive mode.
+
+### Expected merge conflict zones
+
+- LOW: `ToolExecutionComponent.updateResult()` in `tool-execution.ts`.
+
+## 2026-10-02 - Tool-card render cache totals (senpi#2561)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/components/tool-execution-cache.ts` (new): each tool card's rendered-lines cache and render revision, with process-wide O(1) totals (components, cached lines, images) published to the memory report.
+- `tool-execution-animation.ts` (new): the spinner and todo-strike timers and when a card animates; `tool-execution-fallback-preview.ts` (new): the collapsed fallback preview. `tool-execution.ts` delegates to them; rendering is unchanged.
+
+### Why
+
+- The on-demand memory report (`SENPI_MEMORY_REPORT=1`) needs the terminal render cache's size without walking components.
+
+### Why an extension could not handle it
+
+- The cache is private to the core tool card.
+
+### Expected merge conflict zones
+
+- `components/tool-execution.ts` (cache fields, animation timers, `render`).
+
+## 2026-10-02 - Question answer provenance (senpi#2533)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/components/ask-user-question-state.ts`: widget response construction marks submitted answers as `local_ui`.
+- `packages/coding-agent/src/modes/interactive/components/ask-user-async-widget.ts`: collapsed widget and composer answers carry `local_ui`; timeouts do not.
+- `packages/coding-agent/src/modes/interactive/session-control-commands.ts`: admitted question answers carry `control_endpoint`; cancellation does not.
+- Closure: every terminal outcome of a question these surfaces show (an answer from any surface, timeout, cancellation) is published once on the new `ask-user:closed` extension event, `{ requestId, status, resolvedBy? }`, by the ask-user builtin (`src/core/extensions/changes.md`). A losing surface's late answer or cancellation publishes nothing, and reload detaching the widget is not a closure.
+
+### Why
+
+- `packages/coding-agent/src/modes/interactive/components/ask-user-question-state.ts`, `packages/coding-agent/src/modes/interactive/components/ask-user-async-widget.ts`, `packages/coding-agent/src/modes/interactive/session-control-commands.ts`: integrations need the winning surface even when multiple surfaces can answer the same question.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/interactive/components/ask-user-question-state.ts`, `packages/coding-agent/src/modes/interactive/components/ask-user-async-widget.ts`, `packages/coding-agent/src/modes/interactive/session-control-commands.ts`: only these response builders know whether input came from the local widget or an external endpoint.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/interactive/components/ask-user-question-state.ts`, `packages/coding-agent/src/modes/interactive/components/ask-user-async-widget.ts`, `packages/coding-agent/src/modes/interactive/session-control-commands.ts`: response object construction.
+
+## 2026-10-02 - Route Warp-on-WSL empty paste events to the clipboard
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/components/custom-editor.ts`: an exact empty bracketed-paste packet invokes the existing clipboard handler only in a direct Warp-on-WSL session, using the shared hardened session predicate. Non-empty bracketed paste remains editor text input, and other terminal sessions are unchanged.
+
+### Why
+
+- Physical Ctrl+V with a copied image was captured as `ESC[200~ESC[201~`, not a Ctrl+V key byte. Adding a Ctrl+V keybinding alone could not repair this path because the base editor silently ignored empty paste content.
+
+### Why an extension could not handle it
+
+- An optional input hook can work around the event, but the default composer owns clipboard dispatch and must route the terminal paste event without requiring an installed extension.
+
+### Expected merge conflict zones
+
+- LOW: the TUI import and clipboard dispatch condition in `packages/coding-agent/src/modes/interactive/components/custom-editor.ts`.
+
+## 2026-10-01 - Release render caches of rows above the kept main-screen history (senpi#2508)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/components/progressive-transcript-container.ts`: when the kept history window's first child moves forward, `releaseRenders()` drops the cached renders, heights and live-row records of the children that left it and invalidates them, so their own line caches go too.
+
+### Why
+
+In a long regular-mode run every message that scrolled above the kept window kept its rendered lines (and its component's own caches) forever, although the main screen never paints it again. Over a 10-minute event stream this grew the heap about 3 KB per added entry beyond what a cold open of the same session holds. Fullscreen and `/tree` render those rows again on demand; in regular mode they stay above the kept window and are not painted again.
+
+### Why an extension could not handle it
+
+This is the interactive transcript container.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/interactive/components/progressive-transcript-container.ts`: `keptHistoryStart` and the new `releaseRenders`.
+
+## 2026-10-01 - Release session memory after the first render of a resumed session (senpi#2508)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: `init()` calls `session.releaseSettledSessionMemory()` right after `renderInitialMessages()`.
+
+### Why
+
+Rendering a resumed session builds the session views, and no run settles idle afterwards, so a resumed 50,000-entry session kept about 60 MB of views until the first turn ended.
+
+### Why an extension could not handle it
+
+This is the interactive startup sequence.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: `init()` around `renderInitialMessages()`.
+
+## 2026-10-01 - Settled transcript entries are rendered once (senpi#2508)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/components/assistant-message.ts`, `packages/coding-agent/src/modes/interactive/components/user-message.ts`, `packages/coding-agent/src/modes/interactive/components/custom-message.ts`, `packages/coding-agent/src/modes/interactive/components/custom-entry.ts`, `packages/coding-agent/src/modes/interactive/components/compaction-summary-message.ts`, `packages/coding-agent/src/modes/interactive/components/branch-summary-message.ts`, `packages/coding-agent/src/modes/interactive/components/skill-invocation-message.ts`, `packages/coding-agent/src/modes/interactive/components/bash-execution.ts`, `packages/coding-agent/src/modes/interactive/components/themed-text.ts`, `packages/coding-agent/src/modes/interactive/components/dynamic-border.ts`: report a render revision that moves at every point their render cache is dropped (or derive it from their children).
+- `packages/coding-agent/src/modes/interactive/components/tool-execution.ts`: a finished card (final result, complete args, no animation, classic presentation) reports a revision moved by every setter; running cards keep rendering every frame.
+- The fork-only transcript containers cache each revisioned child's lines per (width, capabilities, theme generation, revision), reuse the unchanged leading block of history, memoize the exploration projection and each card's exploration call, and keep their own child heights for mouse dispatch.
+
+- The progressive transcript container keeps the last painted rows of a live (unrevisioned) child that is entirely inside native scrollback; it renders again once it settles, scrolls back on screen, or the width, capabilities or theme change.
+
+- In the regular (main-screen) mode the progressive container paints only the most recent history (`mainScreenHistoryLines()`), led by one muted marker line (`N earlier messages · /tree to browse, or switch to fullscreen`); the kept window grows to 1.5x its budget before its top moves, so appends never rewrite history. Fullscreen and renders outside a frame still return the full transcript, and `interactive-mode.ts` passes the themed marker. Decision from the lead (user side): instant resume and repaint over scrollback the terminal discards anyway; nothing is lost because the session file, `/tree`, fullscreen, copy and export use the full history.
+
+### Why
+
+Typing, streaming a background-triggered reply, or a spinner frame re-rendered every message, card and exploration group of the session; read cards even walked the filesystem per frame for their classification. An exploration spinner that had scrolled into the terminal history changed a row the terminal cannot repaint in place, so every spinner frame replayed the entire transcript.
+
+### Why an extension could not handle it
+
+These are the built-in transcript components and their containers.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/interactive/components/assistant-message.ts`: `invalidate`, `updateContent`, `render`.
+- `packages/coding-agent/src/modes/interactive/components/tool-execution.ts`: `render`, `invalidateRenderCache`.
+- The other listed components: an added `getRenderRevision` override next to `setExpanded`/`invalidate`.
+
+## 2026-10-01 - Forward explicit picker argument requirements (senpi#2479)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: forward `requiresArguments` from builtins, extensions, templates and skills, leaving it unset when the source did not declare it.
+
+### Why
+
+Optional arguments must not force a second Enter to open selectors.
+
+### Why an extension could not handle it
+
+The interactive host assembles every autocomplete command source.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: createBaseAutocompleteProvider mappings.
+
+## 2026-09-30 - Sync with upstream v0.99.1 (6a4af07d6): interactive mode and theme
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/bug-report.ts` (deleted): `session-share.ts` stays deleted (Radius share rejected; gist `/share` kept); `bug-report.ts` (upstream-only) removed (D-6, Exclusion list).
+- `packages/coding-agent/src/modes/interactive/components/compaction-summary-message.ts`: `compaction-summary-message.ts`, `skill-invocation-message.ts`: upstream click-to-toggle `MouseRegion` content container with the fork details line, sanitized summary and multi-skill body.
+- `packages/coding-agent/src/modes/interactive/components/config-selector.ts`: `config-selector.ts`: upstream built-in rows (`BUILTIN_PATH_PREFIX`) with the fork `SourceScope`; the rows list whatever the fork builtin registry resolves.
+- `packages/coding-agent/src/modes/interactive/components/extension-input.ts`: `extension-input.ts`: upstream `description` option; fork cursor-at-end prefill kept.
+- `packages/coding-agent/src/modes/interactive/components/footer.ts`: `footer.ts`: fork O(1) session-manager usage totals, account suffix and colored right-side runs kept; upstream virtual-model routing adopted as ` → <physical-model>:<level>` after the model label (fork label format); upstream per-render stats cache not adopted (the fork totals are already O(1)).
+- `packages/coding-agent/src/modes/interactive/components/pi-logo.ts` (deleted): deleted in this sync (see the lane decision record).
+- `packages/coding-agent/src/modes/interactive/components/settings-selector.ts`: `settings-selector.ts`: upstream system theme entry first (with description), lowercase "automatic", system theme as the default pick, "Fullscreen wheel scrolling" setting; fork thinking-level callback, terminal mouse setting and select-list theme kept; upstream cache-warming row removed (D-5).
+- `packages/coding-agent/src/modes/interactive/components/skill-invocation-message.ts`: `compaction-summary-message.ts`, `skill-invocation-message.ts`: upstream click-to-toggle `MouseRegion` content container with the fork details line, sanitized summary and multi-skill body.
+- `packages/coding-agent/src/modes/interactive/components/tool-execution.ts`: `tool-execution.ts` = OURS (fork renderer/images split); upstream args on the title line ported into `tool-execution-fallback.ts` `createToolCallFallback(toolName, args, expanded)` via `formatToolCallWithArgs` (argument strings stripped of terminal escapes/control characters, line breaks kept) and called from `tool-execution-renderer.ts`; upstream stale-conversion guard already present in the fork `ToolExecutionImages`.
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: Upstream adopted: theme-following text everywhere the upstream switched to `ThemedText` (extension errors + stacks, compaction failure line, provider error line, `/name` echo, `/session` info built on demand, update/debug notices where the fork had no notice box, Copilot/Anthropic notices); the startup header and the loaded-resource listing are built on demand so they recolor on theme changes (`logo()`, instruction thunks; fork `LoadedResourceSection` now takes body thunks); startup applies the theme, then awaits `themeController.waitForTerminalColors()` (ends at DA1, <= 100 ms) before building the header; `[Themes]` startup section removed (D-14); session picker passes the upstream abort `signal` through `currentScopeSessions`/`allScopeSessions` (progressive listing, dfbf793b78); fullscreen wheel scrolling setting (`fullscreenWheelScrollLines` into the renderer, the settings menu and `setWheelScrollLines`), read at every site, the settings menu included, through the fork optional-getter guard `getFullscreenWheelScrollLines?.() ?? "auto"` like the other fullscreen getters (2026-09-03 lifecycle seams); Finder file-path paste before image/text (`readClipboardFilePaths`, bash-mode quoting, control-character rejection, #10136); extension package warnings in `[Extension issues]` (`LoadExtensionsResult.warnings`, #9863); Anthropic thinking-drop notice shortened and de-duplicated against the previous response (`maybeShowThinkingDropNotice`, 13784598d2/4658534986); nested tool calls (`parentToolCallId`, made through `ctx.executeTool()`) are not rendered as separate rows (start and end skip them); boundary-committed entries (`entry_appended` custom_message display and boundary compaction re-render, 466db0fecd); loaded-extension crash-stack hint on fatal errors and uncaught exceptions (`findExtensionStackMatches` + `formatCrashExtensionHint`, 63787ee6ba). Fork preserved: `[s]` autocomplete tag for system-scoped resources (upstream untags other built-in extension commands), ask-user widgets and pending-question flows, goal/loop footers, account switching, herdr/session-control host, `/scoped-models`, gist `/share`, `/answer`, the notice-block family (`showNoticeBox`/`buildNoticeBox` for update, package-update, risky-model, high-reasoning, debug-log and diagnostic notices), fork chrome (`this.chrome.createWelcomeContent`, `APP_NAME` + `formatDisplayVersion` logo, startup tips), Copilot tool-limit notice once per session (`maybeShowAssistantDiagnostics`, now also delegating the live thinking-drop notice), fork uncaught-crash path (debug log, storage-write message, one-line summary), fork submit dispatch, image markers + in-memory pending images, clipboard error logging, `showSessionRenameInput`, fork `handleToolExecutionStart` working labels, fork compaction queue delivery. Not adopted: `/bug`, `reportBug`, the bug-report hint after errors, crash recording + `crashReportInstructions` + the startup crash notice (D-6); cache warming (`addCacheWarmingUsage`, cache-warm usage rows on replay, `/session` Cache Warming block, `onCacheWarmingModeChange`, D-5); the pi logo (`piLogoLines`, fork chrome keeps the brand header; `components/pi-logo.ts` removed, unused). Why: upstream v0.99.1 made every rendered string follow theme changes (system theme recolors when the terminal reports its colors), added virtual-model/nested-call/boundary events and several interactive fixes; the fork's UI surfaces are pinned by fork tests and consumed by omo. Why an extension could not handle it: InteractiveMode is the TUI host every extension renders into. Expected merge conflict zones: import block, header/tip construction in `init`, `showLoadedResources` section builders, `setupEditorSubmitHandler` dispatch table, `handleEvent` message_end/tool_execution_*/compaction_end branches, `maybeShowAssistantDiagnostics`, `handleFatalRuntimeError`/uncaught crash tail, `showSettingsSelector` config + callbacks, `showSessionSelector` loaders, `handleSessionCommand`, `/hotkeys` table.
+- `packages/coding-agent/src/modes/interactive/session-share.ts` (deleted): `session-share.ts` stays deleted (Radius share rejected; gist `/share` kept); `bug-report.ts` (upstream-only) removed (D-6, Exclusion list).
+- `packages/coding-agent/src/modes/interactive/theme/system-theme.ts`: resolved by L6a against upstream v0.99.1 (6a4af07d6): upstream constructs adopted, fork behavior kept.
+- `packages/coding-agent/src/modes/interactive/theme/theme-controller.ts`: resolved by L6a against upstream v0.99.1 (6a4af07d6): upstream constructs adopted, fork behavior kept.
+- `packages/coding-agent/src/modes/interactive/theme/theme.ts`: resolved by L6a against upstream v0.99.1 (6a4af07d6): upstream constructs adopted, fork behavior kept.
+- `packages/coding-agent/src/modes/interactive/tui-renderer.ts`: `tui-renderer.ts`: fork `mouse` plus upstream `fullscreenWheelScrollLines`.
+- `packages/coding-agent/src/modes/interactive/components/extension-selector.ts`: Silent rows read and accepted: export-html `template.css`/`template.js` (nested call records, toggle state), `extension-selector.ts` (description), `session-selector.ts` (progress/abort), `tree-selector.ts` (usage entries hidden, context_edit rows), `theme-json.ts` (`appearance`, compiled validator kept), `theme-schema.json`; tests `interactive-mode-compaction` (#9340), `interactive-tui` (wheel lines, file-path mock), `session-selector-path-delete`, `settings-selector` (system theme, wheel cycle), `streaming-render-debug.ts`, `tree-selector`, `utilities.ts`.
+- `packages/coding-agent/src/modes/interactive/components/session-selector.ts`: Silent rows read and accepted: export-html `template.css`/`template.js` (nested call records, toggle state), `extension-selector.ts` (description), `session-selector.ts` (progress/abort), `tree-selector.ts` (usage entries hidden, context_edit rows), `theme-json.ts` (`appearance`, compiled validator kept), `theme-schema.json`; tests `interactive-mode-compaction` (#9340), `interactive-tui` (wheel lines, file-path mock), `session-selector-path-delete`, `settings-selector` (system theme, wheel cycle), `streaming-render-debug.ts`, `tree-selector`, `utilities.ts`.
+- `packages/coding-agent/src/modes/interactive/components/tree-selector.ts`: Silent rows read and accepted: export-html `template.css`/`template.js` (nested call records, toggle state), `extension-selector.ts` (description), `session-selector.ts` (progress/abort), `tree-selector.ts` (usage entries hidden, context_edit rows), `theme-json.ts` (`appearance`, compiled validator kept), `theme-schema.json`; tests `interactive-mode-compaction` (#9340), `interactive-tui` (wheel lines, file-path mock), `session-selector-path-delete`, `settings-selector` (system theme, wheel cycle), `streaming-render-debug.ts`, `tree-selector`, `utilities.ts`.
+- `packages/coding-agent/src/modes/interactive/theme/theme-json.ts`: Silent rows read and accepted: export-html `template.css`/`template.js` (nested call records, toggle state), `extension-selector.ts` (description), `session-selector.ts` (progress/abort), `tree-selector.ts` (usage entries hidden, context_edit rows), `theme-json.ts` (`appearance`, compiled validator kept), `theme-schema.json`; tests `interactive-mode-compaction` (#9340), `interactive-tui` (wheel lines, file-path mock), `session-selector-path-delete`, `settings-selector` (system theme, wheel cycle), `streaming-render-debug.ts`, `tree-selector`, `utilities.ts`.
+- `packages/coding-agent/src/modes/interactive/theme/theme-schema.json`: Silent rows read and accepted: export-html `template.css`/`template.js` (nested call records, toggle state), `extension-selector.ts` (description), `session-selector.ts` (progress/abort), `tree-selector.ts` (usage entries hidden, context_edit rows), `theme-json.ts` (`appearance`, compiled validator kept), `theme-schema.json`; tests `interactive-mode-compaction` (#9340), `interactive-tui` (wheel lines, file-path mock), `session-selector-path-delete`, `settings-selector` (system theme, wheel cycle), `streaming-render-debug.ts`, `tree-selector`, `utilities.ts`.
+
+### Why
+
+Upstream v0.99.1 (6a4af07d6) changed these paths while the fork carries its own behavior; interactive mode adopts the upstream system theme, virtual-model footer and args display while keeping fork chrome; no /bug (plan D-14, D-6).
+
+### Why an extension could not handle it
+
+Interactive mode is the host UI that renders extensions.
+
+### Expected merge conflict zones
+
+Every path listed above conflicts again where upstream edits the hunks named in its line; the fork-kept constructs named there are the anchors to preserve.
+
 ## 2026-09-30 - Ask-user navigation stays in range; a fully answered widget click submits (omo#9268)
 
 ### What changed
@@ -1371,6 +1564,21 @@ The login command is interactive mode's own command handler; an extension cannot
 ## 2026-09-10 - /tree edits carry the leaf token and reach shared hosts
 # changes
 
+## 2026-09-30 - Keep progressive transcript hydration watermark private
+
+### What changed
+
+- `ProgressiveTranscriptContainer` now warms deferred transcript children behind a private cache watermark while retaining the initially painted tail boundary for every live render.
+- Once warming completes, the fully cached history is published in one completion repaint rather than in geometry-changing chunks.
+
+### Why
+
+- A live assistant or tool render could previously expose each newly warmed chunk above the painted tail, visibly moving resumed transcripts while the user watched.
+
+### Verification
+
+- The progressive transcript container regression test appends a live child after exactly one warm macrotask and verifies that the first painted component remains unchanged.
+
 ## 2026-09-11 - Show the active brand changelog without cross-source updates (senpi#1583)
 
 ### What changed
@@ -2016,3 +2224,68 @@ An extension `input` handler runs inside `AgentSession.prompt`, after the TUI ha
 - LOW: the `isBareSkillNamespace` checks just before the `isExtensionCommand` branch of `setupEditorSubmitHandler` and at the top of `handleFollowUp`, and the new `openSkillPickerForBareNamespace` method beside `isExtensionCommand` in `packages/coding-agent/src/modes/interactive/interactive-mode.ts`.
 
 - Covered production paths: `packages/coding-agent/src/modes/interactive/interactive-mode.ts`.
+
+## 2026-10-02 - Upstream logo animation and Radius login not taken (upstream v1.0.0 sync)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/components/pi-logo-animation.lazy.ts`
+- `packages/coding-agent/src/modes/interactive/components/pi-logo-animation.ts`
+- `packages/coding-agent/src/modes/interactive/components/radius-login-selector.ts`
+
+None of these upstream files are added to the fork.
+
+### Why
+
+The logo animation is upstream branding; the fork keeps its own header and branding. Radius sign-in is excluded from the fork on record (`core/radius.ts`).
+
+### Why an extension could not handle it
+
+Branding and the `/login` provider list are owned by the interactive mode and the excluded provider, not an extension.
+
+### Expected merge conflict zones
+
+Upstream changes to the startup header and the `/login` selector; keep the fork header and omit Radius.
+
+## Adopted upstream v1.0.0 interactive mode rendering (2026-10-02)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/components/settings-selector.ts`
+- `packages/coding-agent/src/modes/interactive/components/user-message.ts`
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`
+- `packages/coding-agent/src/modes/interactive/theme/system-theme.ts`
+
+Upstream interactive-mode fixes are kept: one copy of each rendered user-message line and pastel system-theme chroma, with the fork's tuiMode `regular` default preserved (D-5).
+
+### Why
+
+These are upstream rendering improvements that do not break fork behaviour; the fork's header and tuiMode defaults stay.
+
+### Why an extension could not handle it
+
+Interactive-mode components and theme are rendering internals below the extension API.
+
+### Expected merge conflict zones
+
+Upstream edits to interactive-mode components at the next sync.
+
+## Deleting a session also deletes its tool images (2026-10-03)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/components/session-selector.ts`
+
+`deleteSessionFile` reads the session id from the file header before the file is removed and, only once the file is gone, removes that session's `media/<durableSessionId>` directory next to it (the tool-result images the RPC host persisted for `media_placeholders` clients). A delete that fails removes nothing. When the images cannot be removed after the session file is gone (the id is unrecoverable from then on), `deleteSessionFile` still reports the session as deleted but returns `mediaError` naming the leftover directory, and the selector shows it as an error instead of a clean delete.
+
+### Why
+
+The RPC host keeps tool-result images next to the session files so a client can render them from a path; they must not outlive the session that owns them.
+
+### Why an extension could not handle it
+
+The session selector's delete action is interactive-mode UI code with no extension hook.
+
+### Expected merge conflict zones
+
+`deleteSessionFile` in `session-selector.ts`.

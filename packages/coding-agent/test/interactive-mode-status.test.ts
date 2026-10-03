@@ -15,9 +15,10 @@ import { APP_TITLE } from "../src/config.ts";
 import type { AgentSessionEvent } from "../src/core/agent-session.ts";
 import type { AutocompleteProviderFactory } from "../src/core/extensions/types.ts";
 import { KeybindingsManager } from "../src/core/keybindings.ts";
+import type { QuietStartup } from "../src/core/settings-manager.ts";
 import type { SourceInfo } from "../src/core/source-info.ts";
 import type { AuthSelectorProvider } from "../src/modes/interactive/components/oauth-selector.ts";
-import { InteractiveMode } from "../src/modes/interactive/interactive-mode.ts";
+import { InteractiveMode, showsStartupDetails, showsStartupHeader } from "../src/modes/interactive/interactive-mode.ts";
 import { initTheme, theme } from "../src/modes/interactive/theme/theme.ts";
 import { stripAnsi } from "../src/utils/ansi.ts";
 
@@ -913,7 +914,7 @@ describe("InteractiveMode.showLoadedResources", () => {
 	});
 
 	function createShowLoadedResourcesThis(options: {
-		quietStartup: boolean;
+		quietStartup: QuietStartup;
 		verbose?: boolean;
 		toolOutputExpanded?: boolean;
 		cwd?: string;
@@ -1633,6 +1634,29 @@ describe("InteractiveMode.showLoadedResources", () => {
 		});
 
 		expect(fakeThis.loadedResourcesContainer.children).toHaveLength(0);
+	});
+
+	test("hides resource listing but keeps the startup header with header-only quiet startup", () => {
+		const fakeThis = createShowLoadedResourcesThis({
+			quietStartup: "header",
+			skills: [{ filePath: "/tmp/skill/SKILL.md", name: "commit" }],
+		});
+
+		(InteractiveMode as any).prototype.showLoadedResources.call(fakeThis, {
+			force: false,
+		});
+
+		expect(fakeThis.loadedResourcesContainer.children).toHaveLength(0);
+		expect(showsStartupHeader(false, "header")).toBe(true);
+		expect(showsStartupDetails(false, "header")).toBe(false);
+	});
+
+	test("hides the startup header with full quiet startup unless verbose", () => {
+		expect(showsStartupHeader(false, true)).toBe(false);
+		expect(showsStartupHeader(true, true)).toBe(true);
+		expect(showsStartupDetails(true, "header")).toBe(true);
+		expect(showsStartupHeader(false, false)).toBe(true);
+		expect(showsStartupDetails(false, false)).toBe(true);
 	});
 
 	test("still shows diagnostics on quiet startup when requested", () => {

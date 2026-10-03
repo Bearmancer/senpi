@@ -45,7 +45,7 @@ interface DeterministicFallbackDetails {
 	origin: "required-compaction-recovery";
 	failureKind: RequiredCompactionFallbackFailure;
 	taskIntent?: string;
-	retainedSuffix?: "prepared" | "latest-user-turn" | "earlier-safe-boundary";
+	retainedSuffix?: "prepared" | "latest-user-turn" | "earlier-safe-boundary" | "later-safe-boundary";
 }
 
 export interface DeterministicFallbackDiagnostic {
@@ -110,7 +110,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function hasMeaningfulUserText(entry: SessionEntry): boolean {
-	if (entry.type !== "message" || !isRecord(entry.message) || entry.message.role !== "user") return false;
+	if (entry.type !== "message" || typeof entry.message !== "object" || entry.message === null) return false;
+	if (entry.message.role !== "user") return false;
 	const content = entry.message.content;
 	const hasVisibleText = (text: unknown): boolean =>
 		typeof text === "string" && text.normalize("NFKC").replace(NON_VISIBLE_USER_TEXT, "").length > 0;
@@ -278,6 +279,7 @@ export function createRequiredCompactionFallback(
 		...(taskIntent ? { taskIntent } : {}),
 	};
 	let candidateCount = 0;
+	let sawUnsafeRetainedContent = false;
 
 	const syntheticCompaction: CompactionEntry = {
 		type: "compaction",
@@ -366,7 +368,7 @@ export function createRequiredCompactionFallback(
 		}
 		unsafeSuffix[index] = unsafeSuffix[index + 1] || messageUnsafe;
 		if (messageUnsafe) unsafeIndexSuffix[index] = index;
-		if (!isRecord(message)) continue;
+		if (typeof message !== "object" || message === null) continue;
 		if (message.role === "toolResult" && typeof message.toolCallId === "string") {
 			const indexes = toolResults.get(message.toolCallId) ?? [];
 			indexes.push(index);
@@ -449,6 +451,7 @@ export function createRequiredCompactionFallback(
 		if (startIndex === undefined) return reject("context-reconstruction-failed");
 		const retainedStart = Math.min(startIndex, projectedMessages.length);
 		if (unsafeSuffix[retainedStart]) {
+			sawUnsafeRetainedContent = true;
 			const unsafeMessageIndex = unsafeIndexSuffix[retainedStart];
 			const unsafeMessage = projectedMessages[unsafeMessageIndex];
 			return reject("unsafe-retained-content", {
@@ -520,6 +523,23 @@ export function createRequiredCompactionFallback(
 			}
 		}
 		break;
+	}
+
+	// A split turn can contain an unsafe persisted tool payload after the
+	// prepared boundary and no later user message. Advance to the earliest safe
+	// suffix rather than retaining that payload forever. `projectCandidate`
+	// still rejects orphaned tool results, incomplete call chains, unsafe
+	// content, and over-budget suffixes.
+	if (sawUnsafeRetainedContent) {
+		for (let index = preparedBoundaryIndex + 1; index < branchEntries.length; index++) {
+			const entry = branchEntries[index];
+			if (entry.type === "compaction") continue;
+			const laterSafe = projectCandidate(entry.id, "later-safe-boundary");
+			if (laterSafe) {
+				if (diagnostics) diagnostics.candidatesChecked = candidateCount;
+				return laterSafe;
+			}
+		}
 	}
 
 	if (diagnostics) diagnostics.candidatesChecked = candidateCount;

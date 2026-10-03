@@ -22,7 +22,7 @@ import {
 	resolveSdkTools,
 	TOOL_EXECUTION_DENIED_MESSAGE,
 } from "../src/core/extensions/builtin/anthropic-subscription/tools.ts";
-import type { ExtensionAPI, ExtensionContext } from "../src/core/extensions/types.ts";
+import type { ExtensionAPI, ExtensionContext, ExtensionToolContext } from "../src/core/extensions/types.ts";
 import { createReadToolDefinition } from "../src/core/tools/read.ts";
 
 function tool(name: string): Tool {
@@ -87,7 +87,7 @@ describe("Claude SDK OAuth tool integration", () => {
 				{ path: args.path },
 				undefined,
 				undefined,
-				{} as ExtensionContext,
+				{} as ExtensionToolContext,
 			);
 			expect(result.content).toEqual([{ type: "text", text: "executed by senpi\n" }]);
 		} finally {

@@ -9,21 +9,31 @@ import type { AgentMessage, ThinkingLevel } from "@earendil-works/pi-agent-core"
 import type { ImageContent, Model, ProviderDiagnostic, ThinkingSelection } from "@earendil-works/pi-ai";
 import type { SessionRuntimeKind } from "../../cli/args.ts";
 import type { AgentAbortSource } from "../../core/agent-abort-provenance.ts";
-import type { PromptDisposition, SessionStats } from "../../core/agent-session.ts";
+import type { PromptDisposition, QueuedInput, QueuedInputDisposition, SessionStats } from "../../core/agent-session.ts";
 import type { BashResult } from "../../core/bash-executor.ts";
+import type { BrowserEngine } from "../../core/browser-engine.ts";
+import type { ClientMessageIdentity } from "../../core/client-message-identity.ts";
 import type { CompactionResult } from "../../core/compaction/index.ts";
 import type { PromptSurface } from "../../core/dynamic-prompt/types.ts";
 import type { EngineOrdinal } from "../../core/engine-build-identity.ts";
 import type { ServiceTier } from "../../core/extensions/builtin/service-tier.ts";
 import type { ContextUsage, SessionControlAdmission, SessionKind } from "../../core/extensions/types.ts";
-import type { ProcessFootprintMeasure } from "../../core/process-footprint.ts";
 import type { SessionEntry, SessionMessageEntry, SessionTreeNode, UsageTotals } from "../../core/session-manager.ts";
 import type { SourceInfo } from "../../core/source-info.ts";
+import type { ClientMessageAdmission } from "./client-admission-record.ts";
 import type { RpcSlashCommand } from "./rpc-command-surface.ts";
 
 export type { SessionContext, SessionKind } from "../../core/extensions/types.ts";
 export type { RpcCommandInvocationEvent } from "./rpc-command-invocation.ts";
 export type { RpcCommandsChangedEvent, RpcSlashCommand } from "./rpc-command-surface.ts";
+export type {
+	RpcHostKernelMemory,
+	RpcHostLifecycleEvent,
+	RpcHostMemoryPressureEvent,
+	RpcHostStalledEvent,
+	RpcHostSupersededEvent,
+	RpcHostTrimmedEvent,
+} from "./rpc-host-lifecycle-types.ts";
 
 // ============================================================================
 // RPC Commands (stdin)
@@ -41,6 +51,8 @@ type RpcSessionCommand =
 			sessionTitlePrompt?: string | false;
 			expandPromptTemplates?: boolean;
 			unknownCommandAsText?: boolean;
+			clientMessageId?: string;
+			clientTurnId?: string;
 	  }
 	| {
 			id?: string;
@@ -52,10 +64,23 @@ type RpcSessionCommand =
 			triggerTurn?: boolean;
 			deliverAs?: "steer" | "followUp" | "nextTurn";
 	  }
+	| { id?: string; type: "continue_from_leaf" }
 	| { id?: string; type: "append_user_message"; content: unknown }
 	| { id?: string; type: "append_session_entry"; entry: SessionEntry }
-	| { id?: string; type: "steer"; message: string; images?: ImageContent[]; enqueueOrder?: number }
-	| { id?: string; type: "follow_up"; message: string; images?: ImageContent[]; enqueueOrder?: number }
+	| ({
+			id?: string;
+			type: "steer";
+			message: string;
+			images?: ImageContent[];
+			enqueueOrder?: number;
+	  } & ClientMessageIdentity)
+	| ({
+			id?: string;
+			type: "follow_up";
+			message: string;
+			images?: ImageContent[];
+			enqueueOrder?: number;
+	  } & ClientMessageIdentity)
 	| { id?: string; type: "abort" }
 	| { id?: string; type: "abort_compaction" }
 	| { id?: string; type: "reload" }
@@ -155,6 +180,7 @@ type RpcSessionCommand =
 
 	// Session
 	| { id?: string; type: "get_session_stats" }
+	| { id?: string; type: "memory_report" }
 	| { id?: string; type: "export_html"; outputPath?: string; themeName?: string }
 	| { id?: string; type: "export_jsonl"; outputPath?: string }
 	| { id?: string; type: "switch_session"; sessionPath: string; cwdOverride?: string }
@@ -388,6 +414,15 @@ export type RpcCommand =
 			 * Requires the host capability `prompt_surface`. Any other value is refused with `invalid_launch_profile`.
 			 */
 			promptSurface?: PromptSurface;
+			/**
+			 * Which browser THIS session's skills drive: `connected` (the user's own browser), `builtin` (the
+			 * app's in-app browser) or `none`. Session-scoped, never process-wide: the session's tool
+			 * subprocesses and eval kernel see `OMO_BROWSER_ENGINE=<value>`, other sessions on the host do
+			 * not, and a session opened without it sees no such variable. A later open that attaches with
+			 * another value moves the live session to it; an attach without it keeps the current engine.
+			 * Requires the host capability `browser_engine`. Any other value is refused with `invalid_launch_profile`.
+			 */
+			browserEngine?: BrowserEngine;
 	  }
 	| { id?: string; type: "close_session"; sessionId: string }
 	| {
@@ -518,6 +553,11 @@ export interface RpcSessionModelEntry {
 
 export interface RpcSessionState {
 	model?: Model<any>;
+	/**
+	 * Model switch held until the next compaction, or `null` when no switch is held.
+	 * This key is always present so clients can distinguish no hold from an older host.
+	 */
+	pendingModelSwitch: { provider: string; id: string } | null;
 	thinkingLevel: ThinkingLevel;
 	/**
 	 * Explicit selector provenance for `thinkingLevel`, absent for SDK-defaulted
@@ -557,7 +597,7 @@ export interface RpcSessionState {
 	scopedModels: RpcSessionModelEntry[];
 	steering: string[];
 	followUp: string[];
-	ordered: Array<{ text: string; mode: "steer" | "followUp"; enqueueOrder: number }>;
+	ordered: QueuedInput[];
 	autoCompactionEnabled: boolean;
 	messageCount: number;
 	pendingMessageCount: number;
@@ -690,13 +730,32 @@ export type RpcResponse =
 	// Prompting (async - events follow)
 	// data.disposition reports how the host disposed the prompt (started/queued/handled)
 	// so proxied optimistic-echo contracts resolve exactly like the local path; older
-	// hosts omit it and clients must degrade to canonical-only rendering.
-	| { id?: string; type: "response"; command: "prompt"; success: true; data?: { disposition?: PromptDisposition } }
+	// hosts omit it and clients must degrade to canonical-only rendering. steer/follow_up carry the
+	// per-input disposition (queued/handled) under the same optional contract.
+	| {
+			id?: string;
+			type: "response";
+			command: "prompt";
+			success: true;
+			data?: ClientMessageIdentity & { disposition?: PromptDisposition; admission?: ClientMessageAdmission };
+	  }
 	| { id?: string; type: "response"; command: "send_custom_message"; success: true }
 	| { id?: string; type: "response"; command: "append_user_message"; success: true }
 	| { id?: string; type: "response"; command: "append_session_entry"; success: true }
-	| { id?: string; type: "response"; command: "steer"; success: true }
-	| { id?: string; type: "response"; command: "follow_up"; success: true }
+	| {
+			id?: string;
+			type: "response";
+			command: "steer";
+			success: true;
+			data?: ClientMessageIdentity & { disposition?: QueuedInputDisposition; admission?: ClientMessageAdmission };
+	  }
+	| {
+			id?: string;
+			type: "response";
+			command: "follow_up";
+			success: true;
+			data?: ClientMessageIdentity & { disposition?: QueuedInputDisposition; admission?: ClientMessageAdmission };
+	  }
 	| { id?: string; type: "response"; command: "abort"; success: true }
 	| { id?: string; type: "response"; command: "abort_compaction"; success: true }
 	| { id?: string; type: "response"; command: "reload"; success: true; data: { cancelled: boolean; reason?: string } }
@@ -715,7 +774,7 @@ export type RpcResponse =
 			data: {
 				steering: string[];
 				followUp: string[];
-				ordered: Array<{ text: string; mode: "steer" | "followUp"; enqueueOrder: number }>;
+				ordered: QueuedInput[];
 			};
 	  }
 	| { id?: string; type: "response"; command: "new_session"; success: true; data: { cancelled: boolean } }
@@ -740,12 +799,15 @@ export type RpcResponse =
 			success: true;
 			data: { model: Model<any>; thinkingLevel: ThinkingLevel; isScoped: boolean } | null;
 	  }
+	| { id?: string; type: "response"; command: "continue_from_leaf"; success: true }
 	| {
 			id?: string;
 			type: "response";
 			command: "get_available_models";
 			success: true;
-			data: { models: Array<Model<any> & { supportedThinkingLevels: ThinkingLevel[] }> };
+			data: {
+				models: Array<Model<any> & { supportedThinkingLevels: ThinkingLevel[]; supportsAssistantPrefill: boolean }>;
+			};
 	  }
 
 	// Thinking
@@ -819,6 +881,13 @@ export type RpcResponse =
 
 	// Session
 	| { id?: string; type: "response"; command: "get_session_stats"; success: true; data: SessionStats }
+	| {
+			id?: string;
+			type: "response";
+			command: "memory_report";
+			success: true;
+			data: { path: string; heapSnapshot?: string };
+	  }
 	| { id?: string; type: "response"; command: "export_html"; success: true; data: { path: string } }
 	| { id?: string; type: "response"; command: "export_jsonl"; success: true; data: { path: string } }
 	| { id?: string; type: "response"; command: "switch_session"; success: true; data: { cancelled: boolean } }
@@ -1089,6 +1158,7 @@ export type RpcQuestionUpdatedEvent = {
 /** Outbound terminal outcome for a `question` request. */
 export type RpcQuestionResolvedEvent = {
 	type: "question_resolved";
+	resolvedBy?: "local_ui" | "rpc_connection" | "control_endpoint";
 	id: string;
 	requestId: string;
 	toolCallId: string;
@@ -1244,17 +1314,6 @@ export type RpcSessionClosedEvent = {
 	sessionPath?: string;
 };
 
-/** Sent once to every connection before this generation starts parking for a handoff. */
-export interface RpcHostSupersededEvent {
-	type: "host_superseded";
-	instanceId: string;
-	generation: number;
-	/** Public endpoint of the successor, or null for a drain without a known successor. */
-	successor: { socket: string } | null;
-}
-
-export type RpcHostLifecycleEvent = RpcHostSupersededEvent | RpcHostStalledEvent | RpcHostMemoryPressureEvent;
-
 /** Emitted after the loaded skill, extension, or MCP inventory changes. */
 export interface RpcLoadedSurfacesChangedEvent {
 	type: "loaded_surfaces_changed";
@@ -1266,11 +1325,6 @@ export interface RpcAuthAccountsChangedEvent {
 	provider: string;
 }
 
-/**
- * Emitted when the host's event loop was blocked long enough to stall every session it
- * serves, naming the routing handle and tool whose work held it when that can be
- * attributed. Informational: the host never aborts or refuses anything because of it.
- */
 /**
  * Sent to ONE opener the moment its `open_session` is accepted, before the open enters the
  * session loop. The in-process host serves opens one at a time, so a burst queues; without this
@@ -1288,43 +1342,6 @@ export interface RpcOpenQueuedEvent {
 	position: number;
 	/** Opens already in flight when this one arrived; `position` is this plus one. */
 	in_flight: number;
-}
-
-export interface RpcHostStalledEvent {
-	type: "host_stalled";
-	/** How late the host's own 200ms timer was invoked, i.e. how long the loop was held. */
-	driftMs: number;
-	/** Routing handle blamed for the stall, absent when no session work was running. */
-	sessionId?: string;
-	/** Tool that session was executing, when the stall happened inside one. */
-	tool?: string;
-	/**
-	 * Process CPU time spent during the stalled window, in milliseconds. Near `driftMs`: the host
-	 * was busy (JS work or a collection). Near zero: the process did not run (starved or waiting).
-	 */
-	processCpuMs?: number;
-	/** JS heap change across the stalled window, in megabytes; a large drop means a collection ran. */
-	heapDeltaMb?: number;
-}
-
-/**
- * Emitted while the host process's memory footprint is above its warning threshold. Capacity is memory,
- * never a refusal: the host reports the pressure and parks idle sessions sooner, and
- * never declines or kills a session because of it.
- */
-export interface RpcHostMemoryPressureEvent {
-	type: "host_memory_pressure";
-	/** Resident set size of the host process, in megabytes (what `ps` shows; it stays high after memory is returned). */
-	rssMb: number;
-	/**
-	 * Memory footprint of the host process, in megabytes: the number compared with the threshold (senpi#2261).
-	 * Hosts released before it omit this and `measure`.
-	 */
-	footprintMb?: number;
-	/** Kernel counter behind `footprintMb`; `"rss"` when the platform exposes no footprint counter. */
-	measure?: ProcessFootprintMeasure;
-	/** Live sessions the host is holding, including ones opening or closing. */
-	sessions: number;
 }
 
 /** Emitted when the SDK failover engine advances to a different account slot. */

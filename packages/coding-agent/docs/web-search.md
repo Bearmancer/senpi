@@ -75,7 +75,7 @@ A config file replaces the free default completely: senpi uses only the provider
 | `nativeModel` | The model native search runs on; see [Choosing the model native search runs on](#choosing-the-model-native-search-runs-on). |
 | `providers[]` | The providers to use. Each entry takes `provider`, and optionally `id`, `apiKey`, `baseUrl`, `maxResults`, `timeoutMs`, `priority`, `weight`, `allowedDomains` or `blockedDomains`. |
 
-Free engines you can list without a key: `duckduckgo-html`, `exa-mcp`, `startpage`, `mojeek`, `ecosia`, `google-html`, and `searxng`. Providers that need `apiKey`: `exa`, `tavily`, `brave`, `serper`, `serpdive`, `kagi`, `perplexity`, `z-ai`, `xai`, `kimi`, `deepseek`, `anthropic`, `openai` (plus `searchEngineId` for `google-cse`).
+Free engines you can list without a key: `duckduckgo-html`, `exa-mcp`, `startpage`, `mojeek`, `ecosia`, `google-html`, and `searxng`. Providers that need `apiKey`: `exa`, `tavily`, `brave`, `serper`, `serpdive`, `kagi`, `perplexity`, `z-ai`, `xai`, `kimi`, `deepseek`, `anthropic`, `openai` (plus `searchEngineId` for `google-cse`). `chatgpt-subscription` and `google` use your senpi login when `apiKey` is omitted; see [Listing login-based routes](#listing-login-based-routes).
 
 ## Limit or turn off the free engines
 
@@ -137,7 +137,7 @@ With `auto` on (the default), the model you are chatting with still searches thr
 
 ## Native (hosted) search
 
-When `auto` is `true` (the default), senpi puts a native entry in front of your configured providers, or in front of the free chain when there is no config file. That entry calls the hosted web search of the session's own provider (Anthropic Messages or OpenAI Responses compatible endpoints, xAI, DeepSeek, Perplexity, Z.AI, Kimi Code) with the session's own credential. Sessions on the first-party Anthropic and OpenAI APIs instead get the provider's server-side search tool in the main request, and `web_search` stays out of the way there.
+When `auto` is `true` (the default), senpi puts a native entry in front of your configured providers, or in front of the free chain when there is no config file. That entry calls the hosted web search of the session's own provider (Anthropic Messages or OpenAI Responses compatible endpoints, the ChatGPT subscription, xAI, DeepSeek, Perplexity, Z.AI, Kimi Code) with the session's own credential. Google Search grounding is never added this way; it is opt-in (see below). Sessions on the first-party Anthropic and OpenAI APIs instead get the provider's server-side search tool in the main request, and `web_search` stays out of the way there.
 
 ### Choosing the model native search runs on
 
@@ -165,7 +165,7 @@ Without `nativeModel`, senpi uses the provider's cheaper search model from this 
 | OpenAI Responses (GPT-5 models, first-party or compatible endpoint) | `gpt-5.6-luna` |
 | xAI (Grok models) | `grok-4.3` |
 | DeepSeek (`deepseek-v4-*` models) | `deepseek-v4-flash` |
-| Perplexity, Z.AI, Kimi Code, OpenRouter | none: the session model is used |
+| ChatGPT subscription, Perplexity, Z.AI, Kimi Code, OpenRouter | none: the session model is used |
 
 The default model is used only when all of these hold:
 
@@ -180,3 +180,39 @@ The routing attempts line of each result names the model behind every attempt, f
 ```text
 Routing attempts: my-proxy/native (claude-haiku-4-5) failed: Search failed with HTTP 404: model not found -> my-proxy/native (claude-opus-4-5) 5 results
 ```
+
+### ChatGPT subscription route
+
+The search goes to the subscription's web search tool with your ChatGPT login. A reply counts only when the model actually ran a web search: results come from that search's sources and from the citations in the answer. URLs the model writes in its answer text are never returned as sources. Small realtime models (the `-spark` variants) have no search route.
+
+The `codex` provider id is a separate thing: it calls OpenAI's pay-as-you-go Responses API and needs an `apiKey`.
+
+## Google Search grounding (opt-in)
+
+Google Search grounding runs only when you list a `google` entry in `websearch.json`, because Google bills grounding beyond its free allowance. A Google model session without that entry gets no Google Search grounding.
+
+The search calls `generateContent` with the `google_search` tool. Results are the grounding sources Google returns; an answer without grounding sources counts as no results. Each result URL is Google's grounding redirect link, which forwards to the source page, and the title is usually the source's site name.
+
+A `google` entry without `apiKey` uses your senpi `google` login (Google API key) and a Google model from it; set `model` to choose one. Vertex AI logins are not used.
+
+## Listing login-based routes
+
+List a `google` entry in `websearch.json` to turn on Google Search grounding, or a `chatgpt-subscription` entry to use that login from a session running another provider. Without an `apiKey`, the entry uses the matching senpi login and always sends it to that login's own endpoint; a `baseUrl` on such an entry is ignored. If you have no matching login, senpi skips the entry.
+
+```json
+{
+  "providers": [
+    { "id": "subscription", "provider": "chatgpt-subscription" },
+    { "id": "google", "provider": "google" },
+    { "id": "free", "provider": "duckduckgo-html" }
+  ]
+}
+```
+
+A `google` entry may also carry its own `apiKey` and `model`. Listing `chatgpt-subscription` is only needed to use that login from a session running another provider.
+
+## Cost
+
+- The ChatGPT subscription route counts against your subscription's usage limits. It does not bill an API account.
+- Google Search grounding is opt-in. It may be billed by Google at its grounding price once you pass the free allowance; check Google's pricing for your plan.
+- Other session routes bill the session's own provider account. The free engines (see [Without a config file](#without-a-config-file)) cost nothing.

@@ -165,10 +165,12 @@ export class SubprocessProcess {
 
 export function spawnSubprocess(spawn: SubprocessSpawn | undefined, request: SubprocessSpawnRequest): SubprocessLike {
 	if (spawn) return spawn(request.command, request.args, { cwd: request.cwd, env: request.env });
-	return nodeSpawn(request.command, [...request.args], {
+	const child = nodeSpawn(request.command, [...request.args], {
 		cwd: request.cwd,
 		detached: true,
 		env: request.env,
 		stdio: ["pipe", "pipe", "pipe"],
 	});
+	globalThis.__senpiCodemodeGateObserveResource?.("processes", child, "close");
+	return child;
 }

@@ -1,4 +1,4 @@
-import { type ToolCall, validateToolArguments } from "@earendil-works/pi-ai";
+import { type JsonObject, type JsonValue, type ToolCall, validateToolArguments } from "@earendil-works/pi-ai";
 import { describe, expect, it, vi } from "vitest";
 import { isEvalControlRequest, normalizeEvalSummary, parseEvalRequest } from "../src/tool/eval-request.ts";
 import { createEvalTool } from "../src/tool/eval-tool.ts";
@@ -45,7 +45,20 @@ function prepareEvalArguments(tool: EvalTool, args: unknown): Record<string, unk
 	return { ...prepare(args) };
 }
 
+function isJsonValue(value: unknown): value is JsonValue {
+	if (value === null || typeof value === "string" || typeof value === "number" || typeof value === "boolean")
+		return true;
+	if (Array.isArray(value)) return value.every(isJsonValue);
+	return typeof value === "object" && Object.values(value).every(isJsonValue);
+}
+
+function isJsonObject(value: Record<string, unknown>): value is JsonObject {
+	return Object.values(value).every(isJsonValue);
+}
+
 function validatePrepared(tool: EvalTool, prepared: Record<string, unknown>): Record<string, unknown> {
+	// Tool-call arguments are parsed JSON on the real path (ToolCall.arguments is a JsonObject).
+	if (!isJsonObject(prepared)) throw new Error("prepared eval arguments are not JSON");
 	const toolCall: ToolCall = { type: "toolCall", id: "call-1", name: "eval", arguments: prepared };
 	return validateToolArguments(tool, toolCall) as Record<string, unknown>;
 }

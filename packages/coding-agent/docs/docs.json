@@ -95,6 +95,10 @@
 				{
 					"title": "Custom Providers",
 					"path": "custom-provider.md"
+				},
+				{
+					"title": "Virtual Models",
+					"path": "virtual-models.md"
 				}
 			]
 		},

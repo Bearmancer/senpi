@@ -21,6 +21,9 @@ function usage(ctx: ExtensionCommandContext): void {
 
 function statusOf(account: CredentialAccountSummary): string {
 	const states = [accountLabel(account), account.source, account.blocked ? "blocked" : "available"];
+	for (const { model, until } of account.blockedModels ?? []) {
+		states.push(`blocked for ${model} until ${new Date(until).toISOString()}`);
+	}
 	if (account.pinned) states.push("pinned");
 	return states.join(" | ");
 }
@@ -42,6 +45,7 @@ async function showAccounts(ctx: ExtensionCommandContext, provider: string): Pro
 export default function accountExtension(pi: ExtensionAPI): void {
 	pi.registerCommand("account", {
 		description: "List and manage credential accounts for any provider.",
+		requiresArguments: true,
 		argumentHint:
 			"<provider> [list | pin <id> | unpin | remove <id> | rename <id> <display name...> | clear-name <id>]",
 		handler: async (rawArgs, ctx) => {

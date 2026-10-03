@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from "vitest";
 import { stream as streamOpenAICompletions } from "../src/api/openai-completions.ts";
 import type { AssistantMessage, Context, FetchFunction, Model } from "../src/types.ts";
 
+import { normalizeContext } from "../src/utils/transcript.ts";
+
 // senpi#2197: OpenAI-compatible failures carry a providerDiagnostic minted from the SDK
 // error's structured status and `error.code`, never from the message text.
 
@@ -54,7 +56,7 @@ async function run(
 	fetch: FetchFunction,
 	retry: { maxRetries: number; maxRetryDelayMs?: number } = { maxRetries: 0 },
 ): Promise<AssistantMessage> {
-	return streamOpenAICompletions(model, context, { apiKey: "test-key", fetch, ...retry }).result();
+	return streamOpenAICompletions(model, normalizeContext(context), { apiKey: "test-key", fetch, ...retry }).result();
 }
 
 describe("openai-completions providerDiagnostic", () => {

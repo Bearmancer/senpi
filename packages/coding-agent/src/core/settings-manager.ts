@@ -13,9 +13,15 @@ import type {
 	RetryStagePolicy,
 	RetryTieredHintStrategy,
 } from "@earendil-works/pi-ai/utils/retry-profile/types";
-import type { TuiMode as RendererTuiMode, ScrollViewScrollbar, TerminalCapabilities } from "@earendil-works/pi-tui";
+import type {
+	TuiMode as RendererTuiMode,
+	ScrollViewScrollbar,
+	TerminalCapabilities,
+	WheelScrollLines,
+} from "@earendil-works/pi-tui";
 import { createHash, randomUUID } from "crypto";
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "fs";
+import { mkdir, readFile, rename, rm, writeFile } from "fs/promises";
 import { homedir } from "os";
 import { dirname, join } from "path";
 import lockfile from "proper-lockfile";
@@ -34,6 +40,7 @@ import { DEFAULT_HTTP_IDLE_TIMEOUT_MS, parseHttpIdleTimeoutMs } from "./http-dis
 import {
 	CredentialStoreBusyError,
 	FILE_STORAGE_LOCK_OPTIONS,
+	FILE_STORAGE_LOCK_RETRY_BUDGET_MS,
 	FILE_STORAGE_LOCK_RETRY_MAX_DELAY_MS,
 	FILE_STORAGE_LOCK_RETRY_MIN_DELAY_MS,
 	FILE_STORAGE_SYNC_LOCK_BUDGET_MS,
@@ -74,6 +81,7 @@ import {
 	type TodoFirstTurnPlan,
 	type TodoSettings,
 } from "./settings-shapes.ts";
+import { MAX_SKILL_EXPANSIONS_PER_PROMPT } from "./skill-invocation.ts";
 import {
 	type BranchSummarySettings,
 	isTerminalMouseMode,
@@ -101,7 +109,11 @@ export const DEFAULT_SESSION_SHUTDOWN_HANDLER_TIMEOUT_MS = 10_000;
 export type TuiMode = RendererTuiMode;
 export type FullscreenExitOutput = "transcript" | "resume-hint";
 
-/** Service tier remembered per model; "auto" is an explicit opt-out of an inherited priority tier. */
+/**
+ * Service tier remembered per model for `/fast`. "auto" is an explicit opt-out of an
+ * inherited priority tier. Ultrafast is an explicit selection, not a remembered tier:
+ * a stored "ultrafast" is dropped on read and never sent.
+ */
 export type ModelServiceTier = "auto" | "flex" | "priority";
 
 const THINKING_LEVEL_VALUES: ReadonlySet<string> = new Set<ThinkingLevel>([
@@ -133,6 +145,8 @@ export interface WarningSettings {
 }
 
 export type DefaultProjectTrust = "ask" | "always" | "never";
+/** true hides all startup output, "header" keeps only the startup header. */
+export type QuietStartup = boolean | "header";
 
 export type TransportSetting = Transport;
 
@@ -178,7 +192,7 @@ export interface Settings {
 	showCacheMissNotices?: boolean; // default: false - show prompt-cache miss and compaction cost notices
 	externalEditor?: string; // Command for Ctrl+G external editor; takes precedence over VISUAL/EDITOR
 	shellPath?: string; // Custom shell path (e.g., for Cygwin users on Windows); supports leading ~ expansion
-	quietStartup?: boolean;
+	quietStartup?: QuietStartup; // default: false
 	tips?: boolean; // default: true
 	tipsHistory?: Record<string, number>; // tipId -> epoch ms last shown
 	defaultProjectTrust?: DefaultProjectTrust; // default: "ask"; global setting only
@@ -188,6 +202,7 @@ export interface Settings {
 	enableInstallTelemetry?: boolean; // default: true - anonymous version/update ping after changelog-detected updates
 	enableAnalytics?: boolean; // default: false - opt-in analytics data sharing
 	trackingId?: string; // analytics tracking identifier, generated when analytics is enabled
+	deviceId?: string; // stable UUID of this installation, created when a login first needs it; global setting only
 	packages?: PackageSource[]; // Array of npm/git package sources (string or object with filtering)
 	enabledBuiltinExtensions?: string[]; // Optional allowlist of builtin extension ids to load (default: all)
 	disabledBuiltinExtensions?: string[]; // Builtin extension ids to skip loading
@@ -197,6 +212,7 @@ export interface Settings {
 	themes?: string[]; // Array of local theme file paths or directories
 	hooks?: string[];
 	enableSkillCommands?: boolean; // default: true - register skills as /skill:name commands
+	maxSkillExpansionsPerPrompt?: number; // default: 5 - distinct skills one prompt may expand
 	terminal?: TerminalSettings;
 	promptCache?: PromptCacheSettings;
 	images?: ImageSettings;
@@ -206,7 +222,7 @@ export interface Settings {
 	recommendedModels?: string[]; // Preferred default model ids, in priority order
 	favoriteModels?: string[]; // Model patterns for Ctrl+P cycling (same format as --models CLI flag)
 	enabledModels?: string[]; // Legacy global model narrowing patterns (same format as --models CLI flag)
-	defaultTools?: string[]; // Initial built-in tool selection
+	defaultTools?: string[]; // Initial tool selection; `+name`/`-name` entries add to or remove from the inherited selection
 	doubleEscapeAction?: "fork" | "tree" | "none"; // Action for double-escape with empty editor (default: "tree")
 	treeFilterMode?: "default" | "no-tools" | "user-only" | "labeled-only" | "all"; // Default filter when opening /tree
 	thinkingBudgets?: ThinkingBudgetsSettings; // Custom token budgets for thinking levels
@@ -227,6 +243,7 @@ export interface Settings {
 	fullscreenExitOutput?: FullscreenExitOutput; // default: "transcript"; no effect in regular TUI mode
 	fullscreenScrollbar?: ScrollViewScrollbar; // default: "auto"; no effect in regular TUI mode
 	fullscreenCopyOnSelect?: boolean; // default: true; no effect in regular TUI mode
+	fullscreenWheelScrollLines?: WheelScrollLines; // default: "auto"; lines per wheel event, 1-100
 }
 
 function isMergeableObject(value: unknown): value is Record<string, unknown> {
@@ -252,16 +269,52 @@ function deepMergeObjects(base: Record<string, unknown>, overrides: Record<strin
 	return result;
 }
 
+/** Tools enabled at startup when `defaultTools` does not change them (the fork default includes `grep`). */
+export const DEFAULT_TOOL_NAMES: readonly string[] = ["read", "bash", "edit", "write", "grep"];
+
+function isToolModifier(entry: unknown): boolean {
+	return typeof entry === "string" && (entry.startsWith("+") || entry.startsWith("-"));
+}
+
+/**
+ * Merge `defaultTools` of two settings layers. A list with plain tool names replaces the inherited
+ * one; a list of only `+name`/`-name` entries is appended, so it modifies the inherited selection.
+ */
+function mergeDefaultTools(base: string[] | undefined, overrides: string[] | undefined): string[] | undefined {
+	if (overrides === undefined) return base;
+	// Settings files are not validated; a malformed value replaces instead of throwing here.
+	if (!Array.isArray(base) || !Array.isArray(overrides) || !overrides.every(isToolModifier)) return overrides;
+	return [...base, ...overrides];
+}
+
+/**
+ * Resolve a merged `defaultTools` list: plain names replace `DEFAULT_TOOL_NAMES`, then `+name` adds
+ * and `-name` removes a tool, in list order.
+ */
+function resolveDefaultTools(entries: string[]): string[] {
+	const plain = entries.filter((entry) => !isToolModifier(entry));
+	const tools = plain.length > 0 || entries.length === 0 ? plain : [...DEFAULT_TOOL_NAMES];
+	for (const entry of entries) {
+		if (!isToolModifier(entry)) continue;
+		const name = entry.slice(1);
+		const index = tools.indexOf(name);
+		if (entry.startsWith("+") && index === -1 && name) tools.push(name);
+		else if (entry.startsWith("-") && index !== -1) tools.splice(index, 1);
+	}
+	return tools;
+}
+
 /** Deep merge settings: project/overrides take precedence, nested objects merge recursively */
 function deepMergeSettings(base: Settings, overrides: Settings): Settings {
-	const result = deepMergeObjects(base as Record<string, unknown>, overrides as Record<string, unknown>) as Settings;
+	const merged = deepMergeObjects(base as Record<string, unknown>, overrides as Record<string, unknown>) as Settings;
 	if (overrides.retry?.fallbackChains !== undefined) {
-		result.retry = {
-			...result.retry,
+		merged.retry = {
+			...merged.retry,
 			fallbackChains: structuredClone(overrides.retry.fallbackChains),
 		};
 	}
-	return result;
+	const defaultTools = mergeDefaultTools(base.defaultTools, overrides.defaultTools);
+	return defaultTools === undefined ? merged : { ...merged, defaultTools };
 }
 
 function resolveAskUserTimeoutMinutes(value: unknown): number {
@@ -418,6 +471,17 @@ export interface SettingsManagerCreateOptions {
 
 export interface SettingsStorage {
 	withLock(scope: SettingsScope, fn: (current: string | undefined) => string | undefined): void;
+	/**
+	 * The same locked read-modify-write without blocking the caller's thread while another writer
+	 * holds the lock. Queued saves use it when present; `withLock` stays for synchronous callers.
+	 */
+	withLockAsync?(
+		scope: SettingsScope,
+		fn: (current: string | undefined) => string | undefined,
+		underLock?: () => void,
+	): Promise<void>;
+	/** `withLock` when the lock is free right now; false (and nothing written) when it is held. */
+	tryWithLock?(scope: SettingsScope, fn: (current: string | undefined) => string | undefined): boolean;
 	selectSource?(scope: SettingsScope): SettingsSourceSelection | undefined;
 }
 
@@ -436,6 +500,8 @@ function toSettingsError(scope: SettingsScope, error: unknown, path?: string): S
 		error: error instanceof Error ? error : new Error(String(error)),
 	};
 }
+
+class SettingsLockBusy extends Error {}
 
 export class FileSettingsStorage implements SettingsStorage {
 	private globalSettingsPath: string;
@@ -459,6 +525,15 @@ export class FileSettingsStorage implements SettingsStorage {
 		if (scope === "global") this.globalSettingsPath = path;
 		else this.projectSettingsPath = path;
 		return source;
+	}
+
+	private tryAcquireLockSync(path: string): () => void {
+		try {
+			return lockfile.lockSync(path, { ...FILE_STORAGE_LOCK_OPTIONS, retries: 0 });
+		} catch (error) {
+			if (isLockError(error)) throw new SettingsLockBusy();
+			throw error;
+		}
 	}
 
 	private acquireLockSyncWithRetry(path: string): () => void {
@@ -485,7 +560,87 @@ export class FileSettingsStorage implements SettingsStorage {
 		}
 	}
 
-	withLock(scope: SettingsScope, fn: (current: string | undefined) => string | undefined): void {
+	private async acquireLockWithRetry(path: string): Promise<() => Promise<void>> {
+		const startedAt = Date.now();
+		let attempt = 0;
+		while (true) {
+			try {
+				return await lockfile.lock(path, { ...FILE_STORAGE_LOCK_OPTIONS, retries: 0 });
+			} catch (error) {
+				if (!isLockError(error)) throw error;
+				const waitedMs = Date.now() - startedAt;
+				if (waitedMs >= FILE_STORAGE_LOCK_RETRY_BUDGET_MS) {
+					throw new CredentialStoreBusyError(path, waitedMs, error);
+				}
+				const delayMs = Math.min(
+					FILE_STORAGE_LOCK_RETRY_MIN_DELAY_MS * 2 ** attempt,
+					FILE_STORAGE_LOCK_RETRY_MAX_DELAY_MS,
+					FILE_STORAGE_LOCK_RETRY_BUDGET_MS - waitedMs,
+				);
+				attempt++;
+				await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
+			}
+		}
+	}
+
+	/**
+	 * `withLock` for queued saves. Waiting on a busy lock used `Atomics.wait` on the UI thread: a
+	 * settings write per turn (tip history) froze typing for up to a second whenever the lock was
+	 * held elsewhere. The protocol is unchanged: lock-free read, merge, re-merge under the lock if
+	 * another writer won, then publish through a same-directory temp file and rename.
+	 */
+	async withLockAsync(
+		scope: SettingsScope,
+		fn: (current: string | undefined) => string | undefined,
+		underLock?: () => void,
+	): Promise<void> {
+		const path = scope === "global" ? this.globalSettingsPath : this.projectSettingsPath;
+		const readCurrent = async (): Promise<string | undefined> => {
+			try {
+				return await readFile(path, "utf-8");
+			} catch (error) {
+				if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+				throw error;
+			}
+		};
+		const current = await readCurrent();
+		let next = fn(current);
+		if (next === undefined) return;
+		await mkdir(dirname(path), { recursive: true });
+		const release = await this.acquireLockWithRetry(path);
+		try {
+			// The wait may have outlived the caller's permission to write (e.g. project trust revoked).
+			underLock?.();
+			const lockedContent = await readCurrent();
+			if (lockedContent !== current) next = fn(lockedContent);
+			if (next !== undefined) {
+				const tempPath = `${path}.${process.pid}.${randomUUID()}.tmp`;
+				try {
+					await writeFile(tempPath, next, "utf-8");
+					await rename(tempPath, path);
+					// After the rename: a failed publish must not mark identical content as our own write.
+					recordSelfWrite(path, next);
+				} catch (error) {
+					await rm(tempPath, { force: true });
+					throw error;
+				}
+			}
+		} finally {
+			await release();
+		}
+	}
+
+	tryWithLock(scope: SettingsScope, fn: (current: string | undefined) => string | undefined): boolean {
+		try {
+			this.withLock(scope, fn, false);
+			return true;
+		} catch (error) {
+			if (error instanceof SettingsLockBusy) return false;
+			throw error;
+		}
+	}
+
+	withLock(scope: SettingsScope, fn: (current: string | undefined) => string | undefined, waitForLock = true): void {
 		const path = scope === "global" ? this.globalSettingsPath : this.projectSettingsPath;
 		const dir = dirname(path);
 
@@ -501,7 +656,7 @@ export class FileSettingsStorage implements SettingsStorage {
 		if (!existsSync(dir)) {
 			mkdirSync(dir, { recursive: true });
 		}
-		const release = this.acquireLockSyncWithRetry(path);
+		const release = waitForLock ? this.acquireLockSyncWithRetry(path) : this.tryAcquireLockSync(path);
 		try {
 			const underLock = existsSync(path) ? readFileSync(path, "utf-8") : undefined;
 			if (underLock !== current) {
@@ -812,6 +967,11 @@ export class SettingsManager {
 		return out;
 	}
 
+	/** A copy of the effective settings: global and project settings merged, with overrides. */
+	getSettings(): Settings {
+		return structuredClone(this.settings);
+	}
+
 	getGlobalSettings(): Settings {
 		return structuredClone(this.globalSettings);
 	}
@@ -1019,13 +1179,13 @@ export class SettingsManager {
 		this.modifiedProjectNestedFields.clear();
 	}
 
-	private enqueueWrite(scope: SettingsScope, task: () => void): void {
+	private enqueueWrite(scope: SettingsScope, task: () => void | Promise<void>): void {
 		this.writeQueue = this.writeQueue
-			.then(() => {
+			.then(async () => {
 				if (scope === "project") {
 					this.assertProjectTrustedForWrite();
 				}
-				task();
+				await task();
 				this.clearModifiedScope(scope);
 			})
 			.catch((error) => {
@@ -1046,8 +1206,8 @@ export class SettingsManager {
 		snapshotSettings: Settings,
 		modifiedFields: Set<keyof Settings>,
 		modifiedNestedFields: Map<keyof Settings, Set<string>>,
-	): void {
-		this.storage.withLock(scope, (current) => {
+	): void | Promise<void> {
+		const merge = (current: string | undefined): string => {
 			const currentFileSettings = current ? SettingsManager.migrateSettings(parseSettingsJson(current)) : {};
 			const mergedSettings: Settings = { ...currentFileSettings };
 			for (const field of modifiedFields) {
@@ -1067,7 +1227,20 @@ export class SettingsManager {
 			}
 
 			return JSON.stringify(mergedSettings, null, 2);
-		});
+		};
+		const storage = this.storage;
+		if (!storage.withLockAsync || !storage.tryWithLock) {
+			storage.withLock(scope, merge);
+			return;
+		}
+		// Uncontended (the normal case): written before save() returns, as callers expect. Only when
+		// another writer holds the lock does the wait move off the UI thread.
+		if (storage.tryWithLock(scope, merge)) return;
+		return storage.withLockAsync(
+			scope,
+			merge,
+			scope === "project" ? () => this.assertProjectTrustedForWrite() : undefined,
+		);
 	}
 
 	private save(): void {
@@ -1081,9 +1254,9 @@ export class SettingsManager {
 		const modifiedFields = new Set(this.modifiedFields);
 		const modifiedNestedFields = this.cloneModifiedNestedFields(this.modifiedNestedFields);
 
-		this.enqueueWrite("global", () => {
-			this.persistScopedSettings("global", snapshotGlobalSettings, modifiedFields, modifiedNestedFields);
-		});
+		this.enqueueWrite("global", () =>
+			this.persistScopedSettings("global", snapshotGlobalSettings, modifiedFields, modifiedNestedFields),
+		);
 	}
 
 	private saveProjectSettings(settings: Settings): void {
@@ -1098,9 +1271,9 @@ export class SettingsManager {
 		const snapshotProjectSettings = structuredClone(this.projectSettings);
 		const modifiedFields = new Set(this.modifiedProjectFields);
 		const modifiedNestedFields = this.cloneModifiedNestedFields(this.modifiedProjectNestedFields);
-		this.enqueueWrite("project", () => {
-			this.persistScopedSettings("project", snapshotProjectSettings, modifiedFields, modifiedNestedFields);
-		});
+		this.enqueueWrite("project", () =>
+			this.persistScopedSettings("project", snapshotProjectSettings, modifiedFields, modifiedNestedFields),
+		);
 	}
 
 	private updateProjectSettings(field: keyof Settings, update: (settings: Settings) => void): void {
@@ -1763,11 +1936,12 @@ export class SettingsManager {
 		this.save();
 	}
 
-	getQuietStartup(): boolean {
-		return this.settings.quietStartup ?? false;
+	getQuietStartup(): QuietStartup {
+		const value = this.settings.quietStartup;
+		return value === true || value === "header" ? value : false;
 	}
 
-	setQuietStartup(quiet: boolean): void {
+	setQuietStartup(quiet: QuietStartup): void {
 		this.globalSettings.quietStartup = quiet;
 		this.markModified("quietStartup");
 		this.save();
@@ -1869,6 +2043,20 @@ export class SettingsManager {
 		this.save();
 	}
 
+	/**
+	 * Stable ID of this installation, e.g. sent to OpenAI as its agent host ID.
+	 * Created on first use. Project settings are ignored so a committed project
+	 * settings file cannot give every clone the same ID.
+	 */
+	getOrCreateDeviceId(): string {
+		if (!this.globalSettings.deviceId) {
+			this.globalSettings.deviceId = randomUUID();
+			this.markModified("deviceId");
+			this.save();
+		}
+		return this.globalSettings.deviceId;
+	}
+
 	getPackages(): PackageSource[] {
 		return [...(this.settings.packages ?? [])];
 	}
@@ -1959,6 +2147,13 @@ export class SettingsManager {
 
 	getEnableSkillCommands(): boolean {
 		return this.settings.enableSkillCommands ?? true;
+	}
+
+	getMaxSkillExpansionsPerPrompt(): number {
+		const value = this.settings.maxSkillExpansionsPerPrompt;
+		return typeof value === "number" && Number.isInteger(value) && value > 0
+			? value
+			: MAX_SKILL_EXPANSIONS_PER_PROMPT;
 	}
 
 	setEnableSkillCommands(enabled: boolean): void {
@@ -2112,6 +2307,20 @@ export class SettingsManager {
 		this.save();
 	}
 
+	getFullscreenWheelScrollLines(): WheelScrollLines {
+		const lines = this.settings.fullscreenWheelScrollLines;
+		return typeof lines === "number" && Number.isFinite(lines)
+			? Math.max(1, Math.min(100, Math.floor(lines)))
+			: "auto";
+	}
+
+	setFullscreenWheelScrollLines(lines: WheelScrollLines): void {
+		this.globalSettings.fullscreenWheelScrollLines =
+			lines === "auto" ? lines : Math.max(1, Math.min(100, Math.floor(lines)));
+		this.markModified("fullscreenWheelScrollLines");
+		this.save();
+	}
+
 	getImageAutoResize(): boolean {
 		return this.settings.images?.autoResize ?? true;
 	}
@@ -2161,9 +2370,11 @@ export class SettingsManager {
 		this.save();
 	}
 
+	/** The resolved `defaultTools` selection, or undefined when no settings layer sets it. */
 	getDefaultTools(): string[] | undefined {
 		const tools = this.settings.defaultTools;
-		return tools ? [...tools] : undefined;
+		if (tools === undefined) return undefined;
+		return resolveDefaultTools(Array.isArray(tools) ? tools.filter((tool) => typeof tool === "string") : []);
 	}
 
 	setEnabledModels(patterns: string[] | undefined): void {

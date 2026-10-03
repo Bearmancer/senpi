@@ -4,6 +4,7 @@ import { extractPatchedPaths } from "../gpt-apply-patch/index.ts";
 import { parsePermissionFlag, parsePermissionPresetFlag } from "./cli.ts";
 import { disabled } from "./config.ts";
 import { createEventEmitter } from "./events.ts";
+import { INTERNAL_PERMISSION_TOOLS } from "./internal-tools.ts";
 import { handleNoUI } from "./non-interactive.ts";
 import { createBuiltinParserRegistry, type ParserRegistry, toolOwnedPermissionRequests } from "./parsers.ts";
 import { showPermissionPrompt } from "./prompt.ts";
@@ -60,6 +61,7 @@ export default function permissionSystemExtension(pi: ExtensionAPI): void {
 	let cliRuleset: Ruleset = [];
 	let staticRuleset: Ruleset = [];
 	let initialApprovedCount = 0;
+	let setupError: string | null = null;
 
 	const nextRequestID = createRequestIDFactory();
 
@@ -73,7 +75,20 @@ export default function permissionSystemExtension(pi: ExtensionAPI): void {
 	});
 
 	pi.on("session_start", async (_event, ctx) => {
-		const settingsManager = SettingsManager.create(ctx.cwd);
+		setupError = null;
+		try {
+			loadPermissionRules(ctx.cwd);
+		} catch (error) {
+			// The runner reports a throwing handler and keeps the session running, so a rules
+			// failure must block tool calls itself instead of leaving them unchecked (#2617).
+			setupError = getReason(error);
+			throw error;
+		}
+		applyToolDenials();
+	});
+
+	const loadPermissionRules = (cwd: string): void => {
+		const settingsManager = SettingsManager.create(cwd);
 		const permissionFlag = pi.getFlag("permission");
 		const permissionPresetFlag = pi.getFlag("permission-preset");
 		cliRuleset = typeof permissionFlag === "string" ? parsePermissionFlag(permissionFlag) : [];
@@ -86,28 +101,43 @@ export default function permissionSystemExtension(pi: ExtensionAPI): void {
 			);
 		}
 
-		const loadedSettings = loadPermissionSettings(settingsManager, cliRuleset, ctx.cwd, cliPreset);
+		const loadedSettings = loadPermissionSettings(settingsManager, cliRuleset, cwd, cliPreset);
 		staticRuleset = loadedSettings.staticRuleset;
 		const approved = loadedSettings.approved;
 		parserRegistry = createBuiltinParserRegistry();
 		service = new PermissionService(staticRuleset, approved, createEventEmitter(pi));
 		initialApprovedCount = approved.length;
+	};
 
+	const applyToolDenials = (): void => {
 		const allTools = pi.getAllTools().map((tool) => tool.name);
 		const disabledTools = disabled(allTools, staticRuleset);
-		const activeTools = pi.getActiveTools().filter((toolName) => !disabledTools.has(toolName));
+		const activeTools = pi
+			.getActiveTools()
+			.filter((toolName) => INTERNAL_PERMISSION_TOOLS.has(toolName) || !disabledTools.has(toolName));
 		pi.setActiveTools(activeTools);
-	});
+	};
 
 	pi.on("tool_call", async (event, ctx) => {
+		if (setupError !== null) {
+			return { block: true, reason: `Permission setup failed: ${setupError}` };
+		}
 		if (!service || !parserRegistry) {
 			return undefined;
 		}
 
-		const permissionRequests = parserRegistry.has(event.toolName)
-			? parserRegistry.parse(event.toolName, event.input, ctx.cwd)
-			: (toolOwnedPermissionRequests(pi.getAllTools(), event.toolName, event.input, ctx.cwd) ??
-				parserRegistry.parse(event.toolName, event.input, ctx.cwd));
+		const toolOwnedRequests = parserRegistry.has(event.toolName)
+			? undefined
+			: toolOwnedPermissionRequests(pi.getAllTools(), event.toolName, event.input, ctx.cwd);
+		const permissionRequests = toolOwnedRequests ?? parserRegistry.parse(event.toolName, event.input, ctx.cwd);
+		// Parsing preserves a path monitor's approved parent. Only rearming is
+		// bookkeeping; path watches read file bytes and retain filesystem checks.
+		if (
+			INTERNAL_PERMISSION_TOOLS.has(event.toolName) &&
+			(event.toolName === "monitor" ? event.input.action === "rearm" : toolOwnedRequests === undefined)
+		) {
+			return undefined;
+		}
 		const sessionID = ctx.sessionManager.getSessionId();
 
 		for (const permissionRequest of permissionRequests) {
@@ -120,10 +150,15 @@ export default function permissionSystemExtension(pi: ExtensionAPI): void {
 				metadata: createRequestMetadata(event.toolName, event.input),
 			};
 
-			const askResultPromise = service.ask(request).then(
-				() => ({ ok: true as const }),
-				(error: unknown) => ({ ok: false as const, error }),
-			);
+			const askResultPromise = service
+				.ask(request, {
+					autoApproveAsk: permissionRequest.autoApproveAsk ?? false,
+					...(permissionRequest.ruleAliases ? { ruleAliases: permissionRequest.ruleAliases } : {}),
+				})
+				.then(
+					() => ({ ok: true as const }),
+					(error: unknown) => ({ ok: false as const, error }),
+				);
 			const isPending = service.list().some((pendingRequest) => pendingRequest.id === request.id);
 
 			if (!isPending) {

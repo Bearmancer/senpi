@@ -11,6 +11,8 @@ import { CURSOR_CONVERSATION_POISONED_MESSAGE } from "../src/api/cursor-conversa
 import type { Model } from "../src/types.ts";
 import { getCursorContextLimit, resetCursorContextLimitStoreForTest } from "../src/utils/cursor-context-limit.ts";
 
+import { normalizeContext } from "../src/utils/transcript.ts";
+
 process.env.CURSOR_CONVERSATION_ID_STORE = join(mkdtempSync(join(tmpdir(), "cursor-rotate-")), "ids.json");
 // The stream records observed context ceilings; keep them out of the real agent dir.
 process.env.CURSOR_CONTEXT_LIMIT_STORE = join(mkdtempSync(join(tmpdir(), "cursor-limits-")), "limits.json");
@@ -89,7 +91,7 @@ async function startServer(handler: (stream: http2.ServerHttp2Stream) => void): 
 async function runStream(baseUrl: string, sessionId: string) {
 	const result = streamCursorAgent(
 		buildModel(baseUrl),
-		{ messages: [{ role: "user", content: "hello", timestamp: 0 }] },
+		normalizeContext({ messages: [{ role: "user", content: "hello", timestamp: 0 }] }),
 		{ apiKey: "test-token", sessionId, signal: neverAbortedSignal },
 	);
 	for await (const _event of result) {

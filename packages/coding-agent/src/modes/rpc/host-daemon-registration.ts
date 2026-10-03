@@ -26,7 +26,6 @@ import { rename, rm } from "node:fs/promises";
 import { engineBuildIdentity } from "../../core/engine-build-identity.ts";
 import {
 	type DaemonPidFile,
-	ProcessIdentityUnreadableError,
 	parseDaemonPidFile,
 	processMatchesPidFile,
 	readProcessStartTime,
@@ -152,29 +151,30 @@ export async function clearHostRegistration(paths: HostDaemonPaths): Promise<voi
  * Drops ONE generation's registration while the files still name it. After a handoff the pointer
  * belongs to the successor, so a draining predecessor removes only its own directory - taking the
  * pointer with it would leave every client reading no daemon at all while one is serving.
+ *
+ * A generation whose public socket another one TOOK (`superseded`) removes only its own directory,
+ * whatever the pointer says. The pointer and `settings.json` are then the replacer's to move: a handoff
+ * rewrites the settings before its successor boots and repoints the pointer only after it saw the rename
+ * land, and a predecessor that noticed the rename first would read "still mine" and remove both just as,
+ * or just after, the handoff moved them - leaving the successor serving with no registration (#2536).
  */
 export async function releaseGeneration(
 	paths: HostDaemonPaths,
-	owner: { readonly instanceId: string; readonly pid: number },
+	owner: { readonly instanceId: string; readonly pid: number; readonly superseded?: boolean },
 ): Promise<void> {
 	const generation = generationPaths(paths, owner.instanceId);
 	const record = parseDaemonPidFile((await readFileOrUndefined(generation.pidFile)) ?? "");
 	if (record !== undefined && record.pid !== owner.pid) return;
+	if (owner.superseded === true) {
+		await rm(generation.dir, { recursive: true, force: true });
+		return;
+	}
 	const pointer = parseJson(await readFileOrUndefined(paths.pointerFile));
 	const ownsPointer = pointer?.instance_id === owner.instanceId;
 	if (ownsPointer) await rm(paths.settingsFile, { force: true });
 	await rm(generation.dir, { recursive: true, force: true });
 	// Last: "no pointer" is what every reader takes as "no host here" (senpi#2241).
 	if (ownsPointer) await rm(paths.pointerFile, { force: true });
-}
-
-/**
- * A LEGACY host's flat registration, if one is there. This build never writes and never removes it:
- * it is evidence that a host from before layout 2 may still own the socket, and nothing more.
- */
-export async function readLegacyHostRecord(paths: HostDaemonPaths): Promise<DaemonPidFile | undefined> {
-	const text = await readFileOrUndefined(paths.legacyPidFile);
-	return text === undefined ? undefined : parseDaemonPidFile(text);
 }
 
 /**
@@ -193,25 +193,6 @@ export async function provenOwner(
 	return (await processMatchesPidFile(identity, readProcessStartTime).catch(() => false))
 		? { ...identity, instanceId: registered.instanceId }
 		: undefined;
-}
-
-/**
- * Whether a LEGACY host is still running behind the flat registration. An identity that cannot be
- * read on a live pid counts as running: the point of asking is to refuse rather than start a second
- * host beside a process that may still own the socket.
- */
-export async function legacyHostIsLive(
-	paths: HostDaemonPaths,
-	probe: (pid: number) => Promise<string | undefined>,
-): Promise<boolean> {
-	const record = await readLegacyHostRecord(paths);
-	if (record === undefined) return false;
-	try {
-		return await processMatchesPidFile(record, probe);
-	} catch (error: unknown) {
-		if (error instanceof ProcessIdentityUnreadableError) return true;
-		throw error;
-	}
 }
 
 /**

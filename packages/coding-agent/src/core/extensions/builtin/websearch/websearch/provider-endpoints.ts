@@ -12,6 +12,8 @@ const DEFAULT_PROVIDER_URLS: Record<Exclude<SearchProvider, "searxng">, string> 
 	"z-ai": "https://api.z.ai/api/paas/v4/web_search",
 	openai: "https://api.openai.com/v1/responses",
 	codex: "https://api.openai.com/v1/responses",
+	"chatgpt-subscription": "https://chatgpt.com/backend-api/codex/responses",
+	google: "https://generativelanguage.googleapis.com/v1beta",
 	anthropic: "https://api.anthropic.com/v1/messages",
 	perplexity: "https://api.perplexity.ai/search",
 	xai: "https://api.x.ai/v1/responses",

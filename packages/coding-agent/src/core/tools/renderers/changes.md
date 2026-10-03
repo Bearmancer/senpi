@@ -1,5 +1,24 @@
 # core/tools/renderers changes
 
+## 2026-09-30 - Sync with upstream v0.99.1 (6a4af07d6): tools and shell utilities
+
+### What changed
+
+- `packages/coding-agent/src/core/tools/renderers/bash.ts`: `core/tools/renderers/bash.ts`: collapsed-preview cache holds the hint line together with the preview lines (`cachedSkipped` removed). `bash.ts`: eval-only marker `exposure: "eval"` on `createBashToolDefinition`; timeout validation; stream-callback error propagation; spill cleanup and `AggregateError` finalization; detached-group tracking (`noteDetachedChildExited`/`pruneTrackedDetachedChildren`, senpi#1697); PI_SESSION_CWD/PI_GOAL_STORE_FILE env; successful results keep the fork model-only truncation notice (`modelOnlyText`) as a separate content part.
+- `packages/coding-agent/src/core/tools/renderers/read.ts`: `core/tools/renderers/read.ts` (silent merge, reviewed): null `offset`/`limit` render as omitted (strict schemas send null). `read.ts`: structural folder options, local:// guard, filesystem policy checker, model-only continuation notices.
+
+### Why
+
+Upstream v0.99.1 (6a4af07d6) changed these paths while the fork carries its own behavior; tools and shell utils adopt upstream bash/read fixes and keep fork output shapes and hooks (plan D-15).
+
+### Why an extension could not handle it
+
+Built-in tool execution and shell handling are core tool implementations that extensions call, not replace.
+
+### Expected merge conflict zones
+
+Every path listed above conflicts again where upstream edits the hunks named in its line; the fork-kept constructs named there are the anchors to preserve.
+
 ## Name a file inside a skill directory by its skill, senpi#2082 (2026-09-24)
 
 ### What changed

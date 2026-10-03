@@ -1,5 +1,13 @@
 import type { AssistantMessage } from "@earendil-works/pi-ai";
-import { type Component, Container, Markdown, type MarkdownTheme, Spacer, Text } from "@earendil-works/pi-tui";
+import {
+	type Component,
+	Container,
+	Markdown,
+	type MarkdownTheme,
+	nextRenderRevision,
+	Spacer,
+	Text,
+} from "@earendil-works/pi-tui";
 import type { MarkdownTransformer } from "../../../core/extensions/types.ts";
 import { getMarkdownTheme, theme } from "../theme/theme.ts";
 import { type AssistantRenderDescriptor, createAssistantRenderDescriptors } from "./assistant-render-descriptors.ts";
@@ -30,6 +38,8 @@ export class AssistantMessageComponent extends Container {
 	private providerErrorOwned = false;
 	private isStreaming = false;
 	private thinkingVisibilityOverrides = new Map<number, boolean>();
+	/** Moves whenever the cached render is dropped; output is a function of the state `updateContent` records. */
+	private revision = nextRenderRevision();
 
 	constructor(
 		message?: AssistantMessage,
@@ -56,6 +66,7 @@ export class AssistantMessageComponent extends Container {
 
 	override invalidate(): void {
 		this.renderCache = undefined;
+		this.revision = nextRenderRevision();
 		super.invalidate();
 		this.renderDescriptors = [];
 		this.refreshContent();
@@ -97,6 +108,10 @@ export class AssistantMessageComponent extends Container {
 		this.refreshContent();
 	}
 
+	override getRenderRevision(): number {
+		return this.revision;
+	}
+
 	override render(width: number): string[] {
 		const signature = this.lastMessageSignature ?? "";
 		if (this.renderCache?.width === width && this.renderCache.signature === signature) {
@@ -126,6 +141,7 @@ export class AssistantMessageComponent extends Container {
 		}
 		this.lastMessageSignature = messageSignature;
 		this.renderCache = undefined;
+		this.revision = nextRenderRevision();
 		if (streamingChanged) this.renderDescriptors = [];
 		this.hasToolCalls = message.content.some((content) => content.type === "toolCall");
 		const descriptors = createAssistantRenderDescriptors(message, {

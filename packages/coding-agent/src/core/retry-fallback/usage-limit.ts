@@ -1,4 +1,5 @@
 import { isQuotaExhaustionMessage } from "@earendil-works/pi-ai";
+import { rateLimitModelFamily } from "../credential-pool/model-scope.ts";
 import { isBillingErrorMessage } from "./billing.ts";
 
 /**
@@ -19,6 +20,9 @@ const MODEL_SCOPE_PATTERN = /\bmodels?\b|\bpremium\b|\b(?:opus|sonnet|haiku|fabl
 
 export function usageLimitScope(errorMessage: string | undefined): UsageLimitScope | undefined {
 	if (errorMessage === undefined) return undefined;
+	// Claude Code's "You've reached your Fable limit. Switch to another model" carries
+	// none of the keywords below, yet it names the one family it binds (senpi#2555).
+	if (rateLimitModelFamily(errorMessage) !== undefined) return "model";
 	const limited =
 		isQuotaExhaustionMessage(errorMessage) ||
 		isBillingErrorMessage(errorMessage) ||

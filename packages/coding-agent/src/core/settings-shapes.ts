@@ -55,7 +55,7 @@ export interface MarkdownSettings {
 }
 
 export interface OpenAISettings {
-	serviceTier?: "auto" | "flex" | "priority";
+	serviceTier?: "auto" | "flex" | "priority" | "ultrafast";
 }
 
 export interface ProviderConcurrencySettings {

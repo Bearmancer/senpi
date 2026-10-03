@@ -1,9 +1,12 @@
 import { VERSION } from "../../config.ts";
 import { ACCEPT_EDITS_PERMISSION_PRESET_CAPABILITY } from "../../core/extensions/builtin/permission-system/config.ts";
+import { DURABLE_CLIENT_MESSAGE_ID_CAPABILITY } from "./client-admission-record.ts";
 import { buildRpcSessionState } from "./connection-handler.ts";
 import {
 	AUTO_TITLE_PER_SESSION_CAPABILITY,
 	AUTO_TITLE_SESSIONS_CAPABILITY,
+	BROWSER_ENGINE_CAPABILITY,
+	CONTINUE_FROM_LEAF_CAPABILITY,
 	DURABLE_SESSION_ID_CAPABILITY,
 	MEDIA_PLACEHOLDERS_CAPABILITY,
 	PROMPT_SURFACE_CAPABILITY,
@@ -17,11 +20,12 @@ import { answerWarm } from "./host-warm.ts";
 import { protocolIdentity } from "./protocol-identity.ts";
 import {
 	sessionAutoTitleError,
+	sessionBrowserEngineError,
 	sessionContextError,
 	sessionKindError,
 	sessionPromptSurfaceError,
 } from "./rpc-input-validation.ts";
-import type { RpcCommand, RpcResponse, RpcSessionClosedReason } from "./rpc-types.ts";
+import type { RpcCommand, RpcHostKernelMemory, RpcResponse, RpcSessionClosedReason } from "./rpc-types.ts";
 import {
 	RPC_ERROR_INVALID_LAUNCH_PROFILE,
 	RPC_ERROR_INVALID_SESSION_CONTEXT,
@@ -39,6 +43,7 @@ import type { OpenRpcSession, RpcSessionLaunchProfile, RpcSessionRegistry } from
 import { RpcSessionRegistryError } from "./session-registry.ts";
 import { releaseSession } from "./session-release.ts";
 import { selectSweepEvictions } from "./session-sweep.ts";
+import { liveToolMediaScope, toolMediaPersister } from "./tool-media-store.ts";
 
 /** How often a draining host re-checks whether the work it is waiting for has settled. */
 const DRAIN_SWEEP_MS = 50;
@@ -142,6 +147,10 @@ export class SessionCommandRouter {
 	private emptySince: number | undefined;
 	/** Halves the idle window while the host reports memory pressure; never refuses work. */
 	private memoryPressure = false;
+	/** Live kernel view the host injects; absent until start, and a session with no kernel reads zeros. */
+	private hostMemoryView:
+		| { readonly mainHeapBytes: () => number; readonly kernels: () => readonly RpcHostKernelMemory[] }
+		| undefined;
 
 	constructor(
 		registry: Pick<
@@ -176,6 +185,36 @@ export class SessionCommandRouter {
 	/** Live sessions the host holds, including ones opening or closing. */
 	get sessionCount(): number {
 		return this.registry.size;
+	}
+
+	/**
+	 * Installs the host's live memory view (senpi#1960): the main-thread heap and the kernel
+	 * registry's current listing. The view is read per listing, never cached, so a kernel that
+	 * crashed between samples is absent from the next row rather than repeated with a stale number.
+	 */
+	setHostMemoryView(view: {
+		readonly mainHeapBytes: () => number;
+		readonly kernels: () => readonly RpcHostKernelMemory[];
+	}): void {
+		this.hostMemoryView = view;
+	}
+
+	/** The row's heap split: zeros until the view is installed, and for a session holding no kernel. */
+	private sessionMemory(sessionId: string): {
+		main_heap_bytes: number;
+		kernel_heap_bytes: number;
+		kernel_count: number;
+	} {
+		const view = this.hostMemoryView;
+		if (view === undefined) return { main_heap_bytes: 0, kernel_heap_bytes: 0, kernel_count: 0 };
+		const kernels = view.kernels().filter((kernel) => kernel.sessionId === sessionId);
+		let kernelHeapBytes = 0;
+		for (const kernel of kernels) kernelHeapBytes += kernel.liveBytes;
+		return {
+			main_heap_bytes: view.mainHeapBytes(),
+			kernel_heap_bytes: kernelHeapBytes,
+			kernel_count: kernels.length,
+		};
 	}
 
 	/**
@@ -274,6 +313,8 @@ export class SessionCommandRouter {
 				"multi_session",
 				AUTO_TITLE_SESSIONS_CAPABILITY,
 				MEDIA_PLACEHOLDERS_CAPABILITY,
+				DURABLE_CLIENT_MESSAGE_ID_CAPABILITY,
+				CONTINUE_FROM_LEAF_CAPABILITY,
 				// Host capabilities, not client opt-ins: only a multi-session host owns the
 				// attachment refcount `open_session.retain_on_disconnect` detaches from, the
 				// per-session launch profile `context`/`auto_title` travel on, and the session
@@ -288,6 +329,8 @@ export class SessionCommandRouter {
 				// Every session's prompt is built from its own launch profile, so one host serves both surfaces.
 				PROMPT_SURFACE_CAPABILITY,
 				PROMPT_SURFACE_CHAT_CAPABILITY,
+				// Each session's tool subprocesses and eval kernel get its own OMO_BROWSER_ENGINE from its launch profile.
+				BROWSER_ENGINE_CAPABILITY,
 				ACCEPT_EDITS_PERMISSION_PRESET_CAPABILITY,
 				// Only an in-process runtime shares the loop a warm loads into (senpi#2314).
 				...(this.registry.warm ? [WARM_CAPABILITY] : []),
@@ -312,10 +355,11 @@ export class SessionCommandRouter {
 			// Worker sessions are machine-driven work: a client sees them only by asking, and
 			// the opaque context blob travels only on that listing, never to every connection.
 			const rows = this.registry.list();
+			const withMemory = rows.map((row) => ({ ...row, memory: this.sessionMemory(row.sessionId) }));
 			const sessions =
 				command.include_workers === true
-					? rows
-					: rows.filter((row) => row.kind !== "worker").map(({ context: _context, ...row }) => row);
+					? withMemory
+					: withMemory.filter((row) => row.kind !== "worker").map(({ context: _context, ...row }) => row);
 			return {
 				id: command.id,
 				type: "response",
@@ -562,6 +606,9 @@ export class SessionCommandRouter {
 		const promptSurfaceError = sessionPromptSurfaceError(command.promptSurface);
 		if (promptSurfaceError)
 			return error(command.id, "open_session", `${RPC_ERROR_INVALID_LAUNCH_PROFILE}: ${promptSurfaceError}`);
+		const browserEngineError = sessionBrowserEngineError(command.browserEngine);
+		if (browserEngineError)
+			return error(command.id, "open_session", `${RPC_ERROR_INVALID_LAUNCH_PROFILE}: ${browserEngineError}`);
 		let opened: OpenRpcSession | undefined;
 		try {
 			opened = await this.registry.openSession(
@@ -581,6 +628,7 @@ export class SessionCommandRouter {
 					...(command.durableSessionId !== undefined ? { durableSessionId: command.durableSessionId } : {}),
 					...(typeof command.auto_title === "boolean" ? { autoTitle: command.auto_title } : {}),
 					...(command.promptSurface !== undefined ? { promptSurface: command.promptSurface } : {}),
+					...(command.browserEngine !== undefined ? { browserEngine: command.browserEngine } : {}),
 				},
 				// Host lifecycle policy, deliberately outside the immutable launch profile.
 				{ retainOnDisconnect: command.retain_on_disconnect === true },
@@ -588,6 +636,10 @@ export class SessionCommandRouter {
 			const openedSession = opened;
 			const entry = this.registry.getForCommand(openedSession.sessionId, "open_session");
 			this.writer.setSessionKind(openedSession.sessionId, entry.kind);
+			this.writer.setSessionMedia(
+				openedSession.sessionId,
+				toolMediaPersister(() => liveToolMediaScope(entry)),
+			);
 			if (owner !== undefined) {
 				if (!this.writer.hasRegisteredConnectionCapabilities(owner))
 					this.writer.setConnectionCapabilities(

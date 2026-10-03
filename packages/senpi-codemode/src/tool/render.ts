@@ -73,9 +73,9 @@ const TOOL_CALL_PREVIEW_COUNT = 5;
 const TOOL_CALL_COLLAPSED_VISUAL_LINES = 4;
 const TOOL_CALL_COLLAPSED_ERROR_CODE_POINTS = 512;
 const TOOL_ERROR_OMISSION_MARKER = "[tool error omitted]";
-const LIVE_ELAPSED_TICK_MS = 1_000;
+const LIVE_RENDER_TICK_MS = 100;
 // A live row repaints on every tick, so this many ticks without a render means the row is gone.
-const LIVE_TICKER_MAX_IDLE_TICKS = 60;
+const LIVE_TICKER_MAX_IDLE_TICKS = 600;
 
 class PlainTextComponent implements EvalRenderComponent {
 	#blocks: readonly RenderBlock[] = [];
@@ -92,7 +92,7 @@ class PlainTextComponent implements EvalRenderComponent {
 	 * The host only animates tool rows for streaming args, `task`, and results carrying
 	 * `details.progress`; an eval row matches none of them, so nothing repaints it between
 	 * update events. While a cell is non-terminal this drives the repaint itself so the
-	 * header's elapsed time advances, and it emits no tool updates or RPC traffic. Detached
+	 * header's spinner and elapsed time advance, with no tool updates or RPC traffic. Detached
 	 * and terminal cards never arm it, and a ticker whose row stopped rendering (transcript
 	 * rebuild, session switch) stops itself after LIVE_TICKER_MAX_IDLE_TICKS and rearms on
 	 * the next render, so dropped rows cannot accumulate intervals.
@@ -115,7 +115,7 @@ class PlainTextComponent implements EvalRenderComponent {
 
 	#armTicker(): void {
 		if (this.#ticker !== undefined || this.#invalidate === undefined) return;
-		this.#ticker = setInterval(() => this.#tick(), LIVE_ELAPSED_TICK_MS);
+		this.#ticker = setInterval(() => this.#tick(), LIVE_RENDER_TICK_MS);
 		this.#ticker.unref?.();
 	}
 
@@ -336,7 +336,10 @@ function cellElapsedMs(cell: EvalCellResult, environment: RenderEnvironment): nu
 }
 
 function cellHeader(cell: EvalCellResult, environment: RenderEnvironment, badges: CellBadges): string {
-	const presentation = cellPresentation(cell.status, environment.spinnerFrame);
+	const presentation = cellPresentation(
+		cell.status,
+		environment.spinnerFrame ?? Math.floor((cellElapsedMs(cell, environment) ?? 0) / LIVE_RENDER_TICK_MS),
+	);
 	const runtimeBadge = cell.runtime === undefined ? "" : ` (${formatRuntimeBadge(cell.language, cell.runtime)})`;
 	let header = `eval ${cell.language}${runtimeBadge} ${presentation.label} ${presentation.icon}`;
 	if (cell.queuedBehind !== undefined && cell.queuedBehind.length > 0)

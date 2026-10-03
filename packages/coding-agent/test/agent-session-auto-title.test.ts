@@ -1,4 +1,5 @@
 import type { AgentTool } from "@earendil-works/pi-agent-core";
+import { getCurrentSystemPrompt } from "@earendil-works/pi-ai";
 import { type FauxResponseFactory, fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai/compat";
 import { Type } from "typebox";
 import { afterEach, describe, expect, it } from "vitest";
@@ -27,9 +28,7 @@ describe("agent session auto title", () => {
 	it("forks title generation from the first task prompt and applies the suggested session name", async () => {
 		const titleResponse = createDeferred<ReturnType<typeof fauxAssistantMessage>>();
 		const titleOrTurn: FauxResponseFactory = (context) => {
-			const systemPrompt = Array.isArray(context.systemPrompt)
-				? context.systemPrompt.join("\n")
-				: (context.systemPrompt ?? "");
+			const systemPrompt = getCurrentSystemPrompt(context.messages);
 			if (systemPrompt.includes("<title>")) {
 				return titleResponse.promise;
 			}
@@ -73,9 +72,7 @@ describe("agent session auto title", () => {
 			fauxAssistantMessage(fauxToolCall("probe", {}), { stopReason: "toolUse" }),
 			fauxAssistantMessage("turn complete after tool"),
 			(context) => {
-				const systemPrompt = Array.isArray(context.systemPrompt)
-					? context.systemPrompt.join("\n")
-					: (context.systemPrompt ?? "");
+				const systemPrompt = getCurrentSystemPrompt(context.messages);
 				if (!systemPrompt.includes("<title>")) {
 					return fauxAssistantMessage("", { stopReason: "error", errorMessage: "unexpected non-title call" });
 				}
@@ -137,9 +134,7 @@ describe("agent session auto title", () => {
 		});
 		let titleAttempts = 0;
 		const titleOrTurn: FauxResponseFactory = (context) => {
-			const systemPrompt = Array.isArray(context.systemPrompt)
-				? context.systemPrompt.join("\n")
-				: (context.systemPrompt ?? "");
+			const systemPrompt = getCurrentSystemPrompt(context.messages);
 			if (!systemPrompt.includes("<title>")) {
 				return fauxAssistantMessage("turn complete");
 			}
@@ -167,9 +162,7 @@ describe("agent session auto title", () => {
 		harnesses.push(harness);
 		const titleErrors = collectTitleRuntimeErrors(harness);
 		const titleOrTurn: FauxResponseFactory = (context) => {
-			const systemPrompt = Array.isArray(context.systemPrompt)
-				? context.systemPrompt.join("\n")
-				: (context.systemPrompt ?? "");
+			const systemPrompt = getCurrentSystemPrompt(context.messages);
 			if (!systemPrompt.includes("<title>")) {
 				return fauxAssistantMessage("turn complete");
 			}

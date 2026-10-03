@@ -70,6 +70,13 @@ describe("npm publish dependency graph", () => {
 			const manifest = readJson(join(repoRoot, workspace.packageJsonPath));
 			assert.equal(manifest.private, true, `${workspace.packageName} must remain private`);
 		}
+		// Every registry source manifest stays private; the fork publishes it only under its alias.
+		const workspaceManifests = findPackageDirectories("packages").map((directory) => readJson(join(repoRoot, directory, "package.json")));
+		for (const packageName of registrySourcePackageNames) {
+			const manifest = workspaceManifests.find(({ name }) => name === packageName);
+			assert.ok(manifest, `${packageName} must be a workspace`);
+			assert.equal(manifest.private, true, `${packageName} must remain private`);
+		}
 		for (const workspace of INDEPENDENT_UPSTREAM_WORKSPACES) {
 			const manifest = readJson(join(repoRoot, workspace.packageJsonPath));
 			const aiManifest = readJson(join(repoRoot, "packages/ai/package.json"));

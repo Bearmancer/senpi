@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { ExtensionContext } from "@code-yeongyu/senpi";
+import type { ExtensionContext, ExtensionToolContext } from "@code-yeongyu/senpi";
 import type { Api, Model } from "@earendil-works/pi-ai/compat";
 import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 import type { CodemodeSessionManager } from "../src/extension/session-manager.ts";
@@ -146,7 +146,7 @@ afterAll(async () => {
 	await rm(extensionArtifactsRoot, { recursive: true, force: true });
 });
 
-function extensionContext(cwd = process.cwd()): ExtensionContext {
+function extensionContext(cwd = process.cwd()): ExtensionToolContext {
 	const base = fakeExtensionContext();
 	return {
 		...base,
