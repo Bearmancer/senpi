@@ -2,6 +2,7 @@ import { isAbsolute } from "node:path";
 import { ProviderScope } from "@earendil-works/pi-ai/node/provider-scope";
 import { assertValidSessionId } from "../../core/session-manager.ts";
 import type { CliRuntimeConfiguration } from "../../main.ts";
+import { refreshesSessionActivity } from "./session-command-activity.ts";
 import {
 	type LiveWorkerPaths,
 	RESERVATION_DENIAL_CODES,
@@ -165,7 +166,9 @@ export class WorkerSessionRegistry {
 		)
 			throw new RpcSessionRegistryError("session_closing");
 		if (entry.state !== "open" && entry.state !== "closing") throw new RpcSessionRegistryError("unknown_session");
-		entry.lastCommandAt = this.now();
+		// Polling a session nobody holds is observation, not work that needs its runtime;
+		// an attached client's polling keeps its session alive exactly as before.
+		if (entry.attachments > 0 || refreshesSessionActivity(command)) entry.lastCommandAt = this.now();
 		return entry;
 	}
 

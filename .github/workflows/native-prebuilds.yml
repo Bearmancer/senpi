@@ -1,6 +1,12 @@
 name: Native Prebuilds
 
 on:
+  workflow_call:
+    inputs:
+      native_package_dir:
+        required: false
+        type: string
+        default: crates/senpi-pty
   workflow_dispatch:
     inputs:
       native_package_dir:
@@ -126,7 +132,7 @@ jobs:
         shell: bash
 
     env:
-      NATIVE_PACKAGE_DIR: ${{ github.event.inputs.native_package_dir || 'crates/senpi-pty' }}
+      NATIVE_PACKAGE_DIR: ${{ inputs.native_package_dir || 'crates/senpi-pty' }}
       NAPI_TARGET: ${{ matrix.napi_target }}
       RUST_TARGET: ${{ matrix.rust_target }}
       NODE_PLATFORM: ${{ matrix.node_platform }}
@@ -281,7 +287,10 @@ jobs:
           artifact_dir="${RUNNER_TEMP}/native-prebuild-artifact"
           output_dir="${RUNNER_TEMP}/native-prebuild-output"
 
-          mkdir -p "${artifact_dir}"
+          host="${NODE_PLATFORM}-${NODE_ARCH}"
+          prebuild_dir="${artifact_dir}/native/prebuilds/${host}"
+
+          mkdir -p "${prebuild_dir}"
           # macOS runners ship bash 3.2, which lacks mapfile/readarray.
           node_files=()
           while IFS= read -r node_file; do
@@ -294,6 +303,8 @@ jobs:
             exit 1
           fi
 
+          # Select each addon by name: the sorted node_files list puts senpi_grep.*
+          # first, so index-based copies would mislabel the grep addon as PTY.
           pty_file=""
           grep_file=""
           for node_file in "${node_files[@]}"; do
@@ -308,7 +319,9 @@ jobs:
             exit 1
           fi
 
-          cp "${pty_file}" "${artifact_dir}/"
+          # The PTY addon lands at the loader-relative path the publish-only job stages
+          # straight into packages/pty; the grep addon stays flat for its own consumers.
+          cp "${pty_file}" "${prebuild_dir}/senpi_pty.${host}.node"
           cp "${grep_file}" "${artifact_dir}/"
           {
             echo "artifact=${{ matrix.artifact }}"
@@ -324,6 +337,6 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ${{ matrix.artifact }}
-          path: ${{ runner.temp }}/native-prebuild-artifact/*
+          path: ${{ runner.temp }}/native-prebuild-artifact
           if-no-files-found: error
           retention-days: 14

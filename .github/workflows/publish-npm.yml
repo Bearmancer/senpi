@@ -20,6 +20,7 @@ name: Release
         default: false
 
 permissions:
+  actions: read
   contents: read
   id-token: write
 
@@ -28,7 +29,13 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  native-prebuilds:
+    if: ${{ inputs.publish-only == true }}
+    uses: ./.github/workflows/native-prebuilds.yml
+
   release:
+    needs: native-prebuilds
+    if: ${{ always() && (inputs.publish-only != true || needs.native-prebuilds.result == 'success') }}
     runs-on: ubuntu-latest
     # `--ref main` resolves at run start, so the release can always check out a commit
     # whose CI has not finished yet; the test gate then runs the full suite in-job.
@@ -68,6 +75,30 @@ jobs:
 
       - name: Install dependencies
         run: npm install --ignore-scripts --no-audit --no-fund
+
+      - name: Download native prebuilds
+        if: inputs.publish-only == true
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: native-prebuild-*
+          path: packages/pty/.native-prebuild-artifacts
+          merge-multiple: true
+
+      # The merged download root is untracked scratch. Copy every target's PTY prebuild
+      # into the loader tree explicitly (native/prebuilds/<target>/senpi_pty.<target>.node)
+      # so the pack check below fails on a missing addon instead of packing the scratch
+      # root, which holds the grep addon and manifest files as well.
+      - name: Stage PTY prebuilds into the pty package
+        if: inputs.publish-only == true
+        run: |
+          set -euo pipefail
+          artifacts="packages/pty/.native-prebuild-artifacts"
+          for prebuild in "${artifacts}"/native/prebuilds/*/senpi_pty.*.node; do
+            test -f "${prebuild}" || continue
+            target="$(basename "$(dirname "${prebuild}")")"
+            mkdir -p "packages/pty/native/prebuilds/${target}"
+            cp "${prebuild}" "packages/pty/native/prebuilds/${target}/senpi_pty.${target}.node"
+          done
 
       # coding-agent tool tests resolve rg/fd via system binaries first and only
       # download from GitHub releases as a fallback. Unauthenticated downloads
@@ -121,7 +152,8 @@ jobs:
           if [ "$DRY_RUN" = "true" ]; then
             PUBLISH_ARGS+=(--dry-run)
           fi
-          node scripts/publish.mjs "${PUBLISH_ARGS[@]}"
+          node scripts/publish.mjs "${PUBLISH_ARGS[@]}" \
+            --require-native-prebuilds=darwin-arm64,darwin-x64,linux-x64,linux-arm64,win32-x64
 
       - name: Workflow summary
         if: always()

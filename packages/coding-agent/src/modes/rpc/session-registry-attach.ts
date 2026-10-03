@@ -26,6 +26,7 @@ export async function attachToOpenSession(
 	const [handle, entry] = existing;
 	const wasParked = entry.retainOnDisconnect === true && entry.attachments === 0;
 	entry.attachments += 1;
+	entry.detachedAt = undefined;
 	// The claim carries the attachment state another generation decides on: a path this host is
 	// actively serving a client on is never reclaimable from it.
 	pathReservations?.setAttached(sessionPath, true);

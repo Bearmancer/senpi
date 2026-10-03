@@ -1,5 +1,25 @@
 # prompt-preset Extension Changes
 
+## 2026-10-04 - Claude Fable 5.1: the between-handoff update becomes an instruction; three twice-stated rules go back to one home (senpi#2681)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/prompt-preset/claude-fable-5-1.ts`: three sentences are deleted at their source, none added. `## Style` no longer opens with "Act, then report: for reversible steps the request already covers, proceed without asking" (Scope's "Make routine judgment calls yourself; ask only when ..." is the one home); `## Verification` drops `"Should pass" is not verification: run the validator.` and keeps the claim audit ("audit each claim against a tool result from this session; report only evidence-backed work ..."); the fourth `## Hard Limits` bullet drops "; say what is done, what is not, and why you stopped" (Scope's "finish every other part and say exactly what you left out and why" is the one home).
+- The between-handoff sentence this preset renders through `buildHandoffSection({ briefUpdatesBetweenHandoffs: true })` is replaced in `dynamic-prompt/handoff.ts` (see that tracker): an instruction naming the moment and the shape instead of a recommendation.
+- Render diff against `main` (24 renders: the dynamic prompt and seven presets on terminal, app and chat): only the three `claude-fable-5-1` renders differ; the terminal core goes from 1,550 to 1,522 words.
+
+### Why
+
+- Over two weeks of real sessions Fable 5.1 wrote reply text on 14% of its tool-using steps, the same rate as cores whose handoff section says "work without narration", so the advisory sentence had no measurable effect (prompt-engineering category B: a reason in place of an instruction, with no stated moment). The Fable 5.1 guide says to state when user-facing text is wanted and what each update contains. The three duplicates were left by the 2026-09-02 diet; a rule stated twice competes with itself for a literal instruction follower.
+
+### Why an extension could not handle it
+
+- These sentences are the preset core itself.
+
+### Expected merge conflict zones
+
+- Fork-only file. `claude-fable-5-1.ts` header comment, `## Verification`, `## Hard Limits`, `## Style`.
+
 ## 2026-10-03 - GPT-6 Astra: keep few-call reading and own-change checks; a subagent only for a track that lands the task sooner (senpi#2630)
 
 ### What changed

@@ -878,6 +878,20 @@ export function createCliRuntimeFactory(
 				parsed.projectTrustOverride ??
 				(!hasTrustRequiringResources || trustStore.get(cwd) === true));
 		const runtimeSettingsManager = SettingsManager.create(cwd, agentDir, { projectTrusted });
+		// The opener's per-session fallback policy is an in-memory override: never saved, never shared.
+		if (launchProfile?.retryFallback) {
+			runtimeSettingsManager.applyOverrides({
+				retry: {
+					modelFallback: launchProfile.retryFallback.modelFallback,
+					fallbackChains: Object.fromEntries(
+						Object.entries(launchProfile.retryFallback.fallbackChains).map(([key, entries]) => [
+							key,
+							[...entries],
+						]),
+					),
+				},
+			});
+		}
 		const services = await createAgentSessionServices({
 			cwd,
 			agentDir,

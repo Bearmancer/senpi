@@ -1,5 +1,24 @@
 # changes.md — dynamic-prompt
 
+## 2026-10-04 - Handoff: the Fable-only between-handoff sentence names the moment and the shape (senpi#2681)
+
+### What changed
+
+- `packages/coding-agent/src/core/dynamic-prompt/handoff.ts`: the `briefUpdatesBetweenHandoffs` branch of `buildHandoffSection` now reads "Between handoffs, after each tool wave that changes what you know, write one line of reply text: what you found, then `Now: [task]. Next: [task].`" (was "Between handoffs, a one-line update on what you just found, ending with `Now: [task]. Next: [task].`, helps the user follow along."). The option's doc comment names its only caller. The default branch ("Between handoffs, work without narration."), the handoff moments, the block template and the language rule are unchanged.
+- Only the Claude Fable 5.1 preset passes `briefUpdatesBetweenHandoffs: true`; the default dynamic prompt and every other preset render byte-identical before and after (24-render diff, 0 differences outside `claude-fable-5-1`).
+
+### Why
+
+- The sentence was a recommendation ("helps the user follow along") with no stated moment, and measured sessions showed it produced no more reply text between tool calls than cores that say "work without narration". The Fable 5.1 guide's remedy is a system-prompt line that says when user-facing text is wanted and what each update contains, so the sentence is rewritten at its source rather than reinforced from another section.
+
+### Why an extension could not handle it
+
+- The handoff section is built inside the shared prompt builder; an extension could only append a competing rule.
+
+### Expected merge conflict zones
+
+- Fork-only file. The `betweenRule` ternary and the `HandoffSectionOptions` doc comments in `handoff.ts`.
+
 ## 2026-09-30 - Chat surface: no routing line, no handoff block, no ledger lines (senpi#2398)
 
 ### What changed
