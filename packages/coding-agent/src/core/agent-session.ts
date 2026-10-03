@@ -124,6 +124,11 @@ import { CompactionLifecycleCoordinator, type CompactionLifecycleState } from ".
 import { isTurnStuckOnContextOverflow } from "./compaction/stuck-overflow.ts";
 import { isWarmSummaryAnchorValid } from "./compaction/warm-anchor.ts";
 import type { CompactionModelSelector } from "./compaction-settings-access.ts";
+import {
+	CONTINUE_FROM_LEAF_CUSTOM_TYPE,
+	CONTINUE_FROM_LEAF_DIRECTIVE,
+	ContinueFromLeafError,
+} from "./continue-from-leaf.ts";
 import { admitCursorHistory, cursorAdmissionBudgetBytes } from "./cursor-history-admission.ts";
 import { DEFAULT_THINKING_LEVEL } from "./defaults.ts";
 import { resolveDiscoveredResourcePaths } from "./discovered-resource-scope.ts";
@@ -10333,6 +10338,28 @@ export class AgentSession {
 		summaryEntry?: BranchSummaryEntry;
 	}> {
 		return this._navigateTree(targetId, options);
+	}
+
+	/**
+	 * Start a turn from the current leaf with no new user prompt (senpi #1930): after an edited
+	 * assistant response becomes the leaf, the model continues from its edited text. Delivered as a
+	 * hidden custom message, never as a trailing assistant message (see continue-from-leaf.ts).
+	 * Refuses while streaming and on a session with no messages; resolves once the turn starts.
+	 */
+	async continueFromLeaf(): Promise<void> {
+		if (this.isStreaming) throw new ContinueFromLeafError("streaming");
+		if (this.agent.state.messages.length === 0) throw new ContinueFromLeafError("nothing_to_continue");
+		// Only an answer can be continued; a prompt left as the leaf (an edited one) is retried, not continued.
+		const leaf = this.agent.state.messages[this.agent.state.messages.length - 1];
+		if (leaf?.role !== "assistant") throw new ContinueFromLeafError("leaf_not_assistant");
+		await this.sendCustomMessage(
+			{
+				customType: CONTINUE_FROM_LEAF_CUSTOM_TYPE,
+				content: CONTINUE_FROM_LEAF_DIRECTIVE,
+				display: false,
+			},
+			{ triggerTurn: true },
+		);
 	}
 
 	/**

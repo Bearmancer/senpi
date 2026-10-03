@@ -1,7 +1,8 @@
 // allow: SIZE_OK — one persistent Python lifecycle state machine owns queue, generation, and retirement.
-import type { KernelInterruptHandle } from "../../tool/types.ts";
+import type { KernelInterruptHandle, PendingCell } from "../../tool/types.ts";
 import type { KernelToolsInvokeOptions } from "../js/kernel-tools-types.ts";
 import { rejectKernelToolsUnavailable } from "../kernel-tools-unavailable.ts";
+import { describeExit } from "../shared/kernel-death.ts";
 import { KernelMemoryHost } from "../shared/kernel-memory-host.ts";
 import { KernelPreludeTracker } from "../shared/kernel-prelude-plan.ts";
 import type { PendingRun, PythonKernelRunOptions, PythonKernelStartOptions, ResultMessage } from "./kernel-contract.ts";
@@ -27,6 +28,7 @@ export class PythonKernel {
 	readonly #memory: KernelMemoryHost | null;
 	#generation = 0;
 	#closed = false;
+	#dead = false;
 
 	private constructor(options: PythonKernelStartOptions) {
 		this.#options = options;
@@ -43,6 +45,18 @@ export class PythonKernel {
 		return [];
 	}
 
+	isAlive(): boolean {
+		return !this.#dead;
+	}
+
+	drainPending(): readonly PendingCell[] {
+		return [...this.#queue].map((pending) => {
+			this.#pending.delete(pending.input.cellId);
+			this.#removePending(pending);
+			return { input: pending.input, settle: pending.resolve };
+		});
+	}
+
 	describeKernelTools(_names: readonly string[]): Promise<never> {
 		return rejectKernelToolsUnavailable();
 	}
@@ -54,6 +68,7 @@ export class PythonKernel {
 	run(input: PythonKernelRunOptions): Promise<ResultMessage> {
 		if (this.#failure) return Promise.reject(this.#failure);
 		if (this.#closed) return Promise.reject(new Error("Python kernel is closed"));
+		if (this.#dead) return Promise.reject(new Error("Python kernel died"));
 		return new Promise<ResultMessage>((resolve, reject) => {
 			const pending: PendingRun = { input, resolve, reject, startedAt: null, timeoutTimer: null };
 			this.#pending.set(input.cellId, pending);
@@ -156,6 +171,7 @@ export class PythonKernel {
 	#startNext(): void {
 		if (
 			this.#closed ||
+			this.#dead ||
 			this.#failure ||
 			this.#active ||
 			this.#starting ||
@@ -234,11 +250,11 @@ export class PythonKernel {
 			isOwned: () => !this.#closed && generation === this.#generation,
 			onRetirementFailure: (transport, error) => {
 				if (!this.#transport) this.#transport = transport;
-				this.#recordFailure(error);
+				this.#recoverWhenGone(transport, this.#recordFailure(error));
 			},
 			onResult: (transport, result) => this.#onResult(transport, result),
 			onError: (transport, error) => this.#onError(transport, error),
-			onExit: (transport, error) => this.#onExit(transport, error),
+			onExit: (transport, error, exit) => this.#onExit(transport, error, describeExit(exit.code, exit.signal)),
 		});
 	}
 
@@ -262,15 +278,37 @@ export class PythonKernel {
 		void this.reset().catch(() => undefined);
 	}
 
-	#onExit(transport: PythonKernelTransport, error: Error): void {
+	#onExit(transport: PythonKernelTransport, error: Error, reason: string): void {
 		if (this.#transport !== transport) return;
 		this.#transport = null;
+		// With an owner listening, a death is final for this instance: the cells that never started stay
+		// queued for `drainPending` and the owner replaces it. Without one it respawns lazily, as before.
+		const onDeath = this.#options.onDeath;
+		if (onDeath) this.#dead = true;
 		const active = this.#active;
 		if (active) {
 			if (active.resolveStateRetained) active.resolveStateRetained(false);
-			this.#settleRun(active, failedPythonResult(active.input.cellId, "Python kernel died", error.message));
+			const message = onDeath ? "Python kernel died; every global is lost" : "Python kernel died";
+			this.#settleRun(active, failedPythonResult(active.input.cellId, message, error.message));
 		}
-		this.#startNext();
+		if (onDeath) onDeath(reason);
+		else this.#startNext();
+	}
+
+	/**
+	 * A retirement that timed out is reported, and no second interpreter starts while the first may live.
+	 * Once that process is seen to exit after all, the failure is over: this instance is dead, not broken.
+	 */
+	#recoverWhenGone(transport: PythonKernelTransport, failure: Error): void {
+		const onDeath = this.#options.onDeath;
+		if (!onDeath) return;
+		void transport.whenGone().then(() => {
+			if (this.#closed || this.#failure !== failure) return;
+			this.#failure = null;
+			this.#dead = true;
+			if (this.#transport === transport) this.#transport = null;
+			onDeath("an interpreter that outlived its SIGKILL grace");
+		});
 	}
 
 	#onError(transport: PythonKernelTransport, error: Error): void {
@@ -349,8 +387,10 @@ export class PythonKernel {
 			try {
 				await transport.retire();
 			} catch (error) {
-				if (error instanceof Error) throw this.#recordFailure(error);
-				throw error;
+				if (!(error instanceof Error)) throw error;
+				const failure = this.#recordFailure(error);
+				this.#recoverWhenGone(transport, failure);
+				throw failure;
 			}
 			if (this.#transport === transport) this.#transport = null;
 		})();

@@ -2,6 +2,7 @@ import type { KernelMemoryThresholds } from "../../bridge/memory-protocol.ts";
 import type { BridgeConnectionConfig, KernelToHostMessage } from "../../bridge/protocol.ts";
 import type { EvalKernelRunInput, EvalLanguage } from "../../tool/types.ts";
 import type { SessionEnvironment } from "../session-env.ts";
+import type { KernelLifecycle } from "./kernel-death.ts";
 import type { FootprintReader } from "./kernel-memory-host.ts";
 import type { SubprocessSpawn } from "./subprocess-process.ts";
 
@@ -16,7 +17,7 @@ export interface SubprocessKernelMemory {
 	readonly readFootprint: FootprintReader;
 }
 
-export interface SubprocessKernelOptions {
+export interface SubprocessKernelOptions extends KernelLifecycle {
 	readonly command: string;
 	readonly args: readonly string[];
 	readonly cwd?: string;

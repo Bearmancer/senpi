@@ -5,6 +5,7 @@ import { buildRpcSessionState } from "./connection-handler.ts";
 import {
 	AUTO_TITLE_PER_SESSION_CAPABILITY,
 	AUTO_TITLE_SESSIONS_CAPABILITY,
+	CONTINUE_FROM_LEAF_CAPABILITY,
 	DURABLE_SESSION_ID_CAPABILITY,
 	MEDIA_PLACEHOLDERS_CAPABILITY,
 	PROMPT_SURFACE_CAPABILITY,
@@ -40,6 +41,7 @@ import type { OpenRpcSession, RpcSessionLaunchProfile, RpcSessionRegistry } from
 import { RpcSessionRegistryError } from "./session-registry.ts";
 import { releaseSession } from "./session-release.ts";
 import { selectSweepEvictions } from "./session-sweep.ts";
+import { liveToolMediaScope, toolMediaPersister } from "./tool-media-store.ts";
 
 /** How often a draining host re-checks whether the work it is waiting for has settled. */
 const DRAIN_SWEEP_MS = 50;
@@ -310,6 +312,7 @@ export class SessionCommandRouter {
 				AUTO_TITLE_SESSIONS_CAPABILITY,
 				MEDIA_PLACEHOLDERS_CAPABILITY,
 				DURABLE_CLIENT_MESSAGE_ID_CAPABILITY,
+				CONTINUE_FROM_LEAF_CAPABILITY,
 				// Host capabilities, not client opt-ins: only a multi-session host owns the
 				// attachment refcount `open_session.retain_on_disconnect` detaches from, the
 				// per-session launch profile `context`/`auto_title` travel on, and the session
@@ -625,6 +628,10 @@ export class SessionCommandRouter {
 			const openedSession = opened;
 			const entry = this.registry.getForCommand(openedSession.sessionId, "open_session");
 			this.writer.setSessionKind(openedSession.sessionId, entry.kind);
+			this.writer.setSessionMedia(
+				openedSession.sessionId,
+				toolMediaPersister(() => liveToolMediaScope(entry)),
+			);
 			if (owner !== undefined) {
 				if (!this.writer.hasRegisteredConnectionCapabilities(owner))
 					this.writer.setConnectionCapabilities(
