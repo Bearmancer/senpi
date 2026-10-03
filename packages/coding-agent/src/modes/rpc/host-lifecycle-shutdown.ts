@@ -57,7 +57,6 @@ export function childExited(child: ChildProcess): boolean {
 
 export async function performShutdown(context: SupervisorShutdown, reason: string, exitCode: number): Promise<never> {
 	const { state, child } = context;
-	if (state.shuttingDown) process.exit(exitCode);
 	state.shuttingDown = true;
 	state.shutdownReason = reason;
 	context.stopWatchers();
