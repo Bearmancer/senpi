@@ -582,6 +582,50 @@ describe("senpi-codemode extension lifecycle", () => {
 		expect(attempts).toBe(2);
 	});
 
+	it.each([
+		{ path: "a fresh session_start", shutdown: undefined, start: "startup" },
+		{ path: "a session switch", shutdown: "resume", start: "resume" },
+		{ path: "a fork", shutdown: "fork", start: "fork" },
+		{ path: "a reload", shutdown: "reload", start: "reload" },
+		{ path: "a new session", shutdown: "new", start: "new" },
+	] as const)(
+		"Given a failed re-creation that later evals keep reporting, when $path starts the session again, then eval works without a restart",
+		async ({ shutdown, start }) => {
+			const pi = new FakePi();
+			const manager = new DisposableManager();
+			let attempts = 0;
+			senpiCodemode(pi, {
+				createSessionManager: async () => {
+					attempts += 1;
+					if (attempts <= 2) throw new Error("bridge port unavailable");
+					return manager;
+				},
+			});
+			const ctx = extensionContext();
+			vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+			const evalOnce = (id: string) =>
+				pi.registeredTool?.execute(id, { language: "js", code: "1", summary: id }, undefined, undefined, ctx);
+			await emit(pi, "session_start", { reason: "startup" }, ctx).catch(() => undefined);
+			await expect(evalOnce("recreation-fails")).rejects.toThrow("codemode runtime could not be re-created");
+
+			if (shutdown !== undefined) await emit(pi, "session_shutdown", { reason: shutdown }, ctx);
+			await emit(pi, "session_start", { reason: start }, ctx);
+			const run = evalOnce("after-fresh-start");
+			const outcome = await Promise.race([
+				manager.runStarted.promise.then(() => "kernel reached"),
+				Promise.resolve(run).then(
+					(settled) => JSON.stringify(settled?.content ?? settled),
+					(error: unknown) => String(error),
+				),
+			]);
+
+			expect(outcome).toBe("kernel reached");
+			expect(attempts).toBe(3);
+			await emit(pi, "session_shutdown", {}, ctx);
+			await Promise.allSettled([run]);
+		},
+	);
+
 	it("Given a failed start, when two evals arrive together, then they share one re-creation and one diagnostic", async () => {
 		const pi = new FakePi();
 		const managers: DisposableManager[] = [];
