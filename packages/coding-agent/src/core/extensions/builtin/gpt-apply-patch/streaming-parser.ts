@@ -120,7 +120,15 @@ export class StreamingPatchParser {
 		const hunk = this.currentUpdate();
 		let chunk = hunk.chunks[hunk.chunks.length - 1];
 		if (!chunk || chunk.isEndOfFile) {
-			chunk = { changeContexts: [], oldLines: [], newLines: [], contextLineIndices: [], isEndOfFile: false, addedCount: 0, removedCount: 0 };
+			chunk = {
+				changeContexts: [],
+				oldLines: [],
+				newLines: [],
+				contextLineIndices: [],
+				isEndOfFile: false,
+				addedCount: 0,
+				removedCount: 0,
+			};
 			hunk.chunks.push(chunk);
 		}
 		return chunk;
