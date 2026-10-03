@@ -2458,7 +2458,7 @@ export class InteractiveMode {
 			// with a +N more hint. The full list is one Ctrl+O away.
 			const shown = labels.length <= 8 ? labels : labels.slice(0, 3);
 			const hidden = labels.length - shown.length;
-			const more = hidden > 0 ? theme.fg("muted", ` +${hidden} more (ctrl+o)`) : "";
+			const more = hidden > 0 ? theme.fg("muted", ` +${hidden} more (${keyText("app.tools.expand")})`) : "";
 			return theme.fg("dim", `  ${shown.join(", ")}`) + more;
 		};
 		// System resources are left out of the compact body; a section with nothing else to show stays
