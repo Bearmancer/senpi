@@ -414,6 +414,11 @@ export type AgentSessionEvent =
 			notice: string;
 	  }
 	| { type: "continuation_error"; errorMessage: string }
+	/**
+	 * A background turn (an extension's `triggerTurn`) could not start because no provider is ready. Emitted
+	 * at most once per session with the same guidance a typed prompt gets, instead of an extension error.
+	 */
+	| { type: "provider_required"; notice: string }
 	/** The session file refused a message of the running turn; the message is not in the transcript. */
 	| { type: "transcript_write_failed"; role: AgentMessage["role"]; errorMessage: string }
 	| {
@@ -800,6 +805,14 @@ function isCompactionExecutionAborted(error: unknown): boolean {
 		error instanceof CompactionCancelledError ||
 		(error instanceof Error && error.name === "AbortError")
 	);
+}
+
+/** A turn cannot start: no model is selected, or its provider has no credentials. */
+class ModelNotReadyError extends Error {
+	constructor(message: string) {
+		super(message);
+		this.name = "ModelNotReadyError";
+	}
 }
 
 class RequiredCompactionError extends Error {
@@ -1212,6 +1225,7 @@ export class AgentSession {
 	private _modelRuntime: ModelRuntime;
 	private _modelRegistry: ModelRegistry;
 	private readonly _fallbackValidationWarnings: readonly string[];
+	private _providerRequiredNoticed = false;
 	private readonly _retryFallback: RetryFallbackController;
 	private readonly _selectorCooldowns: SelectorCooldowns;
 	private readonly _fallbackCircuits: FallbackCircuitAccess;
@@ -7672,20 +7686,27 @@ export class AgentSession {
 	 */
 	private async _assertModelReadyForTurn(): Promise<void> {
 		if (!this.model) {
-			throw new Error(formatNoModelSelectedMessage());
+			throw new ModelNotReadyError(formatNoModelSelectedMessage());
 		}
 		const hasConfiguredAuth =
 			this._modelRuntime.hasConfiguredAuth(this.model.provider) ||
 			(await this._modelRuntime.checkAuth(this.model.provider)) !== undefined;
 		if (hasConfiguredAuth) return;
 		if (this._modelRuntime.isUsingOAuth(this.model.provider)) {
-			throw new Error(
+			throw new ModelNotReadyError(
 				`Authentication failed for "${this.model.provider}". ` +
 					`Credentials may have expired or network is unavailable. ` +
 					`Run '/login ${this.model.provider}' to re-authenticate.`,
 			);
 		}
-		throw new Error(formatNoApiKeyFoundMessage(this.model.provider));
+		throw new ModelNotReadyError(formatNoApiKeyFoundMessage(this.model.provider));
+	}
+
+	/** Shows the provider guidance for a refused background turn once per session. */
+	private _noticeProviderRequired(notice: string): void {
+		if (this._providerRequiredNoticed) return;
+		this._providerRequiredNoticed = true;
+		this._emit({ type: "provider_required", notice });
 	}
 
 	/**
@@ -8714,6 +8735,10 @@ export class AgentSession {
 			{
 				sendMessage: (message, options) => {
 					const reportError = (err: unknown) => {
+						if (err instanceof ModelNotReadyError) {
+							this._noticeProviderRequired(err.message);
+							return;
+						}
 						runner.emitError({
 							extensionPath: RUNTIME_EXTENSION_PATH,
 							event: "send_message",

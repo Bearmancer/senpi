@@ -1,4 +1,5 @@
 import type { Model } from "@earendil-works/pi-ai";
+import type { ExtensionAPI } from "../../../src/core/extensions/types.ts";
 import { afterEach, describe, expect, it } from "vitest";
 import { createHarness, type Harness } from "../harness.ts";
 
@@ -84,5 +85,36 @@ describe("a first run with no provider configured", () => {
 
 		// then
 		expect(await outcome).not.toContain(COMPACTION_ERROR);
+	});
+
+	it("#given no provider #when a startup extension triggers turns twice #then the user sees the /login guidance once and no extension error", async () => {
+		// given
+		let api: ExtensionAPI | undefined;
+		const harness = await createHarness({
+			withConfiguredAuth: false,
+			extensionFactories: [
+				(pi) => {
+					api = pi;
+				},
+			],
+		});
+		harnesses.push(harness);
+		harness.session.agent.state.model = NO_PROVIDER_PLACEHOLDER;
+		const extensionErrors: string[] = [];
+		harness.getExtensionRunner().onError((error) => extensionErrors.push(error.error));
+		const typedPromptGuidance = await harness.session.prompt("hello").then(
+			() => "accepted",
+			(error: unknown) => (error instanceof Error ? error.message : String(error)),
+		);
+
+		// when
+		api?.sendMessage({ customType: "startup-note", content: "ready", display: false }, { triggerTurn: true });
+		api?.sendMessage({ customType: "startup-note", content: "again", display: false }, { triggerTurn: true });
+		await harness.session.waitForSettledSessionWork();
+
+		// then
+		expect(extensionErrors).toEqual([]);
+		expect(harness.eventsOfType("provider_required").map((event) => event.notice)).toEqual([typedPromptGuidance]);
+		expect(harness.faux.getCallLog()).toEqual([]);
 	});
 });
