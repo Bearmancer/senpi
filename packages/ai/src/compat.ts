@@ -74,6 +74,7 @@ import type {
 	SimpleStreamOptions,
 	StreamOptions,
 } from "./types.ts";
+import { getCurrentTools, normalizeContext } from "./utils/transcript.ts";
 
 /** @deprecated Static catalog read. Use `getBuiltinModel` from "@earendil-works/pi-ai/providers/all" or `Models.getModel()`. */
 export const getModel = getBuiltinModel;
@@ -106,7 +107,10 @@ import {
 export function registerFauxProvider(options: RegisterFauxProviderOptions = {}): FauxProviderRegistration {
 	const core = createFauxCore(options);
 	const sourceId = `faux-provider-${Math.random().toString(36).slice(2, 10)}`;
-	registerApiProvider({ api: core.api, stream: core.stream, streamSimple: core.streamSimple }, sourceId);
+	// A session reload runs resetApiProviders(); the caller's provider must still answer afterwards, in or out of a provider scope.
+	registerApiProvider({ api: core.api, stream: core.stream, streamSimple: core.streamSimple }, sourceId, {
+		survivesClear: true,
+	});
 	return {
 		api: core.api,
 		models: core.models,
@@ -202,23 +206,24 @@ export function stream<TApi extends Api>(
 	context: Context,
 	options?: ProviderStreamOptions,
 ): AssistantMessageEventStream {
+	const transcript = normalizeContext(context);
 	const format = getToolCallFormat(model);
-	if (format && context.tools && context.tools.length > 0) {
+	const tools = getCurrentTools(transcript.messages);
+	if (format && tools.length > 0) {
 		const protocol = getProtocol(format);
-		const transformedContext = transformContext(context, protocol);
-		const innerStream = stream(model, transformedContext, options);
-		return wrapStreamWithToolCallMiddleware(innerStream, protocol, context.tools);
+		const innerStream = stream(model, transformContext(transcript, protocol), options);
+		return wrapStreamWithToolCallMiddleware(innerStream, protocol, tools);
 	}
 
 	const builtinProvider = getBuiltinProviderForModel(model);
 	if (builtinProvider) {
 		if (model.provider.startsWith("cloudflare-") && !hasResolvedCloudflareAuth(options)) {
-			return compatModels.stream(model, context, options as ModelsApiStreamOptions<TApi> | undefined);
+			return compatModels.stream(model, transcript, options as ModelsApiStreamOptions<TApi> | undefined);
 		}
-		return builtinProvider.stream(model, context, withEnvApiKey(model, options) as ApiStreamOptions<TApi>);
+		return builtinProvider.stream(model, transcript, withEnvApiKey(model, options) as ApiStreamOptions<TApi>);
 	}
 	const provider = resolveApiProvider(model.api);
-	return provider.stream(model, context, withEnvApiKey(model, options) as StreamOptions);
+	return provider.stream(model, transcript, withEnvApiKey(model, options) as StreamOptions);
 }
 
 export async function complete<TApi extends Api>(
@@ -235,23 +240,24 @@ export function streamSimple<TApi extends Api>(
 	context: Context,
 	options?: SimpleStreamOptions,
 ): AssistantMessageEventStream {
+	const transcript = normalizeContext(context);
 	const format = getToolCallFormat(model);
-	if (format && context.tools && context.tools.length > 0) {
+	const tools = getCurrentTools(transcript.messages);
+	if (format && tools.length > 0) {
 		const protocol = getProtocol(format);
-		const transformedContext = transformContext(context, protocol);
-		const innerStream = streamSimple(model, transformedContext, options);
-		return wrapStreamWithToolCallMiddleware(innerStream, protocol, context.tools);
+		const innerStream = streamSimple(model, transformContext(transcript, protocol), options);
+		return wrapStreamWithToolCallMiddleware(innerStream, protocol, tools);
 	}
 
 	const builtinProvider = getBuiltinProviderForModel(model);
 	if (builtinProvider) {
 		if (model.provider.startsWith("cloudflare-") && !hasResolvedCloudflareAuth(options)) {
-			return compatModels.streamSimple(model, context, options);
+			return compatModels.streamSimple(model, transcript, options);
 		}
-		return builtinProvider.streamSimple(model, context, withEnvApiKey(model, options));
+		return builtinProvider.streamSimple(model, transcript, withEnvApiKey(model, options));
 	}
 	const provider = resolveApiProvider(model.api);
-	return provider.streamSimple(model, context, withEnvApiKey(model, options));
+	return provider.streamSimple(model, transcript, withEnvApiKey(model, options));
 }
 
 export async function completeSimple<TApi extends Api>(

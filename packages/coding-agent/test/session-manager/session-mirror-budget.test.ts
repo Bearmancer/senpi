@@ -64,11 +64,24 @@ describe("SessionManager resident mirror", () => {
 			return loadEntriesFromFile(filePath);
 		});
 		try {
-			session.getEntries();
-			session.getEntries();
-			expect(loadCount).toBe(2);
+			expect(session.getEntries().map((entry) => entry.type)).toEqual([
+				"message",
+				"message",
+				"message",
+				"compaction",
+			]);
+			// The first full read after the trim is kept and reused, and entries appended since still appear.
+			const laterId = session.appendMessage(userMsg("later"));
+			expect(
+				session
+					.getEntries()
+					.map((entry) => entry.id)
+					.at(-1),
+			).toBe(laterId);
+			expect(session.getEntries()).toHaveLength(5);
+			expect(loadCount).toBe(1);
 			session.buildSessionContext();
-			expect(loadCount).toBe(2);
+			expect(loadCount).toBe(1);
 		} finally {
 			restoreLoader();
 		}

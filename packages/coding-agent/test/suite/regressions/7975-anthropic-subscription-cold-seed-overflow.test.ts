@@ -11,7 +11,12 @@
  */
 
 import type { StreamFn } from "@earendil-works/pi-agent-core";
-import { type AssistantMessage, fauxAssistantMessage, wrapStreamWithModelRecovery } from "@earendil-works/pi-ai";
+import {
+	type AssistantMessage,
+	fauxAssistantMessage,
+	getCurrentTools,
+	wrapStreamWithModelRecovery,
+} from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it } from "vitest";
 import { CLAUDE_SDK_OAUTH_API_ID } from "../../../src/core/extensions/builtin/anthropic-subscription/api-id.ts";
 import type { SDKMessage } from "../../../src/core/extensions/builtin/anthropic-subscription/sdk-boundary.ts";
@@ -73,7 +78,11 @@ const overflow: Reply = (sessionId) => [
 ];
 
 const residentStreamFn: StreamFn = (model, context, options) =>
-	wrapStreamWithModelRecovery(streamAnthropicSubscription(model, context, options), model, context.tools ?? []);
+	wrapStreamWithModelRecovery(
+		streamAnthropicSubscription(model, context, options),
+		model,
+		getCurrentTools(context.messages),
+	);
 
 const harnesses: Harness[] = [];
 

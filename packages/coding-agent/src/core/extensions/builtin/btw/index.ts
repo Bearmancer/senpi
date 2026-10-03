@@ -45,6 +45,7 @@ export default function btwExtension(pi: ExtensionAPI) {
 	pi.registerCommand("btw", {
 		description: "Ask a side question in parallel without touching the main session",
 		argumentHint: "<question>",
+		requiresArguments: false,
 		handler: async (args, ctx) => {
 			const question = args.trim();
 			if (!question) {

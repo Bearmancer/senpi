@@ -75,6 +75,7 @@ const TRANSIENT_ENV_NAMES = new Set([
 	"SENPI_RPC_HOST_INSTANCE_ID",
 	"SENPI_RPC_HOST_GENERATION",
 	"SENPI_RPC_HOST_DAEMON_DIR",
+	"SENPI_RPC_HOST_EXPECTED_RUNTIME_BUILD_ID",
 ]);
 
 export function daemonEnvIsAllowed(name: string, platform: NodeJS.Platform = process.platform): boolean {

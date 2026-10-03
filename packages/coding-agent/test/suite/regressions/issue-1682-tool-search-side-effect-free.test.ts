@@ -1,4 +1,4 @@
-import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
+import { fauxAssistantMessage, fauxToolCall, getCurrentTools } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { afterEach, describe, expect, it } from "vitest";
 import imagegenExtension from "../../../src/core/extensions/builtin/imagegen/index.ts";
@@ -58,13 +58,13 @@ describe("regression senpi#1682: tool_search is side-effect-free and answers hid
 		const providerTools: string[][] = [];
 		harness.setResponses([
 			(context) => {
-				providerTools.push((context.tools ?? []).map((tool) => tool.name));
+				providerTools.push(getCurrentTools(context.messages).map((tool) => tool.name));
 				return fauxAssistantMessage(fauxToolCall("tool_search", { query: "bash execute shell command" }), {
 					stopReason: "toolUse",
 				});
 			},
 			(context) => {
-				providerTools.push((context.tools ?? []).map((tool) => tool.name));
+				providerTools.push(getCurrentTools(context.messages).map((tool) => tool.name));
 				return fauxAssistantMessage("ok");
 			},
 		]);
@@ -88,13 +88,13 @@ describe("regression senpi#1682: tool_search is side-effect-free and answers hid
 		const providerTools: string[][] = [];
 		harness.setResponses([
 			(context) => {
-				providerTools.push((context.tools ?? []).map((tool) => tool.name));
+				providerTools.push(getCurrentTools(context.messages).map((tool) => tool.name));
 				return fauxAssistantMessage(fauxToolCall(GENERATE_IMAGE_TOOL_NAME, { prompt: "a cat on a mat" }), {
 					stopReason: "toolUse",
 				});
 			},
 			(context) => {
-				providerTools.push((context.tools ?? []).map((tool) => tool.name));
+				providerTools.push(getCurrentTools(context.messages).map((tool) => tool.name));
 				return fauxAssistantMessage("done");
 			},
 		]);

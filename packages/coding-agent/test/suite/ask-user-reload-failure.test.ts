@@ -2,7 +2,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import { formatUserMessage } from "../../src/core/extensions/builtin/ask-user/format.ts";
 import { getPendingQuestions } from "../../src/core/extensions/builtin/ask-user/registry.ts";
 import { emitSessionShutdownEvent } from "../../src/core/extensions/runner.ts";
-import type { ExtensionContext } from "../../src/core/extensions/types.ts";
+import type { ExtensionContext, ExtensionToolContext } from "../../src/core/extensions/types.ts";
 import { ASYNC_QUESTIONS, type AskUserDelivery, createAskUserDelivery } from "./helpers/ask-user-delivery.ts";
 
 const deliveries: AskUserDelivery[] = [];
@@ -27,7 +27,7 @@ it.each(["missing", "throw", "reject"] as const)(
 			{ questions: ASYNC_QUESTIONS, waitForAnswer: false },
 			undefined,
 			undefined,
-			context,
+			context as ExtensionToolContext,
 		);
 		const entry = getPendingQuestions(context.sessionManager.getSessionId())[0];
 		if (!entry) throw new Error("missing pending question");

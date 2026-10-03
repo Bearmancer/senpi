@@ -2,6 +2,25 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { realpathWithoutOpen } from "../../../../utils/paths.ts";
 
+export type AlwaysScope = "file" | "directory";
+
+export function toParentDirectoryPattern(inputPath: string, scope: AlwaysScope): string {
+	if (inputPath === "~" || inputPath === "$HOME") {
+		return `${inputPath}/*`;
+	}
+	if (scope === "directory") {
+		return inputPath.endsWith("/") || inputPath.endsWith("\\") ? `${inputPath}*` : `${inputPath}/*`;
+	}
+	if (inputPath.endsWith("/") || inputPath.endsWith("\\")) {
+		return `${inputPath}*`;
+	}
+	const parentPattern = inputPath.replace(/[\\/][^\\/]+$/, "/*");
+	if (parentPattern.replaceAll("\\", "/") === `${path.parse(inputPath).root.replaceAll("\\", "/")}*`) {
+		return inputPath;
+	}
+	return parentPattern;
+}
+
 export function expandHome(inputPath: string): string {
 	if (inputPath === "~") {
 		return os.homedir();

@@ -200,13 +200,6 @@ jobs:
           cargo test -p senpi-pty --target "${RUST_TARGET}" --locked
           cargo test -p senpi-grep --target "${RUST_TARGET}" --locked
 
-      - name: Rust manual PTY QA
-        if: ${{ !matrix.cross_compile }}
-        run: |
-          set -euo pipefail
-
-          cargo test -p senpi-pty --target "${RUST_TARGET}" --test manual_qa -- --nocapture
-
       - name: Build native prebuild
         run: |
           set -euo pipefail

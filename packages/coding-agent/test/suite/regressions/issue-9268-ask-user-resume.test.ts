@@ -1,7 +1,7 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { AssistantMessage, Usage } from "@earendil-works/pi-ai";
+import type { AssistantMessage, JsonObject, Usage } from "@earendil-works/pi-ai";
 import { setKeybindings } from "@earendil-works/pi-tui";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { createEventBus } from "../../../src/core/event-bus.ts";
@@ -40,7 +40,7 @@ afterEach(async () => {
 function assistantCall(args: Record<string, unknown>): AssistantMessage {
 	return {
 		role: "assistant",
-		content: [{ type: "toolCall", id: CALL_ID, name: "ask_user_question", arguments: args }],
+		content: [{ type: "toolCall", id: CALL_ID, name: "ask_user_question", arguments: args as JsonObject }],
 		api: "anthropic-messages",
 		provider: "anthropic",
 		model: "claude-opus-4-6",

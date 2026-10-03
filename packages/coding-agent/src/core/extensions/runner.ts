@@ -3,8 +3,15 @@
  */
 
 import { basename } from "node:path";
-import type { AgentMessage } from "@earendil-works/pi-agent-core";
-import type { Api, ImageContent, Model, Provider, ProviderHeaders } from "@earendil-works/pi-ai";
+import type { AgentMessage, AgentTool } from "@earendil-works/pi-agent-core";
+import {
+	type Api,
+	getCurrentSystemMessage,
+	type ImageContent,
+	type Model,
+	type Provider,
+	type ProviderHeaders,
+} from "@earendil-works/pi-ai";
 import type { KeyId } from "@earendil-works/pi-tui";
 import { getAgentDir } from "../../config.ts";
 import { type Theme, theme } from "../../modes/interactive/theme/theme.ts";
@@ -22,22 +29,28 @@ import {
 	SettingsManager,
 } from "../settings-manager.ts";
 import type { BuildSystemPromptOptions } from "../system-prompt.ts";
+import type { VirtualModelDefinition } from "../virtual-models.ts";
 import { goalFilePath } from "./builtin/goal/persistence.ts";
 import { goalStoreRef } from "./builtin/goal/store-ref.ts";
 import { kernelToolsStorage } from "./kernel-tools-context.ts";
 import { drainPendingProviderRegistrations } from "./loader.ts";
 import { SessionStartTurnGate } from "./session-start-turn-gate.ts";
 import type {
+	AgentBeforeSettleEvent,
 	BeforeAgentStartEvent,
 	BeforeAgentStartEventResult,
 	BeforeProviderHeadersEvent,
 	BeforeProviderRequestEvent,
+	BoundaryContextPreview,
+	BoundaryResult,
 	CompactOptions,
 	ContextEvent,
 	ContextEventResult,
 	ContextUsage,
+	ContextWithSystemEvent,
 	EntryRenderer,
 	EntryRendererOptions,
+	ExecuteToolOptions,
 	Extension,
 	ExtensionActions,
 	ExtensionCommandContext,
@@ -50,6 +63,7 @@ import type {
 	ExtensionMode,
 	ExtensionRuntime,
 	ExtensionShortcut,
+	ExtensionToolContext,
 	ExtensionUIContext,
 	InputEvent,
 	InputEventResult,
@@ -80,11 +94,13 @@ import type {
 	SessionBeforeReloadResult,
 	SessionBeforeSwitchResult,
 	SessionBeforeTreeResult,
+	SessionBoundaryDraft,
 	SessionShutdownEvent,
 	ToolCallEvent,
 	ToolCallEventResult,
 	ToolResultEvent,
 	ToolResultEventResult,
+	TurnEndEvent,
 	UIPromptKind,
 	UserBashEvent,
 	UserBashEventResult,
@@ -137,6 +153,32 @@ const buildBuiltinKeybindings = (resolvedKeybindings: KeybindingsConfig): BuiltI
 	return builtinKeybindings;
 };
 
+function isUserBashEventResult(value: unknown): value is UserBashEventResult {
+	if (typeof value !== "object" || value === null) return false;
+	const candidate = value as Record<string, unknown>;
+	const hasOperations = candidate.operations !== undefined;
+	const hasResult = candidate.result !== undefined;
+	if (hasOperations === hasResult) return false;
+
+	if (hasOperations) {
+		const operations = candidate.operations;
+		if (typeof operations !== "object" || operations === null) return false;
+		return typeof (operations as Record<string, unknown>).exec === "function";
+	}
+
+	const result = candidate.result;
+	if (typeof result !== "object" || result === null) return false;
+	const resultRecord = result as Record<string, unknown>;
+	return (
+		typeof resultRecord.output === "string" &&
+		"exitCode" in resultRecord &&
+		(resultRecord.exitCode === undefined || typeof resultRecord.exitCode === "number") &&
+		typeof resultRecord.cancelled === "boolean" &&
+		typeof resultRecord.truncated === "boolean" &&
+		(resultRecord.fullOutputPath === undefined || typeof resultRecord.fullOutputPath === "string")
+	);
+}
+
 /** Combined result from all before_agent_start handlers */
 interface BeforeAgentStartCombinedResult {
 	messages?: NonNullable<BeforeAgentStartEventResult["message"]>[];
@@ -154,6 +196,7 @@ type RunnerEmitEvent = Exclude<
 	| ToolResultEvent
 	| UserBashEvent
 	| ContextEvent
+	| ContextWithSystemEvent
 	| BeforeProviderRequestEvent
 	| BeforeProviderHeadersEvent
 	| BeforeAgentStartEvent
@@ -161,6 +204,8 @@ type RunnerEmitEvent = Exclude<
 	| MessageEndEvent
 	| ResourcesDiscoverEvent
 	| InputEvent
+	| TurnEndEvent
+	| AgentBeforeSettleEvent
 >;
 
 type SessionBeforeEvent = Extract<
@@ -248,6 +293,17 @@ export type ExtensionToolHookLifecycleEvent =
 
 export type ExtensionToolHookLifecycleObserver = (event: ExtensionToolHookLifecycleEvent) => void;
 
+type BoundaryBaseEvent =
+	| Omit<TurnEndEvent, "entries" | "continue" | "context">
+	| Omit<AgentBeforeSettleEvent, "entries" | "continue" | "context">;
+
+interface BoundaryDispatchResult {
+	entries: SessionBoundaryDraft[];
+	continue: boolean;
+	context: BoundaryContextPreview;
+	valid: boolean;
+}
+
 export type NewSessionHandler = (options?: {
 	parentSession?: string;
 	setup?: (sessionManager: SessionManager) => Promise<void>;
@@ -304,18 +360,41 @@ export async function emitSessionShutdownEvent(
 	return false;
 }
 
+function snapshotEventHandlers(extensions: Extension[], event: ExtensionEvent["type"]) {
+	return extensions.map((ext) => ({ ext, handlers: ext.handlers.get(event)?.slice() ?? [] }));
+}
+
+function sameMessages(left: AgentMessage[], right: AgentMessage[]): boolean {
+	return left.length === right.length && left.every((message, index) => message === right[index]);
+}
+
+/**
+ * Re-attach the prompt and tool state after a `context` handler. Handlers only see the
+ * conversation; the system messages belong to Pi. An unchanged conversation keeps every
+ * system message in place, so models with mid-conversation support keep their cached
+ * prefix. A changed one gets the replayed prompt sections and tool declarations as one
+ * leading system message, so pruning, windowing, or slicing from a compaction summary
+ * cannot drop them.
+ */
+function restoreSystemMessages(
+	current: AgentMessage[],
+	visible: AgentMessage[],
+	returned: AgentMessage[],
+): AgentMessage[] {
+	if (sameMessages(returned, visible)) return current;
+	const head = getCurrentSystemMessage(current);
+	return head ? [head, ...returned] : returned;
+}
+
 export async function emitProjectTrustEvent(
 	extensionsResult: LoadExtensionsResult,
 	event: ProjectTrustEvent,
 	ctx: ProjectTrustContext,
 ): Promise<{ result?: ProjectTrustEventResult; errors: ExtensionError[] }> {
 	const errors: ExtensionError[] = [];
-	for (const ext of extensionsResult.extensions) {
+	for (const { ext, handlers } of snapshotEventHandlers(extensionsResult.extensions, "project_trust")) {
 		// A single extension may register multiple handlers for the same event.
 		// The first project_trust handler that returns yes/no wins; undecided falls through.
-		const handlers = ext.handlers.get("project_trust");
-		if (!handlers || handlers.length === 0) continue;
-
 		for (const handler of handlers) {
 			try {
 				const handlerResult = (await handler(event, ctx)) as ProjectTrustEventResult;
@@ -462,6 +541,8 @@ export class ExtensionRunner {
 	private getSystemPromptOptionsFn: () => BuildSystemPromptOptions = () => ({ cwd: this.cwd });
 	private getPromptCachePrefixRequestFn: ExtensionContextActions["getPromptCachePrefixRequest"] = undefined;
 	private getAgentDirFn: () => string = () => getAgentDir();
+	private executeToolFn: ExtensionContextActions["executeTool"];
+	private getCallableToolsFn: () => readonly AgentTool[] = () => [];
 	private newSessionHandler: NewSessionHandler = async () => ({ cancelled: false });
 	private forkHandler: ForkHandler = async () => ({ cancelled: false });
 	private navigateTreeHandler: NavigateTreeHandler = async () => ({ cancelled: false });
@@ -510,6 +591,8 @@ export class ExtensionRunner {
 			registerProvider?: (name: string, config: ProviderConfig) => void;
 			registerNativeProvider?: (provider: Provider) => void;
 			unregisterProvider?: (name: string) => void;
+			registerVirtualModel?: (definition: VirtualModelDefinition) => void;
+			unregisterVirtualModel?: (provider: string, id: string) => void;
 		},
 	): void {
 		// Copy actions into the shared runtime (all extension APIs reference this)
@@ -526,6 +609,7 @@ export class ExtensionRunner {
 		this.runtime.executeTool = actions.executeTool;
 		this.runtime.getActiveTools = actions.getActiveTools;
 		this.runtime.getAllTools = actions.getAllTools;
+		this.runtime.getSettings = actions.getSettings;
 		this.runtime.setActiveTools = actions.setActiveTools;
 		this.runtime.refreshTools = actions.refreshTools;
 		this.runtime.registerRemovedToolHint = actions.registerRemovedToolHint;
@@ -538,6 +622,7 @@ export class ExtensionRunner {
 		this.runtime.setSessionThinkingLevel = actions.setSessionThinkingLevel;
 		this.runtime.setSessionFastMode = actions.setSessionFastMode;
 		if (actions.sessionControl) this.runtime.sessionControl = actions.sessionControl;
+		this.runtime.createContext = () => this.createContext();
 
 		// Context actions (required)
 		this.getModel = contextActions.getModel;
@@ -575,6 +660,8 @@ export class ExtensionRunner {
 		if (contextActions.getAgentDir) this.getAgentDirFn = contextActions.getAgentDir;
 		this.getSystemPromptOptionsFn = contextActions.getSystemPromptOptions ?? (() => ({ cwd: this.cwd }));
 		this.getPromptCachePrefixRequestFn = contextActions.getPromptCachePrefixRequest;
+		this.executeToolFn = contextActions.executeTool;
+		this.getCallableToolsFn = contextActions.getCallableTools ?? (() => []);
 
 		for (const extension of this.extensions) {
 			for (const [name, hint] of extension.removedToolHints ?? []) {
@@ -610,6 +697,23 @@ export class ExtensionRunner {
 				});
 			}
 		}
+		const registerVirtualModel = (definition: VirtualModelDefinition) => {
+			if (providerActions?.registerVirtualModel) providerActions.registerVirtualModel(definition);
+			else this.modelRegistry.registerVirtualModel(definition);
+		};
+		for (const { definition, extensionPath } of this.runtime.pendingVirtualModelRegistrations) {
+			try {
+				registerVirtualModel(definition);
+			} catch (err) {
+				this.emitError({
+					extensionPath,
+					event: "register_virtual_model",
+					error: err instanceof Error ? err.message : String(err),
+					stack: err instanceof Error ? err.stack : undefined,
+				});
+			}
+		}
+		this.runtime.pendingVirtualModelRegistrations = [];
 
 		// From this point on, provider registration/unregistration takes effect immediately
 		// without requiring a /reload.
@@ -633,6 +737,11 @@ export class ExtensionRunner {
 				return;
 			}
 			this.modelRegistry.unregisterProvider(name);
+		};
+		this.runtime.registerVirtualModel = registerVirtualModel;
+		this.runtime.unregisterVirtualModel = (provider, id) => {
+			if (providerActions?.unregisterVirtualModel) providerActions.unregisterVirtualModel(provider, id);
+			else this.modelRegistry.unregisterVirtualModel(provider, id);
 		};
 	}
 
@@ -1314,6 +1423,45 @@ export class ExtensionRunner {
 		};
 	}
 
+	/**
+	 * Create the context for executing the tool call `toolCallId`: the extension context plus
+	 * `tools` and `executeTool()`. `signal` is the default signal of nested calls. `baseContext`
+	 * is a per-invocation context the host already created (senpi: it carries `steeringSignal`);
+	 * it must be a fresh object because the tool properties are defined on it.
+	 */
+	createToolContext(
+		toolCallId: string,
+		signal: AbortSignal | undefined,
+		baseContext: ExtensionContext = this.createContext(),
+	): ExtensionToolContext {
+		const runner = this;
+		// createContext() returns a fresh object, so adding properties does not affect other contexts.
+		return Object.defineProperties(baseContext as ExtensionToolContext, {
+			tools: {
+				get() {
+					runner.assertActive();
+					return runner.getCallableToolsFn();
+				},
+			},
+			executeTool: {
+				value: async (name: string, args: unknown, options: ExecuteToolOptions = {}) => {
+					runner.assertActive();
+					if (!runner.executeToolFn) {
+						return {
+							toolCall: { type: "toolCall", id: `${toolCallId}/0`, name, arguments: {} },
+							result: {
+								content: [{ type: "text", text: "Nested tool calls are not available in this context" }],
+								details: {},
+							},
+							isError: true,
+						};
+					}
+					return runner.executeToolFn(toolCallId, name, args, { ...options, signal: options.signal ?? signal });
+				},
+			},
+		});
+	}
+
 	createCommandContext(): ExtensionCommandContext {
 		// Use property descriptors instead of object spread so the guarded getters from
 		// createContext() stay lazy. A spread would eagerly read them once and freeze the
@@ -1357,6 +1505,57 @@ export class ExtensionRunner {
 			return this.requestReload();
 		};
 		return context;
+	}
+
+	async emitBoundary(
+		baseEvent: BoundaryBaseEvent,
+		buildContext: (entries: SessionBoundaryDraft[]) => BoundaryContextPreview | Promise<BoundaryContextPreview>,
+	): Promise<BoundaryDispatchResult> {
+		const ctx = this.createContext();
+		let entries: SessionBoundaryDraft[] = [];
+		let shouldContinue = false;
+		let context = await buildContext(entries);
+		let valid = true;
+
+		for (const { ext, handlers } of snapshotEventHandlers(this.extensions, baseEvent.type)) {
+			for (const handler of handlers) {
+				const event = {
+					...baseEvent,
+					entries,
+					continue: shouldContinue,
+					context,
+				} as TurnEndEvent | AgentBeforeSettleEvent;
+				try {
+					const handlerResult = (await handler(event, ctx)) as BoundaryResult | undefined;
+					if (handlerResult?.entries !== undefined) entries = handlerResult.entries;
+					if (handlerResult?.continue !== undefined) shouldContinue = handlerResult.continue;
+				} catch (err) {
+					this.emitError({
+						extensionPath: ext.path,
+						event: baseEvent.type,
+						error: err instanceof Error ? err.message : String(err),
+						stack: err instanceof Error ? err.stack : undefined,
+					});
+				}
+
+				try {
+					context = await buildContext(entries);
+					valid = true;
+				} catch (err) {
+					valid = false;
+					this.emitError({
+						extensionPath: ext.path,
+						event: baseEvent.type,
+						error: `Invalid boundary entries: ${err instanceof Error ? err.message : String(err)}`,
+						stack: err instanceof Error ? err.stack : undefined,
+					});
+				}
+			}
+		}
+
+		return valid
+			? { entries, continue: shouldContinue, context, valid: true }
+			: { entries: [], continue: false, context, valid: false };
 	}
 
 	private isSessionBeforeEvent(event: RunnerEmitEvent): event is SessionBeforeEvent {
@@ -1483,10 +1682,7 @@ export class ExtensionRunner {
 		const isSessionShutdown = event.type === "session_shutdown";
 		let shutdownBudget: SessionShutdownHandlerBudget | undefined;
 
-		for (const ext of this.extensions) {
-			const handlers = ext.handlers.get(event.type);
-			if (!handlers || handlers.length === 0) continue;
-
+		for (const { ext, handlers } of snapshotEventHandlers(this.extensions, event.type)) {
 			for (const handler of handlers) {
 				try {
 					if (isSessionShutdown) {
@@ -1574,10 +1770,7 @@ export class ExtensionRunner {
 		let currentMessage = event.message;
 		let modified = false;
 
-		for (const ext of this.extensions) {
-			const handlers = ext.handlers.get("message_end");
-			if (!handlers || handlers.length === 0) continue;
-
+		for (const { ext, handlers } of snapshotEventHandlers(this.extensions, "message_end")) {
 			for (const handler of handlers) {
 				try {
 					const currentEvent: MessageEndEvent = { ...event, message: currentMessage };
@@ -1617,10 +1810,7 @@ export class ExtensionRunner {
 		const currentEvent: ToolResultEvent = { ...event };
 		let modified = false;
 
-		for (const ext of this.extensions) {
-			const handlers = ext.handlers.get("tool_result");
-			if (!handlers || handlers.length === 0) continue;
-
+		for (const { ext, handlers } of snapshotEventHandlers(this.extensions, "tool_result")) {
 			for (const handler of handlers) {
 				const hookRun = this.beginToolHookRun(this.createContext(), {
 					hookName: "PostToolUse",
@@ -1638,10 +1828,16 @@ export class ExtensionRunner {
 
 					if (handlerResult.content !== undefined) {
 						currentEvent.content = handlerResult.content;
+						// Structured content that is not replaced along with the content may no longer match it.
+						if (handlerResult.structuredContent === undefined) delete currentEvent.structuredContent;
 						modified = true;
 					}
 					if (handlerResult.details !== undefined) {
 						currentEvent.details = handlerResult.details;
+						modified = true;
+					}
+					if (handlerResult.structuredContent !== undefined) {
+						currentEvent.structuredContent = handlerResult.structuredContent;
 						modified = true;
 					}
 					if (handlerResult.isError !== undefined) {
@@ -1676,6 +1872,7 @@ export class ExtensionRunner {
 		return {
 			content: currentEvent.content,
 			details: currentEvent.details,
+			structuredContent: currentEvent.structuredContent,
 			isError: currentEvent.isError,
 			usage: currentEvent.usage,
 		};
@@ -1684,10 +1881,7 @@ export class ExtensionRunner {
 	async emitToolCall(event: ToolCallEvent): Promise<ToolCallEventResult | undefined> {
 		let result: ToolCallEventResult | undefined;
 
-		for (const ext of this.extensions) {
-			const handlers = ext.handlers.get("tool_call");
-			if (!handlers || handlers.length === 0) continue;
-
+		for (const { ext, handlers } of snapshotEventHandlers(this.extensions, "tool_call")) {
 			for (const handler of handlers) {
 				const hookRun = this.beginToolHookRun(this.createContext(), {
 					hookName: "PreToolUse",
@@ -1721,16 +1915,17 @@ export class ExtensionRunner {
 	}
 
 	async emitUserBash(event: UserBashEvent): Promise<UserBashEventResult | undefined> {
-		for (const ext of this.extensions) {
-			const handlers = ext.handlers.get("user_bash");
-			if (!handlers || handlers.length === 0) continue;
-
+		for (const { ext, handlers } of snapshotEventHandlers(this.extensions, "user_bash")) {
 			for (const handler of handlers) {
 				try {
 					const handlerResult = await handler(event, this.createContext());
-					if (handlerResult) {
-						return handlerResult as UserBashEventResult;
+					if (handlerResult === undefined) continue;
+					if (!isUserBashEventResult(handlerResult)) {
+						throw new Error(
+							"Invalid user_bash handler result: return undefined for local execution or exactly one valid { operations } or { result } object",
+						);
 					}
+					return handlerResult;
 				} catch (err) {
 					const message = err instanceof Error ? err.message : String(err);
 					const stack = err instanceof Error ? err.stack : undefined;
@@ -1740,6 +1935,7 @@ export class ExtensionRunner {
 						error: message,
 						stack,
 					});
+					throw err;
 				}
 			}
 		}
@@ -1747,31 +1943,79 @@ export class ExtensionRunner {
 		return undefined;
 	}
 
+	/**
+	 * Run the request-time transforms in two phases. `context` handlers see the conversation
+	 * only and the runner restores the prompt and tool state after each; `context_with_system`
+	 * handlers then see the full transcript and their output is used as returned.
+	 */
 	async emitContext(messages: AgentMessage[], excludeExtensionPath?: string): Promise<AgentMessage[]> {
 		let currentMessages = cloneJsonValue(messages).map((message, index) => {
 			const entryId = getSessionContextEntryId(messages[index]!);
 			return entryId ? Object.assign(message, { [SESSION_CONTEXT_ENTRY_ID]: entryId }) : message;
 		});
 
-		for (const ext of this.extensions) {
+		for (const { ext, handlers } of snapshotEventHandlers(this.extensions, "context")) {
 			if (ext.path === excludeExtensionPath) continue;
-			const handlers = ext.handlers.get("context");
-			if (!handlers || handlers.length === 0) continue;
-
 			for (const handler of handlers) {
 				try {
-					const event: ContextEvent = { type: "context", messages: currentMessages };
-					const handlerResult = await handler(event, this.createContext(ext.path));
+					// Without system messages there is nothing to hide or restore, so the handler gets the
+					// working list itself and the list it sees is the list the request carries.
+					const hasSystemMessages = currentMessages.some((message) => message.role === "system");
+					const visibleMessages = hasSystemMessages
+						? currentMessages.filter((message) => message.role !== "system")
+						: currentMessages;
+					const visibleSnapshot = visibleMessages.slice();
+					const event: ContextEvent = { type: "context", messages: visibleMessages };
+					const handlerResult = (await handler(event, this.createContext(ext.path))) as
+						| ContextEventResult
+						| undefined;
 
-					if (handlerResult && (handlerResult as ContextEventResult).messages) {
-						currentMessages = (handlerResult as ContextEventResult).messages!;
-					}
+					// Handlers may return a new list or edit event.messages in place.
+					const returned =
+						handlerResult?.messages ??
+						(sameMessages(visibleMessages, visibleSnapshot) ? undefined : visibleMessages);
+					if (!returned) continue;
+					currentMessages = hasSystemMessages
+						? restoreSystemMessages(currentMessages, visibleSnapshot, returned)
+						: returned;
 				} catch (err) {
 					const message = err instanceof Error ? err.message : String(err);
 					const stack = err instanceof Error ? err.stack : undefined;
 					this.emitError({
 						extensionPath: ext.path,
 						event: "context",
+						error: message,
+						stack,
+					});
+				}
+			}
+		}
+
+		for (const { ext, handlers } of snapshotEventHandlers(this.extensions, "context_with_system")) {
+			if (ext.path === excludeExtensionPath) continue;
+			for (const handler of handlers) {
+				try {
+					const hadLeadingSystemMessage = currentMessages[0]?.role === "system";
+					const event: ContextWithSystemEvent = { type: "context_with_system", messages: currentMessages };
+					const handlerResult = (await handler(event, this.createContext(ext.path))) as
+						| ContextEventResult
+						| undefined;
+					currentMessages = handlerResult?.messages ?? currentMessages;
+					// Providers read the prompt and initial tools from the leading system message.
+					// Losing it is never intended; report it but honor the handler's output.
+					if (hadLeadingSystemMessage && currentMessages[0]?.role !== "system") {
+						this.emitError({
+							extensionPath: ext.path,
+							event: "context_with_system",
+							error: "Handler removed the leading system message; the request has no prompt or initial tool declarations. Keep it at index 0 or replace a dropped prefix with getCurrentSystemMessage().",
+						});
+					}
+				} catch (err) {
+					const message = err instanceof Error ? err.message : String(err);
+					const stack = err instanceof Error ? err.stack : undefined;
+					this.emitError({
+						extensionPath: ext.path,
+						event: "context_with_system",
 						error: message,
 						stack,
 					});
@@ -1801,11 +2045,8 @@ export class ExtensionRunner {
 	): Promise<unknown> {
 		let currentPayload = payload;
 
-		for (const ext of this.extensions) {
+		for (const { ext, handlers } of snapshotEventHandlers(this.extensions, "before_provider_request")) {
 			if (ext.path === excludeExtensionPath) continue;
-			const handlers = ext.handlers.get("before_provider_request");
-			if (!handlers || handlers.length === 0) continue;
-
 			for (const handler of handlers) {
 				try {
 					const event: BeforeProviderRequestEvent = {
@@ -1834,10 +2075,7 @@ export class ExtensionRunner {
 	}
 
 	async emitBeforeProviderHeaders(headers: ProviderHeaders): Promise<ProviderHeaders> {
-		for (const ext of this.extensions) {
-			const handlers = ext.handlers.get("before_provider_headers");
-			if (!handlers || handlers.length === 0) continue;
-
+		for (const { ext, handlers } of snapshotEventHandlers(this.extensions, "before_provider_headers")) {
 			for (const handler of handlers) {
 				try {
 					// Handlers mutate `headers` in place; the return value is ignored.
@@ -1887,10 +2125,7 @@ export class ExtensionRunner {
 		const messages: NonNullable<BeforeAgentStartEventResult["message"]>[] = [];
 		let systemPromptModified = false;
 
-		dispatch: for (const ext of this.extensions) {
-			const handlers = ext.handlers.get("before_agent_start");
-			if (!handlers || handlers.length === 0) continue;
-
+		dispatch: for (const { ext, handlers } of snapshotEventHandlers(this.extensions, "before_agent_start")) {
 			for (const handler of handlers) {
 				if (options.signal?.aborted === true) break dispatch;
 				// A preview reaches only handlers that declared themselves side-effect free (senpi#2115).
@@ -1970,10 +2205,7 @@ export class ExtensionRunner {
 					? { path: entry.path, extensionPath }
 					: { path: entry.path, extensionPath, scope: entry.scope };
 
-		for (const ext of this.extensions) {
-			const handlers = ext.handlers.get("resources_discover");
-			if (!handlers || handlers.length === 0) continue;
-
+		for (const { ext, handlers } of snapshotEventHandlers(this.extensions, "resources_discover")) {
 			for (const handler of handlers) {
 				try {
 					const event: ResourcesDiscoverEvent = { type: "resources_discover", cwd, reason, scopedEntries: true };
@@ -2019,8 +2251,8 @@ export class ExtensionRunner {
 		let currentText = text;
 		let currentImages = images;
 
-		for (const ext of this.extensions) {
-			for (const handler of ext.handlers.get("input") ?? []) {
+		for (const { ext, handlers } of snapshotEventHandlers(this.extensions, "input")) {
+			for (const handler of handlers) {
 				try {
 					const event: InputEvent = {
 						type: "input",

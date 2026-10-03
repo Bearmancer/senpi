@@ -66,8 +66,7 @@ export type EvalControlInput =
 
 export type EvalToolRequest = EvalToolInput | EvalControlInput;
 
-// Like `summary`, `language` and `code` stay optional in the wire schema because control
-// actions share it; the description teaches the requirement and parseEvalRequest enforces it.
+// Run fields are optional at the root for control calls, but required in the run branch.
 const LANGUAGE_FIELD_DESCRIPTION =
 	"REQUIRED for run. Kernel that runs the cell; each language keeps its own persistent state across eval calls.";
 const CODE_FIELD_DESCRIPTION = "REQUIRED for run. Cell body, verbatim.";
@@ -124,11 +123,20 @@ export function createEvalInputSchema(
 	const languages = enabledLanguageList(enabled);
 	if (languages.length === 0) throw new Error("eval requires at least one enabled language");
 	const languageSchema = evalLanguageUnion(languages);
+	const properties = evalInputProperties(languageSchema, deadlines);
 	return Type.Unsafe<EvalToolRequest>(
-		Type.Object(evalInputProperties(languageSchema, deadlines), {
+		Type.Object(properties, {
+			// Keep branches self-contained for Mistral-hosted GLM (#2240).
 			anyOf: [
-				{ properties: { action: { enum: ["run", "list"] } } },
-				{ properties: { action: { enum: ["peek", "stop"] } }, required: ["action", "cell_id"] },
+				Type.Object(
+					{ ...properties, action: Type.Optional(Type.Literal("run")) },
+					{ required: ["language", "code", "summary"] },
+				),
+				Type.Object({ action: Type.Literal("list") }),
+				Type.Object(
+					{ action: Type.Union([Type.Literal("peek"), Type.Literal("stop")]), cell_id: properties.cell_id },
+					{ required: ["action", "cell_id"] },
+				),
 			],
 		}),
 	) as EvalInputSchema;

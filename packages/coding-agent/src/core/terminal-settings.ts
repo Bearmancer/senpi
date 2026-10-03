@@ -27,6 +27,7 @@ export interface TerminalSettings {
 	monitorMaxLinesPerInjection?: number; // default: 50 (bounded monitor event batch)
 	monitorMaxCharsPerInjection?: number; // default: 4096 (bounded monitor event batch)
 	monitorWakeBudget?: number; // default: 5 (consecutive monitor-only wake limit)
+	maxDurableMonitors?: number | "unlimited"; // default: "unlimited" (persistent monitors per session; invalid values mean unlimited)
 }
 
 export interface BranchSummarySettings {

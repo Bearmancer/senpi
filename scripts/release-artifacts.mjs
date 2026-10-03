@@ -41,15 +41,6 @@ export function runClaudeCodeModelSupportReport(dryRun, runCommand, log, dryRunL
 	runCommand("node", ["scripts/check-claude-code-model-support.mjs"]);
 }
 
-export function runGenerateImageModels(dryRun, runCommand, log, dryRunLog) {
-	if (dryRun) {
-		dryRunLog("npm --prefix packages/ai run generate-image-models");
-		return;
-	}
-	log("npm --prefix packages/ai run generate-image-models");
-	runCommand("npm", ["--prefix", "packages/ai", "run", "generate-image-models"]);
-}
-
 export function runInstallLock(dryRun, runCommand, log, dryRunLog) {
 	if (dryRun) {
 		dryRunLog("node scripts/generate-coding-agent-install-lock.mjs");

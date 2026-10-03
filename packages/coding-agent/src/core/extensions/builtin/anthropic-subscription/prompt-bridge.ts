@@ -1,4 +1,5 @@
 import type { AssistantMessage, Context } from "@earendil-works/pi-ai";
+import { replayHistoryImages } from "./cold-seed-images.ts";
 import { appendSdkContentBlocks } from "./content-blocks.ts";
 import type { ContentBlockParam, SDKUserMessage } from "./sdk-boundary.ts";
 import { mapPiToolNameToSdk } from "./tools.ts";
@@ -46,10 +47,12 @@ export function buildPromptBlocks(
 			hasPreviousTurn = true;
 		};
 
-		for (const message of history) {
+		const replayedImages = replayHistoryImages(history, (name) => mapPiToolNameToSdk(name, customToolNameToSdk));
+		for (const [index, message] of history.entries()) {
 			if (message.role === "user") {
 				pushPrefix("USER:");
-				if (!appendContentBlocks(blocks, message.content)) pushText("(see attached image)");
+				if (!appendContentBlocks(blocks, replayedImages.get(index) ?? message.content))
+					pushText("(see attached image)");
 				continue;
 			}
 			if (message.role === "assistant") {
@@ -58,11 +61,12 @@ export function buildPromptBlocks(
 				if (text.length > 0) pushText(text);
 				continue;
 			}
-			if (message.role === "configurationUpdate") continue;
+			if (message.role === "configurationUpdate" || message.role === "system") continue;
 			pushPrefix(
 				`TOOL RESULT (historical ${mapPiToolNameToSdk(message.toolName, customToolNameToSdk)}, id=${message.toolCallId}):`,
 			);
-			if (!appendContentBlocks(blocks, message.content)) pushText("(see attached image)");
+			if (!appendContentBlocks(blocks, replayedImages.get(index) ?? message.content))
+				pushText("(see attached image)");
 		}
 		pushText("\n</conversation_history>");
 	}

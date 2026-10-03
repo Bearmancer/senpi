@@ -19,6 +19,7 @@ import {
 	type AdmittedDeliveries,
 	type ExternalAdmissionResult,
 	type ExternalDeliverAs,
+	isSessionControlDeliveryDetails,
 	SESSION_CONTROL_DELIVERY_TYPE,
 	type SessionAdmissionGate,
 	type SessionControlDeliveryDetails,
@@ -239,7 +240,5 @@ function deliveryMessage(input: AdmitExternalMessageInput): SessionControlDelive
 
 export function deliveryIdOf(message: AgentMessage): string | undefined {
 	if (message.role !== "custom" || message.customType !== SESSION_CONTROL_DELIVERY_TYPE) return undefined;
-	const details: unknown = message.details;
-	if (typeof details !== "object" || details === null || !("delivery_id" in details)) return undefined;
-	return typeof details.delivery_id === "string" ? details.delivery_id : undefined;
+	return isSessionControlDeliveryDetails(message.details) ? message.details.delivery_id : undefined;
 }

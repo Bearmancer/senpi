@@ -205,7 +205,14 @@ export function createOAuthConfig(deps: {
 			const interaction: ProviderAuthInteraction = {
 				signal: callbacks.signal ?? new AbortController().signal,
 				prompt: async (prompt) => {
-					if (prompt.type === "select") return "";
+					if (prompt.type === "select") {
+						// This adapter has no select callback; never answer "" or the
+						// flow's mandatory selector throws. Default to the option the
+						// flow marks "(default)" (the browser login), else the first.
+						const options = prompt.options ?? [];
+						const fallback = options.find((option) => /\(default\)/i.test(option.label)) ?? options[0];
+						return fallback ? fallback.id : "";
+					}
 					return callbacks.onPrompt ? callbacks.onPrompt({ message: prompt.message }) : "";
 				},
 				notify: (event) => {

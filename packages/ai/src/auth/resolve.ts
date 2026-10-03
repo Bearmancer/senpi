@@ -1,6 +1,6 @@
 import type { ProviderEnv } from "../types.ts";
 import { operationSignal, raceWithAbortSignal } from "../utils/abort.ts";
-import { formatThrownValue } from "../utils/diagnostics.ts";
+import { ModelsError } from "../utils/models-error.ts";
 import {
 	OAuthRefreshExchangeError,
 	OAuthRefreshStoreError,
@@ -8,6 +8,9 @@ import {
 	refreshOAuthCredential,
 } from "./oauth-refresh.ts";
 import { projectSlot } from "./pool/slots.ts";
+
+export { ModelsError, type ModelsErrorCode } from "../utils/models-error.ts";
+
 import type {
 	ApiKeyAuth,
 	ApiKeyCredential,
@@ -19,8 +22,6 @@ import type {
 	OAuthCredential,
 	ProviderAuth,
 } from "./types.ts";
-
-export type ModelsErrorCode = "model_source" | "model_validation" | "provider" | "stream" | "auth" | "oauth";
 
 export interface AuthResolutionOverrides {
 	apiKey?: string;
@@ -54,26 +55,8 @@ export function providerNotConfiguredMessage(providerId: string): string {
 	return `${PROVIDER_NOT_CONFIGURED_PREFIX}${providerId}`;
 }
 
-export class ModelsError extends Error {
-	readonly code: ModelsErrorCode;
-
-	constructor(code: ModelsErrorCode, message: string, options?: { cause?: unknown }) {
-		super(withCauseDetail(message, options?.cause), options);
-		this.name = "ModelsError";
-		this.code = code;
-	}
-}
-
-/** Callers surface `error.message` only, so keep the underlying reason in it. */
-function withCauseDetail(message: string, cause: unknown): string {
-	if (cause === undefined || cause === null) return message;
-	const detail = formatThrownValue(cause).trim();
-	if (!detail || message.includes(detail)) return message;
-	return `${message}: ${detail}`;
-}
-
 /**
- * Auth resolution shared by the `Models` and `ImagesModels` collections.
+ * Auth resolution shared by all operations in a `Models` collection.
  * A stored credential owns the provider: ambient/env is consulted only when
  * nothing is stored. No silent env fallback after a failed refresh or for a
  * credential type without a matching handler.

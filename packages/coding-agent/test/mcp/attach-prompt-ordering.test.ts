@@ -1,5 +1,5 @@
 import { mkdirSync } from "node:fs";
-import { fauxAssistantMessage } from "@earendil-works/pi-ai";
+import { fauxAssistantMessage, getCurrentSystemPrompt, getCurrentTools } from "@earendil-works/pi-ai";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ENV_AGENT_DIR } from "../../src/config.ts";
 import mcpExtension from "../../src/core/extensions/builtin/mcp/index.ts";
@@ -95,9 +95,9 @@ async function startSessionAndCaptureTurn(root: TestRoot): Promise<CapturedTurn>
 	harness.setResponses([
 		(context) => {
 			captured = {
-				systemPrompt: context.systemPrompt ?? "",
+				systemPrompt: getCurrentSystemPrompt(context.messages),
 				connectionState: getMcpService().getConnection("fx")?.state,
-				toolNames: (context.tools ?? []).map((tool) => tool.name),
+				toolNames: getCurrentTools(context.messages).map((tool) => tool.name),
 			};
 			return fauxAssistantMessage("done");
 		},

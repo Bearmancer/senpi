@@ -3,6 +3,8 @@ import { convertMessages, getCompat } from "../src/api/openai-completions.ts";
 import { getModel } from "../src/compat.ts";
 import type { Context, Model } from "../src/types.ts";
 
+import { normalizeContext } from "../src/utils/transcript.ts";
+
 function createModel(baseUrl: string): Model<"openai-completions"> {
 	const { compat: _compat, ...baseModel } = getModel("openai", "gpt-4o-mini");
 	return {
@@ -22,7 +24,7 @@ function convert(baseUrl: string) {
 		],
 	};
 
-	return convertMessages(model, context, getCompat(model));
+	return convertMessages(model, normalizeContext(context), getCompat(model));
 }
 
 describe("openai-completions message ordering", () => {

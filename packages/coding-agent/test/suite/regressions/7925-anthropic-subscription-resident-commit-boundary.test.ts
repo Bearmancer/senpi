@@ -13,7 +13,7 @@
  */
 
 import type { AgentTool, StreamFn } from "@earendil-works/pi-agent-core";
-import { wrapStreamWithModelRecovery } from "@earendil-works/pi-ai";
+import { getCurrentTools, wrapStreamWithModelRecovery } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it } from "vitest";
 import { CLAUDE_SDK_OAUTH_API_ID } from "../../../src/core/extensions/builtin/anthropic-subscription/api-id.ts";
 import { AssistantCommitBoundary } from "../../../src/core/extensions/builtin/anthropic-subscription/session-commit-boundary.ts";
@@ -84,7 +84,11 @@ const echoTool = {
 
 /** The exact composition model-runtime applies to every provider stream. */
 const residentStreamFn: StreamFn = (model, context, options) =>
-	wrapStreamWithModelRecovery(streamAnthropicSubscription(model, context, options), model, context.tools ?? []);
+	wrapStreamWithModelRecovery(
+		streamAnthropicSubscription(model, context, options),
+		model,
+		getCurrentTools(context.messages),
+	);
 
 const harnesses: Harness[] = [];
 

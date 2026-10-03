@@ -11,6 +11,7 @@ import {
 	type SearchRoutingState,
 } from "./search.ts";
 import { resolveNativeSearchModel } from "./search-model.ts";
+import { resolveSessionLoginEntries } from "./session-login-entries.ts";
 import type {
 	ConfigLoadResult,
 	SearchDetails,
@@ -91,7 +92,13 @@ export function createWebSearchTool(getConfig: ConfigProvider, options: WebSearc
 			}
 
 			const maxResults = loaded.config.providers[0]?.maxResults ?? 10;
-			const config = await configWithNativeRoute(loaded.config, ctx, signal);
+			const listed = await resolveSessionLoginEntries(loaded.config, ctx, signal);
+			const config = await configWithNativeRoute(listed, ctx, signal);
+			if (config.providers.length === 0 && loaded.config.providers.length > 0) {
+				const message =
+					"No web search provider is usable: the websearch.json entries that rely on a senpi login have no matching login.";
+				return { content: [{ type: "text", text: message }], details: searchErrorDetails(params.query, message) };
+			}
 			const progressDetails: SearchProgressDetails = {
 				phase: "searching",
 				query: params.query,

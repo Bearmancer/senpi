@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
-import type { AssistantImages, ImagesModel } from "@earendil-works/pi-ai/compat";
+import type { AssistantImages, ImageModel } from "@earendil-works/pi-ai/compat";
 import {
 	generateImages,
 	getImageModel,
@@ -27,7 +27,8 @@ function synthesizeModel(
 	auth: Extract<ImageGenAuthResolution, { kind: "native-openai" | "gateway" }>,
 	id: keyof typeof IMAGE_MODEL_NAMES,
 ) {
-	const model: ImagesModel<"openai-images"> = {
+	const model: ImageModel<"openai-images"> = {
+		type: "image",
 		id,
 		name: IMAGE_MODEL_NAMES[id],
 		api: "openai-images",

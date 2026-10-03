@@ -7,7 +7,7 @@ import { join, relative } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { builtinExtensions } from "../../src/core/extensions/builtin/index.ts";
 import { loadExtensionFromFactory, loadExtensions } from "../../src/core/extensions/loader.ts";
-import type { QuestionResponse } from "../../src/core/extensions/types.ts";
+import type { ExtensionToolContext, QuestionResponse } from "../../src/core/extensions/types.ts";
 import { createTestResourceLoader } from "../utilities.ts";
 import { createHarness } from "./harness.ts";
 
@@ -160,7 +160,7 @@ describe("herdr builtin host integration", () => {
 				},
 				controller.signal,
 				undefined,
-				ctx,
+				ctx as unknown as ExtensionToolContext,
 			);
 			await blocked;
 			expect(f.requests.at(-1)?.params).toMatchObject({

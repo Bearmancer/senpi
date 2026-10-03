@@ -1,6 +1,6 @@
 import type { Api, Context, Model, SimpleStreamOptions } from "@earendil-works/pi-ai";
 import { type AuthenticatedAttemptInput, queryWithAuthLane } from "./auth-lane.ts";
-import { coldSeedOverflow } from "./cold-seed-budget.ts";
+import { coldSeedCalibration, coldSeedOverflow, estimateColdSeedTokens } from "./cold-seed-budget.ts";
 import { buildPromptBlocks } from "./prompt-bridge.ts";
 import { dedupeUltraworkBlocks, serializedPayloadBytes } from "./prompt-directive-dedupe.ts";
 import type { SDKMessage, SDKUserMessage } from "./sdk-boundary.ts";
@@ -45,8 +45,8 @@ export type ResidentSessionStreamInput = {
 	toolWatchNote?: string;
 	onResumeFallback: (error: unknown) => void;
 	onContinuityDecision?: (observation: ContinuityObservation) => void;
-	/** Called once per attempt, before dispatch, with whether it re-sends the whole history. */
-	onDispatchShape?: (coldSeed: boolean) => void;
+	/** Called once per attempt, before dispatch, with whether it re-sends the whole history and that re-send's bytes/4 estimate. */
+	onDispatchShape?: (coldSeed: boolean, estimatedTokens?: number) => void;
 };
 
 function userMessage(content: SDKUserMessage["message"]["content"]): SDKUserMessage["message"] {
@@ -174,11 +174,18 @@ async function createResidentAttempt(
 	const flattenResult = flatten
 		? dedupeUltraworkBlocks(buildPromptBlocks(input.context, input.customToolNameToSdk, input.toolWatchNote))
 		: undefined;
-	input.onDispatchShape?.(flattenResult !== undefined);
-	const overBudget = flattenResult ? coldSeedOverflow(input.model, input.context, flattenResult.blocks) : undefined;
+	const estimatedTokens = flattenResult ? estimateColdSeedTokens(input.context, flattenResult.blocks) : undefined;
+	input.onDispatchShape?.(flattenResult !== undefined, estimatedTokens);
+	const overBudget =
+		estimatedTokens !== undefined
+			? coldSeedOverflow(input.model, estimatedTokens, coldSeedCalibration(sessionId))
+			: undefined;
 	if (overBudget) {
 		// Never dispatch a re-send that cannot fit: the SDK cannot compact a single
-		// exchange, so the overflow must reach senpi's own compaction instead.
+		// exchange, so the overflow must reach senpi's own compaction instead. The
+		// calibration learned from this session's earlier rejection sizes it the way
+		// the API counts, so a compacted re-send that is still too long is refused
+		// here instead of costing another round trip.
 		closeSession(sessionId, "cold_seed_over_budget");
 		throw overBudget;
 	}
@@ -231,6 +238,7 @@ function residentAuthLaneMessages(input: ResidentSessionStreamInput): AsyncItera
 		env: input.streamOptions.env,
 		signal: input.streamOptions.signal,
 		sessionId: input.streamOptions.affinitySessionId ?? input.streamOptions.sessionId,
+		model: input.model.id,
 		pinnedAccount: input.pinnedAccount,
 		buildOptions: input.buildOptions,
 		createAttempt: (auth) => createResidentAttempt(input, auth),

@@ -1,5 +1,26 @@
 # config-reload Extension Changes
 
+## 2026-10-01 - Ignore runtime-only project directory creation and preserve request admission
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/config-reload/index.ts`: rechecks the live idle, pending-message, and compaction state after awaiting extension reload vetoes.
+- `packages/coding-agent/src/core/extensions/builtin/config-reload/change-groups.ts`: separates presence-watch rearming from a real configuration change. Newly discovered files still request a reload; creating only the project configuration container does not.
+- Files discovered by that rearm pass through the same self-write, routine-settings and generated-shim filters as the event's own paths.
+
+### Why
+
+- The first prompt can begin while a reload veto handler is pending. The previous idle snapshot then allowed configuration reload to retire the generation during that prompt (oh-my-openagent#9365).
+- Desktop task projections created an otherwise configuration-free project directory while the first request was starting (oh-my-openagent#9363). Directory discovery must not reload extensions merely because task runtime state appeared there.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/builtin/config-reload/index.ts` owns pending configuration changes and the decision to request their reload.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/core/extensions/builtin/config-reload/index.ts`, `flushPending`, watcher rearming, and extracted change grouping.
+
 ## 2026-09-21 - Share one recursive FS-watch worker across sessions (#1794)
 
 ### What changed

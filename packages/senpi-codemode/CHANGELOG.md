@@ -14,6 +14,72 @@
 
 ### Removed
 
+## [2026.10.2] - 2026-10-02
+
+### Breaking Changes
+
+### Added
+
+- An eval regression gate records the full prompt and schema surfaces, helper witnesses across five required runtime legs, codemode-scoped eager imports, measured teardown resources (including global, named-import, promise and AbortSignal timers, named by creation site) and legacy contract results against a frozen baseline. CI provisions every interpreter and publishes the report; unrelated host imports and slow child startup cannot cause a regression failure. ([#2452](https://github.com/code-yeongyu/senpi/issues/2452))
+
+### Changed
+
+### Fixed
+
+- Fixed Mistral-hosted GLM 5.3 omitting required `eval` run fields when tool use is forced. ([#2444](https://github.com/code-yeongyu/senpi/pull/2444) by [@urbanbreach](https://github.com/urbanbreach))
+- Anthropic-compatible gateways that reject an `enum` inside a root `anyOf` branch (HTTP 400, code 11133) accept the `eval` schema again. ([#2569](https://github.com/code-yeongyu/senpi/issues/2569), reported and verified by [@DevNewbie1826](https://github.com/DevNewbie1826))
+- Reloading or replacing a session while a detached eval cell is running no longer kills the process from the footer's elapsed-time ticker. The ticker stops when its session's context is retired and starts again with the next session's cells; any other footer error still surfaces ([#2549](https://github.com/code-yeongyu/senpi/issues/2549) by [@rhyme227](https://github.com/rhyme227)).
+
+- JavaScript eval cells run in the session's project directory: a relative path in `Bun.file`, `Bun.write`, `node:fs`, `path.resolve`, `Bun.$`, spawned children, or `Bun.Glob` now resolves inside the project instead of the host process directory, which made `Bun.file("src/todo.ts")` fail with ENOENT in desktop threads and under `--cwd`. A missing or deleted session directory fails the cell with `CodemodeSessionCwdUnavailableError` instead of falling back to another directory. The bash tool's working directory is unchanged ([omo#9371](https://github.com/code-yeongyu/oh-my-openagent/issues/9371)).
+
+- Stop now explicitly reports when a running `Bun.$` wait forces the JavaScript kernel to restart and clears its variables, and recommends `Bun.spawn` or the bash tool for stoppable commands. Native shell semantics remain unchanged. Thanks to [@floweredao](https://github.com/floweredao) for the investigation ([#2475](https://github.com/code-yeongyu/senpi/pull/2475)); native cancellation remains tracked in [#2453](https://github.com/code-yeongyu/senpi/issues/2453).
+
+### Removed
+
+## [2026.10.1-3] - 2026-10-01
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+- The `eval` tool points at the bun-1-4 skill before a cell that installs a package, spawns a server or PTY, or starts a long run, instead of demanding it before the first JavaScript cell ([#2505](https://github.com/code-yeongyu/senpi/issues/2505)).
+
+### Fixed
+
+- Kernel-originated tool approvals now reach the RPC client that submitted the cell, including approvals requested after a cell detaches and its original turn ends. Reusing a kernel no longer sends permission dialogs to its creation context. ([#2512](https://github.com/code-yeongyu/senpi/issues/2512))
+
+- Python eval startup waits for kernel readiness with advancing stage events instead of a five-second total deadline. Cold Windows imports can complete normally; a hung start identifies its stalled stage. ([#2452](https://github.com/code-yeongyu/senpi/issues/2452))
+
+- Fixed the running eval spinner freezing between output updates. ([#2503](https://github.com/code-yeongyu/senpi/issues/2503))
+
+### Removed
+
+## [2026.10.1-2] - 2026-10-01
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.1] - 2026-10-01
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
 ## [2026.9.30] - 2026-09-30
 
 ### Breaking Changes

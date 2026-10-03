@@ -2,6 +2,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { type OpenAIResponsesOptions, streamOpenAIResponses } from "../src/providers/openai-responses.ts";
 import type { Context, Model } from "../src/types.ts";
 
+import { normalizeContext } from "../src/utils/transcript.ts";
+
 // senpi#1628: same runtime fact as the Codex adapter - an unclean disconnect
 // arrives as a message-less `error` event and the `close` that follows names
 // the code and reason.
@@ -85,7 +87,7 @@ const NO_CLOSE_BOUND_MS = 1_000;
 
 async function runStream(): Promise<{ stopReason: string; errorMessage?: string }> {
 	const options = { apiKey: "test-key", transport: "websocket" } satisfies OpenAIResponsesOptions;
-	const result = await streamOpenAIResponses(model, context, options).result();
+	const result = await streamOpenAIResponses(model, normalizeContext(context), options).result();
 	return { stopReason: result.stopReason, errorMessage: result.errorMessage };
 }
 

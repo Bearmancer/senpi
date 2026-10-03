@@ -10,6 +10,7 @@ import {
 	createAssistantMessageEventStream,
 	fauxAssistantMessage,
 	type Model,
+	normalizeContext,
 } from "@earendil-works/pi-ai";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { completeSummarization } from "../../src/core/compaction/compaction.ts";
@@ -296,7 +297,7 @@ describe("summarization settlement stays inside the watched budget", () => {
 		let requestSignal: AbortSignal | undefined;
 		const outcome = completeSummarization(
 			OPENAI_NATIVE_LEGACY_MODEL,
-			{ systemPrompt: "", messages: [] },
+			normalizeContext({ systemPrompt: "", messages: [] }),
 			{ maxTokens: 32 },
 			(_model, _context, options) => {
 				requestSignal = options?.signal;

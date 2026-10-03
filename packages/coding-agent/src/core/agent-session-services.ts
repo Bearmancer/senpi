@@ -66,6 +66,7 @@ export interface CreateAgentSessionFromServicesOptions {
 	initialModelProvenance?: CreateAgentSessionOptions["initialModelProvenance"];
 	thinkingLevel?: ThinkingLevel;
 	thinkingSelection?: ThinkingSelection;
+	serviceTier?: ServiceTier;
 	scopedModels?: Array<{
 		model: Model<any>;
 		thinkingLevel?: ThinkingLevel;
@@ -221,6 +222,18 @@ export async function createAgentSessionServices(
 	} else if (registeredProviders.size > 0) {
 		await modelRuntime.refresh({ allowNetwork: false, providers: [...registeredProviders] });
 	}
+	for (const { definition, extensionPath } of extensionsResult.runtime.pendingVirtualModelRegistrations) {
+		try {
+			modelRuntime.registerVirtualModel(definition);
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			diagnostics.push({
+				type: "error",
+				message: `Extension "${extensionPath}" error: ${message}`,
+			});
+		}
+	}
+	extensionsResult.runtime.pendingVirtualModelRegistrations = [];
 	diagnostics.push(...applyExtensionFlagValues(resourceLoader, options.extensionFlagValues));
 
 	return {
@@ -258,6 +271,7 @@ export async function createAgentSessionFromServices(
 		initialModelProvenance: options.initialModelProvenance,
 		thinkingLevel: options.thinkingLevel,
 		thinkingSelection: options.thinkingSelection,
+		serviceTier: options.serviceTier,
 		scopedModels: options.scopedModels,
 		favoriteModels: options.favoriteModels,
 		tools: options.tools,

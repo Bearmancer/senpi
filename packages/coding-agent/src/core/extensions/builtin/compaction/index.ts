@@ -90,9 +90,10 @@ import {
 	getPromptContextWindow,
 	isAbortedAssistantMessage,
 	isMonitorableMessageEvent,
-	isRequiredCompactionFallbackReason,
 	linkAbortSignal,
 	recentCheckpoint,
+	reportRemoteCompactionTimeout,
+	requiresDeterministicCompactionFallback,
 	withAdditionalTokens,
 } from "./extension-wiring.ts";
 import { isIneffectiveCompaction } from "./yield.ts";
@@ -441,6 +442,7 @@ export default function compactionExtension(
 							if (data?.action === "remote_fallback" && typeof data.reason === "string") {
 								remoteFallbackReason = data.reason;
 							}
+							reportRemoteCompactionTimeout(ctx, "extension", feedbackSignal, data);
 							pi.events.emit(SENPI_COMPACTION_EVENT, data);
 						},
 						remoteCompactionDependencies,
@@ -658,7 +660,10 @@ export default function compactionExtension(
 				remoteCompaction = await runOpenAiRemoteCompaction(
 					ctx,
 					event,
-					(data) => pi.events.emit(SENPI_COMPACTION_EVENT, data),
+					(data) => {
+						reportRemoteCompactionTimeout(ctx, event.reason, event.signal, data);
+						pi.events.emit(SENPI_COMPACTION_EVENT, data);
+					},
 					remoteCompactionDependencies,
 				);
 			} catch (error) {
@@ -692,7 +697,7 @@ export default function compactionExtension(
 				}
 				if (
 					warmFailure !== undefined &&
-					isRequiredCompactionFallbackReason(event.reason) &&
+					requiresDeterministicCompactionFallback(event, ctx.getContextUsage()) &&
 					classifyRequiredCompactionFallbackFailure(warmFailure) !== undefined &&
 					!event.signal.aborted &&
 					speculativeGeneration === claimedGeneration &&
@@ -725,7 +730,7 @@ export default function compactionExtension(
 				const message = error instanceof Error ? error.message : String(error);
 				const failureKind = classifyRequiredCompactionFallbackFailure(error);
 				if (
-					isRequiredCompactionFallbackReason(event.reason) &&
+					requiresDeterministicCompactionFallback(event, ctx.getContextUsage()) &&
 					failureKind !== undefined &&
 					!event.signal.aborted
 				) {

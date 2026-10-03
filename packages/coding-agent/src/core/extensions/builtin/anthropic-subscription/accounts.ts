@@ -1,4 +1,5 @@
 import type { Credential, CredentialStore, OAuthCredential } from "@earendil-works/pi-ai";
+import type { ModelBlocks } from "../../../credential-pool/model-scope.ts";
 
 export type AccountSlot = {
 	/** Immutable operational identity, including SDK session bindings. */
@@ -10,9 +11,11 @@ export type AccountSlot = {
 	source: "login" | "import" | "env";
 	blockedUntil?: number;
 	blockReason?: string;
+	/** Rate limits that bind one model family on this account, not the account (senpi#2555). */
+	modelBlocks?: ModelBlocks;
 };
 
-export type SlotState = Record<string, { blockedUntil?: number; blockReason?: string }>;
+export type SlotState = Record<string, { blockedUntil?: number; blockReason?: string; modelBlocks?: ModelBlocks }>;
 
 export type AnthropicSubscriptionCredential = OAuthCredential & {
 	accounts?: AccountSlot[];
@@ -92,7 +95,7 @@ export function upsertAccount(
 	assertValidAccountName(slot.name);
 	const existing = storedSlots(credential).find((candidate) => candidate.name === slot.name);
 	if (!existing) return { ...credential, accounts: [...storedSlots(credential), slot] };
-	const { blockedUntil: _blockedUntil, blockReason: _blockReason, ...identity } = existing;
+	const { blockedUntil: _blockedUntil, blockReason: _blockReason, modelBlocks: _modelBlocks, ...identity } = existing;
 	const refreshed: AccountSlot = {
 		...identity,
 		access: slot.access,

@@ -1,7 +1,7 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { AssistantMessage, Usage } from "@earendil-works/pi-ai";
+import type { AssistantMessage, JsonValue, Usage } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createEventBus } from "../../src/core/event-bus.ts";
 import { formatUserMessage } from "../../src/core/extensions/builtin/ask-user/format.ts";
@@ -11,6 +11,7 @@ import type { QuestionRequest, QuestionResponse } from "../../src/core/extension
 import type {
 	ExtensionAPI,
 	ExtensionContext,
+	ExtensionToolContext,
 	SessionStartEvent,
 	ToolDefinition,
 } from "../../src/core/extensions/types.ts";
@@ -233,12 +234,19 @@ describe("ask-user resume", () => {
 			await emitStart(installed.handlers, "new", context);
 			const tool = installed.tools.get("ask_user_question");
 			if (!tool) throw new Error("missing tool");
-			const result = await tool.execute(CALL_ID, { ...ARGS, waitForAnswer: false }, undefined, undefined, context);
+			const result = await tool.execute(
+				CALL_ID,
+				{ ...ARGS, waitForAnswer: false },
+				undefined,
+				undefined,
+				context as ExtensionToolContext,
+			);
 			manager.appendMessage({
 				role: "toolResult",
 				toolCallId: CALL_ID,
 				toolName: "ask_user_question",
 				...result,
+				details: result.details as JsonValue,
 				isError: false,
 				timestamp: 3,
 			});

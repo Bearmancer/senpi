@@ -4,6 +4,7 @@ import {
 	createProvider,
 	type OAuthAuth,
 	type OAuthCredential,
+	type ProviderStreams,
 } from "@earendil-works/pi-ai";
 import { listSlots } from "@earendil-works/pi-ai/auth/pool/slots";
 import { describe, expect, it } from "vitest";
@@ -23,6 +24,16 @@ const flow: OAuthAuth = {
 	refresh: async (current) => current,
 	toAuth: async (current) => ({ apiKey: current.access }),
 };
+// createProvider requires a concrete api/images/classifiers implementation (upstream v6 provider
+// shape; empty maps are rejected). These auth-only fixtures carry no models, so nothing ever streams.
+const authOnlyStreams: ProviderStreams = {
+	stream: () => {
+		throw new Error("auth-only fixture provider has no models to stream");
+	},
+	streamSimple: () => {
+		throw new Error("auth-only fixture provider has no models to stream");
+	},
+};
 function interaction(receipts: unknown[], answer = "second"): AuthInteraction {
 	return { prompt: async () => answer, notify: () => {}, onAccountCommitted: (receipt) => receipts.push(receipt) };
 }
@@ -39,7 +50,7 @@ describe("committed account receipts", () => {
 				baseUrl: "https://example.invalid",
 				auth: { oauth: flow },
 				models: [],
-				api: {},
+				api: authOnlyStreams,
 			}),
 		);
 		const receipts: unknown[] = [];
@@ -112,7 +123,7 @@ describe("committed account receipts", () => {
 				baseUrl: "https://example.invalid",
 				auth: { oauth: flow },
 				models: [],
-				api: {},
+				api: authOnlyStreams,
 			}),
 		);
 		await expect(models.login("chatgpt-subscription", "oauth", interaction(receipts))).rejects.toThrow();
@@ -132,7 +143,7 @@ describe("committed account receipts", () => {
 				baseUrl: "https://example.invalid",
 				auth: { oauth: { ...flow, login: async () => result } },
 				models: [],
-				api: {},
+				api: authOnlyStreams,
 			}),
 		);
 		const receipts: unknown[] = [];

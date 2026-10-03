@@ -2,6 +2,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { stream as streamAnthropic } from "../src/api/anthropic-messages.ts";
 import type { AssistantMessage, Context, Model } from "../src/types.ts";
 
+import { normalizeContext } from "../src/utils/transcript.ts";
+
 // senpi#2197: a failed Anthropic turn carries a bounded providerDiagnostic minted only
 // from the SDK's HTTP error metadata or the explicit SSE `event: error` envelope.
 
@@ -61,7 +63,11 @@ function stubSse(lines: string[]): void {
 }
 
 async function run(options: Parameters<typeof streamAnthropic>[2] = {}): Promise<AssistantMessage> {
-	return streamAnthropic(makeModel(), context, { apiKey: "sk-test", maxRetries: 0, ...options }).result();
+	return streamAnthropic(makeModel(), normalizeContext(context), {
+		apiKey: "sk-test",
+		maxRetries: 0,
+		...options,
+	}).result();
 }
 
 afterEach(() => {

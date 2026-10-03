@@ -8,6 +8,8 @@ import {
 	installClaudeCodeVersionStore,
 } from "../src/utils/claude-code-version.ts";
 
+import { normalizeContext } from "../src/utils/transcript.ts";
+
 // Anthropic rejects OAuth requests whose advertised Claude Code version is older
 // than this with `claude_code_version_too_old`; the advertised version must never
 // fall below it. Claude Sonnet 5.5 raised it to 2.1.284 (senpi#2321).
@@ -92,7 +94,7 @@ describe("Anthropic OAuth Claude Code identity headers", () => {
 	});
 
 	it("advertises a claude-cli user-agent at or above Anthropic's minimum supported version", async () => {
-		await streamAnthropic(model, context, { apiKey: oauthToken }).result();
+		await streamAnthropic(model, normalizeContext(context), { apiKey: oauthToken }).result();
 
 		const headers = mockState.clients.at(-1);
 		expect(headers?.["x-app"]).toBe("cli");
@@ -104,7 +106,7 @@ describe("Anthropic OAuth Claude Code identity headers", () => {
 	it(`advertises the exact version pinned in ${CLAUDE_CODE_VERSION_PIN_ENV}`, async () => {
 		vi.stubEnv(CLAUDE_CODE_VERSION_PIN_ENV, "2.1.250");
 
-		await streamAnthropic(model, context, { apiKey: oauthToken }).result();
+		await streamAnthropic(model, normalizeContext(context), { apiKey: oauthToken }).result();
 
 		expect(claudeCliVersion(mockState.clients.at(-1))).toBe("2.1.250");
 	});
@@ -112,7 +114,7 @@ describe("Anthropic OAuth Claude Code identity headers", () => {
 	it("retries once with the version a claude_code_version_too_old rejection names", async () => {
 		mockState.failuresBeforeSuccess.push(tooOldError());
 
-		const message = await streamAnthropic(model, context, { apiKey: oauthToken }).result();
+		const message = await streamAnthropic(model, normalizeContext(context), { apiKey: oauthToken }).result();
 
 		expect(message.stopReason).toBe("stop");
 		expect(mockState.clients.map(claudeCliVersion)).toEqual([expect.any(String), "2.1.290"]);
@@ -121,7 +123,7 @@ describe("Anthropic OAuth Claude Code identity headers", () => {
 	it("gives up after one retry and names the advertised version and the pin variable", async () => {
 		mockState.failuresBeforeSuccess.push(tooOldError("2.1.290"), tooOldError("2.1.295"));
 
-		const message = await streamAnthropic(model, context, { apiKey: oauthToken }).result();
+		const message = await streamAnthropic(model, normalizeContext(context), { apiKey: oauthToken }).result();
 
 		expect(message.stopReason).toBe("error");
 		expect(mockState.clients).toHaveLength(2);
@@ -133,7 +135,7 @@ describe("Anthropic OAuth Claude Code identity headers", () => {
 		vi.stubEnv(CLAUDE_CODE_VERSION_PIN_ENV, "2.1.250");
 		mockState.failuresBeforeSuccess.push(tooOldError());
 
-		const message = await streamAnthropic(model, context, { apiKey: oauthToken }).result();
+		const message = await streamAnthropic(model, normalizeContext(context), { apiKey: oauthToken }).result();
 
 		expect(message.stopReason).toBe("error");
 		expect(mockState.clients).toHaveLength(1);

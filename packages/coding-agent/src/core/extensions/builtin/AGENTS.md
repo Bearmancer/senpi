@@ -53,7 +53,7 @@ Plus bundled extension **codemode** (`@code-yeongyu/senpi-codemode`, resolved by
 
 1. Create `builtin/<name>/index.ts` exporting `default function(pi: ExtensionAPI) { … }`. Single-file extensions go in `builtin/<name>.ts`.
 2. Add to `builtin/index.ts` import block + `builtinExtensions` array — pick registration order with intent.
-3. Add a regression test under `test/suite/<name>-extension.test.ts` using `test/suite/harness.ts`.
+3. Add a test under `test/suite/<name>-extension.test.ts` using `test/suite/harness.ts` only where the repository keeps tests for this behavior and a regression would otherwise pass unnoticed; a bug regression must fail on the pre-fix code, and an existing owner test that already fails may be that proof. See the TEST AUTHORING GATE in the root `AGENTS.md`.
 4. Reach for `ExtensionContext` getters (the `ctx` parameter of event handlers); do NOT cross into `core/` directly. If you modify upstream files (rare), add a section to `<extension-dir>/changes.md`.
 
 ## CONVENTIONS

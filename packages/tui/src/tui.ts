@@ -2,6 +2,7 @@
  * Minimal TUI implementation with differential rendering
  */
 
+import { execFile } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -10,11 +11,11 @@ import { isKeyRelease, matchesKey } from "./keys.ts";
 import { isMultiplexerSession, useLegacyMuxRender, viewportRenderEnabled } from "./mux.ts";
 import type { Terminal } from "./terminal.ts";
 import {
-	isOsc11BackgroundColorResponse,
-	parseOsc11BackgroundColor,
+	parseOscColorResponse,
 	parseTerminalColorSchemeReport,
 	type RgbColor,
 	type TerminalColorScheme,
+	type TerminalColors,
 } from "./terminal-colors.ts";
 import {
 	deleteKittyImage,
@@ -149,7 +150,13 @@ export interface TuiMouseDispatchResult extends TuiMouseEventResult {
 export function dispatchMouseEvent(component: Component, event: TuiMouseEvent): TuiMouseDispatchResult | undefined {
 	const result = component.handleMouse?.(event);
 	if (!result) return undefined;
-	if ("target" in result) return result as TuiMouseDispatchResult;
+	if ("target" in result) {
+		// The component forwarded the event to a child it hosts. Like a delegating container, it routes
+		// keys to that child itself, so it keeps keyboard focus. Focusing the child directly would leave
+		// focus on a detached component once the host removes it, e.g. a closed settings submenu.
+		const forwarded = result as TuiMouseDispatchResult;
+		return forwarded.focus && component.handleInput ? { ...forwarded, focusTarget: component } : forwarded;
+	}
 	if (!result.handled && !result.capture && !result.focus) return undefined;
 	return {
 		...result,
@@ -202,14 +209,32 @@ export interface Component {
 	 */
 	invalidate(): void;
 
+	/**
+	 * Optional render revision for containers that cache child output.
+	 *
+	 * A number promises that `render(width)` returns the same lines for the same width, terminal
+	 * capabilities and theme until the number changes; the component must change it whenever its
+	 * state changes (including in `invalidate()`). `undefined` means the output may change at any
+	 * time (streaming, animation, unknown dependencies), so the component is rendered every frame.
+	 */
+	getRenderRevision?(): number | undefined;
+
 	dispose?(): void;
 }
 
 export type TuiInputListenerResult = { consume?: boolean; data?: string } | undefined;
 export type TuiInputListener = (data: string) => TuiInputListenerResult;
-type PendingOsc11BackgroundQuery = {
-	settled: boolean;
-	resolve: ((rgb: RgbColor | undefined) => void) | undefined;
+type PendingTerminalColorQuery = {
+	foreground?: RgbColor;
+	background?: RgbColor;
+	palette: Array<RgbColor | undefined>;
+	/** Targets that already replied, so duplicates do not count twice. */
+	replied: Set<string>;
+	/**
+	 * Receives the result: the promise's resolve until the timeout, then `onLateReply`. Unset once the
+	 * query completed (on the DA1 reply or once every color replied); later replies are ignored.
+	 */
+	deliver: ((colors: TerminalColors) => void) | undefined;
 	timer: NodeJS.Timeout | undefined;
 };
 
@@ -236,6 +261,26 @@ interface NormalizedLinesResult {
 	readonly compareEndExclusive: number;
 	readonly bounded: boolean;
 }
+
+/** Whether a specific line array contains an image line, so per-frame checks need not rescan it. */
+interface ImageLineScan {
+	readonly lines: string[];
+	readonly hasImage: boolean;
+}
+
+const TERMINAL_PALETTE_SIZE = 16;
+/** OSC 10 and 11 plus OSC 4 for every palette color. */
+const TERMINAL_COLOR_REPLY_COUNT = 2 + TERMINAL_PALETTE_SIZE;
+/**
+ * Default colors, palette colors 0-15, and a trailing primary device attributes (DA1) request.
+ * Every terminal answers DA1 and terminals answer in order, so the DA1 reply marks the end of
+ * the color replies, including for terminals that ignore the color queries.
+ */
+const TERMINAL_COLOR_QUERY = `\x1b]10;?\x07\x1b]11;?\x07${Array.from(
+	{ length: TERMINAL_PALETTE_SIZE },
+	(_, index) => `\x1b]4;${index};?\x07`,
+).join("")}\x1b[c`;
+const DEVICE_ATTRIBUTES_RESPONSE_PATTERN = /^\x1b\[\?[\d;]*c$/;
 
 /**
  * Interface for components that can receive focus and display a hardware cursor.
@@ -566,19 +611,193 @@ type TuiConstructorOptions = {
 /**
  * Container - a component that contains other components
  */
+/**
+ * Facts about the frame being rendered, published by the main-screen renderer for containers that
+ * can skip work for rows the terminal cannot repaint cheaply.
+ */
+const renderFrame: {
+	scrollbackRows: number;
+	offset: number;
+	next: Component | undefined;
+	mode: TuiMode | undefined;
+	rows: number;
+} = {
+	scrollbackRows: 0,
+	offset: 0,
+	next: undefined,
+	mode: undefined,
+	rows: 0,
+};
+
+/** Mode of the renderer drawing the current frame, or `undefined` outside a frame. */
+export function frameMode(): TuiMode | undefined {
+	return renderFrame.mode;
+}
+
+const DEFAULT_HISTORY_LINES = 2000;
+/** Writing this many lines into a terminal takes ~0.2 s, the most a resume or repaint may spend on history. */
+const MAX_HISTORY_LINES = 5000;
+let terminalScrollbackLines: number | null | undefined;
+/** Bumped by {@link resetMainScreenHistoryLines}, so a tmux answer for an older environment is dropped. */
+let scrollbackLookupGeneration = 0;
+
+/**
+ * The override is read at once; tmux is asked in the background (a process run inside the first
+ * render would hold input and painting while tmux answers), and the default applies until it does.
+ */
+function readTerminalScrollbackLines(): number | null {
+	const override = Number(process.env.PI_TUI_HISTORY_LINES);
+	if (Number.isFinite(override) && override > 0) return Math.floor(override);
+	if (!process.env.TMUX) return null;
+	const generation = scrollbackLookupGeneration;
+	try {
+		execFile(
+			"tmux",
+			["display-message", "-p", "#{history_limit}"],
+			{ encoding: "utf8", timeout: 500 },
+			(error, stdout) => {
+				if (generation !== scrollbackLookupGeneration) return;
+				const limit = Number(stdout.trim());
+				if (!error && Number.isFinite(limit) && limit > 0) terminalScrollbackLines = limit;
+			},
+		);
+	} catch {
+		// tmux is not runnable: keep the default.
+	}
+	return null;
+}
+
+/**
+ * Lines of transcript history a main-screen frame keeps above the live area: the terminal's own
+ * scrollback size where it can be read (tmux `history-limit`, or `PI_TUI_HISTORY_LINES`), else
+ * 2,000; never less than two screens, never more than 5,000 so a resume or repaint stays instant.
+ */
+export function mainScreenHistoryLines(rows = renderFrame.rows): number {
+	if (terminalScrollbackLines === undefined) terminalScrollbackLines = readTerminalScrollbackLines();
+	const preferred = Math.min(MAX_HISTORY_LINES, terminalScrollbackLines ?? DEFAULT_HISTORY_LINES);
+	return Math.min(MAX_HISTORY_LINES, Math.max(2 * Math.max(1, rows), preferred));
+}
+
+/** Forget the measured terminal scrollback size, e.g. after the environment changed in a test. */
+export function resetMainScreenHistoryLines(): void {
+	terminalScrollbackLines = undefined;
+	scrollbackLookupGeneration += 1;
+}
+
+/**
+ * Rows at the top of the last committed frame that now live in the terminal's native scrollback
+ * (main-screen renderer, same terminal size). Changing any of them forces a full scrollback replay.
+ * 0 outside such a frame.
+ */
+export function frameScrollbackRows(): number {
+	return renderFrame.scrollbackRows;
+}
+
+/**
+ * The absolute frame row where `component` starts, when its parent rendered it through
+ * {@link renderAtFrameRow}; `undefined` when the position is unknown (any other parent).
+ */
+export function claimFrameRow(component: Component): number | undefined {
+	if (renderFrame.next !== component) return undefined;
+	renderFrame.next = undefined;
+	return renderFrame.offset;
+}
+
+/** Render `child` as starting at absolute frame row `row`, so it can {@link claimFrameRow} it. */
+export function renderAtFrameRow(child: Component, width: number, row: number | undefined): string[] {
+	if (row === undefined) return child.render(width);
+	const previousOffset = renderFrame.offset;
+	const previousNext = renderFrame.next;
+	renderFrame.offset = row;
+	renderFrame.next = child;
+	try {
+		return child.render(width);
+	} finally {
+		renderFrame.offset = previousOffset;
+		renderFrame.next = previousNext;
+	}
+}
+
+let renderRevisionClock = 0;
+
+/**
+ * Draw a new value from the process-wide render revision clock. Every revisioned state change uses
+ * one, so "the clock has not moved" proves no revisioned component changed and caches may skip
+ * re-reading their children's revisions.
+ */
+export function nextRenderRevision(): number {
+	renderRevisionClock += 1;
+	return renderRevisionClock;
+}
+
+/** Current value of the render revision clock (see {@link nextRenderRevision}). */
+export function currentRenderRevision(): number {
+	return renderRevisionClock;
+}
+
+/**
+ * Render revision of a component whose output is a pure function of its own state and its children's
+ * output. `bump()` records an own-state change; `read(children)` returns a revision that also changes
+ * whenever a child is replaced or a child's revision changes, and `undefined` while any child is live.
+ * Child revisions are re-read only after the clock moved, so an unchanged subtree costs one identity pass.
+ */
+export class CompositeRevision {
+	private revision = nextRenderRevision();
+	private children: readonly Component[] = [];
+	private childRevisions: readonly number[] = [];
+	private checkedAt = -1;
+
+	bump(): void {
+		this.revision = nextRenderRevision();
+	}
+
+	read(children: readonly Component[]): number | undefined {
+		let replaced = children.length !== this.children.length;
+		for (let index = 0; !replaced && index < children.length; index++) {
+			if (children[index] !== this.children[index]) replaced = true;
+		}
+		if (!replaced && this.checkedAt === renderRevisionClock) return this.revision;
+		const revisions: number[] = [];
+		for (const child of children) {
+			const revision = child.getRenderRevision?.();
+			if (revision === undefined) {
+				// Unrevisioned: nothing to compare against next time, and removed children must not stay referenced.
+				this.children = [];
+				this.childRevisions = [];
+				this.checkedAt = -1;
+				return undefined;
+			}
+			revisions.push(revision);
+		}
+		const changed = replaced || revisions.some((revision, index) => revision !== this.childRevisions[index]);
+		if (changed) {
+			this.revision = nextRenderRevision();
+			this.children = [...children];
+		}
+		this.childRevisions = revisions;
+		this.checkedAt = renderRevisionClock;
+		return this.revision;
+	}
+}
+
 export class Container implements Component {
 	children: Component[] = [];
 	private disposed = false;
+	private readonly composite = new CompositeRevision();
 	private mouseLayout?: { width: number; children: Array<{ component: Component; height: number }> };
 
+	// Every structural change moves the render revision clock, so a cache that saw the clock stand
+	// still may trust that no revisioned subtree gained, lost or swapped a child.
 	addChild(component: Component): void {
 		this.children.push(component);
+		this.composite.bump();
 	}
 
 	removeChild(component: Component): void {
 		const index = this.children.indexOf(component);
 		if (index !== -1) {
 			this.children.splice(index, 1);
+			this.composite.bump();
 			component.dispose?.();
 		}
 	}
@@ -587,6 +806,7 @@ export class Container implements Component {
 		const index = this.children.indexOf(component);
 		if (index !== -1) {
 			this.children.splice(index, 1);
+			this.composite.bump();
 		}
 	}
 
@@ -595,10 +815,12 @@ export class Container implements Component {
 			child.dispose?.();
 		}
 		this.children = [];
+		this.composite.bump();
 	}
 
 	detachAll(): void {
 		this.children = [];
+		this.composite.bump();
 	}
 
 	dispose(): void {
@@ -610,9 +832,30 @@ export class Container implements Component {
 	}
 
 	invalidate(): void {
+		this.composite.bump();
 		for (const child of this.children) {
 			child.invalidate?.();
 		}
+	}
+
+	/**
+	 * A plain `Container` only concatenates its children, so its output changes exactly when a child
+	 * changes. Subclasses may render more than their children and therefore opt in explicitly by
+	 * overriding this (usually via {@link childRenderRevision}); an inherited revision would let a
+	 * cache keep their stale output.
+	 */
+	getRenderRevision(): number | undefined {
+		return Object.getPrototypeOf(this) === Container.prototype ? this.childRenderRevision() : undefined;
+	}
+
+	/** Revision of this container's children, for subclasses whose output depends only on them and `bump()`ed state. */
+	protected childRenderRevision(): number | undefined {
+		return this.composite.read(this.children);
+	}
+
+	/** Record an own-state change for {@link childRenderRevision}. */
+	protected bumpRenderRevision(): void {
+		this.composite.bump();
 	}
 
 	handleMouse(event: TuiMouseEvent): TuiMouseDispatchResult | undefined {
@@ -638,12 +881,13 @@ export class Container implements Component {
 	}
 
 	render(width: number): string[] {
-		const lines: string[] = [];
+		const chunks: string[][] = [];
 		const mouseChildren: Array<{ component: Component; height: number }> = [];
+		let row = claimFrameRow(this);
 		for (const child of this.children) {
 			let childLines: string[];
 			try {
-				childLines = child.render(width);
+				childLines = renderAtFrameRow(child, width, row);
 			} catch (error) {
 				logRenderErrorOnce(child, error);
 				const componentName = componentRenderErrorName(child);
@@ -651,13 +895,27 @@ export class Container implements Component {
 				childLines = [`[render error: ${componentName}]`];
 			}
 			mouseChildren.push({ component: child, height: childLines.length });
-			for (const line of childLines) {
-				lines.push(line);
-			}
+			chunks.push(childLines);
+			if (row !== undefined) row += childLines.length;
 		}
 		this.mouseLayout = { width, children: mouseChildren };
-		return lines;
+		return joinLineArrays(chunks);
 	}
+}
+
+const JOIN_BATCH = 1024;
+
+/**
+ * Concatenate rendered line arrays into one new array. Native `concat` copies whole arrays at once,
+ * which keeps a frame over a long transcript from paying a per-line iterator and push.
+ */
+export function joinLineArrays(chunks: readonly (readonly string[])[]): string[] {
+	if (chunks.length <= JOIN_BATCH) return ([] as string[]).concat(...chunks);
+	const batches: string[][] = [];
+	for (let start = 0; start < chunks.length; start += JOIN_BATCH) {
+		batches.push(([] as string[]).concat(...chunks.slice(start, start + JOIN_BATCH)));
+	}
+	return ([] as string[]).concat(...batches);
 }
 
 /**
@@ -731,6 +989,9 @@ export abstract class TuiBase extends Container {
 	public terminal: Terminal;
 	protected previousLines: string[] = [];
 	private previousRawLines: string[] = [];
+	private previousImageScan: ImageLineScan | undefined;
+	/** Image presence the normalization pass already measured for the array it produced. */
+	private normalizedImageHint: ImageLineScan | undefined;
 	private normalizeMemo = new Map<string, string>();
 	protected previousKittyImageIds = new Set<number>();
 	protected previousWidth = 0;
@@ -756,8 +1017,11 @@ export abstract class TuiBase extends Container {
 	private muxViewportRepaintCount = 0;
 	private overWideCrashDumpWritten = false;
 	protected stopped = false;
-	private pendingOsc11BackgroundReplies = 0;
-	private pendingOsc11BackgroundQueries: PendingOsc11BackgroundQuery[] = [];
+	/**
+	 * Color queries waiting for their DA1 reply, oldest first. Terminals answer in order, so color
+	 * replies belong to the oldest one. Queries stay here after a timeout to collect late replies.
+	 */
+	private pendingTerminalColorQueries: PendingTerminalColorQuery[] = [];
 	private terminalColorSchemeListeners = new Set<(scheme: TerminalColorScheme) => void>();
 	private terminalColorSchemeNotificationsEnabled = false;
 	#lastCursorVisibility: boolean | undefined;
@@ -866,7 +1130,7 @@ export abstract class TuiBase extends Container {
 	protected noteCommittedMouseFrame(): void {
 		if (this.mouseCommittedLineCount !== this.previousLines.length) this.placementEpoch++;
 		this.mouseCommittedLineCount = this.previousLines.length;
-		if (this.previousLines.some(isImageLine)) {
+		if (this.previousLinesHaveImage()) {
 			this.placementEpoch++;
 			this.anchor.kind = "unknown";
 			return;
@@ -901,7 +1165,7 @@ export abstract class TuiBase extends Container {
 			this.mouseExternalWritePending ||
 			!this.terminal.queryCursorPosition ||
 			this.previousLines.length === 0 ||
-			this.previousLines.some(isImageLine)
+			this.previousLinesHaveImage()
 		)
 			return;
 		if (
@@ -1477,7 +1741,9 @@ export abstract class TuiBase extends Container {
 		this.doRender();
 	}
 
+	/** After stop(), the shell owns the cursor and it must stay visible, so only a running TUI hides it. */
 	#setCursorVisibility(visible: boolean): void {
+		if (!visible && this.stopped) return;
 		if (this.#lastCursorVisibility === visible) return;
 		if (visible) {
 			this.terminal.showCursor();
@@ -1594,7 +1860,7 @@ export abstract class TuiBase extends Container {
 				data = focus.data;
 			}
 		}
-		if (this.consumeOsc11BackgroundResponse(data)) {
+		if (this.consumeTerminalColorResponse(data)) {
 			return;
 		}
 		if (this.consumeTerminalColorSchemeReport(data)) {
@@ -1669,28 +1935,50 @@ export abstract class TuiBase extends Container {
 		}
 	}
 
-	private consumeOsc11BackgroundResponse(data: string): boolean {
-		if (this.pendingOsc11BackgroundReplies <= 0) {
+	private consumeTerminalColorResponse(data: string): boolean {
+		const query = this.pendingTerminalColorQueries[0];
+		if (!query) {
 			return false;
 		}
-
-		if (!isOsc11BackgroundColorResponse(data)) {
-			return false;
+		if (DEVICE_ATTRIBUTES_RESPONSE_PATTERN.test(data)) {
+			this.pendingTerminalColorQueries.shift();
+			this.completeTerminalColorQuery(query);
+			return true;
 		}
 
-		const rgb = parseOsc11BackgroundColor(data);
-		this.pendingOsc11BackgroundReplies -= 1;
-		const query = this.pendingOsc11BackgroundQueries.shift();
-		if (query && !query.settled) {
-			query.settled = true;
-			if (query.timer) {
-				clearTimeout(query.timer);
-				query.timer = undefined;
-			}
-			query.resolve?.(rgb);
-			query.resolve = undefined;
+		const response = parseOscColorResponse(data);
+		if (!response) {
+			return false;
+		}
+		const { target, rgb } = response;
+		const key = String(target);
+		if (!query.deliver || query.replied.has(key)) {
+			return true;
+		}
+		query.replied.add(key);
+		if (target === "foreground") {
+			query.foreground = rgb;
+		} else if (target === "background") {
+			query.background = rgb;
+		} else if (target < TERMINAL_PALETTE_SIZE) {
+			query.palette[target] = rgb;
+		}
+		if (query.replied.size === TERMINAL_COLOR_REPLY_COUNT) {
+			this.completeTerminalColorQuery(query);
 		}
 		return true;
+	}
+
+	private terminalColorQueryResult(query: PendingTerminalColorQuery): TerminalColors {
+		const palette = query.palette.every((color) => color !== undefined) ? (query.palette as RgbColor[]) : undefined;
+		return { foreground: query.foreground, background: query.background, palette };
+	}
+
+	private completeTerminalColorQuery(query: PendingTerminalColorQuery): void {
+		const deliver = query.deliver;
+		query.deliver = undefined;
+		clearTimeout(query.timer);
+		deliver?.(this.terminalColorQueryResult(query));
 	}
 
 	private consumeTerminalColorSchemeReport(data: string): boolean {
@@ -1939,6 +2227,7 @@ export abstract class TuiBase extends Container {
 	}
 
 	private static readonly SEGMENT_RESET = "\x1b[0m\x1b]8;;\x07";
+	private static readonly NORMALIZE_MEMO_MIN = 4096;
 
 	/**
 	 * Every frame write is bracketed by synchronized output (DECSET 2026) and
@@ -1959,6 +2248,21 @@ export abstract class TuiBase extends Container {
 		this.previousRawLines = rawLines;
 	}
 
+	/** Image presence of the committed frame, measured once per frame array instead of once per check. */
+	protected previousLinesHaveImage(): boolean {
+		const lines = this.previousLines;
+		if (this.previousImageScan?.lines !== lines) {
+			const hint = this.normalizedImageHint?.lines === lines ? this.normalizedImageHint.hasImage : undefined;
+			this.previousImageScan = { lines, hasImage: hint ?? lines.some(isImageLine) };
+		}
+		return this.previousImageScan.hasImage;
+	}
+
+	/** Record image presence for a produced array; `undefined` leaves it to a scan when it is committed. */
+	private hintNormalizedImages(lines: string[], hasImage: boolean | undefined): void {
+		this.normalizedImageHint = hasImage === undefined ? undefined : { lines, hasImage };
+	}
+
 	private normalizeLine(line: string): { line: string; normalized: boolean } {
 		if (isImageLine(line)) {
 			return { line, normalized: false };
@@ -1968,6 +2272,15 @@ export abstract class TuiBase extends Container {
 			return { line: cached, normalized: false };
 		}
 		const normalized = normalizeTerminalOutput(line) + TUI.SEGMENT_RESET;
+		// The windowed path only ever adds: a long run of distinct lines (spinners, streamed text)
+		// grew the memo without bound. Past a bound the oldest half goes; full passes rebuild it.
+		if (this.normalizeMemo.size >= Math.max(TUI.NORMALIZE_MEMO_MIN, this.previousRawLines.length * 2)) {
+			let drop = this.normalizeMemo.size >> 1;
+			for (const key of this.normalizeMemo.keys()) {
+				if (drop-- <= 0) break;
+				this.normalizeMemo.delete(key);
+			}
+		}
 		this.normalizeMemo.set(line, normalized);
 		return { line: normalized, normalized: true };
 	}
@@ -1981,9 +2294,11 @@ export abstract class TuiBase extends Container {
 		const nextMemo = new Map<string, string>();
 		const normalizedLines: string[] = [];
 		let normalizedCount = 0;
+		let hasImage = false;
 		for (let i = 0; i < lines.length; i++) {
 			const line = lines[i];
 			if (isImageLine(line)) {
+				hasImage = true;
 				normalizedLines.push(line);
 				continue;
 			}
@@ -1996,6 +2311,7 @@ export abstract class TuiBase extends Container {
 			normalizedLines.push(normalized);
 		}
 		this.normalizeMemo = nextMemo;
+		this.hintNormalizedImages(normalizedLines, hasImage);
 		recordViewportRenderStats(normalizedCount, mode);
 		return {
 			lines: normalizedLines,
@@ -2015,10 +2331,12 @@ export abstract class TuiBase extends Container {
 			!viewportRenderEnabled() ||
 			!stableDimensions ||
 			this.previousLines.length === 0 ||
-			this.previousLines.length !== rawLines.length ||
-			this.previousRawLines.length !== rawLines.length
+			this.previousRawLines.length !== this.previousLines.length
 		) {
 			return this.applyLineResetResult(rawLines);
+		}
+		if (this.previousRawLines.length !== rawLines.length) {
+			return this.applyResizedLineResets(rawLines);
 		}
 
 		const windowStart = Math.max(0, viewportTop - VIEWPORT_RENDER_OVERSCAN);
@@ -2036,14 +2354,18 @@ export abstract class TuiBase extends Container {
 			}
 		}
 
+		const previousHadImage = this.previousLinesHaveImage();
 		const lines = this.previousLines.slice();
 		let normalizedCount = 0;
+		let changedImage = false;
 		if (firstRawChanged !== -1) {
 			for (let i = windowStart; i < windowEnd; i++) {
 				if (rawLines[i] === this.previousRawLines[i]) {
 					continue;
 				}
-				const normalized = this.normalizeLine(rawLines[i] ?? "");
+				const raw = rawLines[i] ?? "";
+				if (isImageLine(raw)) changedImage = true;
+				const normalized = this.normalizeLine(raw);
 				lines[i] = normalized.line;
 				if (normalized.normalized) {
 					normalizedCount += 1;
@@ -2051,11 +2373,54 @@ export abstract class TuiBase extends Container {
 			}
 		}
 
+		// A frame that had an image may have replaced it; only an image-free frame can be updated in place.
+		this.hintNormalizedImages(lines, previousHadImage ? undefined : changedImage);
 		recordViewportRenderStats(normalizedCount, "bounded");
 		return {
 			lines,
 			firstRawChanged,
 			compareEndExclusive: windowEnd,
+			bounded: true,
+		};
+	}
+
+	/**
+	 * A frame whose line count changed (an append, a growing editor, a removed row) keeps every
+	 * leading line that is unchanged since the last frame. Normalization is a pure function of the
+	 * raw line, so the previous normalized prefix is reused and only the changed tail is normalized;
+	 * the diff then starts where the raw lines first differ.
+	 */
+	private applyResizedLineResets(rawLines: string[]): NormalizedLinesResult {
+		const previousRaw = this.previousRawLines;
+		const sharedLength = Math.min(rawLines.length, previousRaw.length);
+		let firstRawChanged = 0;
+		while (firstRawChanged < sharedLength && rawLines[firstRawChanged] === previousRaw[firstRawChanged]) {
+			firstRawChanged++;
+		}
+		const previousHadImage = this.previousLinesHaveImage();
+		const lines = this.previousLines.slice(0, firstRawChanged);
+		let normalizedCount = 0;
+		let tailImage = false;
+		for (let i = firstRawChanged; i < rawLines.length; i++) {
+			const line = rawLines[i] ?? "";
+			if (isImageLine(line)) {
+				tailImage = true;
+				lines.push(line);
+				continue;
+			}
+			let normalized = this.normalizeMemo.get(line);
+			if (normalized === undefined) {
+				normalized = normalizeTerminalOutput(line) + TUI.SEGMENT_RESET;
+				normalizedCount += 1;
+			}
+			lines.push(normalized);
+		}
+		this.hintNormalizedImages(lines, previousHadImage ? undefined : tailImage);
+		recordViewportRenderStats(normalizedCount, "bounded");
+		return {
+			lines,
+			firstRawChanged,
+			compareEndExclusive: Math.max(rawLines.length, this.previousLines.length),
 			bounded: true,
 		};
 	}
@@ -2449,8 +2814,21 @@ export abstract class TuiBase extends Container {
 			return targetScreenRow - currentScreenRow;
 		};
 
-		// Render all components to get new lines
-		let newLines = this.render(width);
+		// Render all components to get new lines. The main screen tells containers which rows of the
+		// last frame are in native scrollback, so live content there can stay as the terminal shows it.
+		renderFrame.scrollbackRows =
+			this.mode === "regular" && !widthChanged && !heightChanged && this.previousLines.length > 0
+				? prevViewportTop
+				: 0;
+		renderFrame.mode = this.mode;
+		renderFrame.rows = height;
+		let newLines: string[];
+		try {
+			newLines = renderAtFrameRow(this, width, 0);
+		} finally {
+			renderFrame.scrollbackRows = 0;
+			renderFrame.mode = undefined;
+		}
 
 		// Composite overlays into the rendered lines (before differential compare)
 		if (this.overlayStack.length > 0) {
@@ -2996,57 +3374,34 @@ export abstract class TuiBase extends Container {
 	}
 
 	/**
-	 * Query the terminal's default background color with OSC 11 (`ESC ] 11 ; ? BEL`).
-	 * @param timeoutMs Query timeout in milliseconds.
-	 * @returns Promise containing the parsed RGB color, or undefined if it times out or fails to parse.
+	 * Query the terminal's theme colors: the default foreground (OSC 10), the default background
+	 * (OSC 11), and ANSI colors 0-15 (OSC 4), followed by a DA1 request that marks the end of the
+	 * replies. Resolves when the DA1 reply or all color replies arrive, or when the timeout expires.
+	 * Colors the terminal did not report are undefined; the palette is only set when all 16 arrived.
+	 * @param timeoutMs Query timeout in milliseconds, for terminals that do not answer DA1 either.
+	 * @param onLateReply Receives the replies if the query completes after the timeout, e.g. over slow links.
 	 */
-	queryTerminalBackgroundColor({ timeoutMs }: { timeoutMs: number }): Promise<RgbColor | undefined> {
+	queryTerminalColors({
+		timeoutMs,
+		onLateReply,
+	}: {
+		timeoutMs: number;
+		onLateReply?: (colors: TerminalColors) => void;
+	}): Promise<TerminalColors> {
 		return new Promise((resolve) => {
-			const query: PendingOsc11BackgroundQuery = {
-				settled: false,
-				resolve,
+			const query: PendingTerminalColorQuery = {
+				palette: Array.from({ length: TERMINAL_PALETTE_SIZE }, () => undefined),
+				replied: new Set(),
+				deliver: resolve,
 				timer: undefined,
 			};
-
+			// Resolve with the replies so far, and keep collecting late replies for `onLateReply`.
 			query.timer = setTimeout(() => {
-				if (query.settled) {
-					return;
-				}
-				query.settled = true;
-				query.timer = undefined;
-				query.resolve?.(undefined);
-				query.resolve = undefined;
+				query.deliver = onLateReply;
+				resolve(this.terminalColorQueryResult(query));
 			}, timeoutMs);
-			this.pendingOsc11BackgroundQueries.push(query);
-			this.pendingOsc11BackgroundReplies += 1;
-			this.terminal.write("\x1b]11;?\x07");
-		});
-	}
-
-	/**
-	 * Query the terminal's color-scheme preference with DSR (`CSI ? 996 n`).
-	 * Terminals that support the color palette notification protocol reply with
-	 * `CSI ? 997 ; 1 n` for dark or `CSI ? 997 ; 2 n` for light.
-	 */
-	queryTerminalColorScheme({ timeoutMs }: { timeoutMs: number }): Promise<TerminalColorScheme | undefined> {
-		return new Promise((resolve) => {
-			let settled = false;
-			let timer: NodeJS.Timeout | undefined;
-			let unsubscribe: () => void = () => {};
-			const settle = (scheme: TerminalColorScheme | undefined) => {
-				if (settled) return;
-				settled = true;
-				if (timer) {
-					clearTimeout(timer);
-					timer = undefined;
-				}
-				unsubscribe();
-				resolve(scheme);
-			};
-
-			unsubscribe = this.onTerminalColorSchemeChange(settle);
-			timer = setTimeout(() => settle(undefined), timeoutMs);
-			this.terminal.write("\x1b[?996n");
+			this.pendingTerminalColorQueries.push(query);
+			this.terminal.write(TERMINAL_COLOR_QUERY);
 		});
 	}
 }

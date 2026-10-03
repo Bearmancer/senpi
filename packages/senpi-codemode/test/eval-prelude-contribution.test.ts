@@ -1,7 +1,12 @@
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { AgentToolResult, ExtensionContext, KernelPreludeContribution } from "@code-yeongyu/senpi";
+import type {
+	AgentToolResult,
+	ExtensionContext,
+	ExtensionToolContext,
+	KernelPreludeContribution,
+} from "@code-yeongyu/senpi";
 import { afterEach, describe, expect, it } from "vitest";
 import senpiCodemode, { type CodemodeExtensionAPI } from "../src/index.ts";
 import { fakeExtensionContext } from "./eval/fakes.ts";
@@ -94,13 +99,13 @@ afterEach(async () => {
 	for (const cleanup of cleanups.splice(0).reverse()) await cleanup();
 });
 
-async function startSession(): Promise<{ readonly pi: PreludeHostPi; readonly ctx: ExtensionContext }> {
+async function startSession(): Promise<{ readonly pi: PreludeHostPi; readonly ctx: ExtensionToolContext }> {
 	const cwd = await mkdtemp(join(tmpdir(), "senpi-codemode-prelude-"));
 	await mkdir(join(cwd, ".senpi"), { recursive: true });
 	const pi = new PreludeHostPi();
 	senpiCodemode(pi);
 	const base = fakeExtensionContext();
-	const ctx: ExtensionContext = {
+	const ctx: ExtensionToolContext = {
 		...base,
 		cwd,
 		sessionManager: { ...base.sessionManager, getSessionId: () => "prelude", getSessionFile: () => undefined },
@@ -114,7 +119,7 @@ async function startSession(): Promise<{ readonly pi: PreludeHostPi; readonly ct
 }
 
 async function runCell(
-	session: { readonly pi: PreludeHostPi; readonly ctx: ExtensionContext },
+	session: { readonly pi: PreludeHostPi; readonly ctx: ExtensionToolContext },
 	language: EvalLanguageUnderTest,
 	code: string,
 ): Promise<string> {

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { describe, it } from "node:test";
 import { runClaudeCodeModelSupportReport, runPackageLockRefresh } from "./release-artifacts.mjs";
 
@@ -48,5 +49,24 @@ describe("release Claude Code model-support report (omo#8700)", () => {
 		);
 
 		assert.deepEqual(commands, [["node", ["scripts/check-claude-code-model-support.mjs"]]]);
+	});
+});
+
+describe("release npm script references", () => {
+	it("runs only npm scripts that the target package defines", () => {
+		const sources = ["release-artifacts.mjs", "release.mjs"].map((file) =>
+			readFileSync(new URL(`./${file}`, import.meta.url), "utf8"),
+		);
+		const calls = [];
+		for (const source of sources) {
+			for (const match of source.matchAll(/runCommand\("npm", \[(?:"--prefix", "([^"]+)", )?"run", "([^"]+)"/g)) {
+				calls.push({ dir: match[1] ?? ".", script: match[2] });
+			}
+		}
+		assert.ok(calls.length > 0, "expected npm run calls in the release scripts");
+		for (const { dir, script } of calls) {
+			const manifest = JSON.parse(readFileSync(new URL(`../${dir}/package.json`, import.meta.url), "utf8"));
+			assert.ok(manifest.scripts?.[script], `${dir}/package.json has no "${script}" script`);
+		}
 	});
 });

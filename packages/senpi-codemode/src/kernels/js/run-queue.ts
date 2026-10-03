@@ -1,4 +1,4 @@
-import type { KernelToHostMessage } from "../../bridge/protocol.ts";
+import type { EvalStatusEvent, KernelToHostMessage } from "../../bridge/protocol.ts";
 import type { JavaScriptRunInput } from "./kernel-contract.ts";
 
 type ResultMessage = Extract<KernelToHostMessage, { type: "result" }>;
@@ -14,6 +14,7 @@ export interface PendingJavaScriptRun {
 	interruptResult: ResultMessage | null;
 	interruptAck: PromiseWithResolvers<void> | null;
 	settledByWorker: boolean;
+	shellWaitActive: boolean;
 }
 
 export class JavaScriptRunQueue {
@@ -40,6 +41,7 @@ export class JavaScriptRunQueue {
 			interruptResult: null,
 			interruptAck: null,
 			settledByWorker: false,
+			shellWaitActive: false,
 		});
 		return promise;
 	}
@@ -51,6 +53,13 @@ export class JavaScriptRunQueue {
 		this.#active = next;
 		next?.input.onStarted?.();
 		return next;
+	}
+
+	acknowledgeInterrupt(event: EvalStatusEvent): void {
+		const active = this.#active;
+		if (!active || event.cellId !== active.input.cellId) return;
+		active.shellWaitActive = event.shellWaitActive === true;
+		active.interruptAck?.resolve();
 	}
 
 	remove(cellId: string, reason = "interrupted"): boolean {

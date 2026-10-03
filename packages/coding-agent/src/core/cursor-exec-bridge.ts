@@ -123,7 +123,9 @@ async function executeTool(
 		type: "toolCall",
 		id: toolCallId,
 		name: toolName,
-		arguments: cleanArgs,
+		// Exec-frame args are JSON: protobuf Value toJson / JSON.parse output (cursor-agent decodeMcpArgValue)
+		// or the scalar pi-args translations; omitUndefinedCursorArgs keeps them typed Record<string, unknown>.
+		arguments: cleanArgs as AgentToolCall["arguments"],
 	};
 
 	let params: unknown;

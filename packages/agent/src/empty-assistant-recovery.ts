@@ -12,6 +12,7 @@ import {
 	hasKimiTextToolCallRecovery,
 	hasVisibleAssistantContent,
 	hasVisibleText,
+	type JsonObject,
 	type Model,
 	shouldRecoverTextToolCalls,
 } from "@earendil-works/pi-ai";
@@ -60,7 +61,7 @@ function isMeaningfulContentEvent(event: AssistantMessageEvent, policy: CommitPo
 function appendRetryDiagnostic(
 	message: AssistantMessage,
 	type = "empty_assistant_response_recovery",
-	details: Record<string, unknown> = { retries: 1 },
+	details: JsonObject = { retries: 1 },
 ): AssistantMessage {
 	return {
 		...message,

@@ -8,7 +8,7 @@
 
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
+import { fauxAssistantMessage, fauxToolCall, getCurrentTools, type TranscriptContext } from "@earendil-works/pi-ai";
 import type { TSchema } from "typebox";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { McpToolCatalogEntry } from "../../src/core/extensions/builtin/mcp/catalog.ts";
@@ -56,8 +56,8 @@ interface ToolShape {
 }
 // Scope to MCP tools (tool_search + mcp_<server>_<tool>); the harness's default
 // base tools (bash/read/write) are separate senpi cost, not MCP resident cost.
-function toolShapes(context: { tools?: { name: string; parameters?: unknown }[] }): ToolShape[] {
-	return (context.tools ?? [])
+function toolShapes(context: TranscriptContext): ToolShape[] {
+	return getCurrentTools(context.messages)
 		.filter((tool) => tool.name.startsWith("mcp_") || tool.name === "tool_search")
 		.map((tool) => ({ name: tool.name, json: JSON.stringify(tool) }))
 		.sort(byName);
@@ -153,7 +153,9 @@ describe("todo32 tier-B: resident token cost", () => {
 			(context) => {
 				const shapes = toolShapes(context);
 				residentNames = withoutMcpUtilityTools(names(shapes));
-				residentJson = JSON.stringify((context.tools ?? []).filter((tool) => residentNames.includes(tool.name)));
+				residentJson = JSON.stringify(
+					getCurrentTools(context.messages).filter((tool) => residentNames.includes(tool.name)),
+				);
 				return fauxAssistantMessage("ok");
 			},
 		]);

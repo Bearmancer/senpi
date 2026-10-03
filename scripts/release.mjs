@@ -34,7 +34,6 @@ import { computeNextVersion } from "./calver.mjs";
 import { syncRemoteMainBeforePush } from "./release-git.mjs";
 import {
 	runClaudeCodeModelSupportReport,
-	runGenerateImageModels,
 	runGenerateModels,
 	runInstallLock,
 	runPackageLockRefresh,
@@ -313,7 +312,6 @@ function main() {
 	runPackageLockRefresh(args.dryRun, runCommand, log, dryRunLog);
 	runGenerateModels(args.dryRun, runCommand, log, dryRunLog);
 	runClaudeCodeModelSupportReport(args.dryRun, runCommand, log, dryRunLog);
-	runGenerateImageModels(args.dryRun, runCommand, log, dryRunLog);
 	runInstallLock(args.dryRun, runCommand, log, dryRunLog);
 	stampChangelogs(version, date, args.dryRun, capturedChangelogSubsections, log, dryRunLog);
 	runCheck(args.dryRun);

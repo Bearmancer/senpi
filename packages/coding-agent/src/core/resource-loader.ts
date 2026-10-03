@@ -1,9 +1,9 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
-import { createRequire } from "node:module";
 import { basename, dirname, join, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { detectCapabilities, getTerminalColorMode, type TerminalColorMode } from "@earendil-works/pi-tui";
 import chalk from "chalk";
-import { CONFIG_DIR_NAME, findNodePackageDir, getAgentDir, getPackageDir, isBunBinary } from "../config.ts";
+import { APP_NAME, CONFIG_DIR_NAME, findNodePackageDir, getAgentDir, getPackageDir, isBunBinary } from "../config.ts";
 import { loadThemeFromPath, type Theme } from "../modes/interactive/theme/theme.ts";
 import { resolveInstallPath } from "../runtime-snapshot/marker.ts";
 import type { ResourceDiagnostic } from "./diagnostics.ts";
@@ -13,6 +13,7 @@ export type { ResourceCollision, ResourceDiagnostic } from "./diagnostics.ts";
 
 import { canonicalizePath, isLocalPath, resolvePath } from "../utils/paths.ts";
 import { stripBom } from "../utils/text.ts";
+import { bundledBuiltinExtensions } from "./bundled-resources.ts";
 import { createEventBus, type EventBus } from "./event-bus.ts";
 import {
 	type BuiltinExtensionFactory,
@@ -51,7 +52,13 @@ import { memoizeResolvedPaths, resolvedPathsMemoKey } from "./resolved-paths-mem
 import { SettingsManager } from "./settings-manager.ts";
 import type { Skill } from "./skills.ts";
 import { loadSkills } from "./skills.ts";
-import { createSourceInfo, type SourceInfo } from "./source-info.ts";
+import {
+	BUILTIN_PATH_PREFIX,
+	createSourceInfo,
+	getSyntheticPathSource,
+	isSyntheticPath,
+	type SourceInfo,
+} from "./source-info.ts";
 import { resetTimings, time } from "./timings.ts";
 
 export interface ResourceExtensionPaths {
@@ -72,6 +79,106 @@ export interface ResourceLoaderReloadOptions {
 	 * trust flip so project-scoped values are never stale.
 	 */
 	settingsAlreadyReloadedFor?: SettingsManager;
+}
+
+const HOST_PROVIDED_EXTENSION_PACKAGES = new Set([
+	"@earendil-works/pi-agent-core",
+	"@earendil-works/pi-ai",
+	"@earendil-works/pi-coding-agent",
+	"@earendil-works/pi-tui",
+	"@mariozechner/pi-agent-core",
+	"@mariozechner/pi-ai",
+	"@mariozechner/pi-coding-agent",
+	"@mariozechner/pi-tui",
+	"@sinclair/typebox",
+	"typebox",
+]);
+
+function collectExtensionPackageWarnings(
+	extensionPaths: string[],
+	metadataByPath: Map<string, PathMetadata>,
+): Array<{ path: string; warning: string }> {
+	const warnings: Array<{ path: string; warning: string }> = [];
+	const packageRoots = new Set(
+		extensionPaths
+			.map((extensionPath) => metadataByPath.get(extensionPath)?.packageRoot)
+			.filter((packageRoot): packageRoot is string => packageRoot !== undefined),
+	);
+	for (const packageRoot of packageRoots) {
+		const packageJsonPath = join(packageRoot, "package.json");
+		if (!existsSync(packageJsonPath)) continue;
+		const manifest = JSON.parse(stripBom(readFileSync(packageJsonPath, "utf-8"))) as { dependencies?: unknown };
+		if (
+			typeof manifest.dependencies !== "object" ||
+			manifest.dependencies === null ||
+			Array.isArray(manifest.dependencies)
+		) {
+			continue;
+		}
+		const hostDependencies = Object.keys(manifest.dependencies)
+			.filter((name) => HOST_PROVIDED_EXTENSION_PACKAGES.has(name))
+			.sort();
+		if (hostDependencies.length === 0) continue;
+		warnings.push({
+			path: packageJsonPath,
+			warning: `Host-provided extension packages must be declared in peerDependencies with a "*" range, not dependencies: ${hostDependencies.join(", ")}. Installed copies can bypass the extension loader and create duplicate runtime modules.`,
+		});
+	}
+	return warnings;
+}
+
+function mergeExtensionWarnings(
+	result: LoadExtensionsResult,
+	warnings: Array<{ path: string; warning: string }>,
+): void {
+	result.warnings = [
+		...new Map([...(result.warnings ?? []), ...warnings].map((warning) => [warning.path, warning])).values(),
+	];
+}
+
+type BuiltinExtension = Exclude<InlineExtension, ExtensionFactory>;
+
+/** Built-in extensions supply the code of `builtin:<name>` extension paths (see `InlineExtension`). */
+export function isBuiltinExtension(input: InlineExtension): input is BuiltinExtension {
+	return typeof input !== "function" && input.builtin === true;
+}
+
+/**
+ * Leave out replaceable extensions (see `InlineExtension`) that share a tool, command, or flag name
+ * with another extension. For example, a third-party MCP extension that registers `/mcp` replaces
+ * the built-in MCP extension instead of both connecting the same servers.
+ */
+function omitReplacedExtensions(
+	extensions: Extension[],
+	warnings?: Array<{ path: string; warning: string }>,
+): Extension[] {
+	const names = (extension: Extension) => [
+		...[...extension.tools.keys()].map((name) => `tool:${name}`),
+		...[...extension.commands.keys()].map((name) => `command:${name}`),
+		...[...extension.flags.keys()].map((name) => `flag:${name}`),
+	];
+	const taken = new Map(
+		extensions
+			.filter((extension) => !extension.replaceable)
+			.flatMap((extension) => names(extension).map((name) => [name, extension] as const)),
+	);
+	return extensions.filter((extension) => {
+		if (!extension.replaceable) return true;
+		const replacement = names(extension)
+			.map((name) => ({ name, extension: taken.get(name) }))
+			.find((value): value is { name: string; extension: Extension } => value.extension !== undefined);
+		if (!replacement) return true;
+		if (extension.path.startsWith(BUILTIN_PATH_PREFIX)) {
+			const builtinName = extension.path.slice(BUILTIN_PATH_PREFIX.length);
+			const [kind, rawName] = replacement.name.split(":", 2);
+			const registeredName = kind === "command" ? `/${rawName}` : kind === "flag" ? `--${rawName}` : rawName;
+			warnings?.push({
+				path: extension.path,
+				warning: `Extension ${replacement.extension.path} registers ${kind} \`${registeredName}\`, so built-in extension \`${builtinName}\` was not loaded. To use \`${builtinName}\`, run \`${APP_NAME} config\` and make sure it is enabled under Built-in extensions, then disable or remove the existing extension. We recommend only having one or the other loaded at a time.`,
+			});
+		}
+		return false;
+	});
 }
 
 export interface ResourceLoader {
@@ -121,48 +228,6 @@ const VENDORED_BUILTIN_EXTENSION_PACKAGES: ReadonlyArray<{ builtinId: string; pa
 	{ builtinId: "todowrite", packageName: "pi-todotools" },
 	{ builtinId: "codemode", packageName: "@code-yeongyu/senpi-codemode" },
 ];
-const moduleRequire = createRequire(import.meta.url);
-
-const bundledBuiltinExtensions: ReadonlyArray<{
-	id: string;
-	resolvePackage: () => string;
-}> = [
-	{
-		id: "codemode",
-		resolvePackage: () =>
-			resolveBundledPackageJson(
-				"@code-yeongyu/senpi-codemode/package.json",
-				"senpi-codemode/package.json",
-				join("node_modules", "@code-yeongyu", "senpi-codemode", "package.json"),
-			),
-	},
-];
-
-function resolveBundledPackageJson(
-	packageSpecifier: string,
-	workspaceRelativePath: string,
-	binaryRelativePath: string,
-): string {
-	const packageRoot = getPackageDir();
-	const runningFromSource = fileURLToPath(import.meta.url).includes(`${sep}src${sep}core${sep}resource-loader.`);
-	const workspacePath = resolve(packageRoot, "..", workspaceRelativePath);
-	if (runningFromSource && existsSync(workspacePath)) {
-		return workspacePath;
-	}
-	const binaryPath = resolve(packageRoot, binaryRelativePath);
-	if (isBunBinary && existsSync(binaryPath)) {
-		return binaryPath;
-	}
-	try {
-		return moduleRequire.resolve(packageSpecifier);
-	} catch (error) {
-		if (existsSync(workspacePath)) {
-			return workspacePath;
-		}
-		throw error;
-	}
-}
-
 function isGeneratedGlobalDefaultExtensionShim(content: string): boolean {
 	return LEGACY_GENERATED_GLOBAL_EXTENSION_BANNERS.some((banner) => content.startsWith(banner));
 }
@@ -387,6 +452,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 	private additionalHookPaths: string[];
 	private builtinExtensionFactories: BuiltinExtensionFactory[];
 	private extensionFactories: InlineExtension[];
+	private builtinExtensions: Map<string, BuiltinExtension>;
 	private noExtensions: boolean;
 	private noSkills: boolean;
 	private noPromptTemplates: boolean;
@@ -445,10 +511,14 @@ export class DefaultResourceLoader implements ResourceLoader {
 			sessionContext: options.sessionContext ?? EMPTY_SESSION_CONTEXT,
 		};
 		this.eventBus = options.eventBus ?? createEventBus();
+		const factories = options.extensionFactories ?? [];
+		this.extensionFactories = factories.filter((input) => !isBuiltinExtension(input));
+		this.builtinExtensions = new Map(factories.filter(isBuiltinExtension).map((input) => [input.name, input]));
 		this.packageManager = new DefaultPackageManager({
 			cwd: this.cwd,
 			agentDir: this.agentDir,
 			settingsManager: this.settingsManager,
+			builtinExtensions: [...this.builtinExtensions.keys()],
 		});
 		this.additionalExtensionPaths = options.additionalExtensionPaths ?? [];
 		this.additionalSkillPaths = options.additionalSkillPaths ?? [];
@@ -467,7 +537,6 @@ export class DefaultResourceLoader implements ResourceLoader {
 								}
 							: extension,
 					);
-		this.extensionFactories = options.extensionFactories ?? [];
 		this.noExtensions = options.noExtensions ?? false;
 		this.noSkills = options.noSkills ?? false;
 		this.noPromptTemplates = options.noPromptTemplates ?? false;
@@ -701,11 +770,18 @@ export class DefaultResourceLoader implements ResourceLoader {
 		const extensionPaths = this.noExtensions
 			? cliEnabledExtensions
 			: this.mergePaths(cliEnabledExtensions, enabledExtensions);
-		const dedupedExtensionPaths = dedupePathsByPackageIdentity(
-			this.shadowVendoredBuiltinExtensionPaths(extensionPaths, metadataByPath),
+		// `builtin:<name>` paths name no file, so they never take part in package-identity dedupe.
+		const shadowedExtensionPaths = this.shadowVendoredBuiltinExtensionPaths(extensionPaths, metadataByPath);
+		const dedupedFilePaths = new Set(
+			dedupePathsByPackageIdentity(shadowedExtensionPaths.filter((path) => !isSyntheticPath(path))),
+		);
+		const dedupedExtensionPaths = shadowedExtensionPaths.filter(
+			(path) => isSyntheticPath(path) || dedupedFilePaths.has(path),
 		);
 
+		const packageWarnings = collectExtensionPackageWarnings(dedupedExtensionPaths, metadataByPath);
 		const extensionsResult = await this.loadFinalExtensionSet(dedupedExtensionPaths, preTrustExtensions);
+		mergeExtensionWarnings(extensionsResult, packageWarnings);
 		for (const p of this.additionalExtensionPaths) {
 			if (isLocalPath(p)) {
 				const resolved = this.resolveResourcePath(p);
@@ -864,9 +940,18 @@ export class DefaultResourceLoader implements ResourceLoader {
 		const { resolvedPaths, cliExtensionPaths } = await this.resolvePackagePaths({ refresh: options.refresh });
 		const enabledExtensions = resolvedPaths.extensions.filter((r) => r.enabled).map((r) => r.path);
 		const cliEnabledExtensions = cliExtensionPaths.extensions.filter((r) => r.enabled).map((r) => r.path);
-		const extensionPaths = this.noExtensions
-			? cliEnabledExtensions
-			: this.mergePaths(cliEnabledExtensions, enabledExtensions);
+		// Built-in extensions wait for the final pass: project settings can disable them, and a loaded
+		// extension cannot be unloaded.
+		const extensionPaths = (
+			this.noExtensions ? cliEnabledExtensions : this.mergePaths(cliEnabledExtensions, enabledExtensions)
+		).filter((path) => !path.startsWith(BUILTIN_PATH_PREFIX));
+		const metadataByPath = new Map(
+			[...resolvedPaths.extensions, ...cliExtensionPaths.extensions].map((resource) => [
+				resource.path,
+				resource.metadata,
+			]),
+		);
+		const packageWarnings = collectExtensionPackageWarnings(extensionPaths, metadataByPath);
 		const extensionsResult = await loadExtensions(
 			extensionPaths,
 			this.cwd,
@@ -874,6 +959,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 			undefined,
 			this.buildGlobalDefaultExtensionLoadOptions(),
 		);
+		mergeExtensionWarnings(extensionsResult, packageWarnings);
 		if (!options.includeInlineFactories) {
 			return extensionsResult;
 		}
@@ -881,11 +967,61 @@ export class DefaultResourceLoader implements ResourceLoader {
 		const inlineExtensions = await this.loadExtensionFactories(extensionsResult.runtime);
 		extensionsResult.extensions.push(...inlineExtensions.extensions);
 		extensionsResult.errors.push(...inlineExtensions.errors);
+		const replacementWarnings: Array<{ path: string; warning: string }> = [];
+		extensionsResult.extensions = omitReplacedExtensions(extensionsResult.extensions, replacementWarnings);
+		mergeExtensionWarnings(extensionsResult, replacementWarnings);
 		return extensionsResult;
 	}
 
 	private resolveExtensionLoadPath(path: string): string {
-		return resolvePath(path, this.cwd, { normalizeUnicodeSpaces: true });
+		return isSyntheticPath(path) ? path : resolvePath(path, this.cwd, { normalizeUnicodeSpaces: true });
+	}
+
+	/**
+	 * Load extension paths: files from disk and `builtin:<name>` paths. A name resolves first against the
+	 * caller-supplied built-in inline extensions, then against the fork builtin registry
+	 * (`extensions/builtin/index.ts`), so `-e builtin:<id>` loads a registry builtin the settings disabled;
+	 * one that is already active loads as `<builtin:id>` from `loadExtensionFactories()`, so naming it
+	 * again is a no-op.
+	 */
+	private async loadExtensionPaths(paths: string[], runtime?: ExtensionRuntime): Promise<LoadExtensionsResult> {
+		const isBuiltinPath = (path: string) => path.startsWith(BUILTIN_PATH_PREFIX);
+		const result = await loadExtensions(
+			paths.filter((path) => !isBuiltinPath(path)),
+			this.cwd,
+			this.eventBus,
+			runtime,
+			this.buildGlobalDefaultExtensionLoadOptions(),
+		);
+		const builtinPaths = paths.filter(isBuiltinPath);
+		const activeRegistryIds = builtinPaths.length > 0 ? this.getActiveBuiltinExtensionIds() : new Set<string>();
+		for (const path of builtinPaths) {
+			const name = path.slice(BUILTIN_PATH_PREFIX.length);
+			const registryBuiltin = this.builtinExtensionFactories.find((extension) => extension.id === name);
+			const builtin = this.builtinExtensions.get(name);
+			if (!builtin && registryBuiltin && activeRegistryIds.has(name)) continue;
+			const factory = builtin?.factory ?? registryBuiltin?.factory;
+			if (!factory) {
+				result.errors.push({ path, error: `Unknown built-in extension: ${path}` });
+				continue;
+			}
+			try {
+				const extension = await loadExtensionFromFactory(
+					factory,
+					this.cwd,
+					this.eventBus,
+					result.runtime,
+					path,
+					this.extensionSession,
+				);
+				extension.hidden = builtin !== undefined;
+				extension.replaceable = builtin?.replaceable === true;
+				result.extensions.push(extension);
+			} catch (error) {
+				result.errors.push({ path, error: error instanceof Error ? error.message : "failed to load extension" });
+			}
+		}
+		return result;
 	}
 
 	private async loadFinalExtensionSet(
@@ -893,23 +1029,21 @@ export class DefaultResourceLoader implements ResourceLoader {
 		preTrustExtensions: LoadExtensionsResult | undefined,
 	): Promise<LoadExtensionsResult> {
 		if (!preTrustExtensions) {
-			const extensionsResult = await loadExtensions(
-				extensionPaths,
-				this.cwd,
-				this.eventBus,
-				undefined,
-				this.buildGlobalDefaultExtensionLoadOptions(),
-			);
+			const extensionsResult = await this.loadExtensionPaths(extensionPaths);
 			const inlineExtensions = await this.loadExtensionFactories(extensionsResult.runtime);
 			extensionsResult.extensions.unshift(...inlineExtensions.extensions);
+			const replacementWarnings: Array<{ path: string; warning: string }> = [];
+			extensionsResult.extensions = omitReplacedExtensions(extensionsResult.extensions, replacementWarnings);
+			mergeExtensionWarnings(extensionsResult, replacementWarnings);
 			this.rebuildExtensionFlagDefaults(extensionsResult);
 			extensionsResult.errors.push(...inlineExtensions.errors);
 			this.addExtensionConflictDiagnostics(extensionsResult);
 			return extensionsResult;
 		}
 
+		const preloaded = preTrustExtensions.extensions;
 		const preloadedByPath = new Map(
-			preTrustExtensions.extensions
+			preloaded
 				.filter((extension) => !extension.path.startsWith("<inline:"))
 				.map((extension) => [extension.resolvedPath, extension]),
 		);
@@ -920,13 +1054,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 			const resolvedPath = this.resolveExtensionLoadPath(path);
 			return !preloadedByPath.has(resolvedPath) && !failedPreloadPaths.has(resolvedPath);
 		});
-		const remainingExtensions = await loadExtensions(
-			remainingPaths,
-			this.cwd,
-			this.eventBus,
-			preTrustExtensions.runtime,
-			this.buildGlobalDefaultExtensionLoadOptions(),
-		);
+		const remainingExtensions = await this.loadExtensionPaths(remainingPaths, preTrustExtensions.runtime);
 		const loadedByPath = new Map(preloadedByPath);
 		for (const extension of remainingExtensions.extensions) {
 			loadedByPath.set(extension.resolvedPath, extension);
@@ -944,12 +1072,15 @@ export class DefaultResourceLoader implements ResourceLoader {
 			.filter((extension): extension is Extension => extension !== undefined);
 		orderedExtensions.unshift(...factoryExtensions);
 
+		const replacementWarnings: Array<{ path: string; warning: string }> = [];
 		const extensionsResult: LoadExtensionsResult = {
-			extensions: orderedExtensions,
+			extensions: omitReplacedExtensions(orderedExtensions, replacementWarnings),
 			errors: [...preTrustExtensions.errors, ...remainingExtensions.errors],
+			warnings: [...(preTrustExtensions.warnings ?? []), ...(remainingExtensions.warnings ?? [])],
 			runtime: preTrustExtensions.runtime,
 			eventBus: preTrustExtensions.eventBus ?? remainingExtensions.eventBus ?? this.eventBus,
 		};
+		mergeExtensionWarnings(extensionsResult, replacementWarnings);
 		this.rebuildExtensionFlagDefaults(extensionsResult);
 		this.addExtensionConflictDiagnostics(extensionsResult);
 		return extensionsResult;
@@ -1041,13 +1172,17 @@ export class DefaultResourceLoader implements ResourceLoader {
 		if (this.noPromptTemplates && promptPaths.length === 0) {
 			promptsResult = { prompts: [], diagnostics: [] };
 		} else {
-			const allPrompts = loadPromptTemplates({
+			const loaded = loadPromptTemplates({
 				cwd: this.cwd,
 				agentDir: this.agentDir,
 				promptPaths,
 				includeDefaults: false,
 			});
-			promptsResult = this.dedupePrompts(allPrompts);
+			const deduped = this.dedupePrompts(loaded.templates);
+			promptsResult = {
+				prompts: deduped.prompts,
+				diagnostics: [...loaded.diagnostics, ...deduped.diagnostics],
+			};
 		}
 		const resolvedPrompts = this.promptsOverride ? this.promptsOverride(promptsResult) : promptsResult;
 		this.prompts = resolvedPrompts.prompts.map((prompt) => ({
@@ -1065,7 +1200,12 @@ export class DefaultResourceLoader implements ResourceLoader {
 		if (this.noThemes && themePaths.length === 0) {
 			themesResult = { themes: [], diagnostics: [] };
 		} else {
-			const loaded = this.loadThemes(themePaths, false);
+			// Theme construction only needs trueColor, so skip the unrelated tmux hyperlink probe.
+			const colorMode = getTerminalColorMode({
+				...detectCapabilities(() => false),
+				...this.settingsManager.getTerminalCapabilityOverrides(),
+			});
+			const loaded = this.loadThemes(themePaths, false, colorMode);
 			const deduped = this.dedupeThemes(loaded.themes);
 			themesResult = { themes: deduped.themes, diagnostics: [...loaded.diagnostics, ...deduped.diagnostics] };
 		}
@@ -1107,7 +1247,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 			return undefined;
 		}
 
-		if (resourcePath.startsWith("<")) {
+		if (isSyntheticPath(resourcePath)) {
 			return this.getDefaultSourceInfoForPath(resourcePath);
 		}
 
@@ -1145,8 +1285,8 @@ export class DefaultResourceLoader implements ResourceLoader {
 	}
 
 	private getDefaultSourceInfoForPath(filePath: string): SourceInfo {
-		if (filePath.startsWith("<") && filePath.endsWith(">")) {
-			const source = filePath.slice(1, -1).split(":")[0] || "temporary";
+		const source = getSyntheticPathSource(filePath);
+		if (source) {
 			return {
 				path: filePath,
 				source,
@@ -1206,7 +1346,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 	}
 
 	private resolveResourcePath(p: string): string {
-		return resolvePath(p, this.cwd, { trim: true });
+		return isSyntheticPath(p) ? p : resolvePath(p, this.cwd, { trim: true });
 	}
 
 	private getActiveBuiltinExtensionIds(): Set<string> {
@@ -1260,6 +1400,10 @@ export class DefaultResourceLoader implements ResourceLoader {
 
 		const filteredPaths: string[] = [];
 		for (const extensionPath of extensionPaths) {
+			if (isSyntheticPath(extensionPath)) {
+				filteredPaths.push(extensionPath);
+				continue;
+			}
 			const metadata = metadataByPath.get(extensionPath) ?? metadataByPath.get(resolve(extensionPath));
 			if (metadata?.source === "cli") {
 				filteredPaths.push(extensionPath);
@@ -1279,7 +1423,8 @@ export class DefaultResourceLoader implements ResourceLoader {
 
 	private loadThemes(
 		paths: string[],
-		includeDefaults: boolean = true,
+		includeDefaults: boolean,
+		colorMode: TerminalColorMode,
 	): {
 		themes: Theme[];
 		diagnostics: ResourceDiagnostic[];
@@ -1290,7 +1435,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 			const defaultDirs = [join(this.agentDir, "themes"), join(this.cwd, CONFIG_DIR_NAME, "themes")];
 
 			for (const dir of defaultDirs) {
-				this.loadThemesFromDir(dir, themes, diagnostics);
+				this.loadThemesFromDir(dir, themes, diagnostics, colorMode);
 			}
 		}
 
@@ -1304,9 +1449,9 @@ export class DefaultResourceLoader implements ResourceLoader {
 			try {
 				const stats = statSync(resolved);
 				if (stats.isDirectory()) {
-					this.loadThemesFromDir(resolved, themes, diagnostics);
+					this.loadThemesFromDir(resolved, themes, diagnostics, colorMode);
 				} else if (stats.isFile() && resolved.endsWith(".json")) {
-					this.loadThemeFromFile(resolved, themes, diagnostics);
+					this.loadThemeFromFile(resolved, themes, diagnostics, colorMode);
 				} else {
 					diagnostics.push({ type: "warning", message: "theme path is not a json file", path: resolved });
 				}
@@ -1319,7 +1464,12 @@ export class DefaultResourceLoader implements ResourceLoader {
 		return { themes, diagnostics };
 	}
 
-	private loadThemesFromDir(dir: string, themes: Theme[], diagnostics: ResourceDiagnostic[]): void {
+	private loadThemesFromDir(
+		dir: string,
+		themes: Theme[],
+		diagnostics: ResourceDiagnostic[],
+		colorMode: TerminalColorMode,
+	): void {
 		if (!existsSync(dir)) {
 			return;
 		}
@@ -1341,7 +1491,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 				if (!entry.name.endsWith(".json")) {
 					continue;
 				}
-				this.loadThemeFromFile(join(dir, entry.name), themes, diagnostics);
+				this.loadThemeFromFile(join(dir, entry.name), themes, diagnostics, colorMode);
 			}
 		} catch (error) {
 			const message = error instanceof Error ? error.message : "failed to read theme directory";
@@ -1349,9 +1499,14 @@ export class DefaultResourceLoader implements ResourceLoader {
 		}
 	}
 
-	private loadThemeFromFile(filePath: string, themes: Theme[], diagnostics: ResourceDiagnostic[]): void {
+	private loadThemeFromFile(
+		filePath: string,
+		themes: Theme[],
+		diagnostics: ResourceDiagnostic[],
+		colorMode: TerminalColorMode,
+	): void {
 		try {
-			themes.push(loadThemeFromPath(filePath));
+			themes.push(loadThemeFromPath(filePath, colorMode));
 		} catch (error) {
 			const message = error instanceof Error ? error.message : "failed to load theme";
 			diagnostics.push({ type: "warning", message, path: filePath });
@@ -1437,6 +1592,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 					this.extensionSession,
 				);
 				extension.hidden = isNamed && input.hidden;
+				extension.replaceable = isNamed && input.replaceable === true;
 				extensions.push(extension);
 			} catch (error) {
 				const message = error instanceof Error ? error.message : "failed to load extension";

@@ -113,7 +113,7 @@ describe("stored-lane credential revision healing (omo#7084)", () => {
 		for await (const event of stream) seen.push(event.type);
 		expect(seen).toEqual(["error"]);
 		const state = await repository.listSlots(PROVIDER, "stored");
-		expect(state["default"]?.blockReason).toBe("auth_error");
-		expect(state["default"]?.credentialRevision).toBe(await revisionFor(PROVIDER, "default", "a1", "r1"));
+		expect(state.default?.blockReason).toBe("auth_error");
+		expect(state.default?.credentialRevision).toBe(await revisionFor(PROVIDER, "default", "a1", "r1"));
 	});
 });

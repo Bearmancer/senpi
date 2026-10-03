@@ -492,6 +492,14 @@ renderResult(result, options, theme, context) {
 
 `selectedBg`, `searchMatchBg`, `userMessageBg`, `customMessageBg`, `toolPendingBg`, `toolSuccessBg`, `toolErrorBg`
 
+**Combined styles** (`theme.style(text, options)`) apply foreground and background colors with text attributes in one call:
+
+```typescript
+return new Text(theme.style("Done!", { fg: "success", bg: "toolSuccessBg", bold: true }), 0, 0);
+```
+
+A style color can be a semantic theme token or a concrete `Color`. Foreground tokens are accepted as `fg` and background tokens as `bg`; to use a token's color in the other position, pass its concrete color, for example `{ fg: theme.colors.userMessageBg }`. Read concrete colors from `theme.colors` and use the TUI library's color utilities, such as `mixColors()`, for color math. Tokens a theme sets to the terminal default report the color the terminal announced, or a guess when it did not. Use `theme.appearance` (`"dark"` or `"light"`) to decide, for example, whether to lighten or darken a color.
+
 **For Markdown**, use `getMarkdownTheme()`:
 
 ```typescript

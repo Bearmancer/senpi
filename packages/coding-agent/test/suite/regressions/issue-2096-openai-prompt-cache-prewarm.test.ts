@@ -1,4 +1,10 @@
-import { type Context, fauxAssistantMessage, type WarmPromptCacheResult } from "@earendil-works/pi-ai";
+import {
+	type Context,
+	fauxAssistantMessage,
+	getCurrentSystemPrompt,
+	getCurrentTools,
+	type WarmPromptCacheResult,
+} from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { afterEach, describe, expect, it } from "vitest";
 import type { ExtensionFactory } from "../../../src/core/extensions/types.ts";
@@ -101,9 +107,9 @@ describe("session-start OpenAI prompt-cache prewarm (#2096)", () => {
 		const [turn] = turnRequests;
 		expect(warm.context.messages).toEqual([]);
 		expect(warm.context.systemPrompt).toContain("Composed per turn by before_agent_start.");
-		expect(warm.context.systemPrompt).toBe(turn?.context.systemPrompt);
+		expect(warm.context.systemPrompt).toBe(getCurrentSystemPrompt(turn?.context.messages ?? []));
 		expect(warm.context.tools?.map((tool) => tool.name)).toEqual(["lookup"]);
-		expect(toolShapes(warm.context.tools)).toEqual(toolShapes(turn?.context.tools));
+		expect(toolShapes(warm.context.tools)).toEqual(toolShapes(getCurrentTools(turn?.context.messages ?? [])));
 		expect(warm.options?.reasoning).toBe("high");
 		expect(warm.options?.reasoning).toBe(turn?.options?.reasoning);
 		expect(warm.options?.sessionId).toBe(turn?.options?.sessionId);

@@ -39,7 +39,7 @@ function keyDeletingTool(): AgentTool {
 	};
 }
 
-function toolCallWith(args: Record<string, unknown>): AgentToolCall {
+function toolCallWith(args: AgentToolCall["arguments"]): AgentToolCall {
 	return { type: "toolCall", id: "call-1", name: "in_place_normalizer", arguments: args };
 }
 

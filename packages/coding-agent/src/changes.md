@@ -1,3 +1,232 @@
+## 2026-10-01 - Package directory lookup is resolved once (senpi#2508)
+
+### What changed
+
+- `packages/coding-agent/src/config.ts`: `getPackageDir()` resolves the source/dist package root once per process instead of walking parent directories with `existsSync` on every call.
+
+### Why
+
+Read-card classification calls `getReadmePath()`; the walk ran for every read card on every frame.
+
+### Why an extension could not handle it
+
+Core path resolution.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/config.ts`: `getPackageDir`.
+
+## 2026-10-01 - Experimental picker preserves optional command arguments (senpi#2479)
+
+### What changed
+
+- `packages/coding-agent/src/experimental/services/slash-commands.ts`: command contributions expose `requiresArguments`.
+- `packages/coding-agent/src/experimental/services/slash-commands-provider.ts`: model, thinking and compact explicitly allow bare invocation.
+- `packages/coding-agent/src/experimental/client-tui.ts`: forward the explicit requirement to the shared autocomplete provider.
+
+### Why
+
+The experimental client uses the same picker as the classic TUI; optional selectors and compaction must submit on first Enter there too.
+
+### Why an extension could not handle it
+
+The service contract and client mapping own the metadata before dispatch.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/experimental/services/slash-commands.ts`: command contribution interface.
+- `packages/coding-agent/src/experimental/services/slash-commands-provider.ts`: builtin command metadata.
+- `packages/coding-agent/src/experimental/client-tui.ts`: updateAutocomplete mapping.
+
+## 2026-10-01 - GPT-6 Astra high-reasoning warning shows above high again (senpi#2496)
+
+### What changed
+
+- `packages/coding-agent/src/core/high-reasoning-warning.ts`: GPT-6 Astra warns at `xhigh` and `max` again, like every other sensitive model, and stays quiet at `high` and below. This reverses the 2026-09-10 "Restrict GPT-6 Astra high-reasoning warning to max" entry below. The full record, with tests, is the 2026-10-01 entry in `src/core/changes.md`.
+
+### Why
+
+- The owner wants the Astra warning shown for any effort above high.
+
+### Why an extension could not handle it
+
+- The warning predicate is core session policy evaluated before the warning event is emitted.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/high-reasoning-warning.ts`: fork-only file.
+
+## 2026-10-01 - Export the bundled-bun PATH helper for eval kernels (omo#9362)
+
+### What changed
+
+- `packages/coding-agent/src/index.ts`: exports `withBundledBunCommands` from `utils/bundled-bun.ts`, next to the shell utilities.
+
+### Why
+
+- The eval extension (`senpi-codemode`) gives its kernels the same `bun`/`bunx` directory that `getShellEnv()` puts on the bash tool's `PATH`, so a cell's `bun test` in a compiled executable runs Bun instead of the engine. The extension reaches it only through the package's public exports.
+
+### Why an extension could not handle it
+
+- The helper lives in the core package; an extension can only import what `index.ts` exports.
+
+### Expected merge conflict zones
+
+- LOW: the shell-utilities export block in `index.ts`.
+## 2026-09-30 - Legacy tool warnings require a legacy tool entry point (senpi#2451)
+
+### What changed
+
+- `packages/coding-agent/src/extension-system-migration.ts`: project and global `tools/` warnings now require the legacy `tools/<name>/index.ts` layout instead of treating every non-binary entry as a custom tool.
+- `packages/coding-agent/test/extension-system-migration.test.ts`: the OmO-branded migration covers both a plain helper file and a legacy custom tool directory.
+
+### Why
+
+- OmO keeps its own helper files and artifacts in `.omo/tools`; those files were never legacy custom tools, but their presence triggered the migration warning.
+
+### Why an extension could not handle it
+
+- The warning is produced by the startup migration before extensions load.
+
+### Expected merge conflict zones
+
+- LOW: the custom-tool filter in `extension-system-migration.ts`.
+
+## 2026-09-30 - Host sessions apply the permission preset their client opened them with (#2461)
+
+### What changed
+
+- `packages/coding-agent/src/main.ts`: `createCliRuntimeFactory`'s `createServices` passes `sessionExtensionFlagValues(parsed.unknownFlags, launchProfile)` as the session's extension flag values instead of the host's own flags alone.
+- `packages/coding-agent/src/core/session-extension-flags.ts` (fork-only): copies the host flags and sets `permission-preset` from `launchProfile.permissionPreset` when the client sent one.
+
+### Why
+
+- `open_session.permissionPreset` was stored in the launch profile and never read, so every host-opened session ran with the host's startup preset (normally `full-access`). The builtin permission extension reads its preset from the `--permission-preset` flag, so the per-session value has to reach it through that flag. Settings still apply below it, as for a CLI preset.
+
+### Why an extension could not handle it
+
+- Extension flag values are fixed when the session's services are created; an extension cannot see the launch profile.
+
+### Expected merge conflict zones
+
+- LOW: the `extensionFlagValues` argument of `createAgentSessionServices` in `main.ts` (one line) and the import block.
+
+## 2026-09-30 - Sync with upstream v0.99.1 (6a4af07d6): experimental micro default model uses the fork provider id
+
+### What changed
+
+- `packages/coding-agent/src/experimental/micro/runtime.ts`: the upstream-new micro runtime's `DEFAULT_MODEL` names the provider `chatgpt-subscription` instead of the upstream `openai-codex`; its README says the same.
+
+### Why
+
+The fork renamed the ChatGPT subscription provider to `chatgpt-subscription` (sync decision D-4; `openai-codex` survives only as the legacy alias in `legacy-provider-ids.ts`), and `test/suite/anthropic-subscription-naming.test.ts` rejects any shipped string literal carrying the legacy id. The upstream file arrived with the old id, so a new micro session looked up a provider name the fork no longer ships.
+
+### Why an extension could not handle it
+
+The default is a module constant the experimental micro entry reads before any extension loads.
+
+### Expected merge conflict zones
+
+- LOW: the `DEFAULT_MODEL` line in `experimental/micro/runtime.ts` whenever upstream changes the micro default model; keep the `chatgpt-subscription` provider id.
+
+## 2026-09-30 - Sync with upstream v0.99.1 (6a4af07d6): paths divergent from the new pin
+
+### What changed
+
+- `packages/coding-agent/src/experimental/radius-auth.ts`: kept the fork version. It defines `ENV_RADIUS_GATEWAY` itself and defaults the gateway from that variable or `DEFAULT_RADIUS_GATEWAY` (`@earendil-works/pi-ai/providers/radius-config`); the pinned upstream file imports both from `../core/radius.ts`.
+
+### Why
+
+The fork deleted `packages/coding-agent/src/core/radius.ts` (the Radius share/upload service is not used; sync decision D-6 keeps it deleted), so the relay auth resolver cannot import from it. The gateway resolution is the same: environment variable first, then the default gateway.
+
+### Why an extension could not handle it
+
+The experimental relay client imports this module directly at startup; there is no extension hook in front of it.
+
+### Expected merge conflict zones
+
+- MEDIUM: the import block and the `RadiusRelayAuthResolver` constructor default whenever upstream changes `core/radius.ts` exports; keep the local `ENV_RADIUS_GATEWAY` and the `DEFAULT_RADIUS_GATEWAY` fallback.
+
+## 2026-09-30 - Sync with upstream v0.99.1 (6a4af07d6): settings, entrypoints and resource loading
+
+### What changed
+
+- `packages/coding-agent/src/bun/runtime-setup.ts`: `packages/coding-agent/src/bun/runtime-setup.ts`: = OURS (`registerBunRuntimeModules`); upstream QuickJS wasm embedding not adopted (only the excluded upstream codemode reads it). No compile-cache work on the Bun path (fork compile cache stays in the Node entry).
+- `packages/coding-agent/src/config.ts`: `packages/coding-agent/src/config.ts`: = OURS (upstream `setEmbeddedQuickJSWasmPath`/`getQuickJSWasmPath`/`getCodemodeWorkerUrl` are codemode-only, D-2).
+- `packages/coding-agent/src/experimental/client.ts`: `packages/coding-agent/src/experimental/client.ts`: = OURS (the fork already waits for the run's terminal event, bounded by `RUN_TAIL_TIMEOUT_MS`; upstream's unbounded duplicate waiter dropped).
+- `packages/coding-agent/src/index.ts`: `packages/coding-agent/src/index.ts`: fork export superset kept (`OAuthCredential`, `McpServerDeclaration`, `ToolPermissionRequest`, `UnknownCommandError`, `connectWebViewService`, `export *` session-control types); adopted upstream `ToolLoadout`, `ToolLoadoutChanges`, `ToolNamespace`, boundary/virtual-model/session-projection/theme type exports and `core/virtual-models.ts` exports (C-EX-10). Dropped: `CacheWarmingDecision/Status`, `CacheWarmingDecisionEvent(Result)`, `CacheWarmingMode` (D-5), `McpServersChangeEvent`, `RegisteredMcpServer`, upstream codemode/mcp/tool-search extension exports (D-2). Upstream core/index.ts additions (all types) are re-exported from here; core/index.ts is not resurrected.
+- `packages/coding-agent/src/main.ts`: `packages/coding-agent/src/main.ts`: = OURS + extension-package warnings mapped into runtime diagnostics in `createCliRuntimeFactory`. No `/bug`, no crash-report hints, no upstream `mcp` subcommand (D-2/D-6); fork startup paths kept (loading indicator, from-source guard, legacy .pi notice, app-server/host/schedule dispatch, moved-session loaders, index-backed exact-id lookup, CLI-side image resize, initialTitlePrompt).
+- `packages/coding-agent/src/experimental/process.ts`: Silent rows read and accepted as merged: `cli/startup-ui.ts` (system theme startup, D-14), `core/keybindings.ts` (descriptions), `core/prompt-templates.ts` (diagnostics result), `core/trust-manager.ts` (adds `mcp.json`; the fork MCP reads project `.senpi/mcp.json`; the `.pi` legacy-trust fix is untouched), `experimental/process.ts` (`--import` URL), `package-manager-cli.ts` (builtin names into config), tests `args`, `package-manager`, `stdout-cleanliness`, `5943-session-start-notify`.
+- `packages/coding-agent/src/package-manager-cli.ts`: Silent rows read and accepted as merged: `cli/startup-ui.ts` (system theme startup, D-14), `core/keybindings.ts` (descriptions), `core/prompt-templates.ts` (diagnostics result), `core/trust-manager.ts` (adds `mcp.json`; the fork MCP reads project `.senpi/mcp.json`; the `.pi` legacy-trust fix is untouched), `experimental/process.ts` (`--import` URL), `package-manager-cli.ts` (builtin names into config), tests `args`, `package-manager`, `stdout-cleanliness`, `5943-session-start-notify`.
+
+### Why
+
+Upstream v0.99.1 settings/resource-loading features are adopted where they carry no excluded subsystem; D-2/D-5/D-6 exclusions remove codemode, MCP, tool-search, cache-warming and /bug surfaces; fork runtime contracts (tool defaults, loader ordering, global-default shims, session profiles) win on conflict.
+
+### Why an extension could not handle it
+
+Settings layering, resource/extension resolution, the package barrel and CLI entrypoints are core loader/bootstrap code that runs before any extension loads.
+
+### Expected merge conflict zones
+
+`settings-manager.ts` Settings interface + deepMergeSettings + getDefaultTools; `resource-loader.ts` constructor, loadCurrentExtensionSet, loadExtensionPaths, loadFinalExtensionSet; `index.ts` extension type export block; `main.ts` createCliRuntimeFactory diagnostics; upstream re-adding cacheWarming/codemode/mcp settings or exports.
+
+## 2026-09-30 - Sync with upstream v0.99.1 (6a4af07d6): upstream features excluded on record
+
+### What changed
+
+Upstream paths below are not added (or stay deleted) in this sync; `.github/agent/upstream-exclusions.txt` lists them for mechanical re-exclusion after every upstream merge.
+
+- `packages/coding-agent/src/extensions/codemode/execute.lazy.ts` (not added / kept deleted)
+- `packages/coding-agent/src/extensions/codemode/execute.ts` (not added / kept deleted)
+- `packages/coding-agent/src/extensions/codemode/index.ts` (not added / kept deleted)
+- `packages/coding-agent/src/extensions/codemode/renderer.ts` (not added / kept deleted)
+- `packages/coding-agent/src/extensions/codemode/tool.ts` (not added / kept deleted)
+- `packages/coding-agent/src/extensions/codemode/worker.ts` (not added / kept deleted)
+- `packages/coding-agent/src/extensions/mcp/cli.lazy.ts` (not added / kept deleted)
+- `packages/coding-agent/src/extensions/mcp/cli.ts` (not added / kept deleted)
+- `packages/coding-agent/src/extensions/mcp/config.ts` (not added / kept deleted)
+- `packages/coding-agent/src/extensions/mcp/index.ts` (not added / kept deleted)
+- `packages/coding-agent/src/extensions/mcp/log.ts` (not added / kept deleted)
+- `packages/coding-agent/src/extensions/mcp/oauth.ts` (not added / kept deleted)
+- `packages/coding-agent/src/extensions/mcp/resources.ts` (not added / kept deleted)
+- `packages/coding-agent/src/extensions/mcp/runtime.lazy.ts` (not added / kept deleted)
+- `packages/coding-agent/src/extensions/mcp/runtime.ts` (not added / kept deleted)
+- `packages/coding-agent/src/extensions/mcp/tools.ts` (not added / kept deleted)
+- `packages/coding-agent/src/extensions/mcp/ui.ts` (not added / kept deleted)
+- `packages/coding-agent/src/extensions/tool-search/index.ts` (not added / kept deleted)
+- `packages/coding-agent/src/extensions/tool-search/tool.ts` (not added / kept deleted)
+- `packages/coding-agent/src/extensions/index.ts`: upstream's built-in list reduced to its llama.cpp entry; the codemode, tool-search and MCP entries are excluded with their directories.
+
+### Why
+
+The fork keeps one implementation per capability: its own builtin mcp, tool-search and senpi-codemode instead of upstream's codemode/MCP/tool-search built-ins and packages (plan D-2, owner default Q1); builtin cache-keepalive instead of upstream cache warming, whose default spends paid refreshes (D-5, Q3); report-bug skills instead of `/bug` uploads to Radius (D-6, Q4); no `packages/durable`, which nothing in the fork imports (D-7). Paths the fork had already deleted (core/index.ts, core/radius.ts, session-share.ts, tui latex.ts, providers/openai-codex.ts, npm-shrinkwrap.json) stay deleted.
+
+### Why an extension could not handle it
+
+Exclusion is a repository-level decision about which upstream files exist at all; an extension can add behavior but cannot remove files an upstream merge adds.
+
+### Expected merge conflict zones
+
+Every upstream release that touches these paths re-adds or modifies them: re-run `git rm -rqf --ignore-unmatch $(cat .github/agent/upstream-exclusions.txt)` after the merge and extend the list (with a dated block here) when upstream adds a new file to an excluded feature.
+## 2026-09-30 - Print mode selects its answer after deferred turns settle (#1431)
+
+### What changed
+
+- `packages/coding-agent/src/modes/print-mode.ts`: await the existing session-work settlement before selecting the final assistant answer and exit status.
+
+### Why
+
+- An extension command can start a deferred turn and return before its provider response arrives. Text mode previously selected its answer before waiting, so the command produced empty or stale output even though the deferred turn completed before process exit. This extracts the remaining print-output slice of #1431; ordinary prompt settlement and JSON event streaming retain their existing behavior.
+
+### Why an extension could not handle it
+
+- The final stdout selection and exit status belong to the core print-mode runner, after extension commands return.
+
+### Expected merge conflict zones
+
+- LOW: the settlement call immediately before final text selection in `packages/coding-agent/src/modes/print-mode.ts`.
+
 ## 2026-09-30 - A runtime snapshot holds its own dependencies, and shared hosts run from it (#2408, #2409)
 
 ### What changed
@@ -18,6 +247,24 @@
 ### Expected merge conflict zones
 
 - LOW: the `prepareRuntimeSnapshot` call in `cli.ts` (one added `await`).
+
+## 2026-09-29 - Carry model tier decorators into session startup (senpi#2399)
+
+### What changed
+
+- `packages/coding-agent/src/main.ts`: retain the service tier from --model and --models through buildSessionOptions and the CLI runtime factory.
+
+### Why
+
+- `packages/coding-agent/src/main.ts`: the real CLI discarded the parsed tier even though model resolution preserved it, so an Astra Ultrafast command silently ran without that tier.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/main.ts`: this host startup boundary discarded the selection before extension contexts were created.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/main.ts`: initial session options and construction/forwarding calls.
 
 ## 2026-09-29 - The CLI runtime factory passes the launch profile's prompt surface (senpi#2377)
 
@@ -251,6 +498,7 @@ Extensions are what gets loaded; the loading itself is the CLI runtime factory's
 
 - `packages/coding-agent/src/index.ts`: exports `connectWebViewService` and the `WebViewServiceConnection` type from the fork-only `src/core/webview/webview-broker.ts`.
 - Fork-only `src/core/webview/`: `WebViewService` serves Chrome-backed `Bun.WebView`s on the process main thread to eval kernels in worker threads. Each kernel gets its own client (a private `MessagePort` and the views created through it); only the owner that connected a client can release it, a closed port releases it too, and Bun's Chrome is retired once no proxied view is left (`closeAll()` off macOS, a kill of Bun's own Chrome child on macOS, where `closeAll()` would also kill the shared WebKit host of native worker views).
+- Fork-only `src/core/webview/webview-readiness.ts` (senpi#2353): the service answers a `create` only after the new view's readiness navigation to `about:blank` settled. A launch still pending at the bound (`cdp-target-attach`) is closed, its Chrome retired unless another view holds it, and relaunched once (not for a released client) before the create fails with `ERR_WEBVIEW_NOT_READY`.
 
 ### Why
 
@@ -4222,3 +4470,76 @@ The instrumented transitions (`_emit`, queue internals, `RequiredCompactionError
 
 - LOW: the single pattern list in `core/retry-fallback/billing.ts`; the module is fork-local.
 
+## 2026-10-02 - Experimental surface stays on the fork harness (upstream v1.0.0 sync)
+
+### What changed
+
+- `packages/coding-agent/src/experimental/client-tui-chat.ts`
+- `packages/coding-agent/src/experimental/commands.ts`
+- `packages/coding-agent/src/experimental/plugin.ts`
+- `packages/coding-agent/src/experimental/services/agent-controller-provider.ts`
+- `packages/coding-agent/src/experimental/services/agent-controller.ts`
+- `packages/coding-agent/src/experimental/services/models-provider.ts`
+- `packages/coding-agent/src/experimental/services/transcript-provider.ts`
+- `packages/coding-agent/src/experimental/services/transcript.ts`
+- `packages/coding-agent/src/experimental/services/worker.ts`
+- `packages/coding-agent/src/experimental/session-worker.ts`
+- `packages/coding-agent/src/experimental/durable/harness-setup.ts`
+- `packages/coding-agent/src/experimental/durable/main.ts`
+- `packages/coding-agent/src/experimental/durable/prompt.ts`
+- `packages/coding-agent/src/experimental/durable/runtime.ts`
+- `packages/coding-agent/src/experimental/durable/sessions.ts`
+- `packages/coding-agent/src/experimental/durable/subagent.ts`
+- `packages/coding-agent/src/experimental/durable/tui.ts`
+- `packages/coding-agent/src/experimental/vacation/harness-setup.ts`
+- `packages/coding-agent/src/experimental/vacation/main.ts`
+- `packages/coding-agent/src/experimental/vacation/runtime.ts`
+- `packages/coding-agent/src/experimental/vacation/sessions.ts`
+- `packages/coding-agent/src/experimental/vacation/tui.ts`
+- `packages/coding-agent/src/experimental/vacation/vacation.ts`
+
+The first ten paths stay exactly as in the fork; upstream rewrote them onto its durable package (48dd1e2f0). The `experimental/durable/**` and `experimental/vacation/**` paths are upstream additions built on that package and are not taken.
+
+### Why
+
+The fork's experimental client, worker and transcript services run on the fork harness; the upstream rewrite would import a package the fork does not ship.
+
+### Why an extension could not handle it
+
+These are the experimental client and worker entry points themselves, which sit below the extension API.
+
+### Expected merge conflict zones
+
+Upstream edits to `src/experimental/**`: keep ours for the listed files and keep the durable/vacation trees absent.
+
+## 2026-10-02 - Adopted upstream session, settings and runtime changes (upstream v1.0.0 sync)
+
+### What changed
+
+- `packages/coding-agent/src/cli/args.ts`
+- `packages/coding-agent/src/core/agent-session.ts`
+- `packages/coding-agent/src/core/extensions/loader.ts`
+- `packages/coding-agent/src/core/model-runtime.ts`
+- `packages/coding-agent/src/core/remote-catalog-provider.ts`
+- `packages/coding-agent/src/core/sdk.ts`
+- `packages/coding-agent/src/core/settings-manager.ts`
+- `packages/coding-agent/src/index.ts`
+- `packages/coding-agent/src/main.ts`
+- `packages/coding-agent/src/modes/interactive/components/settings-selector.ts`
+- `packages/coding-agent/src/modes/interactive/components/user-message.ts`
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`
+- `packages/coding-agent/src/modes/interactive/theme/system-theme.ts`
+
+The upstream changes are kept with fork behaviour preserved: `--provider` requires `--model` (D-7), `quietStartup: "header"` (D-6), `/reload` enables tools newly added to defaultTools, one copy of each rendered user-message line, pastel system-theme chroma, and the absorbed main's runtime catalog work.
+
+### Why
+
+Each is an upstream improvement that does not break a fork behaviour; the fork alternatives (tuiMode regular, fork header, eval-only policy) are preserved and tested.
+
+### Why an extension could not handle it
+
+Session runtime, settings and interactive mode own these paths below the extension API.
+
+### Expected merge conflict zones
+
+Upstream edits to session/settings/runtime paths at the next sync.

@@ -1,7 +1,7 @@
 import { ownedRegistryAliases } from "./prepare-senpi-publish-manifest.mjs";
 import { isUnpublishedForkPackage } from "./registry-packages.mjs";
 
-export const SUPPORTED_NATIVE_PREBUILD_TARGETS = [
+const SUPPORTED_NATIVE_PREBUILD_TARGETS = [
 	"darwin-arm64",
 	"darwin-x64",
 	"linux-arm64",
@@ -50,7 +50,8 @@ const publishedWorkspaceRequiredFiles = new Map([
 	],
 ]);
 
-export function publishedWorkspacePackageChecks(nativeTargets = [nativePrebuildTarget()]) {
+function publishedWorkspacePackageChecks() {
+	const nativeTargets = [nativePrebuildTarget()];
 	return [...publishedWorkspaceRequiredFiles].map(([packageName, requiredFiles]) => {
 		const prebuildFiles = NATIVE_PREBUILD_FILE_NAMES.has(packageName)
 			? nativeTargets.map((target) => nativePrebuildFile(target, packageName))
@@ -74,8 +75,8 @@ function assertNoSourcemaps(filePaths, packageName) {
 	}
 }
 
-export function assertPublishedWorkspacePackFiles(packed, sourcePackageName, options = {}) {
-	const check = publishedWorkspacePackageChecks(options.nativePrebuildTargets).find(
+export function assertPublishedWorkspacePackFiles(packed, sourcePackageName) {
+	const check = publishedWorkspacePackageChecks().find(
 		(candidate) => candidate.packageName === sourcePackageName,
 	);
 	const filePaths = packedFilePaths(packed);

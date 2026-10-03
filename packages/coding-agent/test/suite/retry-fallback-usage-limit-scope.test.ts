@@ -72,6 +72,20 @@ describe("retry fallback usage-limit scope", () => {
 		});
 	});
 
+	it("#given Claude Code's model-limit text (senpi#2555) #when falling back #then only Fable moves to its next rung and the account stays usable for Opus", async () => {
+		const { controller, events, current } = createController(fullChain);
+
+		const switched = await controller.tryFallback("hard-error", {
+			errorMessage: "You've reached your Fable limit. Switch to another model to continue. (rate_limit)",
+		});
+
+		expect({ switched, model: `${current().provider}/${current().id}`, events }).toEqual({
+			switched: true,
+			model: "anthropic-subscription/claude-opus-5-5",
+			events: [expect.objectContaining({ to: "anthropic-subscription/claude-opus-5-5", limit: "model" })],
+		});
+	});
+
 	it("#given an account-wide limit and only same-provider rungs left #when falling back #then the remaining rung is still tried as the last resort", async () => {
 		const { controller, events } = createController(["anthropic-subscription/claude-opus-5-5"]);
 

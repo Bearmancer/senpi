@@ -18,6 +18,9 @@ task-tool names are known.
 	events, tool-call summaries, elapsed duration, and structured display state;
 	a terminal peek preserves the exact final result.
 - Loopback, bearer-authenticated kernel bridge with bounded JSONL frames.
+- Tool calls retain the submitting cell's host context, including its RPC approval
+  channel, even after detachment or kernel reuse. Headless sessions deny commands
+  that require approval rather than waiting for an absent UI.
 - Structured status events for file operations, environment access, phases,
   bridge activity, and delegated task progress.
 - One versioned `senpi.eval.execution` event at terminal cell settlement. The
@@ -56,6 +59,14 @@ task-tool names are known.
 A missing optional interpreter removes that language from the session's `eval`
 schema; it is not an installation failure.
 
+Python startup waits for the interpreter's `ready` event. It reports progress
+through `stdlib-imports`, `runtime-init`, and `host-init`; advancing to the next
+stage resets an inactivity guard rather than consuming a total startup budget.
+The default guard is 11 seconds per stage, derived from a measured 5.220-second
+Windows fresh-cache bootstrap p99 (30 samples). A stalled or failed start names
+the last stage and retains the interpreter's diagnostic error. The low-level
+`PythonKernel.start({ startupTimeoutMs })` override applies per stage.
+
 Every `eval` run must explicitly select an enabled `language` (`js`, `py`, `rb`,
 or `jl`); there is no default kernel, even when only one language is enabled.
 Omitting `action` means `run`, so it also requires `language`. Control requests
@@ -75,6 +86,20 @@ the launching environment are dropped first, so a child spawned from a cell sees
 what a child spawned from the bash tool sees. The values snapshot at kernel start, so a
 mid-session model switch updates the bash tool's next command but not already-running
 kernels; a new session starts fresh kernels with fresh values.
+
+### Working directory
+
+Every kernel runs in the session's working directory, the same directory the read,
+edit, and bash tools use. Python, Ruby, and Julia start their interpreter there. The
+JavaScript kernel is a worker thread, which cannot change directory, so it applies the
+session directory itself: `process.cwd()`, `path.resolve`, `node:fs` and
+`node:fs/promises`, `node:child_process`, `Bun.file`, `Bun.write`, `Bun.$`,
+`Bun.spawn`/`Bun.spawnSync`, `Bun.Glob` scans, and relative `import()` all resolve a
+relative path inside the session directory, never the host process directory. The host
+process and the bash tool keep their own directory. When the session directory is
+missing or deleted, the next cell fails with `CodemodeSessionCwdUnavailableError` naming
+the directory instead of running somewhere else. A new session (including a switch to
+another project) starts fresh kernels in its own directory.
 
 `PI_GOAL_STORE_FILE` is supplied by the host's optional `ExtensionContext.goalStoreFile`
 getter and may name a file that does not exist yet. It honors session-directory overrides
@@ -241,10 +266,10 @@ user writes in: a progress update saying what the agent is doing and why, not
 a label for the code. The
 summary is shown in the TUI while the cell runs and in the finished result, so
 you can always tell what is running and why. It has no length limit; a
-collapsed block shows its first three lines. The schema marks all three
-optional only because the control actions (`peek`, `stop`, `list`) share it; a
-run request missing any of them fails with a teaching error that names what to
-add.
+collapsed block shows its first three lines. The schema requires all three
+for runs, including when `action` is omitted. Control actions (`peek`, `stop`,
+`list`) do not require run fields. Each action branch declares its own fields
+so providers can interpret it independently.
 
 ## Detached cells
 
@@ -314,6 +339,12 @@ restarted, or outcome unknown - never a per-language assumption; oversized
 buffered output is written under the session local root and referenced as
 `local://…`.
 
+When Stop restarts a kernel waiting on `Bun.$`, the result explicitly says that
+the kernel restarted and its variables were cleared. Use `Bun.spawn` or the
+bash tool for long-running commands you may want to stop. Native `Bun.$`
+cancellation is tracked in [Bun #11868](https://github.com/oven-sh/bun/issues/11868);
+the shell's interpretation and object redirects are not replaced.
+
 Commands a cell runs through `Bun.$` never read the host's terminal: the worker
 thread shares the TUI's stdin, so the shell wrapper hands every template an
 empty pipe (`true | ( … )`) while a cell is active. Output, exit codes, `cwd`,
@@ -354,6 +385,92 @@ there is no separate execution runtime. `eval` is excluded from the nested tool
 namespace to prevent recursive execution.
 
 ## Validation
+
+The regression gate compares full prompt content (240 dialect/capability/runtime/host
+combinations), schemas, helper census, live helper witnesses and eager imports,
+and runs the legacy contracts. It requires Bun, Node, Python, Ruby and Julia; a missing
+interpreter fails rather than skipping a runtime. It does not gate wall-clock
+timing or absolute memory footprints; those belong to the paired benchmark.
+Ruby 3.4 and later also require the `base64` gem (`gem install base64 --version 0.3.0 --no-document`).
+
+The eager-import probe starts without third-party validation modules loaded.
+It validates observer records only after measurement, so a target sharing the
+harness dependency tree has the same cold census as a separate checkout.
+Module IDs are package-relative. The exact census covers codemode, its non-virtual
+dependency closure and Node builtins. The observer records parent edges and reads
+both loader `VIRTUAL_MODULES` tables: their backing packages and dependencies
+reachable only across virtual edges belong to the host and are excluded from
+set equality. Every observed edge and classification remains in the report.
+Workspace imports resolve through built `dist` entries. The gate build records
+the source file set, inherited build configs and content hashes after a successful
+build; preflight rejects missing, changed or deleted inputs. Unchanged content
+remains valid after timestamp refreshes. Each ignored `.senpi-gate-inputs.json`
+certificate sits beside its workspace manifest, outside the published `dist` tree.
+
+```bash
+bun packages/senpi-codemode/scripts/gate-build.ts
+bun run --cwd packages/senpi-codemode gate --baseline test/gate/baseline.json
+bun run --cwd packages/senpi-codemode test -- test/gate
+```
+
+The package test script already selects `test/`, so the last command intentionally
+runs the full package suite. For a focused gate-only run, invoke Vitest directly:
+
+```bash
+bun run --cwd packages/senpi-codemode vitest run test/gate
+```
+
+Install and build both the head checkout and a clean checkout of the PR merge
+base with `bun install --ignore-scripts --frozen-lockfile`. Build each target with
+the head harness, `bun packages/senpi-codemode/scripts/gate-build.ts <checkout>`.
+Record the baseline with the **head harness** against that freshly built base
+checkout, not by running an older harness:
+
+```bash
+bun run --cwd packages/senpi-codemode gate --target <base-checkout> \
+  --baseline test/gate/baseline.json --write-baseline
+```
+
+The report is gitignored `gate-report.json` by default (`--report <path>` overrides it).
+`test/gate/allowlist.json` contains reviewed additive changes keyed by plan node;
+it cannot authorize removal or modification of a legacy entry. The test-only
+`SENPI_CODEMODE_GATE_MUTATE=drop-phase` report mutation proves that helper removal
+is rejected. `SENPI_CODEMODE_GATE_MUTATE=leak-kernel` leaves the real kernel
+alive at the teardown witness, then closes it in `finally`; nonzero process,
+worker, socket, handle, subscription and active-resource listener counts fail
+by name. Constructors are observed because Bun's active-handle/report APIs
+return empty arrays even for live workers.
+Live timers are observed independently of the import census, including unref'd
+global timers, named and namespace imports from `node:timers`,
+`node:timers/promises` (including interval iterators and the scheduler), and
+self-rearming `AbortSignal.timeout` polls. Failures name the timer API and its
+creation site. The gate installs delegating wrappers before the kernel graph
+loads; on Bun its module-replacement API also updates builtin ESM bindings.
+These wrappers run only in gate processes and keep the native timer behavior.
+The only production-source additions are an inert gate observer at the existing
+worker, interpreter-process and bridge-server constructors. It is undefined in
+normal execution. This hook is necessary because Bun does not refresh named
+builtin exports when `syncBuiltinESMExports()` runs; patching their default
+exports alone otherwise reports zero resources even for a leaked real kernel.
+
+| Inert hook site | Measured resource | Verification |
+| --- | --- | --- |
+| `src/kernels/js/worker-host.ts` | Worker exit | Real Bun kernel close/leak tests |
+| `src/kernels/py/process.ts` | Python child close | Five-runtime gate and kernel-leak mutation |
+| `src/kernels/shared/subprocess-process.ts` | Ruby/Julia child close | Five-runtime gate and kernel-leak mutation |
+| `src/bridge/http-server.ts` | Server close and accepted sockets | Real Bun bridge close/leak tests |
+
+The gate-only `leak-bridge` mutation leaves the real bridge server open for the
+witness and closes it in `finally`; the real-runtime test must observe an open
+handle. Neither mutation is read by production code.
+
+Legacy scenario identities are compared exactly, so deleting or renaming a
+test cannot make the gate green. Platform-dependent skip outcomes remain
+visible in the report. Driver tests await child close events, with a generous
+hang watchdog; the infinite-loop timeout uses an injected clock after the
+worker announces execution. No deadline tests are excluded from the gate.
+The held-child probe advances the parent clock past all former startup
+deadlines three times before releasing the child's IPC barrier.
 
 ```bash
 cd packages/senpi-codemode

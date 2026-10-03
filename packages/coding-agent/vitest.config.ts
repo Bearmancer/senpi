@@ -1,5 +1,5 @@
 import { fileURLToPath } from "node:url";
-import { defineConfig, mergeConfig } from "vitest/config";
+import { configDefaults, defineConfig, mergeConfig } from "vitest/config";
 import baseConfig, { workspaceSourcePaths } from "../../vitest.base.ts";
 
 const aiSrcProviderScope = fileURLToPath(new URL("../ai/src/node/provider-scope.ts", import.meta.url));
@@ -13,6 +13,9 @@ export default mergeConfig(
 			environment: "node",
 			testTimeout: 30000,
 			setupFiles: ["./test/setup.ts"],
+			// test/manual-qa/ holds real-surface QA drivers, not default-suite tests (test/AGENTS.md).
+			// Run one explicitly with SENPI_MANUAL_QA=1 npx vitest run test/manual-qa/<file>.
+			exclude: [...configDefaults.exclude, ...(process.env.SENPI_MANUAL_QA ? [] : ["test/manual-qa/**"])],
 			// Tests run offline by default; opt in with allowNetwork() from test/test-network-env.ts.
 			// Vitest runs on Node, so the Node.js runtime notice is off unless a test unstubs it.
 			env: { PI_OFFLINE: "1", PI_SKIP_RUNTIME_NOTICE: "1" },

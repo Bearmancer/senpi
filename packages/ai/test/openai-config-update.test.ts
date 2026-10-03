@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { convertResponsesMessages } from "../src/api/openai-responses-shared.ts";
 import { getModels, supportsConfigurationUpdate } from "../src/compat.ts";
 import type { Message, Model } from "../src/types.ts";
+import { normalizeContext } from "../src/utils/transcript.ts";
 
 function catalogModel(provider: "openai" | "chatgpt-subscription", id: string): Model<any> {
 	const model = getModels(provider).find((candidate) => candidate.id === id);
@@ -10,7 +11,7 @@ function catalogModel(provider: "openai" | "chatgpt-subscription", id: string): 
 }
 
 function convert(model: Model<any>, messages: Message[]) {
-	return convertResponsesMessages(model, { systemPrompt: "", messages, tools: [] }, new Set());
+	return convertResponsesMessages(model, normalizeContext({ systemPrompt: "", messages, tools: [] }), new Set());
 }
 
 const updateThenUser: Message[] = [

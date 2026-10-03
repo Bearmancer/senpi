@@ -54,7 +54,7 @@ export function lazyOAuth(input: {
 		isSubscription: input.isSubscription,
 		loginLabel: input.loginLabel,
 		...(input.rejectedTokenStatuses === undefined ? {} : { rejectedTokenStatuses: input.rejectedTokenStatuses }),
-		login: async (interaction) => (await loaded()).login(interaction),
+		login: async (interaction, options) => (await loaded()).login(interaction, options),
 		refresh: async (credential, signal) => (await loaded()).refresh(credential, signal),
 		toAuth: async (credential) => (await loaded()).toAuth(credential),
 	};

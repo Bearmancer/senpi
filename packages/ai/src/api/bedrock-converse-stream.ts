@@ -32,8 +32,9 @@ import type {
 	Api,
 	AssistantMessage,
 	CacheRetention,
-	Context,
 	ImageContent,
+	JsonObject,
+	JsonValue,
 	Model,
 	ProviderEnv,
 	ProviderResponse,
@@ -62,8 +63,16 @@ import {
 } from "../utils/prompt-cache-ttl.ts";
 import { getProviderEnvValue } from "../utils/provider-env.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
+import { getSystemMessageText } from "../utils/text.ts";
 import { normalizeToolCallId } from "../utils/tool-call-id.ts";
 import { normalizeToolParametersForBedrock } from "../utils/tool-schema-compat.ts";
+import {
+	collapseSystemMessages,
+	getCurrentTools,
+	getInitialSystemMessage,
+	type TranscriptContext,
+	withoutInitialSystemMessage,
+} from "../utils/transcript.ts";
 import { getJsonSchemaToolParameters, resolveJsonSchemaStrictSampling } from "./constrained-sampling.ts";
 import {
 	adjustMaxTokensForThinking,
@@ -127,10 +136,12 @@ const REDACTED_THINKING_PLACEHOLDER = "[Reasoning redacted]";
 
 export const stream: StreamFunction<"bedrock-converse-stream", BedrockOptions> = (
 	model: Model<"bedrock-converse-stream">,
-	context: Context,
+	context: TranscriptContext,
 	options: BedrockOptions = {},
 ): AssistantMessageEventStream => {
 	const stream = new AssistantMessageEventStream();
+	// Bedrock has no mid-conversation system messages; fold them into the leading prompt.
+	const normalizedContext = collapseSystemMessages(context);
 
 	(async () => {
 		const output: AssistantMessage = {
@@ -260,18 +271,24 @@ export const stream: StreamFunction<"bedrock-converse-stream", BedrockOptions> =
 			}
 			const cacheRetention = resolveCacheRetention(options.cacheRetention ?? model.cacheRetention, options.env);
 			const inferenceMaxTokens = options.maxTokens ?? (isAnthropicClaudeModel(model) ? model.maxTokens : undefined);
+			const initialSystemMessage = getInitialSystemMessage(normalizedContext.messages);
+			const initialSystemPrompt = initialSystemMessage ? getSystemMessageText(initialSystemMessage) : undefined;
 			let commandInput: ConverseStreamCommandInput & Record<string, unknown> = {
 				modelId: model.id,
-				messages: convertMessages(context, model, cacheRetention, {
+				messages: convertMessages(normalizedContext, model, cacheRetention, {
 					preserveThinking: options.reasoning !== undefined,
 					env: options.env,
 				}),
-				system: buildSystemPrompt(context.systemPrompt, model, cacheRetention, options.env),
+				system: buildSystemPrompt(initialSystemPrompt, model, cacheRetention, options.env),
 				inferenceConfig: {
 					...(inferenceMaxTokens !== undefined && { maxTokens: inferenceMaxTokens }),
 					...(options.temperature !== undefined && { temperature: options.temperature }),
 				},
-				toolConfig: convertToolConfig(context.tools, options.toolChoice, supportsStrictMode),
+				toolConfig: convertToolConfig(
+					getCurrentTools(normalizedContext.messages),
+					options.toolChoice,
+					supportsStrictMode,
+				),
 				additionalModelRequestFields: buildAdditionalModelRequestFields(model, options),
 				...(options.requestMetadata !== undefined && { requestMetadata: options.requestMetadata }),
 			};
@@ -293,6 +310,7 @@ export const stream: StreamFunction<"bedrock-converse-stream", BedrockOptions> =
 			}
 
 			for await (const item of response.stream!) {
+				await options.onProviderStreamEvent?.(item, model);
 				if (item.messageStart) {
 					if (item.messageStart.role !== ConversationRole.ASSISTANT) {
 						throw new Error("Unexpected assistant message start but got user message start instead");
@@ -438,7 +456,7 @@ function appendBedrockFailureDiagnostic(
 	fallbackRequestId: string | undefined,
 ): void {
 	const metadata = (error as SdkErrorMetadata)?.$metadata;
-	const details: Record<string, unknown> = {};
+	const details: JsonObject = {};
 
 	if (typeof metadata?.httpStatusCode === "number") details.status = metadata.httpStatusCode;
 
@@ -537,7 +555,7 @@ function addResponseHeadersMiddleware(
 
 export const streamSimple: StreamFunction<"bedrock-converse-stream", SimpleStreamOptions> = (
 	model: Model<"bedrock-converse-stream">,
-	context: Context,
+	context: TranscriptContext,
 	options?: SimpleStreamOptions,
 ): AssistantMessageEventStream => {
 	const base = {
@@ -719,6 +737,10 @@ function handleMetadata(
 		output.usage.output = event.usage.outputTokens || 0;
 		output.usage.cacheRead = event.usage.cacheReadInputTokens || 0;
 		output.usage.cacheWrite = event.usage.cacheWriteInputTokens || 0;
+		output.usage.cacheWrite1h = event.usage.cacheDetails?.reduce(
+			(total, detail) => total + (detail.ttl === CacheTTL.ONE_HOUR ? (detail.inputTokens ?? 0) : 0),
+			0,
+		);
 		output.usage.totalTokens = event.usage.totalTokens || output.usage.input + output.usage.output;
 		calculateCost(model, output.usage);
 	}
@@ -908,7 +930,7 @@ function createRequiredTextBlock(text: string): ContentBlock.TextMember {
 	return createNonBlankTextBlock(text) ?? { text: EMPTY_TEXT_PLACEHOLDER };
 }
 
-function sanitizeBedrockDocument(value: DocumentType): DocumentType {
+function sanitizeBedrockDocument(value: JsonValue): DocumentType {
 	if (Array.isArray(value)) {
 		return value.map(sanitizeBedrockDocument);
 	}
@@ -951,15 +973,20 @@ function appendMessage(result: Message[], message: Message): void {
 }
 
 function convertMessages(
-	context: Context,
+	context: TranscriptContext,
 	model: Model<"bedrock-converse-stream">,
 	cacheRetention: CacheRetention,
 	options: { preserveThinking?: boolean; env?: ProviderEnv } = {},
 ): Message[] {
 	const result: Message[] = [];
-	const transformedMessages = transformMessages(context.messages, model, normalizeToolCallId, {
-		preserveThinking: options.preserveThinking,
-	});
+	const transformedMessages = transformMessages(
+		withoutInitialSystemMessage(context.messages),
+		model,
+		normalizeToolCallId,
+		{
+			preserveThinking: options.preserveThinking,
+		},
+	);
 
 	for (let i = 0; i < transformedMessages.length; i++) {
 		const m = transformedMessages[i];

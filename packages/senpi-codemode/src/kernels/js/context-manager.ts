@@ -3,10 +3,11 @@ import { CHILD_LIFECYCLE_OP, INTERRUPT_ACK_OP, MEMORY_COLLECTED_OP } from "../..
 import type { KernelInterruptHandle } from "../../tool/types.ts";
 import { KernelMemoryPolicy } from "../shared/kernel-memory.ts";
 import {
-	abandonedWorkerNote,
 	awaitCooperativeSettlement,
 	DEFAULT_INTERRUPT_BOUNDS,
 	type JavaScriptInterruptBounds,
+	restartedResult,
+	restartOutcome,
 	type WorkerRetirement,
 } from "./interrupt-bounds.ts";
 import {
@@ -27,7 +28,7 @@ import type {
 } from "./kernel-tools-types.ts";
 import { type JavaScriptKernelOptions, LocalModuleLoader } from "./local-module-loader.ts";
 import { terminateProcessTrees } from "./process-tree-host.ts";
-import { JavaScriptRunQueue, type PendingJavaScriptRun, stoppedResult } from "./run-queue.ts";
+import { JavaScriptRunQueue, type PendingJavaScriptRun } from "./run-queue.ts";
 import { bridgeError, WorkerStartupCancelledError } from "./worker-host.ts";
 import { WorkerSlot } from "./worker-slot.ts";
 
@@ -242,11 +243,9 @@ export class JavaScriptKernel {
 			}
 			if (!this.#runs.releaseActive(run)) return { retained: run.settledByWorker };
 			const retirement = await this.#terminate();
-			this.#runs.settle(run, run.interruptResult ?? stoppedResult(run.input.cellId, message));
+			this.#runs.settle(run, restartedResult(run, message));
 			void this.#recover(() => Promise.resolve());
-			return retirement === "abandoned"
-				? { retained: false, note: abandonedWorkerNote(this.#interruptBounds.terminateDeadlineMs) }
-				: { retained: false };
+			return restartOutcome(run, retirement, this.#interruptBounds);
 		} finally {
 			this.#clearToolCalls();
 		}
@@ -283,7 +282,7 @@ export class JavaScriptKernel {
 	#handleMessage(message: KernelToHostMessage): void {
 		if (this.#kernelTools.consume(message) && message.type !== "tool-call") return;
 		if (message.type === "status" && message.event.op === INTERRUPT_ACK_OP) {
-			this.#runs.active?.interruptAck?.resolve();
+			this.#runs.acknowledgeInterrupt(message.event);
 			return;
 		}
 		if (message.type === "status" && message.event.op === CHILD_LIFECYCLE_OP) {

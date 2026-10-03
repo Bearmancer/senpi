@@ -3,6 +3,8 @@ import { lazyApi } from "../src/api/lazy.ts";
 import { getModel } from "../src/compat.ts";
 import { TURN_RETRY_SUPPRESSION_PREFIX } from "../src/utils/provider-failure-description.ts";
 
+import { normalizeContext } from "../src/utils/transcript.ts";
+
 // #2358: a package manager rewrote the install under a running session, so the provider module
 // the session imports lazily is gone. Every fallback model needs a module from the same install.
 async function failedLoadMessage(error: Error): Promise<string | undefined> {
@@ -10,7 +12,7 @@ async function failedLoadMessage(error: Error): Promise<string | undefined> {
 		throw error;
 	});
 	const model = getModel("openai", "gpt-4o-mini");
-	return (await api.stream(model, { messages: [] }).result()).errorMessage;
+	return (await api.stream(model, normalizeContext({ messages: [] })).result()).errorMessage;
 }
 
 describe("a provider module that disappeared with the install (#2358)", () => {

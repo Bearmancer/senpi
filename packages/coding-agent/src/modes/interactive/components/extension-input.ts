@@ -13,6 +13,7 @@ export interface ExtensionInputOptions {
 	timeout?: number;
 	/** Text the input opens with; the cursor lands at its end. */
 	initialValue?: string;
+	description?: string;
 }
 
 export class ExtensionInputComponent extends Container implements Focusable {
@@ -51,6 +52,10 @@ export class ExtensionInputComponent extends Container implements Focusable {
 
 		this.titleText = new Text(theme.fg("accent", title), 1, 0);
 		this.addChild(this.titleText);
+		if (opts?.description) {
+			this.addChild(new Spacer(1));
+			this.addChild(new Text(theme.fg("text", opts.description), 1, 0));
+		}
 		this.addChild(new Spacer(1));
 
 		if (opts?.timeout && opts.timeout > 0 && opts.tui) {

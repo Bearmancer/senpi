@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import askUserExtension from "../../src/core/extensions/builtin/ask-user/index.ts";
 import { getPendingQuestions } from "../../src/core/extensions/builtin/ask-user/registry.ts";
-import type { ExtensionAPI, ExtensionContext } from "../../src/core/extensions/types.ts";
+import type { ExtensionAPI, ExtensionContext, ExtensionToolContext } from "../../src/core/extensions/types.ts";
 import { createHarness, type Harness } from "./harness.ts";
 
 const harnesses: Harness[] = [];
@@ -42,7 +42,7 @@ describe("ask-user zero-question boundary", () => {
 			{ questions: [], waitForAnswer: false },
 			undefined,
 			undefined,
-			ctx,
+			ctx as ExtensionToolContext,
 		);
 
 		expect(result.content).toEqual([{ type: "text", text: "questions must contain 1 to 4 items" }]);

@@ -8,6 +8,7 @@ import type { ModelsDevReasoningOption } from "../scripts/models-dev-reasoning-o
 import { streamSimple } from "../src/api/anthropic-messages.ts";
 import { getSupportedThinkingLevels, hasApi } from "../src/models.ts";
 import type { Api, Model } from "../src/types.ts";
+import { normalizeContext } from "../src/utils/transcript.ts";
 
 const packageRoot = fileURLToPath(new URL("..", import.meta.url));
 const temporaryRoots: string[] = [];
@@ -41,12 +42,16 @@ function generateFireworksModels(
 			`  if (url === "https://models.dev/api.json") return Response.json(catalog);\n` +
 			// The fork's generator also fetches the OpenGateway and NVIDIA NIM catalogs; serve
 			// them empty so a tolerated fetch failure never lands on stderr.
+			`  if (url === "https://models.dev/models.json?type=decision") return Response.json({ "typesafe/jev-latest": { name: "Jev", type: "decision", limit: { context: 64000, output: 0 } } });\n` +
 			`  if (\n` +
-			`    url === "https://openrouter.ai/api/v1/models" ||\n` +
+			`    url.startsWith("https://openrouter.ai/api/v1/models") ||\n` +
 			`    url === "https://ai-gateway.vercel.sh/v1/models" ||\n` +
-			`    url === "https://apis.opengateway.ai/v1/models" ||\n` +
 			`    url === "https://integrate.api.nvidia.com/v1/models"\n` +
 			`  ) return Response.json({ data: [] });\n` +
+			// An empty gateway listing or price table counts as an outage, so serve one retired model and one price.
+			`  if (url === "https://apis.opengateway.ai/v1/models") return Response.json({ data: [{ id: "acme/retired", status: "retired", endpoints: ["chat_completions"] }] });\n` +
+			`  if (url === "https://opengateway.ai/api/model-prices") return Response.json({ "acme/retired": { provider: "acme", modelOwner: "acme", modelName: "retired", inputCostPerToken: 0.000001, outputCostPerToken: 0.000001 } });\n` +
+			`  if (url === "https://radius.pi.dev/v1/config") return Response.json({ baseUrl: "https://radius.pi.dev", models: [{ id: "test", name: "Test", reasoning: false, input: ["text"], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 4096, maxTokens: 4096 }] });\n` +
 			`  throw new Error(\`Unexpected fetch: \${url}\`);\n` +
 			`};\n`,
 	);
@@ -118,18 +123,14 @@ describe("Fireworks model generation", () => {
 		expect(model.compat?.forceAdaptiveThinking).toBe(true);
 		expect(getSupportedThinkingLevels(model)).toEqual(["off", "low", "max"]);
 		let payload: Record<string, unknown> | undefined;
-		await streamSimple(
-			model,
-			{ messages: [{ role: "user", content: "test", timestamp: 0 }] },
-			{
-				apiKey: "test-fireworks-key",
-				reasoning: "max",
-				onPayload: (value) => {
-					payload = value as Record<string, unknown>;
-					throw new Error("payload captured");
-				},
+		await streamSimple(model, normalizeContext({ messages: [{ role: "user", content: "test", timestamp: 0 }] }), {
+			apiKey: "test-fireworks-key",
+			reasoning: "max",
+			onPayload: (value) => {
+				payload = value as Record<string, unknown>;
+				throw new Error("payload captured");
 			},
-		).result();
+		}).result();
 		expect(payload?.thinking).toEqual({ type: "adaptive", display: "summarized" });
 		expect(payload?.output_config).toEqual({ effort: "max" });
 	});

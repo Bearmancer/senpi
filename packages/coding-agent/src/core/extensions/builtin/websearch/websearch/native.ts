@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 
+import { credentialHeaders, hostedRouteMapping } from "./hosted-routes.ts";
 import { isAllowedProviderBaseUrl } from "./provider-endpoints.ts";
 import type { SearchProvider, SearchProviderEntry } from "./types.ts";
 
@@ -9,6 +10,7 @@ export interface NativeModelInfo {
 	baseUrl: string;
 	api?: string;
 	cost?: { input: number; output: number };
+	headers?: Record<string, string>;
 }
 
 export type NativeAuthResult =
@@ -25,6 +27,7 @@ export interface NativeProviderMapping {
 	resource: string;
 	routeLabel?: string;
 	endpointPath?: string;
+	endpoint?: (baseUrl: string) => string;
 }
 
 interface NativeEntryOptions {
@@ -33,6 +36,8 @@ interface NativeEntryOptions {
 }
 
 export function nativeMapping(model: NativeModelInfo): NativeProviderMapping | null {
+	const hosted = hostedRouteMapping(model);
+	if (hosted) return hosted;
 	const isOpenAiModel = /^gpt-(4o|4\.1|5)/.test(model.id) && !model.id.includes("codex");
 	if (model.provider === "openai" && isOpenAiModel) {
 		return { provider: "openai", resource: "responses" };
@@ -121,10 +126,16 @@ function buildEndpointUrl(baseUrl: string, resource: string, endpointPath?: stri
 	return configured.href;
 }
 
+function mappingEndpointUrl(mapping: NativeProviderMapping, baseUrl: string): string {
+	return mapping.endpoint
+		? mapping.endpoint(baseUrl)
+		: buildEndpointUrl(baseUrl, mapping.resource, mapping.endpointPath);
+}
+
 export function nativeRouteKey(model: NativeModelInfo): string | null {
 	const mapping = nativeMapping(model);
 	if (!mapping) return null;
-	const baseUrl = buildEndpointUrl(model.baseUrl, mapping.resource, mapping.endpointPath);
+	const baseUrl = mappingEndpointUrl(mapping, model.baseUrl);
 	if (!isAllowedProviderBaseUrl(baseUrl)) return null;
 	const routeUrl = new URL(baseUrl);
 	routeUrl.hostname = routeUrl.hostname.replace(/\.$/, "");
@@ -147,7 +158,7 @@ async function buildNativeEntryForModel(
 	const mapping = nativeMapping(model);
 	if (!mapping) return null;
 	const entryId = id ?? (mapping.routeLabel ? `${mapping.routeLabel}/native` : "native");
-	const baseUrl = buildEndpointUrl(model.baseUrl, mapping.resource, mapping.endpointPath);
+	const baseUrl = mappingEndpointUrl(mapping, model.baseUrl);
 	if (!isAllowedProviderBaseUrl(baseUrl)) return null;
 
 	signal?.throwIfAborted();
@@ -172,10 +183,9 @@ async function buildNativeEntryForModel(
 	if (!auth.ok || !auth.apiKey) return null;
 	// A credential-specific host (a Copilot Business or Enterprise account's own API host) replaces
 	// the catalog host, exactly as it does for the account's chat requests.
-	const requestBaseUrl = auth.baseUrl
-		? buildEndpointUrl(auth.baseUrl, mapping.resource, mapping.endpointPath)
-		: baseUrl;
+	const requestBaseUrl = auth.baseUrl ? mappingEndpointUrl(mapping, auth.baseUrl) : baseUrl;
 	if (!isAllowedProviderBaseUrl(requestBaseUrl)) return null;
+	const headers = credentialHeaders(model.headers, auth.headers);
 
 	return {
 		id: entryId,
@@ -184,6 +194,7 @@ async function buildNativeEntryForModel(
 		baseUrl: requestBaseUrl,
 		model: model.id,
 		priority: -1,
+		...(headers ? { headers } : {}),
 	};
 }
 export async function buildNativeEntries(

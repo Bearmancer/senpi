@@ -1,5 +1,4 @@
 import type { MonitorRegistry } from "../monitor-registry.ts";
-import { MAX_DURABLE_MONITORS } from "../shared.ts";
 import type { MonitorRegistration, TerminalManifestWriter } from "../terminal-manifest.ts";
 import { errorResult, type TerminalToolContext, type TerminalToolResult } from "./context.ts";
 
@@ -69,18 +68,21 @@ export function handFileCheckpoint(
 }
 
 /**
- * Admission control for a durable create: refuse once the session already holds
- * MAX_DURABLE_MONITORS restart-surviving monitors, counting both the bound writer's entries
- * and the specs still queued for a writer. Checked BEFORE any spawn or registry registration
- * so a refused call leaves no PTY and no manifest entry behind. A context with no session
- * key persists nothing, so it has no durable population to cap.
+ * Admission control for a durable create. There is no cap unless `terminal.maxDurableMonitors`
+ * sets one; then refuse once the session already holds that many restart-surviving monitors,
+ * counting both the bound writer's entries and the specs still queued for a writer. Checked
+ * BEFORE any spawn or registry registration so a refused call leaves no PTY and no manifest
+ * entry behind. A context with no session key persists nothing, so it has no durable
+ * population to cap.
  */
 export function durableAdmissionError(ctx: TerminalToolContext): TerminalToolResult | undefined {
+	const limit = ctx.maxDurableMonitors ?? "unlimited";
+	if (limit === "unlimited") return undefined;
 	const sessionKey = manifestSessionKey(ctx);
 	if (sessionKey === undefined) return undefined;
 	const held = (manifestWriters.get(sessionKey)?.durableCount() ?? 0) + pendingDurableSpecCount(sessionKey);
-	if (held < MAX_DURABLE_MONITORS) return undefined;
+	if (held < limit) return undefined;
 	return errorResult(
-		`Cannot start another persistent monitor: this session already holds ${MAX_DURABLE_MONITORS} durable monitors (the maximum). Stop one with kill_bash first.`,
+		`Cannot start another persistent monitor: this session already holds ${limit} durable monitors, the limit set by terminal.maxDurableMonitors. Stop one with kill_bash first, or raise the setting.`,
 	);
 }

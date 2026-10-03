@@ -7,7 +7,7 @@ Senpi supports subscription-based providers via OAuth and API key providers via 
 - [Subscriptions](#subscriptions)
 - [API Keys](#api-keys)
 - [Auth File](#auth-file)
-- [Cloud Providers](#cloud-providers)
+- [Provider Specific Config](#provider-specific-config)
 - [Ollama Cloud](#ollama-cloud)
 - [llama.cpp](#llamacpp)
 - [Custom Providers](#custom-providers)
@@ -21,6 +21,7 @@ Use `/login` in interactive mode, then select a provider:
 - Claude Pro/Max
 - GitHub Copilot
 - xAI (Grok/X subscription)
+- Meta (Muse subscription)
 - OpenRouter (OAuth-minted API key billed from OpenRouter credits)
 - Kimi Code (kimi.com / kimi.ai subscriptions)
 - Radius
@@ -119,6 +120,11 @@ If your Claude Pro/Max subscription usage through `anthropic-subscription` feels
 
 - Run `/login xai`, then select **Use a subscription**
 - `XAI_API_KEY` remains available through **Use an API key**
+
+### Meta (Muse subscription)
+
+- Run `/login meta`, then select **Sign in with Meta** to use Muse Spark models with your Muse subscription; the Model API key is refreshed automatically
+- `META_API_KEY` remains available through **Use an API key**
 
 ### OpenRouter
 
@@ -282,6 +288,8 @@ senpi
 | Cloudflare AI Gateway | `CLOUDFLARE_API_KEY` (+ `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_GATEWAY_ID`) | `cloudflare-ai-gateway` |
 | Cloudflare Workers AI | `CLOUDFLARE_API_KEY` (+ `CLOUDFLARE_ACCOUNT_ID`) | `cloudflare-workers-ai` |
 | xAI | `XAI_API_KEY` | `xai` |
+| Meta | `META_API_KEY` | `meta` |
+| TypeSafe ([classifier models](models.md#classifier-models)) | `TYPESAFE_API_KEY` | `typesafe` |
 | OpenRouter | `OPENROUTER_API_KEY` | `openrouter` |
 | Vercel AI Gateway | `AI_GATEWAY_API_KEY` | `vercel-ai-gateway` |
 | OpenGateway | `OPENGATEWAY_API_KEY` | `opengateway` |
@@ -305,6 +313,8 @@ senpi
 | Xiaomi MiMo Token Plan (Amsterdam) | `XIAOMI_TOKEN_PLAN_AMS_API_KEY` | `xiaomi-token-plan-ams` |
 | Xiaomi MiMo Token Plan (Singapore) | `XIAOMI_TOKEN_PLAN_SGP_API_KEY` | `xiaomi-token-plan-sgp` |
 | Alibaba Token Plan (ap-southeast-1) | `ALIBABA_TOKEN_PLAN_API_KEY` | `alibaba-token-plan` |
+
+With no key or token set, Anthropic uses workload identity federation when `ANTHROPIC_FEDERATION_RULE_ID`, `ANTHROPIC_ORGANIZATION_ID` and `ANTHROPIC_IDENTITY_TOKEN_FILE` are set: the Anthropic SDK exchanges the identity token for a short-lived access token and refreshes it itself (re-reading the identity token file, so keep that file fresh for long sessions). `ANTHROPIC_SERVICE_ACCOUNT_ID` and `ANTHROPIC_WORKSPACE_ID` are passed through when set.
 
 #### OpenGateway
 
@@ -439,7 +449,7 @@ The `key` field supports command execution, environment interpolation, and liter
 
 OAuth credentials are also stored here after `/login` and managed automatically.
 
-## Cloud Providers
+## Provider Specific Config
 
 ### Azure OpenAI
 

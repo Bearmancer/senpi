@@ -1,4 +1,10 @@
-import { type Context, fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
+import {
+	fauxAssistantMessage,
+	fauxToolCall,
+	getCurrentSystemPrompt,
+	getCurrentTools,
+	type TranscriptContext,
+} from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { describe, expect, it } from "vitest";
 import type { ExtensionFactory } from "../../../src/index.ts";
@@ -12,11 +18,12 @@ interface ProviderRequest {
 
 const TOOL_ORDER = ["keep_read", "ask_like", "keep_write"];
 
-function recordRequest(requests: ProviderRequest[], context: Context): void {
+// Faux factories receive a TranscriptContext (A2 C-AI-2): prompt and declared tools live in system messages.
+function recordRequest(requests: ProviderRequest[], context: TranscriptContext): void {
 	requests.push({
-		tools: (context.tools ?? []).map((tool) => tool.name),
+		tools: getCurrentTools(context.messages).map((tool) => tool.name),
 		activeToolNames: context.activeToolNames,
-		systemPrompt: context.systemPrompt ?? "",
+		systemPrompt: getCurrentSystemPrompt(context.messages),
 	});
 }
 

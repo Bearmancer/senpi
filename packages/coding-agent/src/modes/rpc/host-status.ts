@@ -50,6 +50,10 @@ export interface HostStatusReport {
 	readonly engineVersion: string | null;
 	readonly capabilities: readonly string[];
 	readonly launchProfile: RpcLaunchProfile | null;
+	/** Content digest of the runtime the ANSWERING host loaded at startup; `null` when nothing answers or it predates the field. */
+	readonly runtimeBuildId: string | null;
+	/** The conditional idle handover the answering host holds (`handover_pending`, ...); `null` when it holds none. */
+	readonly handover: Readonly<Record<string, unknown>> | null;
 	readonly sessions: HostSessionCounts;
 	readonly zombies: number | null;
 	readonly rss_mb: number | null;
@@ -143,6 +147,8 @@ export async function probeHostStatus(
 		engineVersion: host?.engineVersion ?? current?.engineVersion ?? null,
 		capabilities: host?.capabilities ?? [],
 		launchProfile: host?.launch_profile ?? null,
+		runtimeBuildId: host?.runtimeBuildId ?? null,
+		handover: host?.handover ?? null,
 		sessions: countSessions(listing),
 		zombies: metrics.zombies,
 		rss_mb: metrics.rss_mb,

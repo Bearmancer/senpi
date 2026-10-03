@@ -1,3 +1,21 @@
+## 2026-10-01 - Share the declared skill payload path with read permissions (#2513)
+
+### What changed
+
+- `index.ts`: uses `skill-path.ts` for its module-relative skill location; read permissions consume that same location as a narrow shipped asset root.
+
+### Why
+
+- Development skill reads must remain prompt-free without trusting arbitrary files elsewhere in the source checkout.
+
+### Why an extension could not handle it
+
+- The builtin owns this resource's discovery path, and permissions run before the read tool.
+
+### Expected merge conflict zones
+
+- `index.ts`: skill-path import and module-relative lookup only; embedded-asset fallback is unchanged.
+
 ## 2026-09-23 - The release bundle resolves the embedded skill on Node and Bun (senpi#2028)
 
 ### What changed

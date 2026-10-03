@@ -115,12 +115,15 @@ export type HostRefusalReason = "protocol" | "capability" | "foreign_writer" | "
 export class HostEnsureRefusedError extends Error {
 	readonly socket: string;
 	readonly reason: HostRefusalReason;
+	/** What only the caller knows: which process is in the way, and how to clear it. */
+	readonly detail: string | undefined;
 
-	constructor(socket: string, reason: HostRefusalReason, host: HostProtocolInfo | undefined) {
-		super(`RPC socket ${socket} refused: ${reason} - ${refusalDetail(reason, host)}`);
+	constructor(socket: string, reason: HostRefusalReason, host: HostProtocolInfo | undefined, detail?: string) {
+		super(`RPC socket ${socket} refused: ${reason} - ${refusalDetail(reason, host)}${detail ? `: ${detail}` : ""}`);
 		this.name = "HostEnsureRefusedError";
 		this.socket = socket;
 		this.reason = reason;
+		this.detail = detail;
 	}
 }
 
@@ -135,7 +138,7 @@ function refusalDetail(reason: HostRefusalReason, host: HostProtocolInfo | undef
 		case "foreign_writer":
 			return "its pidfile was written by another process, so this one may not signal it; stop that host explicitly instead";
 		case "legacy_host":
-			return "a host from before the per-socket daemon directory is still running on this endpoint; it is never signalled, and no second host is started beside it";
+			return "a host from before the per-socket daemon directory is still running; it is drained and replaced only while it holds no session, and no second host is started beside it";
 		case "host_busy":
 			return "its socket accepts connections but did not answer inside the probe budget: a live host under load, which is never ended to make room for a replacement";
 		default:

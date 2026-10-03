@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { isMechanicalContinuationBlock } from "../../../src/core/extensions/builtin/goal/continuation-recovery.ts";
 import { readGoal } from "../../../src/core/extensions/builtin/goal/store.ts";
 import { goalStoreRef } from "../../../src/core/extensions/builtin/goal/store-ref.ts";
-import type { AgentEndEvent } from "../../../src/core/extensions/types.ts";
+import type { AgentEndEvent, ExtensionToolContext } from "../../../src/core/extensions/types.ts";
 import {
 	cleanupGoalMonitorTempDirs,
 	createGoalHarness,
@@ -44,7 +44,13 @@ async function setupGoal() {
 	const ctx = await makeGoalContext(notices, "provider-auth-block");
 	const create = harness.tools.get("create_goal");
 	if (create === undefined) throw new Error("create_goal was not registered");
-	await create.execute("create", { objective: "Finish the migration" }, undefined, undefined, ctx);
+	await create.execute(
+		"create",
+		{ objective: "Finish the migration" },
+		undefined,
+		undefined,
+		ctx as ExtensionToolContext,
+	);
 	await runGoalHandlers(harness.handlers, "agent_start", { type: "agent_start" }, ctx);
 	return { harness, ctx, notices, goal: await readGoal(goalStoreRef(ctx.sessionManager, ctx.cwd)) };
 }

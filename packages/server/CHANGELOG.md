@@ -8,6 +8,40 @@
 
 ### Fixed
 
+## [2026.10.2] - 2026-10-02
+
+### Breaking Changes
+
+- `SessionMetadata` is now exported by the server package and requires only `id`; the package no longer depends on the agent core package (inherited). The testing `TestServerHost` keeps an in-memory session map instead of a `MemorySessionRepo`, and `TestHarness` exposes `metadata` instead of `session`.
+
+### Changed
+
+### Fixed
+
+## [2026.10.1-3] - 2026-10-01
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.10.1-2] - 2026-10-01
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.10.1] - 2026-10-01
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
 ## [2026.9.30] - 2026-09-30
 
 ### Breaking Changes

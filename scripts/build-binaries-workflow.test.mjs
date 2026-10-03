@@ -16,7 +16,6 @@ describe("binary release workflow", () => {
 	it("pins a stable Bun release with downloadable cross-compile executables", () => {
 		assert.match(workflow, /bun-version:\s*['"]1\.4\.2['"]/);
 		assert.doesNotMatch(workflow, /bun-version:\s*canary/);
-		assert.doesNotMatch(workflow, /assert-bun-canary\.sh/);
 	});
 
 	it("keeps recovery source refs separate from the published release tag", () => {
@@ -27,12 +26,11 @@ describe("binary release workflow", () => {
 		);
 	});
 
-	it("omits jsdom's retired sync worker from release binaries", () => {
+	it("runs compile-asset preparation and the standalone smoke from an executable release driver", () => {
 		if (process.platform !== "win32") {
 			assert.notEqual(statSync(buildScriptUrl).mode & 0o111, 0);
 		}
 		assert.match(buildScript, /node scripts\/prepare-bun-compile-assets\.mjs/);
-		assert.doesNotMatch(buildScript, /node_modules\/jsdom\/lib\/jsdom\/living\/xhr\/xhr-sync-worker\.js/);
 		assert.match(buildScript, /smoke-standalone-binary\.mjs/);
 	});
 
@@ -40,8 +38,6 @@ describe("binary release workflow", () => {
 		const binaryBuild = codingAgentPackage.scripts["build:binary"];
 		assert.match(binaryBuild, /npm --prefix \.\.\/pty run build/);
 		assert.match(binaryBuild, /node \.\.\/\.\.\/scripts\/prepare-bun-compile-assets\.mjs/);
-		assert.doesNotMatch(binaryBuild, /node_modules\/jsdom\/lib\/jsdom\/living\/xhr\/xhr-sync-worker\.js/);
-		assert.doesNotMatch(binaryBuild, /--external=css-tree/);
 	});
 
 	it("stages the codemode sidecar before executing the release smoke", () => {

@@ -1,7 +1,8 @@
 import type { Api, Model } from "@earendil-works/pi-ai";
 import type { AutocompleteItem } from "@earendil-works/pi-tui";
 import type { ModelRegistry } from "../../model-registry.ts";
-import { SettingsManager } from "../../settings-manager.ts";
+import { type ModelServiceTier, SettingsManager } from "../../settings-manager.ts";
+import { serviceTierForProvider, ultrafastSelectionWarning } from "../../ultrafast-lanes.ts";
 import type { ExtensionAPI, ExtensionCommandContext, ServiceTier } from "../types.ts";
 
 export type { ServiceTier };
@@ -40,6 +41,12 @@ export function addServiceTierToPayload(api: Api | undefined, payload: unknown, 
 		...payload,
 		service_tier: serviceTier,
 	};
+}
+
+function removeServiceTierFromPayload(api: Api | undefined, payload: unknown): unknown {
+	if (!supportsServiceTier(api) || !isRecord(payload) || payload.service_tier === undefined) return payload;
+	const { service_tier: _serviceTier, ...rest } = payload;
+	return rest;
 }
 
 function getRequestModelId(modelRegistry: ModelRegistry, model: Model<Api>): string {
@@ -147,6 +154,12 @@ export async function applyFastMode(ctx: FastModeContext, enabled: boolean): Pro
 		return { enabled: false, applied: false, recordedTier: "auto", message };
 	}
 
+	if (ctx.serviceTier === "ultrafast") {
+		const message = "Service tier is fixed to ultrafast by the active model selection.";
+		ctx.notify(message, "info");
+		return { enabled: false, applied: false, recordedTier: "ultrafast", message };
+	}
+
 	if (!enabled && hasPriorityPin(ctx, model)) {
 		// The pin outranks the memory, so writing "auto" here would be a silent no-op on the wire.
 		const message = "Fast mode is fixed by the active model selection's priority tier.";
@@ -158,7 +171,7 @@ export async function applyFastMode(ctx: FastModeContext, enabled: boolean): Pro
 
 	const settingsManager = SettingsManager.create(ctx.cwd, ctx.agentDir, { projectTrusted: ctx.isProjectTrusted() });
 	const memoryModel = resolveServiceTierMemoryModel(ctx.modelRegistry, model);
-	const tier: ServiceTier = enabled ? PRIORITY_TIER : "auto";
+	const tier: ModelServiceTier = enabled ? "priority" : "auto";
 	settingsManager.setModelServiceTier(memoryModel.provider, memoryModel.id, tier);
 	await settingsManager.flush();
 
@@ -224,6 +237,7 @@ export default function serviceTierExtension(pi: ExtensionAPI): void {
 	 */
 	let liveMemoryTier: ServiceTier | undefined;
 	let liveMemoryKey: string | undefined;
+	let lastUltrafastWarningKey: string | undefined;
 
 	pi.on("session_start", async (_event, ctx) => {
 		const settingsManager = SettingsManager.create(ctx.cwd, ctx.agentDir, { projectTrusted: ctx.isProjectTrusted() });
@@ -258,9 +272,10 @@ export default function serviceTierExtension(pi: ExtensionAPI): void {
 		}
 
 		sessionFastMode =
-			baseModel !== undefined ||
-			remembered === PRIORITY_TIER ||
-			(remembered === undefined && ctx.serviceTier === PRIORITY_TIER);
+			ctx.serviceTier !== "ultrafast" &&
+			(baseModel !== undefined ||
+				remembered === PRIORITY_TIER ||
+				(remembered === undefined && ctx.serviceTier === PRIORITY_TIER));
 		pi.setSessionFastMode(sessionFastMode);
 		const memoryModel = resolveServiceTierMemoryModel(ctx.modelRegistry, model);
 		liveMemoryKey = `${memoryModel.provider}/${memoryModel.id}`;
@@ -283,11 +298,11 @@ export default function serviceTierExtension(pi: ExtensionAPI): void {
 		// there, but the session flag kept `isFastModeActive()` (and with it the RPC `fastMode` and the
 		// lightning indicator) claiming fast for a model that can never be served at that tier.
 		//
-		// Codex -> Codex is deliberately untouched: fast mode is a SESSION intent that survives a
+		// Except for an explicit Ultrafast selection, Codex -> Codex keeps the SESSION intent across a
 		// mid-session Codex switch (see service-tier-extension.test.ts "keeps session fast mode on
 		// across a mid-session switch to another Codex model"), and an incoming model's remembered
 		// "auto" is honored on the wire by `liveMemoryTier` below, not by clearing the flag here.
-		if (sessionFastMode && event.model.api !== OPENAI_CODEX_RESPONSES_API) {
+		if (sessionFastMode && (event.model.api !== OPENAI_CODEX_RESPONSES_API || ctx.serviceTier === "ultrafast")) {
 			sessionFastMode = false;
 			pi.setSessionFastMode(false);
 			return;
@@ -311,6 +326,7 @@ export default function serviceTierExtension(pi: ExtensionAPI): void {
 	pi.registerCommand("fast", {
 		description: "Turn ChatGPT Subscription fast mode on or off for the current model",
 		argumentHint: "[on|off]",
+		requiresArguments: false,
 		getArgumentCompletions: (prefix) => toCompletions(FAST_ARGUMENTS, prefix),
 		handler: async (args, ctx) => {
 			const argument = args.trim().toLowerCase();
@@ -337,7 +353,9 @@ export default function serviceTierExtension(pi: ExtensionAPI): void {
 
 	pi.on("before_provider_request", (event, ctx) => {
 		let effectiveServiceTier: ServiceTier | undefined;
-		if (ctx.model?.api === OPENAI_CODEX_RESPONSES_API) {
+		if (ctx.serviceTier === "ultrafast") {
+			effectiveServiceTier = ctx.serviceTier;
+		} else if (ctx.model?.api === OPENAI_CODEX_RESPONSES_API) {
 			if (sessionFastMode) {
 				effectiveServiceTier = PRIORITY_TIER;
 			} else {
@@ -364,6 +382,18 @@ export default function serviceTierExtension(pi: ExtensionAPI): void {
 		} else {
 			effectiveServiceTier = ctx.serviceTier ?? settingsServiceTier;
 		}
-		return addServiceTierToPayload(ctx.model?.api, event.payload, effectiveServiceTier);
+		const requestModel = ctx.model
+			? { provider: ctx.model.provider, id: getRequestModelId(ctx.modelRegistry, ctx.model) }
+			: undefined;
+		const warning = requestModel ? ultrafastSelectionWarning(requestModel, effectiveServiceTier) : undefined;
+		const warningKey = warning ? `${requestModel?.provider}/${requestModel?.id}:${warning}` : undefined;
+		if (warning && warningKey !== lastUltrafastWarningKey) ctx.ui.notify(warning, "warning");
+		lastUltrafastWarningKey = warningKey;
+
+		const providerServiceTier = serviceTierForProvider(ctx.model?.provider, effectiveServiceTier);
+		if (effectiveServiceTier === "ultrafast" && providerServiceTier === undefined) {
+			return removeServiceTierFromPayload(ctx.model?.api, event.payload);
+		}
+		return addServiceTierToPayload(ctx.model?.api, event.payload, providerServiceTier);
 	});
 }

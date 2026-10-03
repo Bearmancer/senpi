@@ -78,6 +78,8 @@ export type AuthenticatedQueryInput = {
 	env?: Record<string, string>;
 	signal?: AbortSignal;
 	sessionId?: string;
+	/** The requested model id: a usage limit on one model family blocks only that family (senpi#2555). */
+	model?: string;
 	/** Request-scoped CLI pin; takes precedence over persistent settings and account pins. */
 	pinnedAccount?: string;
 	onQuery?: (query: ReturnType<SdkQuery>) => void;
@@ -241,6 +243,7 @@ export async function* queryWithAuthLane(input: AuthenticatedQueryInput): AsyncG
 				sessionId: input.sessionId,
 				pinnedAccount: input.pinnedAccount ?? pool.pinnedAccount,
 				now: activeBoundary.now(),
+				...(input.model === undefined ? {} : { model: input.model }),
 			}),
 		runAttempt: async (slot) => {
 			const options = input.buildOptions(pool.lane);
@@ -258,6 +261,7 @@ export async function* queryWithAuthLane(input: AuthenticatedQueryInput): AsyncG
 		classify: classifySdkError,
 		store: pool.store,
 		providerId: ANTHROPIC_SUBSCRIPTION_PROVIDER_ID,
+		...(input.model === undefined ? {} : { model: input.model }),
 		now: activeBoundary.now,
 		errorFromEvent: sdkFailure,
 		isVisibleDelta: visibleSdkMessage,

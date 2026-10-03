@@ -1,6 +1,12 @@
 import { existsSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { AssistantImages, ImagesContext, ImagesModel, ProviderImagesOptions } from "@earendil-works/pi-ai/compat";
+import type {
+	AssistantImages,
+	ImageApi,
+	ImageModel,
+	ImagesContext,
+	ProviderImagesOptions,
+} from "@earendil-works/pi-ai/compat";
 import { registerImagesApiProvider, unregisterImagesApiProviders } from "@earendil-works/pi-ai/compat";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { setImageGenRegistry, setNativeBypass } from "../src/core/extensions/builtin/imagegen/state.ts";
@@ -15,7 +21,7 @@ const stub: { background: AssistantImages["background"]; mimeType: string | unde
 };
 const generate = vi.fn(
 	async (
-		model: ImagesModel<"openai-images">,
+		model: ImageModel<ImageApi>,
 		_context: ImagesContext,
 		options?: ProviderImagesOptions,
 	): Promise<AssistantImages> => ({

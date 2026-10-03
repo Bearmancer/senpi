@@ -1,5 +1,12 @@
 import { type Agent, buildProviderContext, type ThinkingLevel } from "@earendil-works/pi-agent-core";
-import type { ModelsSimpleStreamOptions, ProviderHeaders } from "@earendil-works/pi-ai";
+import {
+	type Context,
+	getCurrentSystemPrompt,
+	getCurrentTools,
+	type ModelsSimpleStreamOptions,
+	type ProviderHeaders,
+	type TranscriptContext,
+} from "@earendil-works/pi-ai";
 import { isValidThinkingLevel } from "../cli/args.ts";
 import type { ExtensionRunner } from "./extensions/runner.ts";
 import type {
@@ -105,7 +112,7 @@ export async function buildPromptCachePrefixRequest(
 	}
 	const prepared = await untilAborted(sources.modelRuntime.prepareSimpleRequest(model, options), signal);
 	if (prepared === CANCELLED) return cancelled(signal);
-	const context = await buildProviderContext(
+	const transcript = await buildProviderContext(
 		{
 			systemPrompt,
 			messages: [],
@@ -115,7 +122,25 @@ export async function buildPromptCachePrefixRequest(
 		{ convertToLlm: () => [], model },
 	);
 	if (signal.aborted) return cancelled(signal);
-	return { status: "ready", request: { model: prepared.model, context, options: prepared.options } };
+	return {
+		status: "ready",
+		request: { model: prepared.model, context: toPrefixContext(transcript), options: prepared.options },
+	};
+}
+
+/**
+ * `PromptCachePrefixRequest.context` is the pre-transcript `Context` that `warmPromptCache` and
+ * extensions read (`systemPrompt`, `tools`, `activeToolNames`). `buildProviderContext` returns the
+ * loop's `TranscriptContext`, whose prompt and tools live in the leading system message, so the
+ * declaration is replayed back out of it; the tools stay the loop's provider declarations.
+ */
+function toPrefixContext(transcript: TranscriptContext): Context {
+	return {
+		systemPrompt: getCurrentSystemPrompt(transcript.messages),
+		messages: transcript.messages.filter((message) => message.role !== "system"),
+		tools: getCurrentTools(transcript.messages),
+		...(transcript.activeToolNames === undefined ? {} : { activeToolNames: transcript.activeToolNames }),
+	};
 }
 
 async function composeTurnSystemPrompt(sources: PromptCachePrefixSources, signal: AbortSignal): Promise<string> {

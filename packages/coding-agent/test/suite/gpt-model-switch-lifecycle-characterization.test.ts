@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AssistantMessage, Context, Model, ToolResultMessage, Usage } from "@earendil-works/pi-ai";
+import { normalizeContext } from "@earendil-works/pi-ai";
 import { registerFauxProvider } from "@earendil-works/pi-ai/compat";
 import { afterEach, describe, expect, it } from "vitest";
 import { streamSimple as streamAnthropic } from "../../../ai/src/api/anthropic-messages.ts";
@@ -232,17 +233,17 @@ async function capturePayload(
 	};
 
 	if (api === "openai-responses") {
-		await streamResponses(makeModel(api, provider, modelId), context, {
+		await streamResponses(makeModel(api, provider, modelId), normalizeContext(context), {
 			apiKey: "fake-api-key",
 			onPayload,
 		}).result();
 	} else if (api === "openai-completions") {
-		await streamCompletions(makeModel(api, provider, modelId), context, {
+		await streamCompletions(makeModel(api, provider, modelId), normalizeContext(context), {
 			apiKey: "fake-api-key",
 			onPayload,
 		}).result();
 	} else {
-		await streamAnthropic(makeModel(api, provider, modelId), context, {
+		await streamAnthropic(makeModel(api, provider, modelId), normalizeContext(context), {
 			apiKey: "fake-api-key",
 			onPayload,
 		}).result();
@@ -542,7 +543,7 @@ describe("GPT model-switch lifecycle characterization", () => {
 		};
 		const wireInput = convertResponsesMessages(
 			makeModel("openai-responses", "openai", "gpt-5.5"),
-			context,
+			normalizeContext(context),
 			new Set(["openai"]),
 		);
 		const serialized = JSON.stringify(wireInput);
