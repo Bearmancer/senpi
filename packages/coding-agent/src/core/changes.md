@@ -1,3 +1,17 @@
+## 2026-10-03 - A model's free or plan limit falls back at once and keeps its reset window (senpi#2660)
+
+### What changed
+
+- `packages/coding-agent/src/core/retry-fallback/usage-limit.ts`: `usageLimitScope` also recognises a reached free, plan, tier or model limit whose message says to switch to a different model, scoped `model` because it names the model.
+
+### Why
+
+- `packages/coding-agent/src/core/retry-fallback/usage-limit.ts`: Devin's "Reached free model rate limit ... switch to a different model. Your limit will reset in 9 minutes" carried none of the existing usage-limit wording. With the Cursor signatures scoped to Cursor (packages/ai), the failure takes the rate-limited path, falls back to the next chain model on the first failure, and the refused model is cooled down for the stated window. `test/suite/regressions/issue-2660-devin-free-model-limit-fallback.test.ts` covers the immediate fallback and its `limit: "model"`, the 9-minute window with an injected clock, that a plain rate limit is not reported as a usage limit, and a near-threshold context; two of its cases fail on main.
+
+### Expected merge conflict zones
+
+- LOW: the pattern list at the top of `usage-limit.ts`.
+
 ## 2026-10-03 - A launch profile carries the session's own fallback policy (omo#9512)
 
 ### What changed

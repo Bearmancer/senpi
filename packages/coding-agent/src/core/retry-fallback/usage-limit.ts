@@ -16,6 +16,10 @@ export type UsageLimitScope = "model" | "account";
 // "You've hit your session limit · resets 3pm" and the SDK terminal reasons.
 const SUBSCRIPTION_LIMIT_PATTERN =
 	/\bhit\s+your\b[^.]*\blimit\b|\b(?:session|weekly|monthly|daily|hourly|\d+[- ]hour|usage)\s+limit\b|\bblocking_limit\b|\brapid_refill_breaker\b/i;
+// A plan cap that tells the user to switch models, e.g. Devin's "Reached free model rate limit. ...
+// switch to a different model" (senpi#2660). An ordinary "rate limit exceeded" stays transient.
+const PLAN_MODEL_LIMIT_PATTERN =
+	/\breached\b[^.]*\b(?:free|plan|tier|model)\b[^.]*\blimit\b[\s\S]*\bswitch to (?:a |an )?(?:different|another) model\b/i;
 const MODEL_SCOPE_PATTERN = /\bmodels?\b|\bpremium\b|\b(?:opus|sonnet|haiku|fable|mythos)\b/i;
 
 export function usageLimitScope(errorMessage: string | undefined): UsageLimitScope | undefined {
@@ -26,7 +30,8 @@ export function usageLimitScope(errorMessage: string | undefined): UsageLimitSco
 	const limited =
 		isQuotaExhaustionMessage(errorMessage) ||
 		isBillingErrorMessage(errorMessage) ||
-		SUBSCRIPTION_LIMIT_PATTERN.test(errorMessage);
+		SUBSCRIPTION_LIMIT_PATTERN.test(errorMessage) ||
+		PLAN_MODEL_LIMIT_PATTERN.test(errorMessage);
 	if (!limited) return undefined;
 	return MODEL_SCOPE_PATTERN.test(errorMessage) ? "model" : "account";
 }
