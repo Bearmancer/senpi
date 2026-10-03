@@ -207,8 +207,14 @@ export class SubprocessKernel {
 			: null;
 		this.memory?.processReplaced();
 		try {
+			const thresholds = this.options.memory?.thresholds;
 			process.send(
-				encodeBridgeFrame({ type: "init", sessionId: this.options.sessionId, connection: this.options.connection }),
+				encodeBridgeFrame({
+					type: "init",
+					sessionId: this.options.sessionId,
+					connection: this.options.connection,
+					...(thresholds === undefined ? {} : { memory: thresholds }),
+				}),
 			);
 		} catch (error) {
 			const failure = new KernelStartupError(error instanceof Error ? error.message : String(error));
