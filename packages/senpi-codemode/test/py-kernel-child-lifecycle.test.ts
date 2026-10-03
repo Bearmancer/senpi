@@ -82,7 +82,11 @@ function hostLossDriverSource(pidFile: string): string {
 		"if (!detected.ok) process.exit(3);",
 		"const kernel = await PythonKernel.start({ interpreterPath: detected.path, sessionId: 'host-loss', cwd: process.cwd(), connection: { port: 1, token: 'unused' } });",
 		// EOF on stdin means whoever started this driver is gone, however it ended: never outlive it.
-		"process.stdin.on('end', () => { void kernel.close().finally(() => process.exit(0)); });",
+		"process.stdin.on('end', () => {",
+		// A close that hangs must not keep the driver alive either: exit by a deadline regardless.
+		"  setTimeout(() => process.exit(1), 5_000).unref();",
+		"  void kernel.close().finally(() => process.exit(0));",
+		"});",
 		"process.stdin.resume();",
 		`void kernel.run({ cellId: 'blocking-child', code: ${JSON.stringify(cell)}, timeoutMs: 60_000 });`,
 		"await new Promise(() => {});",
