@@ -13,6 +13,7 @@
 ### Fixed
 
 - Quiet, detached worker sessions on the shared in-process RPC host now release their runtimes on the next occupancy sweep once their history is persisted, while active jobs, wake sources, queued deliveries, and requests remain protected. Observational session commands such as `get_state` and `memory_report` no longer prolong idle retention for detached sessions; attached clients polling `get_state` keep their session alive as before, and parked sessions reopen by path with their durable identity and history.
+- A first run with no provider configured no longer reports "Context remains above the compaction threshold" when a message is sent: a turn an extension triggers now checks the model and credentials first, as a typed prompt already did, and fails with the `/login` guidance; a model with an undeclared context window (0) is treated as unknown instead of always over the compaction threshold. A background turn refused that way is not reported as an extension error: the session emits `provider_required` (once, until a turn is admitted again) with the same guidance, for an extension's triggered turn and its `sendUserMessage` alike, and the TUI shows it unless the startup "No models available" warning has just said it ([#2677](https://github.com/code-yeongyu/senpi/issues/2677)).
 
 ### Removed
 
