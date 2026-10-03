@@ -197,6 +197,24 @@ describe("IdleParkingKernel", () => {
 		await parked.close();
 	});
 
+	it("Given a kernel whose cells defined tools when it stays idle then it is never parked, and it parks once the tools are gone", async () => {
+		const first = fakeKernel(1);
+		let names = ["add"];
+		first.listKernelToolNames = () => names;
+		const onParked = vi.fn();
+		const parked = new IdleParkingKernel("js", 1, first, async () => fakeKernel(2), onParked);
+
+		await vi.advanceTimersByTimeAsync(10 * MINUTE);
+		expect(first.closed).toBe(false);
+		expect(onParked).not.toHaveBeenCalled();
+
+		names = [];
+		await vi.advanceTimersByTimeAsync(MINUTE);
+		expect(first.closed).toBe(true);
+		expect(onParked).toHaveBeenCalledTimes(1);
+		await parked.close();
+	});
+
 	it("Given a kernel without kernel tools when it is wrapped then the wrapper does not claim to have them", async () => {
 		const parked = new IdleParkingKernel("py", 1, fakeKernel(1), async () => fakeKernel(2));
 

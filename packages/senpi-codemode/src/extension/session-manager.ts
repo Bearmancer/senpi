@@ -12,11 +12,11 @@ import { type BridgeToolCallRequest, routeBridgeToolCall } from "./bridge-tool-c
 import { parkWhenIdle } from "./idle-parking-kernel.ts";
 import {
 	javaScriptKernelMemory,
-	registerKernel,
+	SessionKernelRegistrations,
 	type StartedKernel,
 	startSubprocessKernel,
 } from "./kernel-registration.ts";
-import { kernelRegistry, type RegisteredKernelSource } from "./kernel-registry.ts";
+import type { RegisteredKernelSource } from "./kernel-registry.ts";
 import { ReplaceableKernel } from "./kernel-replacement.ts";
 import { assertSessionCwdAvailable } from "./session-cwd.ts";
 import type {
@@ -60,7 +60,7 @@ class DefaultCodemodeSessionManager implements CodemodeSessionManager {
 	readonly #options: CreateCodemodeSessionManagerOptions;
 	#bridge: BridgeServerHandle | undefined;
 	#kernels = new Map<EvalLanguage, EvalKernel>();
-	readonly #registrations = new Map<EvalLanguage, string>();
+	readonly #registrations: SessionKernelRegistrations;
 	#kernelCreations = new Map<EvalLanguage, Promise<EvalKernel>>();
 	#onMessageRefs = new Map<EvalLanguage, (message: KernelToHostMessage) => void>();
 	#context: ExtensionContext | undefined;
@@ -69,6 +69,7 @@ class DefaultCodemodeSessionManager implements CodemodeSessionManager {
 
 	constructor(options: CreateCodemodeSessionManagerOptions) {
 		this.#options = options;
+		this.#registrations = new SessionKernelRegistrations(options.ownerSessionId ?? options.sessionId);
 	}
 
 	async start(): Promise<void> {
@@ -148,7 +149,6 @@ class DefaultCodemodeSessionManager implements CodemodeSessionManager {
 		const kernels = [...this.#kernels.values()];
 		const bridge = this.#bridge;
 		this.#kernels.clear();
-		for (const id of this.#registrations.values()) kernelRegistry.unregister(id);
 		this.#registrations.clear();
 		this.#onMessageRefs.clear();
 		this.#bridge = undefined;
@@ -174,21 +174,27 @@ class DefaultCodemodeSessionManager implements CodemodeSessionManager {
 		await assertSessionCwdAvailable(this.#options.cwd);
 		const started = await this.#startLanguageKernel(language, onMessage);
 		const idleParkMinutes = this.#options.settings.memory?.idleParkMinutes ?? 0;
-		const resolvedKernel = parkWhenIdle(language, idleParkMinutes, started.kernel, async () => {
-			const restarted = await this.#startLanguageKernel(language, onMessage);
-			if (generation !== this.#generation) {
-				await restarted.kernel.close();
-				throw new CodemodeSessionDisposedError();
-			}
-			this.#register(language, restarted.memory);
-			return restarted.kernel;
-		});
+		const resolvedKernel = parkWhenIdle(
+			language,
+			idleParkMinutes,
+			started.kernel,
+			async () => {
+				const restarted = await this.#startLanguageKernel(language, onMessage);
+				if (generation !== this.#generation) {
+					await restarted.kernel.close();
+					throw new CodemodeSessionDisposedError();
+				}
+				this.#registrations.register(language, restarted.memory);
+				return restarted.kernel;
+			},
+			() => this.#registrations.unregister(language),
+		);
 		if (generation !== this.#generation) {
 			await resolvedKernel.close();
 			throw new CodemodeSessionDisposedError();
 		}
 		this.#kernels.set(language, resolvedKernel);
-		this.#register(language, started.memory);
+		this.#registrations.register(language, started.memory);
 		// The directory can vanish while the interpreter starts; every caller sharing this creation
 		// must see that, not only the next one. The kernel stays stored and dispose still closes it.
 		await assertSessionCwdAvailable(this.#options.cwd);
@@ -211,13 +217,6 @@ class DefaultCodemodeSessionManager implements CodemodeSessionManager {
 			return created.kernel;
 		});
 		return { kernel, memory };
-	}
-
-	#register(language: EvalLanguage, memory: RegisteredKernelSource | undefined): void {
-		const previous = this.#registrations.get(language);
-		if (previous !== undefined) kernelRegistry.unregister(previous);
-		const owner = this.#options.ownerSessionId ?? this.#options.sessionId;
-		this.#registrations.set(language, registerKernel(owner, language, memory as RegisteredKernelSource));
 	}
 
 	async #createKernel(

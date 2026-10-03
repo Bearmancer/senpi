@@ -3,6 +3,9 @@ import { type Static, Type } from "typebox";
 import type { KernelMemoryThresholds } from "../bridge/memory-protocol.ts";
 import type { CodemodeSettings, Environment } from "./settings.ts";
 
+// The longest delay setTimeout honours (2^31 - 1 ms); a longer one fires after 1 ms.
+export const MAX_IDLE_PARK_MINUTES = 35_791;
+
 export const memorySettingsSchema = Type.Object(
 	{
 		gcWatermarkMb: Type.Optional(Type.Number({ minimum: 0 })),
@@ -10,7 +13,7 @@ export const memorySettingsSchema = Type.Object(
 		ceilingMb: Type.Optional(Type.Number({ minimum: 0 })),
 		retainedResultsMb: Type.Optional(Type.Number({ minimum: 0 })),
 		retainedImagesMb: Type.Optional(Type.Number({ minimum: 0 })),
-		idleParkMinutes: Type.Optional(Type.Number({ minimum: 0 })),
+		idleParkMinutes: Type.Optional(Type.Number({ minimum: 0, maximum: MAX_IDLE_PARK_MINUTES })),
 	},
 	{ additionalProperties: false },
 );

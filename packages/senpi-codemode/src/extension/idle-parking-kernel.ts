@@ -1,10 +1,5 @@
 import type { HostToKernelMessage } from "../bridge/protocol.ts";
 import { kernelToolError } from "../kernels/js/kernel-tools-errors.ts";
-import type {
-	KernelToolsDescribeResult,
-	KernelToolsInvokeOptions,
-	KernelToolsInvokeRequest,
-} from "../kernels/js/kernel-tools-types.ts";
 import { restartNotice, unstartedResult } from "../kernels/shared/kernel-death.ts";
 import type {
 	EvalKernel,
@@ -13,6 +8,7 @@ import type {
 	EvalLanguage,
 	KernelInterruptHandle,
 } from "../tool/types.ts";
+import { hasKernelTools, type KernelToolsMethods } from "./kernel-tools-probe.ts";
 
 export type RestartParkedKernel = () => Promise<EvalKernel>;
 
@@ -28,20 +24,6 @@ interface WaitingCell {
 	readonly cancel: (reason: string) => void;
 }
 
-/** The kernel-tools surface a JavaScript kernel exposes; `run-eval-cell` finds it by probing for these methods. */
-interface KernelToolsMethods {
-	describeKernelTools(names: readonly string[]): Promise<KernelToolsDescribeResult>;
-	invokeKernelTool(
-		request: KernelToolsInvokeRequest,
-		options?: AbortSignal | KernelToolsInvokeOptions,
-	): Promise<unknown>;
-}
-
-function hasKernelTools(kernel: EvalKernel): kernel is EvalKernel & KernelToolsMethods {
-	const probe = kernel as Partial<KernelToolsMethods>;
-	return typeof probe.describeKernelTools === "function" && typeof probe.invokeKernelTool === "function";
-}
-
 /**
  * Opt-in (`memory.idleParkMinutes` > 0): once no cell has been running or queued on the session's kernel for
  * the configured time, closes it to give its memory back, and starts a fresh one when the next cell arrives.
@@ -53,6 +35,7 @@ export class IdleParkingKernel implements EvalKernel {
 	readonly #language: EvalLanguage;
 	readonly #idleMs: number;
 	readonly #restart: RestartParkedKernel;
+	readonly #onParked: () => void;
 	#kernel: EvalKernel | null;
 	#inFlight = 0;
 	#timer: ReturnType<typeof setTimeout> | undefined;
@@ -66,10 +49,17 @@ export class IdleParkingKernel implements EvalKernel {
 	declare readonly describeKernelTools?: KernelToolsMethods["describeKernelTools"];
 	declare readonly invokeKernelTool?: KernelToolsMethods["invokeKernelTool"];
 
-	constructor(language: EvalLanguage, idleMinutes: number, first: EvalKernel, restart: RestartParkedKernel) {
+	constructor(
+		language: EvalLanguage,
+		idleMinutes: number,
+		first: EvalKernel,
+		restart: RestartParkedKernel,
+		onParked: () => void = () => {},
+	) {
 		this.#language = language;
 		this.#idleMs = idleMinutes * 60_000;
 		this.#restart = restart;
+		this.#onParked = onParked;
 		this.#kernel = first;
 		if (hasKernelTools(first)) {
 			const tools: KernelToolsMethods = {
@@ -230,11 +220,14 @@ export class IdleParkingKernel implements EvalKernel {
 		const kernel = this.#kernel;
 		if (this.#closed || this.#inFlight > 0 || kernel === null) return;
 		const snapshot = kernel.queueSnapshot();
-		if (snapshot.activeCellId !== null || snapshot.queuedCellIds.length > 0) {
+		// Tools a cell defined stay callable by child tasks between cells, so their kernel is never parked.
+		const hasTools = (kernel.listKernelToolNames?.() ?? []).length > 0;
+		if (snapshot.activeCellId !== null || snapshot.queuedCellIds.length > 0 || hasTools) {
 			this.#arm();
 			return;
 		}
 		this.#kernel = null;
+		this.#onParked();
 		const parking = kernel
 			.close()
 			.catch((error: unknown) => {
@@ -269,8 +262,9 @@ export function parkWhenIdle(
 	idleMinutes: number,
 	kernel: EvalKernel,
 	restart: RestartParkedKernel,
+	onParked?: () => void,
 ): EvalKernel {
-	return idleMinutes > 0 ? new IdleParkingKernel(language, idleMinutes, kernel, restart) : kernel;
+	return idleMinutes > 0 ? new IdleParkingKernel(language, idleMinutes, kernel, restart, onParked) : kernel;
 }
 
 function errorText(error: unknown): string {
