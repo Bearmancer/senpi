@@ -181,6 +181,40 @@ export function sessionBrowserEngineError(value: unknown): string | undefined {
 	return `browserEngine must be "connected", "builtin" or "none".`;
 }
 
+const MAX_RETRY_FALLBACK_CHAINS = 32;
+const MAX_RETRY_FALLBACK_ENTRIES = 32;
+const MAX_RETRY_FALLBACK_SELECTOR_LENGTH = 512;
+
+/**
+ * Detail for an `open_session.retryFallback` the host refuses, or undefined when it is absent or well
+ * formed: `{ modelFallback: boolean, fallbackChains: Record<string, string[]> }`, at most 32 chains of at
+ * most 32 non-empty selectors. A malformed profile is refused rather than ignored, so a caller that asked
+ * for a chain never runs without one unknowingly.
+ */
+export function sessionRetryFallbackError(value: unknown): string | undefined {
+	if (value === undefined) return undefined;
+	const shape = "retryFallback must be { modelFallback: boolean, fallbackChains: Record<string, string[]> }.";
+	if (typeof value !== "object" || value === null || Array.isArray(value)) return shape;
+	const record = value as Record<string, unknown>;
+	if (typeof record.modelFallback !== "boolean") return shape;
+	const chains = record.fallbackChains;
+	if (typeof chains !== "object" || chains === null || Array.isArray(chains)) return shape;
+	const entries = Object.entries(chains as Record<string, unknown>);
+	if (entries.length > MAX_RETRY_FALLBACK_CHAINS)
+		return `retryFallback allows at most ${MAX_RETRY_FALLBACK_CHAINS} chains.`;
+	for (const [key, selectors] of entries) {
+		if (!isSelector(key)) return shape;
+		if (!Array.isArray(selectors) || !selectors.every(isSelector)) return shape;
+		if (selectors.length > MAX_RETRY_FALLBACK_ENTRIES)
+			return `retryFallback allows at most ${MAX_RETRY_FALLBACK_ENTRIES} entries per chain.`;
+	}
+	return undefined;
+}
+
+function isSelector(value: unknown): value is string {
+	return typeof value === "string" && value.trim().length > 0 && value.length <= MAX_RETRY_FALLBACK_SELECTOR_LENGTH;
+}
+
 export function rpcCommandShapeError(command: unknown): string | undefined {
 	if (typeof command !== "object" || command === null || Array.isArray(command)) {
 		return "RPC command must be a JSON object.";
