@@ -41,6 +41,7 @@
 		"CHANGELOG.md"
 	],
 	"scripts": {
+		"check:provider-defaults": "vitest run test/model-resolver.test.ts -t \"default model selection\"",
 		"clean": "shx rm -rf dist",
 		"build": "tsgo -p tsconfig.build.json && npm run copy-assets && shx chmod +x dist/cli.js dist/rpc-entry.js && shx cp dist/cli.js dist/senpi && shx chmod +x dist/senpi && npm run build:bundle",
 		"build:bundle": "node ../../scripts/build-coding-agent-bundle.mjs",

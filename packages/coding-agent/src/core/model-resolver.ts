@@ -54,7 +54,7 @@ export const defaultModelPerProvider: Record<string, string> = {
 	cursor: "auto",
 	// Radius resolves its catalog after discovery; "balanced" is the selectable default.
 	radius: "balanced",
-	nvidia: "nvidia/nemotron-3-super-120b-a12b",
+	nvidia: "nvidia/nemotron-3-ultra-550b-a55b",
 	deepseek: "deepseek-v4-pro",
 	google: "gemini-3.1-pro-preview",
 	"google-vertex": "gemini-3.1-pro-preview",

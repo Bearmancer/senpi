@@ -35,11 +35,12 @@ import { syncRemoteMainBeforePush } from "./release-git.mjs";
 import {
 	runClaudeCodeModelSupportReport,
 	runGenerateModels,
+	runProviderDefaultsCheck,
 	runInstallLock,
 	runPackageLockRefresh,
 } from "./release-artifacts.mjs";
 import { reAddUnreleasedSections, stampChangelogs } from "./release-changelog.mjs";
-import { decideTestGate } from "./release-test-gate.mjs";
+import { catalogChangedSinceHead, decideTestGate } from "./release-test-gate.mjs";
 import { applyWorkspaceVersions, runSyncVersions } from "./release-packages.mjs";
 
 const VERSION_RE = /^\d{4}\.\d{1,2}\.\d{1,2}(-\d+)?$/;
@@ -266,7 +267,7 @@ function lookupCiCheckRuns(sha) {
 	}
 }
 
-function runTests(dryRun, forceTests) {
+function runTests(dryRun, forceTests, catalogChanged) {
 	if (dryRun) {
 		const sha = captureCommand("git", ["rev-parse", "HEAD"]).trim();
 		const checkRuns = lookupCiCheckRuns(sha);
@@ -276,7 +277,7 @@ function runTests(dryRun, forceTests) {
 		return;
 	}
 	const sha = captureCommand("git", ["rev-parse", "HEAD"]).trim();
-	const decision = decideTestGate({ forceTests, dryRun: false, sha, checkRuns: lookupCiCheckRuns(sha) });
+	const decision = decideTestGate({ forceTests, dryRun: false, sha, checkRuns: lookupCiCheckRuns(sha), catalogChanged });
 	log(`test gate: ${decision.reason}`);
 	if (decision.skip) {
 		return;
@@ -311,13 +312,16 @@ function main() {
 	runSyncVersions(args.dryRun, runCommand, log, dryRunLog);
 	runPackageLockRefresh(args.dryRun, runCommand, log, dryRunLog);
 	runGenerateModels(args.dryRun, runCommand, log, dryRunLog);
+	runProviderDefaultsCheck(args.dryRun, runCommand, log, dryRunLog);
+	// Read before anything is committed: HEAD still holds the pre-regeneration catalog.
+	const catalogChanged = !args.dryRun && catalogChangedSinceHead(process.cwd());
 	runClaudeCodeModelSupportReport(args.dryRun, runCommand, log, dryRunLog);
 	runInstallLock(args.dryRun, runCommand, log, dryRunLog);
 	stampChangelogs(version, date, args.dryRun, capturedChangelogSubsections, log, dryRunLog);
 	runCheck(args.dryRun);
 	runClean(args.dryRun);
 	runBuild(args.dryRun);
-	runTests(args.dryRun, args.forceTests);
+	runTests(args.dryRun, args.forceTests, catalogChanged);
 
 	stageChangedFiles(args.dryRun);
 	gitCommit(`release: v${version}`, args.dryRun);

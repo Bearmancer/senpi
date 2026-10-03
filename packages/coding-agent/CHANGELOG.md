@@ -11,6 +11,7 @@
 ### Fixed
 
 - Quiet, detached worker sessions on the shared in-process RPC host now release their runtimes on the next occupancy sweep once their history is persisted, while active jobs, wake sources, queued deliveries, and requests remain protected. Observational session commands such as `get_state` and `memory_report` no longer prolong idle retention for detached sessions; attached clients polling `get_state` keep their session alive as before, and parked sessions reopen by path with their durable identity and history.
+- `nvidia` starts on a model its catalog still has: the v2026.10.4 catalog no longer lists `nvidia/nemotron-3-super-120b-a12b`, so an NVIDIA-only user without a saved model silently started on the catalog's first entry (`deepseek-ai/deepseek-v4.1-flash`) instead of the provider default. The default is now `nvidia/nemotron-3-ultra-550b-a55b`, and a release now stops when a catalog regeneration drops any bundled provider's default ([#2645](https://github.com/code-yeongyu/senpi/issues/2645)).
 
 ### Removed
 
