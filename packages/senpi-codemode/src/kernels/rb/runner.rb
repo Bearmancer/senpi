@@ -126,7 +126,7 @@ end
 $__senpi_memory = nil
 
 SENPI_SIZER_SAMPLE = 1_000
-SENPI_SIZER_NODE_BUDGET = 20_000
+SENPI_SIZER_NODE_BUDGET = 5_000
 SENPI_SIZER_MAX_DEPTH = 64
 SENPI_SIZER_POINTER = 8
 SENPI_SIZER_OBJECT = 40
@@ -140,7 +140,8 @@ SENPI_IVARS = Kernel.instance_method(:instance_variables)
 SENPI_IVAR_GET = Kernel.instance_method(:instance_variable_get)
 
 # Sizes a global without running user code: built-ins are read through their own unbound methods, so an
-# override in a subclass is never called. Collections are sampled and one node budget bounds the walk.
+# override in a subclass is never called. Collections are sampled, and each global gets its own node
+# budget (leaves count against it too), so one deep global never hides the ones measured after it.
 class SenpiGlobalSizer
   attr_reader :approximate
 
@@ -152,6 +153,7 @@ class SenpiGlobalSizer
 
   def measure(value)
     @approximate = false
+    @nodes = 0
     SENPI_SIZER_POINTER + size(value, 0)
   end
 
@@ -161,15 +163,14 @@ class SenpiGlobalSizer
     return 0 if NilClass === value || TrueClass === value || FalseClass === value || Symbol === value
     return ObjectSpace.memsize_of(value) if Integer === value || Float === value
     return 0 if @seen.key?(value)
-    if depth >= SENPI_SIZER_MAX_DEPTH || @nodes >= SENPI_SIZER_NODE_BUDGET
-      @approximate = true
-      return 0
-    end
     @seen[value] = true
     @nodes += 1
-    if String === value
-      SENPI_SIZER_OBJECT + SENPI_STRING_BYTESIZE.bind_call(value)
-    elsif Array === value
+    return SENPI_SIZER_OBJECT + SENPI_STRING_BYTESIZE.bind_call(value) if String === value
+    if depth >= SENPI_SIZER_MAX_DEPTH || @nodes >= SENPI_SIZER_NODE_BUDGET
+      @approximate = true
+      return ObjectSpace.memsize_of(value)
+    end
+    if Array === value
       length = SENPI_ARRAY_SIZE.bind_call(value)
       SENPI_SIZER_OBJECT + length * SENPI_SIZER_POINTER + sampled(length, depth) { |index| SENPI_ARRAY_AT.bind_call(value, index) }
     elsif Hash === value
@@ -193,17 +194,24 @@ class SenpiGlobalSizer
     SENPI_SIZER_OBJECT + count * 2 * SENPI_SIZER_POINTER + (taken.zero? ? 0 : total * count / taken)
   end
 
+  # Up to SENPI_SIZER_SAMPLE evenly spaced elements; when the walk budget runs out part-way, the elements
+  # measured so far stand in for the rest, so a cut-short container is scaled up, not under-counted.
   def sampled(length, depth)
-    if length <= SENPI_SIZER_SAMPLE
-      total = 0
-      length.times { |index| total += size(yield(index), depth + 1) }
-      return total
-    end
-    @approximate = true
-    step = length.to_f / SENPI_SIZER_SAMPLE
+    return 0 if length.zero?
+    picks = [length, SENPI_SIZER_SAMPLE].min
+    @approximate = true if picks < length
+    step = length.to_f / picks
     total = 0
-    SENPI_SIZER_SAMPLE.times { |sample| total += size(yield((sample * step).floor), depth + 1) }
-    (total.to_f / SENPI_SIZER_SAMPLE * length).round
+    measured = 0
+    picks.times do |sample|
+      if @nodes >= SENPI_SIZER_NODE_BUDGET
+        @approximate = true
+        break
+      end
+      total += size(yield((sample * step).floor), depth + 1)
+      measured += 1
+    end
+    measured.zero? ? 0 : (total.to_f / measured * length).round
   end
 end
 
@@ -236,7 +244,8 @@ end
 def __senpi_memory_report
   return nil if $__senpi_memory.nil?
   named = __senpi_largest_globals(5)
-  report = { "liveBytes" => named.sum { |entry| entry["bytes"] }, "measure" => "footprint", "approximate" => true }
+  # The host replaces liveBytes with the interpreter footprint it reads itself; only globals is used.
+  report = { "liveBytes" => 0, "measure" => "footprint" }
   report["globals"] = named unless named.empty?
   report
 rescue StandardError

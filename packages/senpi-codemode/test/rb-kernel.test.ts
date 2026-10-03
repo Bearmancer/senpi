@@ -229,8 +229,17 @@ describe("RubyKernel", () => {
 
 					const rows = await kernel.run({
 						cellId: "rows",
-						code: 'system("false"); rows = Array.new(300_000) { |i| "x" * 200 + i.to_s }; nil',
-						timeoutMs: 15_000,
+						code: [
+							'system("false")',
+							'stdout_read.instance_variable_set(:@pad, "p" * 2_000_000)',
+							'$LOADED_FEATURES << ("q" * 2_000_000)',
+							'big = "x" * 30_000_000',
+							// 90,000 nodes: far past one global's walk budget, small enough to stay under the 512 MiB ceiling.
+							'nested = Array.new(300) { Array.new(300) { "y" * 10 } }',
+							'rows = Array.new(300_000) { |i| "x" * 200 + i.to_s }',
+							"nil",
+						].join("; "),
+						timeoutMs: 30_000,
 					});
 					const named = rows.memory?.globals ?? [];
 					const sizedRows = named.find((global) => global.name === "rows");
@@ -243,9 +252,13 @@ describe("RubyKernel", () => {
 						"stderr_write",
 						"$stdout",
 						"$LOAD_PATH",
+						"$LOADED_FEATURES",
+						'$"',
 					]) {
 						expect(named.map((global) => global.name)).not.toContain(internal);
 					}
+					expect(named.find((global) => global.name === "big")?.bytes).toBeGreaterThanOrEqual(25 * MiB);
+					expect(named.map((global) => global.name)).toContain("nested");
 
 					const status = await kernel.run({ cellId: "status", code: "$?.exitstatus", timeoutMs: 15_000 });
 					expect(status).toMatchObject({ ok: true, valueRepr: "1" });
