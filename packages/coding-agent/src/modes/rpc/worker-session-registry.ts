@@ -3,6 +3,7 @@ import { ProviderScope } from "@earendil-works/pi-ai/node/provider-scope";
 import type { PromptSurface } from "../../core/dynamic-prompt/types.ts";
 import { assertValidSessionId } from "../../core/session-manager.ts";
 import type { CliRuntimeConfiguration } from "../../main.ts";
+import { refreshesSessionActivity } from "./session-command-activity.ts";
 import {
 	type LiveWorkerPaths,
 	RESERVATION_DENIAL_CODES,
@@ -166,7 +167,7 @@ export class WorkerSessionRegistry {
 		)
 			throw new RpcSessionRegistryError("session_closing");
 		if (entry.state !== "open" && entry.state !== "closing") throw new RpcSessionRegistryError("unknown_session");
-		entry.lastCommandAt = this.now();
+		if (refreshesSessionActivity(command)) entry.lastCommandAt = this.now();
 		return entry;
 	}
 

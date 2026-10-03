@@ -994,7 +994,7 @@ extensions and contents; neither runtime provides process-fatal OOM containment.
 
 What the host does enforce are lifecycle windows, and they only ever return memory from work nobody is doing:
 
-- **Idle eviction**: a session with no routed command and no session-owned work for
+- **Idle eviction**: a session with no activity-changing command and no session-owned work for
   `SENPI_RPC_SESSION_IDLE_EVICTION_MS` (default 30 minutes) is closed through the exact `close_session` sequence
   (abort → waitForIdle → dispose, all attachments drained, path reservation released) and every attached connection
   receives that handle's `session_closed { reason: "idle_evicted" }` broadcast plus a final `close_session` response
@@ -1013,6 +1013,16 @@ What the host does enforce are lifecycle windows, and they only ever return memo
   background terminal jobs and any other published wake source (terminal monitors, loop-guard holds), compaction,
   and barrier-held session work all defer eviction, and the idle clock restarts when that work settles. An evicted
   session resumes like any other: the next `open_session` with the same `sessionPath` reopens it.
+- **Observational reads**: session state, history, model/auth inventory, loaded surfaces, and `memory_report`
+  do not restart the idle clock in either runtime. In particular, polling `get_state` does not keep an otherwise
+  idle session resident. Commands that change the session still restart the clock. An in-flight request or
+  prompt preflight prevents the occupancy sweep from tearing its session down while the request is running.
+- **Completed detached workers**: on the in-process runtime, a retained `kind: "worker"` session with zero
+  attachments is parked on the next occupancy sweep once its transcript is flushed and it has no session-owned
+  work, queued input, admitted unwritten delivery, pending prompt, or in-flight request. It does not wait out the
+  normal idle window. This releases its runtime and eval kernels, not its durable history: reopen its
+  `sessionPath` to continue under a new routing handle. Active monitors and other wake sources still prevent
+  early parking. Unflushed workers, worker-isolate runtimes, and interactive sessions keep their normal window.
 - **Worker capacity** (worker runtime ONLY - a stdio host, `--listen stdio://`, an embedder, or a socket host that
   passed `--session-runtime worker` explicitly): at most 20 workers may be preparing, open, closing, or quarantined
   together, because each one is an isolate the host must keep alive. Admission beyond this bound fails explicitly
@@ -1029,7 +1039,8 @@ What the host does enforce are lifecycle windows, and they only ever return memo
   `open_session` with that `sessionPath` — from any connection — attaches to the same routing handle and returns
   `attached: true`. Retention never outranks an explicit teardown: a `close_session` from an attached connection still
   reaches zero attachments and closes the session, host shutdown closes it, and the idle-eviction window above still
-  parks it — announced as `session_parked { sessionId, sessionPath }`, after which the file reopens by path like any
+  parks it (or the completed-detached-worker rule above parks it sooner) — announced as
+  `session_parked { sessionId, sessionPath }`, after which the file reopens by path like any
   evicted session, and the parked session counts as gone for the empty-host exit below. It is also bounded by the empty-host exit
   and the supervisor's idle-exit window below: retention survives a client, not the host. Any attach may turn retention
   on for a live session; no attach turns it off for clients that already rely on it. Omitting the flag is byte-identical

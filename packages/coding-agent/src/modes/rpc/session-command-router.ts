@@ -433,7 +433,13 @@ export class SessionCommandRouter {
 	sweepIdleSessions(): void {
 		const now = this.idleNow();
 		const idleEvictionMs = this.memoryPressure ? this.idleEvictionMs / 2 : this.idleEvictionMs;
-		const verdicts = selectSweepEvictions(this.registry, now, idleEvictionMs);
+		const verdicts = selectSweepEvictions(
+			this.registry,
+			now,
+			idleEvictionMs,
+			(sessionId) =>
+				this.activeRequests.has(sessionId) || (this.bindings.get(sessionId)?.pendingPrompts?.().length ?? 0) > 0,
+		);
 		for (const sessionId of verdicts.orphaned) void this.evictIdleSession(sessionId, "session_dir_removed");
 		for (const sessionId of verdicts.idle) void this.evictIdleSession(sessionId);
 		if (Number.isFinite(this.emptyExitMs)) {

@@ -4877,3 +4877,23 @@ The host decision runs in the client before any session or extension exists; the
 ### Expected merge conflict zones
 
 `covers()` and `profileWarning()` in `host-decision.ts`, and the profile rows in `test/suite/host-decision.test.ts`.
+
+## 2026-10-03 - Reclaim quiet detached workers without observation heartbeats
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/session-sweep.ts`: a retained, detached in-process worker with a flushed transcript and no active work or queued delivery parks on the next sweep rather than after the full idle window.
+- `packages/coding-agent/src/modes/rpc/session-command-router.ts`: occupancy sweeps protect in-flight requests and prompt preflight.
+- `packages/coding-agent/src/modes/rpc/session-command-activity.ts`, `packages/coding-agent/src/modes/rpc/session-registry.ts`, and `packages/coding-agent/src/modes/rpc/worker-session-registry.ts`: explicitly enumerated observational commands, including `get_state` and `memory_report`, no longer refresh the idle clock in either runtime.
+
+### Why
+
+- Completed retained workers otherwise hold runtimes and eval kernels for the whole idle window; status polling can extend that window indefinitely. Durable transcripts permit reopening after the existing park/disposal path.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/rpc/session-sweep.ts` and `packages/coding-agent/src/modes/rpc/session-command-router.ts` own attachment-aware reclamation and request admission. The two registries own idle timestamps before extension dispatch.
+
+### Expected merge conflict zones
+
+- Occupancy selection in `packages/coding-agent/src/modes/rpc/session-sweep.ts` and `packages/coding-agent/src/modes/rpc/session-command-router.ts`; `getForCommand` in `packages/coding-agent/src/modes/rpc/session-registry.ts` and `packages/coding-agent/src/modes/rpc/worker-session-registry.ts`.
