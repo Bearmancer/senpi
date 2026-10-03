@@ -1,3 +1,24 @@
+## 2026-10-03 - A session's own fallback chain on open_session (omo#9512)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`, `rpc-client.ts`: `open_session.retryFallback?: { modelFallback, fallbackChains }`.
+- `packages/coding-agent/src/modes/rpc/rpc-input-validation.ts`: `sessionRetryFallbackError` refuses a malformed profile (missing `modelFallback`, non-string or empty selectors, selectors over 512 characters, more than 32 chains or 32 entries) with `invalid_launch_profile`; `test/suite/rpc-open-session-retry-fallback.test.ts` pins both sides of each limit and that an attach keeps the policy the session was created with.
+- `packages/coding-agent/src/modes/rpc/session-command-router.ts`: validates the field, passes it into the launch profile, and advertises `retry_fallback_profile` (`custom-capability.ts`).
+- `packages/coding-agent/src/modes/rpc/session-registry-types.ts`: `frozenProfile` deep-freezes the profile's chains.
+
+### Why
+
+- A task child opened on a shared host had no way to receive its own fallback chain: the extension-side setters (`ctx.sessionSettings.setFallbackChain`) write the host's global settings file, which would leak one child's chain to every session and into the user's settings. The chain now travels with the session's launch profile.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`, `rpc-client.ts`, `rpc-input-validation.ts`, `session-command-router.ts`, `custom-capability.ts`, `session-registry-types.ts`: the field must be accepted, validated and advertised by the host before the session or any of its extensions exists, and the only extension-reachable settings setters persist to the host's global file.
+
+### Expected merge conflict zones
+
+- LOW: the `open_session` field list in `rpc-types.ts` and the capability list in `session-command-router.ts`.
+
 ## 2026-10-03 - `continue_from_leaf` command and model prefill capability (senpi#1930)
 
 ### What changed

@@ -229,6 +229,17 @@ export function getOverflowPatterns(): RegExp[] {
 	return [...OVERFLOW_PATTERNS];
 }
 
+const CURSOR_PROVIDERS: ReadonlySet<string> = new Set(["cursor", "cursor-cli-oauth"]);
+
+/**
+ * The zero-token / quota `resource_exhausted` signatures below describe Cursor's backend only.
+ * Other providers send `resource_exhausted` for their own rate and usage limits (senpi#2660), and
+ * reading those as a Cursor payload overflow or re-mint skips the fallback chain.
+ */
+function isCursorProviderMessage(message: { provider?: string }): boolean {
+	return message.provider === undefined || CURSOR_PROVIDERS.has(message.provider);
+}
+
 function cursorZeroTokenCount(message: {
 	usage?: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number; totalTokens?: number };
 }): number {
@@ -241,12 +252,14 @@ function cursorZeroTokenCount(message: {
 
 export function isCursorPayloadResourceExhausted(
 	message: {
+		provider?: string;
 		stopReason?: string;
 		errorMessage?: string;
 		usage?: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number; totalTokens?: number };
 	},
 	_estimateTokens: number,
 ): boolean {
+	if (!isCursorProviderMessage(message)) return false;
 	if (message.stopReason !== "error" || !/resource.?exhausted/i.test(message.errorMessage || "")) {
 		return false;
 	}
@@ -260,6 +273,7 @@ export function isCursorPayloadResourceExhausted(
  */
 export function isCursorQuotaResourceExhausted(
 	message: {
+		provider?: string;
 		stopReason?: string;
 		errorMessage?: string;
 		usage?: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number; totalTokens?: number };
@@ -268,6 +282,7 @@ export function isCursorQuotaResourceExhausted(
 ): boolean {
 	const tokens = cursorZeroTokenCount(message);
 	return (
+		isCursorProviderMessage(message) &&
 		message.stopReason === "error" &&
 		RESOURCE_EXHAUSTED_PATTERN.test(message.errorMessage || "") &&
 		contextWindow > 0 &&
@@ -277,10 +292,12 @@ export function isCursorQuotaResourceExhausted(
 }
 
 export function isCursorZeroTokenResourceExhausted(message: {
+	provider?: string;
 	stopReason?: string;
 	errorMessage?: string;
 	usage?: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number; totalTokens?: number };
 }): boolean {
+	if (!isCursorProviderMessage(message)) return false;
 	if (message.stopReason !== "error" || !/resource.?exhausted/i.test(message.errorMessage || "")) {
 		return false;
 	}
