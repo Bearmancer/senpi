@@ -32,10 +32,21 @@ function read(getter, value) {
 	return Reflect.apply(getter, value, []);
 }
 
-// The Blob brand, checked by its own size getter (which throws on anything else), not by instanceof:
+const GET_PROTOTYPE_OF = Object.getPrototypeOf;
+const BLOB_PROTOTYPE = typeof Blob === "function" ? Blob.prototype : undefined;
+
+function inheritsFromBlob(value) {
+	for (let prototype = GET_PROTOTYPE_OF(value); prototype !== null; prototype = GET_PROTOTYPE_OF(prototype)) {
+		if (prototype === BLOB_PROTOTYPE) return true;
+	}
+	return false;
+}
+
+// The Blob brand: a cheap prototype-chain pre-check (no user hook; proxies never reach here) so ordinary
+// objects skip the try, then the size getter as the proof, which throws on a forged look-alike.
 // instanceof would call a user-redefinable Symbol.hasInstance.
 function isBlob(value) {
-	if (BLOB_SIZE === undefined) return false;
+	if (BLOB_SIZE === undefined || !inheritsFromBlob(value)) return false;
 	try {
 		read(BLOB_SIZE, value);
 		return true;
