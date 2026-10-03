@@ -171,6 +171,12 @@
 				"legacyContracts/test/session-env.test.ts/session environment contract replaces an inherited browser engine with the session's own and clears it for a session with none"
 			],
 			"reason": "senpi#2611: OMO_BROWSER_ENGINE joins the per-session eval kernel environment keys; these witnesses prove each kernel sees only its own session's engine and that a host-process value never reaches a session that chose none. No prompt, schema, helper or invariant cell changes."
+		},
+		"senpi#2619": {
+			"additions": [
+				"legacyContracts/test/py-kernel.test.ts/PythonKernel live reaches the loopback bridge even when a proxy is configured"
+			],
+			"reason": "Adds a witness that a Python cell's bridge call ignores a configured HTTP proxy (the loopback call opens through ProxyHandler({})). Test-only addition to the gate surface; the prelude change records no new helper, prompt or schema."
 		}
 	}
 }
