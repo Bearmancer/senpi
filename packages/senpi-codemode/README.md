@@ -173,6 +173,8 @@ Configuration is loaded in this order:
 | `prompt.advertiseHelpers` | `false` | When `true`, one pointer line to `tool_schema('eval:helpers')` is appended to the eval description. |
 | `kernelTools.enabled` | `true` | Allows cells to define kernel tools (`tool(fn)`, `@tool`). `false` makes them refuse with `tools_unavailable`. |
 
+The `languages.pyInterpreter`, `environments.*`, `isolation.*`, `sandbox.*`, `prompt.*` and `kernelTools.*` keys are accepted and validated now, with the defaults shown, which match today's behaviour. The effect each of those rows describes takes effect when its feature ships; until then, setting a key changes nothing.
+
 `SENPI_CODEMODE_PY`, `SENPI_CODEMODE_JS`, `SENPI_CODEMODE_RB`, and
 `SENPI_CODEMODE_JL` override the corresponding file setting. `1` or `true`
 enables; `0` or `false` disables. Any other value leaves the file setting in
