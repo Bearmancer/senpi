@@ -123,6 +123,13 @@
 			],
 			"reason": "Ruby and Julia kernels get a no-progress startup watchdog (two new modules in the scoped census) with its contracts; two tests pin the one-spawn replacement node 5 already delivers."
 		},
+		"8": {
+			"additions": [
+				"imports/extension/packages/senpi-codemode/src/extension/bridge-tool-call.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/extension/bridge-tool-call.ts"
+			],
+			"reason": "The session manager's bridge tool-call routing moved into its own module (move-only), so the scoped census loads one more extension module."
+		},
 		"9": {
 			"additions": [
 				"legacyContracts/test/kernel-tools-descriptor-language.test.ts/kernel tool descriptors name any eval language Given a descriptor from a Python kernel when it is typed and validated then it is accepted",

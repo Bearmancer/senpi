@@ -2,15 +2,13 @@ import { join } from "node:path";
 import type { ExtensionContext } from "@code-yeongyu/senpi";
 import { type BridgeServerHandle, startBridgeServer } from "../bridge/http-server.ts";
 import type { KernelToHostMessage } from "../bridge/protocol.ts";
-import { isReservedToolName, runReservedTool } from "../bridges/reserved-dispatch.ts";
 import type { CompletionRequest, CompletionResult } from "../completion/handler.ts";
 import { resolveKernelMemoryThresholds } from "../config/memory-settings.ts";
-import { defaultCodemodeSettings } from "../config/settings.ts";
 import { collectOrphanedChildren } from "../host-sdk.ts";
 import { JavaScriptKernel } from "../kernels/js/context-manager.ts";
 import type { KernelLifecycle } from "../kernels/shared/kernel-death.ts";
-import { marshalToolResult } from "../tool/image.ts";
 import type { EvalKernel, EvalLanguage } from "../tool/types.ts";
+import { type BridgeToolCallRequest, routeBridgeToolCall } from "./bridge-tool-call.ts";
 import {
 	javaScriptKernelMemory,
 	registerKernel,
@@ -81,29 +79,8 @@ class DefaultCodemodeSessionManager implements CodemodeSessionManager {
 		});
 	}
 
-	// Subprocess kernels (py/rb/jl) reach the host only through this route, so every reply
-	// must match the in-process JS path in tool/cell-handler.ts: reserved helper names dispatch
-	// through runReservedTool (forwarding them made agent() fail with "Unknown tool __agent__"),
-	// and ordinary tool results are marshalled to { text, images, details, hasError } — the raw
-	// { content } shape left python cells unable to reach tool.read image blocks.
-	async #call(request: { toolName: string; args: unknown; callId: string; signal: AbortSignal }): Promise<unknown> {
-		if (!isReservedToolName(request.toolName)) {
-			return marshalToolResult(
-				await this.#options.executeTool(request.toolName, request.args, { signal: request.signal }),
-			);
-		}
-		const taskTools = this.#options.settings.taskTools ?? defaultCodemodeSettings.taskTools;
-		return await runReservedTool(request.toolName, {
-			callId: request.callId,
-			args: request.args,
-			executeTool: this.#options.executeTool,
-			taskToolName: taskTools.task,
-			taskOutputToolName: taskTools.output,
-			listTools: this.#options.listTools,
-			signal: request.signal,
-			emitStatus: () => {},
-			marshalToolResult,
-		});
+	async #call(request: BridgeToolCallRequest): Promise<unknown> {
+		return await routeBridgeToolCall(this.#options, request);
 	}
 
 	async getKernel(language: EvalLanguage, onMessage: (message: KernelToHostMessage) => void): Promise<EvalKernel> {
