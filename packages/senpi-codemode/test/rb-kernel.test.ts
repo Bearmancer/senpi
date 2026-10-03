@@ -226,6 +226,29 @@ describe("RubyKernel", () => {
 						result.memory?.globals?.find((global) => global.name === "$big_blob")?.bytes,
 					).toBeGreaterThanOrEqual(128 * MiB);
 					expect(result.memory?.notice).toContain("$big_blob");
+
+					const rows = await kernel.run({
+						cellId: "rows",
+						code: 'system("false"); rows = Array.new(300_000) { |i| "x" * 200 + i.to_s }; nil',
+						timeoutMs: 15_000,
+					});
+					const named = rows.memory?.globals ?? [];
+					const sizedRows = named.find((global) => global.name === "rows");
+					expect(sizedRows?.bytes).toBeGreaterThanOrEqual(60 * MiB);
+					expect(sizedRows?.approximate).toBe(true);
+					for (const internal of [
+						"stdout_read",
+						"stdout_write",
+						"stderr_read",
+						"stderr_write",
+						"$stdout",
+						"$LOAD_PATH",
+					]) {
+						expect(named.map((global) => global.name)).not.toContain(internal);
+					}
+
+					const status = await kernel.run({ cellId: "status", code: "$?.exitstatus", timeoutMs: 15_000 });
+					expect(status).toMatchObject({ ok: true, valueRepr: "1" });
 				} finally {
 					await kernel.close();
 				}

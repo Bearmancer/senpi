@@ -125,59 +125,119 @@ end
 
 $__senpi_memory = nil
 
-SENPI_MEMORY_INTERNALS = %i[
-  $__senpi_binding $__senpi_frame_mutex $__senpi_current_cell $__senpi_capture_cell
-  $__senpi_connection $__senpi_frame_io $__senpi_stdout_capture $__senpi_stderr_capture
-  $__senpi_protocol_stdin $__senpi_memory
-].freeze
+SENPI_SIZER_SAMPLE = 1_000
+SENPI_SIZER_NODE_BUDGET = 20_000
+SENPI_SIZER_MAX_DEPTH = 64
+SENPI_SIZER_POINTER = 8
+SENPI_SIZER_OBJECT = 40
+SENPI_SIZER_MIN_REPORTED = 1024 * 1024
+SENPI_ARRAY_AT = Array.instance_method(:[])
+SENPI_ARRAY_SIZE = Array.instance_method(:size)
+SENPI_HASH_SIZE = Hash.instance_method(:size)
+SENPI_HASH_EACH = Hash.instance_method(:each_pair)
+SENPI_STRING_BYTESIZE = String.instance_method(:bytesize)
+SENPI_IVARS = Kernel.instance_method(:instance_variables)
+SENPI_IVAR_GET = Kernel.instance_method(:instance_variable_get)
 
-def __senpi_process_rss
-  if File.exist?("/proc/self/status")
-    status = File.read("/proc/self/status")
-    kb = status[/VmRSS:\s*(\d+)/, 1]
-    return kb.to_i * 1024 if kb
+# Sizes a global without running user code: built-ins are read through their own unbound methods, so an
+# override in a subclass is never called. Collections are sampled and one node budget bounds the walk.
+class SenpiGlobalSizer
+  attr_reader :approximate
+
+  def initialize
+    @seen = {}.compare_by_identity
+    @nodes = 0
+    @approximate = false
   end
-  rss = `ps -o rss= -p #{Process.pid}`.strip
-  rss.empty? ? nil : rss.to_i * 1024
-rescue StandardError, Errno::ENOENT
-  nil
-end
 
-def __senpi_measure_global(value)
-  require "objspace"
-  ObjectSpace.memsize_of(value)
-rescue StandardError
-  nil
+  def measure(value)
+    @approximate = false
+    SENPI_SIZER_POINTER + size(value, 0)
+  end
+
+  private
+
+  def size(value, depth)
+    return 0 if NilClass === value || TrueClass === value || FalseClass === value || Symbol === value
+    return ObjectSpace.memsize_of(value) if Integer === value || Float === value
+    return 0 if @seen.key?(value)
+    if depth >= SENPI_SIZER_MAX_DEPTH || @nodes >= SENPI_SIZER_NODE_BUDGET
+      @approximate = true
+      return 0
+    end
+    @seen[value] = true
+    @nodes += 1
+    if String === value
+      SENPI_SIZER_OBJECT + SENPI_STRING_BYTESIZE.bind_call(value)
+    elsif Array === value
+      length = SENPI_ARRAY_SIZE.bind_call(value)
+      SENPI_SIZER_OBJECT + length * SENPI_SIZER_POINTER + sampled(length, depth) { |index| SENPI_ARRAY_AT.bind_call(value, index) }
+    elsif Hash === value
+      hash_size(value, depth)
+    else
+      ivars = SENPI_IVARS.bind_call(value)
+      ObjectSpace.memsize_of(value) + sampled(ivars.length, depth) { |index| SENPI_IVAR_GET.bind_call(value, ivars[index]) }
+    end
+  end
+
+  def hash_size(hash, depth)
+    count = SENPI_HASH_SIZE.bind_call(hash)
+    taken = 0
+    total = 0
+    SENPI_HASH_EACH.bind_call(hash) do |key, item|
+      total += size(key, depth + 1) + size(item, depth + 1)
+      taken += 1
+      break if taken >= SENPI_SIZER_SAMPLE
+    end
+    @approximate = true if taken < count
+    SENPI_SIZER_OBJECT + count * 2 * SENPI_SIZER_POINTER + (taken.zero? ? 0 : total * count / taken)
+  end
+
+  def sampled(length, depth)
+    if length <= SENPI_SIZER_SAMPLE
+      total = 0
+      length.times { |index| total += size(yield(index), depth + 1) }
+      return total
+    end
+    @approximate = true
+    step = length.to_f / SENPI_SIZER_SAMPLE
+    total = 0
+    SENPI_SIZER_SAMPLE.times { |sample| total += size(yield((sample * step).floor), depth + 1) }
+    (total.to_f / SENPI_SIZER_SAMPLE * length).round
+  end
 end
 
 def __senpi_largest_globals(limit)
   require "objspace"
-  candidates = []
+  sizer = SenpiGlobalSizer.new
+  sized = []
+  measure = lambda do |name, value|
+    bytes = sizer.measure(value)
+    next if bytes < SENPI_SIZER_MIN_REPORTED
+    entry = { "name" => name, "bytes" => bytes }
+    entry["approximate"] = true if sizer.approximate
+    sized << entry
+  end
   $__senpi_binding.local_variables.each do |name|
-    next if SENPI_MEMORY_INTERNALS.include?(name)
-    bytes = __senpi_measure_global($__senpi_binding.local_variable_get(name))
-    candidates << [name.to_s, bytes] if bytes && bytes > 0
+    next if $__senpi_memory_baseline_locals.include?(name)
+    measure.call(name.to_s, $__senpi_binding.local_variable_get(name))
   end
   global_variables.each do |name|
-    next if SENPI_MEMORY_INTERNALS.include?(name) || name.to_s.start_with?("$__senpi_")
-    bytes = __senpi_measure_global(eval(name.to_s))
-    candidates << [name.to_s, bytes] if bytes && bytes > 0
+    next if $__senpi_memory_baseline_globals.include?(name) || name.to_s.start_with?("$__senpi_")
+    measure.call(name.to_s, eval(name.to_s))
   end
-  candidates.sort_by { |_, bytes| -bytes }.first(limit).map { |name, bytes| { "name" => name, "bytes" => bytes } }
+  sized.sort_by { |entry| -entry["bytes"] }.first(limit)
 rescue StandardError
   []
 end
 
+# The host reads the interpreter's footprint and decides on the notice; the runner only names its
+# largest globals. Nothing here spawns a process, so the user's `$?` is left alone.
 def __senpi_memory_report
   return nil if $__senpi_memory.nil?
-  notice = $__senpi_memory["noticeBytes"].to_i
-  live = __senpi_process_rss
-  return nil if live.nil?
-  report = { "liveBytes" => live, "measure" => "footprint" }
-  if notice > 0 && live >= notice
-    named = __senpi_largest_globals(5)
-    report["globals"] = named unless named.empty?
-  end
+  named = __senpi_largest_globals(5)
+  report = { "liveBytes" => named.sum { |entry| entry["bytes"] }, "measure" => "footprint", "approximate" => true }
+  report["globals"] = named unless named.empty?
   report
 rescue StandardError
   nil
@@ -252,6 +312,10 @@ def __senpi_run_cell(message)
     $__senpi_current_cell = nil
   end
 end
+
+# Everything defined so far belongs to the runner or the interpreter, never to the user's cells.
+$__senpi_memory_baseline_locals = $__senpi_binding.local_variables
+$__senpi_memory_baseline_globals = global_variables
 
 $__senpi_protocol_stdin.each_line do |line|
   message = JSON.parse(line)
