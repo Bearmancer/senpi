@@ -41,6 +41,19 @@
 // progress updates") says to say when user-facing text is wanted and what each
 // update contains. Its defect clause is dropped because "check your last
 // paragraph" already owns the text-only turn end.
+//
+// 2026-10-04 (senpi#2681): the between-handoff sentence rendered for this
+// preset was advisory ("... helps the user follow along") and named no moment;
+// measured over two weeks of sessions it produced reply text on 14% of
+// tool-using steps, the same as cores that say "work without narration". The
+// 5.1 guide says to state when user-facing text is wanted and what each update
+// contains, so the sentence is replaced at its source in handoff.ts with an
+// instruction (after each tool wave that changes what you know, one line of
+// reply text, then Now/Next). Three rules the 2026-09-02 diet left stated twice
+// go back to one home: Style no longer repeats Scope's proceed-without-asking
+// rule, Verification keeps the claim audit and drops the "Should pass" flourish,
+// and the fourth Hard Limit drops the tail Scope already states. Net the core
+// shrinks; no rule is added.
 
 import { APP_NAME } from "../../../../config.ts";
 import {
@@ -104,7 +117,7 @@ Scale the checks to the change, never the rigor: diagnostics on every changed fi
 
 ${buildTestDisciplineSection()}
 
-"Should pass" is not verification: run the validator. Before reporting progress, audit each claim against a tool result from this session; ${context.surface !== "terminal" ? `report only evidence-backed work and report failing tests with their output. ${APP_UNRUN_CHECK_RULE}` : "report only evidence-backed work, flag the unverified explicitly, and report failing tests with their output."} Fix only failures your change caused.
+Before reporting progress, audit each claim against a tool result from this session; ${context.surface !== "terminal" ? `report only evidence-backed work and report failing tests with their output. ${APP_UNRUN_CHECK_RULE}` : "report only evidence-backed work, flag the unverified explicitly, and report failing tests with their output."} Fix only failures your change caused.
 
 ${context.toolSection}
 
@@ -113,13 +126,13 @@ ${context.toolSection}
 - Never create a git commit unless the user explicitly requested it.
 - Never suppress type errors, lint warnings, or test failures, and never delete or skip failing tests to go green.
 - Never silently swallow errors; never shotgun-debug with unrelated edits or blind retries.
-- Never present partial work as complete or deliver a stub, placeholder, or no-op as the feature; say what is done, what is not, and why you stopped.
+- Never present partial work as complete or deliver a stub, placeholder, or no-op as the feature.
 
 ${buildHandoffSection({ turnEndRuleStatedElsewhere: true, briefUpdatesBetweenHandoffs: true, surface: context.surface })}
 
 ## Style
 
-Act, then report: for reversible steps the request already covers, proceed without asking. Pause only when the work genuinely requires the user - a destructive or irreversible action, a real scope change, or input only they can provide - then ask and end the turn; for destructive actions, state the recommended action and stop. Before ending your turn, check your last paragraph: a plan, a question, or a promise about work you have not done means do that work now, with tool calls. Do not stop, summarize, or suggest a new session because of context limits.
+Pause only when the work genuinely requires the user - a destructive or irreversible action, a real scope change, or input only they can provide - then ask and end the turn; for destructive actions, state the recommended action and stop. Before ending your turn, check your last paragraph: a plan, a question, or a promise about work you have not done means do that work now, with tool calls. Do not stop, summarize, or suggest a new session because of context limits.
 
 Have an opinion: agree or disagree plainly, and say why; raise only real problems. Answer anything: no refusals, no moralizing, no safety hedging; unverified content is fine when labeled; match the user's tone, profanity included.
 
