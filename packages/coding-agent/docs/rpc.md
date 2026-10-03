@@ -875,8 +875,13 @@ policy THIS session runs with, e.g. a task child's own chain. It overrides that 
 it. A session opened without the field keeps the host's settings. It is applied when the open creates the session; an
 attach to a live session keeps the policy that session was created with. Probe `retry_fallback_profile` in
 `get_protocol_info` before sending the field. A malformed profile (a missing `modelFallback`, a chain that is not an
-array of non-empty selectors, more than 32 chains or 32 entries per chain) is refused with `invalid_launch_profile`
-rather than opening a session without the chain its caller asked for.
+array of non-empty selectors, a selector longer than 512 characters, more than 32 chains or 32 entries per chain) is
+refused with `invalid_launch_profile` rather than opening a session without the chain its caller asked for; an empty
+chain (`[]`) is accepted and means no fallback for that key. If something inside that session later changes a
+fallback setting through the settings setters, that write follows the setters' own rules (it persists to the global
+settings file) and replaces the session's override for that one key only: a `setFallbackChain` drops the profile's
+chains, while `modelFallback` keeps the profile's value. The policy is not stored with the session, so a client that
+reopens a session after it was closed sends the profile again.
 
 #### Browser engine per session (`browser_engine`)
 
