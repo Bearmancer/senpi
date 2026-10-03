@@ -1,3 +1,21 @@
+## 2026-10-03 - The first-run provider guidance is shown once (senpi#2677)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: handles the new `provider_required` session event by showing its notice as a warning; when the startup warning was already "No models available" (`formatNoModelsAvailableMessage()`), the first such event is absorbed by it. `test/interactive-mode-provider-required.test.ts` covers the absorb, a later notice, and no-startup-warning.
+
+### Why
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: a first run with no provider used to show a compaction error from a startup extension's background turn. The decision is that such a turn is neither silent nor an error: the user sees the same `/login` guidance a typed prompt gets, once, on the first screen.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: session events are rendered by the interactive mode itself; no extension owns the first-run warning list.
+
+### Expected merge conflict zones
+
+- LOW: the `resume_context_reduced` / `provider_required` cases in the session event switch.
+
 ## 2026-10-03 - Exact tool-card result bytes for the memory report (senpi#1960)
 
 ### What changed
@@ -2274,6 +2292,9 @@ Upstream edits to interactive-mode components at the next sync.
 
 ### What changed
 
+- `packages/coding-agent/src/modes/interactive/theme/dark.json`
+- `packages/coding-agent/src/modes/interactive/theme/light.json`
+
 `packages/coding-agent/src/modes/interactive/theme/dark.json` and `light.json`: tool success/error/pending card backgrounds move from saturated dark-tinted blocks to muted near-plain tints that stay distinct per status (success green-tint, error red-tint, pending neutral), and the diff foreground colors are decoupled from the shared `success`/`error` roles into dedicated brighter values, so added and removed diff lines keep distinct backgrounds and read at >= 7:1 for the full line content. Dark: success `okhsl(158 26% 13%)`, error `okhsl(19 28% 14%)`, added `okhsl(159 58% 76%)` (9.1:1), removed `okhsl(20 70% 77%)` (8.5:1). Light: success `okhsl(156 25% 91%)`, error `okhsl(24 28% 91%)`, added `okhsl(159 85% 28%)` (7.8:1), removed `okhsl(20 100% 30%)` (8.2:1). Status is still visible from the card background; general text contrast on the card is unchanged or better.
 
 ### Why
@@ -2287,3 +2308,24 @@ Theme color roles are interactive-mode assets resolved at startup; an extension 
 ### Expected merge conflict zones
 
 Upstream edits to `theme/dark.json` or `theme/light.json` color roles at the next sync.
+
+
+## Deleting a session also deletes its tool images (2026-10-03)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/components/session-selector.ts`
+
+`deleteSessionFile` reads the session id from the file header before the file is removed and, only once the file is gone, removes that session's `media/<durableSessionId>` directory next to it (the tool-result images the RPC host persisted for `media_placeholders` clients). A delete that fails removes nothing. When the images cannot be removed after the session file is gone (the id is unrecoverable from then on), `deleteSessionFile` still reports the session as deleted but returns `mediaError` naming the leftover directory, and the selector shows it as an error instead of a clean delete.
+
+### Why
+
+The RPC host keeps tool-result images next to the session files so a client can render them from a path; they must not outlive the session that owns them.
+
+### Why an extension could not handle it
+
+The session selector's delete action is interactive-mode UI code with no extension hook.
+
+### Expected merge conflict zones
+
+`deleteSessionFile` in `session-selector.ts`.

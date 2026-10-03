@@ -6,6 +6,25 @@
 
 ### Added
 
+- An opt-in `memory.idleParkMinutes` setting (off by default) closes a kernel that had no cell running or queued for that many minutes to give its memory back; the next cell starts a fresh kernel and its result says every earlier global is lost ([#2452](https://github.com/code-yeongyu/senpi/issues/2452)).
+
+### Changed
+- Kernel tool descriptors may name any eval language (`js`, `py`, `rb`, `jl`), not only `js`; today only JavaScript kernels define tools, so nothing a session sees changes ([#2452](https://github.com/code-yeongyu/senpi/issues/2452)).
+
+### Fixed
+- A Ruby or Julia kernel whose start hangs no longer leaves its cells waiting forever: startup fails, naming the stage it stalled in, once the runner has printed nothing, changed no stage and its process group has used no CPU for 30 s, so a slow but busy start (a cold Julia compiling its prelude) is never cut off ([#2452](https://github.com/code-yeongyu/senpi/issues/2452)).
+
+- A Python cell's host calls (`tool.*`, `completion`) no longer go through a configured HTTP proxy: the loopback bridge request ignores proxy settings from the environment and, on Windows, the registry, so a proxy can't refuse a `127.0.0.1` call that never needed it ([#2619](https://github.com/code-yeongyu/senpi/issues/2619)).
+
+### Removed
+
+## [2026.10.5] - 2026-10-03
+
+### Breaking Changes
+
+### Added
+
+- Eval kernels expose the session's `OMO_BROWSER_ENGINE` and clear a value inherited from the host process for a session that chose no engine ([#2611](https://github.com/code-yeongyu/senpi/issues/2611)).
 - A Python, Ruby, or Julia eval kernel whose interpreter dies is replaced once instead of failing every later cell: Ruby and Julia no longer stay closed after a crash, and a Python kernel whose stuck interpreter finally exits recovers instead of rejecting every cell. Cells queued behind the death keep their order and run on the replacement, whose first result says `[<language> kernel was restarted after <reason>; every global is lost]`; the cell that was running fails once and is never re-run, and a replacement that dies before finishing a cell fails the queued cells with `eval_kernel_unavailable` ([#2452](https://github.com/code-yeongyu/senpi/issues/2452))
 
 ### Changed

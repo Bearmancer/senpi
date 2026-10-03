@@ -354,6 +354,11 @@ def write(path: str | Path, content: str) -> Path:
     return target
 
 
+# The bridge is a loopback call: urllib's default opener would route it through a configured proxy
+# (the environment everywhere, the registry on Windows), which a 127.0.0.1 request must never use.
+_BRIDGE_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+
+
 def bridge_post(path: str, payload: dict[str, Any]) -> Any:
     port = CONNECTION.get("port")
     token = CONNECTION.get("token")
@@ -369,7 +374,7 @@ def bridge_post(path: str, payload: dict[str, Any]) -> Any:
     emit_status(TIMEOUT_PAUSE_OP, force=True)
     try:
         try:
-            with urllib.request.urlopen(request, timeout=60) as response:
+            with _BRIDGE_OPENER.open(request, timeout=60) as response:
                 response_data = response.read()
         except urllib.error.HTTPError as exc:
             response_data = exc.read()

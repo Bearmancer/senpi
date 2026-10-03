@@ -60,6 +60,7 @@ import type {
 import type { Static, TSchema } from "typebox";
 import type { Theme } from "../../modes/interactive/theme/theme.ts";
 import type { BashResult } from "../bash-executor.ts";
+import type { BrowserEngine } from "../browser-engine.ts";
 import type { CompactionPreparation, CompactionResult } from "../compaction/index.ts";
 import type { WarmAnchorSnapshot } from "../compaction/warm-anchor.ts";
 import type { EventBus } from "../event-bus.ts";
@@ -477,6 +478,8 @@ export interface ExtensionContext {
 	sessionManager: ReadonlySessionManager;
 	/** Absolute goal-store path for this session; reading it does not create the file. */
 	readonly goalStoreFile?: string;
+	/** Browser engine the opener chose for THIS session (`open_session.browserEngine`); absent when it chose none. */
+	readonly browserEngine?: BrowserEngine;
 	/** Model registry for API key resolution */
 	modelRegistry: ModelRegistry;
 	/** Current model (may be undefined) */
@@ -3010,6 +3013,7 @@ export interface ExtensionContextActions {
 	};
 	getLookAtSettings: () => { enabled: boolean; models: string[] | undefined };
 	getAskUserSettings?: () => { enabled: boolean; timeoutMinutes: number };
+	getBrowserEngine?: () => BrowserEngine | undefined;
 	getImageSettings: () => { autoResize: boolean; blockImages: boolean };
 	sessionSettings: ExtensionSessionSettings;
 	compact: (options?: CompactOptions) => void;
