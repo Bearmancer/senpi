@@ -119,6 +119,16 @@ export class ProviderErrorPresentation {
 		this.notice?.setSummary(undefined);
 	}
 
+	/** True while a retry episode is active (a retry was recorded and not yet finished/cleared). */
+	get hasActiveRetry(): boolean {
+		return this.pending;
+	}
+
+	/** True once any retry has been recorded this episode (the notice exists), surviving clear(). */
+	get hadRetryEpisode(): boolean {
+		return this.notice !== undefined;
+	}
+
 	finish(raw?: string, attempts?: number): void {
 		if (raw) this.record(raw);
 		if (!this.pending) return;

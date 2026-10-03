@@ -5560,7 +5560,11 @@ export class InteractiveMode {
 					this.footer?.setCompactionDelegated?.(false);
 				} else if (event.errorMessage) {
 					const errorMessage = sanitizeTerminalLabel(event.errorMessage);
-					if (isRetryableProviderError(errorMessage)) {
+					// The quiet provider-retry banner's finish() closes out a retry episode that already
+					// happened (a retry was recorded, so there is a banner to finish). A terminal
+					// compaction failure with NO recorded retry must always surface as an error, even
+					// when its message looks transient ("timeout", "truncated generator").
+					if (isRetryableProviderError(errorMessage) && this.providerErrors?.hadRetryEpisode === true) {
 						this.getProviderErrors().finish(errorMessage);
 					} else if (event.reason === "manual") {
 						this.showError(errorMessage);
