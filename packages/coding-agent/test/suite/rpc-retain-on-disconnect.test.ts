@@ -327,23 +327,62 @@ it("parks a retained detached session at the idle window and reopens it by path"
 	expect((reopened?.data as { sessionId?: string } | undefined)?.sessionId).not.toBe(sessionId);
 });
 
-it.each(["get_state", "memory_report"])("does not renew a worker isolate's idle window for %s", async (command) => {
-	// Given: an idle worker isolate near its configured eviction deadline.
-	await using host = await retainHost({ idleEvictionMs: 1_000 });
-	await host.open("owner", { cwd: host.cwd, retain_on_disconnect: true });
-	const [row] = await host.list();
-	if (!row) throw new Error("Session did not open");
-	const entry = host.registry.peek(row.sessionId);
-	if (!entry) throw new Error("Session did not open");
-	host.clock.now = 999;
+it.each([{ retain: true }, { retain: false }] as const)(
+	"keeps an attached worker isolate alive while a client polls get_state (retained: $retain)",
+	async ({ retain }) => {
+		// Given: an attached, idle worker isolate whose only traffic is status polling.
+		await using host = await retainHost({ idleEvictionMs: 1_000 });
+		await host.open("owner", { cwd: host.cwd, retain_on_disconnect: retain });
+		const [row] = await host.list();
+		if (!row) throw new Error("Session did not open");
+		const entry = host.registry.peek(row.sessionId);
+		if (!entry) throw new Error("Session did not open");
+		host.clock.now = 999;
 
-	// When: an observation is routed just before the deadline.
-	host.registry.getForCommand(row.sessionId, command);
-	host.clock.now = 1_000;
-	host.router.sweepIdleSessions();
+		// When: the client polls it just before the deadline, then the sweep runs.
+		host.registry.getForCommand(row.sessionId, "get_state");
+		host.clock.now = 1_000;
+		host.router.sweepIdleSessions();
 
-	// Then: the observation has not extended the isolate's lifetime.
-	expect(entry.state).toBe("closing");
-	await entry.closeCompletion;
-	expect(await host.list()).toEqual([]);
-});
+		// Then: no park/evict event and the isolate still lists open and attached.
+		expect(entry.state).toBe("open");
+		const lifecycle = host.records.filter(
+			(record) =>
+				record.sessionId === row.sessionId &&
+				(record.type === "session_parked" || record.type === "session_closed"),
+		);
+		expect(lifecycle).toEqual([]);
+		expect(await host.list()).toEqual([expect.objectContaining({ sessionId: row.sessionId, attachments: 1 })]);
+	},
+);
+
+it.each(["get_state", "memory_report"])(
+	"does not renew a detached worker isolate's idle window for %s",
+	async (command) => {
+		// Given: an idle retained worker isolate nobody is attached to, near its eviction deadline.
+		await using host = await retainHost({ idleEvictionMs: 1_000 });
+		await host.open("owner", { cwd: host.cwd, retain_on_disconnect: true });
+		const [row] = await host.list();
+		if (!row) throw new Error("Session did not open");
+		const entry = host.registry.peek(row.sessionId);
+		if (!entry) throw new Error("Session did not open");
+		await host.drop("owner");
+		host.clock.now = 999;
+
+		// When: a detached observation is routed just before the deadline.
+		host.registry.getForCommand(row.sessionId, command);
+		host.clock.now = 1_000;
+		host.router.sweepIdleSessions();
+
+		// Then: the observation has not extended the isolate's lifetime, and the close event names it.
+		expect(entry.state).toBe("closing");
+		await entry.closeCompletion;
+		expect(await host.list()).toEqual([]);
+		const lifecycle = host.records.filter(
+			(record) =>
+				record.sessionId === row.sessionId &&
+				(record.type === "session_parked" || record.type === "session_closed"),
+		);
+		expect(lifecycle.length).toBeGreaterThan(0);
+	},
+);

@@ -1014,13 +1014,17 @@ What the host does enforce are lifecycle windows, and they only ever return memo
   and barrier-held session work all defer eviction, and the idle clock restarts when that work settles. An evicted
   session resumes like any other: the next `open_session` with the same `sessionPath` reopens it.
 - **Observational reads**: session state, history, model/auth inventory, loaded surfaces, and `memory_report`
-  do not restart the idle clock in either runtime. In particular, polling `get_state` does not keep an otherwise
-  idle session resident. Commands that change the session still restart the clock. An in-flight request or
+  do not restart the idle clock for a DETACHED session in either runtime - a client nobody holds gains nothing by
+  polling. An ATTACHED client polling `get_state` keeps its session alive exactly as before: the poll restarts the
+  clock, so the occupancy sweep never tears a session out from under a client still holding its routing handle.
+  Commands that change the session still restart the clock. An in-flight request or
   prompt preflight prevents the occupancy sweep from tearing its session down while the request is running.
 - **Completed detached workers**: on the in-process runtime, a retained `kind: "worker"` session with zero
   attachments is parked on the next occupancy sweep once its transcript is flushed and it has no session-owned
-  work, queued input, admitted unwritten delivery, pending prompt, or in-flight request. It does not wait out the
-  normal idle window. This releases its runtime and eval kernels, not its durable history: reopen its
+  work, queued input, admitted unwritten delivery, pending prompt, or in-flight request - provided the disconnect
+  has already stood for at least one sweep tick (a short grace age, so a transient reconnect keeps the live runtime
+  instead of re-opening cold). It does not wait out the normal idle window. This releases its runtime and eval
+  kernels, not its durable history: reopen its
   `sessionPath` to continue under a new routing handle. Active monitors and other wake sources still prevent
   early parking. Unflushed workers, worker-isolate runtimes, and interactive sessions keep their normal window.
 - **Worker capacity** (worker runtime ONLY - a stdio host, `--listen stdio://`, an embedder, or a socket host that
