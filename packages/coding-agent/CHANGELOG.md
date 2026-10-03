@@ -6,6 +6,20 @@
 
 ### Added
 
+### Changed
+
+### Fixed
+
+- Quiet, detached worker sessions on the shared in-process RPC host now release their runtimes on the next occupancy sweep once their history is persisted, while active jobs, wake sources, queued deliveries, and requests remain protected. Observational session commands such as `get_state` and `memory_report` no longer prolong idle retention for detached sessions; attached clients polling `get_state` keep their session alive as before, and parked sessions reopen by path with their durable identity and history.
+
+### Removed
+
+## [2026.10.5] - 2026-10-03
+
+### Breaking Changes
+
+### Added
+
 - `open_session` accepts `browserEngine` (`connected`, `builtin` or `none`) and hosts advertise the `browser_engine` capability: the choice is per session, so that session's tool subprocesses and eval kernels see `OMO_BROWSER_ENGINE` and no other session does, a reattach moves or keeps it, and `BSK_HOME` / `BSK_BIN` pass through unchanged ([#2611](https://github.com/code-yeongyu/senpi/issues/2611)).
 - A `media_placeholders` client now gets an `image_ref` placeholder whose `path` names the stored image (written before the placeholder is emitted under the session's `media/<durableSessionId>/` directory, private and read-only, deleted with the session), or an `unavailableReason` of `image_too_large`, `session_limit` or `storage_error`, so tool images other than `read` can be rendered from disk.
 - An edited assistant response can be continued with no new prompt: the RPC `continue_from_leaf` command (advertised as the `continue_from_leaf` capability) starts a turn from the session leaf through a hidden nudge the transcript never shows, refusing with `streaming`, `nothing_to_continue`, or `leaf_not_assistant` (the conversation ends on a user message). `get_available_models` rows report `supportsAssistantPrefill` (false for every model today) ([#1930](https://github.com/code-yeongyu/senpi/issues/1930)).
