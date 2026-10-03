@@ -6,7 +6,7 @@
 
 ### Added
 
-- `maxSkillExpansionsPerPrompt` setting (default `5`) controls how many distinct explicitly invoked skills (`/skill:a /skill:b ...` or `$a $b ...`) one prompt may expand. Raise it in `settings.json` to compose more skills in one prompt; skill commands past the limit still stay literal and show the `Expanded at most N skills` warning.
+- `maxSkillExpansionsPerPrompt` setting (default `5`) controls how many distinct explicitly invoked skills (`/skill:a /skill:b ...` or `$a $b ...`) one prompt may expand. Raise it in `settings.json` to compose more skills in one prompt; skill commands past the limit still stay literal and show the `Expanded at most N skills` warning. Thanks to @trac3r00. ([#2588](https://github.com/code-yeongyu/senpi/pull/2588))
 
 ### Changed
 
@@ -16,6 +16,7 @@
 - Re-using an already loaded skill on a later line of the same prompt (for example `$review` on line 3 after the per-prompt skill cap was reached) no longer triggers the cap warning or stays as bare text: it keeps its `[skill: review]` marker where it was written.
 - Skills skipped by the per-prompt skill cap no longer reach the model as bare `$name` / `/skill:name` text: they become `[skill not loaded: name]` where they were written, so the model knows it does not have them. One warning per prompt names the skipped skills and the cap, for example `Skipped 2 skills (s6, s7): at most 5 skills load per prompt.` Thanks to @trac3r00.
 - A Chrome-backed `Bun.WebView` created from an eval cell no longer holds the cell until its timeout and leaves its Chrome running when that Chrome never attaches a session to the new view (seen on Windows with a freshly launched Chrome). The main-thread service now navigates each new view to `about:blank` before answering its creation: a launch that has not attached within 20 seconds is closed, its Chrome retired unless another view still uses it, and the view launched once more on a fresh Chrome; if that launch stalls too, `new Bun.WebView()` fails with `ERR_WEBVIEW_NOT_READY` naming the `cdp-target-attach` phase. A new view therefore reports `about:blank` as its URL and accepts `cdp()` before the cell's first `navigate()`; page loads the cell starts are not bounded ([#2353](https://github.com/code-yeongyu/senpi/issues/2353)).
+- An explicitly requested thinking level that the model cannot use is no longer dropped silently. When `--thinking`, `/thinking`, RPC, or an extension asks for a level the model does not offer (every level except `off` on a model not marked `reasoning: true`), the session records the requested level and the reason beside the applied one (`thinkingSelection.requested` and `thinkingSelection.clampReason`), and shows one warning: on stderr for print, JSON, and RPC runs, and in the TUI. A level that only comes from the global `defaultThinkingLevel` setting is not treated as a request and does not warn. ([#2395](https://github.com/code-yeongyu/senpi/issues/2395))
 
 ### Removed
 
@@ -142,8 +143,6 @@
 ### Fixed
 
 - In a compiled build with no Bun on `PATH` (for example a desktop app started from Finder, or a standalone binary on a machine without Bun), `bun` and `bunx` from an eval cell, the bash tool and the terminal now run Bun itself. Before this fix, an eval cell's `bun test` started a second agent and returned its reply as a passing result with exit code 0, and the bash tool reported `bun: command not found`. A Bun you installed and put on `PATH` is still used first. ([omo#9362](https://github.com/code-yeongyu/oh-my-openagent/issues/9362))
-
-- An explicitly requested thinking level that the model cannot use is no longer dropped silently. When `--thinking`, `/thinking`, RPC, or an extension asks for a level the model does not offer (every level except `off` on a model not marked `reasoning: true`), the session records the requested level and the reason beside the applied one (`thinkingSelection.requested` and `thinkingSelection.clampReason`), and shows one warning: on stderr for print, JSON, and RPC runs, and in the TUI. A level that only comes from the global `defaultThinkingLevel` setting is not treated as a request and does not warn. ([#2395](https://github.com/code-yeongyu/senpi/issues/2395))
 
 ### Removed
 
