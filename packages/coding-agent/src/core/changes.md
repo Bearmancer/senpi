@@ -1,3 +1,53 @@
+## 2026-10-03 - A model's free or plan limit falls back at once and keeps its reset window (senpi#2660)
+
+### What changed
+
+- `packages/coding-agent/src/core/retry-fallback/usage-limit.ts`: `usageLimitScope` also recognises a reached free, plan, tier or model limit whose message says to switch to a different model, scoped `model` because it names the model.
+
+### Why
+
+- `packages/coding-agent/src/core/retry-fallback/usage-limit.ts`: Devin's "Reached free model rate limit ... switch to a different model. Your limit will reset in 9 minutes" carried none of the existing usage-limit wording. With the Cursor signatures scoped to Cursor (packages/ai), the failure takes the rate-limited path, falls back to the next chain model on the first failure, and the refused model is cooled down for the stated window. `test/suite/regressions/issue-2660-devin-free-model-limit-fallback.test.ts` covers the immediate fallback and its `limit: "model"`, the 9-minute window with an injected clock, that a plain rate limit is not reported as a usage limit, and a near-threshold context; two of its cases fail on main.
+
+### Expected merge conflict zones
+
+- LOW: the pattern list at the top of `usage-limit.ts`.
+
+## 2026-10-03 - A launch profile carries the session's own fallback policy (omo#9512)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session-runtime.ts`: `AgentSessionLaunchProfile.retryFallback?: SessionRetryFallbackProfile` (`{ modelFallback, fallbackChains }`).
+
+### Why
+
+- `test/suite/rpc-open-session-retry-fallback.test.ts` opens two sessions on one host with different chains: each falls back to its own model on a usage limit, a session without a profile keeps the host's settings and fails cleanly, and the user's `settings.json` is byte-identical afterwards. Three of its four cases fail on main. `test/suite/rpc-worker-retry-fallback.test.ts` checks the same per-session chain on worker-isolate sessions.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/agent-session-runtime.ts`: the launch profile is built by the host before any extension loads, and an extension's only settings lever (`ctx.sessionSettings`) writes the global settings file.
+
+### Expected merge conflict zones
+
+- LOW: the `AgentSessionLaunchProfile` fields in `agent-session-runtime.ts`.
+
+## 2026-10-03 - A first run with no provider gets the /login guidance, not a compaction error (senpi#2677)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `_assertModelReadyForTurn()` (no model, or no credentials for its provider) is shared by `prompt()` and the `triggerTurn` path of `sendCustomMessage`, which used to reach the compaction gate unchecked. `_enforceCompactionBeforeProvider` and `_enforceFinalProviderAdmission` treat a context window `<= 0` as unknown for every model, not only virtual ones. The check throws `ModelNotReadyError`; the extension `sendMessage` and `sendUserMessage` error reporters turn it into one `provider_required` session event (with the same guidance text) instead of `runner.emitError`, so a background turn on a first run is neither silent nor an error; the once-latch resets when a turn is admitted, so losing the provider again later is reported again.
+
+### Why
+
+- `packages/coding-agent/src/core/agent-session.ts`: with no provider the session runs on the agent's placeholder model (`contextWindow: 0`), where `shouldCompact(tokens, 0)` is always true, so a startup extension's triggered turn threw `RequiredCompactionError` before anything said no provider was configured. `test/suite/regressions/first-run-no-provider-not-compaction.test.ts` covers the typed prompt, the extension-triggered turn and a zero-window model; the last two fail on main.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/agent-session.ts`: turn admission and the compaction gate run inside the session before any extension hook can intervene.
+
+### Expected merge conflict zones
+
+- LOW: the pre-provider threshold condition and the start of the `triggerTurn` branch in `sendCustomMessage`.
+
 ## 2026-10-03 - Continue a session from its leaf with no new prompt (senpi#1930)
 
 ### What changed
@@ -8836,3 +8886,23 @@ Session runtime, model runtime, remote catalog and settings own these paths belo
 ### Expected merge conflict zones
 
 Upstream edits to core session/settings/runtime paths at the next sync.
+
+## The session launch profile carries the browser engine (2026-10-03)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session-runtime.ts`: `AgentSessionLaunchProfile.browserEngine` and `setBrowserEngine`, which also updates the frozen profile so a later switch, new session or fork keeps the engine.
+- `packages/coding-agent/src/core/agent-session.ts`, `agent-session-services.ts`, `sdk.ts`: the engine is passed through session creation, held on `AgentSession` (`browserEngine`, `setBrowserEngine`) and handed to extensions through the context action `getBrowserEngine`.
+- `core/browser-engine.ts` (new): the `BrowserEngine` values and the `OMO_BROWSER_ENGINE` name.
+
+### Why
+
+`open_session.browserEngine` (senpi#2611) is a per-session choice; the profile is where every other per-session open field (`promptSurface`, `kind`, `context`) already lives.
+
+### Why an extension could not handle it
+
+Session creation and the launch profile are core lifecycle code that runs before extensions load.
+
+### Expected merge conflict zones
+
+The `promptSurface` plumbing in `agent-session.ts`, `agent-session-services.ts` and `sdk.ts`, which the new field sits next to.

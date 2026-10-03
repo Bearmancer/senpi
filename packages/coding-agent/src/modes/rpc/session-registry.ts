@@ -6,6 +6,7 @@ import type { SessionStartEvent } from "../../core/extensions/types.ts";
 import { assertValidSessionId, SessionManager } from "../../core/session-manager.ts";
 import { SESSION_PATH_RETRY_AFTER_MS } from "./host-reservations.ts";
 import { createRegistryWarm, type HostWarm } from "./host-warm.ts";
+import { refreshesSessionActivity } from "./session-command-activity.ts";
 import { canonicalSessionPath } from "./session-path-key.ts";
 import { attachToOpenSession } from "./session-registry-attach.ts";
 import { settleClosingReservation, syncRuntimeMetadata } from "./session-registry-claims.ts";
@@ -78,6 +79,7 @@ export class RpcSessionRegistry {
 				this.options.pathReservations?.release(key);
 			},
 			markDetached: (key) => this.options.pathReservations?.setAttached(key, false),
+			now: () => this.now(),
 			sync: () => this.syncRuntimeMetadata(),
 		};
 	}
@@ -242,9 +244,9 @@ export class RpcSessionRegistry {
 			throw new RpcSessionRegistryError("session_closing");
 		}
 		if (entry.state !== "open" && entry.state !== "closing") throw new RpcSessionRegistryError("unknown_session");
-		// Every routed command counts as activity for idle eviction. Lookups that
-		// must not refresh idleness (sweeps, listing) use peek()/list() instead.
-		entry.lastCommandAt = this.now();
+		// Polling a session nobody holds is observation, not work that needs its runtime;
+		// an attached client's polling keeps its session alive exactly as before.
+		if (entry.attachments > 0 || refreshesSessionActivity(command)) entry.lastCommandAt = this.now();
 		return entry;
 	}
 

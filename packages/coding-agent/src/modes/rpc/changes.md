@@ -1,3 +1,24 @@
+## 2026-10-03 - A session's own fallback chain on open_session (omo#9512)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`, `rpc-client.ts`: `open_session.retryFallback?: { modelFallback, fallbackChains }`.
+- `packages/coding-agent/src/modes/rpc/rpc-input-validation.ts`: `sessionRetryFallbackError` refuses a malformed profile (missing `modelFallback`, non-string or empty selectors, selectors over 512 characters, more than 32 chains or 32 entries) with `invalid_launch_profile`; `test/suite/rpc-open-session-retry-fallback.test.ts` pins both sides of each limit and that an attach keeps the policy the session was created with.
+- `packages/coding-agent/src/modes/rpc/session-command-router.ts`: validates the field, passes it into the launch profile, and advertises `retry_fallback_profile` (`custom-capability.ts`).
+- `packages/coding-agent/src/modes/rpc/session-registry-types.ts`: `frozenProfile` deep-freezes the profile's chains.
+
+### Why
+
+- A task child opened on a shared host had no way to receive its own fallback chain: the extension-side setters (`ctx.sessionSettings.setFallbackChain`) write the host's global settings file, which would leak one child's chain to every session and into the user's settings. The chain now travels with the session's launch profile.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`, `rpc-client.ts`, `rpc-input-validation.ts`, `session-command-router.ts`, `custom-capability.ts`, `session-registry-types.ts`: the field must be accepted, validated and advertised by the host before the session or any of its extensions exists, and the only extension-reachable settings setters persist to the host's global file.
+
+### Expected merge conflict zones
+
+- LOW: the `open_session` field list in `rpc-types.ts` and the capability list in `session-command-router.ts`.
+
 ## 2026-10-03 - `continue_from_leaf` command and model prefill capability (senpi#1930)
 
 ### What changed
@@ -4902,3 +4923,69 @@ The host decision runs in the client before any session or extension exists; the
 ### Expected merge conflict zones
 
 `covers()` and `profileWarning()` in `host-decision.ts`, and the profile rows in `test/suite/host-decision.test.ts`.
+
+## 2026-10-03 - Reclaim quiet detached workers without observation heartbeats
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/session-sweep.ts`: a retained, detached in-process worker with a flushed transcript and no active work or queued delivery parks on the next sweep rather than after the full idle window, once its disconnect has stood for at least five seconds (`DETACHED_RETIREMENT_GRACE_MS`). An attached client is exempt from early retirement; only the ordinary idle deadline applies to it.
+- `packages/coding-agent/src/modes/rpc/session-sweep.ts`: a zero-attachment entry without a detach timestamp falls through to its ordinary idle deadline rather than retiring early or being retained indefinitely.
+- `packages/coding-agent/src/modes/rpc/session-command-router.ts`: occupancy sweeps protect in-flight requests and prompt preflight.
+- `packages/coding-agent/src/modes/rpc/session-command-activity.ts`, `packages/coding-agent/src/modes/rpc/session-registry.ts`, and `packages/coding-agent/src/modes/rpc/worker-session-registry.ts`: explicitly enumerated observational commands, including `get_state` and `memory_report`, no longer refresh the idle clock for DETACHED sessions in either runtime. An attached client's polling keeps its session alive as before; the registries stamp a `detachedAt` time when the last attachment leaves so the sweep can honor the disconnect-age grace.
+
+### Why
+
+- Completed retained workers otherwise hold runtimes and eval kernels for the whole idle window; status polling by a client that has already gone away can extend that window indefinitely. Durable transcripts permit reopening after the existing park/disposal path. The disconnect-age grace keeps a brief disconnect that overlaps a sweep from discarding a runtime its owner is about to reclaim.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/rpc/session-sweep.ts` and `packages/coding-agent/src/modes/rpc/session-command-router.ts` own attachment-aware reclamation and request admission. The two registries own idle timestamps before extension dispatch.
+
+### Expected merge conflict zones
+
+- Occupancy selection in `packages/coding-agent/src/modes/rpc/session-sweep.ts` and `packages/coding-agent/src/modes/rpc/session-command-router.ts`; `getForCommand` in `packages/coding-agent/src/modes/rpc/session-registry.ts` and `packages/coding-agent/src/modes/rpc/worker-session-registry.ts`.
+
+## open_session.browserEngine and the browser_engine capability (2026-10-03)
+
+### What changed
+
+- `custom-capability.ts`: `BROWSER_ENGINE_CAPABILITY` (`browser_engine`), advertised by the multi-session router in `get_protocol_info`.
+- `rpc-types.ts`, `rpc-client.ts`, `rpc-input-validation.ts`, `session-command-router.ts`: `open_session.browserEngine?: "connected" | "builtin" | "none"`; any other value is refused with `invalid_launch_profile` and no session is opened.
+- `session-registry-attach.ts`, `worker-session-registry.ts`, `session-worker-protocol.ts`, `session-worker-client.ts`, `session-worker.ts`: a later attach that names another engine moves the live session to it (worker sessions through a new `browser_engine` request); an attach without the field keeps it.
+- `host-daemon-env.ts`: `OMO_BROWSER_ENGINE` joins the per-session names a daemon never inherits; `BSK_HOME` and `BSK_BIN` (per install) are allowed through.
+- `core/browser-engine.ts` (new), `agent-session*.ts`, `sdk.ts`, `main.ts`: the engine is part of the session launch profile and reaches `AgentSession`, the extension context and the core bash tool.
+
+### Why
+
+The desktop app lets the user choose which browser an agent drives and sends the choice per session. The host had no carrier for it, and an environment variable on the host process would apply to every session it serves (desktop #1544).
+
+### Why an extension could not handle it
+
+The launch profile, the capability list and the session environment are assembled by the host before any extension loads.
+
+### Expected merge conflict zones
+
+The `open_session` branch of `session-command-router.ts` next to `promptSurface`, the capability list in the same file, and the attach blocks in `session-registry-attach.ts` and `worker-session-registry.ts`.
+
+
+## 2026-10-03 - Tool-result images are persisted and their path reported in the placeholder
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/tool-media-store.ts` (new): `persistToolImage` writes a tool-result image to `<sessionDir>/media/<durableSessionId>/<sha256(toolCallId)>/<contentIndex>-<sha256(bytes)>.<ext>` (temp file, rename, read-only, private directories) and returns `{ path }`, or `{ unavailableReason: "image_too_large" | "session_limit" | "storage_error" }` for an image over 20 MiB, a session already holding 256 MiB (new storage refused, nothing evicted; usage is re-measured from disk after a host restart) and a failed write or a format other than PNG/JPEG/GIF/WebP. `removeToolMedia` deletes a session's directory (it first makes every real file and folder under it writable, so read-only images and the Windows read-only attribute cannot leave it behind; it decides by what an entry itself is and never follows a symlink, so a link inside (or in place of) the media folder is removed as a link and what it points at keeps its mode and contents; it throws when the directory cannot be removed). An image is stored only when its bytes carry the signature of the format the tool claimed (HTML claimed as `image/png` is `storage_error`), and a symlink planted where `media/`, `media/<id>` or the per-call folder under it goes is refused.
+- `media-placeholders.ts`: `omitInlineMedia(record, persist?)` threads an optional persister through the walk; `ImageRefBlock` gains optional `path` / `unavailableReason`. With no persister the placeholder is byte-identical to before.
+- `session-event-writer.ts`: `setSessionMedia(sessionId, persister)` registers a per-session persister, passed to the transform at `enqueue` and dropped when the session closes. `session-command-router.ts` registers it on open and resolves the scope from the LIVE session on every image (`liveToolMediaScope`: the in-process runtime's session manager, else the worker's published snapshot), so images taken after `new_session` / `switch_session` / `fork` are filed under the new session; with no live state yet nothing is stored.
+- `modes/interactive/components/session-selector.ts`: deleting a session also removes its media directory, only after the session file is gone.
+- `test/suite/no-sync-in-session-path.ledger.json`: one `writeFileSync` entry for `writeImage`.
+
+### Why
+
+A `media_placeholders` client received an `image_ref` it could never turn into a picture for any tool but `read` (desktop #941): the bytes stay off the socket by design. Writing them once, before the placeholder is published, lets the client render from the path after a disconnect, idle shutdown or handover.
+
+### Why an extension could not handle it
+
+The placeholder is produced by the host's single wire choke point (`SessionEventWriter.enqueue`); no extension hook sits between a tool result and that transform.
+
+### Expected merge conflict zones
+
+`omitContentImages` and its callers in `media-placeholders.ts`, the `enqueue` placeholder line in `session-event-writer.ts`, and the `setSessionKind` neighbourhood in `session-command-router.ts`.

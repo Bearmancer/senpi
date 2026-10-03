@@ -9,8 +9,10 @@ export interface HandoffSectionOptions {
 	turnEndRuleStatedElsewhere?: boolean;
 	/**
 	 * The model under-reports during long tool chains by default (Claude Fable 5.1 guide, "Ask for
-	 * user-facing progress updates": remove narration-suppressing lines, then say when updates are
-	 * wanted), so the quiet-between-handoffs sentence becomes a brief-update sentence.
+	 * user-facing progress updates": remove narration-suppressing lines, then say when user-facing
+	 * text is wanted and what each update contains), so the quiet-between-handoffs sentence becomes a
+	 * brief-update instruction naming the moment and the shape. Rendered only by the Claude Fable 5.1
+	 * preset (senpi#2681).
 	 */
 	briefUpdatesBetweenHandoffs?: boolean;
 	/** The app surface has no routing line, so the block stops referring to one; chat has no block at all. */
@@ -52,7 +54,7 @@ export function buildHandoffSection(options: HandoffSectionOptions = {}): string
 		? "The Next you name is executed in this same response with tool calls."
 		: "The Next you name is executed in this same response with tool calls; a Next with nothing after it is a defect.";
 	const betweenRule = options.briefUpdatesBetweenHandoffs
-		? "Between handoffs, a one-line update on what you just found, ending with `Now: [task]. Next: [task].`, helps the user follow along."
+		? "Between handoffs, after each tool wave that changes what you know, write one line of reply text: what you found, then `Now: [task]. Next: [task].`"
 		: "Between handoffs, work without narration.";
 	const languageRule = surface === "app" ? APP_HANDOFF_LANGUAGE_RULE : HANDOFF_LANGUAGE_RULE;
 	return `## Handoff

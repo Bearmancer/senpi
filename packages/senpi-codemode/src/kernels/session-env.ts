@@ -17,6 +17,7 @@ export const SESSION_ENVIRONMENT_KEYS = [
 	"PI_PROVIDER",
 	"PI_MODEL",
 	"PI_REASONING_LEVEL",
+	"OMO_BROWSER_ENGINE",
 ] as const;
 
 /** Resolved per-session values for {@link SESSION_ENVIRONMENT_KEYS}; absent keys stay unset. */
@@ -32,6 +33,7 @@ export interface SessionEnvironmentSource {
 	};
 	readonly model?: { readonly provider: string; readonly id: string } | undefined;
 	readonly thinkingLevel?: string | undefined;
+	readonly browserEngine?: string | undefined;
 }
 
 export function sessionEnvironmentFrom(source: SessionEnvironmentSource): SessionEnvironment {
@@ -47,6 +49,7 @@ export function sessionEnvironmentFrom(source: SessionEnvironmentSource): Sessio
 		env.PI_MODEL = model.id;
 	}
 	if (source.thinkingLevel) env.PI_REASONING_LEVEL = source.thinkingLevel;
+	if (source.browserEngine) env.OMO_BROWSER_ENGINE = source.browserEngine;
 	return env;
 }
 

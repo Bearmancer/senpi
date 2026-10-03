@@ -26,6 +26,7 @@ export async function attachToOpenSession(
 	const [handle, entry] = existing;
 	const wasParked = entry.retainOnDisconnect === true && entry.attachments === 0;
 	entry.attachments += 1;
+	entry.detachedAt = undefined;
 	// The claim carries the attachment state another generation decides on: a path this host is
 	// actively serving a client on is never reclaimable from it.
 	pathReservations?.setAttached(sessionPath, true);
@@ -38,6 +39,10 @@ export async function attachToOpenSession(
 	if (profile.promptSurface !== undefined && profile.promptSurface !== entry.profile.promptSurface) {
 		entry.profile = frozenProfile({ ...entry.profile, promptSurface: profile.promptSurface });
 		entry.runtime?.setPromptSurface(profile.promptSurface);
+	}
+	if (profile.browserEngine !== undefined && profile.browserEngine !== entry.profile.browserEngine) {
+		entry.profile = frozenProfile({ ...entry.profile, browserEngine: profile.browserEngine });
+		entry.runtime?.setBrowserEngine(profile.browserEngine);
 	}
 	entry.lastCommandAt = now;
 	if (wasParked) {
