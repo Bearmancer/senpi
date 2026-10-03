@@ -2,7 +2,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import type { EvalDetachedCellNotification, EvalDetachedCellSnapshot } from "./detached-cell-manager.ts";
 import { interruptionStateNote, unknownInterruptionStateNote } from "./interrupt-note.ts";
-import type { EvalMemoryDetails } from "./types.ts";
+import type { EvalKernelState, EvalMemoryDetails } from "./types.ts";
 
 const NOTIFICATION_TAIL_BYTES = 512;
 
@@ -78,10 +78,21 @@ function outcomeOf(cell: EvalDetachedCellSnapshot): string {
 }
 
 function stateNoteOf(cell: EvalDetachedCellSnapshot): string {
-	if (cell.state !== "cancelled") return memoryStateNote(cell.result.details?.memory);
+	if (cell.state !== "cancelled") {
+		const kernelState = cell.result.details?.kernelState;
+		return kernelState === undefined ? memoryStateNote(cell.result.details?.memory) : KERNEL_STATE_NOTES[kernelState];
+	}
 	const note = interruptionStateNote(cell.language, cell.stateRetained) ?? unknownInterruptionStateNote(cell.language);
 	return cell.interruptNote === undefined ? note : `${note} ${cell.interruptNote.trim()}`;
 }
+
+/** A kernel death decides what survived, whatever the memory report says. */
+const KERNEL_STATE_NOTES: Readonly<Record<EvalKernelState, string>> = {
+	lost: "The kernel died while this cell ran - every global is lost; the next eval cell runs on a fresh kernel.",
+	restarted:
+		"The kernel was restarted before this cell ran - globals from earlier cells are gone; this cell's variables are available to the next eval cell.",
+	"not-run": "This cell never ran and changed no kernel state.",
+};
 
 export function memoryStateNote(memory: EvalMemoryDetails | undefined): string {
 	if (memory?.overCeiling === true)

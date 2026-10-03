@@ -1,3 +1,58 @@
+## 2026-10-03 - A launch profile carries the session's own fallback policy (omo#9512)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session-runtime.ts`: `AgentSessionLaunchProfile.retryFallback?: SessionRetryFallbackProfile` (`{ modelFallback, fallbackChains }`).
+
+### Why
+
+- `test/suite/rpc-open-session-retry-fallback.test.ts` opens two sessions on one host with different chains: each falls back to its own model on a usage limit, a session without a profile keeps the host's settings and fails cleanly, and the user's `settings.json` is byte-identical afterwards. Three of its four cases fail on main. `test/suite/rpc-worker-retry-fallback.test.ts` checks the same per-session chain on worker-isolate sessions.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/agent-session-runtime.ts`: the launch profile is built by the host before any extension loads, and an extension's only settings lever (`ctx.sessionSettings`) writes the global settings file.
+
+### Expected merge conflict zones
+
+- LOW: the `AgentSessionLaunchProfile` fields in `agent-session-runtime.ts`.
+
+## 2026-10-03 - A first run with no provider gets the /login guidance, not a compaction error (senpi#2677)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `_assertModelReadyForTurn()` (no model, or no credentials for its provider) is shared by `prompt()` and the `triggerTurn` path of `sendCustomMessage`, which used to reach the compaction gate unchecked. `_enforceCompactionBeforeProvider` and `_enforceFinalProviderAdmission` treat a context window `<= 0` as unknown for every model, not only virtual ones. The check throws `ModelNotReadyError`; the extension `sendMessage` and `sendUserMessage` error reporters turn it into one `provider_required` session event (with the same guidance text) instead of `runner.emitError`, so a background turn on a first run is neither silent nor an error; the once-latch resets when a turn is admitted, so losing the provider again later is reported again.
+
+### Why
+
+- `packages/coding-agent/src/core/agent-session.ts`: with no provider the session runs on the agent's placeholder model (`contextWindow: 0`), where `shouldCompact(tokens, 0)` is always true, so a startup extension's triggered turn threw `RequiredCompactionError` before anything said no provider was configured. `test/suite/regressions/first-run-no-provider-not-compaction.test.ts` covers the typed prompt, the extension-triggered turn and a zero-window model; the last two fail on main.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/agent-session.ts`: turn admission and the compaction gate run inside the session before any extension hook can intervene.
+
+### Expected merge conflict zones
+
+- LOW: the pre-provider threshold condition and the start of the `triggerTurn` branch in `sendCustomMessage`.
+
+## 2026-10-03 - Continue a session from its leaf with no new prompt (senpi#1930)
+
+### What changed
+
+- `packages/coding-agent/src/core/continue-from-leaf.ts` (new): `CONTINUE_FROM_LEAF_CUSTOM_TYPE` ("continue-from-leaf"), the hidden `CONTINUE_FROM_LEAF_DIRECTIVE`, and `ContinueFromLeafError` with codes `streaming | nothing_to_continue | leaf_not_assistant`; `AgentSession.continueFromLeaf()` refuses unless the last message is an assistant answer.
+- `packages/coding-agent/src/core/agent-session.ts`: `continueFromLeaf()` starts a turn from the current leaf by sending the directive as a hidden custom message (`display: false`, `triggerTurn: true`), the same mechanism as the "." manual continue. It refuses while streaming and on a session with no messages. After `editAssistantMessage` makes an edited answer the leaf, the model continues from the edited text.
+
+### Why
+
+- `packages/coding-agent/src/core/agent-session.ts`: #1930. `agent.continue()` refuses an assistant tail, and assistant prefill is rejected by the default models (Claude 4.6+ returns 400 on a trailing assistant message; OpenAI's Responses API has no prefill), so a clean "regenerate from my edited answer" needs a user-turn nudge the transcript never shows. It has its own type so the goal extension's manual-continue hook does not treat it as a "." continue.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/agent-session.ts`: the RPC command must start a turn with the session's own refusal semantics (streaming, empty session) and typed errors; an extension command is a prompt, which the desktop would render as user text.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/agent-session.ts`: the import block beside `./manual-continue.ts`, and the method inserted before `editAssistantMessage`.
+
 ## 2026-10-03 - nvidia's default is a model its regenerated catalog still has (senpi#2645)
 
 ### What changed
@@ -8817,3 +8872,23 @@ Session runtime, model runtime, remote catalog and settings own these paths belo
 ### Expected merge conflict zones
 
 Upstream edits to core session/settings/runtime paths at the next sync.
+
+## The session launch profile carries the browser engine (2026-10-03)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session-runtime.ts`: `AgentSessionLaunchProfile.browserEngine` and `setBrowserEngine`, which also updates the frozen profile so a later switch, new session or fork keeps the engine.
+- `packages/coding-agent/src/core/agent-session.ts`, `agent-session-services.ts`, `sdk.ts`: the engine is passed through session creation, held on `AgentSession` (`browserEngine`, `setBrowserEngine`) and handed to extensions through the context action `getBrowserEngine`.
+- `core/browser-engine.ts` (new): the `BrowserEngine` values and the `OMO_BROWSER_ENGINE` name.
+
+### Why
+
+`open_session.browserEngine` (senpi#2611) is a per-session choice; the profile is where every other per-session open field (`promptSurface`, `kind`, `context`) already lives.
+
+### Why an extension could not handle it
+
+Session creation and the launch profile are core lifecycle code that runs before extensions load.
+
+### Expected merge conflict zones
+
+The `promptSurface` plumbing in `agent-session.ts`, `agent-session-services.ts` and `sdk.ts`, which the new field sits next to.

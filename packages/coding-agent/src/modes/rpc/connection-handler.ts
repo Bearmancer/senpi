@@ -17,13 +17,14 @@
 
 import * as crypto from "node:crypto";
 import { basename, dirname, extname } from "node:path";
-import type { ImageContent } from "@earendil-works/pi-ai";
+import { type ImageContent, modelSupportsAssistantPrefill } from "@earendil-works/pi-ai";
 import type { OAuthProviderId } from "@earendil-works/pi-ai/compat";
 import { VERSION } from "../../config.ts";
 import type { AgentAbortSource } from "../../core/agent-abort-provenance.ts";
 import type { AgentSession } from "../../core/agent-session.ts";
 import type { AgentSessionRuntime } from "../../core/agent-session-runtime.ts";
 import { authMethodStatus, buildLoginProviderInfos } from "../../core/auth-providers.ts";
+import { ContinueFromLeafError } from "../../core/continue-from-leaf.ts";
 import {
 	getCredentialAccounts,
 	pinCredentialAccount,
@@ -64,6 +65,7 @@ import { ConnectionQuestionBridge, degradeQuestion, sessionQuestionBridges } fro
 import {
 	AUTO_TITLE_SESSIONS_CAPABILITY,
 	buildCustomUnsupportedRequest,
+	CONTINUE_FROM_LEAF_CAPABILITY,
 	DEFAULT_CUSTOM_EXTENSION_LABEL,
 	EXTENSION_EVENTS_CAPABILITY,
 	MEDIA_PLACEHOLDERS_CAPABILITY,
@@ -926,6 +928,7 @@ export function createRpcConnectionHandler(
 								AUTO_TITLE_SESSIONS_CAPABILITY,
 								MEDIA_PLACEHOLDERS_CAPABILITY,
 								DURABLE_CLIENT_MESSAGE_ID_CAPABILITY,
+								CONTINUE_FROM_LEAF_CAPABILITY,
 								...(options.capabilities ?? []),
 							]),
 						],
@@ -961,6 +964,16 @@ export function createRpcConnectionHandler(
 			case "append_session_entry": {
 				session.appendSessionEntry(command.entry);
 				return success(id, "append_session_entry");
+			}
+
+			case "continue_from_leaf": {
+				try {
+					await session.continueFromLeaf();
+					return success(id, "continue_from_leaf");
+				} catch (err) {
+					if (err instanceof ContinueFromLeafError) return error(id, command.type, err.message, err.code);
+					throw err;
+				}
 			}
 
 			case "send_custom_message": {
@@ -1095,6 +1108,9 @@ export function createRpcConnectionHandler(
 					models: models.map((model) => ({
 						...model,
 						supportedThinkingLevels: getSupportedThinkingLevels(model),
+						supportsAssistantPrefill: modelSupportsAssistantPrefill(model, {
+							thinkingEnabled: session.thinkingLevel !== "off",
+						}),
 					})),
 				});
 			}

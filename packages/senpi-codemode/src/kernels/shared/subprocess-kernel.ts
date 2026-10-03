@@ -1,9 +1,10 @@
 import type { HostToKernelMessage, KernelToHostMessage } from "../../bridge/protocol.ts";
 import { decodeBridgeFrame, encodeBridgeFrame, isKernelToHostMessage } from "../../bridge/protocol.ts";
-import type { KernelInterruptHandle } from "../../tool/types.ts";
+import type { KernelInterruptHandle, PendingCell } from "../../tool/types.ts";
 import type { KernelToolsInvokeOptions } from "../js/kernel-tools-types.ts";
 import { rejectKernelToolsUnavailable } from "../kernel-tools-unavailable.ts";
 import { applySessionEnvironment } from "../session-env.ts";
+import { describeExit } from "./kernel-death.ts";
 import { KernelMemoryHost } from "./kernel-memory-host.ts";
 import type { KernelResult, KernelRunInput, SubprocessKernelOptions, ToolCallMessage } from "./subprocess-contract.ts";
 import { type SubprocessLike, SubprocessProcess, type SubprocessSpawn, spawnSubprocess } from "./subprocess-process.ts";
@@ -19,8 +20,10 @@ import {
 	KernelRetirementError,
 	KernelStartupError,
 	type PendingRun,
+	settlePendingRun,
 	timeoutResult,
 } from "./subprocess-run.ts";
+import { SubprocessStartupWatchdog } from "./subprocess-startup.ts";
 
 export type {
 	KernelResult,
@@ -38,11 +41,13 @@ export class SubprocessKernel {
 	private readonly memory: KernelMemoryHost | null;
 	private process: SubprocessProcess | null = null;
 	private processReady = false;
+	private startup: SubprocessStartupWatchdog | null = null;
 	private retirementPromise: Promise<void> | null = null;
 	private retirementProcess: SubprocessProcess | null = null;
 	private retirementFailure: Error | null = null;
 	private failure: Error | null = null;
 	private closed = false;
+	private dead = false;
 
 	constructor(options: SubprocessKernelOptions) {
 		this.options = options;
@@ -50,6 +55,14 @@ export class SubprocessKernel {
 		const memory = options.memory;
 		this.memory = memory ? new KernelMemoryHost(memory.language, memory.thresholds, memory) : null;
 		this.spawnProcess();
+	}
+
+	isAlive(): boolean {
+		return !this.dead;
+	}
+
+	drainPending(): readonly PendingCell[] {
+		return this.runs.drain().map((run) => ({ input: run.input, settle: (result) => settlePendingRun(run, result) }));
 	}
 
 	run(input: KernelRunInput): Promise<KernelResult> {
@@ -122,6 +135,7 @@ export class SubprocessKernel {
 	async close(): Promise<void> {
 		const wasClosed = this.closed;
 		this.closed = true;
+		this.startup?.stop();
 		if (!wasClosed) {
 			this.settleAll(new KernelClosingError());
 			this.runs.clearToolCalls();
@@ -186,6 +200,11 @@ export class SubprocessKernel {
 		});
 		this.process = process;
 		this.processReady = false;
+		this.startup?.stop();
+		const startup = this.options.startup;
+		this.startup = startup
+			? new SubprocessStartupWatchdog(startup, child.pid, (message) => this.stalled(process, message))
+			: null;
 		this.memory?.processReplaced();
 		try {
 			process.send(
@@ -210,7 +229,9 @@ export class SubprocessKernel {
 
 	private handleMessage(process: SubprocessProcess, message: KernelToHostMessage): void {
 		if (!this.accepts(process)) return;
+		if (!this.processReady) this.startup?.observe(message);
 		if (message.type === "ready") {
+			this.startup?.stop();
 			this.processReady = true;
 			this.runs.handleMessage(message, this.onMessage);
 			this.pumpRuns();
@@ -236,6 +257,7 @@ export class SubprocessKernel {
 
 	private handleExit(process: SubprocessProcess, code: number | null, signal: NodeJS.Signals | null): void {
 		if (this.process !== process) return;
+		this.startup?.stop();
 		if (process.isRetiring) {
 			this.process = null;
 			this.retirementFailure = null;
@@ -243,7 +265,41 @@ export class SubprocessKernel {
 		}
 		this.process = null;
 		this.processReady = false;
-		this.failClosed(new KernelExitedError(signal ?? code ?? "unknown"));
+		const error = new KernelExitedError(signal ?? code ?? "unknown");
+		if (this.options.onDeath) this.die(error, describeExit(code, signal), this.options.onDeath);
+		else this.failClosed(error);
+	}
+
+	/**
+	 * The interpreter exited on its own and is gone: the running cell fails once (its side effects may
+	 * already have happened), the cells that never started stay queued for `drainPending`, and the owner
+	 * replaces this instance. `run()` is never reached on it again.
+	 */
+	private die(error: Error, reason: string, onDeath: (reason: string) => void): void {
+		this.failure = error;
+		this.closed = true;
+		this.dead = true;
+		this.runs.clearToolCalls();
+		const active = this.runs.active;
+		if (active) {
+			this.runs.releaseActive(active);
+			this.runs.settle(active, failureResult(active, new Error(`${error.message}; every global is lost`)));
+		}
+		onDeath(reason);
+	}
+
+	/** A stalled start is a death: the owner replaces the kernel and the cells that never started run there. */
+	private stalled(process: SubprocessProcess, message: string): void {
+		if (!this.accepts(process)) return;
+		const error = new KernelStartupError(message);
+		const onDeath = this.options.onDeath;
+		if (!onDeath) {
+			this.failClosed(error);
+			return;
+		}
+		process.retire();
+		this.trackRetirement(process, this.terminateOwnedProcess(process));
+		this.die(error, message, onDeath);
 	}
 
 	private accepts(process: SubprocessProcess): boolean {
@@ -299,6 +355,7 @@ export class SubprocessKernel {
 	}
 
 	private failClosed(error: Error): void {
+		this.startup?.stop();
 		const process = this.process;
 		this.failure = error;
 		this.closed = true;

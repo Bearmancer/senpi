@@ -21,6 +21,8 @@ import type { RpcExtensionUIRequest } from "./rpc-types.ts";
 export const CUSTOM_UNSUPPORTED_CAPABILITY = "custom_unsupported";
 export const EXTENSION_EVENTS_CAPABILITY = "extension_events";
 export const AUTO_TITLE_SESSIONS_CAPABILITY = "auto_title_sessions";
+/** Host capability: the `continue_from_leaf` command starts a turn with no new prompt (#1930). */
+export const CONTINUE_FROM_LEAF_CAPABILITY = "continue_from_leaf";
 /**
  * Opt-in: the host replaces inline image bytes inside tool results with `image_ref`
  * placeholders for this connection; the client fetches a block on demand with `get_media`.
@@ -75,6 +77,21 @@ export const DURABLE_SESSION_ID_CAPABILITY = "durable_session_id";
  * `SENPI_PROMPT_SURFACE`. A later open that names another surface rebuilds that session's prompt.
  */
 export const PROMPT_SURFACE_CAPABILITY = "prompt_surface";
+
+/**
+ * HOST capability: this host honors `open_session.browserEngine` (`connected` | `builtin` | `none`). The
+ * choice is per session, never per process: that session's tool subprocesses and eval kernel see
+ * `OMO_BROWSER_ENGINE=<value>` and no other session on the host does. Advertised only because the
+ * value reaches every consumer, so a client may rely on it the moment it sees this name.
+ */
+export const BROWSER_ENGINE_CAPABILITY = "browser_engine";
+
+/**
+ * HOST capability: this host honors `open_session.retryFallback` (`{ modelFallback, fallbackChains }`). The
+ * policy is that session's own: it is applied as an in-memory settings override for that session only,
+ * never written to a settings file and never seen by another session on the host.
+ */
+export const RETRY_FALLBACK_PROFILE_CAPABILITY = "retry_fallback_profile";
 
 /**
  * HOST capability: `open_session.promptSurface` also accepts `chat` (a chat bridge: no routing line,

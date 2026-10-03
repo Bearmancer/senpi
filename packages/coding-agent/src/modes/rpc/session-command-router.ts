@@ -5,11 +5,14 @@ import { buildRpcSessionState } from "./connection-handler.ts";
 import {
 	AUTO_TITLE_PER_SESSION_CAPABILITY,
 	AUTO_TITLE_SESSIONS_CAPABILITY,
+	BROWSER_ENGINE_CAPABILITY,
+	CONTINUE_FROM_LEAF_CAPABILITY,
 	DURABLE_SESSION_ID_CAPABILITY,
 	MEDIA_PLACEHOLDERS_CAPABILITY,
 	PROMPT_SURFACE_CAPABILITY,
 	PROMPT_SURFACE_CHAT_CAPABILITY,
 	RETAIN_ON_DISCONNECT_CAPABILITY,
+	RETRY_FALLBACK_PROFILE_CAPABILITY,
 	SESSION_CONTEXT_CAPABILITY,
 	SESSION_KIND_CAPABILITY,
 	WARM_CAPABILITY,
@@ -18,9 +21,11 @@ import { answerWarm } from "./host-warm.ts";
 import { protocolIdentity } from "./protocol-identity.ts";
 import {
 	sessionAutoTitleError,
+	sessionBrowserEngineError,
 	sessionContextError,
 	sessionKindError,
 	sessionPromptSurfaceError,
+	sessionRetryFallbackError,
 } from "./rpc-input-validation.ts";
 import type { RpcCommand, RpcHostKernelMemory, RpcResponse, RpcSessionClosedReason } from "./rpc-types.ts";
 import {
@@ -40,6 +45,7 @@ import type { OpenRpcSession, RpcSessionLaunchProfile, RpcSessionRegistry } from
 import { RpcSessionRegistryError } from "./session-registry.ts";
 import { releaseSession } from "./session-release.ts";
 import { selectSweepEvictions } from "./session-sweep.ts";
+import { liveToolMediaScope, toolMediaPersister } from "./tool-media-store.ts";
 
 /** How often a draining host re-checks whether the work it is waiting for has settled. */
 const DRAIN_SWEEP_MS = 50;
@@ -310,6 +316,7 @@ export class SessionCommandRouter {
 				AUTO_TITLE_SESSIONS_CAPABILITY,
 				MEDIA_PLACEHOLDERS_CAPABILITY,
 				DURABLE_CLIENT_MESSAGE_ID_CAPABILITY,
+				CONTINUE_FROM_LEAF_CAPABILITY,
 				// Host capabilities, not client opt-ins: only a multi-session host owns the
 				// attachment refcount `open_session.retain_on_disconnect` detaches from, the
 				// per-session launch profile `context`/`auto_title` travel on, and the session
@@ -324,6 +331,10 @@ export class SessionCommandRouter {
 				// Every session's prompt is built from its own launch profile, so one host serves both surfaces.
 				PROMPT_SURFACE_CAPABILITY,
 				PROMPT_SURFACE_CHAT_CAPABILITY,
+				// Each session's tool subprocesses and eval kernel get its own OMO_BROWSER_ENGINE from its launch profile.
+				BROWSER_ENGINE_CAPABILITY,
+				// Each session's fallback chain is its own in-memory settings override, never the host's file.
+				RETRY_FALLBACK_PROFILE_CAPABILITY,
 				ACCEPT_EDITS_PERMISSION_PRESET_CAPABILITY,
 				// Only an in-process runtime shares the loop a warm loads into (senpi#2314).
 				...(this.registry.warm ? [WARM_CAPABILITY] : []),
@@ -433,7 +444,13 @@ export class SessionCommandRouter {
 	sweepIdleSessions(): void {
 		const now = this.idleNow();
 		const idleEvictionMs = this.memoryPressure ? this.idleEvictionMs / 2 : this.idleEvictionMs;
-		const verdicts = selectSweepEvictions(this.registry, now, idleEvictionMs);
+		const verdicts = selectSweepEvictions(
+			this.registry,
+			now,
+			idleEvictionMs,
+			(sessionId) =>
+				this.activeRequests.has(sessionId) || (this.bindings.get(sessionId)?.pendingPrompts?.().length ?? 0) > 0,
+		);
 		for (const sessionId of verdicts.orphaned) void this.evictIdleSession(sessionId, "session_dir_removed");
 		for (const sessionId of verdicts.idle) void this.evictIdleSession(sessionId);
 		if (Number.isFinite(this.emptyExitMs)) {
@@ -599,6 +616,12 @@ export class SessionCommandRouter {
 		const promptSurfaceError = sessionPromptSurfaceError(command.promptSurface);
 		if (promptSurfaceError)
 			return error(command.id, "open_session", `${RPC_ERROR_INVALID_LAUNCH_PROFILE}: ${promptSurfaceError}`);
+		const browserEngineError = sessionBrowserEngineError(command.browserEngine);
+		if (browserEngineError)
+			return error(command.id, "open_session", `${RPC_ERROR_INVALID_LAUNCH_PROFILE}: ${browserEngineError}`);
+		const retryFallbackError = sessionRetryFallbackError(command.retryFallback);
+		if (retryFallbackError)
+			return error(command.id, "open_session", `${RPC_ERROR_INVALID_LAUNCH_PROFILE}: ${retryFallbackError}`);
 		let opened: OpenRpcSession | undefined;
 		try {
 			opened = await this.registry.openSession(
@@ -618,6 +641,8 @@ export class SessionCommandRouter {
 					...(command.durableSessionId !== undefined ? { durableSessionId: command.durableSessionId } : {}),
 					...(typeof command.auto_title === "boolean" ? { autoTitle: command.auto_title } : {}),
 					...(command.promptSurface !== undefined ? { promptSurface: command.promptSurface } : {}),
+					...(command.browserEngine !== undefined ? { browserEngine: command.browserEngine } : {}),
+					...(command.retryFallback !== undefined ? { retryFallback: command.retryFallback } : {}),
 				},
 				// Host lifecycle policy, deliberately outside the immutable launch profile.
 				{ retainOnDisconnect: command.retain_on_disconnect === true },
@@ -625,6 +650,10 @@ export class SessionCommandRouter {
 			const openedSession = opened;
 			const entry = this.registry.getForCommand(openedSession.sessionId, "open_session");
 			this.writer.setSessionKind(openedSession.sessionId, entry.kind);
+			this.writer.setSessionMedia(
+				openedSession.sessionId,
+				toolMediaPersister(() => liveToolMediaScope(entry)),
+			);
 			if (owner !== undefined) {
 				if (!this.writer.hasRegisteredConnectionCapabilities(owner))
 					this.writer.setConnectionCapabilities(

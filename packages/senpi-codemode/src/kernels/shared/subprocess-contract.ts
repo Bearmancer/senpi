@@ -2,8 +2,10 @@ import type { KernelMemoryThresholds } from "../../bridge/memory-protocol.ts";
 import type { BridgeConnectionConfig, KernelToHostMessage } from "../../bridge/protocol.ts";
 import type { EvalKernelRunInput, EvalLanguage } from "../../tool/types.ts";
 import type { SessionEnvironment } from "../session-env.ts";
+import type { KernelLifecycle } from "./kernel-death.ts";
 import type { FootprintReader } from "./kernel-memory-host.ts";
 import type { SubprocessSpawn } from "./subprocess-process.ts";
+import type { SubprocessStartupOptions } from "./subprocess-startup.ts";
 
 export type KernelRunInput = EvalKernelRunInput;
 
@@ -16,7 +18,7 @@ export interface SubprocessKernelMemory {
 	readonly readFootprint: FootprintReader;
 }
 
-export interface SubprocessKernelOptions {
+export interface SubprocessKernelOptions extends KernelLifecycle {
 	readonly command: string;
 	readonly args: readonly string[];
 	readonly cwd?: string;
@@ -28,4 +30,6 @@ export interface SubprocessKernelOptions {
 	readonly spawn?: SubprocessSpawn;
 	readonly onMessage?: (message: KernelToHostMessage) => void;
 	readonly memory?: SubprocessKernelMemory & { readonly language: EvalLanguage };
+	/** Fails a start that stops making progress before `ready`; absent, the kernel waits for `ready` indefinitely. */
+	readonly startup?: SubprocessStartupOptions;
 }

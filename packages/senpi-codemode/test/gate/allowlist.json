@@ -1,138 +1,216 @@
 {
- "version": 1,
- "nodes": {
-  "1": {
-   "additions": [],
-   "reason": "The initial harness preserves the merge-base surfaces without additive production changes."
-  },
-  "32": {
-   "additions": [
-    "legacyContracts/test/js-kernel-shell-stop-bun.test.ts/Bun shell Stop reports state loss when Stop interrupts a native shell wait",
-    "legacyContracts/test/js-kernel-shell-stop-bun.test.ts/Bun shell Stop reports state loss when Stop interrupts a native text wait",
-    "legacyContracts/test/js-kernel-shell-stop-bun.test.ts/Bun shell Stop reports state loss when Stop interrupts a native lines wait",
-    "legacyContracts/test/js-kernel-shell-stop-bun.test.ts/Bun shell Stop reports state loss when Stop interrupts a native late wait",
-    "legacyContracts/test/js-kernel-shell-stop-bun.test.ts/Bun shell Stop keeps globals without a shell restart notice when Stop interrupts a normal await",
-    "legacyContracts/test/js-kernel-shell-stop-bun.test.ts/Bun shell Stop keeps normal shell output and globals when the cell finishes",
-    "legacyContracts/test/js-kernel-shell-stop-bun.test.ts/Bun shell Stop cleans up when the shell exits before connecting"
-   ],
-   "reason": "Lead decision A (2026-10-01), node 32: add event-ordered shell restart notice and preservation witnesses without changing default prompts, schemas, helpers, or native shell semantics."
-  },
-  "senpi#2444": {
-   "additions": [
-    "legacyContracts/test/eval-schema-required-fields.test.ts/eval action schemas preserves valid runs and controls through provider schema conversions",
-    "legacyContracts/test/eval-schema-required-fields.test.ts/eval action schemas keeps every root anyOf branch free of enum in each provider's wire schema",
-    "legacyContracts/test/eval-schema-required-fields.test.ts/eval action schemas falls back from preferred OpenAI strict sampling without requiring run fields on controls",
-    "legacyContracts/test/eval-schema-required-fields.test.ts/eval action schemas requires every run field with an explicit or omitted action",
-    "legacyContracts/test/eval-schema-required-fields.test.ts/eval action schemas keeps list, peek and stop usable without run fields",
-    "legacyContracts/test/eval-schema-required-fields.test.ts/eval action schemas declares every required field inside the branch that requires it"
-   ],
-   "reason": "Reviewed with senpi#2444 (fixes #2240 and #2569): contract tests for the self-contained, const-typed eval action branches, including the gateway-safe no-enum-in-root-anyOf check. The intended eval schema change is recorded in baseline.json in the same PR."
-  },
-  "senpi#2564": {
-   "additions": [
-    "legacyContracts/test/js-kernel-crash-lifecycle.test.ts/JavaScriptKernel worker crash lifecycle settles a memory query with the crash error when the worker dies answering it"
-   ],
-   "reason": "senpi#2564 (live kernel registry, fixes #2561): the crash-lifecycle suite gains the memory-query crash-settlement cell covering this PR's queryMemory crash path. No prompt, schema, invariant, census or import change, and no existing contract changed; the cell is absorbed into baseline.json on the next main re-record."
-  },
-  "senpi#2557": {
-   "additions": [
-    "legacyContracts/test/eval-display-image-check.test.ts/eval display image validation Given image data with a length that is not a multiple of four when displayed then no image block is kept and the output says why",
-    "legacyContracts/test/eval-display-image-check.test.ts/eval display image validation Given image data with a non-base64 character when displayed then no image block is kept and the output says why",
-    "legacyContracts/test/eval-display-image-check.test.ts/eval display image validation Given image data with a truncation marker appended when displayed then no image block is kept and the output says why",
-    "legacyContracts/test/eval-display-image-check.test.ts/eval display image validation Given image data with no data when displayed then no image block is kept and the output says why",
-    "legacyContracts/test/eval-display-image-check.test.ts/eval display image validation Given image data with padding in the middle when displayed then no image block is kept and the output says why",
-    "legacyContracts/test/eval-display-image-check.test.ts/eval display image validation Given image/gif declared over data whose signature is R0lGODlh when displayed then the detected type is kept",
-    "legacyContracts/test/eval-display-image-check.test.ts/eval display image validation Given image/jpeg declared over data whose signature is /9j/4A== when displayed then the detected type is kept",
-    "legacyContracts/test/eval-display-image-check.test.ts/eval display image validation Given image/jpeg declared over data whose signature is iVBORw0KGgo= when displayed then the detected type is kept",
-    "legacyContracts/test/eval-display-image-check.test.ts/eval display image validation Given image/png declared over data whose signature is UklGRgAAAABXRUJQ when displayed then the detected type is kept",
-    "legacyContracts/test/eval-display-image-check.test.ts/eval display image validation Given image/png declared over data whose signature is iVBORw0KGgo= when displayed then the detected type is kept",
-    "legacyContracts/test/eval-display-image-check.test.ts/eval display image validation Given valid base64 of a BMP signature when displayed as an image then it is dropped with a clear reason",
-    "legacyContracts/test/eval-display-image-check.test.ts/eval display image validation Given valid base64 of a JPEG-LS signature when displayed as an image then it is dropped with a clear reason",
-    "legacyContracts/test/eval-display-image-check.test.ts/eval display image validation Given valid base64 of plain text bytes when displayed as an image then it is dropped with a clear reason",
-    "legacyContracts/test/eval-display-image-check.test.ts/eval display image validation Given valid base64 of zero bytes when displayed as an image then it is dropped with a clear reason",
-    "legacyContracts/test/eval-display-image-check.test.ts/eval display image validation Given wrapped base64 when displayed then the line breaks are dropped and the image is kept",
-    "legacyContracts/test/upstream-v1-codemode-parity.test.ts/Windows Bun binary worker path inline worker entry under a Windows B:\\~BUN virtual path resolves to the on-disk sidecar",
-    "legacyContracts/test/upstream-v1-codemode-parity.test.ts/Windows Bun binary worker path worker entry under a Windows B:\\~BUN virtual path resolves to the on-disk sidecar",
-    "legacyContracts/test/upstream-v1-codemode-parity.test.ts/collapsed preview counts wrapped lines one long JSON line does not fill the screen when collapsed"
-   ],
-   "reason": "senpi#2557 (upstream v1.0.0 sync), lead+release-senpi approved: new tests from the sync only. The eval display-image validation tests cover the ported upstream fix d2931ad3d (invalid base64 dropped, detected type kept); the parity tests cover upstream v1.0.0 behaviours the fork already has (Windows Bun worker path, wrapped-line preview). No prompt, schema, invariant, census or import change, and no existing contract changed."
-  },
-  "29": {
-   "additions": [
-    "legacyContracts/test/js-kernel-webview-readiness.test.ts/a Chrome launch that never becomes ready retires the stalled launch and answers the create from a fresh Chrome",
-    "legacyContracts/test/js-kernel-webview-readiness.test.ts/a Chrome launch that never becomes ready fails the create naming the phase, with no Chrome left, once every launch stalled",
-    "legacyContracts/test/js-kernel-webview-readiness.test.ts/a Chrome launch that never becomes ready keeps another kernel's ready view on the shared Chrome while a stalled create fails",
-    "legacyContracts/test/js-kernel-webview-readiness.test.ts/a Chrome launch that never becomes ready does not relaunch for a client released while its launch stalls, and leaves no Chrome behind"
-   ],
-   "reason": "Node 29 (senpi#2353): RED/GREEN regressions for a Chrome-backed WebView launch whose CDP attach never completes (bounded readiness, retire, one relaunch, sibling views kept). No prompt, schema, helper, or default changes."
-  },
-  "2": {
-   "additions": [
-    "legacyContracts/test/bench/accounting.test.ts/benchmark process accounting drains a registered interpreter whose receipt is announced while teardown waits",
-    "legacyContracts/test/bench/accounting.test.ts/benchmark process accounting rejects an incomplete window when the old interpreter disappears",
-    "legacyContracts/test/bench/accounting.test.ts/benchmark process accounting counts the exited interpreter and its replacement once",
-    "legacyContracts/test/bench/compare.test.ts/paired benchmark verdicts detects an injected head slowdown without widening calibration",
-    "legacyContracts/test/bench/compare.test.ts/paired benchmark verdicts passes when paired ratios stay inside each row's measured band",
-    "legacyContracts/test/bench/compare.test.ts/paired benchmark verdicts names the regressed workload when paired CPU increases",
-    "legacyContracts/test/bench/compare.test.ts/paired benchmark verdicts returns inconclusive when calibration is too noisy",
-    "legacyContracts/test/bench/compare.test.ts/paired benchmark verdicts invalidates the run when required js-node is missing",
-    "legacyContracts/test/bench/compare.test.ts/paired benchmark verdicts invalidates the run when required jl is missing",
-    "legacyContracts/test/bench/compare.test.ts/paired benchmark verdicts invalidates a comparison across different interpreter versions",
-    "legacyContracts/test/bench/compare.test.ts/paired benchmark verdicts invalidates a scenario missing only on one side",
-    "legacyContracts/test/bench/compare.test.ts/paired benchmark verdicts invalidates a required scenario absent on both sides",
-    "legacyContracts/test/bench/compare.test.ts/paired benchmark verdicts skips only an explicitly optional scenario absent on both sides",
-    "legacyContracts/test/bench/compare.test.ts/paired benchmark verdicts refuses before measurement when injected host load is 81",
-    "legacyContracts/test/bench/compare.test.ts/paired benchmark verdicts refuses when load crosses the ceiling between measurements",
-    "legacyContracts/test/bench/compare.test.ts/paired benchmark verdicts invalidates truncated samples instead of comparing the surviving minima",
-    "legacyContracts/test/bench/compare.test.ts/paired benchmark verdicts rejects a regression in wallMs even when CPU is unchanged",
-    "legacyContracts/test/bench/compare.test.ts/paired benchmark verdicts rejects a regression in p95Ms even when CPU is unchanged",
-    "legacyContracts/test/bench/crash.test.ts/retains real interpreter CPU when a cell kills it",
-    "legacyContracts/test/bench/crash.test.ts/retains CPU when forced retirement kills the entire kernel group",
-    "legacyContracts/test/bench/fixtures.test.ts/benchmark fixtures in js streams the ten-mebibyte workload into a real spill file",
-    "legacyContracts/test/bench/fixtures.test.ts/benchmark fixtures in js reads the actual one-kibibyte fixture through the host bridge",
-    "legacyContracts/test/bench/fixtures.test.ts/benchmark fixtures in js composes four host results in input order",
-    "legacyContracts/test/bench/fixtures.test.ts/benchmark fixtures in js probes optional capabilities without executing a missing helper",
-    "legacyContracts/test/bench/fixtures.test.ts/benchmark fixtures in py streams the ten-mebibyte workload into a real spill file",
-    "legacyContracts/test/bench/fixtures.test.ts/benchmark fixtures in py reads the actual one-kibibyte fixture through the host bridge",
-    "legacyContracts/test/bench/fixtures.test.ts/benchmark fixtures in py composes four host results in input order",
-    "legacyContracts/test/bench/fixtures.test.ts/benchmark fixtures in py probes optional capabilities without executing a missing helper",
-    "legacyContracts/test/bench/fixtures.test.ts/benchmark fixtures in rb streams the ten-mebibyte workload into a real spill file",
-    "legacyContracts/test/bench/fixtures.test.ts/benchmark fixtures in rb reads the actual one-kibibyte fixture through the host bridge",
-    "legacyContracts/test/bench/fixtures.test.ts/benchmark fixtures in rb composes four host results in input order",
-    "legacyContracts/test/bench/fixtures.test.ts/benchmark fixtures in rb probes optional capabilities without executing a missing helper",
-    "legacyContracts/test/bench/fixtures.test.ts/benchmark fixtures in jl streams the ten-mebibyte workload into a real spill file",
-    "legacyContracts/test/bench/fixtures.test.ts/benchmark fixtures in jl reads the actual one-kibibyte fixture through the host bridge",
-    "legacyContracts/test/bench/fixtures.test.ts/benchmark fixtures in jl composes four host results in input order",
-    "legacyContracts/test/bench/fixtures.test.ts/benchmark fixtures in jl probes optional capabilities without executing a missing helper",
-    "legacyContracts/test/bench/fixtures.test.ts/collects the existing 150 MiB fixture and reports released live memory",
-    "legacyContracts/test/bench/fixtures.test.ts/allocates, touches, and releases the Julia GC workload",
-    "legacyContracts/test/bench/rescore.test.ts/rescoring a saved measurement passes identical code and prints the per-row table without new samples",
-    "legacyContracts/test/bench/rescore.test.ts/rescoring a saved measurement detects the 1.3x head injection on the saved samples and names the row",
-    "legacyContracts/test/bench/rescore.test.ts/rescoring a saved measurement rejects a mistyped injection scenario instead of applying it as a silent no-op",
-    "legacyContracts/test/bench/rescore.test.ts/rescoring a saved measurement refuses an injection that matches no measured series",
-    "legacyContracts/test/bench/rescore.test.ts/rescoring a saved measurement reports a forced excessive A/A band as inconclusive",
-    "legacyContracts/test/bench/rescore.test.ts/rescoring a saved measurement scores the same samples with one global band through the scope knob",
-    "legacyContracts/test/bench/rescore.test.ts/rescoring a saved measurement refuses to rescore a report that already carries injected samples",
-    "legacyContracts/test/bench/run.test.ts/paired runtime scheduling keeps each paired repetition adjacent when runtime processes are retained",
-    "legacyContracts/test/bench/run.test.ts/paired runtime scheduling refuses the run end to end when host load crosses 80 between measurements",
-    "legacyContracts/test/bench/run.test.ts/paired runtime scheduling marks a block contaminated when load exceeds the core count during measurement",
-    "legacyContracts/test/bench/run.test.ts/paired runtime scheduling keeps a block clean when load stays at the core count",
-    "legacyContracts/test/bench/run.test.ts/paired runtime scheduling invalidates a run when a runtime exits before its requested sample",
-    "legacyContracts/test/bench/threshold.test.ts/per-row A/A-calibrated thresholds derives every row's band from its own calibration pairs through one shared rule",
-    "legacyContracts/test/bench/threshold.test.ts/per-row A/A-calibrated thresholds keeps a quiet row's tighter threshold and caps a noisy row at the ceiling",
-    "legacyContracts/test/bench/threshold.test.ts/per-row A/A-calibrated thresholds passes matching code whose paired noise meets the bound despite large host drift",
-    "legacyContracts/test/bench/threshold.test.ts/per-row A/A-calibrated thresholds detects a 1.25x head shift on the same noisy series and names the row",
-    "legacyContracts/test/bench/threshold.test.ts/per-row A/A-calibrated thresholds reports a row whose calibration noise exceeds the cap as noise-limited, never as passed",
-    "legacyContracts/test/bench/threshold.test.ts/per-row A/A-calibrated thresholds still fails a noise-limited row that regresses beyond its own noise band",
-    "legacyContracts/test/bench/threshold.test.ts/per-row A/A-calibrated thresholds derives each row's minimum detectable effect from that row's own band, not a constant",
-    "legacyContracts/test/bench/threshold.test.ts/per-row A/A-calibrated thresholds states an MDE above five percent for a noise-limited row and the honest no-regression claim",
-    "legacyContracts/test/bench/threshold.test.ts/per-row A/A-calibrated thresholds keeps a clean row's MDE within its threshold",
-    "legacyContracts/test/bench/threshold.test.ts/per-row A/A-calibrated thresholds switches to one shared band with the global scope knob",
-    "legacyContracts/test/bench/threshold.test.ts/per-row A/A-calibrated thresholds never fails a clean self-vs-self run of many rows under the global scope",
-    "legacyContracts/test/bench/sampler.test.ts/per-block host sampling records host load and the busiest real processes",
-    "legacyContracts/test/bench/sampler.test.ts/per-block host sampling samples at the start, on every interval and at the end, in order and never concurrently"
-   ],
-   "reason": "Plan node 2 (senpi#2534, refs #2452): contract tests for the eval timing benchmark - paired comparator, per-row A/A-calibrated thresholds capped at 0.05, rescoring, scheduler, CPU accounting and workload fixtures. Test-only; no prompt, schema, helper or runtime surface changes."
-  }
- }
+	"version": 1,
+	"nodes": {
+		"1": {
+			"additions": [],
+			"reason": "The initial harness preserves the merge-base surfaces without additive production changes."
+		},
+		"2": {
+			"additions": [
+				"legacyContracts/test/bench/accounting.test.ts/benchmark process accounting drains a registered interpreter whose receipt is announced while teardown waits",
+				"legacyContracts/test/bench/accounting.test.ts/benchmark process accounting rejects an incomplete window when the old interpreter disappears",
+				"legacyContracts/test/bench/accounting.test.ts/benchmark process accounting counts the exited interpreter and its replacement once",
+				"legacyContracts/test/bench/compare.test.ts/paired benchmark verdicts detects an injected head slowdown without widening calibration",
+				"legacyContracts/test/bench/compare.test.ts/paired benchmark verdicts passes when paired ratios stay inside each row's measured band",
+				"legacyContracts/test/bench/compare.test.ts/paired benchmark verdicts names the regressed workload when paired CPU increases",
+				"legacyContracts/test/bench/compare.test.ts/paired benchmark verdicts returns inconclusive when calibration is too noisy",
+				"legacyContracts/test/bench/compare.test.ts/paired benchmark verdicts invalidates the run when required js-node is missing",
+				"legacyContracts/test/bench/compare.test.ts/paired benchmark verdicts invalidates the run when required jl is missing",
+				"legacyContracts/test/bench/compare.test.ts/paired benchmark verdicts invalidates a comparison across different interpreter versions",
+				"legacyContracts/test/bench/compare.test.ts/paired benchmark verdicts invalidates a scenario missing only on one side",
+				"legacyContracts/test/bench/compare.test.ts/paired benchmark verdicts invalidates a required scenario absent on both sides",
+				"legacyContracts/test/bench/compare.test.ts/paired benchmark verdicts skips only an explicitly optional scenario absent on both sides",
+				"legacyContracts/test/bench/compare.test.ts/paired benchmark verdicts refuses before measurement when injected host load is 81",
+				"legacyContracts/test/bench/compare.test.ts/paired benchmark verdicts refuses when load crosses the ceiling between measurements",
+				"legacyContracts/test/bench/compare.test.ts/paired benchmark verdicts invalidates truncated samples instead of comparing the surviving minima",
+				"legacyContracts/test/bench/compare.test.ts/paired benchmark verdicts rejects a regression in wallMs even when CPU is unchanged",
+				"legacyContracts/test/bench/compare.test.ts/paired benchmark verdicts rejects a regression in p95Ms even when CPU is unchanged",
+				"legacyContracts/test/bench/crash.test.ts/retains real interpreter CPU when a cell kills it",
+				"legacyContracts/test/bench/crash.test.ts/retains CPU when forced retirement kills the entire kernel group",
+				"legacyContracts/test/bench/fixtures.test.ts/benchmark fixtures in js streams the ten-mebibyte workload into a real spill file",
+				"legacyContracts/test/bench/fixtures.test.ts/benchmark fixtures in js reads the actual one-kibibyte fixture through the host bridge",
+				"legacyContracts/test/bench/fixtures.test.ts/benchmark fixtures in js composes four host results in input order",
+				"legacyContracts/test/bench/fixtures.test.ts/benchmark fixtures in js probes optional capabilities without executing a missing helper",
+				"legacyContracts/test/bench/fixtures.test.ts/benchmark fixtures in py streams the ten-mebibyte workload into a real spill file",
+				"legacyContracts/test/bench/fixtures.test.ts/benchmark fixtures in py reads the actual one-kibibyte fixture through the host bridge",
+				"legacyContracts/test/bench/fixtures.test.ts/benchmark fixtures in py composes four host results in input order",
+				"legacyContracts/test/bench/fixtures.test.ts/benchmark fixtures in py probes optional capabilities without executing a missing helper",
+				"legacyContracts/test/bench/fixtures.test.ts/benchmark fixtures in rb streams the ten-mebibyte workload into a real spill file",
+				"legacyContracts/test/bench/fixtures.test.ts/benchmark fixtures in rb reads the actual one-kibibyte fixture through the host bridge",
+				"legacyContracts/test/bench/fixtures.test.ts/benchmark fixtures in rb composes four host results in input order",
+				"legacyContracts/test/bench/fixtures.test.ts/benchmark fixtures in rb probes optional capabilities without executing a missing helper",
+				"legacyContracts/test/bench/fixtures.test.ts/benchmark fixtures in jl streams the ten-mebibyte workload into a real spill file",
+				"legacyContracts/test/bench/fixtures.test.ts/benchmark fixtures in jl reads the actual one-kibibyte fixture through the host bridge",
+				"legacyContracts/test/bench/fixtures.test.ts/benchmark fixtures in jl composes four host results in input order",
+				"legacyContracts/test/bench/fixtures.test.ts/benchmark fixtures in jl probes optional capabilities without executing a missing helper",
+				"legacyContracts/test/bench/fixtures.test.ts/collects the existing 150 MiB fixture and reports released live memory",
+				"legacyContracts/test/bench/fixtures.test.ts/allocates, touches, and releases the Julia GC workload",
+				"legacyContracts/test/bench/rescore.test.ts/rescoring a saved measurement passes identical code and prints the per-row table without new samples",
+				"legacyContracts/test/bench/rescore.test.ts/rescoring a saved measurement detects the 1.3x head injection on the saved samples and names the row",
+				"legacyContracts/test/bench/rescore.test.ts/rescoring a saved measurement rejects a mistyped injection scenario instead of applying it as a silent no-op",
+				"legacyContracts/test/bench/rescore.test.ts/rescoring a saved measurement refuses an injection that matches no measured series",
+				"legacyContracts/test/bench/rescore.test.ts/rescoring a saved measurement reports a forced excessive A/A band as inconclusive",
+				"legacyContracts/test/bench/rescore.test.ts/rescoring a saved measurement scores the same samples with one global band through the scope knob",
+				"legacyContracts/test/bench/rescore.test.ts/rescoring a saved measurement refuses to rescore a report that already carries injected samples",
+				"legacyContracts/test/bench/run.test.ts/paired runtime scheduling keeps each paired repetition adjacent when runtime processes are retained",
+				"legacyContracts/test/bench/run.test.ts/paired runtime scheduling refuses the run end to end when host load crosses 80 between measurements",
+				"legacyContracts/test/bench/run.test.ts/paired runtime scheduling marks a block contaminated when load exceeds the core count during measurement",
+				"legacyContracts/test/bench/run.test.ts/paired runtime scheduling keeps a block clean when load stays at the core count",
+				"legacyContracts/test/bench/run.test.ts/paired runtime scheduling invalidates a run when a runtime exits before its requested sample",
+				"legacyContracts/test/bench/threshold.test.ts/per-row A/A-calibrated thresholds derives every row's band from its own calibration pairs through one shared rule",
+				"legacyContracts/test/bench/threshold.test.ts/per-row A/A-calibrated thresholds keeps a quiet row's tighter threshold and caps a noisy row at the ceiling",
+				"legacyContracts/test/bench/threshold.test.ts/per-row A/A-calibrated thresholds passes matching code whose paired noise meets the bound despite large host drift",
+				"legacyContracts/test/bench/threshold.test.ts/per-row A/A-calibrated thresholds detects a 1.25x head shift on the same noisy series and names the row",
+				"legacyContracts/test/bench/threshold.test.ts/per-row A/A-calibrated thresholds reports a row whose calibration noise exceeds the cap as noise-limited, never as passed",
+				"legacyContracts/test/bench/threshold.test.ts/per-row A/A-calibrated thresholds still fails a noise-limited row that regresses beyond its own noise band",
+				"legacyContracts/test/bench/threshold.test.ts/per-row A/A-calibrated thresholds derives each row's minimum detectable effect from that row's own band, not a constant",
+				"legacyContracts/test/bench/threshold.test.ts/per-row A/A-calibrated thresholds states an MDE above five percent for a noise-limited row and the honest no-regression claim",
+				"legacyContracts/test/bench/threshold.test.ts/per-row A/A-calibrated thresholds keeps a clean row's MDE within its threshold",
+				"legacyContracts/test/bench/threshold.test.ts/per-row A/A-calibrated thresholds switches to one shared band with the global scope knob",
+				"legacyContracts/test/bench/threshold.test.ts/per-row A/A-calibrated thresholds never fails a clean self-vs-self run of many rows under the global scope",
+				"legacyContracts/test/bench/sampler.test.ts/per-block host sampling records host load and the busiest real processes",
+				"legacyContracts/test/bench/sampler.test.ts/per-block host sampling samples at the start, on every interval and at the end, in order and never concurrently"
+			],
+			"reason": "Plan node 2 (senpi#2534, refs #2452): contract tests for the eval timing benchmark - paired comparator, per-row A/A-calibrated thresholds capped at 0.05, rescoring, scheduler, CPU accounting and workload fixtures. Test-only; no prompt, schema, helper or runtime surface changes."
+		},
+		"5": {
+			"additions": [
+				"legacyContracts/test/detached-cell-notification.test.ts/detached cell notification state note Given a failed py cell whose kernel died (lost) when the notification is built then it does not claim the variables survived",
+				"legacyContracts/test/detached-cell-notification.test.ts/detached cell notification state note Given a failed py cell whose kernel died (restarted) when the notification is built then it does not claim the variables survived",
+				"legacyContracts/test/detached-cell-notification.test.ts/detached cell notification state note Given a failed py cell whose kernel died (not-run) when the notification is built then it does not claim the variables survived",
+				"legacyContracts/test/kernel-death-recovery.test.ts/a kernel whose interpreter dies is replaced once and keeps its queue rb: an interpreter SIGKILLed between cells is replaced and the next cell runs with the notice",
+				"legacyContracts/test/kernel-death-recovery.test.ts/a kernel whose interpreter dies is replaced once and keeps its queue jl: an interpreter SIGKILLed between cells is replaced and the next cell runs with the notice",
+				"legacyContracts/test/kernel-death-recovery.test.ts/a kernel whose interpreter dies is replaced once and keeps its queue py: a cell queued behind one whose interpreter dies runs on the replacement, in order",
+				"legacyContracts/test/kernel-death-recovery.test.ts/a kernel whose interpreter dies is replaced once and keeps its queue py: two deaths back to back fail the queued cell with eval_kernel_unavailable",
+				"legacyContracts/test/kernel-replacement.test.ts/a replaceable kernel never submits a queued cell cancelled while the replacement starts",
+				"legacyContracts/test/kernel-replacement.test.ts/a replaceable kernel lets session disposal win over a replacement still starting",
+				"legacyContracts/test/kernel-replacement.test.ts/a replaceable kernel fails the held cells with eval_kernel_unavailable when the replacement cannot start",
+				"legacyContracts/test/kernel-replacement.test.ts/a replaceable kernel does not start a second interpreter while the dead one cannot be retired",
+				"legacyContracts/test/kernel-replacement.test.ts/a replaceable kernel ignores a late death reported by an instance it already replaced",
+				"legacyContracts/test/py-kernel-retirement-recovery.test.ts/a Python kernel whose retirement failed reports the failure while the old interpreter lives, and recovers with the notice once it is gone",
+				"imports/extension/packages/senpi-codemode/src/extension/kernel-replacement.ts",
+				"imports/extension/packages/senpi-codemode/src/kernels/shared/kernel-death.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/extension/kernel-replacement.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/kernels/shared/kernel-death.ts"
+			],
+			"reason": "Node 5 (senpi#2452): RED/GREEN witnesses for replacing a dead py/rb/jl kernel once with its queue, the eval_kernel_unavailable double-death path, retirement-failure recovery, and the detached kernel-state notes; no prompt, schema, helper or default change. The session manager now imports the replaceable kernel and its death vocabulary (two small lifecycle modules, no installer or sandbox runtime) on the extension and first-kernel paths."
+		},
+		"6": {
+			"additions": [
+				"imports/extension/packages/senpi-codemode/src/kernels/shared/subprocess-startup.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/kernels/shared/subprocess-startup.ts",
+				"imports/extension/packages/senpi-codemode/src/kernels/shared/process-group-cpu.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/kernels/shared/process-group-cpu.ts",
+				"legacyContracts/test/kernel-replacement.test.ts/a replaceable kernel Given five cells submitted while a dead kernel's replacement is still starting when it becomes ready then exactly one replacement spawned and all five ran on it in order",
+				"legacyContracts/test/kernel-replacement.test.ts/a replaceable kernel Given cells submitted after a death whose replacement failed to start when the next replacement starts then they share one spawn",
+				"legacyContracts/test/kernels/rb/subprocess-startup.test.ts/SubprocessStartupWatchdog Given a runner that prints nothing but keeps using CPU when the no-progress window passes again and again then it never stalls",
+				"legacyContracts/test/kernels/rb/subprocess-startup.test.ts/SubprocessStartupWatchdog Given a runner that is silent and uses no CPU after reaching runtime-init when the window passes then it stalls once, naming that stage",
+				"legacyContracts/test/kernels/rb/subprocess-startup.test.ts/SubprocessStartupWatchdog Given a runner whose CPU stopped moving after a burst when the next window passes then it stalls",
+				"legacyContracts/test/kernels/rb/subprocess-startup.test.ts/SubprocessStartupWatchdog Given a runner whose CPU cannot be read when it stays silent for many windows then it never stalls",
+				"legacyContracts/test/kernels/rb/subprocess-startup.test.ts/SubprocessStartupWatchdog Given the group's CPU total drops because a member exited when the window passes then that counts as activity",
+				"legacyContracts/test/kernels/rb/subprocess-startup.test.ts/SubprocessStartupWatchdog Given a stage name the watchdog does not know when it arrives then the stage reached stays the last known one",
+				"legacyContracts/test/kernels/rb/subprocess-startup.test.ts/SubprocessStartupWatchdog Given output lines keep arriving with no CPU reader when the window passes between them then it never stalls",
+				"legacyContracts/test/kernels/rb/subprocess-startup.test.ts/ps cputime parsing Given the time formats macOS ps prints when they are parsed then each becomes hundredths of a second",
+				"legacyContracts/test/kernels/rb/subprocess-startup.test.ts/ps cputime parsing Given text that is not a cputime when it is parsed then nothing is returned",
+				"legacyContracts/test/kernels/rb/subprocess-startup.test.ts/SubprocessKernel startup Given an interpreter stuck silent and idle in runtime-init when a cell is waiting then the cell fails with a startup error naming the stage",
+				"legacyContracts/test/kernels/rb/subprocess-startup.test.ts/SubprocessKernel startup Given a kernel whose owner replaces dead kernels when its start stalls then it is reported dead with the stage, its interpreter is stopped, and the waiting cell is handed back unrun",
+				"legacyContracts/test/kernels/rb/subprocess-startup.test.ts/SubprocessKernel startup Given a kernel that became ready when it then stays silent and idle then no stall ever fires",
+				"legacyContracts/test/kernels/rb/subprocess-startup.test.ts/SubprocessKernel startup Given an interpreter that exits before ready when the window later passes then only the exit is reported and its CPU is no longer read",
+				"legacyContracts/test/kernels/rb/subprocess-startup.test.ts/SubprocessKernel startup Given a kernel closed during its start when the window later passes then no stall fires and its CPU is no longer read",
+				"legacyContracts/test/kernels/rb/subprocess-startup.test.ts/SubprocessKernel startup Given a starting interpreter that ignores the kill when the kernel is closed then its CPU is no longer read and no stall fires",
+				"legacyContracts/test/kernels/rb/subprocess-startup.test.ts/SubprocessKernel startup Given startup stage frames and stderr before ready when a stall fires then cells never see the frames and the error carries the stderr tail",
+				"legacyContracts/test/kernels/rb/subprocess-startup.test.ts/SubprocessKernel startup Given an interpreter that becomes ready after a long silent but CPU-busy start when a cell runs then it runs normally"
+			],
+			"reason": "Ruby and Julia kernels get a no-progress startup watchdog (two new modules in the scoped census) with its contracts; two tests pin the one-spawn replacement node 5 already delivers."
+		},
+		"9": {
+			"additions": [
+				"legacyContracts/test/kernel-tools-descriptor-language.test.ts/kernel tool descriptors name any eval language Given a descriptor from a Python kernel when it is typed and validated then it is accepted",
+				"legacyContracts/test/kernel-tools-descriptor-language.test.ts/kernel tool descriptors name any eval language Given a descriptor naming a language codemode does not run when it is validated then it is rejected",
+				"legacyContracts/test/kernel-tools-host-dispatch.test.ts/kernel tools on the real worker tool-call path Given the replaceable kernel a session holds for py, rb and jl when it is probed for kernel tools then it exposes none of the interpreter's stubs"
+			],
+			"reason": "The kernel-tools pump moved to kernels/shared/ (the baseline census entry is renamed to the new path) and descriptors may name any eval language; two contracts pin the widened descriptor."
+		},
+		"29": {
+			"additions": [
+				"legacyContracts/test/js-kernel-webview-readiness.test.ts/a Chrome launch that never becomes ready retires the stalled launch and answers the create from a fresh Chrome",
+				"legacyContracts/test/js-kernel-webview-readiness.test.ts/a Chrome launch that never becomes ready fails the create naming the phase, with no Chrome left, once every launch stalled",
+				"legacyContracts/test/js-kernel-webview-readiness.test.ts/a Chrome launch that never becomes ready keeps another kernel's ready view on the shared Chrome while a stalled create fails",
+				"legacyContracts/test/js-kernel-webview-readiness.test.ts/a Chrome launch that never becomes ready does not relaunch for a client released while its launch stalls, and leaves no Chrome behind"
+			],
+			"reason": "Node 29 (senpi#2353): RED/GREEN regressions for a Chrome-backed WebView launch whose CDP attach never completes (bounded readiness, retire, one relaunch, sibling views kept). No prompt, schema, helper, or default changes."
+		},
+		"32": {
+			"additions": [
+				"legacyContracts/test/js-kernel-shell-stop-bun.test.ts/Bun shell Stop reports state loss when Stop interrupts a native shell wait",
+				"legacyContracts/test/js-kernel-shell-stop-bun.test.ts/Bun shell Stop reports state loss when Stop interrupts a native text wait",
+				"legacyContracts/test/js-kernel-shell-stop-bun.test.ts/Bun shell Stop reports state loss when Stop interrupts a native lines wait",
+				"legacyContracts/test/js-kernel-shell-stop-bun.test.ts/Bun shell Stop reports state loss when Stop interrupts a native late wait",
+				"legacyContracts/test/js-kernel-shell-stop-bun.test.ts/Bun shell Stop keeps globals without a shell restart notice when Stop interrupts a normal await",
+				"legacyContracts/test/js-kernel-shell-stop-bun.test.ts/Bun shell Stop keeps normal shell output and globals when the cell finishes",
+				"legacyContracts/test/js-kernel-shell-stop-bun.test.ts/Bun shell Stop cleans up when the shell exits before connecting"
+			],
+			"reason": "Lead decision A (2026-10-01), node 32: add event-ordered shell restart notice and preservation witnesses without changing default prompts, schemas, helpers, or native shell semantics."
+		},
+		"senpi#2444": {
+			"additions": [
+				"legacyContracts/test/eval-schema-required-fields.test.ts/eval action schemas preserves valid runs and controls through provider schema conversions",
+				"legacyContracts/test/eval-schema-required-fields.test.ts/eval action schemas keeps every root anyOf branch free of enum in each provider's wire schema",
+				"legacyContracts/test/eval-schema-required-fields.test.ts/eval action schemas falls back from preferred OpenAI strict sampling without requiring run fields on controls",
+				"legacyContracts/test/eval-schema-required-fields.test.ts/eval action schemas requires every run field with an explicit or omitted action",
+				"legacyContracts/test/eval-schema-required-fields.test.ts/eval action schemas keeps list, peek and stop usable without run fields",
+				"legacyContracts/test/eval-schema-required-fields.test.ts/eval action schemas declares every required field inside the branch that requires it"
+			],
+			"reason": "Reviewed with senpi#2444 (fixes #2240 and #2569): contract tests for the self-contained, const-typed eval action branches, including the gateway-safe no-enum-in-root-anyOf check. The intended eval schema change is recorded in baseline.json in the same PR."
+		},
+		"senpi#2564": {
+			"additions": [
+				"legacyContracts/test/js-kernel-crash-lifecycle.test.ts/JavaScriptKernel worker crash lifecycle settles a memory query with the crash error when the worker dies answering it"
+			],
+			"reason": "senpi#2564 (live kernel registry, fixes #2561): the crash-lifecycle suite gains the memory-query crash-settlement cell covering this PR's queryMemory crash path. No prompt, schema, invariant, census or import change, and no existing contract changed; the cell is absorbed into baseline.json on the next main re-record."
+		},
+		"senpi#2557": {
+			"additions": [
+				"legacyContracts/test/eval-display-image-check.test.ts/eval display image validation Given image data with a length that is not a multiple of four when displayed then no image block is kept and the output says why",
+				"legacyContracts/test/eval-display-image-check.test.ts/eval display image validation Given image data with a non-base64 character when displayed then no image block is kept and the output says why",
+				"legacyContracts/test/eval-display-image-check.test.ts/eval display image validation Given image data with a truncation marker appended when displayed then no image block is kept and the output says why",
+				"legacyContracts/test/eval-display-image-check.test.ts/eval display image validation Given image data with no data when displayed then no image block is kept and the output says why",
+				"legacyContracts/test/eval-display-image-check.test.ts/eval display image validation Given image data with padding in the middle when displayed then no image block is kept and the output says why",
+				"legacyContracts/test/eval-display-image-check.test.ts/eval display image validation Given image/gif declared over data whose signature is R0lGODlh when displayed then the detected type is kept",
+				"legacyContracts/test/eval-display-image-check.test.ts/eval display image validation Given image/jpeg declared over data whose signature is /9j/4A== when displayed then the detected type is kept",
+				"legacyContracts/test/eval-display-image-check.test.ts/eval display image validation Given image/jpeg declared over data whose signature is iVBORw0KGgo= when displayed then the detected type is kept",
+				"legacyContracts/test/eval-display-image-check.test.ts/eval display image validation Given image/png declared over data whose signature is UklGRgAAAABXRUJQ when displayed then the detected type is kept",
+				"legacyContracts/test/eval-display-image-check.test.ts/eval display image validation Given image/png declared over data whose signature is iVBORw0KGgo= when displayed then the detected type is kept",
+				"legacyContracts/test/eval-display-image-check.test.ts/eval display image validation Given valid base64 of a BMP signature when displayed as an image then it is dropped with a clear reason",
+				"legacyContracts/test/eval-display-image-check.test.ts/eval display image validation Given valid base64 of a JPEG-LS signature when displayed as an image then it is dropped with a clear reason",
+				"legacyContracts/test/eval-display-image-check.test.ts/eval display image validation Given valid base64 of plain text bytes when displayed as an image then it is dropped with a clear reason",
+				"legacyContracts/test/eval-display-image-check.test.ts/eval display image validation Given valid base64 of zero bytes when displayed as an image then it is dropped with a clear reason",
+				"legacyContracts/test/eval-display-image-check.test.ts/eval display image validation Given wrapped base64 when displayed then the line breaks are dropped and the image is kept",
+				"legacyContracts/test/upstream-v1-codemode-parity.test.ts/Windows Bun binary worker path inline worker entry under a Windows B:\\~BUN virtual path resolves to the on-disk sidecar",
+				"legacyContracts/test/upstream-v1-codemode-parity.test.ts/Windows Bun binary worker path worker entry under a Windows B:\\~BUN virtual path resolves to the on-disk sidecar",
+				"legacyContracts/test/upstream-v1-codemode-parity.test.ts/collapsed preview counts wrapped lines one long JSON line does not fill the screen when collapsed"
+			],
+			"reason": "senpi#2557 (upstream v1.0.0 sync), lead+release-senpi approved: new tests from the sync only. The eval display-image validation tests cover the ported upstream fix d2931ad3d (invalid base64 dropped, detected type kept); the parity tests cover upstream v1.0.0 behaviours the fork already has (Windows Bun worker path, wrapped-line preview). No prompt, schema, invariant, census or import change, and no existing contract changed."
+		},
+		"senpi#2611": {
+			"additions": [
+				"legacyContracts/test/js-kernel-session-env.test.ts/JavaScriptKernel session environment shows each kernel only its own browser engine, and none to a session that chose nothing, even when the host process has one",
+				"legacyContracts/test/session-env.test.ts/session environment contract carries the browser engine only for a session that chose one",
+				"legacyContracts/test/session-env.test.ts/session environment contract replaces an inherited browser engine with the session's own and clears it for a session with none"
+			],
+			"reason": "senpi#2611: OMO_BROWSER_ENGINE joins the per-session eval kernel environment keys; these witnesses prove each kernel sees only its own session's engine and that a host-process value never reaches a session that chose none. No prompt, schema, helper or invariant cell changes."
+		},
+		"senpi#2619": {
+			"additions": [
+				"legacyContracts/test/py-kernel.test.ts/PythonKernel live reaches the loopback bridge even when a proxy is configured"
+			],
+			"reason": "Adds a witness that a Python cell's bridge call ignores a configured HTTP proxy (the loopback call opens through ProxyHandler({})). Test-only addition to the gate surface; the prelude change records no new helper, prompt or schema."
+		},
+		"senpi#2562": {
+			"additions": [
+				"legacyContracts/test/py-kernel-child-lifecycle.test.ts/PythonKernel retires cell subprocesses on close leaves no driver, kernel or child behind when the process that started the driver dies"
+			],
+			"reason": "Adds a witness that the host-loss test driver exits when the process that started it dies (stdin EOF), so no driver, kernel or child outlives the test. Test-only; no prompt, schema, helper or runtime surface changes."
+		}
+	}
 }

@@ -52,7 +52,11 @@ export interface PythonTransportOptions {
 	readonly onRetirementFailure: (transport: PythonKernelTransport, error: Error) => void;
 	readonly onResult: (transport: PythonKernelTransport, result: PythonTransportResult) => void;
 	readonly onError: (transport: PythonKernelTransport, error: Error) => void;
-	readonly onExit: (transport: PythonKernelTransport, error: Error) => void;
+	readonly onExit: (
+		transport: PythonKernelTransport,
+		error: Error,
+		exit: { readonly code: number | null; readonly signal: string | null },
+	) => void;
 }
 
 const hardKillWaitMs = 500;
@@ -79,10 +83,27 @@ export class PythonKernelTransport {
 	#active = true;
 	#exited = false;
 	#retirement: Promise<void> | null = null;
+	#gone: Promise<void> | null = null;
+	#isGone = false;
 
 	private constructor(options: PythonTransportOptions, child: KernelChild) {
 		this.#options = options;
 		this.#child = child;
+	}
+
+	/**
+	 * A retirement that timed out is confirmed only by this: the process really exited after all. The
+	 * watch is attached on demand, so a transport nobody asks this of leaves no listener on its child.
+	 */
+	whenGone(): Promise<void> {
+		if (this.#exited || this.#isGone) return Promise.resolve();
+		this.#gone ??= new Promise<void>((resolve) => {
+			this.#child.once("exit", () => {
+				this.#isGone = true;
+				resolve();
+			});
+		});
+		return this.#gone;
 	}
 
 	static async start(options: PythonTransportOptions): Promise<PythonKernelTransport> {
@@ -139,7 +160,7 @@ export class PythonKernelTransport {
 	}
 
 	async close(): Promise<void> {
-		if (this.#exited) return;
+		if (this.#exited || this.#isGone) return;
 		if (this.#retirement) {
 			await this.#retirement;
 			return;
@@ -162,7 +183,7 @@ export class PythonKernelTransport {
 	}
 
 	retire(): Promise<void> {
-		if (this.#exited) return Promise.resolve();
+		if (this.#exited || this.#isGone) return Promise.resolve();
 		if (this.#retirement) return this.#retirement;
 		this.#active = false;
 		const retirement = hardKill(this.#child, hardKillWaitMs).finally(() => {
@@ -244,7 +265,7 @@ export class PythonKernelTransport {
 		const error = new Error(this.#stderrTail.trim() || `Python kernel exited (${code ?? signal ?? "unknown"})`);
 		this.#detachListeners();
 		if (!active) return;
-		if (!this.#settleStartup(error)) this.#options.onExit(this, error);
+		if (!this.#settleStartup(error)) this.#options.onExit(this, error, { code, signal });
 	}
 
 	#onError(error: Error): void {

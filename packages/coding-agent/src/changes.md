@@ -1,3 +1,21 @@
+## 2026-10-03 - A session's own fallback policy reaches its settings in memory only (omo#9512)
+
+### What changed
+
+- `packages/coding-agent/src/main.ts`: `createCliRuntimeFactory` applies a launch profile's `retryFallback` (`open_session.retryFallback`) to that session's own `SettingsManager` through `applyOverrides`, the session-only layer that `save()` never writes.
+
+### Why
+
+- `packages/coding-agent/src/main.ts`: each host session builds its own `SettingsManager`, so the override reaches only that session, and the user's `settings.json` stays byte-identical (`test/suite/rpc-open-session-retry-fallback.test.ts`).
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/main.ts`: the settings manager is created before the session's extensions load, and `ctx.sessionSettings` setters persist to the global settings file.
+
+### Expected merge conflict zones
+
+- LOW: the `runtimeSettingsManager` construction in `createCliRuntimeFactory`.
+
 ## 2026-10-02 - Memory report trigger at startup (senpi#2561)
 
 ### What changed
@@ -4561,3 +4579,21 @@ Session runtime, settings and interactive mode own these paths below the extensi
 ### Expected merge conflict zones
 
 Upstream edits to session/settings/runtime paths at the next sync.
+
+## The CLI runtime factory forwards the browser engine (2026-10-03)
+
+### What changed
+
+- `packages/coding-agent/src/main.ts`: `createCliRuntimeFactory` passes `launchProfile.browserEngine` to session creation next to `promptSurface`.
+
+### Why
+
+A session opened with `open_session.browserEngine` must be created with it (senpi#2611).
+
+### Why an extension could not handle it
+
+The runtime factory builds the session before any extension is loaded.
+
+### Expected merge conflict zones
+
+The `promptSurface: launchProfile?.promptSurface` line in the session creation call.
