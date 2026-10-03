@@ -13,6 +13,8 @@
 
 ### Fixed
 
+- A Python cell's host calls (`tool.*`, `completion`) no longer go through a configured HTTP proxy: the loopback bridge request ignores proxy settings from the environment and, on Windows, the registry, so a proxy can't refuse a `127.0.0.1` call that never needed it ([#2619](https://github.com/code-yeongyu/senpi/issues/2619)).
+
 ### Removed
 
 ## [2026.10.4] - 2026-10-03
