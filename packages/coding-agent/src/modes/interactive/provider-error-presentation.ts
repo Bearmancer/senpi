@@ -114,9 +114,21 @@ export class ProviderErrorPresentation {
 		this.notice?.setSummary(undefined);
 	}
 
+	/** A success or cleanup ends the episode: no finish is owed afterward. */
 	clear(): void {
 		this.pending = false;
+		this.retryAwaitingFinish = false;
 		// Keep diagnostics reachable through the existing expansion affordance.
+		this.notice?.setSummary(undefined);
+	}
+
+	/**
+	 * The retry engine finishing (summarization_retry_finished): clears the transient row but keeps
+	 * the episode marker, because the terminal compaction_end that follows still closes the
+	 * exhausted episode out via finish().
+	 */
+	clearTransient(): void {
+		this.pending = false;
 		this.notice?.setSummary(undefined);
 	}
 

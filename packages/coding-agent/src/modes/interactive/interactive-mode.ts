@@ -5774,7 +5774,7 @@ export class InteractiveMode {
 			}
 
 			case "summarization_retry_finished": {
-				this.providerErrors?.clear();
+				this.providerErrors?.clearTransient();
 				this.clearStatusIndicator("retry");
 				this.ui.requestRender();
 				break;

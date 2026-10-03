@@ -64,7 +64,16 @@ describe("provider error episode marker", () => {
 	test("a retry recorded then cleared still awaits finish (the exhausted close-out)", () => {
 		const p = new ProviderErrorPresentation(new Container());
 		p.retrying(envelope, false);
-		p.clear();
+		p.clearTransient();
 		expect(p.awaitingRetryFinish).toBe(true);
+	});
+
+	test("a success-ended episode stops awaiting finish; a later terminal failure is not gated", () => {
+		const p = new ProviderErrorPresentation(new Container());
+		p.retrying(envelope, false);
+		// The SUCCESS path ends the episode; a later, never-retried terminal failure must surface as
+		// an error, not reopen the stale banner.
+		p.clear();
+		expect(p.awaitingRetryFinish).toBe(false);
 	});
 });
