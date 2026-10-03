@@ -10,7 +10,8 @@
 
 ### Fixed
 
-- `/files` opens a selected file on Windows again: drive-letter paths are passed to VS Code as a plain file argument instead of through `--goto`, which rejected them while exiting 0. A `code` launcher that exits 0 but prints to stderr is now reported as a warning instead of being swallowed ([#2646](https://github.com/code-yeongyu/senpi/issues/2646))
+- `/files` and `/diff` open a selected file on Windows again: drive-letter paths are passed to VS Code as a plain file argument instead of through `--goto`, which rejected them while exiting 0. A `code` launcher that exits 0 but prints to stderr is now reported as a warning instead of being swallowed ([#2646](https://github.com/code-yeongyu/senpi/issues/2646)).
+
 ### Removed
 
 ## [2026.10.5] - 2026-10-03
