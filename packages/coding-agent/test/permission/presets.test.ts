@@ -89,7 +89,6 @@ describe("permission presets", () => {
 	it("rejects no-UI requests when a preset still requires confirmation", () => {
 		// given
 		const events: Array<{ event: string; data: unknown }> = [];
-		const staticRuleset: Ruleset = rulesForPreset("read-only");
 
 		// when
 		const result = handleNoUI(createRequest(), {

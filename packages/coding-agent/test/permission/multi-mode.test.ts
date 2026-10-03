@@ -178,8 +178,6 @@ describe("Permission System - Multi-Mode Tests", () => {
 		it("auto-denies with helpful message when no rules match", () => {
 			// given
 			const request = createRequest({ id: "print-test-1", permission: "bash", patterns: ["rm -rf /"] });
-			const staticRuleset: Ruleset = [];
-			const cliOverride: Ruleset = [];
 			const emittedEvents: Array<{ event: string; data: unknown }> = [];
 			const emitEvent = (event: string, data: unknown) => emittedEvents.push({ event, data });
 
@@ -293,8 +291,6 @@ describe("Permission System - Multi-Mode Tests", () => {
 			it("auto-denies same as print mode", () => {
 				// given
 				const request = createRequest({ id: "sdk-no-ui-1", permission: "bash", patterns: ["rm -rf /"] });
-				const staticRuleset: Ruleset = [];
-				const cliOverride: Ruleset = [];
 				const emitEvent = vi.fn();
 
 				// when

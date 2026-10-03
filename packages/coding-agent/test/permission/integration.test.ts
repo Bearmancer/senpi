@@ -1322,8 +1322,6 @@ describe("permission integration", () => {
 			it("should auto-reject when no rules match in no-UI mode", () => {
 				// given
 				const request = createRequest({ id: "req-noui-3", patterns: ["ls", "pwd"] });
-				const cliOverride: Ruleset = [];
-				const staticRuleset: Ruleset = [];
 				const events: Array<{ event: string; data: unknown }> = [];
 
 				// when
