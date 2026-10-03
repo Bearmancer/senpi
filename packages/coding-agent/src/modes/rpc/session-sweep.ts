@@ -12,11 +12,20 @@ export interface SweepVerdicts {
 }
 
 /**
+ * How long a session must stand detached before the early-retirement branch may
+ * park it: a disconnect that overlaps a sweep is a client about to come back,
+ * and re-opening its runtime cold is the expensive path.
+ */
+export const DETACHED_RETIREMENT_GRACE_MS = 5_000;
+
+/**
  * One occupancy sweep's decisions. "Idle" is the COMPLETE session-owned activity contract
  * (`AgentSession.isSessionBusy`: agent run, bash, background terminal jobs and other published
  * wake sources, compaction, barrier-held session work): a busy session restarts its idle clock
  * instead, so work that outlives a turn is never killed. A quiet detached in-process worker
- * with flushed history can reopen by path and need not keep its runtime for the idle window.
+ * with flushed history can reopen by path and need not keep its runtime for the idle window -
+ * once it has been detached for at least `DETACHED_RETIREMENT_GRACE_MS`, so a transient
+ * reconnect keeps the runtime it already owns.
  * A non-finite window evicts nothing idle.
  */
 export function selectSweepEvictions(
@@ -42,14 +51,17 @@ export function selectSweepEvictions(
 			entry.lastCommandAt = now;
 			continue;
 		}
-		if (
-			entry.kind === "worker" &&
-			entry.retainOnDisconnect &&
-			entry.attachments === 0 &&
-			session?.sessionManager.isTranscriptFlushed()
-		) {
+		if (entry.attachments > 0) {
+			// An attached client holds the live routing handle; only the ordinary deadline applies.
+			if (now - entry.lastCommandAt >= idleEvictionMs) idle.push(sessionId);
+			continue;
+		}
+		if (entry.kind === "worker" && entry.retainOnDisconnect && session?.sessionManager.isTranscriptFlushed()) {
 			// Delivery debt is still owed a turn, even after the ordinary idle deadline.
 			if (session.pendingMessageCount > 0 || session.externalAdmission.list().pending.length > 0) continue;
+			// A just-detached worker is a client about to reconnect; park it only once the
+			// disconnect has stood longer than the grace age.
+			if (now - (entry.detachedAt ?? entry.lastCommandAt) < DETACHED_RETIREMENT_GRACE_MS) continue;
 			idle.push(sessionId);
 			continue;
 		}
