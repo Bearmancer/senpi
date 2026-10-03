@@ -160,11 +160,11 @@ class SenpiGlobalSizer
   private
 
   def size(value, depth)
+    @nodes += 1
     return 0 if NilClass === value || TrueClass === value || FalseClass === value || Symbol === value
     return ObjectSpace.memsize_of(value) if Integer === value || Float === value
     return 0 if @seen.key?(value)
     @seen[value] = true
-    @nodes += 1
     return SENPI_SIZER_OBJECT + SENPI_STRING_BYTESIZE.bind_call(value) if String === value
     if depth >= SENPI_SIZER_MAX_DEPTH || @nodes >= SENPI_SIZER_NODE_BUDGET
       @approximate = true

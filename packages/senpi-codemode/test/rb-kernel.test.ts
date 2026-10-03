@@ -260,6 +260,17 @@ describe("RubyKernel", () => {
 					expect(named.find((global) => global.name === "big")?.bytes).toBeGreaterThanOrEqual(25 * MiB);
 					expect(named.map((global) => global.name)).toContain("nested");
 
+					// Numeric leaves count against a global's walk budget like strings do: a 600x600 Integer grid stops
+					// early and is reported as an estimate instead of walking all 360,000 leaves on every cell.
+					const grid = await kernel.run({
+						cellId: "grid",
+						code: "int_grid = Array.new(600) { Array.new(600) { |i| i * 1_000_000_007 } }; nil",
+						timeoutMs: 30_000,
+					});
+					expect(grid.memory?.globals?.find((global) => global.name === "int_grid")).toMatchObject({
+						approximate: true,
+					});
+
 					const status = await kernel.run({ cellId: "status", code: "$?.exitstatus", timeoutMs: 15_000 });
 					expect(status).toMatchObject({ ok: true, valueRepr: "1" });
 				} finally {
