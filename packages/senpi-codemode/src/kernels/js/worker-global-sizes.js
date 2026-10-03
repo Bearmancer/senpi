@@ -37,6 +37,8 @@ const BLOB_PROTOTYPE = typeof Blob === "function" ? Blob.prototype : undefined;
 
 function inheritsFromBlob(value) {
 	for (let prototype = GET_PROTOTYPE_OF(value); prototype !== null; prototype = GET_PROTOTYPE_OF(prototype)) {
+		// A Proxy in the chain would run its getPrototypeOf trap on the next step.
+		if (types.isProxy(prototype)) return false;
 		if (prototype === BLOB_PROTOTYPE) return true;
 	}
 	return false;

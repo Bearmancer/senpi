@@ -199,4 +199,25 @@ describe("largest-globals sizing never runs user code", () => {
 		expect(hits).toBe(0);
 		expect(sized.find((global) => global.name === "withAccessor")).toMatchObject({ approximate: true });
 	});
+
+	it("Given an object whose prototype is a Proxy when the globals are sized then the Proxy's getPrototypeOf trap never runs", () => {
+		const baseline = captureGlobalBaseline();
+		let hits = 0;
+		const trapped = new Proxy(
+			{},
+			{
+				getPrototypeOf(target) {
+					hits += 1;
+					return Reflect.getPrototypeOf(target);
+				},
+			},
+		);
+		const holder = Object.create(trapped);
+		holder.text = "x".repeat(2 * 1024 * 1024);
+		defineGlobal("proxyPrototype", holder);
+
+		largestGlobals(baseline, 5);
+
+		expect(hits).toBe(0);
+	});
 });
