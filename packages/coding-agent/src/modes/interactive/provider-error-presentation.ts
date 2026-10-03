@@ -1,4 +1,5 @@
 import type { AssistantMessage } from "@earendil-works/pi-ai";
+import { isRetryableErrorMessage } from "@earendil-works/pi-ai";
 import { type Component, type Container, Text } from "@earendil-works/pi-tui";
 import { z } from "zod";
 import { keyText } from "./components/keybinding-hints.ts";
@@ -24,6 +25,20 @@ export function isNetworkProviderError(raw: string | undefined, envelopeOnly = f
 		if (error instanceof SyntaxError) return false;
 		throw error;
 	}
+}
+
+/**
+ * True when a provider failure should take the quiet presentation path (one banner, a
+ * status-line countdown while retrying, raw JSON only on expand): any transient failure,
+ * which is a network drop, a 429 rate-limit, or a 5xx. Hard quota/auth/billing failures
+ * classify non-retryable here and stay verbose, because they need a credential or plan
+ * change, not a wait. Delegates to the shared classifier so the transcript decision and
+ * the retry engine never disagree about what is transient.
+ */
+export function isRetryableProviderError(raw: string | undefined): boolean {
+	if (!raw) return false;
+	if (isNetworkProviderError(raw)) return true;
+	return isRetryableErrorMessage(raw);
 }
 
 export function isNetworkProviderMessage(message: AssistantMessage): boolean {

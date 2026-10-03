@@ -2269,3 +2269,21 @@ Interactive-mode components and theme are rendering internals below the extensio
 ### Expected merge conflict zones
 
 Upstream edits to interactive-mode components at the next sync.
+
+## 2026-10-03 - Rate-limit (429) and 5xx errors take the quiet provider-error path (senpi#2652)
+
+### What changed
+
+`packages/coding-agent/src/modes/interactive/provider-error-presentation.ts`: adds `isRetryableProviderError`, a presentation classifier that is true for any transient provider failure (network drop, 429 rate-limit, or 5xx) by delegating to the shared `isRetryableErrorMessage` classifier in `@earendil-works/pi-ai`, and false for hard auth/quota/billing failures (which classify non-retryable). `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: the quiet-vs-verbose error decision at the six provider-error call sites (mid-retry `retrying`, final `finish`, summarization retry, the retry-status indicator's trouble variant, and `showError`) now uses `isRetryableProviderError` instead of the network-only `isNetworkProviderError`, so a 429 is coalesced into one banner with a status-line countdown instead of printing its raw JSON on every retry.
+
+### Why
+
+A 429 rate-limit was excluded from the quiet path by the auth/quota guard (`otherFailure`), so it printed raw `Error: 429: {...}` JSON once per automatic retry and flooded the transcript. Transient failures should retry quietly behind one banner; only failures that need a credential or plan change stay verbose.
+
+### Why an extension could not handle it
+
+The presentation classification and the transcript render decision live in interactive-mode internals below the extension API; an extension cannot redirect which errors reach the quiet banner.
+
+### Expected merge conflict zones
+
+Upstream edits to `provider-error-presentation.ts` or the provider-error event cases in interactive-mode.ts at the next sync.
