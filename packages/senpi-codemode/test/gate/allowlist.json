@@ -179,7 +179,6 @@
 				"legacyContracts/test/config.test.ts/codemode settings uses taskTools defaults",
 				"legacyContracts/test/config.test.ts/codemode settings uses statusEvents default true",
 				"legacyContracts/test/config.test.ts/codemode settings env override beats file settings",
-				"legacyContracts/test/config.test.ts/codemode settings ignores an unknown top-level key with a warning and keeps today's defaults",
 				"legacyContracts/test/config.test.ts/codemode settings warns for malformed new settings values",
 				"legacyContracts/test/config.test.ts/codemode settings returns defaults with warnings for invalid json and invalid values",
 				"legacyContracts/test/config.test.ts/codemode settings defaults hardLimitSeconds to the bash-parity kill deadline",
@@ -194,7 +193,7 @@
 				"legacyContracts/test/config.test.ts/codemode settings ignores a non-positive or malformed foreground window environment value",
 				"legacyContracts/test/config.test.ts/codemode settings resolves the settled-result memory and image-spill budgets from defaults, the file, and the environment"
 			],
-			"reason": "Settings keep the user's other keys when a newer key is present, and gain optional keys for later features with today's defaults; three new config modules in the scoped census and the new settings contracts."
+			"reason": "Settings keep the user's other keys when a newer key is present, and gain optional keys for later features with today's defaults; three new config modules in the scoped census and the new settings contracts. The contract that pinned the old whole-file fallback for an unknown key is renamed in the baseline to the warn-and-keep behaviour it now asserts (status unchanged)."
 		},
 		"24": {
 			"additions": [
