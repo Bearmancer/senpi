@@ -297,6 +297,14 @@ The streaming box had no height bound and re-parsed plus re-rendered the whole b
 
 The streaming parser and renderer are internal to this builtin's tool surface; the per-delta clone and the unbounded box are not reachable through the public extension API.
 
+
+### Covered production paths
+
+- `packages/coding-agent/src/core/extensions/builtin/gpt-apply-patch/streaming-render.ts`
+- `packages/coding-agent/src/core/extensions/builtin/gpt-apply-patch/streaming-parser.ts`
+- `packages/coding-agent/src/core/extensions/builtin/gpt-apply-patch/parser.ts`
+- `packages/coding-agent/src/core/extensions/builtin/gpt-apply-patch/types.ts`
+
 ### Expected merge conflict zones
 
 Upstream edits to `streaming-parser.ts` or `streaming-render.ts` at the next sync.
