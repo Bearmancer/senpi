@@ -29,7 +29,7 @@ export const kernelToolDescriptorSchema = Type.Object({
 	name: Type.String({ minLength: 1 }),
 	description: Type.String(),
 	input_schema: Type.Unknown(),
-	language: Type.Literal("js"),
+	language: Type.Union([Type.Literal("js"), Type.Literal("py"), Type.Literal("rb"), Type.Literal("jl")]),
 	kernel_generation: Type.Integer({ minimum: 0 }),
 	definition_revision: Type.Integer({ minimum: 1 }),
 });

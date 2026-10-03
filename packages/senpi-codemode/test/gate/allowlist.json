@@ -95,6 +95,13 @@
 			],
 			"reason": "Node 5 (senpi#2452): RED/GREEN witnesses for replacing a dead py/rb/jl kernel once with its queue, the eval_kernel_unavailable double-death path, retirement-failure recovery, and the detached kernel-state notes; no prompt, schema, helper or default change. The session manager now imports the replaceable kernel and its death vocabulary (two small lifecycle modules, no installer or sandbox runtime) on the extension and first-kernel paths."
 		},
+		"9": {
+			"additions": [
+				"legacyContracts/test/kernel-tools-descriptor-language.test.ts/kernel tool descriptors name any eval language Given a descriptor from a Python kernel when it is typed and validated then it is accepted",
+				"legacyContracts/test/kernel-tools-descriptor-language.test.ts/kernel tool descriptors name any eval language Given a descriptor naming a language codemode does not run when it is validated then it is rejected"
+			],
+			"reason": "The kernel-tools pump moved to kernels/shared/ (the baseline census entry is renamed to the new path) and descriptors may name any eval language; two contracts pin the widened descriptor."
+		},
 		"29": {
 			"additions": [
 				"legacyContracts/test/js-kernel-webview-readiness.test.ts/a Chrome launch that never becomes ready retires the stalled launch and answers the create from a fresh Chrome",

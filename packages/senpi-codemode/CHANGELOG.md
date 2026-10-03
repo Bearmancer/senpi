@@ -7,6 +7,7 @@
 ### Added
 
 ### Changed
+- Kernel tool descriptors may name any eval language (`js`, `py`, `rb`, `jl`), not only `js`; today only JavaScript kernels define tools, so nothing a session sees changes ([#2452](https://github.com/code-yeongyu/senpi/issues/2452)).
 
 ### Fixed
 
