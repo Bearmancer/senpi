@@ -1,6 +1,3 @@
-import { existsSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { type BridgeHttpCallRequest, startBridgeServer } from "../src/bridge/http-server.ts";
 import type { KernelToHostMessage } from "../src/bridge/protocol.ts";
@@ -33,6 +30,7 @@ type Bridge = {
 	readonly calls: BridgeHttpCallRequest[];
 	readonly messages: KernelToHostMessage[];
 	readonly events: string[];
+	readonly frames: EventTarget;
 };
 
 const cleanups: Array<() => Promise<void>> = [];
@@ -49,6 +47,7 @@ async function bridge(
 	const calls: BridgeHttpCallRequest[] = [];
 	const messages: KernelToHostMessage[] = [];
 	const events: string[] = [];
+	const frames = new EventTarget();
 	const server = await startBridgeServer({
 		onCall: async (request) => {
 			calls.push(request);
@@ -62,13 +61,30 @@ async function bridge(
 		sessionId: `py-kernel-tools-${crypto.randomUUID()}`,
 		cwd: process.cwd(),
 		connection: { port: server.port, token: server.token },
-		onMessage: (message) => messages.push(message),
+		onMessage: (message) => {
+			messages.push(message);
+			frames.dispatchEvent(new CustomEvent("frame", { detail: message }));
+		},
 	});
 	cleanups.push(async () => {
 		await kernel.close();
 		await server.close();
 	});
-	return { kernel, calls, messages, events };
+	return { kernel, calls, messages, events, frames };
+}
+
+/** Resolves on the next `log(text)` frame; subscribe before triggering what logs it. */
+function nextLog(frames: EventTarget, text: string): Promise<void> {
+	return new Promise((resolve) => {
+		const listener = (event: Event) => {
+			const message = (event as CustomEvent<KernelToHostMessage>).detail;
+			if (message.type === "log" && message.message === text) {
+				frames.removeEventListener("frame", listener);
+				resolve();
+			}
+		};
+		frames.addEventListener("frame", listener);
+	});
 }
 
 async function cell(kernel: PythonKernel, code: string, cellId = `cell-${crypto.randomUUID()}`) {
@@ -248,37 +264,26 @@ describe.skipIf(!(await hasPython3()))("Python kernel tools (@tool)", () => {
 		expect(calls).toEqual([]);
 	}, 60_000);
 
-	it("a cell busy in pure computation is not interrupted: a callback posted mid-loop runs only after the cell ends", async () => {
-		const { kernel, messages } = await bridge(() => ({ text: "" }));
+	it("a cell busy in pure computation is not interrupted: a callback that arrives mid-loop runs only after the cell ends", async () => {
+		const { kernel, frames } = await bridge(() => ({ text: "" }));
 		await cell(
 			kernel,
-			"import time\nruns = []\n@tool\ndef mark() -> str:\n    runs.append('callback')\n    return 'marked'",
+			"import threading, time\nruns = []\n@tool\ndef mark() -> str:\n    runs.append('callback')\n    return 'marked'",
 		);
 		const found = await descriptor(kernel, "mark");
+		const started = nextLog(frames, "busy-started");
 
-		const marker = join(tmpdir(), `py-tool-busy-${crypto.randomUUID()}`);
+		// The cell spins in pure Python until the callback's thread exists, which proves it arrived mid-loop.
 		const busy = cell(
 			kernel,
-			`open(${JSON.stringify(marker)}, "w").close()\ndeadline = time.monotonic() + 1.5\nn = 0\nwhile time.monotonic() < deadline:\n    n += 1\nlist(runs)`,
+			"log('busy-started')\nseen = False\ndeadline = time.monotonic() + 20\nwhile time.monotonic() < deadline:\n    if any(t.name == 'senpi-kernel-tool' for t in threading.enumerate()):\n        seen = True\n        break\n(seen, list(runs))",
 		);
-		await within(
-			new Promise<void>((resolve) => {
-				const timer = setInterval(() => {
-					if (existsSync(marker)) {
-						clearInterval(timer);
-						resolve();
-					}
-				}, 5);
-			}),
-			10_000,
-			"cell started",
-		);
+		await within(started, 20_000, "the busy cell starts");
 		const callback = kernel.invokeKernelTool(invokeRequest(found, {}));
 		const [busyResult, value] = await within(Promise.all([busy, callback]), 30_000, "both settle");
-
 		const after = await cell(kernel, "list(runs)");
 
-		expect(busyResult.ok && busyResult.valueRepr).toBe("[]");
+		expect(busyResult.ok && busyResult.valueRepr).toBe("(True, [])");
 		expect(value).toBe("marked");
 		expect(after.ok && after.valueRepr).toBe("['callback']");
 	}, 60_000);
@@ -368,39 +373,40 @@ describe.skipIf(!(await hasPython3()))("Python kernel tools (@tool)", () => {
 	}, 90_000);
 
 	it("a sync callback cancelled mid-computation finishes, and its late result is dropped with an explicit reply", async () => {
-		const { kernel } = await bridge(() => ({ text: "" }));
-		const seen = replies(kernel);
+		const { kernel, frames } = await bridge(() => ({ text: "" }));
+		// spin computes until a second kernel-tool call has arrived; frames are read in order, so by then
+		// the cancel sent before that call has been applied.
 		await cell(
 			kernel,
-			"import time\n@tool\ndef spin() -> str:\n    deadline = time.monotonic() + 1.0\n    while time.monotonic() < deadline:\n        pass\n    return 'finished'",
+			"import threading\n@tool\ndef spin() -> str:\n    log('computing')\n    while sum(t.name == 'senpi-kernel-tool' for t in threading.enumerate()) < 2:\n        pass\n    return 'finished'\n@tool\ndef after() -> int:\n    return 0",
 		);
-		const found = await descriptor(kernel, "spin");
+		const spin = await descriptor(kernel, "spin");
+		const after = await descriptor(kernel, "after");
 		const controller = new AbortController();
+		const computing = nextLog(frames, "computing");
+		const reply = new Promise<KernelToolReplyEvent>((resolve) => {
+			const listener = (event: Event) => {
+				const detail = (event as CustomEvent<KernelToolReplyEvent>).detail;
+				if (detail.ok === false) {
+					kernel.kernelToolEvents.removeEventListener("kernelToolReply", listener);
+					resolve(detail);
+				}
+			};
+			kernel.kernelToolEvents.addEventListener("kernelToolReply", listener);
+		});
 
-		const invoked = kernel.invokeKernelTool(invokeRequest(found, {}), { signal: controller.signal });
-		await new Promise((resolve) => setTimeout(resolve, 100));
+		const invoked = kernel.invokeKernelTool(invokeRequest(spin, {}), { signal: controller.signal });
+		await within(computing, 20_000, "the callback is computing");
 		controller.abort();
+		const second = kernel.invokeKernelTool(invokeRequest(after, {}));
 		await expect(invoked).rejects.toMatchObject({ code: "kernel_tool_stale" });
-		await within(
-			new Promise<void>((resolve) => {
-				const timer = setInterval(() => {
-					if (seen.length > 0) {
-						clearInterval(timer);
-						resolve();
-					}
-				}, 5);
-			}),
-			20_000,
-			"the cancelled call's reply",
-		);
 
-		expect(seen).toEqual([
-			expect.objectContaining({
-				ok: false,
-				code: "kernel_tool_cancelled",
-				message: "cancelled: the call finished after cancellation; its result was dropped",
-			}),
-		]);
+		expect(await within(reply, 20_000, "the cancelled call's reply")).toMatchObject({
+			ok: false,
+			code: "kernel_tool_cancelled",
+			message: "cancelled: the call finished after cancellation; its result was dropped",
+		});
+		expect(await within(second, 20_000, "the call after it")).toBe(0);
 	}, 60_000);
 
 	it("kernel-tool-reset-revokes-child-grant: a descriptor taken before a reset is kernel_tool_stale after it, the new definition never satisfies it, and queued cells run once", async () => {
@@ -480,5 +486,118 @@ describe.skipIf(!(await hasPython3()))("Python kernel tools (@tool)", () => {
 		expect(value).toBe(1);
 		expect(seen[0]).toMatchObject({ ok: true, output: "from the tool\n" });
 		expect(stdout(messages).slice(before.length)).not.toContain("from the tool");
+	}, 60_000);
+});
+
+describe.skipIf(!(await hasPython3()))("Python kernel tools inside parallel() and pipeline()", () => {
+	it("a callback whose parallel() worker is parked in a host call lets a second callback run", async () => {
+		const releaseHold = gate();
+		const held = gate();
+		const { kernel } = await bridge(async (request) => {
+			if ((request.args as { path?: string }).path === "hold") {
+				held.open();
+				await releaseHold.opened;
+			}
+			return { text: "done" };
+		});
+		await cell(
+			kernel,
+			"@tool\ndef nested() -> list:\n    return parallel([lambda: tool.read(path='hold')['text']])\n@tool\ndef eight() -> int:\n    return 8",
+		);
+		const nested = kernel.invokeKernelTool(invokeRequest(await descriptor(kernel, "nested"), {}));
+		await within(held.opened, 20_000, "the worker parks in its host call");
+
+		const second = await within(
+			kernel.invokeKernelTool(invokeRequest(await descriptor(kernel, "eight"), {})),
+			2_500,
+			"a second callback while the first callback's worker is parked",
+		);
+		releaseHold.open();
+
+		expect(second).toBe(8);
+		expect(await within(nested, 20_000, "the first callback after its worker's host call returns")).toEqual(["done"]);
+	}, 60_000);
+
+	it("a parallel() worker's host call is held to the calling tool's scope", async () => {
+		const { kernel, calls } = await bridge(() => ({ text: "side effect" }));
+		await cell(
+			kernel,
+			"@tool\ndef scoped() -> list:\n    return parallel([lambda: tool.write(path='x', content='y')])",
+		);
+
+		const refused = kernel.invokeKernelTool(invokeRequest(await descriptor(kernel, "scoped"), {}), {
+			scope: { tools: { allow: ["read"] } },
+		});
+
+		await expect(refused).rejects.toMatchObject({ code: "kernel_tool_host_denied" });
+		expect(calls).toEqual([]);
+	}, 60_000);
+
+	it("text a pipeline() worker prints goes to its tool's reply, not to a parked cell", async () => {
+		const releaseParent = gate();
+		const parentParked = gate();
+		const { kernel, messages } = await bridge(async (request) => {
+			if ((request.args as { path?: string }).path === "parent") {
+				parentParked.open();
+				await releaseParent.opened;
+			}
+			return { text: "" };
+		});
+		const seen = replies(kernel);
+		await cell(
+			kernel,
+			"@tool\ndef chatty() -> int:\n    pipeline([1], lambda x: print('from a worker'))\n    return 1",
+		);
+		const found = await descriptor(kernel, "chatty");
+		const parent = cell(kernel, "print('parent text')\ntool.read(path='parent')\nNone");
+		await within(parentParked.opened, 20_000, "the parent cell parks");
+
+		const value = await kernel.invokeKernelTool(invokeRequest(found, {}));
+		releaseParent.open();
+		await within(parent, 20_000, "the parent cell resumes");
+
+		expect(value).toBe(1);
+		expect(seen[0]).toMatchObject({ ok: true, output: "from a worker\n" });
+		expect(stdout(messages)).toContain("parent text");
+		expect(stdout(messages)).not.toContain("from a worker");
+	}, 60_000);
+});
+
+describe.skipIf(!(await hasPython3()))("Python kernel tool descriptors after the definition changes", () => {
+	it("a descriptor taken before the interpreter crashed is kernel_tool_stale on the restarted kernel, even for a same-named tool", async () => {
+		const { kernel } = await bridge(() => ({ text: "" }));
+		await cell(kernel, "@tool\ndef chosen() -> str:\n    return 'old'");
+		const before = await descriptor(kernel, "chosen");
+		await cell(kernel, "import os\nos._exit(9)");
+		await cell(kernel, "@tool\ndef chosen() -> str:\n    return 'new'");
+
+		const stale = kernel.invokeKernelTool(invokeRequest(before, {}));
+
+		await expect(stale).rejects.toMatchObject({ code: "kernel_tool_stale" });
+		expect((await descriptor(kernel, "chosen")).kernel_generation).not.toBe(before.kernel_generation);
+	}, 60_000);
+
+	it("a descriptor taken before undefine is kernel_tool_stale after the name is defined again", async () => {
+		const { kernel } = await bridge(() => ({ text: "" }));
+		await cell(kernel, "@tool\ndef chosen() -> str:\n    return 'old'");
+		const before = await descriptor(kernel, "chosen");
+		await cell(kernel, "tool.undefine('chosen')\n@tool\ndef chosen() -> str:\n    return 'new'");
+
+		const stale = kernel.invokeKernelTool(invokeRequest(before, {}));
+
+		await expect(stale).rejects.toMatchObject({ code: "kernel_tool_stale" });
+		expect(await kernel.invokeKernelTool(invokeRequest(await descriptor(kernel, "chosen"), {}))).toBe("new");
+	}, 60_000);
+
+	it("a return annotation naming a class defined later in the cell does not stop the tool from registering", async () => {
+		const { kernel } = await bridge(() => ({ text: "" }));
+		const result = await cell(
+			kernel,
+			"@tool\ndef later() -> 'Later':\n    return Later().value\n@tool\ndef bare() -> Later:\n    return Later().value\nclass Later:\n    value = 7",
+		);
+
+		expect(result.ok).toBe(true);
+		expect(await kernel.invokeKernelTool(invokeRequest(await descriptor(kernel, "later"), {}))).toBe(7);
+		expect(await kernel.invokeKernelTool(invokeRequest(await descriptor(kernel, "bare"), {}))).toBe(7);
 	}, 60_000);
 });

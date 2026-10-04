@@ -123,6 +123,26 @@
 			],
 			"reason": "Ruby and Julia kernels get a no-progress startup watchdog (two new modules in the scoped census) with its contracts; two tests pin the one-spawn replacement node 5 already delivers."
 		},
+		"7": {
+			"additions": [
+				"legacyContracts/test/extension.test.ts/senpi-codemode extension lifecycle Given a session that ended with session_shutdown, when eval runs afterwards, then it is not recovered and no diagnostic is written",
+				"legacyContracts/test/extension.test.ts/senpi-codemode extension lifecycle Given a session_before_switch that another extension cancels (or that fails before teardown), when the session keeps running, then eval still reaches its kernel",
+				"legacyContracts/test/extension.test.ts/senpi-codemode extension lifecycle Given a session_before_fork that another extension cancels (or that fails before teardown), when the session keeps running, then eval still reaches its kernel",
+				"imports/extension/packages/senpi-codemode/src/extension/start-recovery.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/extension/start-recovery.ts",
+				"legacyContracts/test/extension.test.ts/senpi-codemode extension lifecycle Given a session_start whose runtime could not be created, when the next eval runs, then the runtime is re-created once, the cell runs, and one diagnostic names the failed start",
+				"legacyContracts/test/extension.test.ts/senpi-codemode extension lifecycle Given a failed start whose re-creation also fails, when eval runs, then the error names the re-creation failure and the remedy, and later evals report it without retrying",
+				"legacyContracts/test/extension.test.ts/senpi-codemode extension lifecycle Given a failed re-creation that later evals keep reporting, when a fresh session_start starts the session again and that start fails too, then the next eval retries instead of repeating the old failure",
+				"legacyContracts/test/extension.test.ts/senpi-codemode extension lifecycle Given a failed re-creation that later evals keep reporting, when a session switch starts the session again and that start fails too, then the next eval retries instead of repeating the old failure",
+				"legacyContracts/test/extension.test.ts/senpi-codemode extension lifecycle Given a failed re-creation that later evals keep reporting, when a fork starts the session again and that start fails too, then the next eval retries instead of repeating the old failure",
+				"legacyContracts/test/extension.test.ts/senpi-codemode extension lifecycle Given a failed re-creation that later evals keep reporting, when a reload starts the session again and that start fails too, then the next eval retries instead of repeating the old failure",
+				"legacyContracts/test/extension.test.ts/senpi-codemode extension lifecycle Given a failed re-creation that later evals keep reporting, when a new session starts the session again and that start fails too, then the next eval retries instead of repeating the old failure",
+				"legacyContracts/test/extension.test.ts/senpi-codemode extension lifecycle Given a failed re-creation, when a later start succeeds and its manager is then disposed outside the session lifecycle, then eval reports the disposal, not the old failure",
+				"legacyContracts/test/extension.test.ts/senpi-codemode extension lifecycle Given a failed re-creation, when the session ends, then a later eval reports the ended session, not the old failure",
+				"legacyContracts/test/extension.test.ts/senpi-codemode extension lifecycle Given a failed start, when two evals arrive together, then they share one re-creation and one diagnostic"
+			],
+			"reason": "Node 7 (#1706): the extension no longer tears the runtime down on session_before_switch/session_before_fork (veto points another extension can cancel); a failed session_start is recovered once by the next eval with one hashed-session diagnostic, never after session_shutdown. The cancelled-replacement and recovery contracts, plus start-recovery.ts in the scoped census."
+		},
 		"8": {
 			"additions": [
 				"imports/extension/packages/senpi-codemode/src/extension/bridge-tool-call.ts",
@@ -159,7 +179,6 @@
 			"reason": "The kernel-tools pump moved to kernels/shared/ (the baseline census entry is renamed to the new path) and descriptors may name any eval language; two contracts pin the widened descriptor."
 		},
 		"10": {
-			"reason": "Plan node 10: in-cell wait(handles, {timeout, mode}) and handle(node).control over the EvalHandleHost capability, plus opt-in completion handles. Additive helper census (wait and handle in js/py/rb; handle in jl, whose barrier is Base.wait on the view types so no Main.wait appears); the new handle/wait/completion-handle modules on the extension and first-kernel import paths (no installer or sandbox runtime, no task-engine import); and the RED/GREEN contracts for input order, atomic subscribe, epoch fencing, any/settled/empty/timeout, unavailable host, completion handles, detach, kernel death, generation drop and the four prelude surfaces. Prompt cells, the eval input schema and the invariants are unchanged; tool_schema(\"eval:helpers\") and tool_schema(\"eval:wait\") are documentation-only virtual entries outside the ordinary catalog.",
 			"additions": [
 				"helperCensus/js-bun/handle",
 				"helperCensus/js-bun/wait",
@@ -236,7 +255,21 @@
 				"legacyContracts/test/wait-barrier.test.ts/wait() barrier over the handle registry Given a runtime without the host capability, when one wait mixes a completion handle with an agent ref, then it fails as unavailable and leaves no completion subscription behind",
 				"legacyContracts/test/completion-handle-watches.test.ts/Given a watch over a completion handle When the watch is closed, then the registry stops tracking it",
 				"legacyContracts/test/completion-handle-watches.test.ts/Given a watch over a completion handle When the caller stops iterating its updates, then the registry stops tracking the watch"
-			]
+			],
+			"reason": "Plan node 10: in-cell wait(handles, {timeout, mode}) and handle(node).control over the EvalHandleHost capability, plus opt-in completion handles. Additive helper census (wait and handle in js/py/rb; handle in jl, whose barrier is Base.wait on the view types so no Main.wait appears); the new handle/wait/completion-handle modules on the extension and first-kernel import paths (no installer or sandbox runtime, no task-engine import); and the RED/GREEN contracts for input order, atomic subscribe, epoch fencing, any/settled/empty/timeout, unavailable host, completion handles, detach, kernel death, generation drop and the four prelude surfaces. Prompt cells, the eval input schema and the invariants are unchanged; tool_schema(\"eval:helpers\") and tool_schema(\"eval:wait\") are documentation-only virtual entries outside the ordinary catalog."
+		},
+		"12": {
+			"additions": [
+				"legacyContracts/test/workpool-tools.test.ts/js workpool tools forwards tools unchanged to a host that validates with the real create schema",
+				"legacyContracts/test/workpool-tools.test.ts/js workpool tools never forwards an option the host does not know",
+				"legacyContracts/test/workpool-tools.test.ts/py workpool tools forwards tools unchanged to a host that validates with the real create schema",
+				"legacyContracts/test/workpool-tools.test.ts/py workpool tools never forwards an option the host does not know",
+				"legacyContracts/test/workpool-tools.test.ts/rb workpool tools forwards tools unchanged to a host that validates with the real create schema",
+				"legacyContracts/test/workpool-tools.test.ts/rb workpool tools never forwards an option the host does not know",
+				"legacyContracts/test/workpool-tools.test.ts/jl workpool tools forwards tools unchanged to a host that validates with the real create schema",
+				"legacyContracts/test/workpool-tools.test.ts/jl workpool tools never forwards an option the host does not know"
+			],
+			"reason": "Node 12: workpool(agent, name, {mode, tools}) forwards tools to the host create in all four languages. The helper names and the prompt are unchanged (the eval description's workpool line is untouched); the tool_schema('eval:helpers') entry gains one line. Only these contracts are new."
 		},
 		"13": {
 			"additions": [
@@ -376,6 +409,8 @@
 				"legacyContracts/test/eval-virtual-kernel-tools-schema.test.ts/tool_schema('eval:kernel-tools') documents @tool, tool.defined()/undefine(), the inference rules and grant staleness",
 				"legacyContracts/test/eval-virtual-kernel-tools-schema.test.ts/tool_schema('eval:kernel-tools') is not listed under an unrelated name",
 				"legacyContracts/test/kernel-tools-unavailable.test.ts/rb/jl kernel tools returns tools_unavailable from the Ruby and Julia kernel class",
+				"imports/extension/packages/senpi-codemode/src/kernels/py/kernel-tools-host.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/kernels/py/kernel-tools-host.ts",
 				"legacyContracts/test/py-kernel-tools.test.ts/Python kernel tools (@tool) Given @tool def add(a: int, b: int = 1) -> int, describe returns the inferred schema and invoking {a: 2} returns 3",
 				"legacyContracts/test/py-kernel-tools.test.ts/Python kernel tools (@tool) with `from __future__ import annotations`, string annotations resolve through the function's globals",
 				"legacyContracts/test/py-kernel-tools.test.ts/Python kernel tools (@tool) an annotation that can't be resolved is refused with invalid_tool_definition naming it, and nothing registers",
@@ -385,7 +420,7 @@
 				"legacyContracts/test/py-kernel-tools.test.ts/Python kernel tools (@tool) tool.defined() lists names sorted and tool.undefine() removes one; describe then reports it missing",
 				"legacyContracts/test/py-kernel-tools.test.ts/Python kernel tools (@tool) python-tool-callback-during-parent-wait: the parent parked in wait() serves a callback that does a scoped host read; both finish and the FIFO doesn't move",
 				"legacyContracts/test/py-kernel-tools.test.ts/Python kernel tools (@tool) a callback's host call outside its scope is refused with kernel_tool_host_denied and never reaches the host",
-				"legacyContracts/test/py-kernel-tools.test.ts/Python kernel tools (@tool) a cell busy in pure computation is not interrupted: a callback posted mid-loop runs only after the cell ends",
+				"legacyContracts/test/py-kernel-tools.test.ts/Python kernel tools (@tool) a cell busy in pure computation is not interrupted: a callback that arrives mid-loop runs only after the cell ends",
 				"legacyContracts/test/py-kernel-tools.test.ts/Python kernel tools (@tool) nested host calls: the parent's host call, a callback's own host call and a second callback finish without deadlock, in park order",
 				"legacyContracts/test/py-kernel-tools.test.ts/Python kernel tools (@tool) cancellation during a callback parked in a host call: the reply says so explicitly, the callback settles once, and a queued cell runs once",
 				"legacyContracts/test/py-kernel-tools.test.ts/Python kernel tools (@tool) a sync callback cancelled mid-computation finishes, and its late result is dropped with an explicit reply",
@@ -393,22 +428,46 @@
 				"legacyContracts/test/py-kernel-tools.test.ts/Python kernel tools (@tool) a reset while a callback is mid-flight ends it as kernel_tool_stale and leaves no thread or token behind",
 				"legacyContracts/test/py-kernel-tools.test.ts/Python kernel tools (@tool) an awaited future from the parent cell's loop fails fast with kernel_tool_loop_mismatch",
 				"legacyContracts/test/py-kernel-tools.test.ts/Python kernel tools (@tool) a tool's printed text goes to its own reply, never into the parent cell's output",
-				"imports/extension/packages/senpi-codemode/src/kernels/py/kernel-tools-host.ts"
+				"legacyContracts/test/py-kernel-tools.test.ts/Python kernel tools inside parallel() and pipeline() a callback whose parallel() worker is parked in a host call lets a second callback run",
+				"legacyContracts/test/py-kernel-tools.test.ts/Python kernel tools inside parallel() and pipeline() a parallel() worker's host call is held to the calling tool's scope",
+				"legacyContracts/test/py-kernel-tools.test.ts/Python kernel tools inside parallel() and pipeline() text a pipeline() worker prints goes to its tool's reply, not to a parked cell",
+				"legacyContracts/test/py-kernel-tools.test.ts/Python kernel tool descriptors after the definition changes a descriptor taken before the interpreter crashed is kernel_tool_stale on the restarted kernel, even for a same-named tool",
+				"legacyContracts/test/py-kernel-tools.test.ts/Python kernel tool descriptors after the definition changes a descriptor taken before undefine is kernel_tool_stale after the name is defined again",
+				"legacyContracts/test/py-kernel-tools.test.ts/Python kernel tool descriptors after the definition changes a return annotation naming a class defined later in the cell does not stop the tool from registering"
 			],
 			"reason": "Node 11 part 2: Python kernel tools. The new contracts, plus kernel-tools-host.ts (the Python kernel's describe/invoke over the shared pump) joining the scoped census at extension load (the key the eval gate reported on this head). The prompt is unchanged; tool_schema('eval:kernel-tools') is a virtual on-demand entry, absent from the catalog listing."
 		},
-		"12": {
+		"14-host": {
 			"additions": [
-				"legacyContracts/test/workpool-tools.test.ts/js workpool tools forwards tools unchanged to a host that validates with the real create schema",
-				"legacyContracts/test/workpool-tools.test.ts/js workpool tools never forwards an option the host does not know",
-				"legacyContracts/test/workpool-tools.test.ts/py workpool tools forwards tools unchanged to a host that validates with the real create schema",
-				"legacyContracts/test/workpool-tools.test.ts/py workpool tools never forwards an option the host does not know",
-				"legacyContracts/test/workpool-tools.test.ts/rb workpool tools forwards tools unchanged to a host that validates with the real create schema",
-				"legacyContracts/test/workpool-tools.test.ts/rb workpool tools never forwards an option the host does not know",
-				"legacyContracts/test/workpool-tools.test.ts/jl workpool tools forwards tools unchanged to a host that validates with the real create schema",
-				"legacyContracts/test/workpool-tools.test.ts/jl workpool tools never forwards an option the host does not know"
+				"imports/firstKernel/packages/senpi-codemode/src/kernels/py/host-cell.ts",
+				"imports/extension/packages/senpi-codemode/src/kernels/py/host-cell.ts",
+				"legacyContracts/test/py-kernel-host-cell.test.ts/Given a host-executed entry in the Python kernel's queue When it reaches the front, then it runs on the host in FIFO order and the interpreter receives no run frame for it",
+				"legacyContracts/test/py-kernel-host-cell.test.ts/Given a host-executed entry in the Python kernel's queue When it is cancelled while queued, then it is removed like any queued cell and its executor never runs",
+				"legacyContracts/test/py-kernel-host-cell.test.ts/Given a host-executed entry in the Python kernel's queue When the active entry is interrupted, then its executor is aborted, the cell settles interrupted and the interpreter is not signalled",
+				"legacyContracts/test/py-kernel-host-cell.test.ts/Given a host-executed entry in the Python kernel's queue When an interrupted entry's executor finishes afterwards, then its late outcome is ignored and later cells are unaffected",
+				"legacyContracts/test/py-kernel-host-cell.test.ts/Given a host-executed entry in the Python kernel's queue When the active entry times out, then its executor is aborted and the interpreter is not retired",
+				"legacyContracts/test/py-kernel-host-cell.test.ts/Given a host-executed entry in the Python kernel's queue When its executor rejects, then the cell fails with that message and the next queued cell still runs",
+				"legacyContracts/test/py-kernel-host-cell.test.ts/Given a host-executed entry in the Python kernel's queue When the kernel closes with an entry active, then its executor is aborted",
+				"legacyContracts/test/py-kernel-host-cell.test.ts/Given a live Python interpreter When a host entry is interrupted mid-run, then the interpreter keeps its pid and globals",
+				"legacyContracts/test/py-kernel-host-cell.test.ts/Given an aborted host entry in the Python kernel's queue When an interrupted executor keeps running after the abort, then the next entry waits until it stops",
+				"legacyContracts/test/py-kernel-host-cell.test.ts/Given an aborted host entry in the Python kernel's queue When the executor finishes successfully as the interrupt arrives, then the cell reports that its work committed",
+				"legacyContracts/test/py-kernel-host-cell.test.ts/Given an aborted host entry in the Python kernel's queue When the executor throws synchronously, then only its cell fails and the next queued cell still runs",
+				"legacyContracts/test/py-kernel-host-cell.test.ts/Given an aborted host entry in the Python kernel's queue When an aborted executor still emits output, then that output reaches no cell",
+				"legacyContracts/test/py-kernel-host-cell.test.ts/Given an aborted host entry in the Python kernel's queue When an aborted executor never stops, then the cell still settles after the interpreter's escalation bound"
 			],
-			"reason": "Node 12: workpool(agent, name, {mode, tools}) forwards tools to the host create in all four languages. The helper names and the prompt are unchanged (the eval description's workpool line is untouched); the tool_schema('eval:helpers') entry gains one line. Only these contracts are new."
+			"reason": "Node 14 part 2: the Python kernel's queue can hold host-executed entries (the interpreter receives nothing; interrupt, timeout and close abort the host work without restarting the interpreter). Its module loads with the first Python kernel, and the new contracts. No caller submits one yet."
+		},
+		"11a": {
+			"additions": [
+				"legacyContracts/test/kernel-tools-defined-undefine.test.ts/Given a JavaScript kernel with kernel tools js-tool-explicit-name-preserves-argument-order: metadata.name registers the alias, and the positional order still comes from the function",
+				"legacyContracts/test/kernel-tools-defined-undefine.test.ts/Given a JavaScript kernel with kernel tools tool.defined() lists the registered names sorted, and tool.undefine(name) removes one and reports whether it existed",
+				"legacyContracts/test/kernel-tools-defined-undefine.test.ts/Given a JavaScript kernel with kernel tools a descriptor taken before undefine() can no longer be invoked",
+				"legacyContracts/test/kernel-tools-defined-undefine.test.ts/Given a JavaScript kernel with kernel tools a non-string metadata.name is refused with invalid_tool_definition and nothing is registered",
+				"legacyContracts/test/kernel-tools-defined-undefine.test.ts/Given a JavaScript kernel with kernel tools an alias that is not a valid tool name is refused",
+				"legacyContracts/test/kernel-tools-defined-undefine.test.ts/Given a JavaScript kernel with kernel tools registering a kernel tool named defined is refused with reserved_tool_name, by alias or by function name",
+				"legacyContracts/test/kernel-tools-defined-undefine.test.ts/Given a JavaScript kernel with kernel tools registering a kernel tool named undefine is refused with reserved_tool_name, by alias or by function name"
+			],
+			"reason": "Node 11 part 1: tool.defined()/tool.undefine() and the metadata.name alias in the JavaScript kernel. These are tool-namespace members, not top-level helpers, so the helper census and the prompt are unchanged; only these contracts are new."
 		}
 	}
 }
