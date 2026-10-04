@@ -1327,9 +1327,11 @@ describe("permission integration", () => {
 				const events: Array<{ event: string; data: unknown }> = [];
 
 				// when
-				const result = handleNoUI(request, staticRuleset, cliOverride, (event, data) =>
-					events.push({ event, data }),
-				);
+				const result = handleNoUI(request, {
+					staticRuleset,
+					cliOverride,
+					emitEvent: (event, data) => events.push({ event, data }),
+				});
 
 				// then
 				expect(result).toBeUndefined();
@@ -1347,9 +1349,11 @@ describe("permission integration", () => {
 				const events: Array<{ event: string; data: unknown }> = [];
 
 				// when
-				const result = handleNoUI(request, staticRuleset, cliOverride, (event, data) =>
-					events.push({ event, data }),
-				);
+				const result = handleNoUI(request, {
+					staticRuleset,
+					cliOverride,
+					emitEvent: (event, data) => events.push({ event, data }),
+				});
 
 				// then
 				expect(result).toEqual({
@@ -1367,9 +1371,11 @@ describe("permission integration", () => {
 				const events: Array<{ event: string; data: unknown }> = [];
 
 				// when
-				const result = handleNoUI(request, staticRuleset, cliOverride, (event, data) =>
-					events.push({ event, data }),
-				);
+				const result = handleNoUI(request, {
+					staticRuleset,
+					cliOverride,
+					emitEvent: (event, data) => events.push({ event, data }),
+				});
 
 				// then
 				expect(result).toEqual({

@@ -184,7 +184,7 @@ describe("Permission System - Multi-Mode Tests", () => {
 			const emitEvent = (event: string, data: unknown) => emittedEvents.push({ event, data });
 
 			// when
-			const result = handleNoUI(request, staticRuleset, cliOverride, emitEvent);
+			const result = handleNoUI(request, { staticRuleset, cliOverride, emitEvent });
 
 			// then
 			expect(result).toEqual({
@@ -207,7 +207,7 @@ describe("Permission System - Multi-Mode Tests", () => {
 			const emitEvent = vi.fn();
 
 			// when
-			const result = handleNoUI(request, staticRuleset, cliOverride, emitEvent);
+			const result = handleNoUI(request, { staticRuleset, cliOverride, emitEvent });
 
 			// then
 			expect(result).toBeUndefined();
@@ -222,7 +222,7 @@ describe("Permission System - Multi-Mode Tests", () => {
 			const emitEvent = vi.fn();
 
 			// when
-			const result = handleNoUI(request, staticRuleset, cliOverride, emitEvent);
+			const result = handleNoUI(request, { staticRuleset, cliOverride, emitEvent });
 
 			// then
 			expect(result).toEqual({
@@ -240,7 +240,7 @@ describe("Permission System - Multi-Mode Tests", () => {
 			const emitEvent = vi.fn();
 
 			// when
-			const result = handleNoUI(request, staticRuleset, cliOverride, emitEvent);
+			const result = handleNoUI(request, { staticRuleset, cliOverride, emitEvent });
 
 			// then
 			expect(result).toBeUndefined();
@@ -254,7 +254,7 @@ describe("Permission System - Multi-Mode Tests", () => {
 			const emitEvent = vi.fn();
 
 			// when
-			const result = handleNoUI(request, staticRuleset, cliOverride, emitEvent);
+			const result = handleNoUI(request, { staticRuleset, cliOverride, emitEvent });
 
 			// then
 			expect(result).toEqual({
@@ -272,7 +272,7 @@ describe("Permission System - Multi-Mode Tests", () => {
 			const emitEvent = vi.fn();
 
 			// when
-			const result = handleNoUI(request, staticRuleset, cliOverride, emitEvent);
+			const result = handleNoUI(request, { staticRuleset, cliOverride, emitEvent });
 
 			// then - CLI override wins
 			expect(result).toBeUndefined();
@@ -377,7 +377,7 @@ describe("Permission System - Multi-Mode Tests", () => {
 				const emitEvent = vi.fn();
 
 				// when
-				const result = handleNoUI(request, staticRuleset, cliOverride, emitEvent);
+				const result = handleNoUI(request, { staticRuleset, cliOverride, emitEvent });
 
 				// then
 				expect(result?.reply).toBe("reject");

@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { startBridgeServer } from "../src/bridge/http-server.ts";
 import type { KernelToHostMessage } from "../src/bridge/protocol.ts";
+import { resolveCommandPath } from "../src/interpreters/resolve-command.ts";
 import { JuliaKernel } from "../src/kernels/jl/kernel.ts";
 
 function hasJulia(): boolean {
@@ -95,6 +96,112 @@ describe("JuliaKernel", () => {
 				await rm(root, { recursive: true, force: true });
 			}
 		},
+	);
+
+	const juliaPath = resolveCommandPath("julia");
+
+	it.skipIf(juliaPath === undefined)(
+		"reports the largest globals in the result memory notice when live memory crosses the notice threshold",
+		async () => {
+			if (juliaPath === undefined) throw new Error("unreachable: skipped without Julia");
+			const root = await mkdtemp(join(tmpdir(), "senpi-jl-kernel-globals-"));
+			const server = await startBridgeServer({
+				token: "live-token",
+				onCall: async () => "unexpected",
+				onEmit: async () => {},
+				onCompletion: async () => {
+					throw new Error("unexpected completion");
+				},
+			});
+			const MiB = 1024 * 1024;
+			try {
+				const kernel = JuliaKernel.start({
+					cwd: root,
+					sessionId: "jl-globals",
+					connection: { port: server.port, token: server.token },
+					command: juliaPath,
+					memory: {
+						thresholds: { gcWatermarkBytes: 32 * MiB, noticeBytes: 64 * MiB, ceilingBytes: 768 * MiB },
+						readFootprint: () => ({ bytes: 128 * MiB }),
+					},
+				});
+				try {
+					const result = await kernel.run({
+						cellId: "big",
+						code: 'big_blob = repeat("a", 4 * 1024 * 1024); nothing',
+						timeoutMs: 120_000,
+					});
+					expect(result).toMatchObject({ ok: true });
+					expect(result.memory?.globals).toBeDefined();
+					expect(result.memory?.globals?.map((global) => global.name)).toContain("big_blob");
+					expect(result.memory?.notice).toContain("big_blob");
+
+					const rows = await kernel.run({
+						cellId: "rows",
+						code: 'rows = [string(repeat("x", 200), i) for i in 1:150_000]; nothing',
+						timeoutMs: 120_000,
+					});
+					const sizedRows = rows.memory?.globals?.find((global) => global.name === "rows");
+					expect(sizedRows?.bytes).toBeGreaterThanOrEqual(25 * MiB);
+					expect(sizedRows?.approximate).toBe(true);
+
+					// names(Main) is alphabetical: a deep global sorted first must not hide the flat ones after it, and a
+					// user AbstractDict is never iterated by the report.
+					const deep = await kernel.run({
+						cellId: "deep",
+						code: [
+							"aaa_deep = [[[1] for _ in 1:30] for _ in 1:1000]",
+							'zzz_flat = repeat("z", 30_000_000)',
+							"const user_touched = Ref(false)",
+							"struct UserDict <: AbstractDict{Int, Int} end",
+							"Base.length(::UserDict) = (user_touched[] = true; 3)",
+							"Base.iterate(::UserDict, s = 1) = (user_touched[] = true; nothing)",
+							"user_dict = UserDict()",
+							"nothing",
+						].join("\n"),
+						timeoutMs: 120_000,
+					});
+					const deepNames = deep.memory?.globals?.map((global) => global.name) ?? [];
+					expect(deepNames).toContain("zzz_flat");
+					expect(deepNames).toContain("rows");
+					const touched = await kernel.run({ cellId: "touched", code: "user_touched[]", timeoutMs: 120_000 });
+					expect(touched).toMatchObject({ ok: true, valueRepr: "false" });
+
+					// A global that holds Type values is still sized (sizeof on a Type throws), a grid of short strings
+					// stops at its walk budget, and a user AbstractSet is never iterated either.
+					const more = await kernel.run({
+						cellId: "more",
+						code: [
+							"typed_frame = Dict{Symbol, Any}(:dtype => Float64, :data => rand(4_000_000))",
+							'string_grid = [[string("s", i, j) for j in 1:600] for i in 1:600]',
+							"struct UserSet <: AbstractSet{Int} end",
+							"Base.length(::UserSet) = (user_touched[] = true; 3)",
+							"Base.iterate(::UserSet, s = 1) = (user_touched[] = true; nothing)",
+							"user_set = UserSet()",
+							"nothing",
+						].join("\n"),
+						timeoutMs: 120_000,
+					});
+					const moreGlobals = more.memory?.globals ?? [];
+					expect(moreGlobals.find((global) => global.name === "typed_frame")?.bytes).toBeGreaterThanOrEqual(
+						25 * MiB,
+					);
+					expect(moreGlobals.find((global) => global.name === "string_grid")).toMatchObject({ approximate: true });
+					const touchedAgain = await kernel.run({
+						cellId: "touched-again",
+						code: "user_touched[]",
+						timeoutMs: 120_000,
+					});
+					expect(touchedAgain).toMatchObject({ ok: true, valueRepr: "false" });
+				} finally {
+					await kernel.close();
+				}
+			} finally {
+				await server.close();
+				await rm(root, { recursive: true, force: true });
+			}
+		},
+		150_000,
 	);
 	it.skipIf(!hasJulia())(
 		"matches helper, status, markdown, and auto-display contracts",
