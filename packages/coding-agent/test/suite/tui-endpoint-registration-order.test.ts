@@ -8,6 +8,7 @@ import { vi } from "vitest";
 const seams = vi.hoisted(() => ({
 	startTime: undefined as (() => Promise<string | null>) | undefined,
 	bound: [] as Array<(socket: string) => void>,
+	onRegister: undefined as (() => void) | undefined,
 }));
 
 vi.mock("../../src/modes/rpc/host-daemon-registration.ts", async (importOriginal) => {
@@ -23,6 +24,17 @@ vi.mock("../../src/modes/interactive/session-control-server.ts", async (importOr
 			const server = await actual.listenControlSocket(...args);
 			for (const waiter of seams.bound.splice(0)) waiter(args[0]);
 			return server;
+		},
+	};
+});
+
+vi.mock("../../src/modes/interactive/session-control-registry.ts", async (importOriginal) => {
+	const actual = await importOriginal<typeof import("../../src/modes/interactive/session-control-registry.ts")>();
+	return {
+		...actual,
+		registerTuiEndpoint: async (...args: Parameters<typeof actual.registerTuiEndpoint>) => {
+			seams.onRegister?.();
+			return actual.registerTuiEndpoint(...args);
 		},
 	};
 });
@@ -44,6 +56,7 @@ const cleanups: Array<() => Promise<void> | void> = [];
 afterEach(async () => {
 	seams.startTime = undefined;
 	seams.bound.length = 0;
+	seams.onRegister = undefined;
 	for (const cleanup of cleanups.splice(0).reverse()) await cleanup();
 	vi.restoreAllMocks();
 });
@@ -113,6 +126,10 @@ describe.skipIf(process.platform === "win32")("tui endpoint registration order",
 	it("binds the socket while the header is written and publishes endpoint.json only once it is durable", async () => {
 		const harness = await ownedHarness();
 		const header = holdHeader(harness);
+		// Seen at the registry write itself: an unguarded registration reaches it within microtasks of the
+		// bind, before this test could release the header, so a missing or late gate records `false`.
+		const durableAtRegister: boolean[] = [];
+		seams.onRegister = () => durableAtRegister.push(header.durable());
 		const bound = nextBind();
 		const registration = registering(harness);
 
@@ -127,6 +144,7 @@ describe.skipIf(process.platform === "win32")("tui endpoint registration order",
 		header.release();
 		const fixture = await within(registration, 10_000, "registration");
 		expect(fixture.socket).toBe(socket);
+		expect(durableAtRegister).toEqual([true]);
 		expect(existsSync(paths.endpointFile)).toBe(true);
 		expect((await listHostEndpoints(agentDir)).map((entry) => entry.socket)).toEqual([socket]);
 		const [headerLine] = readFileSync(harness.sessionManager.getSessionFile() ?? "", "utf8").split("\n");
@@ -141,7 +159,7 @@ describe.skipIf(process.platform === "win32")("tui endpoint registration order",
 		const socket = await within(bound, 5_000, "the bind while the header is held");
 
 		header.fail();
-		await expect(registration).rejects.toThrow("header write refused");
+		expect(await registration.then(() => "resolved", (error: unknown) => String(error))).toContain("header write refused");
 		expect(existsSync(socket)).toBe(false);
 		expect(existsSync(socketSecretPath(socket))).toBe(false);
 		expect(await listHostEndpoints(join(harness.tempDir, "agent"))).toEqual([]);
