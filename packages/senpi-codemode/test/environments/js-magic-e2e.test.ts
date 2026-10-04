@@ -1,104 +1,10 @@
-import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { homedir } from "node:os";
 import { join } from "node:path";
-import type { AgentToolResult } from "@code-yeongyu/senpi";
-import { afterEach, describe, expect, it } from "vitest";
-import { defaultCodemodeSettings } from "../../src/config/settings.ts";
-import { JsEnvironments } from "../../src/environments/js-environments.ts";
-import { createCodemodeSessionManager } from "../../src/extension/session-manager.ts";
-import { createInterpreterDetector, getInterpreterAvailability } from "../../src/interpreters/detect.ts";
-import { createEvalTool } from "../../src/tool/eval-tool.ts";
-import { fakeExtensionContext } from "../eval/fakes.ts";
-
-const settings = { ...defaultCodemodeSettings, languages: { js: true, py: false, rb: false, jl: false } };
-const availability = await getInterpreterAvailability(settings, createInterpreterDetector());
-const cleanups: Array<() => Promise<void>> = [];
-
-afterEach(async () => {
-	for (const cleanup of cleanups.splice(0).reverse()) await cleanup();
-});
-
-function textOf(result: AgentToolResult<unknown>): string {
-	return result.content.map((part) => (part.type === "text" ? part.text : "")).join("\n");
-}
-
-function hasCommand(command: string): boolean {
-	try {
-		execFileSync(command, ["--version"], { stdio: "ignore" });
-		return true;
-	} catch {
-		return false;
-	}
-}
-
-async function packFixture(
-	dir: string,
-	name: string,
-	version: string,
-	source: string,
-	dependencies?: Record<string, string>,
-) {
-	const pkg = join(dir, `${name}-src`);
-	await mkdir(pkg, { recursive: true });
-	await writeFile(
-		join(pkg, "package.json"),
-		JSON.stringify({ name, version, type: "module", main: "index.js", ...(dependencies ? { dependencies } : {}) }),
-	);
-	await writeFile(join(pkg, "index.js"), source);
-	execFileSync("npm", ["pack", "--silent", "--pack-destination", dir], { cwd: pkg, stdio: "ignore" });
-	return join(dir, `${name}-${version}.tgz`);
-}
-
-async function session(installer: "auto" | "bun" | "npm" = "auto") {
-	const root = await mkdtemp(join(tmpdir(), "senpi-js-magic-"));
-	const project = join(root, "project");
-	const fixtures = join(root, "fixtures");
-	await mkdir(project, { recursive: true });
-	await mkdir(fixtures, { recursive: true });
-	await writeFile(join(project, "package.json"), '{"name":"user-project","private":true}\n');
-	const runSettings = { ...settings, environments: { js: { installer } } };
-	const environments = new JsEnvironments({
-		artifactsDir: join(root, "artifacts"),
-		cwd: project,
-		runtime: "test",
-		env: process.env,
-		settings: runSettings,
-	});
-	const fail = async () => {
-		throw new Error("no host tools or provider calls in this test");
-	};
-	const manager = await createCodemodeSessionManager({
-		sessionId: `js-magic-${crypto.randomUUID()}`,
-		cwd: project,
-		settings,
-		availability,
-		executeTool: fail,
-		complete: fail,
-	});
-	const tool = createEvalTool({
-		enabledLanguages: settings.languages,
-		kernelManager: manager,
-		executeTool: fail,
-		cellTimeoutSeconds: 120,
-		jsEnvironments: environments,
-	});
-	cleanups.push(async () => {
-		await manager.dispose();
-		await rm(root, { recursive: true, force: true });
-	});
-	const context = { ...fakeExtensionContext(), cwd: project };
-	const run = async (code: string, signal?: AbortSignal) =>
-		await tool.execute(
-			`js-magic-${crypto.randomUUID()}`,
-			{ language: "js", code, summary: "Run a cell" },
-			signal,
-			undefined,
-			context,
-		);
-	return { project, fixtures, environments, run };
-}
+import { describe, expect, it } from "vitest";
+import { readActiveRevision } from "../../src/environments/revision-store.ts";
+import { hasCommand, packFixture, session, textOf } from "./js-magic-session.ts";
 
 const probeSource = 'export const probe = () => "ok";\n';
 const secondSource = 'export const second = () => "two";\n';
@@ -129,7 +35,7 @@ describe.skipIf(!hasCommand("bun") || !hasCommand("npm"))("Given a JavaScript ev
 			run("const { probe } = await import('senpi-queued-probe'); probe()"),
 		]);
 
-		expect(textOf(install)).toMatch(/installed/);
+		expect(textOf(install)).toMatch(/added senpi-queued-probe with bun into managed \(revision 1\)/);
 		expect(textOf(imported)).toContain("ok");
 	}, 180_000);
 
@@ -159,8 +65,8 @@ describe.skipIf(!hasCommand("bun") || !hasCommand("npm"))("Given a JavaScript ev
 		expect(textOf(both)).toContain("ok+two");
 	}, 180_000);
 
-	it("When an install fails, then the cell reports environment_install_failed and the previous revision stays active", async () => {
-		const { fixtures, environments, run } = await session("bun");
+	it("When an install fails, then the cell reports environment_install_failed with no host path, and the previous revision stays active", async () => {
+		const { root, fixtures, environments, run } = await session("bun");
 		const good = await packFixture(fixtures, "senpi-probe", "1.0.0", probeSource);
 		const broken = await packFixture(fixtures, "senpi-broken", "1.0.0", "export const x = 1;\n", {
 			"senpi-nonexistent-dependency-for-tests": "file:./does-not-exist",
@@ -172,6 +78,8 @@ describe.skipIf(!hasCommand("bun") || !hasCommand("npm"))("Given a JavaScript ev
 		const still = await run('const { probe } = await import("senpi-probe");\nprobe()');
 
 		expect(textOf(failure)).toContain("environment_install_failed");
+		expect(textOf(failure)).not.toContain(root);
+		expect(textOf(failure)).not.toContain(homedir());
 		expect(environments.packageRoot).toBe(before);
 		expect(textOf(still)).toContain("ok");
 	}, 180_000);
@@ -188,8 +96,8 @@ describe.skipIf(!hasCommand("bun") || !hasCommand("npm"))("Given a JavaScript ev
 		expect(existsSync(join(project, "node_modules", "senpi-probe"))).toBe(true);
 	}, 180_000);
 
-	it("When the cell is cancelled once the installer has started, then the installer tree exits, nothing is published, the project manifest is unchanged and the kernel answers the next cell", async () => {
-		const { project, fixtures, environments, run } = await session("npm");
+	it("When the cell is cancelled once the installer has started, then nothing is published, the project manifest is unchanged and the kernel answers the next cell", async () => {
+		const { root, project, fixtures, environments, run } = await session("npm");
 		const tarball = await packFixture(fixtures, "senpi-probe", "1.0.0", probeSource);
 		const manifest = await readFile(join(project, "package.json"), "utf8");
 		const controller = new AbortController();
@@ -207,6 +115,7 @@ describe.skipIf(!hasCommand("bun") || !hasCommand("npm"))("Given a JavaScript ev
 		const next = await run("40 + 2");
 
 		expect(environments.packageRoot).toBeUndefined();
+		expect(await readActiveRevision(join(root, "artifacts", "environments", "js", "test"))).toBeUndefined();
 		expect(await readFile(join(project, "package.json"), "utf8")).toBe(manifest);
 		expect(textOf(next)).toContain("42");
 	}, 180_000);
@@ -218,4 +127,63 @@ describe.skipIf(!hasCommand("bun") || !hasCommand("npm"))("Given a JavaScript ev
 
 		expect(textOf(refused)).toContain("installer flags are chosen by the host");
 	}, 60_000);
+
+	it("When the session closes while an install runs, then the install is stopped and no revision is published afterwards", async () => {
+		const { root, fixtures, environments, run, dispose } = await session("npm");
+		const tarball = await packFixture(fixtures, "senpi-close-probe", "1.0.0", probeSource);
+		const installStarted = Promise.withResolvers<{ readonly installing: Promise<unknown> }>();
+		const original = environments.install.bind(environments);
+		environments.install = (requested, signal, onOutput) => {
+			const installing = original(requested, signal, onOutput);
+			installStarted.resolve({ installing });
+			return installing;
+		};
+
+		const pending = run(`%npm add ${tarball}`).catch((error: unknown) => error);
+		const { installing } = await installStarted.promise;
+		await dispose();
+		const outcome = await installing.then(
+			() => "published",
+			() => "stopped",
+		);
+		await pending;
+
+		expect(outcome).toBe("stopped");
+		expect(await readActiveRevision(join(root, "artifacts", "environments", "js", "test"))).toBeUndefined();
+	}, 180_000);
+
+	it("When %npm add runs with the installer setting on auto and bun also on PATH, then npm installs", async () => {
+		const { fixtures, run } = await session("auto");
+		const tarball = await packFixture(fixtures, "senpi-npm-choice", "1.0.0", probeSource);
+
+		const install = await run(`%npm add ${tarball}`);
+
+		expect(textOf(install)).toMatch(/added senpi-npm-choice with npm into managed/);
+	}, 180_000);
+
+	it("When %bun add names a package directory relative to the session directory, then it installs as %npm add would", async () => {
+		const { project, run } = await session("bun");
+		const local = join(project, "localpkg");
+		await mkdir(local, { recursive: true });
+		await writeFile(
+			join(local, "package.json"),
+			JSON.stringify({ name: "senpi-local", version: "1.0.0", type: "module", main: "index.js" }),
+		);
+		await writeFile(join(local, "index.js"), probeSource);
+
+		const install = await run("%bun add ./localpkg");
+		const imported = await run('const { probe } = await import("senpi-local");\nprobe()');
+
+		expect(textOf(install)).toMatch(/added senpi-local with bun into managed/);
+		expect(textOf(imported)).toContain("ok");
+	}, 180_000);
+
+	it("When a package name carries a control character, then the cell is refused with an environment error before any installer runs", async () => {
+		const { run } = await session("bun");
+
+		const refused = await run("%bun add bad\u0001name");
+
+		expect(textOf(refused)).toContain("environment_install_failed");
+		expect(textOf(refused)).toContain("package names cannot contain control characters");
+	}, 180_000);
 });
