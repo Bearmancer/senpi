@@ -22,6 +22,13 @@ export interface KernelSpawnOptions {
 
 export type KernelSpawnProcess = (options: KernelSpawnOptions) => KernelChild;
 
+/** Signals a kernel's whole process group (addressed by its leader pid); throws like `process.kill`. */
+export type KillProcessGroup = (pid: number, signal: NodeJS.Signals) => void;
+
+export const killProcessGroup: KillProcessGroup = (pid, signal) => {
+	process.kill(-pid, signal);
+};
+
 export class PythonKernelRetirementError extends Error {
 	constructor(pid: number | undefined) {
 		super(`Python kernel process${pid === undefined ? "" : ` ${pid}`} did not exit after SIGKILL`);
@@ -95,10 +102,10 @@ export async function waitForExit(child: KernelChild, timeoutMs: number): Promis
 // A cell's own subprocess is spawned into the detached kernel's process group. When the
 // leader exits gracefully on close, kill the group so a Popen the cell left running does
 // not outlive the kernel; the group is addressed by the leader pid (== pgid) while members live.
-export function sweepProcessGroup(child: KernelChild): void {
+export function sweepProcessGroup(child: KernelChild, killGroup: KillProcessGroup = killProcessGroup): void {
 	if (child.pid === undefined || process.platform === "win32") return;
 	try {
-		process.kill(-child.pid, "SIGKILL");
+		killGroup(child.pid, "SIGKILL");
 	} catch (error) {
 		// ESRCH means the group is already gone (the success case). Any other error
 		// (for example EPERM on a member we cannot signal) must not fail a graceful close.
@@ -106,7 +113,11 @@ export function sweepProcessGroup(child: KernelChild): void {
 	}
 }
 
-export async function hardKill(child: KernelChild, timeoutMs: number): Promise<void> {
+export async function hardKill(
+	child: KernelChild,
+	timeoutMs: number,
+	killGroup: KillProcessGroup = killProcessGroup,
+): Promise<void> {
 	await new Promise<void>((resolve, reject) => {
 		let timer: NodeJS.Timeout | undefined;
 		let settled = false;
@@ -123,7 +134,7 @@ export async function hardKill(child: KernelChild, timeoutMs: number): Promise<v
 		let signalDelivered = true;
 		if (child.pid !== undefined && process.platform !== "win32") {
 			try {
-				process.kill(-child.pid, "SIGKILL");
+				killGroup(child.pid, "SIGKILL");
 			} catch (error) {
 				if (!(error instanceof Error)) {
 					settle(new Error(String(error)));

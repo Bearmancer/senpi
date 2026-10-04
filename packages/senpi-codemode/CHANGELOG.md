@@ -7,6 +7,19 @@
 ### Added
 
 - `workpool(agent, name, {mode, tools})` forwards `tools`, a list of kernel-tool names the cell defined, to the host workpool unchanged in all four languages, so pool workers can call them; anything other than a list of names is refused with `invalid_tools` before reaching the host. Which kernels' tools a host accepts is the host's call: JavaScript `tool(fn)` tools work on omo today, while Python `@tool` tools need omo#9529 ([#2452](https://github.com/code-yeongyu/senpi/issues/2452)).
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.8] - 2026-10-04
+
+### Breaking Changes
+
+### Added
+
 - Internal groundwork for installing Python packages from a cell: per-session environment revisions that are published only after a successful install (a failed or interrupted install leaves the previous revision active), a per-root install lock, and a pip installer that always targets the session's own directory. Not exposed to cells yet ([#2452](https://github.com/code-yeongyu/senpi/issues/2452)).
 - Python kernel tools: `@tool` registers a function that in-process children can call, with its schema inferred from type hints; callbacks are served while the kernel is idle or its cell waits on a host call, never during a running computation, and a reset or redefinition makes old descriptors stale. `tool.defined()` / `tool.undefine()` in Python, and `tool_schema("eval:kernel-tools")` ([#2452](https://github.com/code-yeongyu/senpi/issues/2452)).
 - Internal groundwork for isolated sandbox cells: a vendored copy of the pi codemode runtime (QuickJS in a worker) with two opt-in host options, output streaming bounded by a credit window and a store policy that keeps no state. Nothing uses it yet ([#2452](https://github.com/code-yeongyu/senpi/issues/2452)).
@@ -14,6 +27,8 @@
 ### Changed
 
 ### Fixed
+
+- A cold Python kernel start on a busy machine no longer fails as a hang: startup keeps waiting while the interpreter is still using CPU or writing output, and fails only when it has gone completely still (naming the stage), or after 120 s without becoming ready ([#2718](https://github.com/code-yeongyu/senpi/issues/2718)).
 
 ### Removed
 
