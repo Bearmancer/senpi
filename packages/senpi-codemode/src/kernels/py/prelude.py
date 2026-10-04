@@ -2126,17 +2126,35 @@ def apply_preludes(preludes: Any) -> None:
             exec(compile(contribution.get("python", ""), "<kernel-prelude>", "exec"), USER_NS)
 
 
-def _enter_source_file(source_file: str | None) -> None:
+def _enter_source_file(source_file: str | None) -> Callable[[], None]:
     # A %load cell runs as its file: __file__ names it and its directory comes first on the import path,
     # so `from sibling import x` resolves next to the file the way it does when the file runs as a script.
+    # The returned step undoes both when the cell ends, so a later cell never imports from that directory
+    # ahead of the session environment; the file's own sys.path edits stay.
     if source_file is None:
-        return
-    USER_NS["__file__"] = source_file
+        return lambda: None
+    missing = object()
+    previous_file = USER_NS.get("__file__", missing)
     directory = os.path.dirname(source_file)
+    previous_index = sys.path.index(directory) if directory in sys.path else None
     with contextlib.suppress(ValueError):
         sys.path.remove(directory)
     sys.path.insert(0, directory)
     importlib.invalidate_caches()
+    USER_NS["__file__"] = source_file
+
+    def restore() -> None:
+        with contextlib.suppress(ValueError):
+            sys.path.remove(directory)
+        if previous_index is not None:
+            sys.path.insert(min(previous_index, len(sys.path)), directory)
+        importlib.invalidate_caches()
+        if previous_file is missing:
+            USER_NS.pop("__file__", None)
+        else:
+            USER_NS["__file__"] = previous_file
+
+    return restore
 
 
 def run_cell(cell_id: str, code: str, preludes: Any = None, source_file: str | None = None) -> None:
@@ -2147,12 +2165,13 @@ def run_cell(cell_id: str, code: str, preludes: Any = None, source_file: str | N
     # cells) ignores it so a late signal cannot kill the stdin-read loop.
     signal.signal(signal.SIGINT, signal.default_int_handler)
     result: dict[str, Any]
+    leave_source_file: Callable[[], None] = lambda: None
     try:
         KERNEL_TOOL_TOKEN.acquire()
         cell_stdout, cell_stderr = KERNEL_TOOL_STREAMS
         with cell_stdout.capture(stdout, cell=True), cell_stderr.capture(stderr, cell=True):
             apply_preludes(preludes)
-            _enter_source_file(source_file)
+            leave_source_file = _enter_source_file(source_file)
             body, expression = compile_cell(code, source_file or "<cell>")
             LOOP.run_until_complete(run_code(body, False))
             value = LOOP.run_until_complete(run_code(expression, True))
@@ -2177,6 +2196,7 @@ def run_cell(cell_id: str, code: str, preludes: Any = None, source_file: str | N
             "durationMs": elapsed(start),
         }
     finally:
+        leave_source_file()
         KERNEL_TOOL_TOKEN.release()
         signal.signal(signal.SIGINT, signal.SIG_IGN)
     try:

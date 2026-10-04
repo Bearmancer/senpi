@@ -1,6 +1,7 @@
 import type { HostToKernelMessage, KernelToHostMessage } from "../../bridge/protocol.ts";
 import { CHILD_LIFECYCLE_OP, INTERRUPT_ACK_OP } from "../../bridge/reserved.ts";
 import type { HostCellExecutor, KernelInterruptHandle } from "../../tool/types.ts";
+import { inputAtStart } from "../shared/cell-source-at-start.ts";
 import { KernelToolHostPump } from "../shared/kernel-tools-pump.ts";
 import { ActiveCellControl } from "./active-cell-control.ts";
 import { DEFAULT_INTERRUPT_BOUNDS, type WorkerRetirement } from "./interrupt-bounds.ts";
@@ -206,6 +207,19 @@ export class JavaScriptKernel {
 			this.#runHostEntry(next, host);
 			return;
 		}
+		const input = inputAtStart(next.input);
+		if ("refused" in input) {
+			this.#runs.releaseActive(next);
+			this.#runs.settle(next, {
+				type: "result",
+				cellId: next.input.cellId,
+				ok: false,
+				error: { message: input.refused },
+				durationMs: 0,
+			});
+			this.#startNext();
+			return;
+		}
 		this.#activeCell.arm(next);
 		this.#slot.postMessage({
 			type: "kernel-tools-names",
@@ -216,10 +230,10 @@ export class JavaScriptKernel {
 			type: "run",
 			cellId: next.input.cellId,
 			code: this.#moduleLoader.prepareCell(
-				next.input.code,
-				next.input.kernelPreludes,
-				next.input.sourceFile,
-				next.input.packageRoot?.(),
+				input.code,
+				input.kernelPreludes,
+				input.sourceFile,
+				input.packageRoot?.(),
 			),
 			timeoutMs: next.input.timeoutMs,
 		});
