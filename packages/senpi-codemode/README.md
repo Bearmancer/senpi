@@ -109,8 +109,13 @@ refused and nothing is fetched. The cell runs as its file: Python compiles it un
 the file's name, so tracebacks name the file and line, and sets `__file__` and puts
 the file's directory first on the import path, so `from sibling import g` resolves
 next to it. JavaScript evaluates it under the file's name and resolves its relative
-imports from the file's directory. A missing file fails the cell with
-`file not found: <path>`.
+imports from the file's directory. The file is read when the cell's turn comes in
+the kernel's queue, so a `%load` queued behind the cell that writes the file runs
+what that cell wrote. When the cell ends, Python takes the file's directory back off
+the import path and restores `__file__`, so later cells import as before. A file that
+cannot be read fails the cell with a message naming the path as written
+(`file not found: <path>`, `permission denied: <path>`); files over 8 MiB, and
+anything that is not a regular file, are refused.
 
 ### JavaScript packages
 

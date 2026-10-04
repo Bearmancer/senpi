@@ -96,9 +96,12 @@ describe.skipIf(!pythonReady)("Given a Python file loaded with %load from a sub-
 		await writeFile(join(root, "lib", "loader.py"), "LOADED = True\n");
 
 		await run("py", "%load ./lib/loader.py");
-		const later = await run("py", "import importlib, json\nimportlib.reload(json)\nhasattr(json, 'dumps')");
+		const later = await run(
+			"py",
+			"import importlib, json\nimportlib.reload(json)\n(hasattr(json, 'SHADOW'), hasattr(json, 'dumps'))",
+		);
 
-		expect(textOf(later)).toContain("True");
+		expect(textOf(later)).toContain("(False, True)");
 	}, 120_000);
 });
 
@@ -121,6 +124,15 @@ describe.skipIf(!pythonReady)("Given a %load path that cannot be read", () => {
 			expect(textOf(failed)).not.toContain(root);
 		}, 120_000);
 	}
+
+	it("When the file is larger than 8 MiB, then the cell is refused before anything is read", async () => {
+		const { run, root } = await session({});
+		await writeFile(join(root, "huge.py"), "#".repeat(8 * 1024 * 1024 + 1));
+
+		const refused = await run("py", "%load ./huge.py");
+
+		expect(textOf(refused)).toContain("%load reads files up to 8 MiB: ./huge.py");
+	}, 120_000);
 
 	it.skipIf(runningAsRoot)(
 		"When the file is unreadable, then the cell fails with permission denied and no absolute path",
