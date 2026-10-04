@@ -4,15 +4,20 @@ import { FakeChild } from "./py-kernel/fixtures.ts";
 
 // These tests give fake children pids. A kill path that bypasses the injected group kill must fail here,
 // never send a real signal to whatever process group happens to have that id.
+let realKill: ReturnType<typeof vi.spyOn>;
+
 beforeEach(() => {
-	vi.spyOn(process, "kill").mockImplementation(() => {
+	realKill = vi.spyOn(process, "kill").mockImplementation(() => {
 		throw new Error("test reached the real process.kill");
 	});
 });
 
 afterEach(() => {
+	const reached = realKill.mock.calls.map((call) => call.slice(0, 2));
 	vi.restoreAllMocks();
 	vi.useRealTimers();
+	// hardKill swallows a failed group kill, so the throw alone could go unnoticed: assert it never ran.
+	expect(reached, "a kill path reached the real process.kill").toEqual([]);
 });
 
 describe("Python startup progress", () => {
