@@ -234,11 +234,10 @@ describe("Python startup progress", () => {
 	});
 
 	it("fails an interpreter that goes idle right after a stage change within one guard period", async () => {
-		// Given: CPU advances up to the stage frame, then stops for good.
+		// Given: CPU time that grows with the clock until the stage frame, then stops for good.
 		vi.useFakeTimers();
 		const child = new FakeChild({ autoReady: false, pid: 4245 });
-		let cpu = 0n;
-		let busy = true;
+		let frozen: bigint | undefined;
 		const started = PythonKernel.start({
 			interpreterPath: "python3",
 			sessionId: "idle-after-stage",
@@ -246,19 +245,22 @@ describe("Python startup progress", () => {
 			connection: { port: 1, token: "fixture" },
 			startupTimeoutMs: 200,
 			startupCeilingMs: 10_000,
-			readCpuTime: () => (busy ? (cpu += 10n) : cpu),
+			readCpuTime: () => frozen ?? BigInt(Date.now()),
 			spawnProcess: () => child,
 		});
-		const outcome = started.catch((error: unknown) => error);
+		let failure: unknown;
+		started.catch((error: unknown) => {
+			failure = error;
+		});
 		await vi.advanceTimersByTimeAsync(150);
 		child.emitMessage({ type: "status", event: { op: "kernel-startup", stage: "runtime-init" } });
-		busy = false;
+		frozen = BigInt(Date.now());
 
 		// When: one guard period passes after the stage change.
 		await vi.advanceTimersByTimeAsync(200);
 
-		// Then: it fails at runtime-init, not a period later.
-		expect(await outcome).toMatchObject({ stage: "runtime-init" });
+		// Then: it has already failed at runtime-init, not a period later.
+		expect(failure).toMatchObject({ stage: "runtime-init" });
 		expect(child.killSignals).toEqual(["SIGKILL"]);
 	});
 
