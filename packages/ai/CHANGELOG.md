@@ -10,6 +10,18 @@
 
 ### Fixed
 
+### Removed
+
+## [2026.10.6] - 2026-10-04
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
 - Cursor's `resource_exhausted` signatures (`isCursorZeroTokenResourceExhausted`, `isCursorPayloadResourceExhausted`, `isCursorQuotaResourceExhausted`) now match only the `cursor` and `cursor-cli-oauth` providers, so another provider's `resource_exhausted` rate or usage limit is no longer read as a Cursor payload overflow or re-mint; a rate-limited body that says its limit resets in N minutes now yields that wait as the retry hint ([#2660](https://github.com/code-yeongyu/senpi/issues/2660)).
 
 ### Removed
