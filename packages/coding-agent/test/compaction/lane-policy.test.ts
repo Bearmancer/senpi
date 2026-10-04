@@ -86,6 +86,17 @@ describe("compaction lane policy — instance policy", () => {
 		expect(loads).toBe(0);
 	});
 
+	it("reports an append-only transcript only for the resident lane", () => {
+		const policy = createCompactionLanePolicy({
+			loadProviderSettings: (cwd) => ({ resumeMode: cwd === "/off" ? "off" : "auto" }),
+		});
+		const lane = { provider: "anthropic-subscription" };
+
+		expect(policy.hasAppendOnlyTranscript({ cwd: "/auto", model: lane })).toBe(true);
+		expect(policy.hasAppendOnlyTranscript({ cwd: "/off", model: lane })).toBe(false);
+		expect(policy.hasAppendOnlyTranscript({ cwd: "/auto", model: { provider: "anthropic" } })).toBe(false);
+	});
+
 	it("re-resolves when the cwd changes", () => {
 		const seen: string[] = [];
 		const policy = createCompactionLanePolicy({

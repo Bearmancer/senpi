@@ -978,6 +978,7 @@ export default function compactionExtension(
 				toolAdmissionEnabled: settings.toolAdmissionEnabled !== false,
 				breakerFallback,
 				laneOwnsCompaction,
+				appendOnlyTranscript: lanePolicy.hasAppendOnlyTranscript(ctx),
 				emergencyPruneLatch,
 				logEmergencyPrune: (fields) => getLogger(ctx).debug("emergency_prune", fields),
 			}),
