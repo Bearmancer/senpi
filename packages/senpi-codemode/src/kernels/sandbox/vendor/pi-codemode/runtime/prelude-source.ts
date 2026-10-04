@@ -46,7 +46,9 @@ export const PRELUDE_SOURCE: string = `(function (bridge, toolsJson, globalsJson
 	const options = optionsJson === undefined ? {} : JSON.parse(optionsJson);
 	const streamOutput = options.streamOutput === true;
 	const rejectStore = options.store === "reject";
-	// The engine's own InternalError, captured before user code runs: a failure is tagged by identity, never by its text.
+	// The engine's own InternalError, captured before user code runs: a failure is tagged by identity, never by its
+	// text, so a cell's own error that merely mentions memory keeps its own code. A script can still construct this
+	// constructor itself and so label its own failure as the memory limit; that mislabels only its own cell.
 	const EngineInternalError = typeof InternalError === "function" ? InternalError : undefined;
 	// senpi-change end
 	"use strict";
@@ -293,6 +295,8 @@ export const PRELUDE_SOURCE: string = `(function (bridge, toolsJson, globalsJson
 		try {
 			rendered = outputText(value);
 		} catch (error) {
+			// The engine's own out-of-memory error keeps its identity, so it is still reported as the memory limit.
+			if (EngineInternalError !== undefined && error instanceof EngineInternalError) throw error; // senpi-change
 			throw new TypeErrorCtor(error instanceof ErrorCtor ? error.message : String(error));
 		}
 		output("text", rendered);

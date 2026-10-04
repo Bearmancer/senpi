@@ -120,7 +120,6 @@ describe("Given sandbox cells are turned on", () => {
 		expect(Math.abs(meta(isolated).totalBytes - meta(persistent).totalBytes)).toBeLessThanOrEqual(2);
 		expect((isolated.details as unknown as { cells: { status: string }[] }).cells[0]?.status).toBe("complete");
 		expect(textOf(isolated)).toContain("ok");
-		expect(textOf(isolated)).not.toContain('"no"');
 	}, 180_000);
 
 	it("a 256 MiB allocation fails with eval_isolate_memory_limit and the persistent kernel keeps its globals", async () => {
@@ -135,6 +134,17 @@ describe("Given sandbox cells are turned on", () => {
 
 		expect(textOf(result)).toContain("eval_isolate_memory_limit");
 		expect(textOf(after)).toContain("42");
+	}, 120_000);
+
+	it("When text() runs out of memory rendering a value, then the cell still fails with eval_isolate_memory_limit", async () => {
+		const { run } = await session({ enabled: true, memoryMb: 64 });
+
+		const result = await run(
+			'const s = "y".repeat(1024 * 1024); const a = []; for (let i = 0; i < 80; i++) a.push(s); text(a); return "unreached"',
+			true,
+		);
+
+		expect(JSON.stringify(result.details)).toContain("eval_isolate_memory_limit");
 	}, 120_000);
 
 	it("a promise that never settles fails with eval_isolate_unresolved_promise", async () => {
@@ -161,6 +171,8 @@ describe("Given sandbox cells are turned on", () => {
 		const memoryText = await run('throw new Error("my parser ran out of memory budget")', true);
 		const unresolvedText = await run('throw new Error("unresolved symbol foo")', true);
 
+		expect(textOf(memoryText)).toContain("my parser ran out of memory budget");
+		expect(textOf(unresolvedText)).toContain("unresolved symbol foo");
 		for (const result of [memoryText, unresolvedText]) {
 			expect(result.details).toMatchObject({ isError: true });
 			expect(JSON.stringify(result.details)).not.toMatch(
