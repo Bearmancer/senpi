@@ -12,6 +12,8 @@
 
 ### Fixed
 
+- `%bun add` over a package first installed from a local directory now works when the new archive's top directory is not `package/` (a GitHub-style `<repo>-<sha>.tgz`, or a plain `.tar`): its name is read from the archive's own top-level directory, so the old directory's links are removed before bun installs ([#2452](https://github.com/code-yeongyu/senpi/issues/2452)).
+
 - A nested tool call that is denied inside an `eval` cell (a permission denial or another hook's block) now reaches the cell as the plain denial, without the `Expected parameters:` schema hint that made it read like an argument error; argument failures still get the hint ([#2700](https://github.com/code-yeongyu/senpi/issues/2700)). Thanks to @MoerAI ([#2755](https://github.com/code-yeongyu/senpi/pull/2755)).
 
 ### Removed

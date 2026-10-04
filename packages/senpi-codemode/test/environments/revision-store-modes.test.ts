@@ -1,4 +1,4 @@
-import { mkdtemp, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -44,4 +44,24 @@ describe("Given the revision store under a permissive umask", () => {
 			}
 		},
 	);
+
+	it("When a revision created 0755 before this change is the active one, then the next revision is still private to the user", async () => {
+		const root = await mkdtemp(join(tmpdir(), "senpi-store-modes-"));
+		roots.push(root);
+		const base = join(root, "artifacts", "environments", "js", "runtime");
+		const previous = process.umask(0o022);
+		try {
+			const first = await publishNextRevision(base, async (staging) => {
+				await writeFile(join(staging, "installed"), "one\n");
+			});
+			await chmod(first.revision.dir, 0o755);
+			const second = await publishNextRevision(base, async (staging) => {
+				await writeFile(join(staging, "installed"), "two\n");
+			});
+
+			expect(((await stat(second.revision.dir)).mode & 0o777).toString(8)).toBe("700");
+		} finally {
+			process.umask(previous);
+		}
+	});
 });

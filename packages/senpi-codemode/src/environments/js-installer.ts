@@ -109,9 +109,24 @@ export async function requestedPackageName(spec: string): Promise<string | undef
 	return REGISTRY_NAME.exec(spec)?.[1];
 }
 
-function tarballManifest(path: string): Promise<string> {
+/**
+ * An archive's own `package.json`, read from its single top-level directory as both installers unpack it: npm's
+ * `package/`, or a GitHub-style `<repo>-<sha>/`. tar detects the compression itself, so a plain `.tar` works too.
+ */
+async function tarballManifest(path: string): Promise<string> {
+	const listing = await tarOutput(["-tf", path]);
+	const top = listing
+		.split("\n")
+		.find((entry) => entry !== "")
+		?.split("/")[0];
+	if (top === undefined || top === "" || top === "." || top === "..")
+		throw new Error("the archive has no top-level directory");
+	return await tarOutput(["-xOf", path, `${top}/package.json`]);
+}
+
+function tarOutput(args: readonly string[]): Promise<string> {
 	return new Promise((resolveText, reject) => {
-		execFile("tar", ["-xzOf", path, "package/package.json"], { maxBuffer: 1 << 20 }, (error, stdout) =>
+		execFile("tar", [...args], { maxBuffer: 64 << 20 }, (error, stdout) =>
 			error === null ? resolveText(stdout) : reject(error),
 		);
 	});
