@@ -6,6 +6,8 @@
 
 ### Added
 
+- Internal groundwork for isolated sandbox cells: a vendored copy of the pi codemode runtime (QuickJS in a worker) with two opt-in host options, output streaming bounded by a credit window and a store policy that keeps no state. Nothing uses it yet ([#2452](https://github.com/code-yeongyu/senpi/issues/2452)).
+
 ### Changed
 
 ### Fixed

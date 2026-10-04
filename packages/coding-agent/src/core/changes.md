@@ -1,3 +1,26 @@
+## 2026-10-04 - continue_from_leaf acknowledges at turn admission, not turn end (senpi#2708)
+
+### What changed
+
+- `packages/coding-agent/src/core/continue-from-leaf.ts`: `trackTurnAdmission()` pairs the `started` disposition with the turn's `agent_start`, resolving once both hold (or immediately on a delegated queue), so the order of the two never drops a same-tick `agent_start`.
+- `packages/coding-agent/src/core/agent-session.ts`: `continueFromLeaf()` resolves once the runtime took the continuation (through `trackTurnAdmission`) instead of awaiting the whole continued turn; the turn keeps running in the background.
+
+### Why
+
+- The desktop sends `continue_from_leaf` with a deadline. Answering only after the whole turn timed out every continuation longer than the deadline and left the editor stuck on "submitting" while the agent kept going (omo-desktop-app#1571 review HIGH-1). `prompt` acknowledges at admission; the continuation now does the same.
+
+### Why an extension could not handle it
+
+- Admission timing is session-core behavior inside `AgentSession.continueFromLeaf()` / `_promptAgent`, not an extension hook. No extension event can change when the method resolves without owning the prompt admission it shares with `prompt()`.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/agent-session.ts` (`continueFromLeaf()` and the surrounding admission helpers), against any upstream change to prompt admission or `sendCustomMessage`.
+
+### Must not break
+
+- The refusals `streaming`, `nothing_to_continue` and `leaf_not_assistant` still throw with their typed codes before any turn starts. A start-time failure rejects the start promise; the turn events are unchanged.
+
 ## 2026-10-03 - A model's free or plan limit falls back at once and keeps its reset window (senpi#2660)
 
 ### What changed
@@ -52,7 +75,7 @@
 
 ### What changed
 
-- `packages/coding-agent/src/core/continue-from-leaf.ts` (new): `CONTINUE_FROM_LEAF_CUSTOM_TYPE` ("continue-from-leaf"), the hidden `CONTINUE_FROM_LEAF_DIRECTIVE`, and `ContinueFromLeafError` with codes `streaming | nothing_to_continue | leaf_not_assistant`; `AgentSession.continueFromLeaf()` refuses unless the last message is an assistant answer.
+- `packages/coding-agent/src/core/continue-from-leaf.ts` (new): `CONTINUE_FROM_LEAF_CUSTOM_TYPE` ("continue-from-leaf"), the hidden `CONTINUE_FROM_LEAF_DIRECTIVE`, and `ContinueFromLeafError` with codes `streaming | nothing_to_continue | leaf_not_assistant`; `AgentSession.continueFromLeaf()` refuses unless the last message is an assistant answer, and resolves when the continued turn STARTS (its `agent_start` or a delegated queue), not after the turn ends (#2708). Before v2026.10.7 it awaited the whole turn.
 - `packages/coding-agent/src/core/agent-session.ts`: `continueFromLeaf()` starts a turn from the current leaf by sending the directive as a hidden custom message (`display: false`, `triggerTurn: true`), the same mechanism as the "." manual continue. It refuses while streaming and on a session with no messages. After `editAssistantMessage` makes an edited answer the leaf, the model continues from the edited text.
 
 ### Why

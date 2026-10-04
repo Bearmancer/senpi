@@ -129,6 +129,7 @@ import {
 	CONTINUE_FROM_LEAF_CUSTOM_TYPE,
 	CONTINUE_FROM_LEAF_DIRECTIVE,
 	ContinueFromLeafError,
+	trackTurnAdmission,
 } from "./continue-from-leaf.ts";
 import { admitCursorHistory, cursorAdmissionBudgetBytes } from "./cursor-history-admission.ts";
 import { DEFAULT_THINKING_LEVEL } from "./defaults.ts";
@@ -10400,9 +10401,14 @@ export class AgentSession {
 
 	/**
 	 * Start a turn from the current leaf with no new user prompt (senpi #1930): after an edited
-	 * assistant response becomes the leaf, the model continues from its edited text. Delivered as a
+	 * assistant response becomes the leaf, the model continues from its edited text, delivered as a
 	 * hidden custom message, never as a trailing assistant message (see continue-from-leaf.ts).
-	 * Refuses while streaming and on a session with no messages; resolves once the turn starts.
+	 * Resolves once the runtime took the continuation (its `agent_start`, or a delegated queue into
+	 * a running turn), like a prompt - NOT after the whole continued turn. Before this it awaited
+	 * the whole turn, so a desktop continuation longer than the RPC control deadline always timed
+	 * out (#848 / senpi #2708). Refuses while streaming and on a session with no messages. The turn
+	 * keeps running in the background after this resolves; a later failure reaches the client as its
+	 * normal turn error event, not as a reply here.
 	 */
 	async continueFromLeaf(): Promise<void> {
 		if (this.isStreaming) throw new ContinueFromLeafError("streaming");
@@ -10410,14 +10416,35 @@ export class AgentSession {
 		// Only an answer can be continued; a prompt left as the leaf (an edited one) is retried, not continued.
 		const leaf = this.agent.state.messages[this.agent.state.messages.length - 1];
 		if (leaf?.role !== "assistant") throw new ContinueFromLeafError("leaf_not_assistant");
-		await this.sendCustomMessage(
+		const turnClaim = new DeferredTurnClaim();
+		const admission = trackTurnAdmission({
+			disposition: turnClaim.disposition,
+			subscribe: (listener) =>
+				this.subscribe((event) => {
+					if (event.type === "agent_start") listener({ type: "agent_start" });
+				}),
+		});
+		// The turn runs in the background. trackTurnAdmission resolves at admission;
+		// a start-time failure in sendCustomMessage rejects the race, so the client
+		// sees the same error a prompt-start failure would give, not a false "started".
+		const run = this.sendCustomMessage(
 			{
 				customType: CONTINUE_FROM_LEAF_CUSTOM_TYPE,
 				content: CONTINUE_FROM_LEAF_DIRECTIVE,
 				display: false,
 			},
 			{ triggerTurn: true },
+			turnClaim,
 		);
+		try {
+			await Promise.race([admission.promise, run]);
+		} finally {
+			admission.dispose();
+		}
+		// After admission the turn runs detached; a later failure is a normal turn
+		// error event, not this reply. Swallow it here so it is not an unhandled
+		// rejection; the client observes it through the turn stream like any prompt.
+		run.catch(() => undefined);
 	}
 
 	/**
