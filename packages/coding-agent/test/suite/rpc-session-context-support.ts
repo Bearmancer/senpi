@@ -63,6 +63,7 @@ interface OpenFields {
 	readonly auto_title?: boolean;
 	readonly promptSurface?: "terminal" | "app" | "chat";
 	readonly browserEngine?: "connected" | "builtin" | "none";
+	readonly retryFallback?: { modelFallback: boolean; fallbackChains: Record<string, string[]> };
 }
 
 /**
@@ -98,6 +99,10 @@ export async function contextHost(
 		autoTitleSessions?: boolean;
 		titleModel?: boolean;
 		browserStateExtension?: boolean;
+		/** A faux provider every session can reach (`--provider`/`--model` select its first model). */
+		faux?: ReturnType<typeof fauxProvider>;
+		/** Global settings written to `<agentDir>/settings.json` before the host starts. */
+		globalSettings?: Record<string, unknown>;
 	} = {},
 ) {
 	const scratch = await mkdtemp(join(tmpdir(), "senpi-session-context-"));
@@ -109,9 +114,14 @@ export async function contextHost(
 	await writeFile(probe, PROBE_EXTENSION);
 	const browserState = join(scratch, "browser-state.mjs");
 	await writeFile(browserState, BROWSER_STATE_EXTENSION);
-	const faux = options.titleModel === true ? fauxProvider({ api: "fauxtitle", provider: "fauxtitle" }) : undefined;
+	if (options.globalSettings !== undefined) {
+		await writeFile(join(agentDir, "settings.json"), `${JSON.stringify(options.globalSettings, null, 2)}\n`);
+	}
+	const faux =
+		options.faux ??
+		(options.titleModel === true ? fauxProvider({ api: "fauxtitle", provider: "fauxtitle" }) : undefined);
 	const model = faux?.getModel();
-	if (faux) {
+	if (faux && options.faux === undefined) {
 		faux.setResponses([
 			fauxAssistantMessage("turn complete"),
 			fauxAssistantMessage("<title>Generated Title</title>"),
@@ -204,6 +214,7 @@ export async function contextHost(
 	return {
 		cwd,
 		scratch,
+		agentDir,
 		clock,
 		router,
 		faux,

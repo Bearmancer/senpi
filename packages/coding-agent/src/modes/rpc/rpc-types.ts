@@ -10,6 +10,7 @@ import type { ImageContent, Model, ProviderDiagnostic, ThinkingSelection } from 
 import type { SessionRuntimeKind } from "../../cli/args.ts";
 import type { AgentAbortSource } from "../../core/agent-abort-provenance.ts";
 import type { PromptDisposition, QueuedInput, QueuedInputDisposition, SessionStats } from "../../core/agent-session.ts";
+import type { SessionRetryFallbackProfile } from "../../core/agent-session-runtime.ts";
 import type { BashResult } from "../../core/bash-executor.ts";
 import type { BrowserEngine } from "../../core/browser-engine.ts";
 import type { ClientMessageIdentity } from "../../core/client-message-identity.ts";
@@ -127,6 +128,7 @@ type RpcSessionCommand =
 	// Retry
 	| { id?: string; type: "set_auto_retry"; enabled: boolean }
 	| { id?: string; type: "abort_retry" }
+	| { id?: string; type: "set_retry_fallback"; retryFallback: SessionRetryFallbackProfile }
 
 	// Bash
 	| {
@@ -423,6 +425,14 @@ export type RpcCommand =
 			 * Requires the host capability `browser_engine`. Any other value is refused with `invalid_launch_profile`.
 			 */
 			browserEngine?: BrowserEngine;
+			/**
+			 * The fallback policy THIS session runs with (e.g. a task child's own chain): applied as an
+			 * in-memory override of this session's `retry.modelFallback` / `retry.fallbackChains`, never written
+			 * to a settings file and never seen by another session. Requires the host capability
+			 * `retry_fallback_profile`; a malformed value is refused with `invalid_launch_profile`. Applied
+			 * when the open creates the session; an attach keeps the session's existing policy.
+			 */
+			retryFallback?: SessionRetryFallbackProfile;
 	  }
 	| { id?: string; type: "close_session"; sessionId: string }
 	| {
@@ -854,6 +864,7 @@ export type RpcResponse =
 	// Retry
 	| { id?: string; type: "response"; command: "set_auto_retry"; success: true }
 	| { id?: string; type: "response"; command: "abort_retry"; success: true }
+	| { id?: string; type: "response"; command: "set_retry_fallback"; success: true }
 
 	// Bash
 	| { id?: string; type: "response"; command: "bash"; success: true; data: BashResult }
@@ -1072,7 +1083,17 @@ export type RpcQuestionUiRequest = {
 
 /** Emitted when an extension needs user input */
 export type RpcExtensionUIRequest =
-	| { type: "extension_ui_request"; id: string; method: "select"; title: string; options: string[]; timeout?: number }
+	| {
+			type: "extension_ui_request";
+			id: string;
+			method: "select";
+			title: string;
+			options: string[];
+			timeout?: number;
+			/** The tool call this dialog approves, when it is a permission request. */
+			toolCallId?: string;
+			parentToolCallId?: string;
+	  }
 	| { type: "extension_ui_request"; id: string; method: "confirm"; title: string; message: string; timeout?: number }
 	| {
 			type: "extension_ui_request";
@@ -1081,6 +1102,8 @@ export type RpcExtensionUIRequest =
 			title: string;
 			placeholder?: string;
 			timeout?: number;
+			toolCallId?: string;
+			parentToolCallId?: string;
 	  }
 	| { type: "extension_ui_request"; id: string; method: "editor"; title: string; prefill?: string }
 	| {

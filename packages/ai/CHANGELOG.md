@@ -12,6 +12,58 @@
 
 ### Removed
 
+## [2026.10.9] - 2026-10-04
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.8] - 2026-10-04
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+- The advertised Claude Code fingerprint floor follows the bundled Claude Agent SDK to Claude Code 2.1.289 ([#2545](https://github.com/code-yeongyu/senpi/issues/2545)).
+
+### Fixed
+
+### Removed
+
+## [2026.10.7] - 2026-10-04
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.6] - 2026-10-04
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- Cursor's `resource_exhausted` signatures (`isCursorZeroTokenResourceExhausted`, `isCursorPayloadResourceExhausted`, `isCursorQuotaResourceExhausted`) now match only the `cursor` and `cursor-cli-oauth` providers, so another provider's `resource_exhausted` rate or usage limit is no longer read as a Cursor payload overflow or re-mint; a rate-limited body that says its limit resets in N minutes now yields that wait as the retry hint ([#2660](https://github.com/code-yeongyu/senpi/issues/2660)).
+
+### Removed
+
 ## [2026.10.5] - 2026-10-03
 
 ### Breaking Changes

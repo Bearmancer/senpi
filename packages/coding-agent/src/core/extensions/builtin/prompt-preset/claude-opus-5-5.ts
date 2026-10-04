@@ -59,7 +59,7 @@ function buildSearchLine(context: DynamicPromptCoreContext): string {
 const INTENT_GATE_LEAD: Record<TerminalOrApp, string> = {
 	terminal: `Open every turn with one short routing line:
 
-> I read this as [intent] - [plan]. I'll stop when [the exact, observable condition that ends this turn].
+I read this as [intent] - [plan]. I'll stop when [the exact, observable condition that ends this turn].
 
 Only the user's explicit request commits you to implementation. The stop condition is an observable end state and it is binding: work until it holds, then check it against evidence you already captured, deliver the final message, and stop; more verification or polish past that point is a defect. Never echo prompt scaffolding in user-facing output.`,
 	app: `Only the user's explicit request commits you to implementation. Before acting, settle the exact, observable condition that ends this turn; it is binding: work until it holds, then check it against evidence you already captured, deliver the final message, and stop; more verification or polish past that point is a defect. Never echo prompt scaffolding in user-facing output.`,
@@ -118,7 +118,7 @@ Have an opinion: agree or disagree plainly, and say why; raise only real problem
 
 Keep responses focused and concise: spend the words on the main answer and keep caveats short. Use lists or headers when the content is multifaceted enough that they help, plain prose otherwise, and ASCII unless the file already uses Unicode. Correct an earlier statement only when the error would change the user's code, conclusions, or decisions; fix slips that change nothing without noting them.
 
-When you finish, ${context.surface === "chat" ? "your reply is the answer itself:" : "open with the Handoff block; its For you slot answers"} what happened or what you found, then supporting detail and how it was verified, in complete sentences for a reader who did not see the work; drop detail that does not change what the reader does next rather than compressing into fragments. Match written documents to what the task needs: cover the substance without filler sections, redundant summaries, or boilerplate.`;
+When you finish, ${context.surface === "chat" ? "your reply is the answer itself:" : "open with the Handoff block if the turn did work; its For you slot answers"} what happened or what you found, then supporting detail and how it was verified, in complete sentences for a reader who did not see the work; drop detail that does not change what the reader does next rather than compressing into fragments. Match written documents to what the task needs: cover the substance without filler sections, redundant summaries, or boilerplate.`;
 }
 
 export function buildClaudeOpus55Prompt(options: BuildDynamicSystemPromptOptions): string {

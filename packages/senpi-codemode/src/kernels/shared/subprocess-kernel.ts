@@ -23,6 +23,7 @@ import {
 	settlePendingRun,
 	timeoutResult,
 } from "./subprocess-run.ts";
+import { SubprocessStartupWatchdog } from "./subprocess-startup.ts";
 
 export type {
 	KernelResult,
@@ -40,6 +41,7 @@ export class SubprocessKernel {
 	private readonly memory: KernelMemoryHost | null;
 	private process: SubprocessProcess | null = null;
 	private processReady = false;
+	private startup: SubprocessStartupWatchdog | null = null;
 	private retirementPromise: Promise<void> | null = null;
 	private retirementProcess: SubprocessProcess | null = null;
 	private retirementFailure: Error | null = null;
@@ -133,6 +135,7 @@ export class SubprocessKernel {
 	async close(): Promise<void> {
 		const wasClosed = this.closed;
 		this.closed = true;
+		this.startup?.stop();
 		if (!wasClosed) {
 			this.settleAll(new KernelClosingError());
 			this.runs.clearToolCalls();
@@ -197,10 +200,21 @@ export class SubprocessKernel {
 		});
 		this.process = process;
 		this.processReady = false;
+		this.startup?.stop();
+		const startup = this.options.startup;
+		this.startup = startup
+			? new SubprocessStartupWatchdog(startup, child.pid, (message) => this.stalled(process, message))
+			: null;
 		this.memory?.processReplaced();
 		try {
+			const thresholds = this.options.memory?.thresholds;
 			process.send(
-				encodeBridgeFrame({ type: "init", sessionId: this.options.sessionId, connection: this.options.connection }),
+				encodeBridgeFrame({
+					type: "init",
+					sessionId: this.options.sessionId,
+					connection: this.options.connection,
+					...(thresholds === undefined ? {} : { memory: thresholds }),
+				}),
 			);
 		} catch (error) {
 			const failure = new KernelStartupError(error instanceof Error ? error.message : String(error));
@@ -221,7 +235,9 @@ export class SubprocessKernel {
 
 	private handleMessage(process: SubprocessProcess, message: KernelToHostMessage): void {
 		if (!this.accepts(process)) return;
+		if (!this.processReady) this.startup?.observe(message);
 		if (message.type === "ready") {
+			this.startup?.stop();
 			this.processReady = true;
 			this.runs.handleMessage(message, this.onMessage);
 			this.pumpRuns();
@@ -247,6 +263,7 @@ export class SubprocessKernel {
 
 	private handleExit(process: SubprocessProcess, code: number | null, signal: NodeJS.Signals | null): void {
 		if (this.process !== process) return;
+		this.startup?.stop();
 		if (process.isRetiring) {
 			this.process = null;
 			this.retirementFailure = null;
@@ -275,6 +292,20 @@ export class SubprocessKernel {
 			this.runs.settle(active, failureResult(active, new Error(`${error.message}; every global is lost`)));
 		}
 		onDeath(reason);
+	}
+
+	/** A stalled start is a death: the owner replaces the kernel and the cells that never started run there. */
+	private stalled(process: SubprocessProcess, message: string): void {
+		if (!this.accepts(process)) return;
+		const error = new KernelStartupError(message);
+		const onDeath = this.options.onDeath;
+		if (!onDeath) {
+			this.failClosed(error);
+			return;
+		}
+		process.retire();
+		this.trackRetirement(process, this.terminateOwnedProcess(process));
+		this.die(error, message, onDeath);
 	}
 
 	private accepts(process: SubprocessProcess): boolean {
@@ -330,6 +361,7 @@ export class SubprocessKernel {
 	}
 
 	private failClosed(error: Error): void {
+		this.startup?.stop();
 		const process = this.process;
 		this.failure = error;
 		this.closed = true;

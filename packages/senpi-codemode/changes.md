@@ -1,6 +1,35 @@
 # senpi-codemode fork changes
 
 
+## 2026-10-04 - The pi codemode sandbox runtime is vendored with streaming output and a store policy (codemode plan node 18, part 1)
+
+### What changed
+
+- `packages/senpi-codemode/src/kernels/sandbox/vendor/pi-codemode/`: seven files of @earendil-works/pi-codemode 1.0.1 from the upstream repository at tag v1.0.1:
+  - `packages/senpi-codemode/src/kernels/sandbox/vendor/pi-codemode/runtime/host.ts`
+  - `packages/senpi-codemode/src/kernels/sandbox/vendor/pi-codemode/runtime/worker.ts`
+  - `packages/senpi-codemode/src/kernels/sandbox/vendor/pi-codemode/runtime/prelude-source.ts`
+  - `packages/senpi-codemode/src/kernels/sandbox/vendor/pi-codemode/runtime/protocol.ts`
+  - `packages/senpi-codemode/src/kernels/sandbox/vendor/pi-codemode/types.ts`
+  - `packages/senpi-codemode/src/kernels/sandbox/vendor/pi-codemode/wasm.ts`
+  - `packages/senpi-codemode/src/kernels/sandbox/vendor/pi-codemode/identifier.ts`
+
+  They come with the upstream LICENSE and `VENDORED.md` (provenance, per-file SHA-256, local changes). Two opt-in host options sit in `// senpi-change` blocks: `output: "stream"` (frames under a credit window, delivered in order, nothing collected) and `builtins.store: "reject"` (store/load defined but stateless). The defaults are upstream's behaviour.
+- `packages/senpi-codemode/package.json`: `quickjs-wasi` 3.6.2, exact pin.
+
+### Why
+
+Isolated sandbox cells (node 18, part 2) need a sandbox host that streams large output without keeping it, which no published version does, and the published package carries only compiled `dist`, so the change has to live in source that ships with this package.
+
+### Why an extension could not handle it
+
+The change is inside the sandbox host and worker; an extension sees only the settled result.
+
+### Expected merge conflict zones
+
+- None: new files only. A future upstream sync re-applies the `senpi-change` blocks.
+
+
 ## 2026-10-02 - Display images are validated before they are kept (upstream v1.0.0 sync)
 
 ### What changed

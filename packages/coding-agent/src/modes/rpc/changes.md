@@ -1,3 +1,93 @@
+## 2026-10-05 - `set_retry_fallback` for a single-session rpc process (omo#9582)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: new command `set_retry_fallback { retryFallback: SessionRetryFallbackProfile }` and its response.
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: `RpcConnectionOptions.retryFallbackCommand`. When set, the handler advertises `retry_fallback_command` in `get_protocol_info` and accepts `set_retry_fallback`: it validates with `sessionRetryFallbackError` (the `open_session.retryFallback` rules), refuses once the connection has asked for a turn (`turnRequested`, set by `prompt`, `steer`, `follow_up`, `continue_from_leaf` and a `send_custom_message` with `triggerTurn`) while any turn streams, or once the session holds turn history (any message other than an extension's `custom` context message), so a launch-time setting never changes under a turn or retry in flight while a fresh child whose components added context on `session_start` still accepts it, and calls `runtimeHost.setRetryFallback`. Without the option, as on a host's session connections, the command is refused and the capability is not advertised.
+- `packages/coding-agent/src/modes/rpc/rpc-mode.ts`: the single-session stdio handler passes `retryFallbackCommand: true`.
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts`: `RpcClient.setRetryFallback(profile)`.
+- `packages/coding-agent/src/modes/rpc/custom-capability.ts`: `RETRY_FALLBACK_COMMAND_CAPABILITY`.
+
+### Why
+
+- omo's task children that run as their own process (`task.process_runner: "child-process"`, and every child on win32) could not carry their category's fallback chain, so a usage limit after a tool call ended them. An RPC command reaches only that process: an environment variable would leak into everything its tools spawn (Bun does not unsetenv), and argv has a command-line length limit on Windows and shows in a process listing.
+
+### Why an extension could not handle it
+
+- Extensions cannot register RPC protocol commands or capabilities, and the connection handler's per-connection options are set by the mode that owns the transport.
+
+### Expected merge conflict zones
+
+- `connection-handler.ts`: `RpcConnectionOptions`, the `get_protocol_info` capability list, and the retry command block after `abort_retry`.
+- `rpc-types.ts`: the retry command and response unions.
+- `rpc-mode.ts`: the `createRpcConnectionHandler` call.
+
+## 2026-10-04 - A handoff replaces an idle host no layout-2 record proves (senpi#2701)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-handoff.ts`: when no layout-2 registration proves the owner, `handoffHostLocked` hands the decision to `handoffUnregisteredHost` instead of refusing `unknown_owner`. `HandoffRefusal` gains `legacy_host`.
+- `packages/coding-agent/src/modes/rpc/host-handoff-unregistered.ts` (new): counts the running host's sessions (`list_sessions` with workers) over a connection it keeps open. Any session, or no answer, is a refusal: `legacy_host` with the existing pid/socket/`host stop --drain` detail when a flat pre-layout-2 record proves the process, `unknown_owner` with the session count otherwise. With 0 sessions the successor takes the socket; a proven legacy process is then sent the DRAIN only when a recount over the held connection still finds 0 (a session opened between the count and the swap keeps it unsignalled). Without a provable owner nothing is signalled - the predecessor drains itself on losing the public entry (`host-supersession.ts`) - and one stderr warning names the socket, its instance and engine.
+- `packages/coding-agent/src/modes/rpc/host-successor.ts`: `startSuccessor`'s `owner` is just the pid to drain and may be `undefined` (no signal); an optional `drainGate` decides whether the drain is sent once the successor owns the socket.
+- `packages/coding-agent/src/modes/rpc/host-handoff.ts`: `HANDOFF_LOCK_HOLD_MS` adds the two session counts (`SESSION_COUNT_TIMEOUT_MS` each), so `ENSURE_LOCK_WAIT_MS`, `HANDOFF_LOCK_WAIT_MS` and `BEGIN_HANDOVER_TIMEOUT_MS` keep covering the longest holder.
+- `packages/coding-agent/src/modes/rpc/host-probe.ts`: `holdSessionCount` (a count plus `recount` over the same connection); `probeSessionCount` shares its parsing.
+- `packages/coding-agent/src/modes/rpc/host-legacy.ts`: `busyLegacyHostDetail` and `describeSessions` export the refusal wording `judgeLegacyHost` already used.
+- `packages/coding-agent/src/modes/rpc/host-runner.ts`: a refused handoff's JSON `detail` is the refusal's own detail when it has one (it was always the reason).
+- `docs/rpc.md` (the handoff guards and the daemon directory section), the I1 carve-out in `src/modes/rpc/AGENTS.md`, and `test/suite/regressions/2701-same-socket-unregistered-host-handoff.test.ts` (real supervisors on the client's own socket: idle legacy replaced, idle unprovable replaced unsignalled with the warning, busy legacy and busy unprovable refused untouched, a session opened in the count-to-swap window parked by the self-drain and reopened on the successor).
+
+### Why
+
+senpi#2701: after an upgrade the old host keeps the very socket the updated client uses. An ensure there answers `reuse` (compatible protocol), so #2423's retire path never runs, and the handoff the desktop asks for on an engine mismatch refused `unknown_owner`; the first turn could not start until somebody ran `host stop --drain` by hand.
+
+### Why an extension could not handle it
+
+The handoff's owner proof, the successor start and the drain signal are host lifecycle internals behind the `senpi host` CLI; no extension surface reaches the ensure lock or the generation records.
+
+### Expected merge conflict zones
+
+- Fork-only files. `startSuccessor`'s context type and its drain line in `host-successor.ts` (senpi#2698 edits the registration objects in the same function); the `HandoffRefusal` union; `handoffOutcome` in `host-runner.ts`.
+
+## 2026-10-03 - A session's own fallback chain on open_session (omo#9512)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`, `rpc-client.ts`: `open_session.retryFallback?: { modelFallback, fallbackChains }`.
+- `packages/coding-agent/src/modes/rpc/rpc-input-validation.ts`: `sessionRetryFallbackError` refuses a malformed profile (missing `modelFallback`, non-string or empty selectors, selectors over 512 characters, more than 32 chains or 32 entries) with `invalid_launch_profile`; `test/suite/rpc-open-session-retry-fallback.test.ts` pins both sides of each limit and that an attach keeps the policy the session was created with.
+- `packages/coding-agent/src/modes/rpc/session-command-router.ts`: validates the field, passes it into the launch profile, and advertises `retry_fallback_profile` (`custom-capability.ts`).
+- `packages/coding-agent/src/modes/rpc/session-registry-types.ts`: `frozenProfile` deep-freezes the profile's chains.
+
+### Why
+
+- A task child opened on a shared host had no way to receive its own fallback chain: the extension-side setters (`ctx.sessionSettings.setFallbackChain`) write the host's global settings file, which would leak one child's chain to every session and into the user's settings. The chain now travels with the session's launch profile.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`, `rpc-client.ts`, `rpc-input-validation.ts`, `session-command-router.ts`, `custom-capability.ts`, `session-registry-types.ts`: the field must be accepted, validated and advertised by the host before the session or any of its extensions exists, and the only extension-reachable settings setters persist to the host's global file.
+
+### Expected merge conflict zones
+
+- LOW: the `open_session` field list in `rpc-types.ts` and the capability list in `session-command-router.ts`.
+
+## 2026-10-04 - A generation record names its own build (#2698)
+
+### What changed
+
+- `host-daemon-registration.ts`: `HostRegistration` carries the `build` (engine version text and ordinal) of the process the record names, and `writeGenerationRecord` stamps that instead of `engineBuildIdentity()` of the writing process. With no `build` the record claims no engine version.
+- `host-successor.ts` `startSuccessor`: the record written at spawn (kept so `host gc` sees a successor that has not registered itself yet) carries no build; the record written once the successor owns the socket carries the `engineVersion` / `engineOrdinal` the successor reported on that socket.
+- `host-ensure-start.ts` and `interactive/session-control-registry.ts`: their own registrations pass `engineBuildIdentity()`, unchanged in effect.
+
+### Why
+
+- A handoff to a different build (an older desktop runtime taking over a newer idle host, or the reverse) recorded the new generation with the build of the process that ran the handoff, so `host status` `generations[]` showed the wrong engine version for exactly the case that list exists for.
+
+### Why an extension could not handle it
+
+- The record is written by the host lifecycle itself; no extension sees it.
+
+### Expected merge conflict zones
+
+- `host-successor.ts` (`startSuccessor`) and `host-daemon-registration.ts` (`HostRegistration`, `writeGenerationRecord`).
+
 ## 2026-10-03 - `continue_from_leaf` command and model prefill capability (senpi#1930)
 
 ### What changed
@@ -58,6 +148,16 @@
 ### Expected merge conflict zones
 
 - LOW: `RpcHostMemoryPressureEvent` in `rpc-types.ts`.
+
+## 2026-10-03 - Advertise the auto permission preset
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/session-command-router.ts`: `get_protocol_info` advertises `permission_preset_auto` from the permission-system extension, next to `permission_preset_accept_edits`.
+
+### Why
+
+- A client must only send `permissionPreset: "auto"` to a host that knows it.
 
 ## 2026-10-03 - Expose held model switches through RPC session state
 
@@ -4903,6 +5003,27 @@ The host decision runs in the client before any session or extension exists; the
 
 `covers()` and `profileWarning()` in `host-decision.ts`, and the profile rows in `test/suite/host-decision.test.ts`.
 
+## 2026-10-03 - Reclaim quiet detached workers without observation heartbeats
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/session-sweep.ts`: a retained, detached in-process worker with a flushed transcript and no active work or queued delivery parks on the next sweep rather than after the full idle window, once its disconnect has stood for at least five seconds (`DETACHED_RETIREMENT_GRACE_MS`). An attached client is exempt from early retirement; only the ordinary idle deadline applies to it.
+- `packages/coding-agent/src/modes/rpc/session-sweep.ts`: a zero-attachment entry without a detach timestamp falls through to its ordinary idle deadline rather than retiring early or being retained indefinitely.
+- `packages/coding-agent/src/modes/rpc/session-command-router.ts`: occupancy sweeps protect in-flight requests and prompt preflight.
+- `packages/coding-agent/src/modes/rpc/session-command-activity.ts`, `packages/coding-agent/src/modes/rpc/session-registry.ts`, and `packages/coding-agent/src/modes/rpc/worker-session-registry.ts`: explicitly enumerated observational commands, including `get_state` and `memory_report`, no longer refresh the idle clock for DETACHED sessions in either runtime. An attached client's polling keeps its session alive as before; the registries stamp a `detachedAt` time when the last attachment leaves so the sweep can honor the disconnect-age grace.
+
+### Why
+
+- Completed retained workers otherwise hold runtimes and eval kernels for the whole idle window; status polling by a client that has already gone away can extend that window indefinitely. Durable transcripts permit reopening after the existing park/disposal path. The disconnect-age grace keeps a brief disconnect that overlaps a sweep from discarding a runtime its owner is about to reclaim.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/rpc/session-sweep.ts` and `packages/coding-agent/src/modes/rpc/session-command-router.ts` own attachment-aware reclamation and request admission. The two registries own idle timestamps before extension dispatch.
+
+### Expected merge conflict zones
+
+- Occupancy selection in `packages/coding-agent/src/modes/rpc/session-sweep.ts` and `packages/coding-agent/src/modes/rpc/session-command-router.ts`; `getForCommand` in `packages/coding-agent/src/modes/rpc/session-registry.ts` and `packages/coding-agent/src/modes/rpc/worker-session-registry.ts`.
+
 ## open_session.browserEngine and the browser_engine capability (2026-10-03)
 
 ### What changed
@@ -4947,3 +5068,22 @@ The placeholder is produced by the host's single wire choke point (`SessionEvent
 ### Expected merge conflict zones
 
 `omitContentImages` and its callers in `media-placeholders.ts`, the `enqueue` placeholder line in `session-event-writer.ts`, and the `setSessionKind` neighbourhood in `session-command-router.ts`.
+
+## 2026-10-04 — Permission prompts carry the tool call id on the wire (#2710)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: the `select` and `input` variants of `RpcExtensionUIRequest` gain optional `toolCallId` and `parentToolCallId`.
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: `dialogCall(opts)` copies `ExtensionUIDialogOptions.toolCallId` / `parentToolCallId` into the `select` and `input` requests; absent options add no keys, so every other dialog is byte-identical.
+
+### Why
+
+The engine runs a message's `tool_call` hooks (where the permission system asks) for every call before any of them runs, so with several calls of one tool in flight a client could not tell which call a prompt approved (#2710). The desktop had to show "the code can't be shown" for every prompt after the first.
+
+### Why an extension could not handle it
+
+The RPC extension UI context is built by the RPC connection handler; an extension cannot add fields to the wire request it emits.
+
+### Expected merge conflict zones
+
+The `select` / `input` lines of `createExtensionUIContext` in `connection-handler.ts`, and the `RpcExtensionUIRequest` union in `rpc-types.ts`.

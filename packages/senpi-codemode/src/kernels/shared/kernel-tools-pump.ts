@@ -1,13 +1,13 @@
 import type { HostToKernelMessage, KernelToHostMessage } from "../../bridge/protocol.ts";
 import { generateCorrelationId } from "../../bridge/protocol.ts";
 import { RESERVED_AGENT_TOOL } from "../../bridge/reserved.ts";
-import { kernelToolError } from "./kernel-tools-errors.ts";
+import { kernelToolError } from "../js/kernel-tools-errors.ts";
 import type {
 	KernelToolsDescribeResult,
 	KernelToolsInvokeOptions,
 	KernelToolsInvokeRequest,
 	KernelToolsInvokeScope,
-} from "./kernel-tools-types.ts";
+} from "../js/kernel-tools-types.ts";
 
 type KernelToolReply = Extract<
 	KernelToHostMessage,
@@ -159,6 +159,9 @@ function codeOf(
 	| "kernel_tool_missing"
 	| "kernel_tool_recursion"
 	| "kernel_tool_host_denied"
+	| "kernel_tool_cancelled"
+	| "kernel_tool_loop_mismatch"
+	| "tool_name_collision"
 	| "tools_unavailable"
 	| "invalid_tool_definition" {
 	if (
@@ -166,6 +169,9 @@ function codeOf(
 		code === "kernel_tool_missing" ||
 		code === "kernel_tool_recursion" ||
 		code === "kernel_tool_host_denied" ||
+		code === "kernel_tool_cancelled" ||
+		code === "kernel_tool_loop_mismatch" ||
+		code === "tool_name_collision" ||
 		code === "tools_unavailable" ||
 		code === "invalid_tool_definition"
 	) {

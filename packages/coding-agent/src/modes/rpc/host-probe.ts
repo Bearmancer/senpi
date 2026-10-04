@@ -89,9 +89,79 @@ export async function probeSocketReachable(socketPath: string, timeoutMs: number
  * does not answer. A stop decision needs the number the host reports, not the one a client remembers.
  */
 export async function probeSessionCount(socketPath: string, timeoutMs: number): Promise<number | undefined> {
-	const reply = await requestOnSocket(socketPath, { type: "list_sessions", include_workers: true }, timeoutMs);
-	if (!isRecord(reply) || !Array.isArray(reply.sessions)) return undefined;
-	return reply.sessions.length;
+	return sessionCountOf(
+		await requestOnSocket(socketPath, { type: "list_sessions", include_workers: true }, timeoutMs),
+	);
+}
+
+/**
+ * The session count together with the connection that answered it, kept open so the SAME host can be
+ * asked again after its public path was handed to somebody else: the recount reaches the process that
+ * was counted, never whoever serves the path by then. `undefined` when the host does not answer.
+ */
+export interface HeldSessionCount {
+	readonly sessions: number;
+	/** Asks the counted host again over the held connection; `undefined` when it no longer answers. */
+	recount(timeoutMs: number): Promise<number | undefined>;
+	close(): void;
+}
+
+export async function holdSessionCount(socketPath: string, timeoutMs: number): Promise<HeldSessionCount | undefined> {
+	const outcome = await connectAndAsk(
+		socketPath,
+		{ id: PROBE_REQUEST_ID, type: "list_sessions", include_workers: true },
+		timeoutMs,
+		true,
+	);
+	const kept = outcome.kept;
+	if (kept === undefined) return undefined;
+	const sessions = sessionCountOf(outcome.answer);
+	if (sessions === undefined) {
+		kept.destroy();
+		return undefined;
+	}
+	let asked = 0;
+	return {
+		sessions,
+		recount: (recountTimeoutMs) => askAgain(kept, `${PROBE_REQUEST_ID}-recount-${++asked}`, recountTimeoutMs),
+		close: () => kept.destroy(),
+	};
+}
+
+function askAgain(socket: Socket, id: string, timeoutMs: number): Promise<number | undefined> {
+	return new Promise((resolveCount) => {
+		let buffer = "";
+		const finish = (count: number | undefined): void => {
+			clearTimeout(timeout);
+			socket.off("data", onData);
+			socket.off("close", onClose);
+			resolveCount(count);
+		};
+		const onClose = (): void => finish(undefined);
+		const onData = (chunk: Buffer): void => {
+			buffer += chunk.toString("utf8");
+			for (let newline = buffer.indexOf("\n"); newline !== -1; newline = buffer.indexOf("\n")) {
+				const answer = readAnswer(buffer.slice(0, newline), id);
+				buffer = buffer.slice(newline + 1);
+				if (answer !== undefined) {
+					finish(sessionCountOf(answer));
+					return;
+				}
+			}
+		};
+		const timeout = setTimeout(() => finish(undefined), timeoutMs);
+		if (socket.destroyed) {
+			finish(undefined);
+			return;
+		}
+		socket.on("data", onData);
+		socket.once("close", onClose);
+		socket.write(`${JSON.stringify({ id, type: "list_sessions", include_workers: true })}\n`);
+	});
+}
+
+function sessionCountOf(reply: unknown): number | undefined {
+	return isRecord(reply) && Array.isArray(reply.sessions) ? reply.sessions.length : undefined;
 }
 
 /** Sends one command and returns its `data`, or `undefined` for any failure to get a usable answer. */
@@ -169,14 +239,14 @@ async function connectAndAsk(
 	});
 }
 
-function readAnswer(text: string): unknown {
+function readAnswer(text: string, id: string = PROBE_REQUEST_ID): unknown {
 	let parsed: unknown;
 	try {
 		parsed = JSON.parse(text);
 	} catch {
 		return undefined;
 	}
-	if (!isRecord(parsed) || parsed.id !== PROBE_REQUEST_ID || parsed.success !== true) return undefined;
+	if (!isRecord(parsed) || parsed.id !== id || parsed.success !== true) return undefined;
 	return parsed.data ?? {};
 }
 

@@ -1,5 +1,8 @@
 import { VERSION } from "../../config.ts";
-import { ACCEPT_EDITS_PERMISSION_PRESET_CAPABILITY } from "../../core/extensions/builtin/permission-system/config.ts";
+import {
+	ACCEPT_EDITS_PERMISSION_PRESET_CAPABILITY,
+	AUTO_PERMISSION_PRESET_CAPABILITY,
+} from "../../core/extensions/builtin/permission-system/config.ts";
 import { DURABLE_CLIENT_MESSAGE_ID_CAPABILITY } from "./client-admission-record.ts";
 import { buildRpcSessionState } from "./connection-handler.ts";
 import {
@@ -12,6 +15,7 @@ import {
 	PROMPT_SURFACE_CAPABILITY,
 	PROMPT_SURFACE_CHAT_CAPABILITY,
 	RETAIN_ON_DISCONNECT_CAPABILITY,
+	RETRY_FALLBACK_PROFILE_CAPABILITY,
 	SESSION_CONTEXT_CAPABILITY,
 	SESSION_KIND_CAPABILITY,
 	WARM_CAPABILITY,
@@ -24,6 +28,7 @@ import {
 	sessionContextError,
 	sessionKindError,
 	sessionPromptSurfaceError,
+	sessionRetryFallbackError,
 } from "./rpc-input-validation.ts";
 import type { RpcCommand, RpcHostKernelMemory, RpcResponse, RpcSessionClosedReason } from "./rpc-types.ts";
 import {
@@ -331,7 +336,10 @@ export class SessionCommandRouter {
 				PROMPT_SURFACE_CHAT_CAPABILITY,
 				// Each session's tool subprocesses and eval kernel get its own OMO_BROWSER_ENGINE from its launch profile.
 				BROWSER_ENGINE_CAPABILITY,
+				// Each session's fallback chain is its own in-memory settings override, never the host's file.
+				RETRY_FALLBACK_PROFILE_CAPABILITY,
 				ACCEPT_EDITS_PERMISSION_PRESET_CAPABILITY,
+				AUTO_PERMISSION_PRESET_CAPABILITY,
 				// Only an in-process runtime shares the loop a warm loads into (senpi#2314).
 				...(this.registry.warm ? [WARM_CAPABILITY] : []),
 				...(this.connectionOptions?.capabilities ?? []),
@@ -440,7 +448,13 @@ export class SessionCommandRouter {
 	sweepIdleSessions(): void {
 		const now = this.idleNow();
 		const idleEvictionMs = this.memoryPressure ? this.idleEvictionMs / 2 : this.idleEvictionMs;
-		const verdicts = selectSweepEvictions(this.registry, now, idleEvictionMs);
+		const verdicts = selectSweepEvictions(
+			this.registry,
+			now,
+			idleEvictionMs,
+			(sessionId) =>
+				this.activeRequests.has(sessionId) || (this.bindings.get(sessionId)?.pendingPrompts?.().length ?? 0) > 0,
+		);
 		for (const sessionId of verdicts.orphaned) void this.evictIdleSession(sessionId, "session_dir_removed");
 		for (const sessionId of verdicts.idle) void this.evictIdleSession(sessionId);
 		if (Number.isFinite(this.emptyExitMs)) {
@@ -609,6 +623,9 @@ export class SessionCommandRouter {
 		const browserEngineError = sessionBrowserEngineError(command.browserEngine);
 		if (browserEngineError)
 			return error(command.id, "open_session", `${RPC_ERROR_INVALID_LAUNCH_PROFILE}: ${browserEngineError}`);
+		const retryFallbackError = sessionRetryFallbackError(command.retryFallback);
+		if (retryFallbackError)
+			return error(command.id, "open_session", `${RPC_ERROR_INVALID_LAUNCH_PROFILE}: ${retryFallbackError}`);
 		let opened: OpenRpcSession | undefined;
 		try {
 			opened = await this.registry.openSession(
@@ -629,6 +646,7 @@ export class SessionCommandRouter {
 					...(typeof command.auto_title === "boolean" ? { autoTitle: command.auto_title } : {}),
 					...(command.promptSurface !== undefined ? { promptSurface: command.promptSurface } : {}),
 					...(command.browserEngine !== undefined ? { browserEngine: command.browserEngine } : {}),
+					...(command.retryFallback !== undefined ? { retryFallback: command.retryFallback } : {}),
 				},
 				// Host lifecycle policy, deliberately outside the immutable launch profile.
 				{ retainOnDisconnect: command.retain_on_disconnect === true },

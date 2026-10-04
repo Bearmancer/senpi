@@ -210,9 +210,14 @@ function Base.getproperty(pool::SenpiWorkpool, name::Symbol)
     getfield(pool, name)
 end
 
-function workpool(agent::AbstractDict, name::AbstractString; mode=nothing)
+function workpool(agent::AbstractDict, name::AbstractString; mode=nothing, tools=nothing)
     args = Dict{String, Any}("op" => "create", "agent" => agent, "name" => name)
     mode !== nothing && (args["mode"] = mode)
+    if tools !== nothing
+        (tools isa AbstractVector && all(name -> name isa AbstractString, tools)) ||
+            throw(SenpiBridgeError("workpool(tools=...) takes a vector of tool names; got $(typeof(tools))", "invalid_tools"))
+        args["tools"] = collect(String, tools)
+    end
     result = senpi_workpool_call(args)
     details = get(result, "details", nothing)
     if details isa AbstractDict
@@ -226,6 +231,14 @@ function workpool(agent::AbstractDict, name::AbstractString; mode=nothing)
     throw(SenpiBridgeError("Host did not return a workpool identity", "workpool_unavailable"))
 end
 
+include("handles.jl")
+
+# Rich view of an agent record, workpool, completion handle or saved reference; see tool_schema("eval:helpers").
+# The barrier is `Base.wait` on the view types (never a `Main.wait`): wait(handle(node)) or wait([handle(a), handle(b)]).
+function handle(value)
+    senpi_handle_view(value)
+end
+
 function completion(prompt::AbstractString; model="default", system=nothing, schema=nothing, kwargs...)
     options = Dict{String, Any}("model" => model)
     system !== nothing && (options["system"] = system)
@@ -234,6 +247,7 @@ function completion(prompt::AbstractString; model="default", system=nothing, sch
         options[string(key)] = value
     end
     response = senpi_with_bridge_timeout_pause(() -> senpi_completion(string(prompt), options))
+    get(options, "handle", false) === true && return handle(response)
     response isa AbstractDict || return response
     haskey(response, "value") && return response["value"]
     get(response, "text", response)

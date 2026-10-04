@@ -9,6 +9,7 @@ import { createConnection, type Socket } from "node:net";
 import type { AgentMessage, ThinkingLevel } from "@earendil-works/pi-agent-core";
 import type { ImageContent } from "@earendil-works/pi-ai";
 import type { PromptDisposition, QueuedInputDisposition, SessionStats } from "../../core/agent-session.ts";
+import type { SessionRetryFallbackProfile } from "../../core/agent-session-runtime.ts";
 import type { BashResult } from "../../core/bash-executor.ts";
 import type { BrowserEngine } from "../../core/browser-engine.ts";
 import { type ClientMessageIdentity, clientMessageIdentity } from "../../core/client-message-identity.ts";
@@ -468,6 +469,8 @@ export class RpcClient {
 		promptSurface?: PromptSurface;
 		/** Which browser this session's skills drive; needs the host's `browser_engine`. */
 		browserEngine?: BrowserEngine;
+		/** This session's own fallback policy, in memory only; needs the host's `retry_fallback_profile`. */
+		retryFallback?: SessionRetryFallbackProfile;
 	}): Promise<{ sessionId: string; state: RpcSessionState; attached?: boolean }> {
 		if (this.pendingOpenSession) throw new RpcClientOpenInFlightError();
 		this.pendingOpenSession = true;
@@ -863,6 +866,14 @@ export class RpcClient {
 	 */
 	async abortRetry(): Promise<void> {
 		await this.send({ type: "abort_retry" });
+	}
+
+	/**
+	 * Give this single-session process its fallback chain before the first turn (`set_retry_fallback`).
+	 * Requires the `retry_fallback_command` capability.
+	 */
+	async setRetryFallback(retryFallback: SessionRetryFallbackProfile): Promise<void> {
+		await this.send({ type: "set_retry_fallback", retryFallback });
 	}
 
 	/**

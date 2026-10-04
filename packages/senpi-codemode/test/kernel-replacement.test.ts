@@ -121,6 +121,46 @@ const instance = (kernels: Fleet, index: number): MortalKernel => {
 };
 
 describe("a replaceable kernel", () => {
+	it("Given five cells submitted while a dead kernel's replacement is still starting when it becomes ready then exactly one replacement spawned and all five ran on it in order", async () => {
+		const kernels = fleet();
+		const kernel = await ReplaceableKernel.create("py", kernels.start);
+		const opening = Promise.withResolvers<void>();
+		kernels.gate = opening.promise;
+
+		instance(kernels, 0).die();
+		const cells = ["a", "b", "c", "d", "e"].map((cellId) => kernel.run({ cellId, code: "" }));
+		opening.resolve();
+
+		await expect.poll(() => instance(kernels, 1).ran).toEqual(["a"]);
+		for (const _cell of cells) instance(kernels, 1).finishActive("ok");
+		const results = await Promise.all(cells);
+
+		expect(kernels.instances).toHaveLength(2);
+		expect(instance(kernels, 1).ran).toEqual(["a", "b", "c", "d", "e"]);
+		expect(results.map((result) => result.ok)).toEqual([true, true, true, true, true]);
+		expect(results.filter((result) => result.kernelState === "restarted")).toHaveLength(1);
+	});
+
+	it("Given cells submitted after a death whose replacement failed to start when the next replacement starts then they share one spawn", async () => {
+		const kernels = fleet();
+		const kernel = await ReplaceableKernel.create("jl", kernels.start);
+		kernels.startFailure = new Error("interpreter missing");
+		instance(kernels, 0).die();
+		await expect(kernel.run({ cellId: "lost", code: "" })).resolves.toMatchObject({ ok: false });
+
+		kernels.startFailure = undefined;
+		const opening = Promise.withResolvers<void>();
+		kernels.gate = opening.promise;
+		const cells = ["x", "y", "z"].map((cellId) => kernel.run({ cellId, code: "" }));
+		opening.resolve();
+		await expect.poll(() => kernels.instances.length).toBe(2);
+		for (const _cell of cells) instance(kernels, 1).finishActive("ok");
+		await Promise.all(cells);
+
+		expect(kernels.instances).toHaveLength(2);
+		expect(instance(kernels, 1).ran).toEqual(["x", "y", "z"]);
+	});
+
 	it("never submits a queued cell cancelled while the replacement starts", async () => {
 		const kernels = fleet();
 		const kernel = await ReplaceableKernel.create("rb", kernels.start);
