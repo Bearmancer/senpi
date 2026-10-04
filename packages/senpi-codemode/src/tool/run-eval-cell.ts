@@ -259,24 +259,23 @@ async function executeCell(
 				options.pythonEnvironments,
 				options.jsEnvironments,
 			);
-			const loaded =
-				magic.kind === "load"
-					? await execution.wait(
-							loadCell(magic.target, { cwd: invocation.ctx.cwd, artifactsDir: options.artifactsDir }),
-						)
-					: undefined;
-			const refusal = magic.kind === "refused" ? magic.message : loaded?.ok === false ? loaded.message : undefined;
-			if (refusal !== undefined) {
-				return await handler.finalize({
-					type: "result",
-					cellId: invocation.cellId,
-					ok: false,
-					error: { message: refusal },
-					durationMs: 0,
-				});
-			}
+			// Resolved when the cell's turn comes in the kernel's queue: a %load reads the file the cells ahead of it
+			// wrote, and a refusal settles in queue order like any cell.
+			const loadOptions = { cwd: invocation.ctx.cwd, artifactsDir: options.artifactsDir };
+			// An isolated cell never runs a file outside its sandbox: %load there is refused.
+			const isolatedLoad = invocation.input.isolate === true && magic.kind === "load";
+			const resolveAtStart = isolatedLoad
+				? () => ({
+						ok: false as const,
+						message: "isolate: true cannot run a %load cell; load the file without isolate",
+					})
+				: magic.kind === "load"
+					? () => loadCell(magic.target, loadOptions)
+					: magic.kind === "refused"
+						? () => ({ ok: false as const, message: magic.message })
+						: undefined;
 			const isolated =
-				invocation.input.isolate === true
+				invocation.input.isolate === true && resolveAtStart === undefined
 					? sandboxCellExecutor(invocation.input.code, {
 							sandbox: resolveSandbox(options.settings ?? {}),
 							executeTool: options.executeTool,
@@ -291,8 +290,8 @@ async function executeCell(
 			const result = await execution.wait(
 				kernel.run({
 					cellId: invocation.cellId,
-					code: loaded?.ok === true ? loaded.code : invocation.input.code,
-					...(loaded?.ok === true ? { sourceFile: loaded.sourceFile } : {}),
+					code: invocation.input.code,
+					...(resolveAtStart === undefined ? {} : { resolveAtStart }),
 					...(magic.kind === "host" ? { host: magic.executor } : {}),
 					...(isolated === undefined ? {} : { host: isolated }),
 					...(envRoot === undefined ? {} : { envRoot }),

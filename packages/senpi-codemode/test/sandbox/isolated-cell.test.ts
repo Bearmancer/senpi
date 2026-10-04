@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AgentToolResult } from "@code-yeongyu/senpi";
@@ -63,7 +63,7 @@ async function session(sandbox: { enabled: boolean; memoryMb?: number; timeoutSe
 			undefined,
 			context,
 		);
-	return { run, reads, tool };
+	return { root, run, reads, tool };
 }
 
 describe("Given sandbox cells are turned on", () => {
@@ -160,4 +160,16 @@ describe("Given sandbox cells are turned off", () => {
 
 		expect(textOf(check)).toContain("undefined");
 	}, 60_000);
+
+	it("When an isolated cell is a %load, then it is refused and the file never runs, in the sandbox or the kernel", async () => {
+		const { root, run } = await session();
+		await writeFile(join(root, "outside.js"), "globalThis.LOADED_OUTSIDE = true;\n");
+
+		const refused = await run("%load ./outside.js", true);
+		const kernelView = await run("globalThis.LOADED_OUTSIDE === undefined");
+
+		expect(refused.details).toHaveProperty("isError", true);
+		expect(textOf(refused)).toContain("isolate: true cannot run a %load cell");
+		expect(textOf(kernelView)).toContain("true");
+	}, 120_000);
 });
