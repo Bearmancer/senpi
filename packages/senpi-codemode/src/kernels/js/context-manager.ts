@@ -219,7 +219,7 @@ export class JavaScriptKernel {
 				next.input.code,
 				next.input.kernelPreludes,
 				next.input.sourceFile,
-				next.input.packageRoot,
+				next.input.packageRoot?.(),
 			),
 			timeoutMs: next.input.timeoutMs,
 		});
