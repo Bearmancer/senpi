@@ -176,6 +176,12 @@ export interface EvalKernelRunInput {
 	/** The file a `%load` cell runs: tracebacks name it and its relative imports resolve from its directory. */
 	readonly sourceFile?: string;
 	/**
+	 * JavaScript only: the session's managed package revision; bare imports that do not resolve from cwd fall back to
+	 * it. Read when the cell starts running (not when it was queued), so a cell queued behind `%bun add` resolves the
+	 * revision that install published.
+	 */
+	readonly packageRoot?: () => string | undefined;
+	/**
 	 * Called when the cell's turn comes in the kernel's queue, never earlier: what to run instead of `code` (a `%load`
 	 * cell's file), or a refusal that settles the cell as failed in queue order.
 	 */

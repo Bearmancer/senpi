@@ -8,6 +8,7 @@ import {
 	type ResolvedCodemodeSettings,
 	resolveEnabledLanguages,
 } from "../config/settings.ts";
+import { JsEnvironments } from "../environments/js-environments.ts";
 import { PythonEnvironments } from "../environments/python-environments.ts";
 import type { HandleRegistry } from "../handles/handle-registry.ts";
 import {
@@ -49,6 +50,7 @@ export type SessionRuntime = {
 	readonly executeTool: AgentExecuteTool;
 	readonly spawns: boolean;
 	readonly pythonEnvironments?: PythonEnvironments;
+	readonly jsEnvironments: JsEnvironments;
 };
 
 export async function createRuntime(
@@ -98,6 +100,13 @@ export async function createRuntime(
 		artifactsDir: artifacts.dir,
 		executeTool,
 		spawns: activeTools.has(settings.taskTools.task),
+		jsEnvironments: new JsEnvironments({
+			artifactsDir: artifacts.dir,
+			cwd: ctx.cwd,
+			runtime: jsRuntimeInfo().name,
+			env: { ...process.env, ...sessionEnv },
+			settings,
+		}),
 		...(availability.py.detected.ok && enabledLanguages.py
 			? {
 					pythonEnvironments: new PythonEnvironments({

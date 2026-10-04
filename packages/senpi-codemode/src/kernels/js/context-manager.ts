@@ -1,17 +1,17 @@
 import type { HostToKernelMessage, KernelToHostMessage } from "../../bridge/protocol.ts";
 import { CHILD_LIFECYCLE_OP, INTERRUPT_ACK_OP } from "../../bridge/reserved.ts";
 import type { KernelInterruptHandle } from "../../tool/types.ts";
-import { inputAtStart } from "../shared/cell-source-at-start.ts";
 import { KernelToolHostPump } from "../shared/kernel-tools-pump.ts";
 import { ActiveCellControl } from "./active-cell-control.ts";
-import { DEFAULT_INTERRUPT_BOUNDS, type WorkerRetirement } from "./interrupt-bounds.ts";
+import { dispatchCell } from "./cell-dispatch.ts";
+import { HostEntries } from "./host-entries.ts";
+import { DEFAULT_INTERRUPT_BOUNDS, JS_INTERRUPT_GRACE_MS, type WorkerRetirement } from "./interrupt-bounds.ts";
 import {
 	assertJavaScriptKernelOpen,
 	type JavaScriptKernelMode,
 	type JavaScriptRunInput,
 	type LifecycleState,
 	type ResultMessage,
-	resolveKernelToolNameSource,
 	type ToolCallMessage,
 } from "./kernel-contract.ts";
 import { type JavaScriptMemoryReading, KernelMemoryBridge } from "./kernel-memory-bridge.ts";
@@ -22,7 +22,7 @@ import type {
 	KernelToolsInvokeRequest,
 } from "./kernel-tools-types.ts";
 import { type JavaScriptKernelOptions, LocalModuleLoader } from "./local-module-loader.ts";
-import { JavaScriptRunQueue } from "./run-queue.ts";
+import { JavaScriptRunQueue, type PendingJavaScriptRun } from "./run-queue.ts";
 import { ToolCallQueue } from "./tool-call-queue.ts";
 import { WorkerChildren } from "./worker-children.ts";
 import { crashedResult } from "./worker-host.ts";
@@ -35,6 +35,15 @@ export type { JavaScriptKernelOptions } from "./local-module-loader.ts";
 export { type JavaScriptWorkerEntryUrlOptions, resolveJsWorkerEntryUrl } from "./worker-startup.ts";
 
 export class JavaScriptKernel {
+	readonly #hostEntries = new HostEntries<PendingJavaScriptRun>({
+		emit: (run, message) => (run.input.onMessage ?? this.#options.onMessage)?.(message),
+		settle: (run, result) => {
+			if (!this.#runs.releaseActive(run)) return;
+			this.#runs.settle(run, result);
+			this.#startNext();
+		},
+		durationMs: (run) => this.#runs.durationMs(run, performance.now()),
+	});
 	readonly #options: JavaScriptKernelOptions;
 	readonly #moduleLoader: LocalModuleLoader;
 	readonly #slot: WorkerSlot;
@@ -129,6 +138,7 @@ export class JavaScriptKernel {
 			const cancelled = this.cancelQueued(cellId, reason);
 			return { stateRetained: Promise.resolve(true), ...(cancelled ? {} : { note: "cell not found" }) };
 		}
+		if (active && this.#hostEntries.abort(active, reason)) return { stateRetained: Promise.resolve(true) };
 		if (!active) {
 			// A worker still stuck in startup is not a healthy idle worker: retiring it is the only recovery.
 			const wedgedInStartup = this.#slot.startingUp;
@@ -163,11 +173,14 @@ export class JavaScriptKernel {
 		if (this.#closePromise) return await this.#closePromise;
 		this.#slot.postMessage({ type: "close" });
 		this.#lifecycle = "closing";
+		const graceMs = this.#options.interruptBounds?.graceMs ?? JS_INTERRUPT_GRACE_MS;
+		const hostEntriesStopped = this.#hostEntries.stopAll("JS kernel closed", graceMs);
 		this.#runs.settleAll("JS kernel closed");
 		this.#kernelTools.rejectAll(kernelToolError("kernel_tool_stale", "JS kernel closed"));
 		this.#toolCalls.clear();
 		const recovery = this.#recovery.inFlight;
 		const closePromise = (async () => {
+			await hostEntriesStopped;
 			if (recovery) await recovery;
 			await this.#terminate();
 		})().finally(() => {
@@ -196,31 +209,13 @@ export class JavaScriptKernel {
 		if (this.#lifecycle !== "open" || this.#runs.active || !this.#slot.present) return;
 		const next = this.#runs.startNext(performance.now());
 		if (!next) return;
-		const input = inputAtStart(next.input);
-		if ("refused" in input) {
-			this.#runs.releaseActive(next);
-			this.#runs.settle(next, {
-				type: "result",
-				cellId: next.input.cellId,
-				ok: false,
-				error: { message: input.refused },
-				durationMs: 0,
-			});
-			this.#startNext();
+		const dispatch = dispatchCell(next.input, this.#moduleLoader, this.#options);
+		if (dispatch.kind === "host") {
+			this.#hostEntries.start(next, dispatch.host);
 			return;
 		}
 		this.#activeCell.arm(next);
-		this.#slot.postMessage({
-			type: "kernel-tools-names",
-			hostToolNames: resolveKernelToolNameSource(this.#options.hostToolNames),
-			foreignLanguageNames: resolveKernelToolNameSource(this.#options.foreignLanguageNames),
-		});
-		this.#slot.postMessage({
-			type: "run",
-			cellId: next.input.cellId,
-			code: this.#moduleLoader.prepareCell(input.code, input.kernelPreludes, input.sourceFile),
-			timeoutMs: next.input.timeoutMs,
-		});
+		for (const frame of dispatch.frames) this.#slot.postMessage(frame);
 	}
 
 	async #restartAfterStop(): Promise<void> {
@@ -261,7 +256,8 @@ export class JavaScriptKernel {
 		this.#activeCell.disarm();
 		this.#kernelTools.rejectAll(kernelToolError("kernel_tool_stale", error.message));
 		this.#memory.workerLost(error);
-		if (active) {
+		// A crash mid-install stops the install (process group killed, nothing published); it settles itself once stopped.
+		if (active && !this.#hostEntries.abort(active, `JavaScript worker crashed: ${error.message}`)) {
 			this.#runs.releaseActive(active);
 			this.#runs.settle(
 				active,

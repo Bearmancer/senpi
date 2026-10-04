@@ -98,7 +98,13 @@ function loaderPrelude(context: RuntimeModuleContext): string {
 		"    const urlModule = await import('node:url');",
 		"    target = urlModule.pathToFileURL(specifier).href;",
 		"  }",
-		"  return options === undefined ? import(target) : import(target, options);",
+		"  const load = (resolved) => (options === undefined ? import(resolved) : import(resolved, options));",
+		"  const resolvePackage = globalThis[Symbol.for('senpi.kernel.resolvePackage')];",
+		"  if (target === specifier && typeof resolvePackage === 'function') {",
+		"    const resolved = resolvePackage(specifier, [context.cwdUrl, context.packageRootUrl]);",
+		"    if (resolved !== undefined) return await load(resolved);",
+		"  }",
+		"  return await load(target);",
 		"};",
 	].join("\n");
 }
@@ -115,18 +121,23 @@ function contributionPrelude(plan: KernelPreludePlan): string {
 
 export class LocalModuleLoader {
 	readonly #prelude: string;
+	readonly #cwdUrl: string;
 	readonly #contributions = new KernelPreludeTracker();
 
 	constructor(options: LocalModuleLoaderOptions) {
 		this.#prelude = loaderPrelude(runtimeContext(options));
+		this.#cwdUrl = directoryUrl(options.cwd);
 	}
 
-	prepareCell(code: string, contributions: readonly KernelPreludeContribution[] = [], sourceFile?: string): string {
+	prepareCell(
+		code: string,
+		contributions: readonly KernelPreludeContribution[] = [],
+		sourceFile?: string,
+		packageRoot?: string,
+	): string {
 		// A %load cell resolves its relative imports from its own file's directory for that cell only.
-		const base =
-			sourceFile === undefined
-				? ""
-				: `\nglobalThis.__senpi_module_context__ = { ...globalThis.__senpi_module_context__, cwdUrl: ${JSON.stringify(directoryUrl(dirname(sourceFile)))} };`;
+		const cwdUrl = sourceFile === undefined ? this.#cwdUrl : directoryUrl(dirname(sourceFile));
+		const base = `\nglobalThis.__senpi_module_context__ = { ...globalThis.__senpi_module_context__, cwdUrl: ${JSON.stringify(cwdUrl)}, packageRootUrl: ${JSON.stringify(packageRoot === undefined ? null : directoryUrl(packageRoot))} };`;
 		const prelude = `${this.#prelude}${base}\n${contributionPrelude(this.#contributions.plan(contributions))}`;
 		return `${PREPARED_CELL_PREFIX}${JSON.stringify({ prelude, code: rewriteImports(code), ...(sourceFile === undefined ? {} : { sourceFile }) })}`;
 	}

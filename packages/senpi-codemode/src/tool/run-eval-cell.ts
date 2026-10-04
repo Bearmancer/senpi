@@ -261,7 +261,12 @@ async function executeCell(
 			}
 			if (invocation.input.reset) await execution.wait(kernel.reset());
 			execution.setKernel(kernel);
-			const magic = planMagicCell(invocation.input.language, invocation.input.code, options.pythonEnvironments);
+			const magic = planMagicCell(
+				invocation.input.language,
+				invocation.input.code,
+				options.pythonEnvironments,
+				options.jsEnvironments,
+			);
 			// Resolved when the cell's turn comes in the kernel's queue: a %load reads the file the cells ahead of it
 			// wrote, and a refusal settles in queue order like any cell.
 			const loadOptions = { cwd: invocation.ctx.cwd, artifactsDir: options.artifactsDir };
@@ -273,6 +278,8 @@ async function executeCell(
 						: undefined;
 			const environments = invocation.input.language === "py" ? options.pythonEnvironments : undefined;
 			const envRoot = environments === undefined ? undefined : () => environments.activeRoot ?? "";
+			const jsEnvironments = invocation.input.language === "js" ? options.jsEnvironments : undefined;
+			const packageRoot = jsEnvironments === undefined ? undefined : () => jsEnvironments.packageRoot;
 			const result = await execution.wait(
 				kernel.run({
 					cellId: invocation.cellId,
@@ -280,6 +287,7 @@ async function executeCell(
 					...(resolveAtStart === undefined ? {} : { resolveAtStart }),
 					...(magic.kind === "host" ? { host: magic.executor } : {}),
 					...(envRoot === undefined ? {} : { envRoot }),
+					...(packageRoot === undefined ? {} : { packageRoot }),
 					...(bridgeCellToken === undefined ? {} : { bridgeCellToken }),
 					kernelPreludes: options.kernelPreludes?.(),
 					onMessage,

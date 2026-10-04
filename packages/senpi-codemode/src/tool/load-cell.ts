@@ -1,4 +1,4 @@
-import { closeSync, constants, fstatSync, openSync, readFileSync } from "node:fs";
+import { closeSync, constants, fstatSync, openSync, readSync } from "node:fs";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -50,6 +50,18 @@ function resolveTarget(target: string, options: LoadCellOptions): { path: string
  * Reads a `%load` target when its cell's turn comes in the kernel's queue, so a file the previous cell wrote is
  * there. Every failure is a refusal that names the target as the user wrote it, never an absolute path.
  */
+/** Reads from `fd` until EOF or `limit` bytes, whichever comes first; a file still growing cannot exceed it. */
+export function readAtMost(fd: number, limit: number): Buffer {
+	const buffer = Buffer.alloc(limit);
+	let filled = 0;
+	while (filled < limit) {
+		const read = readSync(fd, buffer, filled, limit - filled, null);
+		if (read === 0) break;
+		filled += read;
+	}
+	return buffer.subarray(0, filled);
+}
+
 export function loadCell(target: string, options: LoadCellOptions): LoadedCell {
 	const resolved = resolveTarget(target, options);
 	if ("message" in resolved) return { ok: false, message: resolved.message };
@@ -60,8 +72,11 @@ export function loadCell(target: string, options: LoadCellOptions): LoadedCell {
 		fd = openSync(resolved.path, constants.O_RDONLY | constants.O_NONBLOCK);
 		const info = fstatSync(fd);
 		if (!info.isFile()) return { ok: false, message: `not a file: ${target}` };
-		if (info.size > MAX_LOAD_BYTES) return { ok: false, message: `%load reads files up to 8 MiB: ${target}` };
-		return { ok: true, code: readFileSync(fd, "utf8"), sourceFile: resolved.path };
+		const tooLarge = { ok: false as const, message: `%load reads files up to 8 MiB: ${target}` };
+		if (info.size > MAX_LOAD_BYTES) return tooLarge;
+		const bytes = readAtMost(fd, MAX_LOAD_BYTES + 1);
+		if (bytes.length > MAX_LOAD_BYTES) return tooLarge;
+		return { ok: true, code: bytes.toString("utf8"), sourceFile: resolved.path };
 	} catch (error) {
 		const code = errorCode(error);
 		if (code === "ENOENT" || code === "ENOTDIR") return { ok: false, message: `file not found: ${target}` };
