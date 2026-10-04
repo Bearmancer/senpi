@@ -249,12 +249,30 @@ describe("interactive MCP manager (senpi#2716)", () => {
 				.split("\n")
 				.every((line) => visibleWidth(line) <= 28),
 		).toBe(true);
+		// Default Enter must not confirm 15 and default Esc must not cancel; navigation continues.
 		s.input("\r");
+		s.input("\x1b[B");
+		expect(s.text(28)).toContain("→ server-16");
+		s.input("\x1b");
+		s.input("\x1b[B");
+		expect(s.text(28)).toContain("→ server-17");
 		s.input("\x19");
-		// Then: only configured confirm chooses the off-screen item.
-		expect(await pending).toBe("15");
-		const empty = s.view.menu(() => menu([]));
+		// Then: only configured confirm chooses 17 (wrong Enter gives 15, wrong Esc gives undefined).
+		expect(await pending).toBe("17");
+		const emptyReady = s.waitFor((text) => text.includes("Nothing to show."));
+		let live = 0;
+		const empty = s.view.menu(
+			() => menu([]),
+			() => {
+				live++;
+				return () => live--;
+			},
+		);
+		await emptyReady;
+		s.input("\x1b");
+		expect(live).toBe(1);
 		s.input("\x18");
+		expect(live).toBe(0);
 		expect(await empty).toBeUndefined();
 	});
 
