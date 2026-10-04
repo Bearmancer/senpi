@@ -127,7 +127,7 @@ export function createWorkerCore(transport, options) {
 		}
 		if (message.type === "init") {
 			applySessionEnvironment(message.sessionEnv);
-			installSessionCwd(options.cwd);
+			installSessionCwd(options.cwd, options.cwdInstallOptions);
 			installKernelWebView(requestWebViewPort);
 			runtime = new JsWorkerRuntime({
 				cwd: options.cwd,
@@ -142,7 +142,9 @@ export function createWorkerCore(transport, options) {
 					if (activeCell?.interruption) acknowledgeInterrupt();
 				},
 			});
-			if (message.memory) {
+			// A process-mode kernel measures its memory host-side as a footprint; the in-heap
+			// worker reading would contradict it, so the child keeps memory collection off.
+			if (message.memory && !options.processModeMemory) {
 				memory = createWorkerMemory(message.memory, (report) => emit({ type: "status", event: { op: MEMORY_COLLECTED_OP, ...report } }));
 				memory.captureBaseline();
 			}

@@ -59,6 +59,25 @@ task-tool names are known.
 A missing optional interpreter removes that language from the session's `eval`
 schema; it is not an installation failure.
 
+### JavaScript process isolation
+
+By default the JavaScript kernel runs as a worker thread on the host's own
+runtime (`isolation.js: "worker"`). Setting `isolation.js: "process"` (or
+`SENPI_CODEMODE_JS_ISOLATION=process`, which wins over the file) runs each
+JavaScript kernel in its own subprocess instead, so a kernel crash — including a
+native `SIGSEGV` — cannot take down the host session; the next cell runs on a
+replacement child and its result carries the restart notice.
+
+The child runs the same kernel core over a framed subprocess transport: frames
+travel on fd 0 in and a private dup of fd 1 out, while the child's fd 1 is
+re-pointed at a pipe whose bytes become `text` frames, so a cell's direct
+`process.stdout.write` still reaches the active cell. The default stays
+`"worker"` and worker-mode behaviour is unchanged. There is no inline fallback
+in process mode: a failed start settles the waiting cell with a capability-gap
+result naming the missing runtime (`Install bun or node, or use isolation.js:
+"worker"`). The process-mode badge reads `js (bun 1.4.x, process)`, and the
+result's memory reading is the child's process footprint.
+
 Python startup waits for the interpreter's `ready` event. It reports progress
 through `stdlib-imports`, `runtime-init`, and `host-init`; advancing to the next
 stage resets an inactivity guard rather than consuming a total startup budget.
@@ -230,7 +249,7 @@ Configuration is loaded in this order:
 | `prompt.advertiseHelpers` | `false` | When `true`, one pointer line to `tool_schema('eval:helpers')` is appended to the eval description. |
 | `kernelTools.enabled` | `true` | Allows cells to define kernel tools (`tool(fn)`, `@tool`). `false` makes them refuse with `tools_unavailable`. |
 
-The `languages.pyInterpreter`, `environments.*`, `isolation.*`, `sandbox.*`, `prompt.*` and `kernelTools.*` keys are accepted and validated now, with the defaults shown, which match today's behaviour. The effect each of those rows describes takes effect when its feature ships; until then, setting a key changes nothing.
+The `languages.pyInterpreter`, `environments.*`, `sandbox.*`, `prompt.*` and `kernelTools.*` keys are accepted and validated now, with the defaults shown, which match today's behaviour. The effect each of those rows describes takes effect when its feature ships; until then, setting a key changes nothing. `isolation.js` ships in this release: `"process"` takes effect at the next kernel start.
 
 `SENPI_CODEMODE_PY`, `SENPI_CODEMODE_JS`, `SENPI_CODEMODE_RB`, and
 `SENPI_CODEMODE_JL` override the corresponding file setting. `1` or `true`

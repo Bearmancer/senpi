@@ -242,6 +242,27 @@
 			],
 			"reason": "Node 16: %load runs a local file as a Python or JavaScript cell; load-cell.ts joins the scoped census, plus the %load contracts. No prompt or eval schema change."
 		},
+		"17": {
+			"additions": [
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation initializes, runs cells, round-trips tool calls, interrupts a cell, and closes the child",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation routes a cell's direct fd 1 writes into text frames and keeps the frame channel intact",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation survives a SIGSEGV of its child and runs the next cell on a replacement with the restart notice",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation leaves no child or process-group member behind after the session closes",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation settles the cell with a capability gap that names the runtime when none is on PATH",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation labels the process-mode badge with the isolation",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation reports the child's process footprint in the result memory and registry reading",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation keeps the worker default when no isolation is asked for",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation in worker mode the SIGSEGV case is skipped: a worker thread shares this test's host process, so killing it would kill the host",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation drives a WebView natively on the child's main thread in process mode",
+				"imports/extension/packages/senpi-codemode/src/kernels/js/process-worker.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/kernels/js/process-worker.ts",
+				"imports/extension/packages/senpi-codemode/src/kernels/js/process-memory-host.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/kernels/js/process-memory-host.ts",
+				"imports/extension/packages/senpi-codemode/src/kernels/js/process-entry.js",
+				"imports/firstKernel/packages/senpi-codemode/src/kernels/js/process-entry.js"
+			],
+			"reason": "Node 17: opt-in process-isolated JavaScript kernel (isolation.js: \"process\", worker default unchanged). The child runs worker-core over the framed subprocess transport (fd 0 in, a private dup of fd 1 out; fd 1 re-pointed at a pipe drained into text frames), with no inline fallback in process mode (a failed start is a capability-gap result naming the runtime). process-entry.js, process-worker.ts and process-memory-host.ts join the scoped census, plus the new contracts. No prompt or eval schema change."
+		},
 		"24": {
 			"additions": [
 				"legacyContracts/test/worker-global-sizes.test.js/largest-globals sizing never runs user code Given a global array with an index accessor when the globals are sized then the getter never runs",

@@ -57,6 +57,7 @@ The memory report, large-globals notice, and ceiling restart (senpi#2261) have n
 | Language | Measured by | Post-cell collection | Largest-globals notice | Ceiling restart | Tests |
 | --- | --- | --- | --- | --- | --- |
 | js | worker heap | yes (synchronous + idle) | yes | yes | `test/js-kernel-memory.test.ts` |
+| js (process isolation) | child process footprint, read by the host | no | no | no (no ceiling wiring yet) | `test/js-process-kernel.test.ts` |
 | py | process footprint, in the kernel | yes (`gc.collect()`, glibc `malloc_trim(0)`) | yes | yes | `test/py-kernel-memory.test.ts` |
 | rb | interpreter footprint, read by the host | no | yes (runner-side sizer) | yes | `test/kernels/rb/subprocess-memory-ceiling.test.ts`; `test/rb-kernel.test.ts` |
 | jl | interpreter footprint, read by the host | no | yes (runner-side sizer) | yes | `test/kernels/rb/subprocess-memory-ceiling.test.ts`; `test/jl-kernel.test.ts` |

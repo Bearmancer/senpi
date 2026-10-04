@@ -6,6 +6,8 @@
 
 ### Added
 
+- An opt-in process-isolated JavaScript kernel (`isolation.js: "process"` or `SENPI_CODEMODE_JS_ISOLATION=process`) runs each JavaScript kernel in its own subprocess instead of a worker thread, so a kernel crash or `SIGSEGV` can no longer take down the host session. The child runs the same `worker-core` over a framed subprocess transport: frames travel on fd 0 in and a private dup of fd 1 out, while the child's fd 1 is re-pointed at a pipe whose bytes become `text` frames (a cell's direct `process.stdout.write` reaches the active cell). The default stays `"worker"` and worker-mode behaviour is unchanged. There is no inline fallback in process mode: a failed start settles the waiting cell with a capability-gap result naming the missing runtime (`Install bun or node, or use isolation.js: "worker"`). The process-mode badge reads `js (bun 1.4.x, process)`, and the host reports the child's process footprint as the result's memory reading.
+
 - A JavaScript cell that is only `%bun add <package ...>` or `%npm add <package ...>` installs packages into a per-session managed environment without restarting the kernel; the next cell imports them by bare name, the project's `package.json` and `node_modules` are untouched, lifecycle scripts never run, and a failed or cancelled install leaves the previous packages active ([#2452](https://github.com/code-yeongyu/senpi/issues/2452)).
 
 - A Python or JavaScript cell that is only `%load <path>` runs that local file as the cell: its definitions persist, Python tracebacks name the file and its sibling modules import, and JavaScript resolves the file's relative imports from its directory; remote URLs are refused ([#2452](https://github.com/code-yeongyu/senpi/issues/2452)).

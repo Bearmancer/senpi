@@ -4,6 +4,7 @@ import { type CodemodeRuntimeAssetEnvironment, requireCodemodeRuntimeAsset } fro
 import { createInlineWorker, type WorkerLike } from "./inline-worker.ts";
 import { resolveKernelToolNameSource } from "./kernel-contract.ts";
 import { type JavaScriptKernelOptions, localBridgeConnection } from "./local-module-loader.ts";
+import { resolveJsProcessEntryUrl, spawnProcessWorker } from "./process-worker.ts";
 import { spawnNodeWorker, WorkerStartupCancelledError, waitForReady } from "./worker-host.ts";
 
 export interface JavaScriptWorkerEntryUrlOptions extends CodemodeRuntimeAssetEnvironment {
@@ -36,7 +37,8 @@ export async function startWorkerWithInlineFallback(hooks: WorkerStartupHooks, s
 			await worker.terminate();
 			throw new WorkerStartupCancelledError();
 		}
-		if (worker.mode === "inline") throw error;
+		// Process mode never falls back: the user asked for isolation, so a failed start stays visible.
+		if (worker.mode === "inline" || worker.mode === "process") throw error;
 		hooks.retire(worker);
 		await worker.terminate();
 	}
@@ -47,6 +49,14 @@ export async function startWorkerWithInlineFallback(hooks: WorkerStartupHooks, s
 }
 
 function spawnWorker(options: JavaScriptKernelOptions): WorkerLike {
+	if (options.isolation === "process") {
+		const url = resolveJsProcessEntryUrl();
+		return spawnProcessWorker(url, {
+			cwd: options.cwd,
+			parallelPoolWidth: options.parallelPoolWidth,
+			...(options.processCommandPath === undefined ? {} : { searchPath: options.processCommandPath }),
+		});
+	}
 	try {
 		const url = options.workerEntryUrl ?? resolveJsWorkerEntryUrl();
 		return spawnNodeWorker(url, options.cwd, options.parallelPoolWidth);

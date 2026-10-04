@@ -6,7 +6,7 @@ import type { ResultMessage } from "./kernel-contract.ts";
 
 export interface JavaScriptMemoryReading {
 	readonly liveBytes: number;
-	readonly measure: "heap";
+	readonly measure: "heap" | "footprint";
 }
 
 /** A query waits at most this long: the worker answers between cells, never inside one. */

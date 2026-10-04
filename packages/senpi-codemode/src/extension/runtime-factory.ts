@@ -2,6 +2,7 @@ import { type ExtensionContext, withBundledBunCommands } from "@code-yeongyu/sen
 import type { AgentExecuteTool } from "../bridges/agent-bridge.ts";
 import type { EvalSchemaToolInfo } from "../bridges/schema-bridge.ts";
 import type { CompletionRequest, CompletionResult } from "../completion/handler.ts";
+import { resolveJsIsolation } from "../config/feature-settings.ts";
 import {
 	type CodemodeSettings,
 	loadCodemodeSettings,
@@ -66,6 +67,7 @@ export async function createRuntime(
 	};
 	const availability = await getInterpreterAvailability(settings, createInterpreterDetector());
 	const enabledLanguages = enabledLanguagesFrom(settings, availability);
+	const jsProcessIsolation = resolveJsIsolation(settings) === "process";
 	const artifacts = resolveSessionArtifactsDir(ctx.sessionManager.getSessionFile());
 	const activeTools = new Set(pi.getActiveTools());
 	const executeTool = createExecuteTool(pi, activeTools);
@@ -92,7 +94,10 @@ export async function createRuntime(
 		parallelPoolWidth,
 		manager,
 		enabledLanguages,
-		runtimes: runtimesFromAvailability(availability, jsRuntimeInfo()),
+		runtimes: runtimesFromAvailability(
+			availability,
+			jsRuntimeInfo(process.versions, process.execPath, jsProcessIsolation),
+		),
 		settings,
 		artifactsDir: artifacts.dir,
 		executeTool,
