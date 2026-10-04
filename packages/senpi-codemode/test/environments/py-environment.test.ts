@@ -5,7 +5,7 @@ import { createServer, type Server } from "node:http";
 import { hostname, tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { assertNoEditableInstalls } from "../../src/environments/editable-check.ts";
+import { assertInstalledInRevision, assertNoEditableInstalls } from "../../src/environments/editable-check.ts";
 import { withRootLock } from "../../src/environments/install-lock.ts";
 import { installPythonPackages } from "../../src/environments/py-environment.ts";
 import { parsePipRequirements } from "../../src/environments/py-installer.ts";
@@ -284,6 +284,26 @@ describe("Given a staged revision pip has just written", () => {
 		await symlink(outside, join(staging, "linked"));
 
 		await expect(assertNoEditableInstalls(staging)).rejects.toThrow(/a link that points outside the environment/);
+	});
+
+	it("When a link deep inside a package points outside the revision, then the revision is refused", async () => {
+		const { staging, outside } = await staged();
+		await mkdir(join(staging, "pkg", "data"), { recursive: true });
+		await symlink(outside, join(staging, "pkg", "data", "linked"));
+
+		await expect(assertNoEditableInstalls(staging)).rejects.toThrow(/a link that points outside the environment/);
+	});
+
+	it("When pip reports a distribution the revision doesn't contain, then the install fails instead of publishing it empty", async () => {
+		const { staging } = await staged();
+		await mkdir(join(staging, "senpi_probe-1.0.dist-info"));
+
+		await expect(
+			assertInstalledInRevision("Successfully installed Senpi.Probe-1.0 other-pkg-2.1\n", staging),
+		).rejects.toThrow(/other-pkg was installed outside the session's environment/);
+		await expect(
+			assertInstalledInRevision("Successfully installed Senpi.Probe-1.0\n", staging),
+		).resolves.toBeUndefined();
 	});
 
 	it("When its .pth lines and links stay inside the revision, then it is accepted", async () => {

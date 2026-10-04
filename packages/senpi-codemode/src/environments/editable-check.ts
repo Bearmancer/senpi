@@ -3,10 +3,11 @@ import { join, relative, resolve, sep } from "node:path";
 import { EnvironmentError } from "./py-installer.ts";
 
 /**
- * Refuses a staged revision that loads code from outside itself, however pip was asked for it. It catches
- * a PEP 660 editable install (`direct_url.json` with `dir_info.editable`), a legacy `setup.py develop`
- * (an `.egg-link`), a `.pth` line or symlink that resolves outside the revision. A refused revision is
- * never published.
+ * Refuses a staged revision that links to code outside itself: a PEP 660 editable install
+ * (`direct_url.json` with `dir_info.editable`), a legacy `setup.py develop` (`.egg-link`), a `.pth` path
+ * line that resolves outside the revision, or a symlink anywhere in it that does. `.pth` lines starting
+ * with `import` are code that runs at startup, like any installed package's code, and are not inspected.
+ * A refused revision is never published.
  */
 export async function assertNoEditableInstalls(staging: string): Promise<void> {
 	const root = await realpath(staging).catch(() => resolve(staging));
@@ -34,10 +35,50 @@ export async function assertNoEditableInstalls(staging: string): Promise<void> {
 					refuse(entry, `a path outside the environment (${text})`);
 			}
 		}
-		if ((await lstat(path)).isSymbolicLink() && !(await inside(root, path))) {
-			refuse(entry, "a link that points outside the environment");
+	}
+	await refuseOutsideLinks(root, staging);
+}
+
+/** Every symlink in the revision, at any depth, must resolve inside it; links are checked, not followed. */
+async function refuseOutsideLinks(root: string, dir: string): Promise<void> {
+	for (const entry of await readdir(dir)) {
+		const path = join(dir, entry);
+		const info = await lstat(path);
+		if (info.isSymbolicLink()) {
+			if (!(await inside(root, path))) refuse(relative(root, path), "a link that points outside the environment");
+		} else if (info.isDirectory()) {
+			await refuseOutsideLinks(root, path);
 		}
 	}
+}
+
+/**
+ * pip reports what it installed; each of those distributions must be in the revision. A configuration
+ * that redirects pip elsewhere (a target, root or prefix from any config file or variable, on any pip
+ * version) leaves them missing here, so the install fails instead of publishing an empty revision.
+ */
+export async function assertInstalledInRevision(stdout: string, staging: string): Promise<void> {
+	const line = stdout.split("\n").find((entry) => entry.startsWith("Successfully installed "));
+	if (line === undefined) return;
+	const present = new Set(
+		(await readdir(staging).catch(() => [] as string[]))
+			.filter((entry) => entry.endsWith(".dist-info"))
+			.map((entry) => entry.slice(0, -".dist-info".length))
+			.map((stem) => canonicalName(stem.slice(0, stem.lastIndexOf("-")))),
+	);
+	for (const token of line.slice("Successfully installed ".length).trim().split(/\s+/u)) {
+		const name = token.slice(0, token.lastIndexOf("-"));
+		if (!present.has(canonicalName(name))) {
+			throw new EnvironmentError(
+				"environment_install_failed",
+				`${name} was installed outside the session's environment (pip's configuration redirected it); nothing was published`,
+			);
+		}
+	}
+}
+
+function canonicalName(name: string): string {
+	return name.toLowerCase().replace(/[-_.]+/gu, "_");
 }
 
 async function inside(root: string, path: string): Promise<boolean> {

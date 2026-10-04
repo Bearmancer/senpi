@@ -112,7 +112,8 @@ function isolatedPipEnv(): NodeJS.ProcessEnv {
 	for (const [key, value] of Object.entries(process.env)) {
 		if (!key.toUpperCase().startsWith("PIP_")) env[key] = value;
 	}
-	return { ...env, PIP_CONFIG_FILE: devNull, PYTHONNOUSERSITE: "1" };
+	// pip skips every config file when PIP_CONFIG_FILE equals Python's os.devnull: "nul" on Windows, not Node's "\\\\.\\nul".
+	return { ...env, PIP_CONFIG_FILE: process.platform === "win32" ? "nul" : devNull, PYTHONNOUSERSITE: "1" };
 }
 
 export function runPipInstall(input: {

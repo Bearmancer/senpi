@@ -393,6 +393,8 @@
 		},
 		"14-env": {
 			"additions": [
+				"imports/extension/packages/senpi-codemode/src/environments/editable-check.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/environments/editable-check.ts",
 				"legacyContracts/test/environments/install-lock-races.test.ts/Given a waiter that judged the root lock stale When other waiters replace it with live locks before this waiter acts, then no live lock is ever deleted",
 				"legacyContracts/test/environments/install-lock-races.test.ts/Given two waiters that find the same stale lock When both try to reap it, then only the waiter holding the reap claim removes it and they hold the lock one at a time",
 				"legacyContracts/test/environments/install-lock-races.test.ts/Given a stale lock that a live waiter is reaping When another waiter finds it, then that waiter waits quietly instead of re-reading the lock in a loop",
@@ -433,6 +435,8 @@
 				"legacyContracts/test/environments/py-environment.test.ts/Given a staged revision pip has just written When it holds a legacy develop install's egg-link, then the revision is refused",
 				"legacyContracts/test/environments/py-environment.test.ts/Given a staged revision pip has just written When a .pth line points outside the revision, then the revision is refused",
 				"legacyContracts/test/environments/py-environment.test.ts/Given a staged revision pip has just written When an entry is a link to a directory outside the revision, then the revision is refused",
+				"legacyContracts/test/environments/py-environment.test.ts/Given a staged revision pip has just written When a link deep inside a package points outside the revision, then the revision is refused",
+				"legacyContracts/test/environments/py-environment.test.ts/Given a staged revision pip has just written When pip reports a distribution the revision doesn't contain, then the install fails instead of publishing it empty",
 				"legacyContracts/test/environments/py-environment.test.ts/Given a staged revision pip has just written When its .pth lines and links stay inside the revision, then it is accepted",
 				"legacyContracts/test/environments/py-environment.test.ts/Given an environment root's install lock When several waiters find one dead holder's lock at once, then exactly one holder is ever inside, across many trials",
 				"legacyContracts/test/environments/py-environment.test.ts/Given an environment root's install lock When a waiter crashed while reaping a stale lock and left its claim behind, then the lock is still taken over by exactly one holder at a time",
@@ -440,9 +444,7 @@
 				"legacyContracts/test/environments/py-environment.test.ts/Given an environment root's install lock When a live waiter is reaping a stale lock, then another waiter waits for it instead of reaping too",
 				"legacyContracts/test/environments/py-environment.test.ts/Given an environment root's install lock When an empty lock file older than a few seconds is found (a crash between create and write), then it is taken over",
 				"legacyContracts/test/environments/py-environment.test.ts/Given an environment root's install lock When a freshly created lock can't be read yet, then it is waited for, not taken over",
-				"legacyContracts/test/environments/py-environment.test.ts/Given an environment root's install lock When a live process on this host holds the lock, then a waiter enters only after it is released",
-				"imports/extension/packages/senpi-codemode/src/environments/editable-check.ts",
-				"imports/firstKernel/packages/senpi-codemode/src/environments/editable-check.ts"
+				"legacyContracts/test/environments/py-environment.test.ts/Given an environment root's install lock When a live process on this host holds the lock, then a waiter enters only after it is released"
 			],
 			"reason": "Node 14 part 3: the Python environments library (versioned revisions published by an atomic pointer switch, per-root install lock, pip --target installer) and its contracts. Not wired into any cell yet, so no import-census, prompt or helper change."
 		},

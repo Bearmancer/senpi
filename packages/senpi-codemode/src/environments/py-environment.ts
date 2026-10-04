@@ -2,7 +2,7 @@ import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { promisify } from "node:util";
-import { assertNoEditableInstalls } from "./editable-check.ts";
+import { assertInstalledInRevision, assertNoEditableInstalls } from "./editable-check.ts";
 import { parsePipRequirements, runPipInstall } from "./py-installer.ts";
 import { publishNextRevision, type Revision } from "./revision-store.ts";
 
@@ -61,6 +61,7 @@ export async function installPythonPackages(input: {
 					input.onOutput?.(stream, data);
 				},
 			});
+			await assertInstalledInRevision(stdout, staging);
 			await assertNoEditableInstalls(staging);
 		},
 		input.signal,
