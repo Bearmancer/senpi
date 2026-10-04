@@ -258,27 +258,6 @@
 				"legacyContracts/test/completion-handle-watches.test.ts/Given a watch over a completion handle When the caller stops iterating its updates, then the registry stops tracking the watch"
 			]
 		},
-		"12": {
-			"additions": [
-				"legacyContracts/test/workpool-tools.test.ts/js workpool tools forwards tools unchanged to a host that validates with the real create schema",
-				"legacyContracts/test/workpool-tools.test.ts/js workpool tools never forwards an option the host does not know",
-				"legacyContracts/test/workpool-tools.test.ts/py workpool tools forwards tools unchanged to a host that validates with the real create schema",
-				"legacyContracts/test/workpool-tools.test.ts/py workpool tools never forwards an option the host does not know",
-				"legacyContracts/test/workpool-tools.test.ts/rb workpool tools forwards tools unchanged to a host that validates with the real create schema",
-				"legacyContracts/test/workpool-tools.test.ts/rb workpool tools never forwards an option the host does not know",
-				"legacyContracts/test/workpool-tools.test.ts/jl workpool tools forwards tools unchanged to a host that validates with the real create schema",
-				"legacyContracts/test/workpool-tools.test.ts/jl workpool tools never forwards an option the host does not know",
-				"legacyContracts/test/workpool-prelude.test.ts/js workpool prelude refuses tools given as a single string with a typed error, and posts nothing to the host",
-				"legacyContracts/test/workpool-prelude.test.ts/js workpool prelude forwards a list of tool names unchanged",
-				"legacyContracts/test/workpool-prelude.test.ts/py workpool prelude refuses tools given as a single string with a typed error, and posts nothing to the host",
-				"legacyContracts/test/workpool-prelude.test.ts/py workpool prelude forwards a list of tool names unchanged",
-				"legacyContracts/test/workpool-prelude.test.ts/rb workpool prelude refuses tools given as a single string with a typed error, and posts nothing to the host",
-				"legacyContracts/test/workpool-prelude.test.ts/rb workpool prelude forwards a list of tool names unchanged",
-				"legacyContracts/test/workpool-prelude.test.ts/jl workpool prelude refuses tools given as a single string with a typed error, and posts nothing to the host",
-				"legacyContracts/test/workpool-prelude.test.ts/jl workpool prelude forwards a list of tool names unchanged"
-			],
-			"reason": "Node 12: workpool(agent, name, {mode, tools}) forwards tools to the host create in all four languages. The helper names and the prompt are unchanged (the eval description's workpool line is untouched); the tool_schema('eval:helpers') entry gains one line. Only these contracts are new."
-		},
 		"13": {
 			"additions": [
 				"imports/extension/packages/senpi-codemode/src/config/unknown-settings.ts",
@@ -468,54 +447,37 @@
 			],
 			"reason": "Node 16: %load runs a local file as a Python or JavaScript cell, read at the cell's turn in the kernel queue; load-cell.ts and kernels/shared/cell-source-at-start.ts join the scoped census, plus the %load contracts. No prompt or eval schema change."
 		},
-		"17": {
+		"18": {
 			"additions": [
-				"imports/extension/packages/senpi-codemode/src/kernels/js/process-worker.ts",
-				"imports/firstKernel/packages/senpi-codemode/src/kernels/js/process-worker.ts",
-				"imports/extension/packages/senpi-codemode/src/kernels/js/process-memory-host.ts",
-				"imports/firstKernel/packages/senpi-codemode/src/kernels/js/process-memory-host.ts",
-				"imports/extension/packages/senpi-codemode/src/kernels/js/process-entry.js",
-				"imports/firstKernel/packages/senpi-codemode/src/kernels/js/process-entry.js",
-				"imports/extension/packages/senpi-codemode/src/kernels/js/kernel-memory.ts",
-				"imports/firstKernel/packages/senpi-codemode/src/kernels/js/kernel-memory.ts",
-				"imports/extension/packages/senpi-codemode/src/kernels/js/control-frames.ts",
-				"imports/firstKernel/packages/senpi-codemode/src/kernels/js/control-frames.ts",
-				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation initializes, runs cells, round-trips tool calls, interrupts a cell, and closes the child",
-				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation routes a cell's direct fd 1 writes into text frames and keeps the frame channel intact",
-				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation survives a SIGSEGV of its child and runs the next cell on a replacement with the restart notice",
-				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation leaves no child or process-group member behind after the session closes",
-				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation When the host's executable is not bun or node (a compiled binary) and neither is on PATH, then the cell settles with a capability gap naming the runtime",
-				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation When a cell writes frame-shaped lines to every fd it can reach, then each arrives as output text and none is taken as a frame",
-				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation When cell code walks globals, the require cache, env and argv for the frame token, then nothing it finds forges a frame",
-				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation When a cell writes a raw line straight to fd 1, then it arrives as output text and the next cell still runs",
-				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation labels the process-mode badge with the isolation",
-				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation reports the child's process footprint in the result memory and registry reading",
-				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation keeps the worker default when no isolation is asked for",
-				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation drives a WebView natively on the child's main thread in process mode",
-				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation When a cell prints more than the 10 MiB frame limit, then the output arrives whole and the kernel keeps its globals",
-				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation When a timer from a cell throws, then the crashed cell names the error and the next result says the kernel restarted",
-				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation When a cell writes straight to fd 1 and returns, then the line arrives with that cell's output, before its result",
-				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation When a worker-mode cell crashes, then the next result carries no restart notice, as before process mode existed",
-				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation When the runtime is resolved under native Node ESM (no injected require), then a node on PATH is found",
-				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation When the host is killed with SIGKILL, then its process-mode kernel child is gone too",
-				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation When the host is exits without closing its kernel, then its process-mode kernel child is gone too",
-				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation When a cell in a bun child reads fd 0, then it reads nothing and the host can still interrupt it",
-				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation When a worker-mode cell calls a host tool with a BigInt and an undefined field, then the host receives them as worker mode does",
-				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation When a process-mode cell calls a host tool with a BigInt and an undefined field, then the host receives them as worker mode does",
-				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation When a process-mode kernel starts, then its child runs on bun, the product's runtime",
-				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation When a cell runs a child process that inherits fd 1 and prints 300 KB, then the cell settles with all of it",
-				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation When a cell writes to fd 1 in a loop that ignores failed writes and returns, then the cell settles",
-				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation When a cell returns a value whose UTF-8 form exceeds the frame limit, then the cell fails and the kernel keeps its globals",
-				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation When a cell calls a host tool with arguments larger than the frame limit, then the call fails in the cell at once",
-				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation When a cell sends data shaped like the value markers, then the host receives it unchanged",
-				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation When a cell in a node child crashes while waiting on a host tool, then the cell settles with the crash at once",
-				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation When the host is killed with SIGKILL while a cell spins, then its process-mode kernel child is gone too",
-				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation When a cell runs cat on a 4 MB file with fd 1 inherited, then the command succeeds and every byte arrives",
-				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation When a cell writes 4 MB to fd 1 in one writeSync call, then the call writes it all and every byte arrives",
-				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation When a blocked cell's child process prints 100 MiB through fd 1, then the kernel's memory stays flat and all of it arrives",
-				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation When the host's parent is a subreaper and the host is killed while a cell spins, then the kernel child is gone too"
+				"schemas/js+sandbox",
+				"schemas/js+py+sandbox",
+				"schemas/all+sandbox",
+				"imports/extension/packages/senpi-codemode/src/kernels/sandbox/sandbox-cell.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/kernels/sandbox/sandbox-cell.ts",
+				"legacyContracts/test/eval-isolate-schema.test.ts/Given sandbox cells are turned off When the eval schema is built, then it is byte-identical to the schema built with no sandbox option",
+				"legacyContracts/test/eval-isolate-schema.test.ts/Given sandbox cells are turned off When a call passes isolate: true, then it is refused with eval_isolate_invalid instead of running as normal JavaScript",
+				"legacyContracts/test/eval-isolate-schema.test.ts/Given sandbox cells are turned off When a call passes isolate: false or omits it, then the request is the same as today",
+				"legacyContracts/test/eval-isolate-schema.test.ts/Given sandbox cells are turned on When the eval schema is built, then it adds only the optional isolate boolean beside today's fields",
+				"legacyContracts/test/eval-isolate-schema.test.ts/Given sandbox cells are turned on When JavaScript is not an enabled language, then the schema has no isolate field",
+				"legacyContracts/test/eval-isolate-schema.test.ts/Given sandbox cells are turned on When a JavaScript call passes isolate: true, then the request carries it",
+				"legacyContracts/test/eval-isolate-schema.test.ts/Given sandbox cells are turned on When the call has another language, then it is refused with eval_isolate_invalid",
+				"legacyContracts/test/eval-isolate-schema.test.ts/Given sandbox cells are turned on When the call has reset, then it is refused with eval_isolate_invalid",
+				"legacyContracts/test/eval-isolate-schema.test.ts/Given sandbox cells are turned on When the call has a non-boolean value, then it is refused with eval_isolate_invalid",
+				"legacyContracts/test/sandbox/isolated-cell.test.ts/Given sandbox cells are turned on isolated-cell-has-no-ambient-host-or-persistence: the isolated cell sees neither the persistent kernel's globals nor process, can call tool.read, and the next isolated cell is fresh",
+				"legacyContracts/test/sandbox/isolated-cell.test.ts/Given sandbox cells are turned on isolated-result-contract: printed text, a returned value and an error use the normal result contract",
+				"legacyContracts/test/sandbox/isolated-cell.test.ts/Given sandbox cells are turned on large-item-fidelity: one 20 MiB printed item reaches the result contract complete, exactly as the persistent kernel reports the same output",
+				"legacyContracts/test/sandbox/isolated-cell.test.ts/Given sandbox cells are turned on a 256 MiB allocation fails with eval_isolate_memory_limit and the persistent kernel keeps its globals",
+				"legacyContracts/test/sandbox/isolated-cell.test.ts/Given sandbox cells are turned on a promise that never settles fails with eval_isolate_unresolved_promise",
+				"legacyContracts/test/sandbox/isolated-cell.test.ts/Given sandbox cells are turned on store() throws eval_isolate_no_state and load() finds nothing",
+				"legacyContracts/test/sandbox/isolated-cell.test.ts/Given sandbox cells are turned off isolate: true is refused with eval_isolate_invalid and the code does not run",
+				"legacyContracts/test/sandbox/isolated-cell.test.ts/Given sandbox cells are turned on When a cell's own error mentions running out of memory or an unresolved promise, then it keeps the script error code",
+				"legacyContracts/test/sandbox/isolated-cell.test.ts/Given sandbox cells are turned on When an isolated cell displays text, then it prints the text like the persistent kernel does",
+				"legacyContracts/test/sandbox/isolated-cell.test.ts/Given sandbox cells are turned on When an isolated cell calls tool.read as the prompt teaches, then it reaches the host tool",
+				"legacyContracts/test/sandbox/isolated-cell.test.ts/Given sandbox cells are turned on When an isolated cell is a %load, then it is refused and the file never runs, in the sandbox or the kernel",
+				"legacyContracts/test/sandbox/isolated-cell.test.ts/Given sandbox cells are turned on When text() runs out of memory rendering a value, then the cell still fails with eval_isolate_memory_limit",
+				"legacyContracts/test/eval-tool.test.ts/createEvalTool When sandbox cells are on and a proxy runs cells, then isolate: true is refused and never reaches the proxy"
 			],
-			"reason": "Node 17: opt-in process-isolated JavaScript kernel (isolation.js: \"process\", worker default unchanged). The child runs worker-core over the framed subprocess transport (fd 0 in, a private dup of fd 1 out; fd 1 re-pointed at a pipe drained into text frames), with no inline fallback in process mode (a failed start is a capability-gap result naming the runtime). process-entry.js, process-worker.ts and process-memory-host.ts join the scoped census, plus the new contracts. No prompt or eval schema change."
+			"reason": "Node 18 part 2: the setting-gated isolate field. The three '+sandbox' schema cells are measured only with sandbox.enabled; the default schema cells (js, js+py, all) and every prompt cell stay unchanged. sandbox-cell.ts joins the scoped census (the vendored runtime itself loads lazily on the first isolated cell), plus the isolated-cell contracts."
 		},
 		"24": {
 			"additions": [
@@ -551,45 +513,6 @@
 				"legacyContracts/test/js-kernel-shell-stop-bun.test.ts/Bun shell Stop cleans up when the shell exits before connecting"
 			],
 			"reason": "Lead decision A (2026-10-01), node 32: add event-ordered shell restart notice and preservation witnesses without changing default prompts, schemas, helpers, or native shell semantics."
-		},
-		"2718": {
-			"additions": [
-				"imports/extension/packages/senpi-codemode/src/kernels/shared/process-cpu.ts",
-				"imports/firstKernel/packages/senpi-codemode/src/kernels/shared/process-cpu.ts",
-				"legacyContracts/test/py-kernel-startup.test.ts/Python startup progress keeps waiting for a cold interpreter that is silent in its imports but busy on the CPU",
-				"legacyContracts/test/py-kernel-startup.test.ts/Python startup progress fails a silent and idle interpreter after the guard, naming the stage it stopped in",
-				"legacyContracts/test/py-kernel-startup.test.ts/Python startup progress stops an interpreter that stays busy but never becomes ready at the startup ceiling, naming its stage",
-				"legacyContracts/test/py-kernel-startup.test.ts/Python startup progress keeps a starting interpreter alive while it writes output",
-				"legacyContracts/test/py-kernel-startup.test.ts/Python startup progress keeps a starting interpreter alive while it prints on stdout",
-				"legacyContracts/test/py-kernel-startup.test.ts/Python startup progress fails an interpreter that goes idle right after a stage change within one guard period",
-				"legacyContracts/test/py-kernel-startup.test.ts/Python startup progress retires a stalled interpreter with one SIGKILL to its process group, and never through the real process table",
-				"legacyContracts/test/py-kernel-startup.test.ts/Python startup progress falls back to killing the child itself when its process group is already gone"
-			],
-			"reason": "Python startup counts CPU use and output as progress, with an absolute ceiling (senpi#2718): a shared CPU reader module and four startup behaviour cases."
-		},
-		"2731": {
-			"reason": "senpi#2731: host calls from a Python cell carry a per-run host-minted secret, and the host gives them that run's kernel-tools capability (CellKernelTools, the #1754 scope); ReplaceableKernel forwards Python's kernel tools to its current instance; Python agent(tools=...).",
-			"additions": [
-				"imports/extension/packages/senpi-codemode/src/extension/cell-kernel-tools.ts",
-				"imports/firstKernel/packages/senpi-codemode/src/extension/cell-kernel-tools.ts",
-				"legacyContracts/test/py-kernel-tools-bridge.test.ts/Given a Python cell that defined @tool add When the cell grants it through a host tool, then the host sees the cell's kernel tools and add runs back in the kernel",
-				"legacyContracts/test/py-kernel-tools-bridge.test.ts/Given a Python cell that defined @tool add When the cell calls agent(..., tools=[...]), then the grant reaches the host task tool with the cell's kernel tools",
-				"legacyContracts/test/py-kernel-tools-bridge.test.ts/Given a Python cell that defined @tool add When agent(tools=...) is given a single string, then it is refused with a typed error before reaching the host",
-				"legacyContracts/test/py-kernel-tools-bridge.test.ts/Given a Python cell that defined @tool add When a host call carries a secret no running cell holds, then it gets no kernel tools",
-				"legacyContracts/test/py-kernel-tools-bridge.test.ts/Given a Python cell that defined @tool add When a thread keeps a finished cell's context and calls the host later, then that call gets no kernel tools",
-				"legacyContracts/test/py-kernel-tools-bridge.test.ts/Given a Python cell that defined @tool add When a cell's host call names its own model-visible cell id instead of its run's secret, then it gets no kernel tools",
-				"legacyContracts/test/py-kernel-tools-bridge.test.ts/Given a Python cell that defined @tool add When a JavaScript cell and a Python cell run, then only the Python run is bound, under a secret that is not its cell id",
-				"legacyContracts/test/py-kernel-tools-bridge.test.ts/Given a Python cell that defined @tool add When a cell stashes its run's context and a later cell replays a host call in it, then that call gets no kernel tools",
-				"legacyContracts/test/py-kernel-tools-bridge.test.ts/Given a Python cell that defined @tool add When a Python cell names a JavaScript cell that is running right now, then it cannot reach that cell's tools",
-				"legacyContracts/test/kernel-tools-host-dispatch.test.ts/kernel tools on the real worker tool-call path Given the replaceable kernel a session holds for rb and jl when it is probed for kernel tools then it exposes none of the interpreter's stubs",
-				"legacyContracts/test/kernel-tools-host-dispatch.test.ts/kernel tools on the real worker tool-call path Given the replaceable kernel a session holds for py when its interpreter is replaced then kernel tools reach only the new instance"
-			],
-			"changes": [
-				{
-					"key": "legacyContracts/test/kernel-tools-host-dispatch.test.ts/kernel tools on the real worker tool-call path Given the replaceable kernel a session holds for py, rb and jl when it is probed for kernel tools then it exposes none of the interpreter's stubs",
-					"reason": "Python now has real kernel tools that a Python cell can grant (#2731), so py leaves this contract: the replaceable kernel forwards them to its current instance (new contract 'Given the replaceable kernel a session holds for py when its interpreter is replaced then kernel tools reach only the new instance'); the rb/jl case is the new contract 'Given the replaceable kernel a session holds for rb and jl ...'."
-				}
-			]
 		},
 		"senpi#2444": {
 			"additions": [
@@ -862,12 +785,141 @@
 			],
 			"reason": "Node 14 part 3: the Python environments library (versioned revisions published by an atomic pointer switch, per-root install lock, pip --target installer) and its contracts. Not wired into any cell yet, so no import-census, prompt or helper change."
 		},
+		"2718": {
+			"additions": [
+				"imports/extension/packages/senpi-codemode/src/kernels/shared/process-cpu.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/kernels/shared/process-cpu.ts",
+				"legacyContracts/test/py-kernel-startup.test.ts/Python startup progress keeps waiting for a cold interpreter that is silent in its imports but busy on the CPU",
+				"legacyContracts/test/py-kernel-startup.test.ts/Python startup progress fails a silent and idle interpreter after the guard, naming the stage it stopped in",
+				"legacyContracts/test/py-kernel-startup.test.ts/Python startup progress stops an interpreter that stays busy but never becomes ready at the startup ceiling, naming its stage",
+				"legacyContracts/test/py-kernel-startup.test.ts/Python startup progress keeps a starting interpreter alive while it writes output",
+				"legacyContracts/test/py-kernel-startup.test.ts/Python startup progress keeps a starting interpreter alive while it prints on stdout",
+				"legacyContracts/test/py-kernel-startup.test.ts/Python startup progress fails an interpreter that goes idle right after a stage change within one guard period",
+				"legacyContracts/test/py-kernel-startup.test.ts/Python startup progress retires a stalled interpreter with one SIGKILL to its process group, and never through the real process table",
+				"legacyContracts/test/py-kernel-startup.test.ts/Python startup progress falls back to killing the child itself when its process group is already gone"
+			],
+			"reason": "Python startup counts CPU use and output as progress, with an absolute ceiling (senpi#2718): a shared CPU reader module and four startup behaviour cases."
+		},
+		"12": {
+			"additions": [
+				"legacyContracts/test/workpool-tools.test.ts/js workpool tools forwards tools unchanged to a host that validates with the real create schema",
+				"legacyContracts/test/workpool-tools.test.ts/js workpool tools never forwards an option the host does not know",
+				"legacyContracts/test/workpool-tools.test.ts/py workpool tools forwards tools unchanged to a host that validates with the real create schema",
+				"legacyContracts/test/workpool-tools.test.ts/py workpool tools never forwards an option the host does not know",
+				"legacyContracts/test/workpool-tools.test.ts/rb workpool tools forwards tools unchanged to a host that validates with the real create schema",
+				"legacyContracts/test/workpool-tools.test.ts/rb workpool tools never forwards an option the host does not know",
+				"legacyContracts/test/workpool-tools.test.ts/jl workpool tools forwards tools unchanged to a host that validates with the real create schema",
+				"legacyContracts/test/workpool-tools.test.ts/jl workpool tools never forwards an option the host does not know",
+				"legacyContracts/test/workpool-prelude.test.ts/js workpool prelude refuses tools given as a single string with a typed error, and posts nothing to the host",
+				"legacyContracts/test/workpool-prelude.test.ts/js workpool prelude forwards a list of tool names unchanged",
+				"legacyContracts/test/workpool-prelude.test.ts/py workpool prelude refuses tools given as a single string with a typed error, and posts nothing to the host",
+				"legacyContracts/test/workpool-prelude.test.ts/py workpool prelude forwards a list of tool names unchanged",
+				"legacyContracts/test/workpool-prelude.test.ts/rb workpool prelude refuses tools given as a single string with a typed error, and posts nothing to the host",
+				"legacyContracts/test/workpool-prelude.test.ts/rb workpool prelude forwards a list of tool names unchanged",
+				"legacyContracts/test/workpool-prelude.test.ts/jl workpool prelude refuses tools given as a single string with a typed error, and posts nothing to the host",
+				"legacyContracts/test/workpool-prelude.test.ts/jl workpool prelude forwards a list of tool names unchanged"
+			],
+			"reason": "Node 12: workpool(agent, name, {mode, tools}) forwards tools to the host create in all four languages. The helper names and the prompt are unchanged (the eval description's workpool line is untouched); the tool_schema('eval:helpers') entry gains one line. Only these contracts are new."
+		},
+		"2731": {
+			"reason": "senpi#2731: host calls from a Python cell carry a per-run host-minted secret, and the host gives them that run's kernel-tools capability (CellKernelTools, the #1754 scope); ReplaceableKernel forwards Python's kernel tools to its current instance; Python agent(tools=...).",
+			"additions": [
+				"imports/extension/packages/senpi-codemode/src/extension/cell-kernel-tools.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/extension/cell-kernel-tools.ts",
+				"legacyContracts/test/py-kernel-tools-bridge.test.ts/Given a Python cell that defined @tool add When the cell grants it through a host tool, then the host sees the cell's kernel tools and add runs back in the kernel",
+				"legacyContracts/test/py-kernel-tools-bridge.test.ts/Given a Python cell that defined @tool add When the cell calls agent(..., tools=[...]), then the grant reaches the host task tool with the cell's kernel tools",
+				"legacyContracts/test/py-kernel-tools-bridge.test.ts/Given a Python cell that defined @tool add When agent(tools=...) is given a single string, then it is refused with a typed error before reaching the host",
+				"legacyContracts/test/py-kernel-tools-bridge.test.ts/Given a Python cell that defined @tool add When a host call carries a secret no running cell holds, then it gets no kernel tools",
+				"legacyContracts/test/py-kernel-tools-bridge.test.ts/Given a Python cell that defined @tool add When a thread keeps a finished cell's context and calls the host later, then that call gets no kernel tools",
+				"legacyContracts/test/py-kernel-tools-bridge.test.ts/Given a Python cell that defined @tool add When a cell's host call names its own model-visible cell id instead of its run's secret, then it gets no kernel tools",
+				"legacyContracts/test/py-kernel-tools-bridge.test.ts/Given a Python cell that defined @tool add When a JavaScript cell and a Python cell run, then only the Python run is bound, under a secret that is not its cell id",
+				"legacyContracts/test/py-kernel-tools-bridge.test.ts/Given a Python cell that defined @tool add When a cell stashes its run's context and a later cell replays a host call in it, then that call gets no kernel tools",
+				"legacyContracts/test/py-kernel-tools-bridge.test.ts/Given a Python cell that defined @tool add When a Python cell names a JavaScript cell that is running right now, then it cannot reach that cell's tools",
+				"legacyContracts/test/kernel-tools-host-dispatch.test.ts/kernel tools on the real worker tool-call path Given the replaceable kernel a session holds for rb and jl when it is probed for kernel tools then it exposes none of the interpreter's stubs",
+				"legacyContracts/test/kernel-tools-host-dispatch.test.ts/kernel tools on the real worker tool-call path Given the replaceable kernel a session holds for py when its interpreter is replaced then kernel tools reach only the new instance"
+			],
+			"changes": [
+				{
+					"key": "legacyContracts/test/kernel-tools-host-dispatch.test.ts/kernel tools on the real worker tool-call path Given the replaceable kernel a session holds for py, rb and jl when it is probed for kernel tools then it exposes none of the interpreter's stubs",
+					"reason": "Python now has real kernel tools that a Python cell can grant (#2731), so py leaves this contract: the replaceable kernel forwards them to its current instance (new contract 'Given the replaceable kernel a session holds for py when its interpreter is replaced then kernel tools reach only the new instance'); the rb/jl case is the new contract 'Given the replaceable kernel a session holds for rb and jl ...'."
+				}
+			]
+		},
 		"senpi#2700": {
 			"additions": [
 				"legacyContracts/test/tool-schema-hint.test.ts/kernel tool-call denials (senpi#2700) delivers a blocked call's denial without the parameter schema",
 				"legacyContracts/test/tool-schema-hint.test.ts/kernel tool-call denials (senpi#2700) still appends the parameter schema to an invalid-arguments failure"
 			],
 			"reason": "A nested tool call that a hook blocked (code \"blocked\", for example a permission denial) is delivered to the cell without the parameter-schema hint; argument failures keep it. Test-only additions; no prompt, schema, helper or import surface changes."
+		},
+		"senpi#1396": {
+			"additions": [
+				"legacyContracts/test/eval-request-language.test.ts/eval request language validation distinguishes invalid language null from an omission",
+				"legacyContracts/test/eval-request-language.test.ts/eval request language validation distinguishes invalid language \"\" from an omission",
+				"legacyContracts/test/eval-request-language.test.ts/eval request language validation distinguishes invalid language \"python\" from an omission",
+				"legacyContracts/test/eval-request-language.test.ts/eval request language validation distinguishes invalid language 42 from an omission",
+				"legacyContracts/test/eval-request-language.test.ts/eval request language validation rejects an omitted language instead of selecting a default kernel",
+				"legacyContracts/test/eval-request-language.test.ts/eval request language validation accepts peek without a language",
+				"legacyContracts/test/eval-request-language.test.ts/eval request language validation accepts stop without a language",
+				"legacyContracts/test/eval-request-language.test.ts/parseEvalRequest language and code enforcement throws a distinct actionable error for an unknown language value",
+				"legacyContracts/test/eval-request-language.test.ts/parseEvalRequest language and code enforcement lists only the enabled languages when a run names an unknown language"
+			],
+			"reason": "#1395: an omitted eval language and an invalid one now fail with distinct errors, and peek/stop need no language; these contract tests pin that, and replace the 'same actionable error for an unknown language value' test.",
+			"changes": [
+				{
+					"key": "legacyContracts/test/eval-request-language.test.ts/parseEvalRequest language and code enforcement throws the same actionable error for an unknown language value",
+					"reason": "senpi#1396 makes an unknown language value fail with a distinct error from an omitted language, so this contract leaves the baseline; its honest rename 'parseEvalRequest language and code enforcement throws a distinct actionable error for an unknown language value' is listed under additions (reviewed by the gate owner on the PR)."
+				}
+			]
+		},
+		"17": {
+			"additions": [
+				"imports/extension/packages/senpi-codemode/src/kernels/js/process-worker.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/kernels/js/process-worker.ts",
+				"imports/extension/packages/senpi-codemode/src/kernels/js/process-memory-host.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/kernels/js/process-memory-host.ts",
+				"imports/extension/packages/senpi-codemode/src/kernels/js/process-entry.js",
+				"imports/firstKernel/packages/senpi-codemode/src/kernels/js/process-entry.js",
+				"imports/extension/packages/senpi-codemode/src/kernels/js/kernel-memory.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/kernels/js/kernel-memory.ts",
+				"imports/extension/packages/senpi-codemode/src/kernels/js/control-frames.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/kernels/js/control-frames.ts",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation initializes, runs cells, round-trips tool calls, interrupts a cell, and closes the child",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation routes a cell's direct fd 1 writes into text frames and keeps the frame channel intact",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation survives a SIGSEGV of its child and runs the next cell on a replacement with the restart notice",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation leaves no child or process-group member behind after the session closes",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation When the host's executable is not bun or node (a compiled binary) and neither is on PATH, then the cell settles with a capability gap naming the runtime",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation When a cell writes frame-shaped lines to every fd it can reach, then each arrives as output text and none is taken as a frame",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation When cell code walks globals, the require cache, env and argv for the frame token, then nothing it finds forges a frame",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation When a cell writes a raw line straight to fd 1, then it arrives as output text and the next cell still runs",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation labels the process-mode badge with the isolation",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation reports the child's process footprint in the result memory and registry reading",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation keeps the worker default when no isolation is asked for",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation drives a WebView natively on the child's main thread in process mode",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation When a cell prints more than the 10 MiB frame limit, then the output arrives whole and the kernel keeps its globals",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation When a timer from a cell throws, then the crashed cell names the error and the next result says the kernel restarted",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation When a cell writes straight to fd 1 and returns, then the line arrives with that cell's output, before its result",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation When a worker-mode cell crashes, then the next result carries no restart notice, as before process mode existed",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation When the runtime is resolved under native Node ESM (no injected require), then a node on PATH is found",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation When the host is killed with SIGKILL, then its process-mode kernel child is gone too",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation When the host is exits without closing its kernel, then its process-mode kernel child is gone too",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation When a cell in a bun child reads fd 0, then it reads nothing and the host can still interrupt it",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation When a worker-mode cell calls a host tool with a BigInt and an undefined field, then the host receives them as worker mode does",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation When a process-mode cell calls a host tool with a BigInt and an undefined field, then the host receives them as worker mode does",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation When a process-mode kernel starts, then its child runs on bun, the product's runtime",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation When a cell runs a child process that inherits fd 1 and prints 300 KB, then the cell settles with all of it",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation When a cell writes to fd 1 in a loop that ignores failed writes and returns, then the cell settles",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation When a cell returns a value whose UTF-8 form exceeds the frame limit, then the cell fails and the kernel keeps its globals",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation When a cell calls a host tool with arguments larger than the frame limit, then the call fails in the cell at once",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation When a cell sends data shaped like the value markers, then the host receives it unchanged",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation When a cell in a node child crashes while waiting on a host tool, then the cell settles with the crash at once",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation When the host is killed with SIGKILL while a cell spins, then its process-mode kernel child is gone too",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation When a cell runs cat on a 4 MB file with fd 1 inherited, then the command succeeds and every byte arrives",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation When a cell writes 4 MB to fd 1 in one writeSync call, then the call writes it all and every byte arrives",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation When a blocked cell's child process prints 100 MiB through fd 1, then the kernel's memory stays flat and all of it arrives",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation When the host's parent is a subreaper and the host is killed while a cell spins, then the kernel child is gone too"
+			],
+			"reason": "Node 17: opt-in process-isolated JavaScript kernel (isolation.js: \"process\", worker default unchanged). The child runs worker-core over the framed subprocess transport (fd 0 in, a private dup of fd 1 out; fd 1 re-pointed at a pipe drained into text frames), with no inline fallback in process mode (a failed start is a capability-gap result naming the runtime). process-entry.js, process-worker.ts and process-memory-host.ts join the scoped census, plus the new contracts. No prompt or eval schema change."
 		}
 	}
 }

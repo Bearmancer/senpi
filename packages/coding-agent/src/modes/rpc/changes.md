@@ -1,3 +1,27 @@
+## 2026-10-05 - `set_retry_fallback` for a single-session rpc process (omo#9582)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: new command `set_retry_fallback { retryFallback: SessionRetryFallbackProfile }` and its response.
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: `RpcConnectionOptions.retryFallbackCommand`. When set, the handler advertises `retry_fallback_command` in `get_protocol_info` and accepts `set_retry_fallback`: it validates with `sessionRetryFallbackError` (the `open_session.retryFallback` rules), refuses once the connection has asked for a turn (`turnRequested`, set by `prompt`, `steer`, `follow_up`, `continue_from_leaf` and a `send_custom_message` with `triggerTurn`) while any turn streams, or once the session holds turn history (any message other than an extension's `custom` context message), so a launch-time setting never changes under a turn or retry in flight while a fresh child whose components added context on `session_start` still accepts it, and calls `runtimeHost.setRetryFallback`. Without the option, as on a host's session connections, the command is refused and the capability is not advertised.
+- `packages/coding-agent/src/modes/rpc/rpc-mode.ts`: the single-session stdio handler passes `retryFallbackCommand: true`.
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts`: `RpcClient.setRetryFallback(profile)`.
+- `packages/coding-agent/src/modes/rpc/custom-capability.ts`: `RETRY_FALLBACK_COMMAND_CAPABILITY`.
+
+### Why
+
+- omo's task children that run as their own process (`task.process_runner: "child-process"`, and every child on win32) could not carry their category's fallback chain, so a usage limit after a tool call ended them. An RPC command reaches only that process: an environment variable would leak into everything its tools spawn (Bun does not unsetenv), and argv has a command-line length limit on Windows and shows in a process listing.
+
+### Why an extension could not handle it
+
+- Extensions cannot register RPC protocol commands or capabilities, and the connection handler's per-connection options are set by the mode that owns the transport.
+
+### Expected merge conflict zones
+
+- `connection-handler.ts`: `RpcConnectionOptions`, the `get_protocol_info` capability list, and the retry command block after `abort_retry`.
+- `rpc-types.ts`: the retry command and response unions.
+- `rpc-mode.ts`: the `createRpcConnectionHandler` call.
+
 ## 2026-10-04 - A handoff replaces an idle host no layout-2 record proves (senpi#2701)
 
 ### What changed
@@ -5063,3 +5087,25 @@ The RPC extension UI context is built by the RPC connection handler; an extensio
 ### Expected merge conflict zones
 
 The `select` / `input` lines of `createExtensionUIContext` in `connection-handler.ts`, and the `RpcExtensionUIRequest` union in `rpc-types.ts`.
+
+## 2026-10-05 - Daemon directories in parallel, no prune for a fresh registration, host inbox arming off the registration path (senpi#2756)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-daemon-paths.ts`: `createDaemonDirectories` creates the endpoint directory, then its `generations/` and `reservations/` and the flat `layout.json` concurrently. Each endpoint directory is re-moded to 0700 only when it already existed (`mkdir` returned no created path); one `mkdir` just created already has the mode. The flat directory is still never re-moded.
+- `packages/coding-agent/src/modes/rpc/host-daemon-registration.ts`: `writeHostRegistration(paths, registration, { fresh? })` skips `pruneDeadGenerations` when `fresh` is true. Only a terminal's registration passes it; every host path still prunes first (#1893).
+- `packages/coding-agent/src/modes/rpc/host-session-control.ts`: follows the new `watchInbox` contract (`InboxWatch { armed, stop }`): a host session's registration returns once the watch exists, and one more `inbox` pass runs when arming settled.
+- Tests: `test/suite/rpc-daemon-directory-modes.test.ts`.
+
+### Why
+
+- Part of the terminal control endpoint's registration cost (see the matching entry in `../interactive/changes.md`): `createDaemonDirectories` was 4 sequential `mkdir`s, 3 `chmod`s and the marker write, 2.1 ms after `settled`. The chmods exist for directories that predate the call; a directory `mkdir` created is already private. A terminal's endpoint directory is named by a fresh instance id, so pruning it reads empty directories.
+- The host session registers through the same `watchInbox`; keeping the old "return only once armed" contract there would have needed a second function for the same watch.
+
+### Why an extension could not handle it
+
+- These are the engine's daemon-state primitives and its host-side control endpoint; no extension hook runs inside them.
+
+### Expected merge conflict zones
+
+- LOW: `createDaemonDirectories` in `host-daemon-paths.ts`, the head of `writeHostRegistration`, and the `watchInbox` call in `HostSessionControl.register`. All three files are fork-only.

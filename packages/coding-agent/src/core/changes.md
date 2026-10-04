@@ -1,3 +1,21 @@
+## 2026-10-05 - A runtime's fallback policy can be set before its first turn (omo#9582)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session-runtime.ts`: new exported `applyRetryFallbackProfile(settingsManager, profile)` overlays a `SessionRetryFallbackProfile` with `applyOverrides`, the session-only layer `save()` never writes. New `AgentSessionRuntime.setRetryFallback(profile)` stores a frozen copy in the runtime's launch profile, so `new_session` / `switch_session` / `fork` keep it, and applies it to the current session's settings.
+
+### Why
+
+- A single-session `--mode rpc` process (an omo task child run as its own process, which is every child on Windows) needs its own fallback chain without a settings file. `set_retry_fallback` (`modes/rpc`) calls this before the first turn.
+
+### Why an extension could not handle it
+
+- The launch profile that later replacement sessions are built from is private to `AgentSessionRuntime`. An extension can change the current session's settings, but not what the runtime hands the next session it creates.
+
+### Expected merge conflict zones
+
+- `agent-session-runtime.ts`: the `SessionRetryFallbackProfile` interface block and the setter block after `setBrowserEngine`.
+
 ## 2026-10-04 - continue_from_leaf acknowledges at turn admission, not turn end (senpi#2708)
 
 ### What changed
@@ -918,6 +936,27 @@ The warning predicate is core session policy evaluated before the warning event 
 ### Expected merge conflict zones
 
 - `packages/coding-agent/src/core/high-reasoning-warning.ts`: fork-only file.
+
+## 2026-09-30 - An explicit thinking level the model cannot use is recorded and warned about (senpi#2395)
+
+### What changed
+
+- `packages/coding-agent/src/core/thinking-levels.ts`: `clampThinkingSelection()` applies the effective level to an explicit selection and, when it differs from the requested level, keeps `requested` and a `clampReason` (`model-not-reasoning` or `level-unsupported`) on it. `getThinkingClampNotice()` and `formatThinkingClampWarning()` describe a clamp for the user.
+- `packages/coding-agent/src/core/sdk.ts`: the startup clamp in `createAgentSession` goes through `clampThinkingSelection()` instead of overwriting the selection's level. A level that comes only from the global `defaultThinkingLevel` is applied as a default: no requested level, no reason, no notice.
+- `packages/coding-agent/src/core/agent-session.ts`: `_setThinkingLevel` and `_getThinkingForModelSwitch` record clamps the same way (the global-default fallback on a model switch stays a default), and a changed requested level counts as a selection change. `thinking_level_clamped` is emitted once per model and requested level, and `startupThinkingClamp` exposes a clamp applied at creation so the starting mode can show it once.
+
+### Why
+
+- An explicit `--thinking high` on a model without `reasoning: true` ran with thinking off and recorded `{"level":"off","source":"explicit"}`, as if off had been requested, with no warning (senpi#2395).
+
+### Why an extension could not handle it
+
+- The clamp runs inside session creation and `AgentSession` before any extension event carries the requested level, and core writes the recorded selection.
+
+### Expected merge conflict zones
+
+- `sdk.ts`: the thinking clamp block in `createAgentSession`.
+- `agent-session.ts`: `_setThinkingLevel`, `_getThinkingForModelSwitch`, the `AgentSessionEvent` union, and the constructor after fallback-chain validation.
 
 ## 2026-09-30 - High-reasoning warning covers Venice's dotless gpt-61-sol (senpi#2390)
 

@@ -20,6 +20,7 @@ import { assertSessionCwdExists } from "./session-cwd.ts";
 import { holdSessionFile, type SessionHold } from "./session-holders.ts";
 import { SessionManager } from "./session-manager.ts";
 import { reserveSessionWrite, unregisterSessionWriter } from "./session-write-reservation.ts";
+import type { SettingsManager } from "./settings-manager.ts";
 import { resetTimings, time } from "./timings.ts";
 
 /**
@@ -69,6 +70,21 @@ export interface SessionRetryFallbackProfile {
 	readonly modelFallback: boolean;
 	/** Chain key (selector, optionally `:thinking`) to its ordered fallback selectors. */
 	readonly fallbackChains: Readonly<Record<string, readonly string[]>>;
+}
+
+/** Overlays a session's fallback policy on its settings in memory: never saved, never shared. */
+export function applyRetryFallbackProfile(
+	settingsManager: SettingsManager,
+	profile: SessionRetryFallbackProfile,
+): void {
+	settingsManager.applyOverrides({
+		retry: {
+			modelFallback: profile.modelFallback,
+			fallbackChains: Object.fromEntries(
+				Object.entries(profile.fallbackChains).map(([key, entries]) => [key, [...entries]]),
+			),
+		},
+	});
 }
 
 /**
@@ -193,6 +209,24 @@ export class AgentSessionRuntime {
 	setBrowserEngine(engine: BrowserEngine): void {
 		this._launchProfile = Object.freeze({ ...(this._launchProfile ?? { cwd: this.cwd }), browserEngine: engine });
 		this._session.setBrowserEngine(engine);
+	}
+
+	/**
+	 * Gives this process's sessions their fallback policy (`set_retry_fallback`); later replacements
+	 * (switch, new, fork) keep it. Callers set it before the first turn: a chain never changes under a
+	 * retry already in flight.
+	 */
+	setRetryFallback(profile: SessionRetryFallbackProfile): void {
+		const retryFallback = Object.freeze({
+			modelFallback: profile.modelFallback,
+			fallbackChains: Object.freeze(
+				Object.fromEntries(
+					Object.entries(profile.fallbackChains).map(([key, entries]) => [key, Object.freeze([...entries])]),
+				),
+			),
+		});
+		this._launchProfile = Object.freeze({ ...(this._launchProfile ?? { cwd: this.cwd }), retryFallback });
+		applyRetryFallbackProfile(this._session.settingsManager, retryFallback);
 	}
 
 	setRebindSession(rebindSession?: (session: AgentSession) => Promise<void>): void {

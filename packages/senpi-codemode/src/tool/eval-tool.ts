@@ -1,5 +1,6 @@
 import type { AgentToolResult, ToolDefinition } from "@code-yeongyu/senpi";
 import type { TUnsafe } from "typebox";
+import { resolveSandbox } from "../config/feature-settings.ts";
 import {
 	DEFAULT_FOREGROUND_WINDOW_SECONDS,
 	defaultCodemodeSettings,
@@ -8,7 +9,12 @@ import {
 import { buildEvalPrompt } from "../prompt/eval-prompt.ts";
 import { EvalDetachedCellManager } from "./detached-cell-manager.ts";
 import { executeEvalControl } from "./detached-eval-result.ts";
-import { isEvalControlRequest, normalizeEvalSummary, parseEvalRequest } from "./eval-request.ts";
+import {
+	EvalIsolateInvalidError,
+	isEvalControlRequest,
+	normalizeEvalSummary,
+	parseEvalRequest,
+} from "./eval-request.ts";
 import type { CreateEvalToolOptions } from "./eval-tool-options.ts";
 import { runEvalCell } from "./run-eval-cell.ts";
 import {
@@ -43,7 +49,8 @@ export function createEvalTool(options: CreateEvalToolOptions) {
 		foregroundWindowSeconds,
 		hardLimitSeconds: options.hardLimitSeconds ?? defaultEvalDeadlineSeconds.hardLimitSeconds,
 	};
-	const parameters = createEvalInputSchema(options.enabledLanguages, deadlines);
+	const sandbox = resolveSandbox(options.settings ?? defaultCodemodeSettings).enabled;
+	const parameters = createEvalInputSchema(options.enabledLanguages, deadlines, { sandbox });
 	const prompt = buildEvalPrompt(options.enabledLanguages, {
 		spawns: options.spawns ?? false,
 		monitor: options.monitor,
@@ -74,9 +81,14 @@ export function createEvalTool(options: CreateEvalToolOptions) {
 	async function execute(
 		...[toolCallId, params, signal, onUpdate, ctx]: EvalExecuteArgs<EvalToolRequest>
 	): Promise<AgentToolResult<EvalResultDetails>> {
-		const request = parseEvalRequest(params, languages);
+		const request = parseEvalRequest(params, languages, { sandbox });
 		if (isEvalControlRequest(request)) return await executeEvalControl(cellManager, request);
-		if (options.proxyExecutor) return await options.proxyExecutor(request, signal);
+		if (options.proxyExecutor) {
+			// A proxy runs cells elsewhere and knows nothing of sandbox cells: an isolated cell must never run unisolated.
+			if ("isolate" in request && request.isolate === true)
+				throw new EvalIsolateInvalidError("isolate: true is not available through this eval proxy");
+			return await options.proxyExecutor(request, signal);
+		}
 		if (!languages.includes(request.language))
 			throw new RangeError(
 				`Unsupported eval language "${request.language}". Enabled languages: ${languages.join(", ")}`,

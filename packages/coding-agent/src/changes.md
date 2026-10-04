@@ -1,3 +1,21 @@
+## 2026-10-05 - A single-session rpc process takes its fallback chain over the wire (omo#9582)
+
+### What changed
+
+- `packages/coding-agent/src/main.ts`: `createServices` applies a launch profile's `retryFallback` through the shared `applyRetryFallbackProfile` helper (`core/agent-session-runtime.ts`) instead of an inline `applyOverrides` block, so `open_session` and `set_retry_fallback` apply the policy the same way.
+
+### Why
+
+- omo task children that run as their own `--mode rpc` process (every Windows child) had no way to receive their category's fallback chain, so a usage limit after a tool call ended the child even with `fallback_models` configured. `set_retry_fallback` gives that process the same in-memory policy `open_session.retryFallback` gives a host session; the runtime factory has to apply it identically for later sessions of the process.
+
+### Why an extension could not handle it
+
+- The runtime factory builds each session's `SettingsManager` before any extension loads. An extension cannot reach a later replacement session's settings before its first turn.
+
+### Expected merge conflict zones
+
+- `main.ts`: the `createServices` block directly after `SettingsManager.create(cwd, agentDir, { projectTrusted })`.
+
 ## 2026-10-03 - EvalHandleHost capability exports (codemode plan node 10)
 
 ### What changed
@@ -280,6 +298,24 @@ Every upstream release that touches these paths re-adds or modifies them: re-run
 ### Expected merge conflict zones
 
 - LOW: the settlement call immediately before final text selection in `packages/coding-agent/src/modes/print-mode.ts`.
+
+## 2026-09-30 - Print, JSON, and RPC runs warn once about a clamped explicit thinking level (senpi#2395)
+
+### What changed
+
+- `packages/coding-agent/src/main.ts`: after runtime creation, non-interactive modes report `session.startupThinkingClamp` as one stderr warning. The CLI thinking re-apply passes the requested level from a clamped selection, so it keeps the clamp record instead of replacing it with the applied level.
+
+### Why
+
+- `--thinking high` on a model not marked `reasoning: true` silently ran with thinking off (senpi#2395). Spawned RPC children are one common way this level is set.
+
+### Why an extension could not handle it
+
+- The warning belongs to CLI startup before extensions see the session, and the re-apply is part of `main.ts` session creation.
+
+### Expected merge conflict zones
+
+- `main.ts`: the `cliThinkingOverride` re-apply in the session factory and the diagnostics block after `reportDiagnostics(runtime.diagnostics)`.
 
 ## 2026-09-30 - A runtime snapshot holds its own dependencies, and shared hosts run from it (#2408, #2409)
 

@@ -6,6 +6,7 @@
 
 ### Added
 
+- Isolated eval cells: with `sandbox.enabled`, `isolate: true` runs a JavaScript cell in a fresh QuickJS VM with no persistence and no ambient host (only `tools.*`, `print`, `display`), streaming output under a credit window. Off by default; the eval schema is unchanged until the setting is on.
 - An opt-in process-isolated JavaScript kernel (`isolation.js: "process"` or `SENPI_CODEMODE_JS_ISOLATION=process`) runs each JavaScript kernel in its own subprocess instead of a worker thread, so a kernel crash (`SIGSEGV`, out-of-memory, `process.exit`, an uncaught error) can no longer take down the host session; the next cell runs on a replacement child with a restart notice naming the crash. It isolates crashes, not hostile code: a cell is trusted as in worker mode, and hostile code belongs in `isolate: true` sandbox cells ([#2752](https://github.com/code-yeongyu/senpi/issues/2752) tracks hostile-cell isolation). The child runs on the host's own runtime, exits as soon as its host is gone (including `SIGKILL`), carries large output and `BigInt`/`undefined` values as worker mode does, and its frames carry a per-process token so stray output is never taken for a frame. The default stays `"worker"` and worker-mode behaviour is unchanged ([#2452](https://github.com/code-yeongyu/senpi/issues/2452)).
 - A JavaScript cell that is only `%bun add <package ...>` or `%npm add <package ...>` installs packages into a per-session managed environment without restarting the kernel; the next cell imports them by bare name, the project's `package.json` and `node_modules` are untouched, lifecycle scripts never run, and a failed or cancelled install leaves the previous packages active ([#2452](https://github.com/code-yeongyu/senpi/issues/2452)).
 
@@ -14,6 +15,7 @@
 ### Fixed
 
 - A nested tool call that is denied inside an `eval` cell (a permission denial or another hook's block) now reaches the cell as the plain denial, without the `Expected parameters:` schema hint that made it read like an argument error; argument failures still get the hint ([#2700](https://github.com/code-yeongyu/senpi/issues/2700)). Thanks to @MoerAI ([#2755](https://github.com/code-yeongyu/senpi/pull/2755)).
+- An `eval` run with an invalid `language` value (for example `"python"`, `""` or `null`) now gets its own error listing the enabled languages, instead of the "run requires language" message meant for an omitted one; `peek` and `stop` still need no language ([#1395](https://github.com/code-yeongyu/senpi/issues/1395)). Thanks to @MoerAI.
 
 ### Removed
 

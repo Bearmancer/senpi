@@ -123,6 +123,12 @@ Windows fresh-cache bootstrap p99 (30 samples). A stalled or failed start names
 the last stage and retains the interpreter's diagnostic error. The low-level
 `PythonKernel.start({ startupTimeoutMs })` override applies per stage.
 
+Every `eval` run must explicitly select an enabled `language` (`js`, `py`, `rb`,
+or `jl`); there is no default kernel, even when only one language is enabled.
+Omitting `action` means `run`, so it also requires `language`. Control requests
+with `action: "peek"` or `action: "stop"` use `cell_id` and do not require a
+language.
+
 ### Session environment
 
 Every kernel starts with the active session's `PI_*` environment — `PI_SESSION_ID`,
@@ -230,6 +236,19 @@ that project, with concurrent installs serialised by a lock. Setting
 of `environment_install_failed`, `environment_install_cancelled`,
 `environment_installer_unavailable` or `environment_resolution_conflict`.
 
+### Isolated cells
+
+With `sandbox.enabled: true`, a JavaScript call may pass `isolate: true`. The cell then runs in a fresh QuickJS VM (the vendored pi codemode runtime) instead of the persistent kernel:
+
+- Nothing persists: globals from the kernel are not visible, and a global set in one isolated cell is gone in the next. `store()` throws `eval_isolate_no_state` and `load()` returns `undefined`.
+- No ambient host: there is no `process`, `require`, file system, network, child processes or timers. The cell's only reach is `tools.<name>` (also `tool.<name>`; every active tool except `eval`, run through the same permission hooks as a direct call) plus `print`, `display`, `text` and `image`.
+- `isolate: true` isolates the JavaScript, not the tools it calls: a tool keeps its normal reach. `tools.bash`, for example, runs a shell with the session's environment and files, under the same permission hooks as any other call.
+- Output streams from the VM in frames under a 256 KiB credit window, so the VM never holds a large item; the host joins an item's frames before adding it to the result, and memory stays bounded by `sandbox.memoryMb`.
+- It is a host entry in the JavaScript queue: it waits for earlier cells, Stop and the run budget end it, and the persistent kernel is never restarted for it.
+- Limits: `sandbox.memoryMb` (default 64) and `sandbox.timeoutSeconds` (default 300). Failures are named: `eval_isolate_memory_limit`, `eval_isolate_timeout`, `eval_isolate_unresolved_promise` (a top-level promise that can never settle) and `eval_isolate_unavailable` (the runtime could not start).
+
+While `sandbox.enabled` is `false` (the default) the `isolate` field is absent from the eval schema, and passing it is refused with `eval_isolate_invalid`, as are `isolate` with another language and `isolate` with `reset`.
+
 ## Settings
 
 Configuration is loaded in this order:
@@ -303,7 +322,8 @@ Configuration is loaded in this order:
 | `prompt.advertiseHelpers` | `false` | When `true`, one pointer line to `tool_schema('eval:helpers')` is appended to the eval description. |
 | `kernelTools.enabled` | `true` | Allows cells to define kernel tools (`tool(fn)`, `@tool`). `false` makes them refuse with `tools_unavailable`. |
 
-The `languages.pyInterpreter`, `environments.*`, `sandbox.*`, `prompt.*` and `kernelTools.*` keys are accepted and validated now, with the defaults shown, which match today's behaviour. The effect each of those rows describes takes effect when its feature ships; until then, setting a key changes nothing. `isolation.js` ships in this release: `"process"` takes effect at the next kernel start.
+The `languages.pyInterpreter`, `environments.*`, `prompt.*` and `kernelTools.*` keys are accepted and validated now, with the defaults shown, which match today's behaviour. The effect each of those rows describes takes effect when its feature ships; until then, setting a key changes nothing. `isolation.js` ships in this release: `"process"` takes effect at the next kernel start.
+
 
 `SENPI_CODEMODE_PY`, `SENPI_CODEMODE_JS`, `SENPI_CODEMODE_RB`, and
 `SENPI_CODEMODE_JL` override the corresponding file setting. `1` or `true`
