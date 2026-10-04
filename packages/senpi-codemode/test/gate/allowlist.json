@@ -308,7 +308,9 @@
 				"imports/firstKernel/packages/senpi-codemode/src/environments/install-lock.ts",
 				"imports/firstKernel/packages/senpi-codemode/src/environments/py-environment.ts",
 				"imports/firstKernel/packages/senpi-codemode/src/environments/py-installer.ts",
-				"imports/firstKernel/packages/senpi-codemode/src/environments/revision-store.ts"
+				"imports/firstKernel/packages/senpi-codemode/src/environments/revision-store.ts",
+				"imports/extension/packages/senpi-codemode/src/environments/editable-check.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/environments/editable-check.ts"
 			],
 			"reason": "Node 14 part 3: %pip / %environment magic cells run as host entries in the Python kernel's queue and every Python cell imports from the session's active environment revision; the magic-cell modules, and the environments library they import (install-lock, py-environment, py-installer, revision-store, first reached from the extension here), join the scoped census, plus the new contracts. No prompt or eval schema change."
 		},
