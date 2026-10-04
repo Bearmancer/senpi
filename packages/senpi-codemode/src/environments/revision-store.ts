@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { chmod, cp, mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { type LockWaitNotice, withRootLock } from "./install-lock.ts";
 import { assertLinkStaysInside, assertNoLinksBelow, recordedInstallSources } from "./no-links.ts";
 import { EnvironmentError } from "./py-installer.ts";
@@ -120,12 +120,7 @@ async function highestRevision(base: string): Promise<number> {
 	return highest;
 }
 
-/** Creates `dir` and any missing parents as 0700, whatever the umask: each level this call creates is chmodded. */
+/** Creates `dir` and any missing parents private to the user (0700; the umask can only narrow it further). */
 export async function mkdirPrivate(dir: string): Promise<void> {
-	const first = await mkdir(dir, { recursive: true, mode: 0o700 });
-	if (first === undefined) return;
-	for (let level = dir; ; level = dirname(level)) {
-		await chmod(level, 0o700);
-		if (level === first || dirname(level) === level) return;
-	}
+	await mkdir(dir, { recursive: true, mode: 0o700 });
 }
