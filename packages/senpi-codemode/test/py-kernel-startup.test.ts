@@ -68,7 +68,7 @@ describe("Python startup progress", () => {
 	it("keeps waiting for a cold interpreter that is silent in its imports but busy on the CPU", async () => {
 		// Given: a contended cold start that stays in stdlib imports far longer than the guard, using CPU throughout.
 		vi.useFakeTimers();
-		const child = new FakeChild({ autoReady: false, pid: 4242 });
+		const child = new FakeChild({ autoReady: false });
 		let cpu = 0n;
 		const started = PythonKernel.start({
 			interpreterPath: "python3",
@@ -105,7 +105,7 @@ describe("Python startup progress", () => {
 	it("fails a silent and idle interpreter after the guard, naming the stage it stopped in", async () => {
 		// Given: an interpreter that reached stdlib imports, then neither writes nor uses any CPU.
 		vi.useFakeTimers();
-		const child = new FakeChild({ autoReady: false, pid: 4243 });
+		const child = new FakeChild({ autoReady: false });
 		const started = PythonKernel.start({
 			interpreterPath: "python3",
 			sessionId: "idle-stall",
@@ -134,7 +134,7 @@ describe("Python startup progress", () => {
 	it("stops an interpreter that stays busy but never becomes ready at the startup ceiling, naming its stage", async () => {
 		// Given: an interpreter spinning in stdlib imports (CPU always advancing, never ready).
 		vi.useFakeTimers();
-		const child = new FakeChild({ autoReady: false, pid: 4244 });
+		const child = new FakeChild({ autoReady: false });
 		let cpu = 0n;
 		const started = PythonKernel.start({
 			interpreterPath: "python3",
@@ -236,7 +236,7 @@ describe("Python startup progress", () => {
 	it("fails an interpreter that goes idle right after a stage change within one guard period", async () => {
 		// Given: CPU time that grows with the clock until the stage frame, then stops for good.
 		vi.useFakeTimers();
-		const child = new FakeChild({ autoReady: false, pid: 4245 });
+		const child = new FakeChild({ autoReady: false });
 		let frozen: bigint | undefined;
 		const started = PythonKernel.start({
 			interpreterPath: "python3",

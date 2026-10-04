@@ -16,14 +16,13 @@ export interface FakeChildOptions {
 	readonly rejectKill?: boolean;
 	readonly throwOnInterruptFrame?: boolean;
 	readonly onRun?: (message: Extract<HostToKernelMessage, { type: "run" }>) => void;
-	readonly pid?: number;
 }
 
 export class FakeChild implements KernelChild {
 	readonly stdin = new PassThrough();
 	readonly stdout = new PassThrough();
 	readonly stderr = new PassThrough();
-	readonly pid: number | undefined;
+	readonly pid: number | undefined = undefined;
 	readonly runMessages: Extract<HostToKernelMessage, { type: "run" }>[] = [];
 	readonly killSignals: NodeJS.Signals[] = [];
 	killed = false;
@@ -34,7 +33,6 @@ export class FakeChild implements KernelChild {
 
 	constructor(options: FakeChildOptions = {}) {
 		this.#options = options;
-		this.pid = options.pid;
 		this.stdin.on("data", (chunk) => {
 			const lines = String(chunk).split("\n").filter(Boolean);
 			for (const line of lines) {

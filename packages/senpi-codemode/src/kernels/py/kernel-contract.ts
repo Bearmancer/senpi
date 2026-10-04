@@ -21,7 +21,7 @@ export interface PythonKernelStartOptions extends KernelLifecycle {
 	/** Total startup backstop for an interpreter that stays busy but never becomes ready. */
 	readonly startupCeilingMs?: number;
 	/** Reads the interpreter's CPU time; the default reads the process group (Unix) or the process (Windows). */
-	readonly readCpuTime?: (pid: number) => bigint | undefined;
+	readonly readCpuTime?: (pid: number | undefined) => bigint | undefined;
 	/** Observes bootstrap control events without mixing them into cell output callbacks. */
 	readonly onStartupProgress?: (stage: PythonStartupStage) => void;
 	readonly onMessage?: (message: KernelToHostMessage) => void;

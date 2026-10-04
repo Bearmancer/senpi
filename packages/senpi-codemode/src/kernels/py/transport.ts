@@ -46,7 +46,7 @@ export interface PythonTransportOptions {
 	readonly sessionEnv?: SessionEnvironment;
 	readonly startupTimeoutMs: number;
 	readonly startupCeilingMs: number;
-	readonly readCpuTime?: (pid: number) => bigint | undefined;
+	readonly readCpuTime?: (pid: number | undefined) => bigint | undefined;
 	readonly onStartupProgress?: (stage: PythonStartupStage) => void;
 	readonly memory?: KernelMemoryThresholds;
 	/** Kernel-tool descriptors carry this; a restarted interpreter gets a new one, so old descriptors go stale. */
@@ -210,7 +210,10 @@ export class PythonKernelTransport {
 			noProgressMs: this.#options.startupTimeoutMs,
 			ceilingMs: this.#options.startupCeilingMs,
 			failureDetail: () => this.#stderrTail,
-			readCpuTime: () => (pid === undefined ? undefined : (this.#options.readCpuTime ?? readKernelCpuTime)(pid)),
+			readCpuTime: () => {
+				if (this.#options.readCpuTime) return this.#options.readCpuTime(pid);
+				return pid === undefined ? undefined : readKernelCpuTime(pid);
+			},
 		});
 		this.#startup = startup;
 		const onStdout = (chunk: unknown) => this.#onStdout(String(chunk));
