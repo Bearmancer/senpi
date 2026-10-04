@@ -6,6 +6,8 @@
 
 ### Added
 
+- Python kernel tools: `@tool` registers a function that in-process children can call, with its schema inferred from type hints; callbacks are served while the kernel is idle or its cell waits on a host call, never during a running computation, and a reset or redefinition makes old descriptors stale. `tool.defined()` / `tool.undefine()` in Python, and `tool_schema("eval:kernel-tools")` ([#2452](https://github.com/code-yeongyu/senpi/issues/2452)).
+
 - An opt-in `memory.idleParkMinutes` setting (off by default) closes a kernel that had no cell running or queued for that many minutes to give its memory back; the next cell starts a fresh kernel and its result says every earlier global is lost ([#2452](https://github.com/code-yeongyu/senpi/issues/2452)).
 - Ruby eval results name their largest globals, and Ruby and Julia kernels now get the same large-memory notice as JavaScript and Python when the interpreter footprint crosses `memory.noticeMb` ([#2452](https://github.com/code-yeongyu/senpi/issues/2452)).
 - Julia eval results name their largest globals in that notice ([#2452](https://github.com/code-yeongyu/senpi/issues/2452)).

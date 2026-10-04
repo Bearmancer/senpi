@@ -26,12 +26,18 @@ import subprocess
 import time
 import traceback
 import types
+import typing
 import urllib.error
 import urllib.request
 import uuid
 from collections.abc import Iterable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
+import contextvars
+import queue
+import threading
+from dataclasses import dataclass, field
+from typing import Iterator
 from threading import Lock, Thread
 from typing import Any, Callable, Union
 from urllib.parse import unquote
@@ -380,15 +386,20 @@ def bridge_post(path: str, payload: dict[str, Any], *, socket_timeout: float | N
         headers={"authorization": f"Bearer {token}", "content-type": "application/json"},
         method="POST",
     )
+    _guard_host_call(payload)
     emit_status(TIMEOUT_PAUSE_OP, force=True)
     try:
-        try:
-            with _BRIDGE_OPENER.open(request, timeout=socket_timeout) as response:
-                response_data = response.read()
-        except urllib.error.HTTPError as exc:
-            response_data = exc.read()
+        with KERNEL_TOOL_TOKEN.parked():
+            try:
+                with _BRIDGE_OPENER.open(request, timeout=socket_timeout) as response:
+                    response_data = response.read()
+            except urllib.error.HTTPError as exc:
+                response_data = exc.read()
     finally:
         emit_status(TIMEOUT_RESUME_OP, force=True)
+    invocation = CURRENT.get()
+    if invocation is not None and invocation.cancelled.is_set():
+        raise Cancelled(CANCELLED_AT_PARK_POINT)
 
     try:
         body = json.loads(response_data.decode("utf-8"))
@@ -400,6 +411,539 @@ def bridge_post(path: str, payload: dict[str, Any], *, socket_timeout: float | N
     if isinstance(error, dict):
         raise PreludeRuntimeError(str(error.get("message", error)), error.get("code"))
     raise PreludeRuntimeError(str(error))
+
+
+# --- Kernel tools (`@tool`): inference, admission token, output routing, registry and serving threads. ---
+# Admission is one interpreter-owner token: the main thread holds it while a cell runs and releases it only inside a
+# host bridge call or while idle; a callback runs only while holding it, so a cell busy in pure computation never yields.
+
+MCP_TOOL_NAME_MAX_LENGTH = 64
+_NAME_RE = re.compile(r"^[A-Za-z0-9_-]+$")
+RESERVED_TOOL_NAMES = frozenset({"__agent__", "__output__", "__schema__", "defined", "undefine"})
+_NONE_TYPE = type(None)
+
+
+class KernelToolError(Exception):
+    def __init__(self, code: str, message: str, details: dict[str, Any] | None = None) -> None:
+        super().__init__(message)
+        self.code = code
+        self.details = details
+
+
+def tool_key(name: str) -> str:
+    return re.sub(r"[^a-zA-Z0-9_-]", "_", name).replace("-", "_")
+
+
+def validate_tool_name(name: Any) -> str:
+    if not isinstance(name, str) or not name:
+        raise KernelToolError("invalid_tool_definition", "@tool name must be a non-empty string")
+    if not _NAME_RE.match(name) or len(name) > MCP_TOOL_NAME_MAX_LENGTH:
+        raise KernelToolError("invalid_tool_definition", f"Kernel tool name must match MCP name grammar: {name}")
+    if tool_key(name) in {tool_key(reserved) for reserved in RESERVED_TOOL_NAMES}:
+        raise KernelToolError("reserved_tool_name", f"Kernel tool name is reserved: {name}")
+    return name
+
+
+def _resolved_hints(fn: Callable[..., Any], params: list[inspect.Parameter]) -> dict[str, Any]:
+    try:
+        return typing.get_type_hints(fn, globalns=getattr(fn, "__globals__", None), include_extras=True)
+    except Exception as exc:  # noqa: BROAD_EXCEPT_OK — any resolution failure is reported with the annotation that caused it.
+        globalns = getattr(fn, "__globals__", {})
+        for param in params:
+            annotation = param.annotation
+            if not isinstance(annotation, str):
+                continue
+            try:
+                eval(annotation, globalns)  # noqa: S307 — the same evaluation get_type_hints performs, one annotation at a time.
+            except Exception as inner:  # noqa: BROAD_EXCEPT_OK — names the annotation that failed.
+                raise KernelToolError(
+                    "invalid_tool_definition",
+                    f"can't resolve the annotation {annotation!r} on parameter {param.name!r} ({inner}); pass schema=",
+                ) from inner
+        raise KernelToolError("invalid_tool_definition", f"can't resolve the type hints ({exc}); pass schema=") from exc
+
+
+def _schema_for(annotation: Any, where: str) -> dict[str, Any]:
+    if annotation is inspect.Parameter.empty or annotation is typing.Any:
+        return {}
+    origin = typing.get_origin(annotation)
+    args = typing.get_args(annotation)
+    if origin is typing.Annotated:
+        schema = _schema_for(args[0], where)
+        description = next((item for item in args[1:] if isinstance(item, str)), None)
+        return {**schema, "description": description} if description is not None else schema
+    if annotation is _NONE_TYPE or annotation is None:
+        return {"type": "null"}
+    if annotation is bool:
+        return {"type": "boolean"}
+    if annotation is int:
+        return {"type": "integer"}
+    if annotation is float:
+        return {"type": "number"}
+    if annotation is str:
+        return {"type": "string"}
+    if annotation is list or annotation is typing.List:
+        return {"type": "array"}
+    if annotation is dict or annotation is typing.Dict:
+        return {"type": "object"}
+    if origin is list:
+        return {"type": "array", "items": _schema_for(args[0], where)} if args else {"type": "array"}
+    if origin is dict:
+        if args and args[0] is not str:
+            raise KernelToolError("invalid_tool_definition", f"{where}: dict keys must be str")
+        return {"type": "object", "additionalProperties": _schema_for(args[1], where)} if args else {"type": "object"}
+    if origin is typing.Literal:
+        if not all(isinstance(value, (str, int, float, bool)) or value is None for value in args):
+            raise KernelToolError("invalid_tool_definition", f"{where}: Literal values must be JSON scalars")
+        return {"enum": list(args)}
+    if origin is typing.Union or origin is getattr(types, "UnionType", None):
+        return {"anyOf": [_schema_for(item, where) for item in args]}
+    raise KernelToolError("invalid_tool_definition", f"{where}: unsupported annotation {annotation!r}; pass schema=")
+
+
+def _json_default(value: Any, where: str) -> Any:
+    if callable(value):
+        raise KernelToolError("invalid_tool_definition", f"{where}: default must be a JSON value, not a callable")
+    try:
+        json.dumps(value, allow_nan=False)
+    except (TypeError, ValueError) as exc:
+        raise KernelToolError("invalid_tool_definition", f"{where}: default must be a JSON value ({exc})") from exc
+    return value
+
+
+def _description(fn: Callable[..., Any], explicit: Any) -> str:
+    if explicit is not None:
+        if not isinstance(explicit, str):
+            raise KernelToolError("invalid_tool_definition", "@tool description must be a string")
+        return explicit
+    doc = inspect.getdoc(fn) or ""
+    return doc.split("\n\n", 1)[0].strip()
+
+
+def infer_tool(fn: Any, *, name: Any = None, description: Any = None, schema: Any = None) -> dict[str, Any]:
+    if not callable(fn) or not hasattr(fn, "__name__"):
+        raise KernelToolError("invalid_tool_definition", "@tool requires a named function")
+    tool_name = validate_tool_name(fn.__name__ if name is None else name)
+    params = list(inspect.signature(fn).parameters.values())
+    for param in params:
+        if param.kind is inspect.Parameter.POSITIONAL_ONLY:
+            raise KernelToolError("invalid_tool_definition", "positional-only parameters are not supported")
+        if param.kind in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD):
+            raise KernelToolError("invalid_tool_definition", f"*args and **kwargs are not supported ({param.name})")
+    names = [param.name for param in params]
+    text = _description(fn, description)
+    if schema is not None:
+        if not isinstance(schema, dict) or schema.get("type") != "object" or not isinstance(schema.get("properties"), dict):
+            raise KernelToolError("invalid_tool_definition", "@tool schema must be a JSON object schema")
+        if sorted(schema["properties"]) != sorted(names):
+            raise KernelToolError("invalid_tool_definition", "@tool schema properties must match parameters")
+        return {"name": tool_name, "description": text, "input_schema": schema, "params": names}
+    hints = _resolved_hints(fn, params)
+    properties: dict[str, Any] = {}
+    required: list[str] = []
+    for param in params:
+        where = f"parameter {param.name!r}"
+        prop = _schema_for(hints.get(param.name, param.annotation), where)
+        if param.default is inspect.Parameter.empty:
+            required.append(param.name)
+        else:
+            prop = {**prop, "default": _json_default(param.default, where)}
+        properties[param.name] = prop
+    input_schema: dict[str, Any] = {"type": "object", "properties": properties, "additionalProperties": False}
+    if required:
+        input_schema["required"] = required
+    return {"name": tool_name, "description": text, "input_schema": input_schema, "params": names}
+
+
+class OwnerToken:
+    def __init__(self) -> None:
+        self._cond = threading.Condition()
+        self._owner: int | None = None
+        self._depth = 0
+
+    def acquire(self) -> None:
+        me = threading.get_ident()
+        with self._cond:
+            while self._owner not in (None, me):
+                self._cond.wait()
+            self._owner = me
+            self._depth += 1
+
+    def release(self) -> None:
+        with self._cond:
+            if self._owner != threading.get_ident():
+                return
+            self._depth -= 1
+            if self._depth == 0:
+                self._owner = None
+                self._cond.notify_all()
+
+    @contextlib.contextmanager
+    def parked(self) -> Iterator[None]:
+        me = threading.get_ident()
+        with self._cond:
+            held = self._depth if self._owner == me else 0
+            if held:
+                self._owner, self._depth = None, 0
+                self._cond.notify_all()
+        try:
+            yield
+        finally:
+            if held:
+                with self._cond:
+                    while self._owner not in (None, me):
+                        self._cond.wait()
+                    self._owner, self._depth = me, held
+
+
+class ThreadRoutedStream(io.TextIOBase):
+    """sys.stdout / sys.stderr: each writer thread's text goes to the buffer it registered, else the cell's."""
+
+    def __init__(self, stderr: bool) -> None:
+        self._stderr = stderr
+        self._targets: dict[int, io.StringIO] = {}
+        self.cell_target: io.StringIO | None = None
+
+    @contextlib.contextmanager
+    def capture(self, buffer: io.StringIO, *, cell: bool) -> Iterator[None]:
+        me = threading.get_ident()
+        previous = self._targets.get(me)
+        self._targets[me] = buffer
+        if cell:
+            self.cell_target = buffer
+        try:
+            yield
+        finally:
+            if previous is None:
+                self._targets.pop(me, None)
+            else:
+                self._targets[me] = previous
+            if cell:
+                self.cell_target = None
+
+    def write(self, text: str) -> int:
+        target = self._targets.get(threading.get_ident()) or self.cell_target
+        if target is None:
+            return sys.__stderr__.write(text)
+        return target.write(text)
+
+    def writable(self) -> bool:
+        return True
+
+    @property
+    def encoding(self) -> None:
+        return None
+
+
+@dataclass
+class _Entry:
+    name: str
+    fn: Callable[..., Any]
+    description: str
+    input_schema: dict[str, Any]
+    params: list[str]
+    revision: int
+
+
+class Registry:
+    def __init__(self, on_change: Callable[[list[str]], None]) -> None:
+        self._lock = threading.Lock()
+        self._entries: dict[str, _Entry] = {}
+        self._on_change = on_change
+        self.generation = 1
+
+    def define(self, fn: Any, *, name: Any = None, description: Any = None, schema: Any = None) -> Any:
+        inferred = infer_tool(fn, name=name, description=description, schema=schema)
+        key = tool_key(inferred["name"])
+        with self._lock:
+            existing = self._entries.get(key)
+            if existing is not None and existing.name != inferred["name"]:
+                raise KernelToolError("tool_name_collision", f"Kernel tool name collides: {inferred['name']}")
+            revision = existing.revision + 1 if existing is not None else 1
+            self._entries[key] = _Entry(fn=fn, revision=revision, **inferred)
+            names = sorted(entry.name for entry in self._entries.values())
+        self._on_change(names)
+        return fn
+
+    def undefine(self, name: Any) -> bool:
+        if not isinstance(name, str):
+            return False
+        with self._lock:
+            removed = self._entries.pop(tool_key(name), None) is not None
+            names = sorted(entry.name for entry in self._entries.values())
+        if removed:
+            self._on_change(names)
+        return removed
+
+    def defined(self) -> list[str]:
+        with self._lock:
+            return sorted(entry.name for entry in self._entries.values())
+
+    def describe(self, names: list[str]) -> list[dict[str, Any]]:
+        results = []
+        with self._lock:
+            for name in names:
+                entry = self._entries.get(tool_key(name))
+                if entry is None:
+                    error = {"code": "kernel_tool_missing", "message": f"Kernel tool is not defined: {name}"}
+                    results.append({"name": name, "ok": False, "error": error})
+                    continue
+                descriptor = {"name": entry.name, "description": entry.description, "input_schema": entry.input_schema,
+                              "language": "py", "kernel_generation": self.generation, "definition_revision": entry.revision}
+                results.append({"name": name, "ok": True, "descriptor": descriptor})
+        return results
+
+    def resolve(self, request: dict[str, Any]) -> _Entry:
+        if request.get("kernel_generation") != self.generation:
+            raise KernelToolError("kernel_tool_stale", "Kernel tool descriptor generation is stale")
+        with self._lock:
+            entry = self._entries.get(tool_key(str(request.get("name", ""))))
+        if entry is None:
+            raise KernelToolError("kernel_tool_missing", f"Kernel tool is not defined: {request.get('name')}")
+        if entry.revision != request.get("definition_revision"):
+            raise KernelToolError("kernel_tool_stale", "Kernel tool descriptor revision is stale")
+        return entry
+
+    def is_live(self, entry: _Entry) -> bool:
+        with self._lock:
+            return self._entries.get(tool_key(entry.name)) is entry
+
+
+class Cancelled(BaseException):
+    pass
+
+
+@dataclass
+class Invocation:
+    request_id: str
+    call_id: str
+    scope: Any
+    cancelled: threading.Event = field(default_factory=threading.Event)
+    task: tuple[asyncio.AbstractEventLoop, asyncio.Task[Any]] | None = None
+
+
+CURRENT: contextvars.ContextVar[Invocation | None] = contextvars.ContextVar("senpi_kernel_tool_call", default=None)
+
+
+def host_call_refusal(scope: Any, tool_name: str) -> str | None:
+    tools = scope.get("tools") if isinstance(scope, dict) else None
+    if not isinstance(tools, dict):
+        return None
+    deny, allow = tools.get("deny"), tools.get("allow")
+    if deny is not None and (not isinstance(deny, list) or tool_name in deny):
+        return "deny"
+    if allow is not None and (not isinstance(allow, list) or tool_name not in allow):
+        return "allow"
+    return None
+
+
+def jsonable(value: Any) -> Any:
+    try:
+        json.dumps(value, allow_nan=False)
+    except (TypeError, ValueError):
+        return repr(value)
+    return value
+
+
+def validate_args(schema: dict[str, Any], args: Any) -> dict[str, Any]:
+    if not isinstance(args, dict):
+        raise KernelToolError("invalid_tool_definition", "kernel tool args must be a JSON object")
+    missing = [key for key in schema.get("required", []) if key not in args]
+    if missing:
+        raise KernelToolError("invalid_tool_definition", f"kernel tool args are missing: {', '.join(missing)}")
+    properties = schema.get("properties", {})
+    unknown = [key for key in args if key not in properties]
+    if unknown:
+        raise KernelToolError("invalid_tool_definition", f"kernel tool args are not parameters: {', '.join(unknown)}")
+    return args
+
+
+def is_coroutine_function(fn: Callable[..., Any]) -> bool:
+    return inspect.iscoroutinefunction(fn)
+
+
+CANCELLED_AT_PARK_POINT = "cancelled: took effect at a host park point"
+CANCELLED_AT_AWAIT = "cancelled: took effect at an await point"
+CANCELLED_BEFORE_START = "cancelled: the call never started"
+CANCELLED_RESULT_DROPPED = "cancelled: the call finished after cancellation; its result was dropped"
+
+
+class KernelToolRunner:
+    """Answers describe from the reader thread and runs each invocation on its own thread under the token."""
+
+    def __init__(
+        self,
+        emit: Callable[[dict[str, Any]], None],
+        token: OwnerToken,
+        registry: Registry,
+        streams: tuple[ThreadRoutedStream, ThreadRoutedStream],
+    ) -> None:
+        self._emit = emit
+        self._token = token
+        self._registry = registry
+        self._streams = streams
+        self._lock = threading.Lock()
+        self._invocations: dict[str, Invocation] = {}
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._closed = False
+
+    def handle(self, message: dict[str, Any]) -> bool:
+        kind = message.get("type")
+        if kind == "kernel-tool-describe":
+            names = [str(name) for name in message.get("names", [])]
+            self._emit({"type": "kernel-tool-describe-reply", "requestId": message.get("requestId"), "ok": True,
+                        "results": self._registry.describe(names)})
+            return True
+        if kind == "kernel-tool-invoke":
+            self._start(message)
+            return True
+        if kind == "kernel-tool-cancel":
+            self._cancel(str(message.get("requestId", "")))
+            return True
+        return False
+
+    def close(self) -> None:
+        with self._lock:
+            self._closed = True
+            pending = list(self._invocations.values())
+        for invocation in pending:
+            invocation.cancelled.set()
+
+    def _start(self, message: dict[str, Any]) -> None:
+        invocation = Invocation(request_id=str(message.get("requestId", "")), call_id=str(message.get("call_id", "")),
+                                scope=message.get("scope"))
+        with self._lock:
+            if self._closed:
+                self._reply_error(invocation, "tools_unavailable", "Python kernel is closing")
+                return
+            self._invocations[invocation.request_id] = invocation
+        thread = threading.Thread(target=self._run, args=(invocation, message), name="senpi-kernel-tool", daemon=True)
+        thread.start()
+
+    def _cancel(self, request_id: str) -> None:
+        with self._lock:
+            invocation = self._invocations.get(request_id)
+        if invocation is None:
+            return
+        invocation.cancelled.set()
+        if invocation.task is not None:
+            loop, task = invocation.task
+            loop.call_soon_threadsafe(task.cancel)
+
+    def _run(self, invocation: Invocation, message: dict[str, Any]) -> None:
+        output = io.StringIO()
+        try:
+            entry = self._registry.resolve(message)
+            args = validate_args(entry.input_schema, message.get("args"))
+            self._token.acquire()
+            try:
+                if invocation.cancelled.is_set():
+                    raise Cancelled(CANCELLED_BEFORE_START)
+                CURRENT.set(invocation)
+                stdout, stderr = self._streams
+                with stdout.capture(output, cell=False), stderr.capture(output, cell=False):
+                    value = self._call(invocation, entry.fn, args)
+            finally:
+                CURRENT.set(None)
+                self._token.release()
+            if invocation.cancelled.is_set():
+                raise Cancelled(CANCELLED_RESULT_DROPPED)
+            if not self._registry.is_live(entry):
+                raise KernelToolError("kernel_tool_stale", "Kernel tool descriptor is stale")
+            self._emit({"type": "kernel-tool-invoke-reply", "requestId": invocation.request_id, "ok": True,
+                        "value": jsonable(value), **self._output_field(output)})
+        except Cancelled as exc:
+            self._reply_error(invocation, "kernel_tool_cancelled", str(exc), output)
+        except KernelToolError as exc:
+            self._reply_error(invocation, exc.code, str(exc), output, exc.details)
+        except BaseException as exc:  # noqa: BROAD_EXCEPT_OK — the invocation boundary serializes the tool's own failure.
+            self._reply_error(invocation, "kernel_tool_failed", f"{type(exc).__name__}: {exc}", output,
+                              stack="".join(traceback.format_exception(type(exc), exc, exc.__traceback__)))
+        finally:
+            with self._lock:
+                self._invocations.pop(invocation.request_id, None)
+
+    def _call(self, invocation: Invocation, fn: Callable[..., Any], args: dict[str, Any]) -> Any:
+        result = fn(**args)
+        if not asyncio.iscoroutine(result) and not isinstance(result, asyncio.Future):
+            return result
+        loop = self._callback_loop()
+        temporary = loop.is_running()
+        if temporary:
+            loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        task = loop.create_task(_awaited(result))
+        invocation.task = (loop, task)
+        try:
+            return loop.run_until_complete(task)
+        except asyncio.CancelledError as exc:
+            raise Cancelled(CANCELLED_AT_AWAIT) from exc
+        except RuntimeError as exc:
+            if "attached to a different loop" in str(exc) or "different event loop" in str(exc):
+                raise KernelToolError(
+                    "kernel_tool_loop_mismatch",
+                    "an awaited object belongs to another event loop (for example the parent cell's); "
+                    "create it inside the tool",
+                ) from exc
+            raise
+        finally:
+            invocation.task = None
+            asyncio.set_event_loop(None)
+            if temporary:
+                loop.close()
+
+    def _callback_loop(self) -> asyncio.AbstractEventLoop:
+        with self._lock:
+            if self._loop is None or self._loop.is_closed():
+                self._loop = asyncio.new_event_loop()
+            return self._loop
+
+    def _output_field(self, output: io.StringIO) -> dict[str, Any]:
+        text = output.getvalue()
+        return {"output": text} if text else {}
+
+    def _reply_error(self, invocation: Invocation, code: str, message: str, output: io.StringIO | None = None,
+                     details: Any = None, stack: str | None = None) -> None:
+        error: dict[str, Any] = {"code": code, "message": message}
+        if details is not None:
+            error["details"] = details
+        if stack is not None:
+            error["stack"] = stack
+        frame: dict[str, Any] = {"type": "kernel-tool-invoke-reply", "requestId": invocation.request_id, "ok": False,
+                                 "error": error}
+        if output is not None:
+            frame.update(self._output_field(output))
+        self._emit(frame)
+
+
+async def _awaited(awaitable: Any) -> Any:
+    return await awaitable
+
+
+KERNEL_TOOL_TOKEN = OwnerToken()
+KERNEL_TOOL_STREAMS = (ThreadRoutedStream(stderr=False), ThreadRoutedStream(stderr=True))
+KERNEL_TOOL_REGISTRY = Registry(lambda names: emit({"type": "kernel-tools-defined", "names": names}))
+KERNEL_TOOL_RUNNER = KernelToolRunner(emit, KERNEL_TOOL_TOKEN, KERNEL_TOOL_REGISTRY, KERNEL_TOOL_STREAMS)
+
+
+def _prelude_tool_error(exc: KernelToolError) -> PreludeRuntimeError:
+    return PreludeRuntimeError(f"{exc.code}: {exc}", exc.code)
+
+
+def _guard_host_call(payload: dict[str, Any]) -> None:
+    invocation = CURRENT.get()
+    if invocation is None:
+        return
+    if invocation.cancelled.is_set():
+        raise Cancelled(CANCELLED_AT_PARK_POINT)
+    tool_name = payload.get("toolName")
+    refusal = host_call_refusal(invocation.scope, tool_name) if isinstance(tool_name, str) else None
+    if refusal is not None:
+        raise KernelToolError(
+            "kernel_tool_host_denied",
+            f"Host tool is outside this kernel tool call's scope: {tool_name} ({refusal})",
+            {"tool": tool_name, "call_id": invocation.call_id, "reason": refusal},
+        )
 
 
 class ToolCallable:
@@ -429,6 +973,21 @@ class ToolCallable:
 
 class ToolProxy:
     __slots__ = ()
+
+    def __call__(self, fn: Any = None, /, *, name: Any = None, description: Any = None, schema: Any = None) -> Any:
+        def register(target: Any) -> Any:
+            try:
+                return KERNEL_TOOL_REGISTRY.define(target, name=name, description=description, schema=schema)
+            except KernelToolError as exc:
+                raise _prelude_tool_error(exc) from None
+
+        return register if fn is None else register(fn)
+
+    def defined(self) -> list[str]:
+        return KERNEL_TOOL_REGISTRY.defined()
+
+    def undefine(self, name: Any) -> bool:
+        return KERNEL_TOOL_REGISTRY.undefine(name)
 
     def __getattr__(self, name: str) -> ToolCallable:
         if name.startswith("_"):
@@ -1500,7 +2059,9 @@ def run_cell(cell_id: str, code: str, preludes: Any = None) -> None:
     signal.signal(signal.SIGINT, signal.default_int_handler)
     result: dict[str, Any]
     try:
-        with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+        KERNEL_TOOL_TOKEN.acquire()
+        cell_stdout, cell_stderr = KERNEL_TOOL_STREAMS
+        with cell_stdout.capture(stdout, cell=True), cell_stderr.capture(stderr, cell=True):
             apply_preludes(preludes)
             body, expression = compile_cell(code)
             LOOP.run_until_complete(run_code(body, False))
@@ -1526,6 +2087,7 @@ def run_cell(cell_id: str, code: str, preludes: Any = None) -> None:
             "durationMs": elapsed(start),
         }
     finally:
+        KERNEL_TOOL_TOKEN.release()
         signal.signal(signal.SIGINT, signal.SIG_IGN)
     try:
         memory = KERNEL_MEMORY.after_cell()
@@ -1550,6 +2112,9 @@ def _handle_message(message: dict[str, Any]) -> bool:
             emit({"type": "init-failed", "error": {"message": "missing bridge connection"}})
             return True
         CONNECTION = connection
+        generation = message.get("kernelGeneration")
+        if isinstance(generation, int) and not isinstance(generation, bool):
+            KERNEL_TOOL_REGISTRY.generation = generation
         KERNEL_MEMORY.configure(message.get("memory"))
         emit({"type": "ready"})
         return True
@@ -1557,6 +2122,7 @@ def _handle_message(message: dict[str, Any]) -> bool:
         run_cell(str(message.get("cellId", "")), str(message.get("code", "")), message.get("preludes"))
         return True
     if message_type == "close":
+        KERNEL_TOOL_RUNNER.close()
         emit({"type": "closed"})
         return False
     return True
@@ -1612,14 +2178,37 @@ def _start_parent_watch() -> None:
         ).start()
 
 
+def _read_control(commands: queue.Queue[tuple[str, Any]]) -> None:
+    # Kernel-tool frames are served here, so a callback can be admitted while the main thread is inside a cell.
+    for raw in sys.stdin:
+        try:
+            message = json.loads(raw)
+        except BaseException as exc:  # noqa: BROAD_EXCEPT_OK — malformed input is reported by the main loop, in order.
+            commands.put(("malformed", exc))
+            continue
+        if isinstance(message, dict) and KERNEL_TOOL_RUNNER.handle(message):
+            continue
+        commands.put(("message", message))
+    commands.put(("eof", None))
+
+
 def main() -> None:
     emit_status("kernel-startup", force=True, stage="host-init")
     signal.signal(signal.SIGINT, signal.SIG_IGN)
     _start_parent_watch()
+    sys.stdout, sys.stderr = KERNEL_TOOL_STREAMS
+    commands: queue.Queue[tuple[str, Any]] = queue.Queue()
+    threading.Thread(target=_read_control, args=(commands,), name="senpi-control-reader", daemon=True).start()
     host_closed = False
-    for raw in sys.stdin:
+    while True:
+        kind, payload = commands.get()
+        if kind == "eof":
+            break
+        if kind == "malformed":
+            emit({"type": "init-failed", "error": bridge_error(payload)})
+            continue
         try:
-            if not _handle_message(json.loads(raw)):
+            if not _handle_message(payload):
                 host_closed = True
                 break
         except BaseException as exc:  # noqa: BROAD_EXCEPT_OK — process boundary serializes malformed input and interrupts.
