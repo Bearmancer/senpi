@@ -1,8 +1,9 @@
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { cp, lstat, mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { chmod, cp, mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import { type LockWaitNotice, withRootLock } from "./install-lock.ts";
+import { assertLinkStaysInside, assertNoLinksBelow, recordedInstallSources } from "./no-links.ts";
 import { EnvironmentError } from "./py-installer.ts";
 
 const POINTER = "active";
@@ -50,7 +51,7 @@ export async function publishNextRevision(
 	signal?: AbortSignal,
 	onLockWait?: (notice: LockWaitNotice) => void,
 ): Promise<{ readonly revision: Revision; readonly previous: Revision | undefined }> {
-	await mkdir(base, { recursive: true });
+	await mkdirPrivate(base);
 	return withRootLock(
 		base,
 		async () => {
@@ -59,15 +60,18 @@ export async function publishNextRevision(
 			const staging = join(base, `.staging-rev-${number}-${process.pid}-${randomUUID()}`);
 			const dir = join(base, `rev-${number}`);
 			try {
-				if (previous === undefined) await mkdir(staging, { recursive: true });
+				if (previous === undefined) await mkdir(staging, { mode: 0o700 });
 				else {
-					// A revision that is a link would carry the link itself into staging, and the build would
-					// then write through it into whatever it points at.
-					if (!(await lstat(previous.dir)).isDirectory()) {
-						throw new Error(`rev-${previous.number} is not a real directory; refusing to build on it`);
-					}
-					await cp(previous.dir, staging, { recursive: true, verbatimSymlinks: true });
+					await assertNoLinksBelow(base, previous.dir);
+					const sources = await recordedInstallSources(previous.dir);
+					await cp(previous.dir, staging, {
+						recursive: true,
+						verbatimSymlinks: true,
+						filter: async (source) => await assertLinkStaysInside(source, previous.dir, sources),
+					});
 				}
+				// Explicit, not left to the umask: a revision holds the user's installed packages and carried registry config.
+				await chmod(staging, 0o700);
 				await build(staging, previous);
 				signal?.throwIfAborted();
 				await renameRetrying(staging, dir);
@@ -114,4 +118,14 @@ async function highestRevision(base: string): Promise<number> {
 		if (match?.[1] !== undefined) highest = Math.max(highest, Number(match[1]));
 	}
 	return highest;
+}
+
+/** Creates `dir` and any missing parents as 0700, whatever the umask: each level this call creates is chmodded. */
+export async function mkdirPrivate(dir: string): Promise<void> {
+	const first = await mkdir(dir, { recursive: true, mode: 0o700 });
+	if (first === undefined) return;
+	for (let level = dir; ; level = dirname(level)) {
+		await chmod(level, 0o700);
+		if (level === first || dirname(level) === level) return;
+	}
 }
