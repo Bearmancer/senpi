@@ -8,7 +8,7 @@
 
 ### Why
 
-- The resident SDK session only accepts appended messages. With the documented `compaction.model` escape hatch senpi owns compaction on the lane, so the context reduction ran there: past its 50% gate it rewrites older messages, the sent stream diverges from the SDK transcript (`sent_stream_diverged`) and every later turn re-sends the history through a fork or a cold-seed instead of a delta. Measured on the real lane (claude-haiku-4-5, 120k window, senpi-owned): from the first rewrite on, cache reads dropped to the ~20k system prompt with 24-43k cache writes per turn; with the reduction skipped every turn stayed `delta / prefix_matched` and cache reads grew turn by turn.
+- The resident SDK session only accepts appended messages. With the documented `compaction.model` escape hatch senpi owns compaction on the lane, so the context reduction ran there: past its 50% gate it rewrites older messages, the sent stream diverges from the SDK transcript (`sent_stream_diverged`) and every later turn re-sends the history through a fork or a cold-seed instead of a delta. Measured on the real lane (claude-haiku-4-5, 120k window, senpi-owned): from the first rewrite on, cache reads dropped to the ~20k system prompt with 13-43k cache writes per turn; with the reduction skipped every turn stayed `delta / prefix_matched` and cache reads grew turn by turn.
 
 ### Why an extension could not handle it
 
