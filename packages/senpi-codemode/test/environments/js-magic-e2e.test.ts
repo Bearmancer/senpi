@@ -103,10 +103,16 @@ describe.skipIf(!hasCommand("bun") || !hasCommand("npm"))("Given a JavaScript ev
 		const controller = new AbortController();
 		const installerStarted = Promise.withResolvers<void>();
 		const original = environments.install.bind(environments);
-		environments.install = (requested, signal, onOutput) => {
-			installerStarted.resolve();
-			return original(requested, signal, onOutput);
-		};
+		environments.install = (requested, signal, onOutput, installer) =>
+			original(
+				requested,
+				signal,
+				(stream, data) => {
+					installerStarted.resolve();
+					onOutput?.(stream, data);
+				},
+				installer,
+			);
 
 		const pending = run(`%npm add ${tarball}`, controller.signal);
 		await installerStarted.promise;
@@ -133,14 +139,24 @@ describe.skipIf(!hasCommand("bun") || !hasCommand("npm"))("Given a JavaScript ev
 		const tarball = await packFixture(fixtures, "senpi-close-probe", "1.0.0", probeSource);
 		const installStarted = Promise.withResolvers<{ readonly installing: Promise<unknown> }>();
 		const original = environments.install.bind(environments);
-		environments.install = (requested, signal, onOutput) => {
-			const installing = original(requested, signal, onOutput);
+		const installerOutput = Promise.withResolvers<void>();
+		environments.install = (requested, signal, onOutput, installer) => {
+			const installing = original(
+				requested,
+				signal,
+				(stream, data) => {
+					installerOutput.resolve();
+					onOutput?.(stream, data);
+				},
+				installer,
+			);
 			installStarted.resolve({ installing });
 			return installing;
 		};
 
 		const pending = run(`%npm add ${tarball}`).catch((error: unknown) => error);
 		const { installing } = await installStarted.promise;
+		await installerOutput.promise;
 		await dispose();
 		const outcome = await installing.then(
 			() => "published",
