@@ -23,9 +23,10 @@ class SenpiWorkpool
   end
 end
 
-def workpool(agent, name, mode: nil)
+def workpool(agent, name, mode: nil, tools: nil)
   args = { "op" => "create", "agent" => agent, "name" => name }
   args["mode"] = mode unless mode.nil?
+  args["tools"] = tools.to_a unless tools.nil?
   result = __senpi_workpool_call(args)
   details = result["details"]
   if details.is_a?(Hash)

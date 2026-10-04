@@ -210,9 +210,10 @@ function Base.getproperty(pool::SenpiWorkpool, name::Symbol)
     getfield(pool, name)
 end
 
-function workpool(agent::AbstractDict, name::AbstractString; mode=nothing)
+function workpool(agent::AbstractDict, name::AbstractString; mode=nothing, tools=nothing)
     args = Dict{String, Any}("op" => "create", "agent" => agent, "name" => name)
     mode !== nothing && (args["mode"] = mode)
+    tools !== nothing && (args["tools"] = collect(tools))
     result = senpi_workpool_call(args)
     details = get(result, "details", nothing)
     if details isa AbstractDict

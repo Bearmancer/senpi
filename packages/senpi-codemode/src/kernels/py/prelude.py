@@ -1036,10 +1036,14 @@ class Workpool:
         return _workpool_call({"op": "cancel", "pool_id": self.pool_id})
 
 
-def workpool(agent: dict[str, JsonValue], name: str, *, mode: str | None = None) -> Workpool:
+def workpool(
+    agent: dict[str, JsonValue], name: str, *, mode: str | None = None, tools: list[str] | None = None
+) -> Workpool:
     args: dict[str, JsonValue] = {"op": "create", "agent": agent, "name": name}
     if mode is not None:
         args["mode"] = mode
+    if tools is not None:
+        args["tools"] = list(tools)
     result = _workpool_call(args)
     details = result.get("details")
     if isinstance(details, dict):
