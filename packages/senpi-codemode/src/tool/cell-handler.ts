@@ -235,22 +235,20 @@ export class CellHandler {
 			this.#kernel.deliverToolReply({ type: "tool-reply", callId: message.callId, ok: true, value: reply.value });
 		} catch (error) {
 			if (!this.#state.active) return;
-			const text = appendSchemaHint(
-				error instanceof Error ? error.message : String(error),
-				message.toolName,
-				this.#toolParameters(message.toolName),
-			);
+			const code =
+				error instanceof Error && "code" in error && typeof error.code === "string" ? error.code : undefined;
+			const errorMessage = error instanceof Error ? error.message : String(error);
+			// A blocked call (a permission denial or another hook's veto) is not an argument problem.
+			const text =
+				code === "blocked"
+					? errorMessage
+					: appendSchemaHint(errorMessage, message.toolName, this.#toolParameters(message.toolName));
 			recordToolCall(this.#state.toolCalls, false, capture, undefined, text);
 			this.#kernel.deliverToolReply({
 				type: "tool-reply",
 				callId: message.callId,
 				ok: false,
-				error: {
-					message: text,
-					...(error instanceof Error && "code" in error && typeof error.code === "string"
-						? { code: error.code }
-						: {}),
-				},
+				error: { message: text, ...(code === undefined ? {} : { code }) },
 			});
 		}
 		this.#resultBuilder.emitUpdate(false);

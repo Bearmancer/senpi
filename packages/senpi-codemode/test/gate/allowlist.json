@@ -830,6 +830,13 @@
 					"reason": "Python now has real kernel tools that a Python cell can grant (#2731), so py leaves this contract: the replaceable kernel forwards them to its current instance (new contract 'Given the replaceable kernel a session holds for py when its interpreter is replaced then kernel tools reach only the new instance'); the rb/jl case is the new contract 'Given the replaceable kernel a session holds for rb and jl ...'."
 				}
 			]
+		},
+		"senpi#2700": {
+			"additions": [
+				"legacyContracts/test/tool-schema-hint.test.ts/kernel tool-call denials (senpi#2700) delivers a blocked call's denial without the parameter schema",
+				"legacyContracts/test/tool-schema-hint.test.ts/kernel tool-call denials (senpi#2700) still appends the parameter schema to an invalid-arguments failure"
+			],
+			"reason": "A nested tool call that a hook blocked (code \"blocked\", for example a permission denial) is delivered to the cell without the parameter-schema hint; argument failures keep it. Test-only additions; no prompt, schema, helper or import surface changes."
 		}
 	}
 }
