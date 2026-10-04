@@ -4,7 +4,7 @@ import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { readActiveRevision } from "../../src/environments/revision-store.ts";
 import { hasCommand, packFixture, session, textOf } from "./js-magic-session.ts";
 
@@ -239,6 +239,47 @@ describe.skipIf(!hasCommand("bun") || !hasCommand("npm"))("Given a JavaScript ev
 			expect(await readActiveRevision(base)).toBeUndefined();
 			expect(existsSync(base) ? readdirSync(base).filter((name) => /^rev-\d+$/.test(name)) : []).toEqual([]);
 		} finally {
+			registry.closeAllConnections();
+			registry.close();
+		}
+	}, 180_000);
+
+	it("When an install is cancelled and the installer's group can no longer be signalled, then the installer itself is still stopped", async () => {
+		const { run } = await session("npm");
+		const requested = Promise.withResolvers<void>();
+		const dropped = Promise.withResolvers<void>();
+		const registry = createServer((request) => {
+			request.socket.once("close", () => dropped.resolve());
+			requested.resolve();
+		});
+		await new Promise<void>((resolve) => registry.listen(0, "127.0.0.1", resolve));
+		const { port } = registry.address() as AddressInfo;
+		const kill = process.kill.bind(process);
+		// macOS answers EPERM for a process group whose leader already exited.
+		const groupKill = vi.spyOn(process, "kill").mockImplementation((pid, signal) => {
+			if (typeof pid === "number" && pid < 0) {
+				throw Object.assign(new Error("kill EPERM"), { code: "EPERM", errno: -1, syscall: "kill" });
+			}
+			return kill(pid, signal);
+		});
+		const controller = new AbortController();
+		try {
+			const install = run(`%npm add http://127.0.0.1:${port}/senpi-cancel-1.0.0.tgz`, controller.signal).then(
+				() => undefined,
+				(error: unknown) => error,
+			);
+			await requested.promise;
+			controller.abort();
+			const stopped = await Promise.race([
+				dropped.promise.then(() => true),
+				new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 20_000)),
+			]);
+			const rejection = await install;
+
+			expect(stopped).toBe(true);
+			expect(rejection).toMatchObject({ name: "AbortError" });
+		} finally {
+			groupKill.mockRestore();
 			registry.closeAllConnections();
 			registry.close();
 		}

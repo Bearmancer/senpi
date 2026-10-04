@@ -108,8 +108,9 @@ export function runJsInstall(input: {
 				try {
 					process.kill(-child.pid, "SIGKILL");
 					return;
-				} catch (error) {
-					if (!(error instanceof Error && "code" in error && error.code === "ESRCH")) throw error;
+				} catch {
+					// ESRCH (the group is gone) or EPERM (macOS refuses a group whose leader already exited): stop the
+					// installer itself. An abort listener must never throw: nothing above it can catch the error.
 				}
 			}
 			child.kill("SIGKILL");
