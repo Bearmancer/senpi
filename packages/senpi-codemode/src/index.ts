@@ -143,64 +143,6 @@ export default function senpiCodemode(pi: CodemodeExtensionAPI, options: SenpiCo
 		const preludes = promptKernelPreludes(pi);
 		promptPreludeDocs = kernelPreludeDocsKey(preludes);
 		pi.registerTool(
-<<<<<<< HEAD
-			createEvalTool({
-				enabledLanguages: runtime.enabledLanguages,
-				kernelManager: manager,
-				cellTimeoutSeconds: runtime.settings.cellTimeoutSeconds,
-				foregroundWindowSeconds: resolveForegroundWindowSeconds(runtime.settings),
-				runBudgetSeconds: resolveRunBudgetSeconds(runtime.settings),
-				hardLimitSeconds: resolveHardLimitSeconds(runtime.settings),
-				executeTool: runtime.executeTool,
-				listTools: () => pi.getAllTools(),
-				complete,
-				settings: runtime.settings,
-				artifactsDir: runtime.artifactsDir,
-				...(runtime.pythonEnvironments === undefined ? {} : { pythonEnvironments: runtime.pythonEnvironments }),
-				jsEnvironments: runtime.jsEnvironments,
-				cellManager,
-				executionTracker: manager,
-				onCellSettled,
-				renderers,
-				monitor,
-				spawns: runtime.spawns,
-				spawnDefaultAgent: runtime.settings.taskTools.task,
-				hostLine: hostLine(),
-				runtimes: runtime.runtimes,
-				kernelPreludes: () => activeKernelPreludes(pi),
-				promptKernelPreludes: preludes,
-				...(bunSkillPath === undefined ? {} : { bunSkillPath }),
-				...(modelId === undefined ? {} : { modelId }),
-			}),
-||||||| a11e583bb
-			createEvalTool({
-				enabledLanguages: runtime.enabledLanguages,
-				kernelManager: manager,
-				cellTimeoutSeconds: runtime.settings.cellTimeoutSeconds,
-				foregroundWindowSeconds: resolveForegroundWindowSeconds(runtime.settings),
-				runBudgetSeconds: resolveRunBudgetSeconds(runtime.settings),
-				hardLimitSeconds: resolveHardLimitSeconds(runtime.settings),
-				executeTool: runtime.executeTool,
-				listTools: () => pi.getAllTools(),
-				complete,
-				settings: runtime.settings,
-				artifactsDir: runtime.artifactsDir,
-				...(runtime.pythonEnvironments === undefined ? {} : { pythonEnvironments: runtime.pythonEnvironments }),
-				cellManager,
-				executionTracker: manager,
-				onCellSettled,
-				renderers,
-				monitor,
-				spawns: runtime.spawns,
-				spawnDefaultAgent: runtime.settings.taskTools.task,
-				hostLine: hostLine(),
-				runtimes: runtime.runtimes,
-				kernelPreludes: () => activeKernelPreludes(pi),
-				promptKernelPreludes: preludes,
-				...(bunSkillPath === undefined ? {} : { bunSkillPath }),
-				...(modelId === undefined ? {} : { modelId }),
-			}),
-=======
 			withStartRecovery(
 				recovery,
 				createEvalTool({
@@ -216,6 +158,7 @@ export default function senpiCodemode(pi: CodemodeExtensionAPI, options: SenpiCo
 					settings: runtime.settings,
 					artifactsDir: runtime.artifactsDir,
 					...(runtime.pythonEnvironments === undefined ? {} : { pythonEnvironments: runtime.pythonEnvironments }),
+					jsEnvironments: runtime.jsEnvironments,
 					cellManager,
 					handles,
 					executionTracker: manager,
@@ -232,7 +175,6 @@ export default function senpiCodemode(pi: CodemodeExtensionAPI, options: SenpiCo
 					...(modelId === undefined ? {} : { modelId }),
 				}),
 			),
->>>>>>> origin/codemode/n16-load
 		);
 	};
 	const dropRuntime = async (): Promise<void> => {
