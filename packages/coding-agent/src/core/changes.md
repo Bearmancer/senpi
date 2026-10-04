@@ -1,3 +1,21 @@
+## 2026-10-04 - continue_from_leaf acknowledges at turn admission, not turn end (senpi#2708)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `continueFromLeaf()` resolves once the runtime took the continuation - its `agent_start`, or a delegated queue into a running turn - like a prompt. It no longer awaits the whole continued turn, and the turn keeps running in the background.
+
+### Why
+
+- The desktop sends `continue_from_leaf` with a deadline. Answering only after the whole turn timed out every continuation longer than the deadline and left the editor stuck on "submitting" while the agent kept going (omo-desktop-app#1571 review HIGH-1). `prompt` acknowledges at admission; the continuation now does the same.
+
+### How to verify
+
+- The regression "resolves when the continued turn STARTS, not after the turn ends (#848)" is RED on v2026.10.6 (a continuation whose response is released after the reply) and GREEN here.
+
+### Must not break
+
+- The refusals `streaming`, `nothing_to_continue` and `leaf_not_assistant` still throw with their typed codes before any turn starts. A start-time failure rejects the start promise; the turn events are unchanged.
+
 ## 2026-10-03 - A model's free or plan limit falls back at once and keeps its reset window (senpi#2660)
 
 ### What changed

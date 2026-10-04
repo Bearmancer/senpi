@@ -10400,17 +10400,14 @@ export class AgentSession {
 
 	/**
 	 * Start a turn from the current leaf with no new user prompt (senpi #1930): after an edited
-	 * assistant response becomes the leaf, the model continues from its edited text. Delivered as a
+	 * assistant response becomes the leaf, the model continues from its edited text, delivered as a
 	 * hidden custom message, never as a trailing assistant message (see continue-from-leaf.ts).
-	 * Refuses while streaming and on a session with no messages; resolves once the turn starts.
-	 */
-	/**
-	 * Continue from the session's leaf with no new prompt. Resolves once the
-	 * runtime took the continuation (its turn started, or it was queued into a
-	 * running turn) - like a prompt, NOT after the whole continued turn. Before
-	 * this it awaited the whole turn, so a desktop continuation longer than the
-	 * RPC control deadline always timed out (#848). The turn keeps running in
-	 * the background after this resolves.
+	 * Resolves once the runtime took the continuation (its `agent_start`, or a delegated queue into
+	 * a running turn), like a prompt - NOT after the whole continued turn. Before this it awaited
+	 * the whole turn, so a desktop continuation longer than the RPC control deadline always timed
+	 * out (#848 / senpi #2708). Refuses while streaming and on a session with no messages. The turn
+	 * keeps running in the background after this resolves; a later failure reaches the client as its
+	 * normal turn error event, not as a reply here.
 	 */
 	async continueFromLeaf(): Promise<void> {
 		if (this.isStreaming) throw new ContinueFromLeafError("streaming");
@@ -10424,14 +10421,31 @@ export class AgentSession {
 			resolveStarted = resolve;
 			rejectStarted = reject;
 		});
-		let turnStarted = false;
+		// Order-independent: the `agent_start` event and the `started` disposition can
+		// arrive in either order (the disposition fires in a microtask, so an
+		// agent_start emitted in the same tick would otherwise be missed). Track each
+		// and resolve once both hold - or immediately on a delegated queue.
+		let agentStartSeen = false;
+		let startDispositionSeen = false;
+		const maybeStarted = (): void => {
+			if (agentStartSeen && startDispositionSeen) resolveStarted?.();
+		};
 		const turnClaim = new DeferredTurnClaim();
 		void turnClaim.disposition.then((disposition) => {
-			if (disposition === "delegated") resolveStarted?.();
-			else if (disposition === "started") turnStarted = true;
+			if (disposition === "delegated") {
+				resolveStarted?.();
+				return;
+			}
+			if (disposition === "started") {
+				startDispositionSeen = true;
+				maybeStarted();
+			}
 		});
 		const unsubscribe = this.subscribe((event) => {
-			if (event.type === "agent_start" && turnStarted) resolveStarted?.();
+			if (event.type === "agent_start") {
+				agentStartSeen = true;
+				maybeStarted();
+			}
 		});
 		// The turn runs in the background; admission is reported through the
 		// subscription above, and a start-time failure rejects the start promise.

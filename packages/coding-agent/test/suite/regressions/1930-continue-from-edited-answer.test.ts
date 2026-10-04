@@ -155,15 +155,19 @@ describe("continue from an edited answer with no new prompt (#1930)", () => {
 		).toBe(false);
 	});
 
-	it("surfaces a provider error on the continued turn like any other turn", async () => {
+	it("surfaces a provider error on the continued turn like any other turn, as a turn event after admission", async () => {
 		const { harness } = await conversation("anthropic-messages");
 		const callsBefore = harness.faux.state.callCount;
 		harness.setResponses([fauxAssistantMessage("", { stopReason: "error", errorMessage: "invalid_api_key" })]);
 
+		// The reply is at admission (the error has not happened yet); the provider
+		// failure then reaches the client through the turn's message_end, not the reply.
 		await harness.session.continueFromLeaf();
+		const eventsBeforeError = harness.eventsOfType("message_end").length;
 		await harness.session.agent.waitForIdle();
 
 		expect(harness.faux.state.callCount).toBe(callsBefore + 1);
+		expect(harness.eventsOfType("message_end").length).toBeGreaterThan(eventsBeforeError);
 		const errored = harness
 			.eventsOfType("message_end")
 			.map((event) => event.message)

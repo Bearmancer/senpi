@@ -12,6 +12,8 @@
 
 ### Fixed
 
+- `continue_from_leaf` now acknowledges when the continued turn starts (its `agent_start`, or a delegated queue), like a prompt, instead of after the whole turn. This stops a desktop continuation longer than the RPC deadline from timing out. ([#2708](https://github.com/code-yeongyu/senpi/issues/2708))
+
 - After an upgrade, an old host that was still serving the client's own socket with no session open can now be replaced: `host handoff` (which the desktop runs when the engine changed) starts the new engine there instead of refusing `unknown_owner`, so the first turn no longer fails with "No provider available" until the old host is drained by hand. A host from before layout 2 is sent a drain only while a recount still finds no session, a host nothing proves is never signalled (it drains itself once it loses the socket), and a host that holds a session is still refused, with the command that retires it ([#2701](https://github.com/code-yeongyu/senpi/issues/2701)).
 - `host status` now reports the right engine version for a host generation started by a handoff to a different build: the generation's record names the build the new host reported, not the build of the process that ran the handoff ([#2698](https://github.com/code-yeongyu/senpi/issues/2698)).
 
