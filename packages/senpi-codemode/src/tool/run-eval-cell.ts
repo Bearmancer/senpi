@@ -286,7 +286,8 @@ async function executeCell(
 					: undefined;
 			const environments = invocation.input.language === "py" ? options.pythonEnvironments : undefined;
 			const envRoot = environments === undefined ? undefined : () => environments.activeRoot ?? "";
-			const packageRoot = invocation.input.language === "js" ? options.jsEnvironments?.packageRoot : undefined;
+			const jsEnvironments = invocation.input.language === "js" ? options.jsEnvironments : undefined;
+			const packageRoot = jsEnvironments === undefined ? undefined : () => jsEnvironments.packageRoot;
 			const result = await execution.wait(
 				kernel.run({
 					cellId: invocation.cellId,

@@ -118,6 +118,21 @@ describe.skipIf(!hasCommand("bun") || !hasCommand("npm"))("Given a JavaScript ev
 		expect(existsSync(join(project, "node_modules"))).toBe(false);
 	}, 180_000);
 
+	it("When an import cell is queued behind a %bun add cell that is itself queued behind a running cell, then the import resolves the newly installed package", async () => {
+		const { fixtures, run } = await session();
+		const tarball = await packFixture(fixtures, "senpi-queued-probe", "1.0.0", probeSource);
+
+		// All three are submitted before the install runs: the import was queued when no revision existed yet.
+		const [, install, imported] = await Promise.all([
+			run("await new Promise((resolve) => setTimeout(resolve, 1500))"),
+			run(`%bun add ${tarball}`),
+			run("const { probe } = await import('senpi-queued-probe'); probe()"),
+		]);
+
+		expect(textOf(install)).toMatch(/installed/);
+		expect(textOf(imported)).toContain("ok");
+	}, 180_000);
+
 	it("When npm is the installer, then %npm add installs the same way", async () => {
 		const { fixtures, run } = await session("npm");
 		const tarball = await packFixture(fixtures, "senpi-probe", "1.0.0", probeSource);
