@@ -56,9 +56,12 @@ export async function startSuccessor(context: {
 	options: HandoffHostOptions;
 	paths: HostDaemonPaths;
 	host: HostProtocolInfo;
-	owner: { pid: number; processStartTime: string; instanceId: string };
+	/** The predecessor's proven identity; `undefined` when nothing proves it, and then it is never signalled. */
+	owner: { readonly pid: number } | undefined;
+	/** Asked once the successor owns the socket: the drain request is sent only when it answers true. */
+	drainGate?: () => Promise<boolean>;
 }): Promise<HandoffResult> {
-	const { options, paths, host, owner } = context;
+	const { options, paths, host, owner, drainGate } = context;
 	const generation = (host.generation ?? 0) + 1;
 	// The successor's identity, chosen here so its generation directory holds its settings before it
 	// boots and the pointer can name it the instant it answers on the public socket.
@@ -147,7 +150,8 @@ export async function startSuccessor(context: {
 		// to a pid the record proved and a host that advertised it can survive the signal. A
 		// predecessor that exited on its own in the meantime is already drained, and the handoff it
 		// was being asked to make room for has already happened.
-		signalGeneration(owner.pid, "SIGUSR1");
+		if (owner !== undefined && (drainGate === undefined || (await drainGate())))
+			signalGeneration(owner.pid, "SIGUSR1");
 		return {
 			action: "handoff",
 			pid: child.pid,
