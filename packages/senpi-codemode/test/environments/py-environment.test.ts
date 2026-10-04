@@ -10,6 +10,7 @@ import { withRootLock } from "../../src/environments/install-lock.ts";
 import { installPythonPackages } from "../../src/environments/py-environment.ts";
 import { isolatedPipEnv, parsePipRequirements } from "../../src/environments/py-installer.ts";
 import { readActiveRevision } from "../../src/environments/revision-store.ts";
+import { createInterpreterDetector } from "../../src/interpreters/detect.ts";
 import {
 	buildWheel,
 	editableBackend,
@@ -315,10 +316,15 @@ describe("Given a staged revision pip has just written", () => {
 		).resolves.toBeUndefined();
 	});
 
-	it("When pip's config file is pointed at the null device, then it is the exact path the interpreter calls os.devnull, so pip skips every config file", () => {
-		const devnull = spawnSync("python3", ["-c", "import os; print(os.devnull)"], { encoding: "utf8" }).stdout.trim();
+	it("When pip's config file is pointed at the null device, then it is the exact path the interpreter calls os.devnull, so pip skips every config file", async () => {
+		// The interpreter the kernel resolves is the one whose pip installs into the environment.
+		const python = await createInterpreterDetector().detect("py");
+		if (!python.ok) throw new Error("no Python interpreter resolved; this test must run where the kernel can start");
+		const executable = python.resolvedPath ?? python.path;
+		const probe = spawnSync(executable, ["-c", "import os; print(os.devnull)"], { encoding: "utf8" });
 
-		expect(isolatedPipEnv().PIP_CONFIG_FILE).toBe(devnull);
+		expect(probe.status, probe.stderr).toBe(0);
+		expect(isolatedPipEnv().PIP_CONFIG_FILE).toBe(probe.stdout.trim());
 	});
 
 	it("When its .pth lines and links stay inside the revision, then it is accepted", async () => {
