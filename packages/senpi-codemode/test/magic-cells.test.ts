@@ -44,6 +44,10 @@ describe("magic cell detection", () => {
 		});
 	});
 
+	it("Given a comment line ending in a backslash, then the comment does not swallow the %pip line after it", () => {
+		expect(parseMagicCell("py", "# setup \\\n%pip install six")).toEqual({ kind: "pip", args: "install six" });
+	});
+
 	it("Given a %pip line that is not the cell's first code line, such as inside a string, then the cell runs as ordinary Python", () => {
 		expect(parseMagicCell("py", 'notes = """\n%pip install six\n"""\nprint(notes)')).toBeUndefined();
 		expect(parseMagicCell("py", "x = 5 %pip")).toBeUndefined();
@@ -66,6 +70,19 @@ describe("%pip argument parsing", () => {
 			String.raw`C:\Users\me\wheels\pkg.whl`,
 		]);
 		expect(splitShellWords(String.raw`install my\ pkg`, true)).toEqual(["install", "my pkg"]);
+	});
+
+	it("Given a backslash inside double quotes in POSIX mode, then it stays unless it escapes a quote, backslash, dollar or backtick", () => {
+		expect(splitShellWords(String.raw`install "a\b" "say \"hi\"" "c\\d"`, true)).toEqual([
+			"install",
+			String.raw`a\b`,
+			'say "hi"',
+			String.raw`c\d`,
+		]);
+	});
+
+	it("Given a backslash-newline in POSIX mode, then it continues the word inside or outside double quotes", () => {
+		expect(splitShellWords('install "a\\\nb" c\\\nd', true)).toEqual(["install", "ab", "cd"]);
 	});
 
 	it("Given an unclosed quote, then the install is refused naming the quote instead of guessing", () => {
