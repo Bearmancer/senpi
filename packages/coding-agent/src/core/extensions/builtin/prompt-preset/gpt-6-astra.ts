@@ -365,7 +365,7 @@ export const GPT6_ASTRA_RULES = [
 const INTENT_GATE_LEAD: Record<TerminalOrApp, string> = {
 	terminal: `Open a new request with one short routing line:
 
-> I read this as [intent] - [plan]. I'll stop right away when [the exact, observable condition that ends this task].
+I read this as [intent] - [plan]. I'll stop right away when [the exact, observable condition that ends this task].
 
 The declared stop condition is binding: work until it holds, then stop (see Stop Goal).`,
 	app: "Open a new request by settling the exact, observable condition that ends the task. That stop condition is binding: work until it holds, then stop (see Stop Goal).",

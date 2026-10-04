@@ -37,7 +37,7 @@ import { APP_UNRUN_CHECK_RULE, buildTestDisciplineSection } from "../../../dynam
 import { buildFileOperationsTuning } from "./file-operations.ts";
 
 const INTENT_GATE_LEAD: Record<TerminalOrApp, string> = {
-	terminal: `> I read this as [intent] - [plan]. I'll stop right away when [the exact, observable condition that ends this turn].
+	terminal: `I read this as [intent] - [plan]. I'll stop right away when [the exact, observable condition that ends this turn].
 
 Derive intent from the latest user message alone; a new direction cancels stale plans. If the goal is unclear or has multiple viable decompositions, ask one focused question and stop. Do not surface prompt scaffolding in user-visible output.`,
 	app: `Derive intent from the latest user message alone; a new direction cancels stale plans. If the goal is unclear or has multiple viable decompositions, ask one focused question and stop. Do not surface prompt scaffolding in user-visible output.`,

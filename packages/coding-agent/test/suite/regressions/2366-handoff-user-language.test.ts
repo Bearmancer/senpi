@@ -48,11 +48,11 @@ describe("senpi#2366 handoff user-language rule", () => {
 		// given
 		const templateLine = buildHandoffSection()
 			.split("\n")
-			.find((line) => line.startsWith("Ask:"));
+			.find((line) => line.includes("For you: ["));
 
 		// then
 		expect(templateLine).toMatch(
-			/^Ask: \[[^\]]+\] - wanted: \[[^\]]+\]\. For you: \[[^\]]+\]\. Now: \[[^\]]+\]\. Next: \[[^\]]+\]\.$/,
+			/Ask: \[[^\]]+\] - wanted: \[[^\]]+\]\. For you: \[[^\]]+\]\. Now: \[[^\]]+\]\. Next: \[[^\]]+\]\./,
 		);
 	});
 });

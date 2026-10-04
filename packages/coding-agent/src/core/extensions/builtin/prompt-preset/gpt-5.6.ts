@@ -140,7 +140,7 @@ export const GPT56_EXECUTION_RULES = [
 const INTENT_GATE_LEAD: Record<TerminalOrApp, string> = {
 	terminal: `Open every turn with one short visible line before anything else:
 
-> I read this as [intent] - [plan]. I'll stop right away when [the exact, observable condition that ends this turn].
+I read this as [intent] - [plan]. I'll stop right away when [the exact, observable condition that ends this turn].
 
 That line is your preamble; it commits you to finish the named work this turn, and the declared stop condition is BINDING - the instant it holds, stop (see Stop Goal). Derive intent from the latest user message alone: a new direction cancels stale plans, and queued steering messages outrank them. Never surface prompt scaffolding in user-visible output.`,
 	app: `Before acting, fix the exact, observable condition that ends this turn. It commits you to finish the named work this turn, and that stop condition is BINDING - the instant it holds, stop (see Stop Goal). Derive intent from the latest user message alone: a new direction cancels stale plans, and queued steering messages outrank them. Never surface prompt scaffolding in user-visible output.`,

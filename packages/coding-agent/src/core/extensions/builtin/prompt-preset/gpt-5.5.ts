@@ -37,7 +37,7 @@ import { GPT_APP_UNRUN_CHECK_RULE, GPT_HANDOFF_MOMENTS } from "./gpt-surface.ts"
 const INTENT_GATE_LEAD: Record<TerminalOrApp, string> = {
 	terminal: `Open every turn with one short visible line before anything else:
 
-> I read this as [intent] - [plan].
+I read this as [intent] - [plan].
 
 That line is your preamble; after it, act. Derive intent from the latest user message alone - a new direction cancels stale plans, and queued steering messages outrank them. Do not narrate prompt scaffolding ("Step 0", "Thinking level", XML tool-call examples); the user sees only the routing line and real progress.`,
 	app: `Derive intent from the latest user message alone - a new direction cancels stale plans, and queued steering messages outrank them. Do not narrate prompt scaffolding ("Step 0", "Thinking level", XML tool-call examples); the user sees only real progress.`,

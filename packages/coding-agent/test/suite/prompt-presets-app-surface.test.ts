@@ -94,15 +94,15 @@ describe("prompt surface contract", () => {
 		expect(render(prompt, "app")).toMatch(HANDOFF_SLOT);
 	});
 
-	// senpi#2714: the model copies the template line as its reply, and a leading `>` made the whole answer a blockquote.
-	it.each(PROMPTS)("%s renders its handoff template as plain text, not a markdown quote", (prompt) => {
-		for (const surface of ["terminal", "app"] as const) {
-			const template = render(prompt, surface)
+	// senpi#2714: the model copies a format example as the shape of its reply, so a format line written as a
+	// markdown quote (`> Ask: ...`, `> I read this as ...`) turned whole answers into blockquotes.
+	it.each(PROMPTS)("%s renders no markdown quote line on any surface", (prompt) => {
+		for (const surface of ["terminal", "app", "chat"] as const) {
+			const quoted = render(prompt, surface)
 				.split("\n")
-				.filter((line) => /Now: \[/.test(line) && HANDOFF_SLOT.test(line));
+				.filter((line) => line.trimStart().startsWith(">"));
 
-			expect(template.length).toBeGreaterThan(0);
-			for (const line of template) expect(line).not.toMatch(/^\s*>/);
+			expect(quoted).toEqual([]);
 		}
 	});
 
