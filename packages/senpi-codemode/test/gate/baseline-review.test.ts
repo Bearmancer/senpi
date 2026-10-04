@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { readBaseBaseline, reviewBaselineChanges } from "../../scripts/gate-baseline-review.ts";
+import { entriesNewSinceBase, readBaseBaseline, reviewBaselineChanges } from "../../scripts/gate-baseline-review.ts";
 import type { GateReport } from "../../scripts/gate-report.ts";
 
 const base: GateReport = {
@@ -27,13 +27,15 @@ describe("Given a pull request that changes a tracked eval schema field", () => 
 	it("When it ships the recomputed baseline and lists the change, then the review passes", () => {
 		const head = withSchema(changedSchema);
 
-		expect(reviewBaselineChanges({ base, committed: head, report: head, changes: schemaChange })).toEqual([]);
+		expect(
+			reviewBaselineChanges({ base, committed: head, report: head, changes: schemaChange, additions: [] }),
+		).toEqual([]);
 	});
 
 	it("When the same baseline change is not listed under changes, then the review fails naming the cell", () => {
 		const head = withSchema(changedSchema);
 
-		expect(reviewBaselineChanges({ base, committed: head, report: head, changes: [] })).toEqual([
+		expect(reviewBaselineChanges({ base, committed: head, report: head, changes: [], additions: [] })).toEqual([
 			'unreviewed baseline change: schemas/js (list it under "changes" in test/gate/allowlist.json with a reason)',
 		]);
 	});
@@ -42,7 +44,7 @@ describe("Given a pull request that changes a tracked eval schema field", () => 
 		const committed = withSchema('{"type":"object","required":["code","lang"]}');
 		const head = withSchema(changedSchema);
 
-		expect(reviewBaselineChanges({ base, committed, report: head, changes: schemaChange })).toEqual([
+		expect(reviewBaselineChanges({ base, committed, report: head, changes: schemaChange, additions: [] })).toEqual([
 			"baseline change to schemas/js does not match the head measurement",
 		]);
 	});
@@ -51,7 +53,7 @@ describe("Given a pull request that changes a tracked eval schema field", () => 
 		const committed: GateReport = { ...withSchema(changedSchema), invariants: { terminalEvents: 2 } };
 		const head = withSchema(changedSchema);
 
-		expect(reviewBaselineChanges({ base, committed, report: head, changes: schemaChange })).toEqual([
+		expect(reviewBaselineChanges({ base, committed, report: head, changes: schemaChange, additions: [] })).toEqual([
 			'unreviewed baseline change: invariants/terminalEvents (list it under "changes" in test/gate/allowlist.json with a reason)',
 			"baseline change to invariants/terminalEvents does not match the head measurement",
 		]);
@@ -65,7 +67,7 @@ describe("Given a set section in the baseline", () => {
 	it("When a removal is not listed, then it fails like an edit", () => {
 		const head = withoutOldModule();
 
-		expect(reviewBaselineChanges({ base, committed: head, report: head, changes: [] })).toEqual([
+		expect(reviewBaselineChanges({ base, committed: head, report: head, changes: [], additions: [] })).toEqual([
 			'unreviewed baseline change: imports/extension/src/old-module.ts (list it under "changes" in test/gate/allowlist.json with a reason)',
 		]);
 	});
@@ -73,27 +75,53 @@ describe("Given a set section in the baseline", () => {
 	it("When a listed removal is no longer measured by the head, then it passes", () => {
 		const head = withoutOldModule();
 
-		expect(reviewBaselineChanges({ base, committed: head, report: head, changes: removal })).toEqual([]);
+		expect(reviewBaselineChanges({ base, committed: head, report: head, changes: removal, additions: [] })).toEqual(
+			[],
+		);
 	});
 
 	it("When a listed removal is still measured by the head, then it fails", () => {
-		expect(reviewBaselineChanges({ base, committed: withoutOldModule(), report: base, changes: removal })).toEqual([
-			"baseline removes imports/extension/src/old-module.ts, but the head still measures it",
-		]);
+		expect(
+			reviewBaselineChanges({ base, committed: withoutOldModule(), report: base, changes: removal, additions: [] }),
+		).toEqual(["baseline removes imports/extension/src/old-module.ts, but the head still measures it"]);
 	});
 
-	it("When the baseline adds a member the head measures, then it passes without a changes entry", () => {
+	it("When the baseline adds a member the head measures and this PR lists it under additions, then it passes", () => {
 		const head: GateReport = { ...structuredClone(base), helperCensus: { js: ["phase", "print", "wait"] } };
 
-		expect(reviewBaselineChanges({ base, committed: head, report: head, changes: [] })).toEqual([]);
+		expect(
+			reviewBaselineChanges({
+				base,
+				committed: head,
+				report: head,
+				changes: [],
+				additions: ["helperCensus/js/wait"],
+			}),
+		).toEqual([]);
+	});
+
+	it("When the PR writes new cells into its own baseline without listing them, then each fails as an unreviewed addition", () => {
+		const head: GateReport = {
+			...structuredClone(base),
+			imports: { extension: ["node:fs", "src/old-module.ts", "src/environments/py-installer.ts"] },
+			prompts: {
+				...structuredClone(base.prompts),
+				"gpt-new": { description: "x", promptSnippet: "y", promptGuidelines: [], bytes: 2, tokens: 1 },
+			},
+		};
+
+		expect(reviewBaselineChanges({ base, committed: head, report: head, changes: [], additions: [] })).toEqual([
+			'unreviewed baseline addition: prompts/gpt-new (list it under "additions" in test/gate/allowlist.json)',
+			'unreviewed baseline addition: imports/extension/src/environments/py-installer.ts (list it under "additions" in test/gate/allowlist.json)',
+		]);
 	});
 
 	it("When the baseline adds a member the head does not measure, then it fails", () => {
 		const committed: GateReport = { ...structuredClone(base), helperCensus: { js: ["phase", "print", "wait"] } };
 
-		expect(reviewBaselineChanges({ base, committed, report: base, changes: [] })).toEqual([
-			"baseline addition helperCensus/js/wait does not match the head measurement",
-		]);
+		expect(
+			reviewBaselineChanges({ base, committed, report: base, changes: [], additions: ["helperCensus/js/wait"] }),
+		).toEqual(["baseline addition helperCensus/js/wait does not match the head measurement"]);
 	});
 
 	it("When a legacy contract outcome is recorded on another platform, then only its presence is compared", () => {
@@ -112,7 +140,69 @@ describe("Given a set section in the baseline", () => {
 			},
 		};
 
-		expect(reviewBaselineChanges({ base, committed, report: head, changes: [] })).toEqual([]);
+		expect(
+			reviewBaselineChanges({
+				base,
+				committed,
+				report: head,
+				changes: [],
+				additions: ["legacyContracts/fixture/new case"],
+			}),
+		).toEqual([]);
+	});
+});
+
+describe("Given allowlist entries merged by earlier pull requests", () => {
+	const earlier = {
+		nodes: {
+			"13": {
+				additions: ["imports/extension/src/a.ts"],
+				changes: [{ key: "schemas/js", reason: "rename (earlier PR)" }],
+			},
+		},
+	};
+
+	it("When a later PR edits the same cell again without a new entry, then the earlier entry does not approve it", () => {
+		const fresh = entriesNewSinceBase({ base: earlier, head: earlier });
+		const head = withSchema(changedSchema);
+
+		expect(fresh).toEqual({ changes: [], additions: [] });
+		expect(reviewBaselineChanges({ base, committed: head, report: head, ...fresh })).toEqual([
+			'unreviewed baseline change: schemas/js (list it under "changes" in test/gate/allowlist.json with a reason)',
+		]);
+	});
+
+	it("When the later PR adds its own entry for the cell, then that entry approves it", () => {
+		const head = {
+			nodes: {
+				...earlier.nodes,
+				"35": {
+					additions: ["imports/extension/src/b.ts"],
+					changes: [{ key: "schemas/js", reason: "language becomes required" }],
+				},
+			},
+		};
+		const fresh = entriesNewSinceBase({ base: earlier, head });
+
+		expect(fresh).toEqual({
+			changes: [{ key: "schemas/js", reason: "language becomes required" }],
+			additions: ["imports/extension/src/b.ts"],
+		});
+		expect(
+			reviewBaselineChanges({
+				base,
+				committed: withSchema(changedSchema),
+				report: withSchema(changedSchema),
+				...fresh,
+			}),
+		).toEqual([]);
+	});
+
+	it("When the base has no allowlist file, then every head entry counts as new", () => {
+		expect(entriesNewSinceBase({ base: undefined, head: earlier })).toEqual({
+			changes: [{ key: "schemas/js", reason: "rename (earlier PR)" }],
+			additions: ["imports/extension/src/a.ts"],
+		});
 	});
 });
 

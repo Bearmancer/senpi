@@ -5,6 +5,26 @@ import { canonical, GateInputError, type GateReport, reportSchema } from "./gate
 
 export type BaselineChange = { readonly key: string; readonly reason: string };
 
+type AllowlistNodes = { readonly nodes: Readonly<Record<string, { readonly additions: readonly string[]; readonly changes?: readonly BaselineChange[] }>> };
+
+/**
+ * Only allowlist entries this pull request adds count as its approvals: an entry merged by an earlier PR
+ * approved that PR's value, so it must not pre-approve a later edit of the same cell.
+ */
+export function entriesNewSinceBase(input: { readonly base: AllowlistNodes | undefined; readonly head: AllowlistNodes }): {
+	readonly changes: readonly BaselineChange[];
+	readonly additions: readonly string[];
+} {
+	const baseNodes = Object.values(input.base?.nodes ?? {});
+	const baseChanges = new Set(baseNodes.flatMap((node) => (node.changes ?? []).map((change) => JSON.stringify([change.key, change.reason]))));
+	const baseAdditions = new Set(baseNodes.flatMap((node) => node.additions));
+	const headNodes = Object.values(input.head.nodes);
+	return {
+		changes: headNodes.flatMap((node) => node.changes ?? []).filter((change) => !baseChanges.has(JSON.stringify([change.key, change.reason]))),
+		additions: headNodes.flatMap((node) => node.additions).filter((key) => !baseAdditions.has(key)),
+	};
+}
+
 type Cells = ReadonlyMap<string, string>;
 
 /**
@@ -17,6 +37,8 @@ export function reviewBaselineChanges(input: {
 	readonly committed: GateReport;
 	readonly report: GateReport;
 	readonly changes: readonly BaselineChange[];
+	/** Addition keys this pull request lists; a cell it writes into the baseline must be one of them. */
+	readonly additions: readonly string[];
 }): string[] {
 	const base = cellsOf(input.base);
 	const committed = cellsOf(input.committed);
@@ -24,6 +46,7 @@ export function reviewBaselineChanges(input: {
 	const unmeasured = input.report.unmeasured ?? [];
 	const isMeasured = (key: string) => !unmeasured.some((section) => key === section || key.startsWith(`${section}/`));
 	const listed = new Set(input.changes.map((change) => change.key));
+	const listedAdditions = new Set(input.additions);
 	const samePlatform = input.committed.observations?.platform === input.report.observations?.platform;
 	const matchesHead = (key: string, value: string) =>
 		key.startsWith("legacyContracts/") && !samePlatform ? measured.has(key) : measured.get(key) === value;
@@ -39,7 +62,12 @@ export function reviewBaselineChanges(input: {
 		if (now !== undefined && !matchesHead(key, now)) failures.push(`baseline change to ${key} does not match the head measurement`);
 	}
 	for (const [key, value] of committed) {
-		if (base.has(key) || !isMeasured(key)) continue;
+		if (base.has(key)) continue;
+		// Without this, writing a new cell into the PR's own baseline would hide it from the additions allowlist.
+		if (!listedAdditions.has(key) && !listed.has(key)) {
+			failures.push(`unreviewed baseline addition: ${key} (list it under "additions" in test/gate/allowlist.json)`);
+		}
+		if (!isMeasured(key)) continue;
 		if (!matchesHead(key, value)) failures.push(`baseline addition ${key} does not match the head measurement`);
 	}
 	return failures;
@@ -72,7 +100,7 @@ export async function readBaseBaseline(input: {
 	readonly baselinePath: string;
 	readonly baseRef?: string;
 	readonly env: Readonly<Record<string, string | undefined>>;
-}): Promise<{ readonly base: GateReport; readonly mergeBase: string } | undefined> {
+}): Promise<{ readonly base: GateReport; readonly allowlist: AllowlistNodes | undefined; readonly mergeBase: string } | undefined> {
 	const pullRequestBase = input.env.GITHUB_BASE_REF?.trim();
 	const ref = input.baseRef ?? (pullRequestBase ? `origin/${pullRequestBase}` : undefined);
 	if (ref === undefined) return undefined;
@@ -88,5 +116,15 @@ export async function readBaseBaseline(input: {
 	if (shown.exitCode !== 0) throw new GateInputError(`baseline at merge base ${sha}: ${shown.stderr.trim()}`);
 	const base: unknown = JSON.parse(shown.stdout);
 	if (!Check(reportSchema, base)) throw new GateInputError(`baseline at merge base ${sha}`);
-	return { base, mergeBase: sha };
+	const allowlistShown = await runProcess(["git", "show", `${sha}:./allowlist.json`], cwd);
+	const allowlist = allowlistShown.exitCode === 0 ? parseAllowlist(allowlistShown.stdout, sha) : undefined;
+	return { base, allowlist, mergeBase: sha };
+}
+
+function parseAllowlist(text: string, sha: string): AllowlistNodes {
+	const value: unknown = JSON.parse(text);
+	if (typeof value !== "object" || value === null || !("nodes" in value) || typeof value.nodes !== "object" || value.nodes === null) {
+		throw new GateInputError(`allowlist at merge base ${sha}`);
+	}
+	return value as AllowlistNodes;
 }

@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { Type } from "typebox";
 import { Check } from "typebox/value";
-import { readBaseBaseline, reviewBaselineChanges } from "./gate-baseline-review.ts";
+import { entriesNewSinceBase, readBaseBaseline, reviewBaselineChanges } from "./gate-baseline-review.ts";
 import { compareReports } from "./gate-compare.ts";
 import { runProcess } from "./gate-process.ts";
 import { writeGateOutput } from "./gate-output.ts";
@@ -173,10 +173,8 @@ async function main(): Promise<void> {
 			const resolved = await readBaseBaseline({ baselinePath, env: process.env, ...(baseRef === undefined ? {} : { baseRef }) });
 			if (resolved !== undefined) {
 				console.log(`Baseline changes reviewed against merge base ${resolved.mergeBase}`);
-				failures.push(...reviewBaselineChanges({
-					base: resolved.base, committed, report,
-					changes: Object.values(allowlist.nodes).flatMap((node) => node.changes ?? []),
-				}));
+				const fresh = entriesNewSinceBase({ base: resolved.allowlist, head: allowlist });
+				failures.push(...reviewBaselineChanges({ base: resolved.base, committed, report, ...fresh }));
 			}
 		}
 	} catch (error: unknown) {
