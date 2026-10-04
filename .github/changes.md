@@ -1,3 +1,21 @@
+## 2026-10-05 - The process-mode kernel suite runs on Linux and macOS (codemode plan node 17)
+
+### What changed
+
+- `.github/workflows/ci.yml`: a new job, `process-kernel` (`Eval kernel process isolation (ubuntu-latest)` and `(macos-latest)`), runs `test/js-process-kernel.test.ts` with the JSON reporter on both platforms. A following step fails unless the suite ran (at least 30 passed, none failed, and on macOS only the Linux-only subreaper case skipped) and no `process-entry.js` child was left behind with ppid 1.
+
+### Why
+
+- Process mode could not start on Linux at all (a spawn's stdout is a socket there, and the entry reopened it by path), and no CI run caught it: the suite never ran on macOS, and the PR that added it was stacked, so it got no test workflow (#2759). A platform where the kernel child cannot start must fail a check instead of shipping.
+
+### Why an extension could not handle it
+
+- This is CI configuration.
+
+### Expected merge conflict zones
+
+- LOW: the job list in `ci.yml`, where the new job sits before `python-kernel-windows`.
+
 ## 2026-10-04 - The Windows Python job checks that environment installs stay inside the revision (codemode plan node 14)
 
 ### What changed
