@@ -31,6 +31,7 @@ import { createDaemonDirectories, createHostDaemonPaths } from "./host-daemon-pa
 import { provenOwner, readHostRegistration } from "./host-daemon-registration.ts";
 import { GENERATION_HANDOFF_CAPABILITY } from "./host-decision.ts";
 import { acquireHostEnsureLock } from "./host-ensure-lock.ts";
+import { handoffUnregisteredHost } from "./host-handoff-unregistered.ts";
 import type { HostLifecyclePolicyInput } from "./host-lifecycle.ts";
 import { probeProtocolInfo } from "./host-probe.ts";
 import { SUCCESSOR_START_BUDGET_MS, startSuccessor } from "./host-successor.ts";
@@ -83,8 +84,10 @@ export type HandoffRefusal =
 	| "handoff_unsupported"
 	/** win32: a named pipe can be neither renamed nor drained. */
 	| "upgrade_unsupported"
-	/** The pidfile cannot prove which process serves this socket, so it may not be signalled. */
+	/** No record proves which process serves this socket, and that host holds sessions (or will not say). */
 	| "unknown_owner"
+	/** A host from before layout 2, proven by its flat record, holds sessions; `detail` says how to retire it. */
+	| "legacy_host"
 	/** The public socket stopped being the one this handoff was decided against. */
 	| "socket_replaced"
 	/** `<public>.next-<gen>` would exceed the platform's socket path limit. */
@@ -136,7 +139,7 @@ export async function handoffHostLocked(options: HandoffHostOptions): Promise<Ha
 	}
 	const registered = await readHostRegistration(paths);
 	const owner = await provenOwner(registered, options.socket);
-	if (!owner) return { action: "refuse", reason: "unknown_owner", upgradeable: true };
+	if (!owner) return handoffUnregisteredHost(options, paths, host);
 	return startSuccessor({ options, paths, host, owner });
 }
 

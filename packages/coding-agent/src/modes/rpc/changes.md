@@ -1,3 +1,27 @@
+## 2026-10-04 - A handoff replaces an idle host no layout-2 record proves (senpi#2701)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-handoff.ts`: when no layout-2 registration proves the owner, `handoffHostLocked` hands the decision to `handoffUnregisteredHost` instead of refusing `unknown_owner`. `HandoffRefusal` gains `legacy_host`.
+- `packages/coding-agent/src/modes/rpc/host-handoff-unregistered.ts` (new): counts the running host's sessions (`list_sessions` with workers) over a connection it keeps open. Any session, or no answer, is a refusal: `legacy_host` with the existing pid/socket/`host stop --drain` detail when a flat pre-layout-2 record proves the process, `unknown_owner` with the session count otherwise. With 0 sessions the successor takes the socket; a proven legacy process is then sent the DRAIN only when a recount over the held connection still finds 0 (a session opened between the count and the swap keeps it unsignalled). Without a provable owner nothing is signalled - the predecessor drains itself on losing the public entry (`host-supersession.ts`) - and one stderr warning names the socket, its instance and engine.
+- `packages/coding-agent/src/modes/rpc/host-successor.ts`: `startSuccessor`'s `owner` may be `undefined` (no signal) and an optional `drainGate` decides whether the drain is sent once the successor owns the socket.
+- `packages/coding-agent/src/modes/rpc/host-probe.ts`: `holdSessionCount` (a count plus `recount` over the same connection); `probeSessionCount` shares its parsing.
+- `packages/coding-agent/src/modes/rpc/host-legacy.ts`: `busyLegacyHostDetail` and `describeSessions` export the refusal wording `judgeLegacyHost` already used.
+- `packages/coding-agent/src/modes/rpc/host-runner.ts`: a refused handoff's JSON `detail` is the refusal's own detail when it has one (it was always the reason).
+- `docs/rpc.md` (daemon directory section) and `test/suite/regressions/2701-same-socket-unregistered-host-handoff.test.ts` (real supervisors on the client's own socket: idle legacy replaced, idle unprovable replaced unsignalled with the warning, busy legacy and busy unprovable refused untouched, a session opened in the count-to-swap window parked by the self-drain and reopened on the successor).
+
+### Why
+
+senpi#2701: after an upgrade the old host keeps the very socket the updated client uses. An ensure there answers `reuse` (compatible protocol), so #2423's retire path never runs, and the handoff the desktop asks for on an engine mismatch refused `unknown_owner`; the first turn could not start until somebody ran `host stop --drain` by hand.
+
+### Why an extension could not handle it
+
+The handoff's owner proof, the successor start and the drain signal are host lifecycle internals behind the `senpi host` CLI; no extension surface reaches the ensure lock or the generation records.
+
+### Expected merge conflict zones
+
+- Fork-only files. `startSuccessor`'s context type and its drain line in `host-successor.ts` (senpi#2698 edits the registration objects in the same function); the `HandoffRefusal` union; `handoffOutcome` in `host-runner.ts`.
+
 ## 2026-10-03 - A session's own fallback chain on open_session (omo#9512)
 
 ### What changed

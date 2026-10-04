@@ -430,6 +430,13 @@ pid and start time must match the live process, so a recycled pid proves nothing
   its endpoint answers with `generation_handoff` and `list_sessions` (workers included) lists no session.
   Otherwise it refuses `legacy_host`, and the CLI refusal carries `detail`: the pid, its endpoint, how many
   sessions it holds and the `host stop --drain --socket <endpoint>` that retires it.
+- A handoff (`host handoff`, and an ensure's upgrade) on an endpoint no layout-2 record proves counts the
+  running host's sessions over a connection it keeps open. With any session, or no answer, it refuses:
+  `legacy_host` with the same `detail` when a flat record proves the process, `unknown_owner` with the
+  session count otherwise. With none, the successor takes the socket; a proven legacy process is sent the
+  drain only if a recount over that held connection still lists no session, and a host no record proves
+  is never signalled - it drains itself once another generation owns the public entry, and the handoff
+  writes one stderr warning naming the socket, that host's instance and its engine.
 
 `ensureHost` fails with a typed `HostDaemonStateError` naming the directory it could not create or write,
 and starts no host in that case.
