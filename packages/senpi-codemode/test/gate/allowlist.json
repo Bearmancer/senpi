@@ -158,6 +158,32 @@
 			],
 			"reason": "The kernel-tools pump moved to kernels/shared/ (the baseline census entry is renamed to the new path) and descriptors may name any eval language; two contracts pin the widened descriptor."
 		},
+		"13": {
+			"additions": [
+				"imports/extension/packages/senpi-codemode/src/config/unknown-settings.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/config/unknown-settings.ts",
+				"imports/extension/packages/senpi-codemode/src/config/feature-settings.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/config/feature-settings.ts",
+				"imports/extension/packages/senpi-codemode/src/config/settings-overrides.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/config/settings-overrides.ts",
+				"legacyContracts/test/feature-settings.test.ts/codemode feature settings Given no settings file when the new keys resolve then each equals today's behaviour",
+				"legacyContracts/test/feature-settings.test.ts/codemode feature settings Given a file without the new keys when settings load then the resolved settings equal the previous defaults object exactly",
+				"legacyContracts/test/feature-settings.test.ts/codemode feature settings Given every new key set in the file when settings load then each value is kept and resolves",
+				"legacyContracts/test/feature-settings.test.ts/codemode feature settings Given an isolation value this version does not know when settings load then the file falls back to defaults with a warning and isolation stays worker",
+				"legacyContracts/test/feature-settings.test.ts/codemode feature settings Given environment overrides when isolation and the sandbox memory resolve then valid values win and invalid ones are ignored",
+				"legacyContracts/test/config.test.ts/codemode settings Given a settings file with a key from a newer version when settings load then the other settings still apply and the unknown key gets one warning",
+				"legacyContracts/test/config.test.ts/codemode settings Given an unknown key inside a known setting when settings load then the file still falls back to defaults with a warning",
+				"imports/extension/packages/senpi-codemode/src/config/settings-constants.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/config/settings-constants.ts",
+				"legacyContracts/test/feature-settings.test.ts/codemode feature settings Given an unknown key inside environments when settings load then that object stays strict and the file falls back to defaults with a warning",
+				"legacyContracts/test/feature-settings.test.ts/codemode feature settings Given an unknown key inside isolation when settings load then that object stays strict and the file falls back to defaults with a warning",
+				"legacyContracts/test/feature-settings.test.ts/codemode feature settings Given an unknown key inside sandbox when settings load then that object stays strict and the file falls back to defaults with a warning",
+				"legacyContracts/test/feature-settings.test.ts/codemode feature settings Given an unknown key inside prompt when settings load then that object stays strict and the file falls back to defaults with a warning",
+				"legacyContracts/test/feature-settings.test.ts/codemode feature settings Given an unknown key inside kernelTools when settings load then that object stays strict and the file falls back to defaults with a warning",
+				"legacyContracts/test/feature-settings.test.ts/codemode feature settings Given an unknown key inside environments.js when settings load then that object stays strict and the file falls back to defaults with a warning"
+			],
+			"reason": "Settings keep the user's other keys when a newer key is present, and gain optional keys for later features with today's defaults; three new config modules in the scoped census and the new settings contracts. The contract that pinned the old whole-file fallback for an unknown key is renamed in the baseline to the warn-and-keep behaviour it now asserts (status unchanged)."
+		},
 		"24": {
 			"additions": [
 				"legacyContracts/test/worker-global-sizes.test.js/largest-globals sizing never runs user code Given a global array with an index accessor when the globals are sized then the getter never runs",
