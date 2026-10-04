@@ -19,6 +19,7 @@ import {
 	type KernelChild,
 	type KernelSpawnOptions,
 	type KernelSpawnProcess,
+	type KillProcessGroup,
 	numberOrNull,
 	signalOrNull,
 	splitCommand,
@@ -47,6 +48,7 @@ export interface PythonTransportOptions {
 	readonly startupTimeoutMs: number;
 	readonly startupCeilingMs: number;
 	readonly readCpuTime?: (pid: number | undefined) => bigint | undefined;
+	readonly killProcessGroup?: KillProcessGroup;
 	readonly onStartupProgress?: (stage: PythonStartupStage) => void;
 	readonly memory?: KernelMemoryThresholds;
 	/** Kernel-tool descriptors carry this; a restarted interpreter gets a new one, so old descriptors go stale. */
@@ -176,7 +178,7 @@ export class PythonKernelTransport {
 			return;
 		}
 		if (!this.#active) {
-			await hardKill(this.#child, hardKillWaitMs);
+			await hardKill(this.#child, hardKillWaitMs, this.#options.killProcessGroup);
 			return;
 		}
 		this.#active = false;
@@ -188,15 +190,15 @@ export class PythonKernelTransport {
 		}
 		// hardKill kills the whole group; a graceful leader exit does not, so sweep it
 		// to retire any subprocess the cell left running in the kernel's process group.
-		if (await exited) sweepProcessGroup(this.#child);
-		else await hardKill(this.#child, hardKillWaitMs);
+		if (await exited) sweepProcessGroup(this.#child, this.#options.killProcessGroup);
+		else await hardKill(this.#child, hardKillWaitMs, this.#options.killProcessGroup);
 	}
 
 	retire(): Promise<void> {
 		if (this.#exited || this.#isGone) return Promise.resolve();
 		if (this.#retirement) return this.#retirement;
 		this.#active = false;
-		const retirement = hardKill(this.#child, hardKillWaitMs).finally(() => {
+		const retirement = hardKill(this.#child, hardKillWaitMs, this.#options.killProcessGroup).finally(() => {
 			this.#detachListeners();
 			if (this.#retirement === retirement) this.#retirement = null;
 		});

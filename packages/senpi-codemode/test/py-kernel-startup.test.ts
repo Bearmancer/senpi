@@ -264,6 +264,66 @@ describe("Python startup progress", () => {
 		expect(child.killSignals).toEqual(["SIGKILL"]);
 	});
 
+	it("retires a stalled interpreter with one SIGKILL to its process group, and never through the real process table", async () => {
+		// Given: a child with a pid, its group kill observed through the injected function.
+		vi.useFakeTimers();
+		const child = Object.assign(new FakeChild({ autoReady: false }), { pid: 4246 });
+		const groupKills: [number, NodeJS.Signals][] = [];
+		const started = PythonKernel.start({
+			interpreterPath: "python3",
+			sessionId: "group-kill",
+			cwd: process.cwd(),
+			connection: { port: 1, token: "fixture" },
+			startupTimeoutMs: 200,
+			startupCeilingMs: 10_000,
+			readCpuTime: () => 1n,
+			killProcessGroup: (pid, signal) => {
+				groupKills.push([pid, signal]);
+				child.kill(signal);
+			},
+			spawnProcess: () => child,
+		});
+		const outcome = started.catch((error: unknown) => error);
+
+		// When: it stalls for one guard period.
+		await vi.advanceTimersByTimeAsync(200);
+
+		// Then: startup fails and the group gets exactly one SIGKILL (Windows has no groups: the child is killed).
+		expect(await outcome).toMatchObject({ stage: "interpreter-launch" });
+		expect(groupKills).toEqual(process.platform === "win32" ? [] : [[4246, "SIGKILL"]]);
+		expect(child.killSignals).toEqual(["SIGKILL"]);
+	});
+
+	it("falls back to killing the child itself when its process group is already gone", async () => {
+		// Given: a group kill that reports the group is gone (ESRCH).
+		vi.useFakeTimers();
+		const child = Object.assign(new FakeChild({ autoReady: false }), { pid: 4247 });
+		let groupKillAttempts = 0;
+		const started = PythonKernel.start({
+			interpreterPath: "python3",
+			sessionId: "group-gone",
+			cwd: process.cwd(),
+			connection: { port: 1, token: "fixture" },
+			startupTimeoutMs: 200,
+			startupCeilingMs: 10_000,
+			readCpuTime: () => 1n,
+			killProcessGroup: () => {
+				groupKillAttempts += 1;
+				throw Object.assign(new Error("kill ESRCH"), { code: "ESRCH" });
+			},
+			spawnProcess: () => child,
+		});
+		const outcome = started.catch((error: unknown) => error);
+
+		// When: it stalls for one guard period.
+		await vi.advanceTimersByTimeAsync(200);
+
+		// Then: the child itself receives the SIGKILL.
+		expect(await outcome).toMatchObject({ stage: "interpreter-launch" });
+		expect(groupKillAttempts).toBe(process.platform === "win32" ? 0 : 1);
+		expect(child.killSignals).toEqual(["SIGKILL"]);
+	});
+
 	it("does not extend a hung stage for repeated progress frames", async () => {
 		// Given: an interpreter stuck in imports.
 		vi.useFakeTimers();
