@@ -9,7 +9,14 @@ import { withRootLock } from "../../src/environments/install-lock.ts";
 import { installPythonPackages } from "../../src/environments/py-environment.ts";
 import { parsePipRequirements } from "../../src/environments/py-installer.ts";
 import { readActiveRevision } from "../../src/environments/revision-store.ts";
-import { buildWheel, fixtureDir, hasPythonWithPip, importFrom, siteFilesSnapshot } from "./wheel-fixtures.ts";
+import {
+	buildWheel,
+	editableBackend,
+	fixtureDir,
+	hasPythonWithPip,
+	importFrom,
+	siteFilesSnapshot,
+} from "./wheel-fixtures.ts";
 
 const roots: string[] = [];
 const servers: Server[] = [];
@@ -125,6 +132,52 @@ describe.skipIf(!hasPythonWithPip())("Given a Python environment root", () => {
 
 		expect(siteFilesSnapshot()).toBe(before);
 	});
+
+	it.each([
+		["a requirements file", { "reqs.txt": "-e ./pkg\n" }, "-r reqs.txt"],
+		[
+			"a constraint file included from a requirements file",
+			{ "reqs.txt": "-r nested/more.txt\n", "nested/more.txt": "-e ./pkg\n" },
+			"-r reqs.txt",
+		],
+		["a line after a comment that ends in a backslash", { "reqs.txt": "# note \\\n-e ./pkg\n" }, "-r reqs.txt"],
+	])(
+		"When %s asks for an editable install, then it is refused and nothing is published",
+		async (_case, files, args) => {
+			const { root, base } = await workspace();
+			await mkdir(join(root, "pkg"), { recursive: true });
+			await writeFile(
+				join(root, "pkg", "pyproject.toml"),
+				'[build-system]\nrequires = []\nbuild-backend = "senpi_backend"\nbackend-path = ["."]\n[project]\nname = "senpi-editable"\nversion = "1.0"\n',
+			);
+			await writeFile(join(root, "pkg", "senpi_backend.py"), editableBackend);
+			for (const [name, text] of Object.entries(files)) {
+				await mkdir(join(root, name, ".."), { recursive: true });
+				await writeFile(join(root, name), text);
+			}
+
+			await expect(install(base, root, `install --no-index ${args}`)).rejects.toThrow(
+				/senpi[-_]editable.* was installed as editable/,
+			);
+			expect(await readActiveRevision(base)).toBeUndefined();
+		},
+	);
+
+	it("When pip's environment names a root to install under, then the install still lands only in the revision", async () => {
+		const { root, base, wheels } = await workspace();
+		const elsewhere = join(root, "elsewhere");
+		const previous = process.env.PIP_ROOT;
+		process.env.PIP_ROOT = elsewhere;
+		try {
+			const receipt = await install(base, root, `install --no-index ${buildWheel(wheels, "senpi_probe", "1.0")}`);
+
+			expect(importFrom(receipt.root, "senpi_probe")).toBe("1.0");
+			expect(existsSync(elsewhere)).toBe(false);
+		} finally {
+			if (previous === undefined) delete process.env.PIP_ROOT;
+			else process.env.PIP_ROOT = previous;
+		}
+	});
 });
 
 describe("Given pip arguments from a magic cell", () => {
@@ -212,6 +265,74 @@ describe("Given an environment root's install lock", () => {
 
 		expect(overlaps).toBe(0);
 	}, 180_000);
+
+	it("When a waiter crashed while reaping a stale lock and left its claim behind, then the lock is still taken over by exactly one holder at a time", async () => {
+		const base = await lockRoot();
+		const dead = exitedPid();
+		let overlaps = 0;
+		for (let trial = 0; trial < 40; trial++) {
+			await writeFile(
+				join(base, ".install.lock"),
+				JSON.stringify({ pid: dead, host: hostname(), nonce: `lock-${trial}` }),
+			);
+			await writeFile(
+				join(base, `.install.lock.reap.lock-${trial}.0`),
+				JSON.stringify({ pid: dead, host: hostname(), nonce: `t-${trial}` }),
+			);
+			let inside = 0;
+			const holder = async () => {
+				inside++;
+				if (inside > 1) overlaps++;
+				await new Promise((resolve) => setTimeout(resolve, 1));
+				inside--;
+			};
+			await Promise.all(Array.from({ length: 8 }, () => withRootLock(base, holder, AbortSignal.timeout(30_000))));
+		}
+
+		expect(overlaps).toBe(0);
+	}, 180_000);
+
+	it("When the only waiter that claimed a stale lock died with no successor, then the next waiter takes the lock over promptly and clears the dead claims", async () => {
+		const base = await lockRoot();
+		const dead = exitedPid();
+		await writeFile(join(base, ".install.lock"), JSON.stringify({ pid: dead, host: hostname(), nonce: "stale" }));
+		await writeFile(
+			join(base, ".install.lock.reap.stale.0"),
+			JSON.stringify({ pid: dead, host: hostname(), nonce: "c0" }),
+		);
+		await writeFile(
+			join(base, ".install.lock.reap.stale.1"),
+			JSON.stringify({ pid: dead, host: hostname(), nonce: "c1" }),
+		);
+		const started = Date.now();
+
+		const entered = await withRootLock(base, async () => "entered", AbortSignal.timeout(5_000));
+
+		expect(entered).toBe("entered");
+		expect(Date.now() - started).toBeLessThan(2_000);
+		expect((await readdir(base)).filter((name) => name.startsWith(".install.lock.reap."))).toEqual([]);
+	});
+
+	it("When a live waiter is reaping a stale lock, then another waiter waits for it instead of reaping too", async () => {
+		const base = await lockRoot();
+		await writeFile(
+			join(base, ".install.lock"),
+			JSON.stringify({ pid: exitedPid(), host: hostname(), nonce: "stale" }),
+		);
+		const takeover = join(base, ".install.lock.reap.stale.0");
+		await writeFile(takeover, JSON.stringify({ pid: process.pid, host: hostname(), nonce: "live" }));
+		let entered = false;
+
+		const waiting = withRootLock(base, async () => {
+			entered = true;
+		});
+		await new Promise((resolve) => setImmediate(resolve));
+		expect(entered).toBe(false);
+		await rm(takeover);
+		await waiting;
+
+		expect(entered).toBe(true);
+	});
 
 	it("When an empty lock file older than a few seconds is found (a crash between create and write), then it is taken over", async () => {
 		const base = await lockRoot();

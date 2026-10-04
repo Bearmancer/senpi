@@ -23,7 +23,7 @@
  * this module reads and writes through its primitives and never builds a path of its own.
  */
 import { rename, rm } from "node:fs/promises";
-import { engineBuildIdentity } from "../../core/engine-build-identity.ts";
+import type { EngineOrdinal } from "../../core/engine-build-identity.ts";
 import {
 	type DaemonPidFile,
 	parseDaemonPidFile,
@@ -55,6 +55,11 @@ export interface HostRegistration {
 	readonly generation: number;
 	/** The profile the spawned host was launched with, for a client comparing two generations. */
 	readonly launchProfileId: string;
+	/**
+	 * The build of the process this record names. Absent while it is not known yet (a handoff's
+	 * successor before it answers): the record then claims no engine version rather than the writer's.
+	 */
+	readonly build?: { readonly text: string; readonly ordinal: EngineOrdinal };
 }
 
 export interface RegisteredHost {
@@ -121,14 +126,13 @@ export async function writeGenerationRecord(
 ): Promise<{ generation: HostGenerationPaths; writer: HostPidFileWriter }> {
 	const generation = generationPaths(paths, registration.instanceId);
 	const writer: HostPidFileWriter = { pid: process.pid, startTime: await thisProcessStartTime() };
-	const build = engineBuildIdentity();
+	const { build } = registration;
 	await createGenerationDirectory(generation);
 	await writeStateFile(generation.pidFile, {
 		...registration.record,
 		instance_id: registration.instanceId,
 		generation: registration.generation,
-		engineVersion: build.text,
-		engineOrdinal: build.ordinal,
+		...(build && { engineVersion: build.text, engineOrdinal: build.ordinal }),
 		launchProfileId: registration.launchProfileId,
 		socket: registration.socket,
 		writer,

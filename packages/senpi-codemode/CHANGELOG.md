@@ -8,10 +8,16 @@
 
 - A Python cell that is only `%pip install <requirements>` installs packages without restarting the kernel; the next cell imports them. Packages go into the session's own environment (or `<cwd>/.senpi/python-packages` after `%environment project`), never the interpreter's site-packages or the user site, and a failed or cancelled install leaves the previous packages active ([#2452](https://github.com/code-yeongyu/senpi/issues/2452)).
 - Internal groundwork for installing Python packages from a cell: per-session environment revisions that are published only after a successful install (a failed or interrupted install leaves the previous revision active), a per-root install lock, and a pip installer that always targets the session's own directory. Not exposed to cells yet ([#2452](https://github.com/code-yeongyu/senpi/issues/2452)).
+- JavaScript kernel tools: `tool.defined()` lists the defined kernel tools and `tool.undefine(name)` removes one; `tool(fn, { name })` registers a tool under an explicit name while keeping the function's argument order ([#2452](https://github.com/code-yeongyu/senpi/issues/2452)).
+- In-cell `wait(handles, {timeout, mode})` barrier and `handle(node | ref | {pool_id})` rich views in all four kernels: `wait` returns values in input order (`all`), the first success (`any`) or every outcome (`settled`), times out with `eval_wait_timeout` without cancelling work, and pauses the run budget while parked; `handle(node).control` offers `status()`, `output()`, `send()`, `cancel()` and `wait()` fenced by owner, id and `run_epoch` through the host's `EvalHandleHost` capability (agent and workpool handles fail with `eval_wait_unavailable` on a host without it); `completion(prompt, {handle: true})` returns an opt-in completion handle bounded by its cell's hard deadline; `tool_schema("eval:helpers")` and `tool_schema("eval:wait")` document the surface and the removed-tool hint for `wait` points at them. The legacy `agent(..., {handle: true})` record, the eval description and the eval input schema are unchanged; the Python runner's dispatcher was renamed `_handle_message` so `handle()` is the helper ([#2687](https://github.com/code-yeongyu/senpi/pull/2687)).
 
 ### Changed
 
 ### Fixed
+
+- The Ruby kernel's memory notice names the largest globals again on Ruby 2.6 (the sizer used a Ruby 2.7 method) ([#2696](https://github.com/code-yeongyu/senpi/issues/2696)).
+- Eval no longer fails with "codemode session manager is disposed" for the rest of a session after a session switch or fork that another extension cancelled: codemode only tears its kernels down when the session actually ends ([#1706](https://github.com/code-yeongyu/senpi/issues/1706)).
+- A session whose codemode runtime failed to start is recovered by the next eval call (once, with one stderr line naming the failed start); if re-creation also fails, the call says "codemode runtime could not be re-created: <reason>" and how to bring eval back ([#1706](https://github.com/code-yeongyu/senpi/issues/1706)).
 
 ### Removed
 
