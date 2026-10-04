@@ -19,6 +19,25 @@
 
 - Fork-only files. The routing line and the `## Handoff` template line in each preset.
 
+## 2026-10-04 - Final-message rules leave a plain answer as the answer itself (senpi#2723)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/prompt-preset/gpt-surface.ts`: `GPT_HANDOFF_MOMENTS` names "the final message of a turn that did work (a reply that only answers a question is the answer itself)"; `gpt-6-astra.ts` carries the same words in `HANDOFF_REPORT` (its app variant is derived by replacing the terminal moments).
+- Final-message rules now apply to work: `claude-opus-5-5.ts`, `claude-opus-5.ts`, `claude-sonnet-5-5.ts` ("open with the Handoff block if the turn did work"); `claude-fable-5.ts`, `claude-fable-5-1.ts`, `kimi-k3.ts`, `gpt-5.5.ts` ("The final message of work ..."); `gpt-5.6.ts`, `grok-4.5.ts` ("for work, the Handoff block ..."); `gpt-6-astra.ts` `FINAL_MESSAGE_SHAPE` and its chat replacement ("The final message of work is the handoff block ...").
+
+### Why
+
+- Same cause as `dynamic-prompt/changes.md` (senpi#2723): the block was mandatory for every final message, so plain answers were wrapped in a status block.
+
+### Why an extension could not handle it
+
+- These lines are the preset cores themselves.
+
+### Expected merge conflict zones
+
+- Fork-only files. The final-message sentence and the handoff moments in each preset.
+
 ## 2026-10-04 - Claude Fable 5.1: the between-handoff update becomes an instruction; three twice-stated rules go back to one home (senpi#2681)
 
 ### What changed
