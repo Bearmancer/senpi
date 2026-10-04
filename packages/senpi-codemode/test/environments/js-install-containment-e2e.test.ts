@@ -57,7 +57,8 @@ describe.skipIf(!hasCommand("bun") || !hasCommand("npm"))("Given a managed JavaS
 			readFileSync(join(dir, "package.json"), "utf8"),
 			readFileSync(join(dir, "bun.lock"), "utf8"),
 		]);
-		const { fixtures, run } = await session("auto", managedRoot, { ...process.env, HOME: home });
+		const { project, fixtures, run } = await session("auto", managedRoot, { ...process.env, HOME: home });
+		const projectManifest = readFileSync(join(project, "package.json"), "utf8");
 		const viaBun = await packFixture(fixtures, "senpi-contain-bun", "1.0.0", probeSource);
 		const viaNpm = await packFixture(fixtures, "senpi-contain-npm", "1.0.0", probeSource);
 
@@ -75,6 +76,9 @@ describe.skipIf(!hasCommand("bun") || !hasCommand("npm"))("Given a managed JavaS
 			]),
 		).toEqual(before);
 		expect(nodeModulesOutside(outer, managedRoot)).toEqual([]);
+		expect(readFileSync(join(project, "package.json"), "utf8")).toBe(projectManifest);
+		expect(existsSync(join(project, "node_modules"))).toBe(false);
+		expect(existsSync(join(project, "bun.lock"))).toBe(false);
 	}, 240_000);
 
 	it.each([["environments"], [join("environments", "js")], [join("environments", "js", "test")]])(

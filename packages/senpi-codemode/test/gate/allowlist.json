@@ -385,7 +385,21 @@
 				"imports/extension/packages/senpi-codemode/src/environments/no-links.ts",
 				"imports/firstKernel/packages/senpi-codemode/src/environments/no-links.ts",
 				"imports/extension/packages/senpi-codemode/src/environments/project-resolves.ts",
-				"imports/firstKernel/packages/senpi-codemode/src/environments/project-resolves.ts"
+				"imports/firstKernel/packages/senpi-codemode/src/environments/project-resolves.ts",
+				"legacyContracts/test/environments/js-install-sources-e2e.test.ts/Given a package installed from a local directory When the directory's package is replaced by a tarball of the same name, then the import gets the tarball and the directory is untouched",
+				"legacyContracts/test/environments/js-install-sources-e2e.test.ts/Given a package installed from a local directory When a package's link points outside the revision at a directory no install recorded, then the next install is refused and that directory is untouched",
+				"legacyContracts/test/environments/js-install-sources-e2e.test.ts/Given a package installed from a local directory When one package's link points at the directory recorded for another package, then the next install is refused",
+				"legacyContracts/test/environments/js-install-sources-e2e.test.ts/Given a package installed from a local directory When an installer path of the revision links at a recorded source directory, then the next install is refused and the source is untouched",
+				"legacyContracts/test/environments/js-install-sources-e2e.test.ts/Given a package installed from a local directory When the active revision no longer records the directory an earlier revision installed from, then its link is refused",
+				"legacyContracts/test/environments/js-install-sources-e2e.test.ts/Given a package installed from a local directory When npm installs from a directory and then installs another package, then both import and the source directory is untouched",
+				"legacyContracts/test/environments/js-install-sources-e2e.test.ts/Given a package installed from a local directory When bun installs from a directory and then installs another package, then both import and the source directory is untouched",
+				"legacyContracts/test/environments/js-install-sources-e2e.test.ts/Given a managed JavaScript revision When the revision's node_modules is a relative link to a directory inside it, then the next install is refused and that directory is untouched",
+				"legacyContracts/test/environments/js-install-sources-e2e.test.ts/Given a managed JavaScript revision When an install runs under umask 022, then every managed directory and the revision are private to the user",
+				"legacyContracts/test/environments/js-install-sources-e2e.test.ts/Given a managed JavaScript revision When npm is told to install globally by its config, then the install still lands in the revision and imports",
+				"legacyContracts/test/environments/revision-store-modes.test.ts/Given the revision store under a permissive umask When a py environment publishes its first two revisions under umask 022, then every directory it created is private to the user",
+				"legacyContracts/test/environments/revision-store-modes.test.ts/Given the revision store under a permissive umask When a js environment publishes its first two revisions under umask 022, then every directory it created is private to the user",
+				"legacyContracts/test/environments/js-install-abort-e2e.test.ts/Given a JavaScript install that is stopped part way When an install is aborted while it waits for another session's install lock, then it is reported as cancelled",
+				"legacyContracts/test/environments/js-install-abort-e2e.test.ts/Given a JavaScript install that is stopped part way When publishing the new revision fails, then the cell reports the failure without any host path"
 			],
 			"reason": "Node 15: %bun add / %npm add install into a per-session managed JavaScript environment (bare-import fallback root on the run input, host entries in the JS kernel queue); the two environment modules join the scoped census, plus the new contracts. No prompt or eval schema change."
 		},

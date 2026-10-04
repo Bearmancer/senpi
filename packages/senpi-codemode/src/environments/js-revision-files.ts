@@ -57,14 +57,18 @@ export async function recordedFileSpecs(root: string): Promise<string[]> {
 
 /**
  * A carried `registry`/`@scope:registry` value keeps only its scheme, host and path: user info, a query and a fragment
- * can each carry a credential, so they are cleared with the WHATWG URL parser npm itself uses. A value that does not
- * parse is dropped. Other carried keys pass unchanged.
+ * can each carry a credential, so they are cleared with the WHATWG URL parser npm itself uses. The path is kept, since
+ * registries are addressed by it, so a registry that embeds a token in its path keeps it in the revision's private
+ * (0600, in a 0700 directory) copy. A value that does not parse is dropped, and so is one that names an environment
+ * variable (`${...}`): npm expands it at install time, and a parsed copy would be a different URL. Other carried keys
+ * pass unchanged.
  */
 function withoutUrlCredentials(line: string): string | undefined {
 	const separator = line.indexOf("=");
 	const key = line.slice(0, separator).trim();
 	if (!key.endsWith("registry")) return line;
 	const raw = line.slice(separator + 1).trim();
+	if (raw.includes("${")) return undefined;
 	const quote = raw.length >= 2 && (raw[0] === '"' || raw[0] === "'") && raw.endsWith(raw[0]) ? raw[0] : "";
 	let url: URL;
 	try {

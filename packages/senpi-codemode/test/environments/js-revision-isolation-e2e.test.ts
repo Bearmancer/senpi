@@ -52,6 +52,7 @@ describe.skipIf(!hasCommand("bun") || !hasCommand("npm"))("Given JavaScript pack
 				"@twoat:registry=http://a@b:twoatsecret@twoat.example.test/",
 				"@oneslash:registry=http:/bu:oneslashsecret@oneslash.example.test/",
 				'@scoped:registry="http://u:s@scoped.example.test/"',
+				"@envvar:registry=https://envvar.example.test/t/$" + "{NPM_TOKEN}/",
 			].join("\r\n")}\r//cr.example.test/:_authToken=secret-cr-only\r`,
 		);
 		await writeFile(
@@ -75,7 +76,7 @@ describe.skipIf(!hasCommand("bun") || !hasCommand("npm"))("Given JavaScript pack
 				"",
 			].join("\n"),
 		);
-		expect(carried).not.toMatch(/secret|urluser|u:s@|bu:/);
+		expect(carried).not.toMatch(/secret|urluser|u:s@|bu:|envvar/);
 		expect(existsSync(join(secondRoot, "bunfig.toml"))).toBe(false);
 	}, 240_000);
 

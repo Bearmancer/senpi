@@ -93,7 +93,13 @@ export function runJsInstall(input: {
 		const child = spawn(input.command, jsInstallArgv(input.installer, input.root, input.packages), {
 			cwd: input.cwd,
 			stdio: ["ignore", "pipe", "pipe"],
-			env: { ...input.env, npm_config_ignore_scripts: "true" },
+			// npm reads `global`/`location` from any .npmrc and the env; a global install would land where the import never looks.
+			env: {
+				...input.env,
+				npm_config_ignore_scripts: "true",
+				npm_config_global: "false",
+				npm_config_location: "project",
+			},
 			detached: process.platform !== "win32",
 		});
 		let output = "";

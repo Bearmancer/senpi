@@ -1,4 +1,4 @@
-import { lstat, readlink } from "node:fs/promises";
+import { lstat, readFile, readlink, realpath, stat } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { EnvironmentError } from "./py-installer.ts";
 
@@ -26,15 +26,78 @@ export async function assertNoLinksBelow(root: string, path: string): Promise<vo
 	}
 }
 
-/** A copy filter: a link inside `tree` may point only inside `tree`, so a copied revision never reaches out. */
-export async function assertLinkStaysInside(path: string, tree: string): Promise<boolean> {
+/**
+ * The local directories a revision's `package.json` records as install sources, by package name, as realpaths: npm
+ * writes `file:<path relative to the revision>`, bun the absolute path. Only these may be link targets out of the
+ * revision, because installing from a directory links the package to it.
+ */
+export async function recordedInstallSources(revision: string): Promise<ReadonlyMap<string, string>> {
+	const sources = new Map<string, string>();
+	let manifest: unknown;
+	try {
+		manifest = JSON.parse(await readFile(join(revision, "package.json"), "utf8"));
+	} catch {
+		return sources;
+	}
+	if (typeof manifest !== "object" || manifest === null || !("dependencies" in manifest)) return sources;
+	const dependencies = manifest.dependencies;
+	if (typeof dependencies !== "object" || dependencies === null) return sources;
+	for (const [name, spec] of Object.entries(dependencies)) {
+		if (typeof spec !== "string") continue;
+		const path = spec.startsWith("file:") ? spec.slice("file:".length) : spec;
+		if (!isAbsolute(path) && !path.startsWith("./") && !path.startsWith("../")) continue;
+		const source = await realpath(resolve(revision, path)).catch(() => undefined);
+		if (source !== undefined && (await stat(source)).isDirectory()) sources.set(name, source);
+	}
+	return sources;
+}
+
+/**
+ * A copy filter. A link inside `tree` may point inside it (relatively: an absolute link would keep pointing at the
+ * previous revision from the copy), or out of it only to exactly the matching file of a recorded install source:
+ * the link at `node_modules/<name>/<rest>` may resolve to `<source of name>/<rest>` and to nothing else.
+ */
+export async function assertLinkStaysInside(
+	path: string,
+	tree: string,
+	sources: ReadonlyMap<string, string>,
+): Promise<boolean> {
 	if (!(await lstat(path)).isSymbolicLink()) return true;
-	const inside = relative(tree, resolve(dirname(path), await readlink(path)));
-	if (inside === "" || (!inside.startsWith("..") && !isAbsolute(inside))) return true;
+	const target = await readlink(path);
+	const resolved = resolve(dirname(path), target);
+	const inside = relative(tree, resolved);
+	const where = relative(tree, path);
+	if (inside === "" || (!inside.startsWith("..") && !isAbsolute(inside))) {
+		if (!isAbsolute(target)) return true;
+		throw new EnvironmentError(
+			"environment_install_failed",
+			`${where} is an absolute link into its revision; refusing to build on it`,
+		);
+	}
+	if (await isRecordedSourceLink(where, resolved, sources)) return true;
 	throw new EnvironmentError(
 		"environment_install_failed",
-		`${relative(tree, path)} links outside its revision; refusing to build on it`,
+		`${where} links outside its revision; refusing to build on it`,
 	);
+}
+
+async function isRecordedSourceLink(
+	where: string,
+	resolved: string,
+	sources: ReadonlyMap<string, string>,
+): Promise<boolean> {
+	const parts = where.split(sep);
+	if (parts[0] !== "node_modules" || parts[1] === undefined) return false;
+	const scoped = parts[1].startsWith("@");
+	const name = scoped ? `${parts[1]}/${parts[2] ?? ""}` : parts[1];
+	const source = sources.get(name);
+	if (source === undefined) return false;
+	const expected = join(source, ...parts.slice(scoped ? 3 : 2));
+	const [actual, wanted] = await Promise.all([
+		realpath(resolved).catch(() => undefined),
+		realpath(expected).catch(() => undefined),
+	]);
+	return actual !== undefined && actual === wanted;
 }
 
 function missing(error: unknown): undefined {

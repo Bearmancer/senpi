@@ -22,7 +22,9 @@ function hasRootEntry(packageDir: string): boolean {
 	} catch {
 		return legacyFile(join(packageDir, "index.js"));
 	}
-	if (typeof manifest !== "object" || manifest === null) return false;
+	// The resolver throws on a null manifest and treats any other non-object as one without fields.
+	if (manifest === null) return true;
+	if (typeof manifest !== "object") return legacyFile(join(packageDir, "index.js"));
 	// With `exports` the resolver commits to this package: it imports the "." target or fails, never falling through.
 	if ("exports" in manifest && manifest.exports !== undefined && manifest.exports !== null) return true;
 	const moduleEntry =

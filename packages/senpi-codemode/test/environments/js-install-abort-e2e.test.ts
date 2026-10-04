@@ -1,14 +1,14 @@
-import { existsSync, readdirSync, writeFileSync } from "node:fs";
-import { readFile } from "node:fs/promises";
+import { existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
+import { hostname } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { readActiveRevision } from "../../src/environments/revision-store.ts";
 import { hasCommand, packFixture, session, textOf } from "./js-magic-session.ts";
 
 const probeSource = 'export const probe = () => "ok";\n';
-const _secondSource = 'export const second = () => "two";\n';
 
 describe.skipIf(!hasCommand("bun") || !hasCommand("npm"))("Given a JavaScript install that is stopped part way", () => {
 	it("When the cell is cancelled once the installer has started, then nothing is published, the project manifest is unchanged and the kernel answers the next cell", async () => {
@@ -153,5 +153,65 @@ describe.skipIf(!hasCommand("bun") || !hasCommand("npm"))("Given a JavaScript in
 			registry.closeAllConnections();
 			registry.close();
 		}
+	}, 180_000);
+	it("When an install is aborted while it waits for another session's install lock, then it is reported as cancelled", async () => {
+		const { root, environments } = await session("npm");
+		const base = join(root, "artifacts", "environments", "js", "test");
+		await mkdir(base, { recursive: true });
+		// A live holder on this host (this very process) is never stale, so the install waits for it.
+		await writeFile(
+			join(base, ".install.lock"),
+			JSON.stringify({ pid: process.pid, host: hostname(), nonce: "another-session" }),
+		);
+		// The first abort listener on the signal is the lock wait's; the installer registers its own only once it holds the
+		// lock. Aborting as soon as that first listener is registered is an abort mid-wait, with no timing involved.
+		const controller = new AbortController();
+		const { signal } = controller;
+		const listen = signal.addEventListener.bind(signal);
+		let waiting = false;
+		signal.addEventListener = (...args: Parameters<AbortSignal["addEventListener"]>) => {
+			listen(...args);
+			if (args[0] === "abort" && !waiting) {
+				waiting = true;
+				queueMicrotask(() => controller.abort());
+			}
+		};
+
+		const error = await environments.install("left-pad", signal).then(
+			() => undefined,
+			(failure: unknown) => failure,
+		);
+
+		expect(waiting).toBe(true);
+		expect(error).toMatchObject({ code: "environment_install_cancelled" });
+	}, 60_000);
+
+	it("When publishing the new revision fails, then the cell reports the failure without any host path", async () => {
+		const { root, fixtures, environments, run } = await session("npm");
+		const tarball = await packFixture(fixtures, "senpi-publish-blocked", "1.0.0", probeSource);
+		const base = join(root, "artifacts", "environments", "js", "test");
+		const original = environments.install.bind(environments);
+		let blocked = false;
+		environments.install = (requested, signal, onOutput, installer) =>
+			original(
+				requested,
+				signal,
+				(stream, data) => {
+					// The target name is taken while the installer runs, so the publish rename meets a non-empty directory.
+					if (!blocked) {
+						blocked = true;
+						mkdirSync(join(base, "rev-1", "occupied"), { recursive: true });
+					}
+					onOutput?.(stream, data);
+				},
+				installer,
+			);
+
+		const install = await run(`%npm add ${tarball}`);
+
+		expect(blocked).toBe(true);
+		expect(install.details).toHaveProperty("isError", true);
+		expect(textOf(install)).toContain("could not publish the new revision");
+		expect(textOf(install)).not.toContain(root);
 	}, 180_000);
 });
