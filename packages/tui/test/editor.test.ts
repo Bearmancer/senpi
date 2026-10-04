@@ -2347,6 +2347,96 @@ describe("Editor component", () => {
 			assert.deepStrictEqual(requests, [{ text, force: true }]);
 		});
 
+		// A slow refresh (fd walking $HOME) left the "@" list on screen while "~/Dev" was typed;
+		// accepting it spliced the stale item into the new text: "@~/Dev" -> "@~/De@go/".
+		it("accepts against the current token when the shown list predates the text", async (t) => {
+			t.mock.timers.enable({ apis: ["setTimeout"] });
+			for (const acceptKey of ["\t", "\r"]) {
+				const editor = new Editor(createTestTUI(), defaultEditorTheme);
+				let submitted = false;
+				editor.onSubmit = () => {
+					submitted = true;
+				};
+				let stall = false;
+				editor.setAutocompleteProvider({
+					getSuggestions: async (lines, cursorLine, cursorCol, options) => {
+						const prefix = lines[cursorLine]!.slice(0, cursorCol);
+						if (prefix === "@") return { prefix, items: [{ value: "@go/", label: "go/" }] };
+						if (stall) {
+							return new Promise((resolve) => options.signal.addEventListener("abort", () => resolve(null)));
+						}
+						return {
+							prefix,
+							items: [
+								{ value: "@~/Developer/", label: "Developer/" },
+								{ value: "@~/Dev.txt", label: "Dev.txt" },
+							],
+						};
+					},
+					applyCompletion,
+				});
+
+				editor.handleInput("@");
+				t.mock.timers.tick(20);
+				await flushAutocomplete();
+				assert.strictEqual(editor.isShowingAutocomplete(), true);
+
+				stall = true;
+				for (const char of "~/Dev") editor.handleInput(char);
+				t.mock.timers.tick(20);
+				await flushAutocomplete();
+				stall = false;
+
+				editor.handleInput(acceptKey);
+				await flushAutocomplete();
+				assert.strictEqual(editor.getText(), "@~/Developer/", JSON.stringify(acceptKey));
+				assert.deepStrictEqual(editor.getCursor(), { line: 0, col: "@~/Developer/".length });
+				assert.strictEqual(editor.isShowingAutocomplete(), false);
+				assert.strictEqual(submitted, false);
+			}
+		});
+
+		// Re-querying after the space found an empty token and listed the working directory instead.
+		it("closes an @ or Tab path picker when a space ends the path", async (t) => {
+			t.mock.timers.enable({ apis: ["setTimeout"] });
+			for (const [typed, openWithTab] of [
+				["@src/", false],
+				["src/", true],
+			] as const) {
+				const editor = new Editor(createTestTUI(), defaultEditorTheme);
+				const requested: string[] = [];
+				editor.setAutocompleteProvider({
+					getSuggestions: async (lines, cursorLine, cursorCol) => {
+						const text = lines[cursorLine]!.slice(0, cursorCol);
+						requested.push(text);
+						if (text.endsWith(" ")) return { prefix: "", items: [{ value: "cwd-entry/", label: "cwd-entry/" }] };
+						return {
+							prefix: text,
+							items: [
+								{ value: `${text}a.ts`, label: "a.ts" },
+								{ value: `${text}b.ts`, label: "b.ts" },
+							],
+						};
+					},
+					applyCompletion,
+				});
+
+				for (const char of typed) editor.handleInput(char);
+				if (openWithTab) editor.handleInput("\t");
+				t.mock.timers.tick(20);
+				await flushAutocomplete();
+				assert.strictEqual(editor.isShowingAutocomplete(), true, typed);
+
+				editor.handleInput(" ");
+				t.mock.timers.tick(20);
+				await flushAutocomplete();
+
+				assert.strictEqual(editor.getText(), `${typed} `, typed);
+				assert.strictEqual(editor.isShowingAutocomplete(), false, typed);
+				assert.ok(!requested.some((text) => text.endsWith(" ")), typed);
+			}
+		});
+
 		it("completes Chinese path prefixes after whitespace or CJK punctuation with Tab", async (t) => {
 			const baseDir = mkdtempSync(join(tmpdir(), "pi-editor-autocomplete-"));
 			t.after(() => rmSync(baseDir, { recursive: true, force: true }));
@@ -2392,12 +2482,14 @@ describe("Editor component", () => {
 					assert.strictEqual(editor.isShowingAutocomplete(), true);
 					editor.handleInput(separator);
 					await flushAutocomplete();
-					assert.deepStrictEqual(requests, [prefix, prefix + separator]);
+					// Whitespace closes an @ picker outright; re-querying would list the working directory.
+					const expected = trigger === "@" && /\s/.test(separator) ? [prefix] : [prefix, prefix + separator];
+					assert.deepStrictEqual(requests, expected);
 					assert.strictEqual(editor.isShowingAutocomplete(), false);
 					editor.handleInput("文");
 					t.mock.timers.tick(20);
 					await flushAutocomplete();
-					assert.deepStrictEqual(requests, [prefix, prefix + separator]);
+					assert.deepStrictEqual(requests, expected);
 				}
 			}
 		});
