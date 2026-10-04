@@ -268,7 +268,7 @@ await tokenReceived;
 
 // The crash cause reaches the host on stderr, tagged with the token, before the kernel ends (worker mode reports it
 // through the thread's error event). It ends by SIGKILL, not process.exit: a crashed kernel runs no more code, and
-// Node's exit can stall joining its own platform threads, which would keep a dead kernel and its cell waiting.
+// Node's exit can stall joining its own platform threads, which would keep a dead kernel and its cell waiting (#2757).
 function reportCrash(error) {
 	const cause = error instanceof Error ? { name: error.name, message: error.message } : { name: "Error", message: String(error) };
 	try {
