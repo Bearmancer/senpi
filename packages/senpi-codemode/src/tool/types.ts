@@ -174,7 +174,16 @@ export interface EvalKernelRunInput {
 	readonly envRoot?: () => string;
 	/** The file a `%load` cell runs: tracebacks name it and its relative imports resolve from its directory. */
 	readonly sourceFile?: string;
+	/**
+	 * Called when the cell's turn comes in the kernel's queue, never earlier: what to run instead of `code` (a `%load`
+	 * cell's file), or a refusal that settles the cell as failed in queue order.
+	 */
+	readonly resolveAtStart?: () => CellSourceAtStart;
 }
+
+export type CellSourceAtStart =
+	| { readonly ok: true; readonly code: string; readonly sourceFile?: string }
+	| { readonly ok: false; readonly message: string };
 
 export interface KernelInterruptHandle {
 	/** Resolves once the kernel knows whether user state survived the interrupt. */

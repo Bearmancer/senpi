@@ -337,7 +337,21 @@
 				"legacyContracts/test/load-cell.test.ts/Given a %load that cannot run a local file When the file does not exist, then the cell fails with file not found and the path",
 				"legacyContracts/test/load-cell.test.ts/Given a %load that cannot run a local file When %load shares its cell with other code, then the cell is refused with the own-cell teaching error",
 				"imports/extension/packages/senpi-codemode/src/tool/load-cell.ts",
-				"imports/firstKernel/packages/senpi-codemode/src/tool/load-cell.ts"
+				"imports/firstKernel/packages/senpi-codemode/src/tool/load-cell.ts",
+				"legacyContracts/test/load-cell-turn.test.ts/Given a %load cell queued behind the cell that writes its file When the Python cell ahead writes the file, then the %load runs what it wrote",
+				"legacyContracts/test/load-cell-turn.test.ts/Given a %load cell queued behind the cell that writes its file When the JavaScript cell ahead writes the file, then the %load runs what it wrote",
+				"legacyContracts/test/load-cell-turn.test.ts/Given a Python file loaded with %load from a sub-directory When a later cell runs, then that directory is off the import path and __file__ is gone",
+				"legacyContracts/test/load-cell-turn.test.ts/Given a Python file loaded with %load from a sub-directory When the loaded file shadows a standard-library module name, then a later cell still imports the standard library",
+				"legacyContracts/test/load-cell-turn.test.ts/Given a %load path that cannot be read When it is a file:// URL naming a host, then the cell fails with a message naming the target and no absolute path",
+				"legacyContracts/test/load-cell-turn.test.ts/Given a %load path that cannot be read When it is a file:// URL with an encoded slash, then the cell fails with a message naming the target and no absolute path",
+				"legacyContracts/test/load-cell-turn.test.ts/Given a %load path that cannot be read When it is a malformed local:// escape, then the cell fails with a message naming the target and no absolute path",
+				"legacyContracts/test/load-cell-turn.test.ts/Given a %load path that cannot be read When it is a path through a file, then the cell fails with a message naming the target and no absolute path",
+				"legacyContracts/test/load-cell-turn.test.ts/Given a %load path that cannot be read When the file is unreadable, then the cell fails with permission denied and no absolute path",
+				"legacyContracts/test/load-cell-turn.test.ts/Given a %load target written as a URL When it is a file:// URL of a real file, then the file runs as the cell",
+				"legacyContracts/test/load-cell-turn.test.ts/Given a %load target written as a URL When it is local:// under the session artifacts, then the file runs as the cell",
+				"legacyContracts/test/load-cell-turn.test.ts/Given a %load target written as a URL When local:// climbs out of the artifacts root, then the cell is refused",
+				"imports/extension/packages/senpi-codemode/src/kernels/shared/cell-source-at-start.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/kernels/shared/cell-source-at-start.ts"
 			],
 			"reason": "Node 16: %load runs a local file as a Python or JavaScript cell; load-cell.ts joins the scoped census, plus the %load contracts. No prompt or eval schema change."
 		},
