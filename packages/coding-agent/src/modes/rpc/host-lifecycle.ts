@@ -88,6 +88,7 @@ import { hostCrashCleanupPaths } from "./host-cleanup-paths.ts";
 import { createHostDaemonPaths, generationPaths, HOST_DAEMON_DIR_ENV } from "./host-daemon-paths.ts";
 import { releaseGeneration } from "./host-daemon-registration.ts";
 import { HOST_INSTANCE_ID_ENV } from "./host-identity-env.ts";
+import { SessionRunActivity } from "./host-run-activity.ts";
 import { watchForSupersession } from "./host-supersession.ts";
 import {
 	HOST_CLEANUP_PATHS_ENV,
@@ -412,7 +413,7 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 	const internalSecretPath = internal.secretPath ?? socketSecretPath(internalSocket);
 	const internalSecret = process.platform === "win32" ? await createSocketSecret(internalSecretPath) : undefined;
 	const clients = new ClientOccupancy(() => decider.update(currentActivity()));
-	const busySessions = new Map<string, number>();
+	const runs = new SessionRunActivity();
 	// Declared before anything that can reach `currentActivity()`. A client accepted during startup
 	// asks for the activity snapshot, and a `const` read before its initializer runs is a
 	// ReferenceError that fails the connection - which is how a successor's first `open_session`
@@ -555,32 +556,13 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 				unhealthySince: observerLink.unhealthySince(),
 				now: Date.now(),
 				unknownGraceMs: decider.idleExitMs,
-				observedBusy: countBusySessions(),
+				observedBusy: runs.busySessions,
 			}),
 		};
 	}
 
-	function countBusySessions(): number {
-		let busy = 0;
-		for (const count of busySessions.values()) if (count > 0) busy++;
-		return busy;
-	}
-
 	function observeHostEvent(line: string): void {
-		let event: unknown;
-		try {
-			event = JSON.parse(line);
-		} catch {
-			return;
-		}
-		if (typeof event !== "object" || event === null) return;
-		const { type, sessionId } = event as { type?: unknown; sessionId?: unknown };
-		if (typeof sessionId !== "string") return;
-		if (type === "agent_start") busySessions.set(sessionId, (busySessions.get(sessionId) ?? 0) + 1);
-		else if (type === "agent_settled")
-			busySessions.set(sessionId, Math.max(0, (busySessions.get(sessionId) ?? 1) - 1));
-		else return;
-		decider.update(currentActivity());
+		if (runs.observe(line)) decider.update(currentActivity());
 	}
 
 	async function shutdown(reason: string, exitCode: number): Promise<never> {

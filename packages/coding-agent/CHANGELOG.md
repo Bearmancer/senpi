@@ -12,6 +12,8 @@
 
 ### Fixed
 
+- An RPC host shard's supervisor exits after its idle window again once its sessions are done. It counted a session busy per `agent_start`, but a run emits one on every loop iteration (a provider retry, a post-compaction continue, a follow-up) and settles once, so any run that continued left the shard busy forever; a session closed mid-run did the same. It now tracks runs, and drops a session when it closes ([#2713](https://github.com/code-yeongyu/senpi/issues/2713), reported by [@DevNewbie1826](https://github.com/DevNewbie1826)).
+
 ### Removed
 
 ## [2026.10.7] - 2026-10-04
