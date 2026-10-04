@@ -347,6 +347,10 @@ describe.skipIf(!(await hasPython3()))("Python kernel tools (@tool)", () => {
 		const queued = cell(kernel, "len(runs)");
 		controller.abort();
 		await expect(invoked).rejects.toMatchObject({ code: "kernel_tool_stale" });
+		// The cancel frame and the host call's reply travel on different channels (stdin vs the bridge socket).
+		// The kernel serves control frames in order, so a describe answered after the cancel proves the
+		// cancel reached the kernel before the parked host call is allowed to return.
+		await within(descriptor(kernel, "slow"), 20_000, "the kernel to read the cancel");
 		releaseHost.open();
 		const queuedResult = await within(queued, 20_000, "queued cell");
 		await within(
