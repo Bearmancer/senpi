@@ -1,10 +1,10 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
 import { PythonKernel } from "../src/kernels/py/kernel.ts";
 import { FakeChild } from "./py-kernel/fixtures.ts";
 
 // These tests give fake children pids. A kill path that bypasses the injected group kill must fail here,
 // never send a real signal to whatever process group happens to have that id.
-let realKill: ReturnType<typeof vi.spyOn>;
+let realKill: MockInstance<typeof process.kill>;
 
 beforeEach(() => {
 	realKill = vi.spyOn(process, "kill").mockImplementation(() => {
