@@ -1,6 +1,5 @@
-import { existsSync, statSync } from "node:fs";
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
-import { dirname, isAbsolute, join } from "node:path";
+import { mkdir, readFile, rm } from "node:fs/promises";
+import { join } from "node:path";
 import type { ResolvedCodemodeSettings } from "../config/settings.ts";
 import { withRootLock } from "./install-lock.ts";
 import {
@@ -11,9 +10,23 @@ import {
 	runJsInstall,
 	withoutHostPaths,
 } from "./js-installer.ts";
+import { carryNpmrcSettings, recordedFileSpecs, seedPackageJson } from "./js-revision-files.ts";
+import { assertNoLinksBelow } from "./no-links.ts";
+import { projectResolves } from "./project-resolves.ts";
 import type { EnvironmentMode } from "./py-environment.ts";
 import { EnvironmentError } from "./py-installer.ts";
 import { publishNextRevision, readActiveRevision } from "./revision-store.ts";
+
+/** The paths in a revision that the installer writes. */
+const INSTALLER_WRITES = [
+	"package.json",
+	"package-lock.json",
+	"bun.lock",
+	"bun.lockb",
+	"node_modules",
+	".npmrc",
+	"bunfig.toml",
+];
 
 export interface JsInstallReceipt {
 	readonly installer: "bun" | "npm";
@@ -87,9 +100,15 @@ export class JsEnvironments {
 			});
 		// The lock and the revision store fail with raw file system errors; they reach the cell redacted.
 		const redacted = (root: string) => (error: unknown) => {
-			if (error instanceof EnvironmentError) throw error;
-			const message = error instanceof Error ? error.message : String(error);
-			const text = withoutHostPaths(message, { root, cwd: this.#options.cwd, packages, recordedSpecs });
+			const raw =
+				error instanceof EnvironmentError
+					? error.message.slice(error.code.length + 2)
+					: String(error instanceof Error ? error.message : error);
+			const text = withoutHostPaths(raw, { root, cwd: this.#options.cwd, packages, recordedSpecs });
+			if (error instanceof EnvironmentError) throw new EnvironmentError(error.code, text);
+			// An abort while waiting for the lock or before the publish is a cancel, not a failure.
+			if (signal.aborted)
+				throw new EnvironmentError("environment_install_cancelled", `the install was cancelled: ${text}`);
 			throw new EnvironmentError("environment_install_failed", text);
 		};
 		if (this.#mode === "project") {
@@ -101,26 +120,34 @@ export class JsEnvironments {
 			return { installer, mode: "project", revision: undefined, added, shadowed: [] };
 		}
 		let added: string[] = [];
+		const base = this.#managedBase();
+		await assertNoLinksBelow(this.#managedRoot(), base).catch(redacted(base));
 		const { revision } = await publishNextRevision(
-			this.#managedBase(),
+			base,
 			async (staging) => {
 				await carryNpmrcSettings(staging);
 				await rm(join(staging, "bunfig.toml"), { recursive: true, force: true });
+				await seedPackageJson(staging);
+				// Every path the installer writes must be the revision's own, never a link out of it.
+				for (const entry of INSTALLER_WRITES) await assertNoLinksBelow(base, join(staging, entry));
 				const before = await dependencyNames(staging);
-				recordedSpecs = await absoluteDependencySpecs(staging);
+				recordedSpecs = await recordedFileSpecs(staging);
 				await run(staging);
 				added = (await dependencyNames(staging)).filter((name) => !before.includes(name));
 			},
 			signal,
-		).catch(redacted(this.#managedBase()));
+		).catch(redacted(base));
 		this.#packageRoot = revision.dir;
 		const shadowed = added.filter((name) => projectResolves(this.#options.cwd, name));
 		return { installer, mode: "managed", revision: revision.number, added, shadowed };
 	}
 
+	#managedRoot(): string {
+		return this.#options.settings.environments?.managedRoot ?? this.#options.artifactsDir;
+	}
+
 	#managedBase(): string {
-		const root = this.#options.settings.environments?.managedRoot ?? this.#options.artifactsDir;
-		return join(root, "environments", "js", this.#options.runtime);
+		return join(this.#managedRoot(), "environments", "js", this.#options.runtime);
 	}
 }
 
@@ -133,75 +160,5 @@ async function dependencyNames(root: string): Promise<string[]> {
 	} catch (error) {
 		if (error instanceof Error && "code" in error && error.code === "ENOENT") return [];
 		throw error;
-	}
-}
-
-const NPMRC_CARRIED_KEY = /^(?:registry|@[^\s=:/]+:registry|strict-ssl|ca|cafile)$/;
-
-/**
- * A revision carries forward only the registry settings of its `.npmrc`: `registry`, `@scope:registry`, `strict-ssl`,
- * `ca` and `cafile`. Every other key, credentials included, is dropped by default, and the file is rewritten as a
- * regular file: a symlinked `.npmrc` is replaced, never written through, so the file it pointed at stays untouched.
- */
-async function carryNpmrcSettings(root: string): Promise<void> {
-	const path = join(root, ".npmrc");
-	let text: string;
-	try {
-		text = await readFile(path, "utf8");
-	} catch {
-		await rm(path, { recursive: true, force: true });
-		return;
-	}
-	const kept = text
-		.split(/\r\n|\r|\n/)
-		.map((line) => line.trim())
-		.filter((line) => {
-			const key = line.split("=", 1)[0]?.trim() ?? "";
-			return line.includes("=") && NPMRC_CARRIED_KEY.test(key);
-		})
-		// A registry URL may carry `user:password@`; that is a credential, so it is dropped too.
-		.map((line) => line.replace(/^([^=]*registry\s*=\s*["']?[a-z][a-z0-9+.-]*:\/\/)[^@/\s"']*@/i, "$1"));
-	await rm(path, { recursive: true, force: true });
-	if (kept.length > 0) await writeFile(path, `${kept.join("\n")}\n`, { mode: 0o600, flag: "wx" });
-}
-
-/** Absolute paths (or `file:` paths) a revision's `package.json` already records: the installer echoes them. */
-async function absoluteDependencySpecs(root: string): Promise<string[]> {
-	try {
-		const manifest: unknown = JSON.parse(await readFile(join(root, "package.json"), "utf8"));
-		if (typeof manifest !== "object" || manifest === null || !("dependencies" in manifest)) return [];
-		const dependencies = manifest.dependencies;
-		if (typeof dependencies !== "object" || dependencies === null) return [];
-		return Object.values(dependencies).flatMap((spec) => {
-			if (typeof spec !== "string") return [];
-			const path = spec.startsWith("file:") ? spec.slice("file:".length) : spec;
-			return isAbsolute(path) ? [path] : [];
-		});
-	} catch {
-		return [];
-	}
-}
-
-/**
- * Whether a bare import of `name` from the session directory resolves in the project before a managed revision:
- * the host-side twin of the kernel resolver's lookup (`worker-package-resolve.js`, which stays plain JavaScript).
- * Like the resolver it stops at the first `node_modules/<name>` directory up the chain, and that directory wins
- * only when it has an entry: a `package.json`, or the `index.js` a manifest-less package falls back to.
- */
-function projectResolves(cwd: string, name: string): boolean {
-	for (let directory = cwd; ; directory = dirname(directory)) {
-		const candidate = join(directory, "node_modules", name);
-		if (isDirectory(candidate)) {
-			return existsSync(join(candidate, "package.json")) || existsSync(join(candidate, "index.js"));
-		}
-		if (dirname(directory) === directory) return false;
-	}
-}
-
-function isDirectory(path: string): boolean {
-	try {
-		return statSync(path).isDirectory();
-	} catch {
-		return false;
 	}
 }

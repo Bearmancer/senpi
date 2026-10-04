@@ -48,6 +48,9 @@ describe.skipIf(!hasCommand("bun") || !hasCommand("npm"))("Given JavaScript pack
 				"key=secret-inline-key",
 				"strict-ssl=true",
 				"registry=http://urluser:urlsecret@registry.example.test/",
+				"@query:registry=http://query.example.test/?token=querysecret",
+				"@twoat:registry=http://a@b:twoatsecret@twoat.example.test/",
+				"@oneslash:registry=http:/bu:oneslashsecret@oneslash.example.test/",
 				'@scoped:registry="http://u:s@scoped.example.test/"',
 			].join("\r\n")}\r//cr.example.test/:_authToken=secret-cr-only\r`,
 		);
@@ -61,9 +64,18 @@ describe.skipIf(!hasCommand("bun") || !hasCommand("npm"))("Given JavaScript pack
 		const carried = await readFile(join(secondRoot, ".npmrc"), "utf8");
 
 		expect(carried).toBe(
-			'@acme:registry=https://registry.example.test/\nstrict-ssl=true\nregistry=http://registry.example.test/\n@scoped:registry="http://scoped.example.test/"\n',
+			[
+				"@acme:registry=https://registry.example.test/",
+				"strict-ssl=true",
+				"registry=http://registry.example.test/",
+				"@query:registry=http://query.example.test/",
+				"@twoat:registry=http://twoat.example.test/",
+				"@oneslash:registry=http://oneslash.example.test/",
+				'@scoped:registry="http://scoped.example.test/"',
+				"",
+			].join("\n"),
 		);
-		expect(carried).not.toMatch(/urlsecret|urluser|u:s@/);
+		expect(carried).not.toMatch(/secret|urluser|u:s@|bu:/);
 		expect(existsSync(join(secondRoot, "bunfig.toml"))).toBe(false);
 	}, 240_000);
 

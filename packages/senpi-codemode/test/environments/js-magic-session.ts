@@ -58,7 +58,11 @@ export async function packFixture(
 	return join(dir, `${name}-${version}.tgz`);
 }
 
-export async function session(installer: "auto" | "bun" | "npm" = "auto", managedRoot?: string) {
+export async function session(
+	installer: "auto" | "bun" | "npm" = "auto",
+	managedRoot?: string,
+	env: NodeJS.ProcessEnv = process.env,
+) {
 	const root = await mkdtemp(join(tmpdir(), "senpi-js-magic-"));
 	const project = join(root, "project");
 	const fixtures = join(root, "fixtures");
@@ -73,7 +77,7 @@ export async function session(installer: "auto" | "bun" | "npm" = "auto", manage
 		artifactsDir: join(root, "artifacts"),
 		cwd: project,
 		runtime: "test",
-		env: process.env,
+		env,
 		settings: runSettings,
 	});
 	const fail = async () => {

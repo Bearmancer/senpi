@@ -164,9 +164,12 @@ export function withoutHostPaths(
 ): string {
 	const home = homedir();
 	// A spec that is an absolute file path names the user's file system; it is shown by its file name only.
-	const specPaths = [...input.packages, ...(input.recordedSpecs ?? [])]
+	// This install's absolute specs, and every path an earlier install recorded (npm records a relative `file:` path).
+	const requested = input.packages
 		.map((spec) => (spec.startsWith("file:") ? spec.slice("file:".length) : spec))
-		.filter((path) => isAbsolute(path))
+		.filter((path) => isAbsolute(path));
+	const specPaths = [...requested, ...(input.recordedSpecs ?? [])]
+		.sort((a, b) => b.length - a.length)
 		.map((path) => [path, `<path>/${basename(path)}`] as const);
 	return [
 		...specPaths,
