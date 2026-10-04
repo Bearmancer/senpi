@@ -413,7 +413,8 @@
 				"legacyContracts/test/py-kernel-tools.test.ts/Python kernel tools (@tool) a reset while a callback is mid-flight ends it as kernel_tool_stale and leaves no thread or token behind",
 				"legacyContracts/test/py-kernel-tools.test.ts/Python kernel tools (@tool) an awaited future from the parent cell's loop fails fast with kernel_tool_loop_mismatch",
 				"legacyContracts/test/py-kernel-tools.test.ts/Python kernel tools (@tool) a tool's printed text goes to its own reply, never into the parent cell's output",
-				"imports/extension/packages/senpi-codemode/src/kernels/py/kernel-tools-host.ts"
+				"imports/extension/packages/senpi-codemode/src/kernels/py/kernel-tools-host.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/kernels/py/kernel-tools-host.ts"
 			],
 			"reason": "Node 11 part 2: Python kernel tools. The new contracts, plus kernel-tools-host.ts (the Python kernel's describe/invoke over the shared pump) joining the scoped census at extension load (the key the eval gate reported on this head). The prompt is unchanged; tool_schema('eval:kernel-tools') is a virtual on-demand entry, absent from the catalog listing."
 		},
