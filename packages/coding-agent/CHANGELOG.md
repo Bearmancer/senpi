@@ -16,6 +16,7 @@
 
 ### Fixed
 
+- `auto` permission preset: a git revision argument that names an existing path, a dangling symlink included, is checked as a path, so `auto` asks for it; in print mode and the unbound SDK, a request `auto` or your rules still ask about is always refused with a reason.
 - A rate limit (429) or a server error (5xx) from the provider now shows as one retry banner with a countdown in the status line, as a dropped connection already did, instead of printing the provider's raw JSON on every retry; authentication, quota and billing failures still show in full ([#2652](https://github.com/code-yeongyu/senpi/issues/2652)).
 - The apply_patch streaming preview is tail-windowed with a sticky per-file change count, so a long patch no longer fills the screen, and it no longer re-renders the whole box on every streamed chunk.
 - The edit tool card header now shows the aggregate change count next to the path (for example `edit src/greet.ts (+2/-1)`), so an edit's size is visible at a glance.
