@@ -464,7 +464,10 @@ cell it edits or removes under that node's `changes`, each as
 `{ "key": "<section>/<cell>", "reason": "..." }`. In a pull request the gate reads
 the baseline at the merge base and fails any baseline edit or removal that is
 not listed, any edited or added cell that differs from what the head measures,
-and any listed removal the head still measures. Reviewers read each `changes`
+and any listed removal the head still measures. A cell written into the baseline that
+was absent at the merge base must be listed under some node's `additions` (an entry an earlier
+pull request added counts, so a re-record can write in cells approved before); only `changes`
+entries must be new in this pull request. Reviewers read each `changes`
 entry: it is the only record of why a protected surface moved. If the merge
 base cannot be resolved in a pull request, the gate fails closed; the gate job
 checks out full history for this. A local run outside a pull request reviews
