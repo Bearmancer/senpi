@@ -165,27 +165,27 @@ class SenpiGlobalSizer
     return ObjectSpace.memsize_of(value) if Integer === value || Float === value
     return 0 if @seen.key?(value)
     @seen[value] = true
-    return SENPI_SIZER_OBJECT + SENPI_STRING_BYTESIZE.bind_call(value) if String === value
+    return SENPI_SIZER_OBJECT + SENPI_STRING_BYTESIZE.bind(value).call() if String === value
     if depth >= SENPI_SIZER_MAX_DEPTH || @nodes >= SENPI_SIZER_NODE_BUDGET
       @approximate = true
       return ObjectSpace.memsize_of(value)
     end
     if Array === value
-      length = SENPI_ARRAY_SIZE.bind_call(value)
-      SENPI_SIZER_OBJECT + length * SENPI_SIZER_POINTER + sampled(length, depth) { |index| SENPI_ARRAY_AT.bind_call(value, index) }
+      length = SENPI_ARRAY_SIZE.bind(value).call()
+      SENPI_SIZER_OBJECT + length * SENPI_SIZER_POINTER + sampled(length, depth) { |index| SENPI_ARRAY_AT.bind(value).call(index) }
     elsif Hash === value
       hash_size(value, depth)
     else
-      ivars = SENPI_IVARS.bind_call(value)
-      ObjectSpace.memsize_of(value) + sampled(ivars.length, depth) { |index| SENPI_IVAR_GET.bind_call(value, ivars[index]) }
+      ivars = SENPI_IVARS.bind(value).call()
+      ObjectSpace.memsize_of(value) + sampled(ivars.length, depth) { |index| SENPI_IVAR_GET.bind(value).call(ivars[index]) }
     end
   end
 
   def hash_size(hash, depth)
-    count = SENPI_HASH_SIZE.bind_call(hash)
+    count = SENPI_HASH_SIZE.bind(hash).call()
     taken = 0
     total = 0
-    SENPI_HASH_EACH.bind_call(hash) do |key, item|
+    SENPI_HASH_EACH.bind(hash).call() do |key, item|
       total += size(key, depth + 1) + size(item, depth + 1)
       taken += 1
       break if taken >= SENPI_SIZER_SAMPLE

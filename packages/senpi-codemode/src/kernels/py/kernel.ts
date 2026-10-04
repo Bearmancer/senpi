@@ -1,12 +1,16 @@
 // allow: SIZE_OK — one persistent Python lifecycle state machine owns queue, generation, and retirement.
 import type { KernelInterruptHandle, PendingCell } from "../../tool/types.ts";
-import type { KernelToolsInvokeOptions } from "../js/kernel-tools-types.ts";
-import { rejectKernelToolsUnavailable } from "../kernel-tools-unavailable.ts";
+import type {
+	KernelToolsDescribeResult,
+	KernelToolsInvokeOptions,
+	KernelToolsInvokeRequest,
+} from "../js/kernel-tools-types.ts";
 import { describeExit } from "../shared/kernel-death.ts";
 import { KernelMemoryHost } from "../shared/kernel-memory-host.ts";
 import { KernelPreludeTracker } from "../shared/kernel-prelude-plan.ts";
 import { runHostCell } from "./host-cell.ts";
 import type { PendingRun, PythonKernelRunOptions, PythonKernelStartOptions, ResultMessage } from "./kernel-contract.ts";
+import { PythonKernelTools } from "./kernel-tools-host.ts";
 import { pythonStartupHangGuardMs } from "./startup.ts";
 import { failedPythonResult, PythonKernelTransport } from "./transport.ts";
 
@@ -14,6 +18,15 @@ export type { PythonKernelRunOptions, PythonKernelStartOptions } from "./kernel-
 export type { KernelChild, KernelSpawnOptions, KernelSpawnProcess } from "./process.ts";
 
 const interruptEscalationMs = 5_000;
+
+// Every interpreter this process starts gets its own generation, so a kernel tool descriptor taken from one
+// never resolves in another, whether it was replaced by reset, by a lazy restart after a crash, or by a new
+// kernel instance an owner created.
+let lastInterpreterGeneration = 0;
+function nextInterpreterGeneration(): number {
+	lastInterpreterGeneration += 1;
+	return lastInterpreterGeneration;
+}
 
 export class PythonKernel {
 	readonly #options: PythonKernelStartOptions;
@@ -29,11 +42,17 @@ export class PythonKernel {
 	readonly #memory: KernelMemoryHost | null;
 	#generation = 0;
 	#closed = false;
+	readonly #tools: PythonKernelTools;
 	#dead = false;
 
 	private constructor(options: PythonKernelStartOptions) {
 		this.#options = options;
 		this.#memory = options.memory === undefined ? null : new KernelMemoryHost("py", options.memory);
+		this.#tools = new PythonKernelTools({
+			post: (message) => this.#transport?.post(message),
+			isOpen: () => this.#transport !== null && !this.#closed,
+			...(options.peerKernelToolsDescribe === undefined ? {} : { peerDescribe: options.peerKernelToolsDescribe }),
+		});
 	}
 
 	static async start(options: PythonKernelStartOptions): Promise<PythonKernel> {
@@ -43,7 +62,11 @@ export class PythonKernel {
 	}
 
 	listKernelToolNames(): readonly string[] {
-		return [];
+		return this.#tools.listNames();
+	}
+
+	get kernelToolEvents(): EventTarget {
+		return this.#tools.events;
 	}
 
 	isAlive(): boolean {
@@ -58,12 +81,15 @@ export class PythonKernel {
 		});
 	}
 
-	describeKernelTools(_names: readonly string[]): Promise<never> {
-		return rejectKernelToolsUnavailable();
+	describeKernelTools(names: readonly string[]): Promise<KernelToolsDescribeResult> {
+		return this.#tools.describe(names);
 	}
 
-	invokeKernelTool(_request: unknown, _options?: AbortSignal | KernelToolsInvokeOptions): Promise<never> {
-		return rejectKernelToolsUnavailable();
+	invokeKernelTool(
+		request: KernelToolsInvokeRequest,
+		options?: AbortSignal | KernelToolsInvokeOptions,
+	): Promise<unknown> {
+		return this.#tools.invoke(request, options);
 	}
 
 	run(input: PythonKernelRunOptions): Promise<ResultMessage> {
@@ -131,6 +157,7 @@ export class PythonKernel {
 		if (this.#failure) throw this.#failure;
 		if (this.#closed) throw new Error("Python kernel is closed");
 		const generation = ++this.#generation;
+		this.#tools.retire("kernel_tool_stale", "Python kernel was reset; its kernel tools are gone");
 		const prior = this.#starting;
 		const operation = (async () => {
 			await prior?.catch(() => undefined);
@@ -156,6 +183,7 @@ export class PythonKernel {
 		if (this.#closePromise) return await this.#closePromise;
 		this.#closed = true;
 		this.#generation += 1;
+		this.#tools.retire("tools_unavailable", "Python kernel is closed");
 		this.#settleAllPending("Python kernel closed");
 		const starting = this.#starting;
 		this.#closePromise = (async () => {
@@ -283,6 +311,7 @@ export class PythonKernel {
 			...this.#options,
 			onMessage: (message) => {
 				if (message.type === "result") return;
+				if (generation === this.#generation && this.#tools.consume(message)) return;
 				const callback =
 					message.type === "ready" || message.type === "init-failed" || message.type === "closed"
 						? this.#options.onMessage
@@ -290,6 +319,7 @@ export class PythonKernel {
 				callback?.(message);
 			},
 			startupTimeoutMs: this.#options.startupTimeoutMs ?? pythonStartupHangGuardMs,
+			kernelGeneration: nextInterpreterGeneration(),
 			isOwned: () => !this.#closed && generation === this.#generation,
 			onRetirementFailure: (transport, error) => {
 				if (!this.#transport) this.#transport = transport;
@@ -324,6 +354,7 @@ export class PythonKernel {
 	#onExit(transport: PythonKernelTransport, error: Error, reason: string): void {
 		if (this.#transport !== transport) return;
 		this.#transport = null;
+		this.#tools.retire("kernel_tool_stale", "Python kernel died; its kernel tools are gone");
 		// With an owner listening, a death is final for this instance: the cells that never started stay
 		// queued for `drainPending` and the owner replaces it. Without one it respawns lazily, as before.
 		const onDeath = this.#options.onDeath;

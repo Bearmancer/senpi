@@ -6,8 +6,10 @@ import type { CompletionRequest, CompletionResult } from "../completion/handler.
 import { resolveKernelMemoryThresholds } from "../config/memory-settings.ts";
 import { collectOrphanedChildren } from "../host-sdk.ts";
 import { JavaScriptKernel } from "../kernels/js/context-manager.ts";
+import type { KernelToolsDescribeResult } from "../kernels/js/kernel-tools-types.ts";
 import type { KernelLifecycle } from "../kernels/shared/kernel-death.ts";
 import type { EvalKernel, EvalLanguage } from "../tool/types.ts";
+import { type BridgeDispatchContext, dispatchBridgeCompletion } from "./bridge-dispatch.ts";
 import { type BridgeToolCallRequest, routeBridgeToolCall } from "./bridge-tool-call.ts";
 import { parkWhenIdle } from "./idle-parking-kernel.ts";
 import {
@@ -73,16 +75,23 @@ class DefaultCodemodeSessionManager implements CodemodeSessionManager {
 	}
 
 	async start(): Promise<void> {
+		const manager = this;
+		const dispatch: BridgeDispatchContext = {
+			get context() {
+				return manager.#context;
+			},
+			contextFor: (signal) => this.#contextFor(signal),
+			requireContext: () => this.#requireContext(),
+		};
 		this.#bridge = await startBridgeServer({
 			onCall: async (request) => await this.#call(request),
 			onEmit: async () => undefined,
-			onCompletion: async (request) =>
-				this.#options.complete({ prompt: request.prompt, opts: request.opts }, this.#contextFor(request.signal)),
+			onCompletion: async (request) => await dispatchBridgeCompletion(this.#options, request, dispatch),
 		});
 	}
 
 	async #call(request: BridgeToolCallRequest): Promise<unknown> {
-		return await routeBridgeToolCall(this.#options, request);
+		return await routeBridgeToolCall(this.#options, request, this.#context?.evalHandleHost);
 	}
 
 	async getKernel(language: EvalLanguage, onMessage: (message: KernelToHostMessage) => void): Promise<EvalKernel> {
@@ -268,7 +277,20 @@ class DefaultCodemodeSessionManager implements CodemodeSessionManager {
 			...lifecycle,
 		};
 		const memory = resolveKernelMemoryThresholds(this.#options.settings.memory);
-		return await startSubprocessKernel({ language, interpreterPath: detected.path, memory, shared });
+		return await startSubprocessKernel({
+			language,
+			interpreterPath: detected.path,
+			memory,
+			shared,
+			peerKernelToolsDescribe: (names) => this.#javaScriptKernelToolsDescribe(names),
+		});
+	}
+
+	/** Only an already running JavaScript kernel can define a colliding name; none is started for this. */
+	#javaScriptKernelToolsDescribe(names: readonly string[]): Promise<KernelToolsDescribeResult> | undefined {
+		const js = this.#kernels.get("js");
+		if (!js || !("describeKernelTools" in js) || typeof js.describeKernelTools !== "function") return undefined;
+		return (js.describeKernelTools as (names: readonly string[]) => Promise<KernelToolsDescribeResult>)(names);
 	}
 
 	#foreignKernelToolNames(): string[] {
@@ -280,9 +302,14 @@ class DefaultCodemodeSessionManager implements CodemodeSessionManager {
 		return names;
 	}
 
-	#contextFor(signal: AbortSignal): ExtensionContext {
+	#requireContext(): ExtensionContext {
 		const ctx = this.#context;
 		if (!ctx) throw new CodemodeContextUnavailableError();
+		return ctx;
+	}
+
+	#contextFor(signal: AbortSignal): ExtensionContext {
+		const ctx = this.#requireContext();
 		return { ...ctx, signal: ctx.signal ? AbortSignal.any([ctx.signal, signal]) : signal };
 	}
 }

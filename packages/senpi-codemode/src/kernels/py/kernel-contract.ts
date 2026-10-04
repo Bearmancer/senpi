@@ -3,6 +3,7 @@ import type { BridgeConnectionConfig, KernelToHostMessage } from "../../bridge/p
 import type { EvalKernelRunInput } from "../../tool/types.ts";
 import type { SessionEnvironment } from "../session-env.ts";
 import type { KernelLifecycle } from "../shared/kernel-death.ts";
+import type { PeerKernelToolsDescribe } from "./kernel-tools-host.ts";
 import type { KernelSpawnProcess } from "./process.ts";
 import type { PythonStartupStage } from "./startup.ts";
 import type { PythonTransportResult } from "./transport.ts";
@@ -23,6 +24,8 @@ export interface PythonKernelStartOptions extends KernelLifecycle {
 	readonly spawnProcess?: KernelSpawnProcess;
 	/** Post-cell collection, notice, and ceiling thresholds sent on `init`; absent leaves memory unmanaged. */
 	readonly memory?: KernelMemoryThresholds;
+	/** The JavaScript kernel's describe, so a name defined in both languages is a describe-time collision. */
+	readonly peerKernelToolsDescribe?: PeerKernelToolsDescribe;
 }
 
 export type PythonKernelRunOptions = EvalKernelRunInput;

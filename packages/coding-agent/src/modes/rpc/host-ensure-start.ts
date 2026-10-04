@@ -2,6 +2,7 @@
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { open, readFile } from "node:fs/promises";
+import { engineBuildIdentity } from "../../core/engine-build-identity.ts";
 import { type DaemonPidFile, readProcessStartTime, waitForStartTime } from "../app-server/daemon/process.ts";
 import type { HostDaemonPaths } from "./host-daemon-paths.ts";
 import { clearHostRegistration, writeHostRegistration } from "./host-daemon-registration.ts";
@@ -99,6 +100,7 @@ export async function startHost(
 			instanceId,
 			generation,
 			launchProfileId: hostLaunchProfile(hostChildArgv(options.hostArgs ?? []), process.cwd()).profile_id,
+			build: engineBuildIdentity(),
 		});
 		child.unref();
 	} catch (error: unknown) {
