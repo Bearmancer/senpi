@@ -3,6 +3,7 @@ import type { ExtensionAPI, ExtensionCommandContext } from "../../types.ts";
 import { handleMcpAuthCommand } from "./auth/commands-auth-dispatch.ts";
 import { addGlobalMcpServer, setGlobalMcpServerEnabled } from "./config-edit.ts";
 import type { McpServerConfig } from "./config-schema.ts";
+import { showMcpManager } from "./manager.ts";
 import { getMcpService } from "./service.ts";
 import { MCP_STARTUP_RACE_MS } from "./startup-race.ts";
 import { buildMcpStatusRows, formatMcpStatus } from "./status.ts";
@@ -61,7 +62,13 @@ async function handleMcpCommand(
 	const args = splitCommandArgs(rawArgs);
 	const subcommand = args[0] ?? "";
 	if (subcommand === "") {
-		await showPanel(ctx, service);
+		if (!ctx.hasUI || ctx.mode !== "tui") {
+			ctx.ui.notify(await renderStatus("MCP servers", service));
+		} else {
+			await showMcpManager(ctx, pi, service, (command, name, commandCtx) =>
+				handleMcpCommand(`${command} ${JSON.stringify(name)}`, commandCtx, pi, service),
+			);
+		}
 		return;
 	}
 	if (AUTH_SUBCOMMANDS.has(subcommand)) {
@@ -96,16 +103,6 @@ async function handleMcpCommand(
 }
 
 type McpCommandService = ReturnType<typeof getMcpService>;
-
-async function showPanel(ctx: ExtensionCommandContext, service: McpCommandService): Promise<void> {
-	const text = await renderStatus("MCP servers", service);
-	if (!ctx.hasUI) {
-		ctx.ui.notify(text);
-		return;
-	}
-	const choice = await ctx.ui.select(text, ["status", "logs <server>", "test <server>"]);
-	if (choice === undefined) ctx.ui.notify(text);
-}
 
 async function notifyStatus(ctx: ExtensionCommandContext, service: McpCommandService): Promise<void> {
 	ctx.ui.notify(await renderStatus("MCP status", service));
