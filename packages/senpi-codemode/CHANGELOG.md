@@ -17,6 +17,8 @@
 
 ### Fixed
 
+- A cold Python kernel start on a busy machine no longer fails as a hang: startup keeps waiting while the interpreter is still using CPU or writing output, and fails only when it has gone completely still (naming the stage), or after 120 s without becoming ready ([#2718](https://github.com/code-yeongyu/senpi/issues/2718)).
+
 ### Removed
 
 ## [2026.10.7] - 2026-10-04
