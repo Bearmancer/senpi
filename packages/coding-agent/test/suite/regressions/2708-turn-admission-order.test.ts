@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
 
 import {
-	trackTurnAdmission,
 	type TurnAdmissionDisposition,
 	type TurnAdmissionEvent,
+	trackTurnAdmission,
 } from "../../../src/core/continue-from-leaf.ts";
 
 // The real AgentSession's loop always emits agent_start after the disposition
