@@ -8,6 +8,8 @@
 
 ### Changed
 
+- The bundled Claude Agent SDK is updated to 0.3.289 (from 0.3.288), so the Anthropic subscription lane runs Claude Code 2.1.289 and the models it knows ([#2545](https://github.com/code-yeongyu/senpi/issues/2545)).
+
 ### Fixed
 
 ### Removed
@@ -21,8 +23,6 @@
 - Extensions can provide and read a session-scoped `EvalHandleHost` (`pi.provideEvalHandleHost(host)` / `ctx.evalHandleHost`): the capability behind codemode's in-cell `wait()` and `handle()` helpers, fenced by owner session, id and run epoch. It is absent until a task owner provides it and is cleared when the session runtime is replaced ([#2687](https://github.com/code-yeongyu/senpi/pull/2687)).
 
 ### Changed
-
-- The bundled Claude Agent SDK is updated to 0.3.289 (from 0.3.288), so the Anthropic subscription lane runs Claude Code 2.1.289 and the models it knows ([#2545](https://github.com/code-yeongyu/senpi/issues/2545)).
 
 ### Fixed
 
