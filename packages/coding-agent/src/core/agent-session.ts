@@ -129,6 +129,7 @@ import {
 	CONTINUE_FROM_LEAF_CUSTOM_TYPE,
 	CONTINUE_FROM_LEAF_DIRECTIVE,
 	ContinueFromLeafError,
+	trackTurnAdmission,
 } from "./continue-from-leaf.ts";
 import { admitCursorHistory, cursorAdmissionBudgetBytes } from "./cursor-history-admission.ts";
 import { DEFAULT_THINKING_LEVEL } from "./defaults.ts";
@@ -10415,41 +10416,17 @@ export class AgentSession {
 		// Only an answer can be continued; a prompt left as the leaf (an edited one) is retried, not continued.
 		const leaf = this.agent.state.messages[this.agent.state.messages.length - 1];
 		if (leaf?.role !== "assistant") throw new ContinueFromLeafError("leaf_not_assistant");
-		let resolveStarted: (() => void) | undefined;
-		let rejectStarted: ((error: unknown) => void) | undefined;
-		const started = new Promise<void>((resolve, reject) => {
-			resolveStarted = resolve;
-			rejectStarted = reject;
-		});
-		// Order-independent: the `agent_start` event and the `started` disposition can
-		// arrive in either order (the disposition fires in a microtask, so an
-		// agent_start emitted in the same tick would otherwise be missed). Track each
-		// and resolve once both hold - or immediately on a delegated queue.
-		let agentStartSeen = false;
-		let startDispositionSeen = false;
-		const maybeStarted = (): void => {
-			if (agentStartSeen && startDispositionSeen) resolveStarted?.();
-		};
 		const turnClaim = new DeferredTurnClaim();
-		void turnClaim.disposition.then((disposition) => {
-			if (disposition === "delegated") {
-				resolveStarted?.();
-				return;
-			}
-			if (disposition === "started") {
-				startDispositionSeen = true;
-				maybeStarted();
-			}
+		const admission = trackTurnAdmission({
+			disposition: turnClaim.disposition,
+			subscribe: (listener) => this.subscribe((event) => {
+				if (event.type === "agent_start") listener({ type: "agent_start" });
+			}),
 		});
-		const unsubscribe = this.subscribe((event) => {
-			if (event.type === "agent_start") {
-				agentStartSeen = true;
-				maybeStarted();
-			}
-		});
-		// The turn runs in the background; admission is reported through the
-		// subscription above, and a start-time failure rejects the start promise.
-		void this.sendCustomMessage(
+		// The turn runs in the background. trackTurnAdmission resolves at admission;
+		// a start-time failure in sendCustomMessage rejects the race, so the client
+		// sees the same error a prompt-start failure would give, not a false "started".
+		const run = this.sendCustomMessage(
 			{
 				customType: CONTINUE_FROM_LEAF_CUSTOM_TYPE,
 				content: CONTINUE_FROM_LEAF_DIRECTIVE,
@@ -10457,17 +10434,16 @@ export class AgentSession {
 			},
 			{ triggerTurn: true },
 			turnClaim,
-		).then(
-			() => {
-				resolveStarted?.();
-			},
-			(error: unknown) => {
-				rejectStarted?.(error);
-			},
-		).finally(() => {
-			unsubscribe();
-		});
-		await started;
+		);
+		try {
+			await Promise.race([admission.promise, run]);
+		} finally {
+			admission.dispose();
+		}
+		// After admission the turn runs detached; a later failure is a normal turn
+		// error event, not this reply. Swallow it here so it is not an unhandled
+		// rejection; the client observes it through the turn stream like any prompt.
+		run.catch(() => undefined);
 	}
 
 	/**

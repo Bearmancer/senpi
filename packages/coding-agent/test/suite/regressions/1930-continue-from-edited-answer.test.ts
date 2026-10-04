@@ -155,6 +155,7 @@ describe("continue from an edited answer with no new prompt (#1930)", () => {
 		).toBe(false);
 	});
 
+
 	it("surfaces a provider error on the continued turn like any other turn, as a turn event after admission", async () => {
 		const { harness } = await conversation("anthropic-messages");
 		const callsBefore = harness.faux.state.callCount;

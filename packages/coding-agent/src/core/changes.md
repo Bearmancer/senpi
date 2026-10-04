@@ -2,7 +2,8 @@
 
 ### What changed
 
-- `packages/coding-agent/src/core/agent-session.ts`: `continueFromLeaf()` resolves once the runtime took the continuation - its `agent_start`, or a delegated queue into a running turn - like a prompt. It no longer awaits the whole continued turn, and the turn keeps running in the background.
+- `packages/coding-agent/src/core/continue-from-leaf.ts`: `trackTurnAdmission()` pairs the `started` disposition with the turn's `agent_start`, resolving once both hold (or immediately on a delegated queue), so the order of the two never drops a same-tick `agent_start`.
+- `packages/coding-agent/src/core/agent-session.ts`: `continueFromLeaf()` resolves once the runtime took the continuation (through `trackTurnAdmission`) instead of awaiting the whole continued turn; the turn keeps running in the background.
 
 ### Why
 
