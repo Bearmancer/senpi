@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { existsSync, readdirSync, writeFileSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -203,21 +203,31 @@ describe.skipIf(!hasCommand("bun") || !hasCommand("npm"))("Given a JavaScript ev
 		expect(textOf(refused)).toContain("package names cannot contain control characters");
 	}, 180_000);
 
-	it("When a timer from an earlier cell crashes the worker while an install runs, then the install reports its own success and its revision is active", async () => {
-		const { fixtures, environments, run } = await session("npm");
+	it("When the worker crashes while an install runs, then the install is stopped and no revision is published", async () => {
+		const { root, fixtures, environments, run } = await session("npm");
 		const tarball = await packFixture(fixtures, "senpi-crash-probe", "1.0.0", probeSource);
-		const installStarted = Promise.withResolvers<void>();
+		const marker = join(root, "crash-now");
 		const original = environments.install.bind(environments);
-		environments.install = (requested, signal, onOutput) => {
-			installStarted.resolve();
-			return original(requested, signal, onOutput);
-		};
-		await run('setTimeout(() => { throw new Error("stray timer"); }, 300); "armed"');
+		environments.install = (requested, signal, onOutput, installer) =>
+			original(
+				requested,
+				signal,
+				(stream, data) => {
+					if (!existsSync(marker)) writeFileSync(marker, "");
+					onOutput?.(stream, data);
+				},
+				installer,
+			);
+		await run(
+			`import { existsSync } from "node:fs";\nconst crashTimer = setInterval(() => { if (existsSync(${JSON.stringify(marker)})) { clearInterval(crashTimer); throw new Error("stray timer"); } }, 5);\n"armed"`,
+		);
 
 		const install = await run(`%npm add ${tarball}`);
+		const base = join(root, "artifacts", "environments", "js", "test");
 
-		expect(textOf(install)).toMatch(/added senpi-crash-probe with npm into managed \(revision 1\)/);
-		expect(environments.packageRoot).toBeDefined();
+		expect(install.details).toHaveProperty("isError", true);
+		expect(await readActiveRevision(base)).toBeUndefined();
+		expect(existsSync(base) ? readdirSync(base).filter((name) => /^rev-\d+$/.test(name)) : []).toEqual([]);
 	}, 180_000);
 
 	it("When the package is hoisted in a parent node_modules, then the install reports the conflict; an empty package directory does not", async () => {

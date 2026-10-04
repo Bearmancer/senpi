@@ -35,11 +35,6 @@ export class HostEntries<Run extends { readonly input: { readonly cellId: string
 		void entry.done.finally(() => this.#done.delete(run));
 	}
 
-	/** Whether `run` is a running host entry: host work that a worker crash does not touch. */
-	has(run: Run): boolean {
-		return this.#aborts.has(run);
-	}
-
 	/** Aborts `run`'s host entry; false when `run` is not one. */
 	abort(run: Run, reason: string): boolean {
 		const abort = this.#aborts.get(run);
