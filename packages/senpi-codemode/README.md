@@ -91,7 +91,9 @@ How it works:
   in worker mode.
 - **File descriptors.** Under Bun, the control channel moves to a private
   duplicate of fd 0, fd 0 becomes `/dev/null`, and fd 1 is re-pointed at a
-  blocking pipe that a reader thread turns into `text` frames as it is written,
+  pipe that a reader thread turns into `text` frames as it is written. The pipe is kept
+  blocking (a child that switches it to non-blocking is undone before every cell and around
+  every child process a cell starts),
   so output is never held in memory while a cell is busy. A cell's direct
   `process.stdout.write` or fd 1 write (or a child process inheriting fd 1)
   arrives before that cell's result. In a bun child, raw fd 1 bytes are not
