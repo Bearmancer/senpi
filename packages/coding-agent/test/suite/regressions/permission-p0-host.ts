@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ToolCall } from "@earendil-works/pi-ai";
@@ -6,6 +6,7 @@ import { fauxAssistantMessage, fauxProvider, fauxToolCall } from "@earendil-work
 import { type Static, Type } from "typebox";
 import { Value } from "typebox/value";
 import { parseArgs } from "../../../src/cli/args.ts";
+import { CONFIG_DIR_NAME, getAgentDir } from "../../../src/config.ts";
 import type { ExtensionFactory } from "../../../src/core/extensions/types.ts";
 import { createCliRuntimeFactory } from "../../../src/main.ts";
 import type { RpcCommand } from "../../../src/modes/rpc/rpc-types.ts";
@@ -30,10 +31,17 @@ export interface PermissionTurn {
 	readonly args: ToolCall["arguments"];
 }
 
+export interface PermissionHostSetup {
+	readonly globalSettings?: Record<string, unknown>;
+	readonly projectSettings?: Record<string, unknown>;
+	readonly presetFlag?: string;
+}
+
 export async function createPermissionP0Host(
 	extensionFactories: ExtensionFactory[] = [],
 	permissionFlag?: string,
 	additionalBuiltins: readonly string[] = [],
+	setup: PermissionHostSetup = {},
 ) {
 	const scratch = await mkdtemp(join(tmpdir(), "senpi-perm-p0-"));
 	const cwd = join(scratch, "project");
@@ -46,6 +54,19 @@ export async function createPermissionP0Host(
 			enabledBuiltinExtensions: ["permission-system", "tool-search", ...additionalBuiltins],
 		}),
 	);
+	// The permission extension reads global settings from the process agent dir, not the host's.
+	const globalSettingsPath = join(getAgentDir(), "settings.json");
+	const originalGlobalSettings = setup.globalSettings
+		? await readFile(globalSettingsPath, "utf8").catch(() => undefined)
+		: undefined;
+	if (setup.globalSettings) {
+		await mkdir(getAgentDir(), { recursive: true });
+		await writeFile(globalSettingsPath, JSON.stringify(setup.globalSettings));
+	}
+	if (setup.projectSettings) {
+		await mkdir(join(cwd, CONFIG_DIR_NAME), { recursive: true });
+		await writeFile(join(cwd, CONFIG_DIR_NAME, "settings.json"), JSON.stringify(setup.projectSettings));
+	}
 	const outsidePath = join(scratch, "outside.txt");
 	await writeFile(outsidePath, "private outside content\n");
 	const faux = fauxProvider({ api: "permission-p0", provider: "permission-p0" });
@@ -63,6 +84,7 @@ export async function createPermissionP0Host(
 		"--api-key",
 		"faux-key",
 		...(permissionFlag ? ["--permission", permissionFlag] : []),
+		...(setup.presetFlag ? ["--permission-preset", setup.presetFlag] : []),
 	]);
 	const registry = new RpcSessionRegistry({
 		agentDir,
@@ -95,8 +117,12 @@ export async function createPermissionP0Host(
 	return {
 		cwd,
 		outsidePath,
-		async run(preset: string, turn: PermissionTurn) {
-			const opened = await send({ type: "open_session", cwd, permissionPreset: preset });
+		async run(preset: string | undefined, turn: PermissionTurn) {
+			const opened = await send({
+				type: "open_session",
+				cwd,
+				...(preset === undefined ? {} : { permissionPreset: preset }),
+			});
 			const sessionId = opened?.data?.sessionId;
 			if (!sessionId) {
 				throw new Error(`Session failed to open: ${JSON.stringify(opened)}`);
@@ -158,6 +184,10 @@ export async function createPermissionP0Host(
 		},
 		async dispose() {
 			await router.dispose();
+			if (setup.globalSettings) {
+				if (originalGlobalSettings === undefined) await rm(globalSettingsPath, { force: true });
+				else await writeFile(globalSettingsPath, originalGlobalSettings);
+			}
 			await rm(scratch, { recursive: true, force: true });
 		},
 	};

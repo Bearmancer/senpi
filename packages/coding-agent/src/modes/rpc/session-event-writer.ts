@@ -2,7 +2,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import type { SessionKind } from "../../core/extensions/types.ts";
 import { MEDIA_PLACEHOLDERS_CAPABILITY } from "./custom-capability.ts";
 import { serializeJsonLine } from "./jsonl.ts";
-import { omitInlineMedia } from "./media-placeholders.ts";
+import { type MediaPersister, omitInlineMedia } from "./media-placeholders.ts";
 import type {
 	RpcHostLifecycleEvent,
 	RpcOpenQueuedEvent,
@@ -105,6 +105,8 @@ export class SessionEventWriter {
 	/** Sessions whose lifecycle records stay on their attached connections (`kind: "worker"`). */
 	private readonly workerSessions = new Set<string>();
 	private readonly openTurns = new SessionOpenTurns();
+	/** Per-session image persisters: bytes reach disk before the placeholder that names them is emitted. */
+	private readonly mediaPersisters = new Map<string, MediaPersister>();
 	private readonly writeRaw: RawWriter;
 	private readonly waitForBackpressure?: BackpressureWaiter;
 	private readonly scheduleFlush: FlushScheduler;
@@ -202,6 +204,11 @@ export class SessionEventWriter {
 	 * instead of broadcast; an interactive session keeps the broadcast every client (the
 	 * desktop mirror, the supervisor's idle observer) relies on.
 	 */
+	setSessionMedia(sessionId: string, persister: MediaPersister | undefined): void {
+		if (persister === undefined) this.mediaPersisters.delete(sessionId);
+		else this.mediaPersisters.set(sessionId, persister);
+	}
+
 	setSessionKind(sessionId: string, kind: SessionKind): void {
 		if (kind === "worker") this.workerSessions.add(sessionId);
 		else this.workerSessions.delete(sessionId);
@@ -255,7 +262,7 @@ export class SessionEventWriter {
 		const hasPlaceholderTarget = targets.some((target) =>
 			this.fanout.connectionHas(target, MEDIA_PLACEHOLDERS_CAPABILITY),
 		);
-		const redacted = hasPlaceholderTarget ? omitInlineMedia(tagged) : tagged;
+		const redacted = hasPlaceholderTarget ? omitInlineMedia(tagged, this.mediaPersisters.get(sessionId)) : tagged;
 		const placeholderLine = redacted === tagged ? undefined : serializeJsonLine(redacted);
 		if (!isTargeted) this.fanout.rememberSnapshot(sessionId, tagged, line, placeholderLine, tagged);
 		for (const target of targets) {
@@ -419,6 +426,7 @@ export class SessionEventWriter {
 		if (!this.settleBeforeSeal(sessionId)) return;
 		this.sealedSessions.add(sessionId);
 		this.fanout.forgetSession(sessionId);
+		this.mediaPersisters.delete(sessionId);
 		const targetId = this.connectionContext.getStore();
 		// `reason` tells an attached client WHY the handle ended, so a park it can reopen by path is
 		// not read as a session that is gone. Absent unless the caller names one; clients tolerate that.
@@ -468,6 +476,7 @@ export class SessionEventWriter {
 		if (!this.settleBeforeSeal(sessionId)) return;
 		this.sealedSessions.add(sessionId);
 		this.fanout.forgetSession(sessionId);
+		this.mediaPersisters.delete(sessionId);
 		if (this.fanout.isEmpty()) this.appendSessionRecord(sessionId, lifecycle);
 		else if (this.workerSessions.has(sessionId))
 			this.fanout.deliverToSession(sessionId, serializeJsonLine(lifecycle));
@@ -573,6 +582,7 @@ export class SessionEventWriter {
 		this.openTurns.take(sessionId);
 		this.workerSessions.delete(sessionId);
 		this.fanout.forgetSession(sessionId);
+		this.mediaPersisters.delete(sessionId);
 	}
 
 	/** Drain every retained lane and the current in-flight record. */

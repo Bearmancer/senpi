@@ -1,4 +1,5 @@
-node_modules/
+# A file or a directory: worktrees often symlink node_modules, and a directory-only pattern lets the link be committed.
+node_modules
 packages/senpi-codemode/gate-report.json
 .senpi-gate-inputs.json
 dist/

@@ -9,8 +9,10 @@ export interface HandoffSectionOptions {
 	turnEndRuleStatedElsewhere?: boolean;
 	/**
 	 * The model under-reports during long tool chains by default (Claude Fable 5.1 guide, "Ask for
-	 * user-facing progress updates": remove narration-suppressing lines, then say when updates are
-	 * wanted), so the quiet-between-handoffs sentence becomes a brief-update sentence.
+	 * user-facing progress updates": remove narration-suppressing lines, then say when user-facing
+	 * text is wanted and what each update contains), so the quiet-between-handoffs sentence becomes a
+	 * brief-update instruction naming the moment and the shape. Rendered only by the Claude Fable 5.1
+	 * preset (senpi#2681).
 	 */
 	briefUpdatesBetweenHandoffs?: boolean;
 	/** The app surface has no routing line, so the block stops referring to one; chat has no block at all. */
@@ -29,8 +31,8 @@ const APP_HANDOFF_LANGUAGE_RULE = HANDOFF_LANGUAGE_RULE.replace("the routing lin
 
 const HANDOFF_MOMENTS: Record<TerminalOrApp, string> = {
 	terminal:
-		"A handoff is the todo list's creation (in the message that creates it, after the routing line, or the next one), each todo phase change, a blocker or plan change, and the final message; the routing line is not one.",
-	app: "A handoff is the todo list's creation (in the message that creates it or the next one), each todo phase change, a blocker or plan change, and the final message.",
+		"A handoff is the todo list's creation (in the message that creates it, after the routing line, or the next one), each todo phase change, a blocker or plan change, and the final message of a turn that did work; the routing line is not one, and a reply that only answers a question is the answer itself.",
+	app: "A handoff is the todo list's creation (in the message that creates it or the next one), each todo phase change, a blocker or plan change, and the final message of a turn that did work; a reply that only answers a question is the answer itself.",
 };
 
 /**
@@ -52,14 +54,14 @@ export function buildHandoffSection(options: HandoffSectionOptions = {}): string
 		? "The Next you name is executed in this same response with tool calls."
 		: "The Next you name is executed in this same response with tool calls; a Next with nothing after it is a defect.";
 	const betweenRule = options.briefUpdatesBetweenHandoffs
-		? "Between handoffs, a one-line update on what you just found, ending with `Now: [task]. Next: [task].`, helps the user follow along."
+		? "Between handoffs, after each tool wave that changes what you know, write one line of reply text: what you found, then `Now: [task]. Next: [task].`"
 		: "Between handoffs, work without narration.";
 	const languageRule = surface === "app" ? APP_HANDOFF_LANGUAGE_RULE : HANDOFF_LANGUAGE_RULE;
 	return `## Handoff
 
 ${HANDOFF_MOMENTS[surface]} Before writing one, weigh what the user originally asked for and what they would want to know right now; then state it in one short block:
 
-> Ask: [the user's original request] - wanted: [the outcome they asked for]. For you: [what they need to know now - ledger N/M done, findings, blockers]. Now: [the todo task in progress]. Next: [the next open task].
+Ask: [the user's original request] - wanted: [the outcome they asked for]. For you: [what they need to know now - ledger N/M done, findings, blockers]. Now: [the todo task in progress]. Next: [the next open task].
 
 ${languageRule} ${nextRule} ${betweenRule}`;
 }

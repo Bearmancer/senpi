@@ -44,6 +44,10 @@ const hostToKernelMessageSchema = Type.Union([
 		cellId: Type.String({ minLength: 1 }),
 		code: Type.String(),
 		timeoutMs: Type.Optional(Type.Integer({ minimum: 1 })),
+		/** Python only: the published environment revision to import from, applied before the cell runs; empty removes the previous one. */
+		envRoot: Type.Optional(Type.String()),
+		/** The file a `%load` cell runs; the runner compiles under its name and imports beside it. */
+		sourceFile: Type.Optional(Type.String({ minLength: 1 })),
 		/** Python only: active tool globals to install before the cell and deactivated ones to remove. */
 		preludes: Type.Optional(
 			Type.Object({
@@ -90,6 +94,12 @@ const hostToKernelMessageSchema = Type.Union([
 	...kernelMemoryQueryHostToKernelSchemas,
 ]);
 
+/**
+ * Host-set: what a kernel death did to this cell's state. `lost`: the interpreter died while it ran;
+ * `restarted`: it ran on a kernel replaced after a death; `not-run`: it was failed without running.
+ */
+const kernelStateSchema = Type.Union([Type.Literal("lost"), Type.Literal("restarted"), Type.Literal("not-run")]);
+
 const kernelToHostMessageSchema = Type.Union([
 	Type.Object({ type: Type.Literal("ready") }),
 	Type.Object({ type: Type.Literal("init-failed"), error: bridgeErrorSchema }),
@@ -119,6 +129,9 @@ const kernelToHostMessageSchema = Type.Union([
 		valueRepr: Type.Optional(Type.String()),
 		durationMs: Type.Integer({ minimum: 0 }),
 		memory: Type.Optional(kernelMemoryReportSchema),
+		/** Host-set: the bracketed notice that this cell ran on a kernel restarted after its interpreter died. */
+		notice: Type.Optional(Type.String()),
+		kernelState: Type.Optional(kernelStateSchema),
 	}),
 	Type.Object({
 		type: Type.Literal("result"),
@@ -127,6 +140,8 @@ const kernelToHostMessageSchema = Type.Union([
 		error: bridgeErrorSchema,
 		durationMs: Type.Integer({ minimum: 0 }),
 		memory: Type.Optional(kernelMemoryReportSchema),
+		notice: Type.Optional(Type.String()),
+		kernelState: Type.Optional(kernelStateSchema),
 	}),
 	Type.Object({ type: Type.Literal("closed") }),
 	Type.Object({ type: Type.Literal("webview-connect"), requestId: Type.String({ minLength: 1 }) }),
