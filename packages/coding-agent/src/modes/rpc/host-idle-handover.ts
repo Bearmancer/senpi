@@ -96,6 +96,7 @@ const NEW_WORK_COMMANDS: ReadonlySet<string> = new Set([
 	"steer",
 	"follow_up",
 	"send_custom_message",
+	"continue_from_leaf",
 	"append_user_message",
 	"bash",
 	"compact",

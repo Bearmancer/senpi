@@ -1,3 +1,77 @@
+## 2026-10-04 - Claude Agent SDK 0.3.289
+
+### What changed
+
+- `packages/coding-agent/package.json`: `@anthropic-ai/claude-agent-sdk` 0.3.288 -> 0.3.289; `bun.lock`, the root `package-lock.json` (with the 8 platform packages relocked) and `packages/coding-agent/install-lock` follow.
+
+### Why
+
+The Releasability gate's SDK currency check fails while a newer SDK is published; 0.3.289 bundles Claude Code 2.1.289.
+
+### Why an extension could not handle it
+
+The SDK pin and the advertised Claude Code version are fixed at build time in the package manifest and the provider module.
+
+### Expected merge conflict zones
+
+The SDK pin line and the lockfiles at the next upstream dependency sync.
+
+## 2026-10-03 - `check:provider-defaults` script for the release (senpi#2645)
+
+### What changed
+
+- `packages/coding-agent/package.json`: new script `check:provider-defaults` runs the "default model selection" tests of `test/model-resolver.test.ts`.
+
+### Why
+
+- `packages/coding-agent/package.json`: the release runs it right after regenerating the model catalog (`scripts/release.mjs`, `scripts/local-release.mjs`), so a regeneration that drops a bundled provider's default model stops the release instead of shipping it (v2026.10.4 shipped such an `nvidia` default).
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/package.json`: package scripts are release tooling, not something an extension can add to.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/package.json`: the `scripts` block.
+
+## 2026-10-02 - Per-session heap split and render-cache accounting on the memory surfaces (senpi#1960)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: `RpcHostMemoryPressureEvent` gains optional `main: { heapBytes }` and `kernels: { sessionId, language, liveBytes, measure }[]`; new `RpcHostKernelMemory` names the per-kernel row.
+- `packages/coding-agent/src/modes/interactive/components/tool-execution.ts`: a finished tool card's retained `result` is measured once at finalize (`serializedToolResultBytes` from `tool-execution-cache.ts`) and recorded on its render cache.
+
+### Why
+
+- senpi#1960 asks where a session's memory lives. The pressure event and `list_sessions` now carry the main-thread heap and each session's kernel heaps, so an operator sees the split without an external probe. The render cache is made measurable (exact cached-line bytes per card, finished-card result bytes, and the TUI's frame-line bytes) so a later bound is designed from the measurement rather than guessed.
+
+### Why an extension could not handle it
+
+- The pressure event and the session listing are RPC wire contracts owned by the host; the render cache and the finalize path are tool-card internals. Neither is reachable through the extension API.
+
+### Expected merge conflict zones
+
+- LOW: additive optional fields on the event and the session row; the cache counters and the finalize call are new lines beside existing cache writes.
+
+## 2026-10-03 - claude-agent-sdk 0.3.288 (senpi#2545)
+
+### What changed
+
+- `packages/coding-agent/package.json`: `@anthropic-ai/claude-agent-sdk` 0.3.286 -> 0.3.288 (Claude Code 2.1.286 -> 2.1.288). `bun.lock`, `package-lock.json` and `install-lock/package-lock.json` regenerated with `bun run refresh-lock`; the eight platform packages are relocked with `scripts/generate-claude-agent-sdk-platform-lock.mjs`.
+- The engine's Claude Code fingerprint floor moves with it (`packages/ai/src/changes.md`), which regression #2033 requires.
+
+### Why
+
+- The nightly Releasability gate's `Claude Agent SDK currency` job fails while the pin trails npm latest (0.3.288).
+
+### Why an extension could not handle it
+
+- The pin and its locks are package metadata; no extension hook changes which SDK the package installs.
+
+### Expected merge conflict zones
+
+- LOW: the SDK pin line in `package.json` and the generated lock files (regenerate, never hand-merge).
+
 ## 2026-10-01 - claude-agent-sdk 0.3.286 (senpi#2481)
 
 ### What changed

@@ -90,6 +90,15 @@ export function bridgeError(error: Error): {
 	return { message: error.message, name: error.name, stack: error.stack };
 }
 
+/** The result a cell settles with when its worker crashed under it. */
+export function crashedResult(
+	cellId: string,
+	error: Error,
+	durationMs: number,
+): Extract<KernelToHostMessage, { type: "result" }> {
+	return { type: "result", cellId, ok: false, error: bridgeError(error), durationMs };
+}
+
 function wrapNodeWorker(worker: Worker, mode: JavaScriptKernelMode): WorkerLike {
 	return {
 		mode,

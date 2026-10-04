@@ -19,6 +19,7 @@ import { createEventBus } from "../src/core/event-bus.ts";
 import { registerTodoTool, type TODO_PARAMS_SCHEMA } from "../src/core/extensions/builtin/todotools/tools/todo.ts";
 import { createExtensionRuntime, loadExtensionFromFactory } from "../src/core/extensions/loader.ts";
 import type { ExtensionAPI, ToolDefinition } from "../src/core/extensions/types.ts";
+import { tuiRenderCacheTotals } from "../src/core/memory-report/memory-report-registry.ts";
 import { type BashOperations, createBashToolDefinition } from "../src/core/tools/bash.ts";
 import { renderToolDiff } from "../src/core/tools/diff-render.ts";
 import { createReadTool, createReadToolDefinition } from "../src/core/tools/read.ts";
@@ -1360,5 +1361,76 @@ describe("ToolExecutionComponent parity", () => {
 		} finally {
 			vi.useRealTimers();
 		}
+	});
+});
+
+describe("tool card render cache totals (#2561)", () => {
+	test("Given rendered tool cards when one is disposed then the memory report totals drop its lines and images", () => {
+		initTheme("dark");
+		const emptyTotals = () => ({
+			components: 0,
+			cachedLines: 0,
+			images: 0,
+			finishedCards: 0,
+			cachedLinesBytes: 0,
+			resultBytes: 0,
+		});
+		const before = tuiRenderCacheTotals() ?? emptyTotals();
+		const text = new ToolExecutionComponent(
+			"custom_tool",
+			"cache-text",
+			{},
+			{},
+			undefined,
+			createFakeTui(),
+			process.cwd(),
+		);
+		const image = new ToolExecutionComponent(
+			"custom_tool",
+			"cache-image",
+			{},
+			{ showImages: false },
+			undefined,
+			createFakeTui(),
+			process.cwd(),
+		);
+		const textResult = { content: [{ type: "text" as const, text: "one\ntwo\nthree" }], isError: false };
+		const imageResult = { content: [{ type: "image" as const, data: "png", mimeType: "image/png" }], isError: false };
+		text.updateResult(textResult);
+		image.updateResult(imageResult);
+		const textLines = text.render(80).length;
+		const imageLines = image.render(80).length;
+
+		// The same estimator the cache publishes: 8 per line slot plus 2 per UTF-16 code unit.
+		const lineBytes = (count: number, sample: readonly string[]) => count * 8 + sample.join("").length * 2;
+		const textBytes = lineBytes(textLines, text.render(80));
+		const imageBytes = lineBytes(imageLines, image.render(80));
+		// The same shape the component serializes at finalize: content JSON, plus details when present.
+		const resultBytes = (result: { content: unknown; details?: unknown }) =>
+			(JSON.stringify(result.content)?.length ?? 0) +
+			(result.details === undefined ? 0 : (JSON.stringify(result.details)?.length ?? 0));
+
+		const rendered = tuiRenderCacheTotals();
+		text.dispose();
+		const afterDispose = tuiRenderCacheTotals();
+
+		expect(rendered).toEqual({
+			components: before.components + 2,
+			cachedLines: before.cachedLines + textLines + imageLines,
+			images: before.images + 1,
+			finishedCards: before.finishedCards + 2,
+			cachedLinesBytes: before.cachedLinesBytes + textBytes + imageBytes,
+			resultBytes: before.resultBytes + resultBytes(textResult) + resultBytes(imageResult),
+		});
+		expect(afterDispose).toEqual({
+			components: before.components + 1,
+			cachedLines: before.cachedLines + imageLines,
+			images: before.images + 1,
+			finishedCards: before.finishedCards + 1,
+			cachedLinesBytes: before.cachedLinesBytes + imageBytes,
+			resultBytes: before.resultBytes + resultBytes(imageResult),
+		});
+		image.dispose();
+		expect(tuiRenderCacheTotals()).toEqual(before);
 	});
 });

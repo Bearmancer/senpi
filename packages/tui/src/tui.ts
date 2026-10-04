@@ -736,6 +736,34 @@ export function currentRenderRevision(): number {
 }
 
 /**
+ * Byte cost of the frame the TUI last held, summed over every live TUI in the process (senpi#1960):
+ * `previousLines` is the whole frame a terminal keeps for the differential pass, so a long session's
+ * transcript cost lives here. The memory report reads the figure structurally through a process-global
+ * key; a process with no TUI reports no figure. Estimator: 2 bytes per UTF-16 code unit plus an 8-byte
+ * array slot per line - the same estimate the tool-card render cache uses, so the two figures compare.
+ */
+const FRAME_LINE_BYTES_KEY = Symbol.for("senpi.tui.frame-line-bytes");
+
+export interface FrameLineBytesTotals {
+	readonly previousLinesBytes: number;
+}
+
+function frameLineBytesState(): { bytes: number } {
+	const existing: unknown = Reflect.get(globalThis, FRAME_LINE_BYTES_KEY);
+	if (typeof existing === "object" && existing !== null && typeof Reflect.get(existing, "bytes") === "number") {
+		return existing as { bytes: number };
+	}
+	const created = { bytes: 0 };
+	Reflect.set(globalThis, FRAME_LINE_BYTES_KEY, created);
+	return created;
+}
+
+/** Sum of every live TUI's current frame-line bytes; `0` before any frame renders. */
+export function frameLineBytesTotals(): FrameLineBytesTotals {
+	return { previousLinesBytes: frameLineBytesState().bytes };
+}
+
+/**
  * Render revision of a component whose output is a pure function of its own state and its children's
  * output. `bump()` records an own-state change; `read(children)` returns a revision that also changes
  * whenever a child is replaced or a child's revision changes, and `undefined` while any child is live.
@@ -1721,8 +1749,7 @@ export abstract class TuiBase extends Container {
 		this.afterTerminalStop(options);
 		this.resetRenderState();
 		this.#lastCursorVisibility = undefined;
-		this.previousLines = [];
-		this.previousRawLines = [];
+		this.dropPreviousLines();
 		this.previousKittyImageIds.clear();
 		this.previousWidth = 0;
 		this.previousHeight = 0;
@@ -1795,8 +1822,7 @@ export abstract class TuiBase extends Container {
 	/** Drop every cached frame so the next render repaints from a clean slate. */
 	private resetForcedRenderState(): void {
 		this.resetRenderState();
-		this.previousLines = [];
-		this.previousRawLines = [];
+		this.dropPreviousLines();
 		this.previousWidth = -1; // -1 triggers widthChanged, forcing a full clear
 		this.previousHeight = -1; // -1 triggers heightChanged, forcing a full clear
 		this.cursorRow = 0;
@@ -2243,9 +2269,23 @@ export abstract class TuiBase extends Container {
 	private static readonly FRAME_BEGIN = "\x1b[?2026h\x1b[?7l";
 	private static readonly FRAME_END = "\x1b[?7h\x1b[?2026l";
 
+	private frameLineBytes = 0;
+
 	private setPreviousLines(lines: string[], rawLines: string[]): void {
+		const state = frameLineBytesState();
+		state.bytes -= this.frameLineBytes;
+		let bytes = lines.length * 8;
+		for (const line of lines) bytes += line.length * 2;
+		this.frameLineBytes = bytes;
+		state.bytes += bytes;
 		this.previousLines = lines;
 		this.previousRawLines = rawLines;
+	}
+
+	/** Releases this TUI's frame from the process total (stop/dispose resets the frame). */
+	private dropPreviousLines(): void {
+		if (this.previousLines.length === 0 && this.previousRawLines.length === 0 && this.frameLineBytes === 0) return;
+		this.setPreviousLines([], []);
 	}
 
 	/** Image presence of the committed frame, measured once per frame array instead of once per check. */

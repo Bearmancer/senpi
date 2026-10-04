@@ -7,6 +7,7 @@ import { resolvePath } from "../utils/paths.ts";
 import { AgentSession } from "./agent-session.ts";
 import { formatNoModelsAvailableMessage } from "./auth-guidance.ts";
 import { AuthStorage } from "./auth-storage.ts";
+import type { BrowserEngine } from "./browser-engine.ts";
 import { estimateTokens } from "./compaction/compaction.ts";
 import { createSessionCursorExecBridge } from "./cursor-exec-bridge-session.ts";
 import { DEFAULT_THINKING_LEVEL } from "./defaults.ts";
@@ -129,6 +130,8 @@ export interface CreateAgentSessionOptions {
 	autoTitleSessions?: boolean;
 	/** Where this session's replies render; omitted means `SENPI_PROMPT_SURFACE` decides. */
 	promptSurface?: PromptSurface;
+	/** Browser engine this session's skills drive (`open_session.browserEngine`); omitted means none was chosen. */
+	browserEngine?: BrowserEngine;
 }
 
 /** Result from createAgentSession */
@@ -587,6 +590,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		sessionStartEvent,
 		autoTitleSessions: options.autoTitleSessions,
 		promptSurface: options.promptSurface,
+		browserEngine: options.browserEngine,
 	});
 	const liveContextTokens = hasExistingSession
 		? existingSession.messages.reduce((total, message) => total + estimateTokens(message), 0)

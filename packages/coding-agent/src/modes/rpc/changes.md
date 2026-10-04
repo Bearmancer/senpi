@@ -1,3 +1,187 @@
+## 2026-10-04 - A handoff replaces an idle host no layout-2 record proves (senpi#2701)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-handoff.ts`: when no layout-2 registration proves the owner, `handoffHostLocked` hands the decision to `handoffUnregisteredHost` instead of refusing `unknown_owner`. `HandoffRefusal` gains `legacy_host`.
+- `packages/coding-agent/src/modes/rpc/host-handoff-unregistered.ts` (new): counts the running host's sessions (`list_sessions` with workers) over a connection it keeps open. Any session, or no answer, is a refusal: `legacy_host` with the existing pid/socket/`host stop --drain` detail when a flat pre-layout-2 record proves the process, `unknown_owner` with the session count otherwise. With 0 sessions the successor takes the socket; a proven legacy process is then sent the DRAIN only when a recount over the held connection still finds 0 (a session opened between the count and the swap keeps it unsignalled). Without a provable owner nothing is signalled - the predecessor drains itself on losing the public entry (`host-supersession.ts`) - and one stderr warning names the socket, its instance and engine.
+- `packages/coding-agent/src/modes/rpc/host-successor.ts`: `startSuccessor`'s `owner` is just the pid to drain and may be `undefined` (no signal); an optional `drainGate` decides whether the drain is sent once the successor owns the socket.
+- `packages/coding-agent/src/modes/rpc/host-handoff.ts`: `HANDOFF_LOCK_HOLD_MS` adds the two session counts (`SESSION_COUNT_TIMEOUT_MS` each), so `ENSURE_LOCK_WAIT_MS`, `HANDOFF_LOCK_WAIT_MS` and `BEGIN_HANDOVER_TIMEOUT_MS` keep covering the longest holder.
+- `packages/coding-agent/src/modes/rpc/host-probe.ts`: `holdSessionCount` (a count plus `recount` over the same connection); `probeSessionCount` shares its parsing.
+- `packages/coding-agent/src/modes/rpc/host-legacy.ts`: `busyLegacyHostDetail` and `describeSessions` export the refusal wording `judgeLegacyHost` already used.
+- `packages/coding-agent/src/modes/rpc/host-runner.ts`: a refused handoff's JSON `detail` is the refusal's own detail when it has one (it was always the reason).
+- `docs/rpc.md` (the handoff guards and the daemon directory section), the I1 carve-out in `src/modes/rpc/AGENTS.md`, and `test/suite/regressions/2701-same-socket-unregistered-host-handoff.test.ts` (real supervisors on the client's own socket: idle legacy replaced, idle unprovable replaced unsignalled with the warning, busy legacy and busy unprovable refused untouched, a session opened in the count-to-swap window parked by the self-drain and reopened on the successor).
+
+### Why
+
+senpi#2701: after an upgrade the old host keeps the very socket the updated client uses. An ensure there answers `reuse` (compatible protocol), so #2423's retire path never runs, and the handoff the desktop asks for on an engine mismatch refused `unknown_owner`; the first turn could not start until somebody ran `host stop --drain` by hand.
+
+### Why an extension could not handle it
+
+The handoff's owner proof, the successor start and the drain signal are host lifecycle internals behind the `senpi host` CLI; no extension surface reaches the ensure lock or the generation records.
+
+### Expected merge conflict zones
+
+- Fork-only files. `startSuccessor`'s context type and its drain line in `host-successor.ts` (senpi#2698 edits the registration objects in the same function); the `HandoffRefusal` union; `handoffOutcome` in `host-runner.ts`.
+
+## 2026-10-03 - A session's own fallback chain on open_session (omo#9512)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`, `rpc-client.ts`: `open_session.retryFallback?: { modelFallback, fallbackChains }`.
+- `packages/coding-agent/src/modes/rpc/rpc-input-validation.ts`: `sessionRetryFallbackError` refuses a malformed profile (missing `modelFallback`, non-string or empty selectors, selectors over 512 characters, more than 32 chains or 32 entries) with `invalid_launch_profile`; `test/suite/rpc-open-session-retry-fallback.test.ts` pins both sides of each limit and that an attach keeps the policy the session was created with.
+- `packages/coding-agent/src/modes/rpc/session-command-router.ts`: validates the field, passes it into the launch profile, and advertises `retry_fallback_profile` (`custom-capability.ts`).
+- `packages/coding-agent/src/modes/rpc/session-registry-types.ts`: `frozenProfile` deep-freezes the profile's chains.
+
+### Why
+
+- A task child opened on a shared host had no way to receive its own fallback chain: the extension-side setters (`ctx.sessionSettings.setFallbackChain`) write the host's global settings file, which would leak one child's chain to every session and into the user's settings. The chain now travels with the session's launch profile.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`, `rpc-client.ts`, `rpc-input-validation.ts`, `session-command-router.ts`, `custom-capability.ts`, `session-registry-types.ts`: the field must be accepted, validated and advertised by the host before the session or any of its extensions exists, and the only extension-reachable settings setters persist to the host's global file.
+
+### Expected merge conflict zones
+
+- LOW: the `open_session` field list in `rpc-types.ts` and the capability list in `session-command-router.ts`.
+
+## 2026-10-04 - A generation record names its own build (#2698)
+
+### What changed
+
+- `host-daemon-registration.ts`: `HostRegistration` carries the `build` (engine version text and ordinal) of the process the record names, and `writeGenerationRecord` stamps that instead of `engineBuildIdentity()` of the writing process. With no `build` the record claims no engine version.
+- `host-successor.ts` `startSuccessor`: the record written at spawn (kept so `host gc` sees a successor that has not registered itself yet) carries no build; the record written once the successor owns the socket carries the `engineVersion` / `engineOrdinal` the successor reported on that socket.
+- `host-ensure-start.ts` and `interactive/session-control-registry.ts`: their own registrations pass `engineBuildIdentity()`, unchanged in effect.
+
+### Why
+
+- A handoff to a different build (an older desktop runtime taking over a newer idle host, or the reverse) recorded the new generation with the build of the process that ran the handoff, so `host status` `generations[]` showed the wrong engine version for exactly the case that list exists for.
+
+### Why an extension could not handle it
+
+- The record is written by the host lifecycle itself; no extension sees it.
+
+### Expected merge conflict zones
+
+- `host-successor.ts` (`startSuccessor`) and `host-daemon-registration.ts` (`HostRegistration`, `writeGenerationRecord`).
+
+## 2026-10-03 - `continue_from_leaf` command and model prefill capability (senpi#1930)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: new command `{ type: "continue_from_leaf" }` and its response. `get_available_models` rows gain `supportsAssistantPrefill: boolean`.
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: handles `continue_from_leaf` through `session.continueFromLeaf()`, refusing with `errorCode` `streaming`, `nothing_to_continue`, or `leaf_not_assistant`. Each `get_available_models` row reports `modelSupportsAssistantPrefill(model, { thinkingEnabled })` for the session's current thinking level. Classic `get_protocol_info` advertises `continue_from_leaf`.
+- `packages/coding-agent/src/modes/rpc/session-command-router.ts`: the multi-session `get_protocol_info` advertises `continue_from_leaf`.
+- `packages/coding-agent/src/modes/rpc/custom-capability.ts`: `CONTINUE_FROM_LEAF_CAPABILITY`.
+- `packages/coding-agent/src/modes/rpc/host-idle-handover.ts`: `continue_from_leaf` is new model work for the idle-handover gate.
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts`: `continueFromLeaf()`.
+
+### Why
+
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`, `packages/coding-agent/src/modes/rpc/rpc-types.ts`, `packages/coding-agent/src/modes/rpc/session-command-router.ts`, `packages/coding-agent/src/modes/rpc/custom-capability.ts`, `packages/coding-agent/src/modes/rpc/host-idle-handover.ts`, `packages/coding-agent/src/modes/rpc/rpc-client.ts`: #1930. The desktop's "edit an answer, then Retry" needs a promptless turn it can detect by capability. The prefill flag lets a client switch to true prefill per model once a live probe proves a model supports it; today it is false everywhere.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`, `packages/coding-agent/src/modes/rpc/session-command-router.ts`: commands and `get_protocol_info` capabilities are owned by the RPC dispatch, not the extension API.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: the command union beside `send_custom_message` and the `get_available_models` response.
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: the `send_custom_message` case neighbourhood and the `get_protocol_info` capability list.
+- `packages/coding-agent/src/modes/rpc/session-command-router.ts`: the capability set.
+
+## 2026-10-03 - A refused close_session rejects instead of reporting a confirmed close (senpi#2572)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts`: `closeSession` passes the `close_session` response through `getData`, like `openSession`. A response with `success: false` rejects with `RpcCommandError` carrying the host's error text and code, and the client keeps its session handle. A gone transport is still treated as closed, and a successful close behaves as before.
+
+### Why
+
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts`: the response was never checked, so a host that refused the close (for example `unknown_session` for a handle this connection never attached to) was indistinguishable from a confirmed close. Callers that only finish a cancellation or delete a record once the close is confirmed could leave a running session with nothing pointing at it.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts`: the client's request/response handling runs in the embedder's process, outside any agent extension runtime.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts`: the `send` call in `closeSession`.
+
+## 2026-10-03 - Per-session memory split on the host pressure record (senpi#1960)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: `RpcHostMemoryPressureEvent` gains optional `main` (`{ heapBytes }`, the main-thread heap) and `kernels` (`RpcHostKernelMemory[]`: every live kernel's `sessionId`, `language`, `liveBytes` and `measure`), the shape the host reports on the pressure event and the session listing.
+
+### Why
+
+- A shared host's memory pressure says which session's kernel holds the memory, not just the process total.
+
+### Why an extension could not handle it
+
+- The RPC host's event and listing types are core protocol.
+
+### Expected merge conflict zones
+
+- LOW: `RpcHostMemoryPressureEvent` in `rpc-types.ts`.
+
+## 2026-10-03 - Advertise the auto permission preset
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/session-command-router.ts`: `get_protocol_info` advertises `permission_preset_auto` from the permission-system extension, next to `permission_preset_accept_edits`.
+
+### Why
+
+- A client must only send `permissionPreset: "auto"` to a host that knows it.
+
+## 2026-10-03 - Expose held model switches through RPC session state
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-session-state.ts`: every `RpcSessionState` projection now includes
+  `pendingModelSwitch`, either the held model's `{ provider, id }` or `null`.
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: declares the always-present, nullable wire field.
+- `packages/coding-agent/docs/rpc.md` and
+  `packages/coding-agent/test/suite/regressions/1873-deferred-model-switch.test.ts`: document and cover the
+  null-versus-held contract through the real compaction admission path.
+
+### Why
+
+RPC clients could see the old active model after `set_model` but could not tell whether the requested model was held
+for compaction or replaced by a later selection. `null` distinguishes no hold on a host that supports this field from
+an older host that omits it.
+
+### Why an extension could not handle it
+
+`RpcSessionState` is the fixed transport projection shared by RPC, worker snapshots, and the TUI control endpoint;
+extensions cannot add fields to that wire contract.
+
+### Expected merge conflict zones
+
+- LOW: `RpcSessionState` in `rpc-types.ts` and the state literal in `rpc-session-state.ts`.
+
+## 2026-09-30 - Do not replay eval callers when spawning RPC hosts
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-exec-argv.ts`: shared `rpcHostExecArgv` removes eval/print expressions, input-type, and interactive mode while preserving runtime options and order. Under Bun it also removes every other `-e…`/`-p…` token (Bun reads `-eCODE`, `-e=CODE`, `-pCODE` and even `-expose-gc` as glued code) and always drops the token after `-e`/`--eval`/`-p`/`--print`/`-pe`; under Node, single-dash V8 options such as `-expose-gc` are kept.
+- `packages/coding-agent/src/modes/rpc/host-launch.ts`: both non-compiled supervisor routes use the filtered arguments.
+- `packages/coding-agent/src/modes/rpc/host-lifecycle.ts`: the default non-compiled host child uses the same filter; explicit child commands and compiled launches are unchanged.
+- `test/suite/rpc-host-exec-argv.test.ts` covers argument forms and bounded real Node children; `docs/rpc.md` documents embedding from eval callers.
+
+### Why
+
+An embedding caller launched with `node -e` or `bun -e` (including Bun's glued `bun -eCODE` / `bun -pCODE`) passes its own code in `process.execArgv`. Copying it before the host script executes the caller again, potentially spawning hosts recursively. `--input-type` also prevents a script entry from running.
+
+### Why an extension could not handle it
+
+The launch commands in `packages/coding-agent/src/modes/rpc/host-launch.ts` and `packages/coding-agent/src/modes/rpc/host-lifecycle.ts` are constructed before extensions load. `packages/coding-agent/src/modes/rpc/host-exec-argv.ts` centralizes that process-launch policy.
+
+### Expected merge conflict zones
+
+- `defaultHostLaunch` in `packages/coding-agent/src/modes/rpc/host-launch.ts` and `resolveHostChildLaunch` in `packages/coding-agent/src/modes/rpc/host-lifecycle.ts`.
+- `packages/coding-agent/src/modes/rpc/host-exec-argv.ts` is a new fork-only module.
 ## 2026-10-02 - A taken-over generation leaves the successor's registration alone (senpi#2536)
 
 ### What changed
@@ -19,6 +203,52 @@
 - `packages/coding-agent/src/modes/rpc/host-daemon-registration.ts`: `releaseGeneration` signature and its early return.
 - `packages/coding-agent/src/modes/rpc/host-lifecycle.ts`: the drain state declarations, the supersession watch callback and `performShutdown`'s release call.
 - `packages/coding-agent/src/modes/rpc/host-handoff.ts`, `packages/coding-agent/src/modes/rpc/host-successor.ts`: the `_test` options and the line before `writeHostRegistration`.
+
+## 2026-10-02 - Idle task hosts give their cost back (senpi#2567)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-ensure.ts`: once `ensureHost` has returned a host, it schedules the budgeted gc pass (`packages/coding-agent/src/modes/rpc/host-gc-pass.ts`, marker `packages/coding-agent/src/modes/rpc/host-gc-pass-marker.ts`) from an unref'd immediate, outside every lock, never awaited. `packages/coding-agent/src/modes/rpc/host-gc.ts` exports `gcEndpoint` so both entry points share one evidence and removal path. The ensure's start, stop, client identity and option types move to `packages/coding-agent/src/modes/rpc/host-ensure-start.ts`, `packages/coding-agent/src/modes/rpc/host-ensure-stop.ts`, `packages/coding-agent/src/modes/rpc/host-ensure-client.ts` and `packages/coding-agent/src/modes/rpc/host-ensure-types.ts`, and the tmpdir reaper to `packages/coding-agent/src/modes/rpc/host-internal-dir-reaper.ts`; `host-ensure.ts` re-exports every name it exported before.
+- `packages/coding-agent/src/modes/rpc/session-registry.ts`: the in-process registry reports its size after every open and close (`onSizeChange`); its types, the entry `switchSession` factory, the path-claim reconciliation and attach-on-open move to `packages/coding-agent/src/modes/rpc/session-registry-types.ts`, `packages/coding-agent/src/modes/rpc/session-registry-switch.ts`, `packages/coding-agent/src/modes/rpc/session-registry-claims.ts` and `packages/coding-agent/src/modes/rpc/session-registry-attach.ts`, re-exported from `session-registry.ts`.
+- `packages/coding-agent/src/modes/rpc/host-zero-session-trim.ts`, `packages/coding-agent/src/modes/rpc/host-observers.ts`, `packages/coding-agent/src/modes/rpc/host-core-gate.ts`, `packages/coding-agent/src/modes/rpc/multi-session-host.ts`: a host that drops to zero sessions collects once (at most once a minute) and broadcasts `host_trimmed` one tick later; `startHostObservers` moves to `host-observers.ts`.
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`, `packages/coding-agent/src/modes/rpc/rpc-host-lifecycle-types.ts`: the host lifecycle record types move to their own module (re-exported) and gain `RpcHostTrimmedEvent`.
+- `packages/coding-agent/src/modes/rpc/session-event-writer.ts`, `packages/coding-agent/src/modes/rpc/session-open-turns.ts`: before a session is sealed (close, park, release), the writer publishes the `agent_settled { reason: "session_closed" }` of every turn the session's records opened and did not settle; the writer also renders `host_trimmed`.
+
+### Why
+
+An idle task shard stayed resident: a session closed mid-turn left the supervisor's busy count above zero for good (its real settle is written after the seal and dropped), a host that dropped to zero sessions held its peak footprint for its whole idle window, and dead endpoint records under an agent directory were only ever reaped by an operator running `senpi host gc`.
+
+### Why an extension could not handle it
+
+`packages/coding-agent/src/modes/rpc/session-event-writer.ts` owns sealing and lifecycle delivery, `packages/coding-agent/src/modes/rpc/session-registry.ts` owns the session count, `packages/coding-agent/src/modes/rpc/host-ensure.ts` owns the ensure path, and the trim runs on the host loop (`packages/coding-agent/src/modes/rpc/multi-session-host.ts`); none of these is reachable from an extension.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/session-event-writer.ts`: `enqueue`, `closeSession`, `sealWithLifecycle`, `forgetSession`, `broadcastHostRecord`.
+- `packages/coding-agent/src/modes/rpc/session-registry.ts`: imports, the class header, `openSession` (attach branch and `entries.set`/`delete`).
+- `packages/coding-agent/src/modes/rpc/host-ensure.ts`: imports and `ensureHost`; anything that touched `startHost` or the stop helpers now lives in `host-ensure-start.ts`/`host-ensure-stop.ts`.
+- `packages/coding-agent/src/modes/rpc/multi-session-host.ts`: `createHostCore` registry options, `runStdioHost`/`runSocketHost` observer wiring.
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: the host lifecycle event block, now a re-export.
+
+## 2026-10-02 - memory_report request (senpi#2561)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/memory-report-command.ts` (new) and `connection-handler.ts`: `memory_report` writes the session's memory report and answers `{ path, heapSnapshot? }`; it fails with `memory_report_disabled` unless the host runs with `SENPI_MEMORY_REPORT=1`, and with `memory_report_failed: <reason>` when the file cannot be written.
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: the command and its response.
+- `packages/coding-agent/docs/rpc.md`: documents the request and the report fields.
+
+### Why
+
+- An embedder (desktop, a daemon client) needs the same on-demand report `SIGUSR2` gives a terminal user, without signalling a shared host.
+
+### Why an extension could not handle it
+
+- RPC commands are dispatched by the connection handler.
+
+### Expected merge conflict zones
+
+- `connection-handler.ts` after `get_session_stats`; `rpc-types.ts` session command and response unions.
 
 ## 2026-10-02 - Prompt acknowledgements wait through observed compaction
 
@@ -120,7 +350,6 @@ Host identity, admission and generation handoff are core RPC host lifecycle; an 
 ### Expected merge conflict zones
 
 - Fork-only files. `createHostCore` and the socket host's capability list and `createHostCore` call in `multi-session-host.ts`; `identityPayload`/`refusal` moving to `host-outcome.ts` from `host-runner.ts`; the `launch` line in `startSuccessor`.
-
 ## 2026-09-30 - An updated client retires a live pre-layout-2 host with no session (senpi#2423)
 
 ### What changed
@@ -4731,3 +4960,106 @@ Upstream v1.0.0 (0c453048b) made the CLI reject a lone `--provider`, because the
 ### Expected merge conflict zones
 
 The provider/model argument block in `RpcClient.start()` if upstream changes how the client spawns the host.
+
+## 2026-10-03 - Host profile coverage compares plugin extensions by role
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-decision.ts`: `covers()` compares `core.extensions` by role instead of by absolute path. The engine plugin's entries are identified from the last `plugin` path segment on (`plugin`, `plugin/extensions/<name>.js`, either separator), and every other extension keeps its whole path. `profileWarning()` returns no warning when the client and host profiles cover each other, so two installs of the same plugin set under different roots no longer log `profile_mismatch_attached` on every ensure.
+
+### Why
+
+A runtime directory per build put the plugin under a different absolute path each time, so two builds of the same plugin set compared as different and a proper superset never counted as covering. Role coverage is profile compatibility only: the handoff still needs a STRICTLY newer engine ordinal (I2), an uncomparable build still attaches, and `covers()` still fails when the client lacks any extension role the host loads.
+
+### Why an extension could not handle it
+
+The host decision runs in the client before any session or extension exists; the comparison is owned by `decideHostAction`.
+
+### Expected merge conflict zones
+
+`covers()` and `profileWarning()` in `host-decision.ts`, and the profile rows in `test/suite/host-decision.test.ts`.
+
+## 2026-10-03 - Reclaim quiet detached workers without observation heartbeats
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/session-sweep.ts`: a retained, detached in-process worker with a flushed transcript and no active work or queued delivery parks on the next sweep rather than after the full idle window, once its disconnect has stood for at least five seconds (`DETACHED_RETIREMENT_GRACE_MS`). An attached client is exempt from early retirement; only the ordinary idle deadline applies to it.
+- `packages/coding-agent/src/modes/rpc/session-sweep.ts`: a zero-attachment entry without a detach timestamp falls through to its ordinary idle deadline rather than retiring early or being retained indefinitely.
+- `packages/coding-agent/src/modes/rpc/session-command-router.ts`: occupancy sweeps protect in-flight requests and prompt preflight.
+- `packages/coding-agent/src/modes/rpc/session-command-activity.ts`, `packages/coding-agent/src/modes/rpc/session-registry.ts`, and `packages/coding-agent/src/modes/rpc/worker-session-registry.ts`: explicitly enumerated observational commands, including `get_state` and `memory_report`, no longer refresh the idle clock for DETACHED sessions in either runtime. An attached client's polling keeps its session alive as before; the registries stamp a `detachedAt` time when the last attachment leaves so the sweep can honor the disconnect-age grace.
+
+### Why
+
+- Completed retained workers otherwise hold runtimes and eval kernels for the whole idle window; status polling by a client that has already gone away can extend that window indefinitely. Durable transcripts permit reopening after the existing park/disposal path. The disconnect-age grace keeps a brief disconnect that overlaps a sweep from discarding a runtime its owner is about to reclaim.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/rpc/session-sweep.ts` and `packages/coding-agent/src/modes/rpc/session-command-router.ts` own attachment-aware reclamation and request admission. The two registries own idle timestamps before extension dispatch.
+
+### Expected merge conflict zones
+
+- Occupancy selection in `packages/coding-agent/src/modes/rpc/session-sweep.ts` and `packages/coding-agent/src/modes/rpc/session-command-router.ts`; `getForCommand` in `packages/coding-agent/src/modes/rpc/session-registry.ts` and `packages/coding-agent/src/modes/rpc/worker-session-registry.ts`.
+
+## open_session.browserEngine and the browser_engine capability (2026-10-03)
+
+### What changed
+
+- `custom-capability.ts`: `BROWSER_ENGINE_CAPABILITY` (`browser_engine`), advertised by the multi-session router in `get_protocol_info`.
+- `rpc-types.ts`, `rpc-client.ts`, `rpc-input-validation.ts`, `session-command-router.ts`: `open_session.browserEngine?: "connected" | "builtin" | "none"`; any other value is refused with `invalid_launch_profile` and no session is opened.
+- `session-registry-attach.ts`, `worker-session-registry.ts`, `session-worker-protocol.ts`, `session-worker-client.ts`, `session-worker.ts`: a later attach that names another engine moves the live session to it (worker sessions through a new `browser_engine` request); an attach without the field keeps it.
+- `host-daemon-env.ts`: `OMO_BROWSER_ENGINE` joins the per-session names a daemon never inherits; `BSK_HOME` and `BSK_BIN` (per install) are allowed through.
+- `core/browser-engine.ts` (new), `agent-session*.ts`, `sdk.ts`, `main.ts`: the engine is part of the session launch profile and reaches `AgentSession`, the extension context and the core bash tool.
+
+### Why
+
+The desktop app lets the user choose which browser an agent drives and sends the choice per session. The host had no carrier for it, and an environment variable on the host process would apply to every session it serves (desktop #1544).
+
+### Why an extension could not handle it
+
+The launch profile, the capability list and the session environment are assembled by the host before any extension loads.
+
+### Expected merge conflict zones
+
+The `open_session` branch of `session-command-router.ts` next to `promptSurface`, the capability list in the same file, and the attach blocks in `session-registry-attach.ts` and `worker-session-registry.ts`.
+
+
+## 2026-10-03 - Tool-result images are persisted and their path reported in the placeholder
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/tool-media-store.ts` (new): `persistToolImage` writes a tool-result image to `<sessionDir>/media/<durableSessionId>/<sha256(toolCallId)>/<contentIndex>-<sha256(bytes)>.<ext>` (temp file, rename, read-only, private directories) and returns `{ path }`, or `{ unavailableReason: "image_too_large" | "session_limit" | "storage_error" }` for an image over 20 MiB, a session already holding 256 MiB (new storage refused, nothing evicted; usage is re-measured from disk after a host restart) and a failed write or a format other than PNG/JPEG/GIF/WebP. `removeToolMedia` deletes a session's directory (it first makes every real file and folder under it writable, so read-only images and the Windows read-only attribute cannot leave it behind; it decides by what an entry itself is and never follows a symlink, so a link inside (or in place of) the media folder is removed as a link and what it points at keeps its mode and contents; it throws when the directory cannot be removed). An image is stored only when its bytes carry the signature of the format the tool claimed (HTML claimed as `image/png` is `storage_error`), and a symlink planted where `media/`, `media/<id>` or the per-call folder under it goes is refused.
+- `media-placeholders.ts`: `omitInlineMedia(record, persist?)` threads an optional persister through the walk; `ImageRefBlock` gains optional `path` / `unavailableReason`. With no persister the placeholder is byte-identical to before.
+- `session-event-writer.ts`: `setSessionMedia(sessionId, persister)` registers a per-session persister, passed to the transform at `enqueue` and dropped when the session closes. `session-command-router.ts` registers it on open and resolves the scope from the LIVE session on every image (`liveToolMediaScope`: the in-process runtime's session manager, else the worker's published snapshot), so images taken after `new_session` / `switch_session` / `fork` are filed under the new session; with no live state yet nothing is stored.
+- `modes/interactive/components/session-selector.ts`: deleting a session also removes its media directory, only after the session file is gone.
+- `test/suite/no-sync-in-session-path.ledger.json`: one `writeFileSync` entry for `writeImage`.
+
+### Why
+
+A `media_placeholders` client received an `image_ref` it could never turn into a picture for any tool but `read` (desktop #941): the bytes stay off the socket by design. Writing them once, before the placeholder is published, lets the client render from the path after a disconnect, idle shutdown or handover.
+
+### Why an extension could not handle it
+
+The placeholder is produced by the host's single wire choke point (`SessionEventWriter.enqueue`); no extension hook sits between a tool result and that transform.
+
+### Expected merge conflict zones
+
+`omitContentImages` and its callers in `media-placeholders.ts`, the `enqueue` placeholder line in `session-event-writer.ts`, and the `setSessionKind` neighbourhood in `session-command-router.ts`.
+
+## 2026-10-04 — Permission prompts carry the tool call id on the wire (#2710)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: the `select` and `input` variants of `RpcExtensionUIRequest` gain optional `toolCallId` and `parentToolCallId`.
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: `dialogCall(opts)` copies `ExtensionUIDialogOptions.toolCallId` / `parentToolCallId` into the `select` and `input` requests; absent options add no keys, so every other dialog is byte-identical.
+
+### Why
+
+The engine runs a message's `tool_call` hooks (where the permission system asks) for every call before any of them runs, so with several calls of one tool in flight a client could not tell which call a prompt approved (#2710). The desktop had to show "the code can't be shown" for every prompt after the first.
+
+### Why an extension could not handle it
+
+The RPC extension UI context is built by the RPC connection handler; an extension cannot add fields to the wire request it emits.
+
+### Expected merge conflict zones
+
+The `select` / `input` lines of `createExtensionUIContext` in `connection-handler.ts`, and the `RpcExtensionUIRequest` union in `rpc-types.ts`.

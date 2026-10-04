@@ -74,6 +74,7 @@ import { type CredentialAccountSummary, summarizeCredentialAccounts } from "./co
 import { exportFromFile } from "./core/export-html/index.ts";
 import type { InlineExtension } from "./core/extensions/types.ts";
 import { applyHttpProxySettings, configureHttpDispatcher } from "./core/http-dispatcher.ts";
+import { installMemoryReportSignal } from "./core/memory-report/memory-report-write.ts";
 import {
 	getModelNarrowingPatterns,
 	resolveCliModel,
@@ -878,6 +879,20 @@ export function createCliRuntimeFactory(
 				parsed.projectTrustOverride ??
 				(!hasTrustRequiringResources || trustStore.get(cwd) === true));
 		const runtimeSettingsManager = SettingsManager.create(cwd, agentDir, { projectTrusted });
+		// The opener's per-session fallback policy is an in-memory override: never saved, never shared.
+		if (launchProfile?.retryFallback) {
+			runtimeSettingsManager.applyOverrides({
+				retry: {
+					modelFallback: launchProfile.retryFallback.modelFallback,
+					fallbackChains: Object.fromEntries(
+						Object.entries(launchProfile.retryFallback.fallbackChains).map(([key, entries]) => [
+							key,
+							[...entries],
+						]),
+					),
+				},
+			});
+		}
 		const services = await createAgentSessionServices({
 			cwd,
 			agentDir,
@@ -1045,6 +1060,7 @@ export function createCliRuntimeFactory(
 				launchProfile?.autoTitle,
 			),
 			promptSurface: launchProfile?.promptSurface,
+			browserEngine: launchProfile?.browserEngine,
 		});
 		markSwitch("createSession");
 		const cliThinkingOverride = runtimeParsed.thinking !== undefined || cliThinkingFromModel;
@@ -1280,6 +1296,9 @@ export async function main(args: string[], options?: MainOptions) {
 	if (appMode === "interactive" && parsed.useTheme !== undefined) {
 		startupSettingsManager.applyOverrides({ theme: parsed.useTheme });
 	}
+
+	// Installs nothing unless SENPI_MEMORY_REPORT=1; then SIGUSR2 writes a memory report for every live session.
+	installMemoryReportSignal();
 
 	if (appMode === "rpc" && parsed.multiSession) {
 		if (options?.extensionFactories?.length)

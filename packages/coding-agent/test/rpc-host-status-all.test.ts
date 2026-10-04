@@ -228,6 +228,8 @@ describe.skipIf(process.platform === "win32")("host status --all against real ho
 				name: null,
 				attachments: 1,
 				context: { tree_key: "tree-7", host_socket: canonicalSocket(qa.legacy), host_instance: instanceId },
+				// senpi#1960: the host publishes its live heap split; the main heap moves, the kernel split is exact.
+				memory: { main_heap_mb: expect.any(Number), kernel_heap_mb: 0, kernel_count: 0 },
 			},
 		]);
 		expect(listed.claims_live).toBe(1);

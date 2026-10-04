@@ -1,3 +1,57 @@
+## 2026-10-03 - EvalHandleHost capability exports (codemode plan node 10)
+
+### What changed
+
+- `packages/coding-agent/src/index.ts`: re-exports the `EvalHandleHost` capability surface from `core/extensions/eval-handle-host.ts` (`EvalHandleHost`, `HandleRef`, `HandlePhase`, `HandleSnapshot`, `HandleOutcome`, `HandleWatch`, `HandleCallContext`, `HandleError`, `HandleKind`, `CancelReceipt`, `OutputRequest`, `OutputSnapshot`, `EVAL_HANDLE_ERROR_CODES`, `EvalHandleErrorCode`, `EvalHandleError`) beside the kernel-tools context exports.
+
+### Why
+
+- The task owner (an extension) implements the capability and codemode (another extension) consumes it; both import the contract from the package root, never from each other.
+
+### Why an extension could not handle it
+
+- The package root is the only import path published to extensions; an extension cannot add exports to it.
+
+### Expected merge conflict zones
+
+- `index.ts`: the export block directly before the `kernel-tools-context.ts` re-exports.
+
+## 2026-10-03 - A session's own fallback policy reaches its settings in memory only (omo#9512)
+
+### What changed
+
+- `packages/coding-agent/src/main.ts`: `createCliRuntimeFactory` applies a launch profile's `retryFallback` (`open_session.retryFallback`) to that session's own `SettingsManager` through `applyOverrides`, the session-only layer that `save()` never writes.
+
+### Why
+
+- `packages/coding-agent/src/main.ts`: each host session builds its own `SettingsManager`, so the override reaches only that session, and the user's `settings.json` stays byte-identical (`test/suite/rpc-open-session-retry-fallback.test.ts`).
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/main.ts`: the settings manager is created before the session's extensions load, and `ctx.sessionSettings` setters persist to the global settings file.
+
+### Expected merge conflict zones
+
+- LOW: the `runtimeSettingsManager` construction in `createCliRuntimeFactory`.
+
+## 2026-10-02 - Memory report trigger at startup (senpi#2561)
+
+### What changed
+
+- `packages/coding-agent/src/main.ts`: calls `installMemoryReportSignal()` before the multi-session branch and the mode dispatch, so TUI, print, RPC and multi-session hosts all install the `SIGUSR2` memory report when `SENPI_MEMORY_REPORT=1`; without the flag it installs nothing.
+
+### Why
+
+- The on-demand memory report must be reachable from every mode of a running session process.
+
+### Why an extension could not handle it
+
+- Extensions load per session, after mode selection; a multi-session host has none until a session opens, and the signal handler is process-wide.
+
+### Expected merge conflict zones
+
+- `main.ts`: the line before `if (appMode === "rpc" && parsed.multiSession)` and the import block.
+
 ## 2026-10-01 - Package directory lookup is resolved once (senpi#2508)
 
 ### What changed
@@ -4561,3 +4615,21 @@ Session runtime, settings and interactive mode own these paths below the extensi
 ### Expected merge conflict zones
 
 Upstream edits to session/settings/runtime paths at the next sync.
+
+## The CLI runtime factory forwards the browser engine (2026-10-03)
+
+### What changed
+
+- `packages/coding-agent/src/main.ts`: `createCliRuntimeFactory` passes `launchProfile.browserEngine` to session creation next to `promptSurface`.
+
+### Why
+
+A session opened with `open_session.browserEngine` must be created with it (senpi#2611).
+
+### Why an extension could not handle it
+
+The runtime factory builds the session before any extension is loaded.
+
+### Expected merge conflict zones
+
+The `promptSurface: launchProfile?.promptSurface` line in the session creation call.

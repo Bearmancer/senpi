@@ -17,13 +17,14 @@
 
 import * as crypto from "node:crypto";
 import { basename, dirname, extname } from "node:path";
-import type { ImageContent } from "@earendil-works/pi-ai";
+import { type ImageContent, modelSupportsAssistantPrefill } from "@earendil-works/pi-ai";
 import type { OAuthProviderId } from "@earendil-works/pi-ai/compat";
 import { VERSION } from "../../config.ts";
 import type { AgentAbortSource } from "../../core/agent-abort-provenance.ts";
 import type { AgentSession } from "../../core/agent-session.ts";
 import type { AgentSessionRuntime } from "../../core/agent-session-runtime.ts";
 import { authMethodStatus, buildLoginProviderInfos } from "../../core/auth-providers.ts";
+import { ContinueFromLeafError } from "../../core/continue-from-leaf.ts";
 import {
 	getCredentialAccounts,
 	pinCredentialAccount,
@@ -64,6 +65,7 @@ import { ConnectionQuestionBridge, degradeQuestion, sessionQuestionBridges } fro
 import {
 	AUTO_TITLE_SESSIONS_CAPABILITY,
 	buildCustomUnsupportedRequest,
+	CONTINUE_FROM_LEAF_CAPABILITY,
 	DEFAULT_CUSTOM_EXTENSION_LABEL,
 	EXTENSION_EVENTS_CAPABILITY,
 	MEDIA_PLACEHOLDERS_CAPABILITY,
@@ -73,6 +75,7 @@ import { createRpcEventOutputBuffer } from "./event-output-buffer.ts";
 import { settleExtensionUiResponse } from "./extension-ui-response.ts";
 import { HostSessionControl } from "./host-session-control.ts";
 import { createRpcLoginPromptCallbacks } from "./login-prompts.ts";
+import { answerMemoryReport } from "./memory-report-command.ts";
 import { protocolIdentity } from "./protocol-identity.ts";
 import { buildRpcCommandsForSession, createCommandsChangedEvent, rpcCommandListDigest } from "./rpc-command-surface.ts";
 import { rpcCommandPayloadError, rpcCommandShapeError, rpcMessageLengthError } from "./rpc-input-validation.ts";
@@ -153,6 +156,15 @@ export interface RpcConnectionHandler {
 	cancelPendingExtensionUiRequests(): void;
 	/** Tear down subscriptions and dispose the runtime. Never calls process.exit. */
 	dispose(): Promise<void>;
+}
+
+/** The tool call a dialog is about, as wire fields (absent when the dialog is not a permission request). */
+function dialogCall(opts: ExtensionUIDialogOptions | undefined): { toolCallId?: string; parentToolCallId?: string } {
+	if (opts?.toolCallId === undefined) return {};
+	return {
+		toolCallId: opts.toolCallId,
+		...(opts.parentToolCallId === undefined ? {} : { parentToolCallId: opts.parentToolCallId }),
+	};
 }
 
 function loadedExtensionName(path: string): string {
@@ -446,8 +458,11 @@ export function createRpcConnectionHandler(
 				? questions.ask(request, opts)
 				: degradeQuestion(createExtensionUIContext(), request, opts),
 		select: (title, options, opts) =>
-			createDialogPromise(opts, undefined, { method: "select", title, options, timeout: opts?.timeout }, (r) =>
-				"cancelled" in r && r.cancelled ? undefined : "value" in r ? r.value : undefined,
+			createDialogPromise(
+				opts,
+				undefined,
+				{ method: "select", title, options, timeout: opts?.timeout, ...dialogCall(opts) },
+				(r) => ("cancelled" in r && r.cancelled ? undefined : "value" in r ? r.value : undefined),
 			),
 
 		confirm: (title, message, opts) =>
@@ -456,8 +471,11 @@ export function createRpcConnectionHandler(
 			),
 
 		input: (title, placeholder, opts) =>
-			createDialogPromise(opts, undefined, { method: "input", title, placeholder, timeout: opts?.timeout }, (r) =>
-				"cancelled" in r && r.cancelled ? undefined : "value" in r ? r.value : undefined,
+			createDialogPromise(
+				opts,
+				undefined,
+				{ method: "input", title, placeholder, timeout: opts?.timeout, ...dialogCall(opts) },
+				(r) => ("cancelled" in r && r.cancelled ? undefined : "value" in r ? r.value : undefined),
 			),
 
 		notify(message: string, type?: "info" | "warning" | "error"): void {
@@ -925,6 +943,7 @@ export function createRpcConnectionHandler(
 								AUTO_TITLE_SESSIONS_CAPABILITY,
 								MEDIA_PLACEHOLDERS_CAPABILITY,
 								DURABLE_CLIENT_MESSAGE_ID_CAPABILITY,
+								CONTINUE_FROM_LEAF_CAPABILITY,
 								...(options.capabilities ?? []),
 							]),
 						],
@@ -960,6 +979,16 @@ export function createRpcConnectionHandler(
 			case "append_session_entry": {
 				session.appendSessionEntry(command.entry);
 				return success(id, "append_session_entry");
+			}
+
+			case "continue_from_leaf": {
+				try {
+					await session.continueFromLeaf();
+					return success(id, "continue_from_leaf");
+				} catch (err) {
+					if (err instanceof ContinueFromLeafError) return error(id, command.type, err.message, err.code);
+					throw err;
+				}
 			}
 
 			case "send_custom_message": {
@@ -1094,6 +1123,9 @@ export function createRpcConnectionHandler(
 					models: models.map((model) => ({
 						...model,
 						supportedThinkingLevels: getSupportedThinkingLevels(model),
+						supportsAssistantPrefill: modelSupportsAssistantPrefill(model, {
+							thinkingEnabled: session.thinkingLevel !== "off",
+						}),
 					})),
 				});
 			}
@@ -1323,6 +1355,11 @@ export function createRpcConnectionHandler(
 			case "get_session_stats": {
 				const stats = session.getSessionStats();
 				return success(id, "get_session_stats", stats);
+			}
+
+			case "memory_report": {
+				const answer = await answerMemoryReport(session);
+				return answer.ok ? success(id, "memory_report", answer.data) : error(id, "memory_report", answer.error);
 			}
 
 			case "export_html": {

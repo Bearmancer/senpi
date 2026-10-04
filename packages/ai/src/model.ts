@@ -49,6 +49,14 @@ export interface Model<TApi extends Api> extends BaseModel<TApi> {
 	serviceTier?: "auto" | "flex" | "priority" | "ultrafast";
 	/** Whether to recover supported text-encoded tool calls from assistant text. */
 	recoverTextToolCalls?: boolean;
+	/**
+	 * Whether a request may end with an assistant message the model continues
+	 * writing (assistant prefill). Absent means no: Claude 4.6 and later reject a
+	 * trailing assistant message, OpenAI's Responses API has no prefill, and the
+	 * other default providers document none. Set it per model only after a live
+	 * probe; `modelSupportsAssistantPrefill` also applies the request settings.
+	 */
+	supportsAssistantPrefill?: boolean;
 	/** Compatibility overrides for OpenAI-compatible APIs. If not set, auto-detected from baseUrl. */
 	compat?: TApi extends "openai-completions"
 		? OpenAICompletionsCompat
@@ -103,4 +111,17 @@ export interface CursorAgentCompat {
 		 */
 		variantIds?: Readonly<Partial<Record<ModelThinkingLevel, string>>>;
 	};
+}
+
+/**
+ * Whether a request to `model` with these settings may end with an assistant
+ * message the model continues writing. Extended thinking rules prefill out on
+ * the Anthropic Messages API even for models that otherwise accept it.
+ */
+export function modelSupportsAssistantPrefill(
+	model: Pick<Model<Api>, "api" | "supportsAssistantPrefill">,
+	settings: { readonly thinkingEnabled: boolean },
+): boolean {
+	if (model.supportsAssistantPrefill !== true) return false;
+	return !(model.api === "anthropic-messages" && settings.thinkingEnabled);
 }

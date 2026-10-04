@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { assertSenpiPackedWorkspaceFiles } from "./senpi-publish-pack-checks.mjs";
+import { assertPublishedWorkspacePackFiles, assertSenpiPackedWorkspaceFiles, nativePrebuildFile } from "./senpi-publish-pack-checks.mjs";
 
 const VENDORED_FILES = [
 	"vendor/pi-client/index.js",
@@ -135,6 +135,83 @@ describe("assertSenpiPackedWorkspaceFiles", () => {
 		assert.throws(
 			() => assertSenpiPackedWorkspaceFiles(packed, stagedManifest()),
 			/missing vendored workspace files: vendor\/pi-protocol\/index\.d\.ts$/,
+		);
+	});
+});
+
+const REQUIRED_NATIVE_PREBUILD_TARGETS = ["darwin-arm64", "darwin-x64", "linux-x64", "linux-arm64", "win32-x64"];
+const PTY = "@earendil-works/pi-pty";
+const PTY_LOADER_FILES = ["package.json", "dist/index.js", "native/index.js"];
+
+describe("assertPublishedWorkspacePackFiles required native prebuilds (senpi#1193)", () => {
+	it("rejects a senpi-pty tarball missing a required release-built prebuild (senpi#1193)", () => {
+		// Given: the pty loader files are packed, but the Linux x64 release artifact is
+		// absent — the tarball a Linux user would install would silently pipe-fallback.
+		const packed = {
+			files: [...PTY_LOADER_FILES, nativePrebuildFile("darwin-arm64", PTY)].map((path) => ({ path: `package/${path}` })),
+		};
+
+		// When / Then
+		assert.throws(
+			() => assertPublishedWorkspacePackFiles(packed, PTY, { requiredNativePrebuildTargets: ["linux-x64"] }),
+			/native\/prebuilds\/linux-x64\/senpi_pty\.linux-x64\.node/,
+		);
+	});
+
+	it("rejects when any one of the five required targets is missing", () => {
+		// Given: four of the five publish-only targets are staged; win32-x64 is not.
+		const present = REQUIRED_NATIVE_PREBUILD_TARGETS.filter((target) => target !== "win32-x64");
+		const packed = {
+			files: [...PTY_LOADER_FILES, ...present.map((target) => nativePrebuildFile(target, PTY))].map((path) => ({ path })),
+		};
+
+		// When / Then
+		assert.throws(
+			() => assertPublishedWorkspacePackFiles(packed, PTY, { requiredNativePrebuildTargets: REQUIRED_NATIVE_PREBUILD_TARGETS }),
+			/native\/prebuilds\/win32-x64\/senpi_pty\.win32-x64\.node/,
+		);
+	});
+
+	it("accepts a senpi-pty tarball carrying every required target's prebuild", () => {
+		// Given
+		const packed = {
+			files: [...PTY_LOADER_FILES, ...REQUIRED_NATIVE_PREBUILD_TARGETS.map((target) => nativePrebuildFile(target, PTY))].map(
+				(path) => ({ path }),
+			),
+		};
+
+		// When / Then
+		assert.doesNotThrow(() =>
+			assertPublishedWorkspacePackFiles(packed, PTY, { requiredNativePrebuildTargets: REQUIRED_NATIVE_PREBUILD_TARGETS }),
+		);
+	});
+
+	it("keeps an unrequired target warn-only so best-effort rows never fail the pack", () => {
+		// Given: win32-arm64 stays best-effort, so its absence must warn, not throw.
+		const warnings = [];
+		const originalWarn = console.warn;
+		console.warn = (message) => warnings.push(String(message));
+		try {
+			const packed = { files: PTY_LOADER_FILES.map((path) => ({ path: `package/${path}` })) };
+
+			// When / Then
+			assert.doesNotThrow(() => assertPublishedWorkspacePackFiles(packed, PTY, { requiredNativePrebuildTargets: [] }));
+			assert.equal(warnings.length, 1);
+			assert.match(warnings[0], /no native prebuild/);
+		} finally {
+			console.warn = originalWarn;
+		}
+	});
+
+	it("rejects an unsupported required target before packing anything", () => {
+		assert.throws(
+			() =>
+				assertPublishedWorkspacePackFiles(
+					{ files: PTY_LOADER_FILES.map((path) => ({ path })) },
+					PTY,
+					{ requiredNativePrebuildTargets: ["freebsd-x64"] },
+				),
+			/Unsupported native prebuild target: freebsd-x64/,
 		);
 	});
 });

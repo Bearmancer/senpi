@@ -4,6 +4,8 @@
 
 ### Added
 
+- Publish-only releases now ship the native PTY prebuild for every supported target (darwin-arm64, darwin-x64, linux-x64, linux-arm64, win32-x64), so Linux x64 and the other newly shipped targets get the real native PTY backend instead of the pipe fallback. The publish fails when a required prebuild is missing from the tarball; win32-arm64 stays best-effort. Thanks @Altairpaca. ([#1224](https://github.com/code-yeongyu/senpi/pull/1224), fixes [#1193](https://github.com/code-yeongyu/senpi/issues/1193))
+
 - `TerminalSession` exposes the child's `pid` on every backend (native, pipe fallback, Bun) and its `processGroupId` where the backend knows it (native and pipe fallback), so callers can record the process identity of a session. ([#2108](https://github.com/code-yeongyu/senpi/issues/2108))
 - Added `TerminalSession.terminate({ signal, graceMs, forcedGraceMs })`, which signals the session, waits for the exit, escalates to `SIGKILL`, and resolves with the settled exit (or `null` when the process outlives both waits).
 - Added `SessionRegistry` options `forcedExitGraceMs` (wait after the escalated `SIGKILL`, default 1s) and `detachedExitGraceMs` (detached-child grace before `SIGKILL`, default 1s).

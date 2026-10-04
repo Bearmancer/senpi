@@ -1,3 +1,45 @@
+## 2026-10-03 - Session-scoped EvalHandleHost provide/read pair (codemode plan node 10)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts`: `ExtensionAPI.provideEvalHandleHost(host)` registers the session's `EvalHandleHost` (the capability declared in `eval-handle-host.ts`: `watch`/`result`/`send`/`cancel`/`output` fenced by owner session, id and `run_epoch`); `ExtensionContext.evalHandleHost` reads it back, optional and absent on runtimes without a provider; `ExtensionRuntimeState.evalHandleHost` is the per-runtime slot.
+- `packages/coding-agent/src/core/extensions/loader.ts`: the API method stores the host on the extension runtime (last provider wins); `invalidate()` clears it so a replaced or reloaded session never reads a stale host.
+- `packages/coding-agent/src/core/extensions/runner.ts`: `createContext` exposes the slot as the `evalHandleHost` getter beside `kernelTools`.
+- `packages/coding-agent/src/index.ts` re-exports the capability types and `EvalHandleError`.
+
+### Why
+
+- `packages/coding-agent/src/core/extensions/types.ts`: the task/workpool owner (an extension) provides the capability and codemode (another extension) consumes it per session; the direction is the reverse of `kernelTools` (long-lived, provider-to-consumer), so a call-scoped AsyncLocalStorage does not fit, and a process-global registry would let every session's task extension register into one slot on a multi-session host.
+- `packages/coding-agent/src/core/extensions/loader.ts` / `runner.ts`: the runtime is the only object both extensions of one session share, so it is the session-scoped carrier.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/types.ts` owns `ExtensionAPI` and `ExtensionContext`; an extension cannot add a surface other extensions receive, and two extensions have no shared per-session object other than the runtime.
+
+### Expected merge conflict zones
+
+- `types.ts`: the `ExtensionContext` body after `kernelTools`, the `ExtensionAPI` tool-registration block after `registerRemovedToolHint`, and the tail of `ExtensionRuntimeState`; `loader.ts` `createExtensionAPI` beside `registerRemovedToolHint` and the `invalidate` closure; `runner.ts` `createContext` getters.
+
+## 2026-10-02 - Extension memory reporters (senpi#2561)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts`: `ExtensionAPI.registerMemoryReporter(name, reporter)` and `MemoryReporter` (`() => Readonly<Record<string, number>>`); `Extension.memoryReporters` is optional for records built before it.
+- `packages/coding-agent/src/core/extensions/loader.ts`: the API stores reporters per extension and refuses the report's reserved names.
+- `packages/coding-agent/src/core/extensions/runner.ts`: `getMemoryReporters()` returns every extension's reporters in load order.
+
+### Why
+
+- Layers owned by extensions (task children, caches) must appear in the on-demand memory report; only the extension knows their size.
+
+### Why an extension could not handle it
+
+- The report is assembled by the host; an extension needs a registration surface to contribute to it.
+
+### Expected merge conflict zones
+
+- `types.ts` beside `registerMarkdownTransformer`; `loader.ts` `createExtensionAPI` and the extension record literal; `runner.ts` beside `getMarkdownTransformers`.
+
 ## 2026-10-02 - Ask-user answer provenance (senpi#2533)
 
 ### What changed
@@ -3026,3 +3068,41 @@ Extension loading is the core loader itself, not expressible as an extension.
 ### Expected merge conflict zones
 
 Upstream edits to the extension loader at the next sync.
+
+## ExtensionContext.browserEngine (2026-10-03)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts`: `ExtensionContext.browserEngine?: BrowserEngine` and the optional `ExtensionContextActions.getBrowserEngine`.
+- `packages/coding-agent/src/core/extensions/runner.ts`: the context getter and its bound action (default `undefined`).
+- `packages/coding-agent/src/core/extensions/builtin/terminal/tools/bash.ts`: the PTY bash tool exports `OMO_BROWSER_ENGINE` from the session context and marks it for removal when the session chose none.
+
+### Why
+
+A shared RPC host serves many sessions, so the browser engine an opener chose (`open_session.browserEngine`) must travel with the session, not the process. Extensions and the tool subprocesses they spawn read it from the session context like the other per-session values.
+
+### Why an extension could not handle it
+
+The value lives in the session's launch profile and the bash tool environment is assembled in core.
+
+### Expected merge conflict zones
+
+The context getter block in `runner.ts` (next to `goalStoreFile`) and the `SessionEnvSource` / `sessionEnvOverrides` pair in the terminal bash tool.
+
+## 2026-10-04 — `ExtensionUIDialogOptions` names the tool call a dialog is about (#2710)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts`: `ExtensionUIDialogOptions` gains optional `toolCallId` and `parentToolCallId`. UI contexts that do not use them (TUI, print) ignore them.
+
+### Why
+
+The engine runs a message's `tool_call` hooks (where the permission system asks) for every call before any of them runs, so with several calls of one tool in flight a client could not tell which call a prompt approved (#2710). The desktop had to show "the code can't be shown" for every prompt after the first.
+
+### Why an extension could not handle it
+
+The dialog options type is the public extension API that every UI context receives; the field has to exist there for the permission extension to hand the id to the RPC context.
+
+### Expected merge conflict zones
+
+The `ExtensionUIDialogOptions` interface in `types.ts`.

@@ -1,5 +1,174 @@
 # Permission System Builtin Extension
 
+## 2026-10-04 - No-UI refusal only; ref-shaped git operands by lstat
+
+### What changed
+
+- `non-interactive.ts`: `handleNoUI(request, { emitEvent, presetBound })` always returns the refusal. It is only reached for a request the service is still asking about, so its old allow outcome could never apply and its deny outcome only ever refused too; `index.ts` replies with it directly.
+- `auto-paths.ts` + `auto-policy.ts`: a ref-shaped git operand counts as a path when anything exists at that name, a dangling symlink included (`existsAtName`, an `lstat`); before, a dangling project symlink was treated as missing and allowed. A name `lstat` refuses (too long, a loop) also counts as a path, so it asks instead of throwing.
+
+### Why
+
+- Follow-ups from the round-8 review of #2614 (no blockers).
+
+### Must not break
+
+- No-UI mode never approves a request the service asked about.
+
+## 2026-10-04 - No-UI requests fail closed; plain-word shell splitter
+
+### What changed
+
+- `non-interactive.ts`: `handleNoUI(request, options)` judges every pattern of the request (CLI override before the static ruleset), allows only when all are allowed, and rejects on any deny; `index.ts` refuses whenever it does not allow, so a request the service still asks about is never answered "once" without a UI.
+- `auto-shell-segments.ts`: only plain words joined by `;` or `&&` (the same character set the judge accepted before); the unreachable quote, redirect, pipe and glob handling and `ShellWord.hasGlob` are gone.
+- `auto-program-rules.ts` + `auto-policy.ts`: a ref-shaped git operand (`ref-or-path`) asks when something exists at that name and is not an approvable project path, or when it is credential-shaped.
+- `auto-policy.ts`: `grep` with an empty path list asks. `service.ts`: the unreachable judge branch outside `presetBound` is gone.
+
+### Why
+
+- Round 7 of the #2614 review: the round-6 "answer a no-UI allow" approved a multi-path `external_directory` request whose later path no rule allowed (`handleNoUI` judged only the first pattern).
+
+### Must not break
+
+- No-UI mode never allows what the service asked about; every pattern of a request is judged.
+
+## 2026-10-03 - Auto: one decision for ask, the pending re-check and no-UI
+
+### What changed
+
+- `service.ts`: `decide()` is the single decision for a call. `ask` uses it, and so does the re-check of still-pending requests after an "Always" reply (each pending request keeps the options it was asked with). Under `presetBound`, settings and CLI rules combine with the preset as the more restrictive; an "Always" answer given in this session then allows its pattern.
+- `non-interactive.ts` + `index.ts`: with `auto` and no UI, a call the service still asks for is refused with a reason (no configured allow can answer it); a no-UI allow is now answered with `once` instead of leaving the call waiting.
+- `auto-policy.ts`: a session root that is not a project (`/`, home or above, a hidden directory) approves nothing, shell commands included.
+- `auto-program-rules.ts`: a flag's value (`git log -n 1000`) is not treated as an object id.
+
+### Why
+
+- Round 6 of the #2614 review: the no-UI path hung on `auto` + `--permission bash=allow`; the pending re-check after "Always" still used the order-dependent evaluation and approved a pending `rm`; shell commands without a path were approved in a home or `/` root.
+
+### Must not break
+
+- Every path that decides a call goes through `decide()`; a configured user rule can only narrow `auto`.
+
+## 2026-10-03 - Auto: preset and user decisions combine as the more restrictive
+
+### What changed
+
+- `service.ts`: with `presetBound` (set by `index.ts` while `auto` is active), each call is decided twice, independently: the preset's rules alone (its blanket ask becomes allow when the judge approves) and the user's rules alone; the final action is the more restrictive of the two (deny > ask > allow). Rule order and layer no longer matter, so a user `allow` cannot widen `auto` and a user `deny`/`ask` always narrows it. This replaces the round-4 `userRestrictionFor` lookup, which still let a user `allow` ordered after the preset win.
+- `auto-paths.ts`: a session root inside a hidden directory (`~/.config/...`) approves nothing.
+- `auto-policy.ts`: `apply_patch` with a delete asks; `multiedit` (no such tool in senpi, so no resolver) asks.
+- `auto-program-rules.ts`: hex operands of 4+ characters count as object ids and ask; `cat`/`head`/`tail`/`wc`/`cut` need a file and `grep`/`rg` a pattern plus a file, so none waits on terminal input.
+
+### Why
+
+- Round 5 of the #2614 review: precedence was order-dependent (a user allow after the preset in the same settings file, or `--permission bash=allow`, deleted a file unprompted).
+
+### Must not break
+
+- A user rule may only narrow `auto`; the combination must not depend on rule order or layer.
+
+## 2026-10-03 - Auto: a user allow never widens it; home-ancestor roots, git operands
+
+### What changed
+
+- `service.ts`: with `auto` active, only a user `deny` or `ask` for the call replaces the preset's rule (`userRestrictionFor`); a user `allow` is ignored there, so it cannot let a call skip the judge.
+- `auto-paths.ts`: a session root that is `/`, the home directory or any ancestor of it (`/Users`, `/home`) approves nothing.
+- `auto-program-rules.ts`: a `git diff`/`log`/`rev-parse` operand that is not a plain ref is checked as a project path; the dead `show` branch is gone.
+- `auto-policy.ts`: `decideAuto` is async and judges `read` with the tool's own `resolveReadPathAsync`.
+
+### Why
+
+- Round 4 of the #2614 review: a project `bash: allow` plus `auto` deleted a file with no prompt (only `deny`/`ask` are promised to win); a `/Users` root counted as a project; git operands were never path-checked.
+
+### Must not break
+
+- A user rule may only narrow `auto`, never widen it.
+
+## 2026-10-03 - Auto decides on the tool's own resolved target; user rules win from every layer
+
+### What changed
+
+- `auto-policy.ts`: each decision uses the target the tool itself computes: `resolveReadPath` for `read` (every quote layer and macOS name fallback the tool tries), `resolveToCwd` for `write`/`edit`/`multiedit`/`ls`/`find`/`grep`, and `parsePatch` + `resolvePatchPath` for `apply_patch`. `bash_input` and a `monitor` path always ask. Shell commands are judged only when made of plain words joined by `;` or `&&` (no quotes, escapes, expansions, redirects, pipes, `:` or `..`), and only for the read-only programs left in `auto-program-rules.ts` (`cp`, `mv`, `rm`, `mkdir`, `touch`, `sort`, `uniq`, `cd` and `git show` removed; full object ids ask).
+- `auto-paths.ts`: one resolver (`realpathWithoutOpenStrict`) instead of a second implementation; a session root equal to the home directory or `/` approves nothing; `.vscode` left the safe hidden list.
+- `service.ts` + `index.ts`: with `auto` active, when the matching rule is the preset's own, a user rule for the same call (from any layer, ordered before or after the preset) decides instead (`userRulesBeatPreset`).
+
+### Why
+
+- Round 3 of the #2614 review: the policy re-derived paths in parallel with the tools and missed nested quotes, macOS name fallbacks, a patch header with U+2028, a blob read through `git show`, a logical `cd`, and `cp` into a directory holding a symlink; a project rule ordered before a CLI/RPC-selected preset was shadowed by it.
+
+### Must not break
+
+- The judge must call the tools' resolvers, never a copy; if a tool changes how it resolves a path, the decision follows automatically. A user `deny`/`ask` beats the `auto` judge whatever layer it comes from.
+
+## 2026-10-03 - Auto preset becomes an allowlist
+
+### What changed
+
+- `config.ts`: the `auto` preset's rules are a single `*:*=ask`; it no longer inherits accept-edits' `read/list/grep/edit=allow`.
+- `auto-paths.ts` (new): resolves a path the way the file tools do (`@` stripped, Unicode spaces, `~`/`$HOME`, `read`'s quoted fallback) and then physically, component by component, so a symlink is followed before a later `..` (`resolvePhysicalPath`; a missing tail must be plain names). `isApprovableProjectPath` accepts only a resolved path inside the resolved project root with no hidden component (except `.github`, `.gitignore`, `.gitattributes`, `.editorconfig`, `.nvmrc`, `.node-version`, formatter/linter configs, `.vscode`) and no credential-shaped name.
+- `auto-shell-grammar.ts` (new) + `auto-program-rules.ts`: each allowed program has a full flag grammar; every flag, attached value (`-o/x`, `-ro/x`, `--output=x`) and operand is classified as read-file, list, write, remove-file or text, and an unknown flag or form asks. The set is file utilities (`ls cat head tail wc diff stat file sort uniq cut grep rg mkdir touch cp mv rm echo pwd true which`) and read-only git (`status`, summary-only `diff`/`show`, `log`, `rev-parse`, `ls-files`, `blame`, `branch`). Test runners, builds, package managers and installs were removed.
+- `auto-policy.ts`: approves `read`, `ls`/`find`, `write`/`edit`/`multiedit`/`apply_patch` only when every path the tool will touch is approvable, `grep` only on regular files, and shell commands only when every segment parses and every path word is approvable both as written (traversal order) and lexically. Anything else returns no approval. `requireApproval` is gone (the preset already asks).
+
+### Why
+
+- Two review rounds on #2614 found eight bypasses of the earlier denylist (attached option values, symlink then `..`, `@`/quoted spellings, credential stores missing from the list, recursive grep). Approving only what is proven safe removes that class instead of adding entries.
+
+### Must not break
+
+- A user's rules still win over the judge (`isPresetRule`). The judge's check runs before the tool; a path swapped for a symlink between the check and the tool call is the documented residual window (`docs/settings.md`).
+
+## 2026-10-03 - Auto preset review fixes: attached option values, resolved credentials, user rule precedence
+
+### What changed
+
+- `auto-policy.ts`: a short-option word is checked at every tail that could be an attached value (`sort -o/x`, `-ro/x`, `cp -t/dir`, `make -C/dir -f/file -I/dir`, `unittest -s/dir`), the same as a separate argument. Credential checks run on the symlink-resolved target as well as the name, for shell arguments and for every path permission request (`read`, `edit`, `list`, `grep`, `external_directory`). An outside read is approved only when it resolves to no credential; outside `grep` only for a single regular file (the grep tool searches hidden files by default).
+- `auto-credentials.ts`: adds agent `auth.json`, `.credentials.json`, `credentials.toml`, `.envrc`, `.terraformrc` and `credentials.tfrc.json`, shell history files, and `.m2/settings.xml`.
+- `config.ts` + `service.ts`: `rulesForPreset` marks its rule objects (`isPresetRule`), and the judge's approval applies only to an ask that came from the preset's own rule, so a user's `bash=ask` or `external_directory=ask` after `auto` keeps asking.
+- `auto-program-rules.ts`: `READ_ONLY_PROGRAMS` renamed `FILE_UTILITY_PROGRAMS` (it includes `mkdir`, `touch`, `cp`, `mv`).
+
+### Why
+
+- Review of record on #2614 found that attached option values and project symlinks to credentials bypassed the checks, and that the judge overrode a user's blanket ask rule.
+
+### Must not break
+
+- A user's rule always wins over the judge: deny, pattern-specific ask and blanket ask. `isPresetRule` relies on the preset's rule objects reaching `evaluate` unchanged (`merge` and the service only copy the array).
+
+## 2026-10-03 - A failed permission setup blocks tools instead of skipping checks (#2617)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/permission-system/index.ts`: `session_start` loads the permission rules (`loadPermissionRules`) inside a try/catch. When that throws (unknown `--permission-preset` or RPC `permissionPreset`, unknown or non-string settings `permissionPreset`), the error is recorded and rethrown as before, and `tool_call` refuses every call with `Permission setup failed: <reason>` until a later `session_start` succeeds. Applying deny rules to the active tool list (`applyToolDenials`) runs after and outside that guard: it calls extension action methods, which throw while the extension runtime is still starting, and that must not lock a session whose rules loaded fine.
+
+### Why
+
+- The extension runner reports a throwing handler and keeps the session running. The service was never created, and `tool_call` returned no decision when it was missing, so every tool ran unchecked: a misspelled preset turned the strictest setting into full access.
+
+### Why an extension could not handle it
+
+- The permission builtin owns tool-call gating; nothing after it can tell an unconfigured permission system from an allow.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/builtin/permission-system/index.ts`: the `session_start` handler (now a wrapper around `startPermissionSession`) and the first lines of the `tool_call` handler.
+
+## 2026-10-03 - Auto preset judges commands against a fixed policy
+
+### What changed
+
+- `types.ts`, `cli.ts`, `settings.ts`, `config.ts`: a sixth preset, `auto`, whose static rules match `accept-edits`. `PERMISSION_PRESET_NAMES` is the one list the flag, settings and error messages read. `loadPermissionSettings` also returns the effective preset (CLI, then project, then global, then the default).
+- `auto-policy.ts`, `auto-shell-segments.ts`, `auto-program-rules.ts`, `auto-credentials.ts`: under `auto`, a bash command is split into simple commands (`;`, `&&`, `||`, `|`, newlines) and allowed only when every one is on the fixed program list, stays inside the project (paths resolved through symlinks, `cd` tracked) and touches no credential path. The splitter fails closed: substitutions, variables, escapes, subshells, groups, input redirects, here-docs, background jobs, globs in a program name, `~user`, and output redirects other than `/dev/null` all ask. Outside reads (read/grep/find/ls) are approved; a credential path asks even when a rule allows it.
+- `service.ts`: `ask` takes `approveBlanketAsk` (approves an ask that comes only from a `*` rule, so a user's specific ask rule still asks) and `requireApproval` (asks even when a rule allows). Deny rules always win.
+- `index.ts`: calls the auto judge only when the effective preset is `auto`.
+- `../../../modes/rpc/session-command-router.ts`: advertises `permission_preset_auto`.
+
+### Why
+
+- desktop-fixall todo 39: an Auto mode that approves safe actions on the user's behalf and asks for the rest, judged by a fixed, reviewable policy rather than a model.
+
+### Must not break
+
+- `auto` is never the default. Every other preset behaves exactly as before. A command the judge cannot fully read asks; widening the program list or the splitter must keep the bypass tests in `test/permission/auto-preset.test.ts` asking.
+
 ## 2026-10-01 - Read shipped resources without approval (#2513)
 
 ### What changed
@@ -207,3 +376,11 @@ The permission-system builtin owns preset policy and parsing; all policy remains
 ### Expected merge conflict zones
 
 Preset union, CLI switch and rules table. Existing workspace semantics and approval storage remain unchanged.
+
+## 2026-10-04 — A permission request records and sends its tool call (#2710)
+
+**What:** `index.ts` sets `Request.tool = { callID: event.toolCallId, parentCallID? }` (the field existed and was never set; `messageID` becomes optional because the hook has none). `prompt.ts` passes the call to `ctx.ui.select` and to the feedback `ctx.ui.input` as `{ toolCallId, parentToolCallId? }`.
+
+**Why:** clients bind each prompt to its call; see `modes/rpc/changes.md`.
+
+**Test:** `test/suite/regressions/issue-2710-permission-tool-call-id.test.ts`. Three reads in one message, over the real host core: each prompt carries its own call id. Answering "Allow once" per prompt returns each call's own file.

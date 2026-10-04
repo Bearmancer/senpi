@@ -20,6 +20,7 @@ import type { ResourceDiagnostic } from "../diagnostics.ts";
 import type { DiscoveredResourceEntry } from "../discovered-resource-scope.ts";
 import { createEventBus, type EventBus, EXTENSION_RPC_EVENT_CHANNEL, type ExtensionRpcEvent } from "../event-bus.ts";
 import type { KeybindingsConfig } from "../keybindings.ts";
+import type { NamedMemoryReporter } from "../memory-report/memory-report-registry.ts";
 import type { ModelRegistry } from "../model-registry.ts";
 import type { ScopedModel } from "../model-resolver.ts";
 import { getSessionContextEntryId, SESSION_CONTEXT_ENTRY_ID, type SessionManager } from "../session-manager.ts";
@@ -513,6 +514,7 @@ export class ExtensionRunner {
 		enabled: true,
 		timeoutMinutes: 30,
 	});
+	private getBrowserEngineFn: NonNullable<ExtensionContextActions["getBrowserEngine"]> = () => undefined;
 	private getImageSettingsFn: ExtensionContextActions["getImageSettings"] = () => ({
 		autoResize: true,
 		blockImages: false,
@@ -647,6 +649,7 @@ export class ExtensionRunner {
 			this.getPromptCacheKeepAliveSettingsFn = contextActions.getPromptCacheKeepAliveSettings;
 		this.getLookAtSettingsFn = contextActions.getLookAtSettings;
 		if (contextActions.getAskUserSettings) this.getAskUserSettingsFn = contextActions.getAskUserSettings;
+		if (contextActions.getBrowserEngine) this.getBrowserEngineFn = contextActions.getBrowserEngine;
 		this.getImageSettingsFn = contextActions.getImageSettings;
 		this.sessionSettingsFn = contextActions.sessionSettings;
 		this.compactFn = contextActions.compact;
@@ -1117,6 +1120,13 @@ export class ExtensionRunner {
 		return undefined;
 	}
 
+	/** Every loaded extension's memory reporters, in load order; the report keeps the first of a name. */
+	getMemoryReporters(): NamedMemoryReporter[] {
+		return this.extensions.flatMap((ext) =>
+			[...(ext.memoryReporters ?? new Map())].map(([name, reporter]) => ({ name, reporter })),
+		);
+	}
+
 	getMarkdownTransformers(): MarkdownTransformer[] {
 		return this.extensions.flatMap((ext) => (ext.markdownTransformer ? [ext.markdownTransformer] : []));
 	}
@@ -1268,6 +1278,10 @@ export class ExtensionRunner {
 				runner.assertActive();
 				return goalFilePath(goalStoreRef(runner.sessionManager, runner.cwd));
 			},
+			get browserEngine() {
+				runner.assertActive();
+				return runner.getBrowserEngineFn();
+			},
 			get modelRegistry() {
 				runner.assertActive();
 				return runner.modelRegistry;
@@ -1307,6 +1321,10 @@ export class ExtensionRunner {
 			get kernelTools() {
 				runner.assertActive();
 				return kernelToolsStorage.getStore();
+			},
+			get evalHandleHost() {
+				runner.assertActive();
+				return runner.runtime.evalHandleHost;
 			},
 			abort: (source) => {
 				runner.assertActive();

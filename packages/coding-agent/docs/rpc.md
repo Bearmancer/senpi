@@ -87,6 +87,23 @@ snapshot replay) with an `image_ref` placeholder:
 [`get_media`](#get_media) using the `ref`. User-authored images (`prompt`/`steer`/`follow_up`
 `images`) are never replaced.
 
+A multi-session host also keeps each tool-result image on disk, so a client can render it from a
+path without a round trip. The bytes are written atomically BEFORE the placeholder is emitted, and the
+placeholder gains one of two fields:
+
+```json
+{"type": "image_ref", "mimeType": "image/png", "byteLength": 553000,
+ "ref": {"toolCallId": "call_abc123", "contentIndex": 1},
+ "path": "/home/me/.senpi/agent/sessions/--proj--/media/<durableSessionId>/<sha256(toolCallId)>/1-<sha256(bytes)>.png"}
+```
+
+`unavailableReason` replaces `path` when the image was not kept: `image_too_large` (over 20 MiB),
+`session_limit` (the durable session already holds 256 MiB of images; new images are refused and
+stored ones are never evicted) or `storage_error` (the write failed, the format is not PNG, JPEG,
+GIF or WebP, or the bytes are not the format the tool claimed). A session with no session file has neither field. Files are immutable and private, live next to the session files and never under the
+project, outlive disconnects, idle shutdown and generation handover, and are deleted with the session
+(from the interactive session selector). `get_media` keeps working for every placeholder.
+
 A connection that does not advertise the capability receives byte-identical output to before. The
 capability is advertised by the host in `get_protocol_info.capabilities` in both classic and
 multi-session mode, but the transform itself is applied only by the multi-session host: classic
@@ -271,8 +288,9 @@ Two guards decide whether a handoff is attempted at all, and both fail closed:
   handler for it, so a host from before the drain existed is never signalled - `handoffHost` answers
   `{ action: "refuse", reason: "handoff_unsupported" }` and `decideHostAction` reports `upgradeable: false`.
 - The registration must prove which process serves the socket (pid + start time, and the record's `socket`
-  must be this endpoint). An unprovable owner refuses with `unknown_owner` rather than signalling a
-  stranger (I1).
+  must be this endpoint) before that process is signalled. Without such a registration a handoff never
+  signals a stranger (I1): it refuses while that host holds a session, and replaces an idle one without
+  a signal unless a flat pre-layout-2 record proves it (see "Daemon state directory (layout 2)").
 
 On win32 a named pipe can be neither renamed nor drained: `handoffHost` refuses with `upgrade_unsupported`
 and `decideHostAction` never yields `handoff` there. Upgrades apply after `stopHost({ drain: true })` or an
@@ -413,6 +431,13 @@ pid and start time must match the live process, so a recycled pid proves nothing
   its endpoint answers with `generation_handoff` and `list_sessions` (workers included) lists no session.
   Otherwise it refuses `legacy_host`, and the CLI refusal carries `detail`: the pid, its endpoint, how many
   sessions it holds and the `host stop --drain --socket <endpoint>` that retires it.
+- A handoff (`host handoff`, and an ensure's upgrade) on an endpoint no layout-2 record proves counts the
+  running host's sessions over a connection it keeps open. With any session, or no answer, it refuses:
+  `legacy_host` with the same `detail` when a flat record proves the process, `unknown_owner` with the
+  session count otherwise. With none, the successor takes the socket; a proven legacy process is sent the
+  drain only if a recount over that held connection still lists no session, and a host no record proves
+  is never signalled - it drains itself once another generation owns the public entry, and the handoff
+  writes one stderr warning naming the socket, that host's instance and its engine.
 
 `ensureHost` fails with a typed `HostDaemonStateError` naming the directory it could not create or write,
 and starts no host in that case.
@@ -531,9 +556,13 @@ which prints the bare socket path).
   - `shard`: `{ kind: "p" | "i", key }` when the socket's basename is `<kind>-<16 hex>.sock` (the naming
     contract below), else `null`.
   - `session_rows`: under `--include-workers` only (else `[]`), every row of that same `list_sessions
-    { include_workers: true }` reply as `{ id, kind, session_path, cwd, name, attachments, context }`. `session_path` is
+    { include_workers: true }` reply as `{ id, kind, session_path, cwd, name, attachments, context, memory }`. `session_path` is
     the host's canonical path, the key a client matches a session by; `context` is the published labels
-    including the host's own `host_socket`/`host_instance`, `null` where none were published.
+    including the host's own `host_socket`/`host_instance`, `null` where none were published. `memory` is the
+    per-session heap split the host published on the listing, as `{ main_heap_mb, kernel_heap_mb, kernel_count }`:
+    the host's main-thread heap (the same host-wide number on every row), the sum of this session's kernel
+    heaps, and how many kernels that is. All three are `0` for a session holding no kernel, and for every row
+    of a host released before the field - never `null`.
   - `claims_live`: session-path claims in `reservations/` whose owner process is still running, `0` when the
     directory is absent.
   - `claims`: under `--include-workers` only (else `[]`), every claim in `reservations/` whichever generation
@@ -846,6 +875,40 @@ surface, and `new_session` / `switch_session` / `fork` inside the session keep i
 `chat`: a host without it refuses `chat` with `invalid_launch_profile`, so a gateway falls back to `app`. Any value other
 than `terminal`, `app` or `chat` is refused with `invalid_launch_profile`.
 
+#### Fallback chain per session (`retry_fallback_profile`)
+
+`open_session.retryFallback: { modelFallback: boolean, fallbackChains: Record<string, string[]> }` is the fallback
+policy THIS session runs with, e.g. a task child's own chain. It overrides that session's `retry.modelFallback` and
+`retry.fallbackChains` in memory only: it is never written to a settings file, and no other session on the host sees
+it. A session opened without the field keeps the host's settings. It is applied when the open creates the session; an
+attach to a live session keeps the policy that session was created with. Probe `retry_fallback_profile` in
+`get_protocol_info` before sending the field. A malformed profile (a missing `modelFallback`, a chain that is not an
+array of non-empty selectors, a selector longer than 512 characters, more than 32 chains or 32 entries per chain) is
+refused with `invalid_launch_profile` rather than opening a session without the chain its caller asked for; an empty
+chain (`[]`) is accepted and means no fallback for that key. If something inside that session later changes a
+fallback setting through the settings setters, that write follows the setters' own rules (it persists to the global
+settings file) and replaces the session's override for that one key only: a `setFallbackChain` drops the profile's
+chains, while `modelFallback` keeps the profile's value. The policy is not stored with the session, so a client that
+reopens a session after it was closed sends the profile again.
+
+#### Browser engine per session (`browser_engine`)
+
+`open_session.browserEngine: "connected" | "builtin" | "none"` names the browser THIS session's skills drive: the
+user's own browser, the app's in-app browser, or none. It is session-scoped, never process-wide: the session's tool
+subprocesses (the bash tool and everything it spawns) and its eval kernels, including their child processes, see
+`OMO_BROWSER_ENGINE=<value>`, and no other session on the host does. A session opened without the field sees no such
+variable, even when the host process itself exports one (a daemon never inherits it from the process that ensured it).
+`BSK_HOME` and `BSK_BIN` are per install, not per session: they pass from the host environment to every session
+unchanged. A later `open_session` that attaches to a live session with another `browserEngine` moves that session to
+it, and an attach without the field keeps the current engine; `new_session` / `switch_session` / `fork` keep it too.
+Probe `browser_engine` in `get_protocol_info` before sending the field; the capability is advertised only because the
+value reaches every consumer above. Any other value is refused with `invalid_launch_profile`.
+
+A skill that must tell the client what the browser is doing publishes it as that session's own event: an extension
+registers a tool that calls `pi.rpc.emit(name, data)`, an eval cell reaches it as `tool.<name>(...)`, and the host adds
+the owning `sessionId` to the `extension_event` record. Only clients that advertised `extension_events` receive it.
+
+
 ### Session auto-titling
 
 Auto-generated session titles are on by default only for interactive launches. A multi-session host decides titling per
@@ -881,6 +944,8 @@ The command response reports only `{ cancelled }`, so this event is the only pus
 ### Multi-session host lifecycle (cold start + idle exit)
 
 The lifecycle supervisor is also available to bundled/rebranded runtimes through the hidden internal launch route `--internal-rpc-host-supervisor`. This route is wire-invisible and intended only for desktop launchers: it receives the public socket, ownership directory, and the runtime command/arguments to wrap, then runs the same `host-lifecycle.ts` implementation used by `ensureHost()`. Normal CLI modes do not use or advertise this route. Compiled standalone binaries also re-enter themselves through this route automatically: a bun executable always boots its embedded entrypoint, so the script-path re-entry used under a JS runtime would be parsed as CLI arguments (`Unknown option: --socket`) and the host could never start.
+
+When a Node.js or Bun caller starts a host, both spawn levels retain runtime options such as loaders and memory limits, but remove eval/print expressions, `--input-type`, and interactive mode from `process.execArgv`. This lets embedding code launched with `node -e` or `bun -e` start the intended host entry instead of replaying itself. Under Bun, any token beginning with `-e` or `-p` is removed as well, because Bun reads it as code glued to the flag (`-eCODE`, `-e=CODE`, `-pCODE`); Node rejects those forms, so single-dash V8 options such as `-expose-gc` are kept there. Explicit child commands keep their supplied arguments.
 
 On win32 the supervisor's internal hop lives under `<daemonDir>/internal-<uuid>`, and that directory is created recursively. Before allocating the internal hop or spawning a child, the supervisor ensures `<publicSocket>.secret` exists, creating its parent directories and a 32-byte secret with mode `0600` when needed. An existing valid secret, including one written by `ensureHost()`, is reused unchanged. Direct launch therefore works on a fresh profile without caller-side secret provisioning. Provisioning failures identify the bootstrap step and secret path; the public endpoint still requires the secret handshake before forwarding RPC traffic.
 
@@ -988,7 +1053,7 @@ extensions and contents; neither runtime provides process-fatal OOM containment.
 
 What the host does enforce are lifecycle windows, and they only ever return memory from work nobody is doing:
 
-- **Idle eviction**: a session with no routed command and no session-owned work for
+- **Idle eviction**: a session with no activity-refreshing command and no session-owned work for
   `SENPI_RPC_SESSION_IDLE_EVICTION_MS` (default 30 minutes) is closed through the exact `close_session` sequence
   (abort → waitForIdle → dispose, all attachments drained, path reservation released) and every attached connection
   receives that handle's `session_closed { reason: "idle_evicted" }` broadcast plus a final `close_session` response
@@ -1007,6 +1072,21 @@ What the host does enforce are lifecycle windows, and they only ever return memo
   background terminal jobs and any other published wake source (terminal monitors, loop-guard holds), compaction,
   and barrier-held session work all defer eviction, and the idle clock restarts when that work settles. An evicted
   session resumes like any other: the next `open_session` with the same `sessionPath` reopens it.
+- **Observational reads**: session state, history, model/auth inventory, loaded surfaces, and `memory_report`
+  do not restart the idle clock of a **detached** session in either runtime. With any client still attached,
+  these reads keep refreshing activity as before: an attached client polling `get_state` keeps the same live
+  routing handle and runtime. An attached session receiving no commands can still idle-evict as before.
+  Commands that change the session restart the clock even when detached. An in-flight request or prompt
+  preflight prevents ordinary idle parking while the request is running; directory-removal teardown is separate.
+- **Completed detached workers**: on the in-process runtime, a retained `kind: "worker"` session with zero
+  attachments is parked on the next occupancy sweep once its transcript is flushed and it has no session-owned
+  work, queued input, admitted unwritten delivery, pending prompt, or in-flight request - provided the disconnect
+  has already stood for at least five seconds (a short grace age, so a transient reconnect keeps the live runtime
+  instead of re-opening cold). It does not wait out the normal idle window. This releases its runtime and eval
+  kernels, not its durable history: reopen its
+  `sessionPath` to continue under a new routing handle. Active monitors and other wake sources still prevent
+  early parking. Unflushed workers, worker-isolate runtimes, and interactive sessions keep their normal window.
+  A zero-attachment worker without a recorded disconnect time also keeps its normal idle deadline.
 - **Worker capacity** (worker runtime ONLY - a stdio host, `--listen stdio://`, an embedder, or a socket host that
   passed `--session-runtime worker` explicitly): at most 20 workers may be preparing, open, closing, or quarantined
   together, because each one is an isolate the host must keep alive. Admission beyond this bound fails explicitly
@@ -1023,7 +1103,8 @@ What the host does enforce are lifecycle windows, and they only ever return memo
   `open_session` with that `sessionPath` — from any connection — attaches to the same routing handle and returns
   `attached: true`. Retention never outranks an explicit teardown: a `close_session` from an attached connection still
   reaches zero attachments and closes the session, host shutdown closes it, and the idle-eviction window above still
-  parks it — announced as `session_parked { sessionId, sessionPath }`, after which the file reopens by path like any
+  parks it (or the completed-detached-worker rule above parks it sooner) — announced as
+  `session_parked { sessionId, sessionPath }`, after which the file reopens by path like any
   evicted session, and the parked session counts as gone for the empty-host exit below. It is also bounded by the empty-host exit
   and the supervisor's idle-exit window below: retention survives a client, not the host. Any attach may turn retention
   on for a live session; no attach turns it off for clients that already rely on it. Omitting the flag is byte-identical
@@ -1235,9 +1316,18 @@ REPORT: nothing here aborts a turn, kills a session, or refuses an `open_session
   decides: it keeps counting memory the host already returned (after a collection or an eval kernel reset it stayed
   at gigabytes while the footprint was back near 150 MB, senpi#2261). Above `SENPI_RPC_HOST_RSS_WARN_MB` (default 4096,
   compared with the footprint despite its name) it broadcasts `host_memory_pressure`
-  (`{ type, rssMb, footprintMb, measure, sessions }`) on every sample, writes one stderr line per five minutes naming
+  (`{ type, rssMb, footprintMb, measure, sessions, main, kernels }`) on every sample, writes one stderr line per five minutes naming
   both numbers, and HALVES the idle-eviction window above while the host stays above the threshold, so idle sessions
-  return their memory sooner. It is released as soon as the footprint falls back under the threshold. Memory never refuses an open: the
+  return their memory sooner. `main` is `{ heapBytes }`, the host's main-thread heap in bytes (`bun:jsc heapSize()` when
+  the runtime offers it, else `process.memoryUsage().heapUsed` - on Bun that counts the main thread only, never a kernel
+  worker's heap, which is also why the loop-lag watchdog's `heapDeltaMb` is a main-thread figure). `kernels` lists every
+  live kernel as `{ sessionId, language, liveBytes, measure }`, so the record names which sessions own the pressure:
+  `measure: "heap"` for a JS kernel's own estimate, `"footprint"` for an interpreter process's footprint; a kernel
+  without a reading yet reports `liveBytes: 0`, and one that crashed between samples is absent rather than repeated
+  with a stale number. `list_sessions` rows carry the same split per session as `memory`
+  (`{ main_heap_bytes, kernel_heap_bytes, kernel_count }`, zeros for a session holding no kernel), which is what
+  `host status --all --include-workers --json` reports as `{ main_heap_mb, kernel_heap_mb, kernel_count }` on
+  `session_rows`. It is released as soon as the footprint falls back under the threshold. Memory never refuses an open: the
   host has no resource caps, so every `open_session` is admitted whatever the host holds (#2207). Hosts released
   before #2207 had a second admission watermark; current hosts have no such admission path.
 - **Per-endpoint pressure under sharding**: an agent directory may contain many independent hosts, so each endpoint
@@ -1256,7 +1346,13 @@ REPORT: nothing here aborts a turn, kills a session, or refuses an `open_session
 - **Teardown order**: a session's provider scope closes only after its runtime disposal settles, on the graceful path
   and at the close grace deadline alike; a config-reload watcher callback bound to a closed scope is a no-op (#1905).
 
-`host_stalled` and `host_memory_pressure` are additive records: a client that does not know them ignores them.
+- **Zero-session trim**: when a host that held sessions drops to zero (opening and closing ones included), it runs one
+  full collection (`Bun.gc(true)`; `gc()` on Node only with `--expose-gc`) and, one second later, broadcasts
+  `host_trimmed { footprintBeforeMb, footprintAfterMb, measure, collected }` - the allocator returns freed pages lazily,
+  so the after reading waits for it. At most one trim per minute; never while a session exists; idle exit is unchanged.
+  That single collection is the only synchronous work the no-sync rule allows, and the record is its log.
+
+`host_stalled`, `host_memory_pressure` and `host_trimmed` are additive records: a client that does not know them ignores them.
 
 #### The no-sync rule
 
@@ -1371,12 +1467,14 @@ Hosts that support `open_session.permissionPreset: "accept-edits"` advertise
 `permission_preset_accept_edits`. This preset allows project read/list/grep/edit
 and asks for bash, external_directory and other tools. Clients without that
 capability must use `ask`, never `workspace`, for an edit-only approval promise.
-Explicit permission rules and remembered approvals retain their existing precedence.
+Hosts that support `permissionPreset: "auto"` advertise `permission_preset_auto`;
+clients without it must not send `auto`.
+Explicit permission rules and remembered approvals retain their existing precedence, except under `auto`: there settings and CLI rules can only narrow the preset (the more restrictive decision wins), and an "Always" answer (saved in `.senpi/permissions-approved.jsonl`, from this or an earlier session) still allows its pattern.
 
 | Command | Params | Success data | Notes |
 | --- | --- | --- | --- |
 | `get_protocol_info` | - | `{ protocolVersion: 1, serverVersion: string, capabilities: string[], mode: "classic"\|"multi", instanceId: string, generation: number, engineVersion: string, engineOrdinal: [y, m, d, n, epoch], launch_profile: { profile_id, core }, memory_pressure?: boolean }` | Answered in BOTH modes; side-effect-free; the capability probe. Multi-session hosts include `multi_session`, `retain_on_disconnect`, `session_kind`, `session_context`, `auto_title_per_session`, `durable_session_id`, `prompt_surface` and `prompt_surface_chat` plus the negotiated launch capabilities. Those are HOST capabilities (a client never sends them) and are advertised only in multi-session mode, where the host owns the attachment refcount and the per-session launch profile. The identity fields are described under "Host identity" above; compatibility is decided from `protocolVersion`, `capabilities` and `engineOrdinal`, NEVER from `serverVersion`. |
-| `open_session` | `sessionPath?`, `cwd?`, `provider?`, `modelId?`, `thinkingLevel?`, `permissionPreset?`, `retain_on_disconnect?`, `kind?`, `context?`, `auto_title?`, `durableSessionId?`, `promptSurface?` (all optional; paths MUST be absolute) | `{ sessionId, state: RpcSessionState, attached?: true }` | `sessionPath` = today's `--session` semantics (open-if-exists else create persisting there, `session-manager.ts:926-940`); `provider`/`modelId` applied only on create (resume restores the session's model — mirrors `SenpiSessionRuntime.ts:198-200`); params form the immutable launch profile (D8). When the path is already held by a fully-open session, the open ATTACHES to it: same routing handle, `attached: true`, one more attachment counted; the runtime is torn down only when the last attachment closes. Idle sessions past the eviction window are closed by the host itself. `retain_on_disconnect: true` (default false) makes a dropped connection DETACH from this session instead of closing it — see "Retained sessions" below. `kind` (default `interactive`) and the opaque `context` map are described under "Session kind and context" above; both are stored frozen for the session's life and never influence auth, model or resource resolution. |
+| `open_session` | `sessionPath?`, `cwd?`, `provider?`, `modelId?`, `thinkingLevel?`, `permissionPreset?`, `retain_on_disconnect?`, `kind?`, `context?`, `auto_title?`, `durableSessionId?`, `promptSurface?`, `browserEngine?`, `retryFallback?` (all optional; paths MUST be absolute) | `{ sessionId, state: RpcSessionState, attached?: true }` | `sessionPath` = today's `--session` semantics (open-if-exists else create persisting there, `session-manager.ts:926-940`); `provider`/`modelId` applied only on create (resume restores the session's model — mirrors `SenpiSessionRuntime.ts:198-200`); params form the immutable launch profile (D8). When the path is already held by a fully-open session, the open ATTACHES to it: same routing handle, `attached: true`, one more attachment counted; the runtime is torn down only when the last attachment closes. Idle sessions past the eviction window are closed by the host itself. `retain_on_disconnect: true` (default false) makes a dropped connection DETACH from this session instead of closing it — see "Retained sessions" below. `kind` (default `interactive`) and the opaque `context` map are described under "Session kind and context" above; both are stored frozen for the session's life and never influence auth, model or resource resolution. |
 | `close_session` | `sessionId` | `{}` | Refused with `unknown_session` when the requesting connection never attached to that handle (a close releases the CALLER's attachment, and `list_sessions` publishes every handle). Otherwise aborts active work, awaits agent idle + settled persistence for up to the host grace window (default 10s), then quarantines any worker that has not exited without releasing its path reservation; its response is the LAST record tagged with that handle for the first closer — no events after (test-pinned). An admitted concurrent close joins the same teardown and receives its own successful response; output saturation rejects admission with the bounded close-overflow/resync notice described above. |
 | `list_sessions` | `include_workers?` (default false) | `{ sessions: [{ sessionId, durableSessionId, sessionPath, cwd, name, status, attachments, kind, context? }] }` | Includes `opening`/`closing` entries. Internally quarantined workers remain externally `closing` until exit. `attachments` is the session's live client attachment count; `0` on an `open` row is a retained session with no client attached. Every row carries `kind`. Rows with `kind: "worker"` are omitted unless `include_workers: true`, and `context` is published ONLY on that listing — a default listing carries no `context` at all. |
 | `release_session` | `sessionId`, `reason: "takeover"`, `interrupt?`, `force?` | `{ released: true, session_path, attachments }` | Hands the session to a runtime outside this host. See "Handing a session over (`release_session`)" below. |
@@ -1409,7 +1507,7 @@ In the response `error` field, machine-matchable:
 - `open_failed: <detail>`
 - `invalid_session_context: <detail>` (`open_session.context` past a documented cap: more than 32 keys, a key that does not match `^[a-z][a-z0-9_]*$`, a non-string or >16 KiB value, or more than 32 KiB of JSON in total; the detail names the cap and its byte budget)
 - `invalid_session_kind: <detail>` (`open_session.kind` other than `interactive` or `worker`)
-- `invalid_launch_profile: <detail>` (`open_session.auto_title` present but not a boolean, or `open_session.promptSurface` other than `terminal`, `app` or `chat`)
+- `invalid_launch_profile: <detail>` (`open_session.auto_title` present but not a boolean, `open_session.promptSurface` other than `terminal`, `app` or `chat`, `open_session.browserEngine` other than `connected`, `builtin` or `none`, or a malformed `open_session.retryFallback`)
 - `host_memory_pressure` (sent only by hosts released before #2207, which declined to CREATE a `kind: "worker"` session above `SENPI_RPC_HOST_RSS_REFUSE_MB`; `errorData { rssMb, retry_after_ms }` says when to ask again. Current hosts never refuse an open for memory; a client talking to an older generation waits and retries, it never starts a second host or a per-child process)
 - `warm_failed: <detail>` (`warm` could not load its profile, for example a `cwd` that does not exist; not remembered, so a retry loads again)
 - `media_not_found` (`get_media` for an unknown `toolCallId`, or a `contentIndex` that does not point at an image block)
@@ -1709,7 +1807,7 @@ Response:
 }
 ```
 
-The `model` field is a full [Model](#model) object or `null`. The `sessionName` field is the display name set via `set_session_name`, or omitted if not set.
+The `model` field is a full [Model](#model) object or `null`. `pendingModelSwitch` is always present: `null` means no held switch, while an object with `provider` and `id` identifies a switch that applies after the next compaction. The `sessionName` field is the display name set via `set_session_name`, or omitted if not set.
 
 `serviceTier` is the tier a request would carry right now (`"auto"`, `"flex"`, or `"priority"`), omitted when no tier applies. `fastMode` is `true` when the active model is served at the priority ("fast") tier — either because fast mode is on for this session or because the model selection itself pins `priority`. The two never disagree: whenever `fastMode` is `true`, `serviceTier` is `"priority"`.
 
@@ -1832,7 +1930,7 @@ List all configured models.
 {"type": "get_available_models"}
 ```
 
-Response contains an array of full [Model](#model) objects with supported thinking levels:
+Response contains an array of full [Model](#model) objects with supported thinking levels. Each row also carries `supportsAssistantPrefill`: whether the model accepts a request ending with an assistant message, given the session's current thinking level. It is `false` for every model today, so clients continue an edited answer with `continue_from_leaf`:
 ```json
 {
   "type": "response",
@@ -2225,6 +2323,34 @@ Response:
 
 `contextUsage` is omitted when no model or context window is available. `contextUsage.tokens` and `contextUsage.percent` are `null` immediately after compaction until a fresh post-compaction assistant response provides valid usage data.
 
+#### memory_report
+
+Write a per-layer memory report for this session on demand. Available only when the host process runs with `SENPI_MEMORY_REPORT=1`; without it nothing is installed and the request fails with `memory_report_disabled`. On POSIX the same report is also written when the process receives `SIGUSR2`, for every live session registered in that process: a TUI, print, or single-session RPC host, or a multi-session host with the in-process runtime (`--listen`, the shared daemon default), reports all of its sessions. On a worker-runtime multi-session host (the stdio default), sessions live in worker isolates the signalled main isolate cannot see, so the signal writes nothing; send the `memory_report` request to each session instead. Nothing runs on a timer.
+
+```json
+{"type": "memory_report"}
+```
+
+Response:
+```json
+{
+  "type": "response",
+  "command": "memory_report",
+  "success": true,
+  "data": { "path": "/path/to/session-artifacts/memory/2026-10-02T11-30-00.000Z.json" }
+}
+```
+
+The file is written to `<session>-artifacts/memory/<iso>.json` beside the session file and holds:
+
+- `main`: the process's main-thread memory: `jscHeapSize` (Bun only), `heapUsed`, `external`, and `footprint` (`bytes`, `measure`).
+- `kernels`: every live eval kernel in the process with `language`, `measure` (`heap` or `footprint`), `lastLiveBytes`, and `stale: true` when a cell was running so the reading predates the cell.
+- `residentStore`: `entries` and `approxBytes` of the session's in-memory resident strings.
+- `tuiRenderCache` (terminal UI only): `components`, `cachedLines`, `images` across live tool cards.
+- one object per extension memory reporter, under its registered name (for example `taskChildren`), and `reporterErrors` for reporters that threw.
+
+With `SENPI_MEMORY_REPORT_SNAPSHOT=1` a heap snapshot of the main thread is written beside the report and `data.heapSnapshot` (and the report's `heapSnapshot`) names it. A report that cannot be written answers `memory_report_failed: <reason>`, logs one stderr line, and leaves the session running.
+
 #### export_html
 
 Export session to an HTML file.
@@ -2400,6 +2526,30 @@ Failures carry a typed `errorCode`:
 | `stale_leaf` | `expectedLeafId` no longer matches the session leaf |
 
 Message identity: RPC mode emits `entry_appended` right after every persisted `message_end`, carrying the full session entry (`entry.id`, `entry.parentId`, `entry.message`). Clients should record `entry.id` from that stream as the identity of each rendered message instead of inferring it by position, and pass it as `entryId` here.
+
+#### continue_from_leaf
+
+Start a new turn from the session's current leaf without a new user prompt. A typical use is after `edit_assistant_message`: the agent carries on from the edited answer as if it were its own words. Default models do not accept a request that ends with an assistant message, so the turn is driven by a hidden custom message (`customType: "continue-from-leaf"`, `display: false`). It is persisted, but clients must never render it. Only hosts that advertise the `continue_from_leaf` capability in `get_protocol_info` accept this command.
+
+```json
+{"type": "continue_from_leaf"}
+```
+
+Response (the turn then streams like any other):
+
+```json
+{"type": "response", "command": "continue_from_leaf", "success": true}
+```
+
+Failures carry a typed `errorCode`:
+
+| `errorCode` | Meaning |
+|-------------|---------|
+| `streaming` | A response is in flight; retry once the turn ends |
+| `nothing_to_continue` | The session has no messages yet |
+| `leaf_not_assistant` | The conversation ends on a user message (for example an edited prompt): there is no answer to continue. Send or retry it instead |
+
+A provider error during the continued turn is reported through the usual turn events, as for a prompt.
 
 #### edit_user_message
 
@@ -2798,6 +2948,7 @@ Events are streamed to stdout as JSON lines during agent operation. Events do no
 | `session_parked` | Multi-session host: a retained session was released to disk at the idle window (`sessionId`, `sessionPath`). Replaces `session_closed` for that handle |
 | `host_stalled` | Multi-session host: the event loop was blocked past `SENPI_RPC_LOOP_LAG_ERROR_MS`, with the drift and the session/tool blamed for it |
 | `host_memory_pressure` | Multi-session host: the memory footprint is above `SENPI_RPC_HOST_RSS_WARN_MB`, with RSS beside it and the live session count |
+| `host_trimmed` | Multi-session host: it dropped to zero sessions and collected, with the footprint before and after |
 | `session_opened` | Multi-session host: a session was opened on this host (content-free lifecycle record) |
 | `session_closed` | Multi-session host: a routing handle ended, with an optional `reason` (`handoff_parked` = a generation handoff put the session back on disk; reopen it by `sessionPath`) |
 | `session_parked` | Multi-session host: a retained session's handle was released while the session itself stays on disk (`{ sessionId, sessionPath }`); reopen it with `open_session { sessionPath }` |
@@ -2805,7 +2956,7 @@ Events are streamed to stdout as JSON lines during agent operation. Events do no
 
 Event types are additive: a client that does not recognise a type must ignore that record rather than fail. `model_changed`
 and `service_tier_changed` were added after the initial protocol and are safe to ignore. `session_parked`, `host_stalled`,
-and `host_memory_pressure` are the same: ignore them if unknown. `session_closed.reason` is optional; ignore an unknown
+`host_memory_pressure` and `host_trimmed` are the same: ignore them if unknown. `session_closed.reason` is optional; ignore an unknown
 value the same way.
 
 ### session_closed.reason
@@ -2857,6 +3008,15 @@ Informational. Capacity is memory, never a refusal: the host reports the pressur
 `footprintMb` is the number compared with the threshold and `measure` names its kernel counter (`phys_footprint`,
 `rss_anon`, `private_usage`, or `rss` where none is readable); `rssMb` is what `ps` shows and can stay high after
 the memory was returned. Hosts released before senpi#2261 send `rssMb` and `sessions` only.
+
+### host_trimmed
+
+```json
+{ "type": "host_trimmed", "footprintBeforeMb": 442, "footprintAfterMb": 237, "measure": "phys_footprint", "collected": true }
+```
+
+Informational, at most once a minute: the host's last session closed and it ran one full collection. `collected` is
+`false` where the runtime exposes none (Node without `--expose-gc`); the record is still sent, with the two readings.
 
 ### model_changed
 
@@ -2960,6 +3120,10 @@ Emitted after the full session-level run settles. At this point senpi will not c
 ```json
 {"type": "agent_settled"}
 ```
+
+A multi-session host that closes, parks or releases a session mid-turn first publishes the settle that turn will now
+never write, with `"reason": "session_closed"`, on the same broadcast as every `agent_settled`: whoever counted the
+`agent_start` (the supervisor's idle-exit observer included) sees it end. Older hosts never send `reason`.
 
 ### turn_start / turn_end
 
@@ -3397,6 +3561,19 @@ Prompt the user to choose from a list. Dialog methods with a `timeout` field inc
 ```
 
 Expected response: `extension_ui_response` with `value` (the selected option string) or `cancelled: true`.
+
+A permission prompt (title `Permission required: <permission>`) also carries `toolCallId`, the id of the tool call it approves, and `parentToolCallId` when another tool (for example a codemode script) issued that call. Clients bind the prompt to that call by id: the engine raises the prompts for every call of a message before any of them runs, so the order of `tool_execution_start` events does not say which call a prompt belongs to. The `input` that follows a "Deny with feedback" choice carries the same fields.
+
+```json
+{
+  "type": "extension_ui_request",
+  "id": "uuid-3",
+  "method": "select",
+  "title": "Permission required: read\n\nPath: /project/a.txt\n\nPatterns:\n  - /project/a.txt",
+  "options": ["Allow once", "Allow always", "Deny", "Deny with feedback"],
+  "toolCallId": "call-a"
+}
+```
 
 #### confirm
 

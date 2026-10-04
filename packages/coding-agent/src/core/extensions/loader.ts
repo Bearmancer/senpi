@@ -29,6 +29,7 @@ import { resolvePath } from "../../utils/paths.ts";
 import { createEventBus, type EventBus, EXTENSION_RPC_EVENT_CHANNEL, type ExtensionRpcEvent } from "../event-bus.ts";
 import type { ExecOptions } from "../exec.ts";
 import { execCommand } from "../exec.ts";
+import { RESERVED_MEMORY_REPORT_KEYS } from "../memory-report/memory-report-registry.ts";
 import { readPiManifest } from "../pi-manifest.ts";
 import { unboundSessionControlActions } from "../session-control-actions.ts";
 import { createSyntheticSourceInfo, getSyntheticPathSource, isSyntheticPath } from "../source-info.ts";
@@ -36,6 +37,7 @@ import { time } from "../timings.ts";
 import { type ReadClassifier, registerReadClassifier } from "../tools/read-classifiers.ts";
 import type { ModelRouteRequest, VirtualModelDefinition } from "../virtual-models.ts";
 import { validateMcpServerDeclaration } from "./builtin/mcp/config-schema.ts";
+import type { EvalHandleHost } from "./eval-handle-host.ts";
 import { recordExtensionLoadKey } from "./extension-load-key.ts";
 import {
 	cachedExtensionFactory,
@@ -57,6 +59,7 @@ import type {
 	LazyToolActivator,
 	LoadExtensionsResult,
 	MarkdownTransformer,
+	MemoryReporter,
 	MessageRenderer,
 	PendingProviderRegistration,
 	ProviderConfig,
@@ -292,6 +295,7 @@ export function createExtensionRuntime(): ExtensionRuntime {
 				"This extension ctx is stale after session replacement or reload. Do not use a captured pi or command ctx after ctx.newSession(), ctx.fork(), ctx.switchSession(), or ctx.reload(). For newSession, fork, and switchSession, move post-replacement work into withSession and use the ctx passed to withSession. For reload, do not use the old ctx after await ctx.reload().";
 			for (const unsubscribe of eventBusUnsubscribers) unsubscribe();
 			eventBusUnsubscribers.clear();
+			runtime.evalHandleHost = undefined;
 			runtimeFactories.delete(runtime);
 		},
 		trackEventBusSubscription: (unsubscribe) => {
@@ -450,6 +454,11 @@ function createExtensionAPI(
 			runtime.registerLazyToolActivator(activator);
 		},
 
+		provideEvalHandleHost(host: EvalHandleHost): void {
+			runtime.assertActive();
+			runtime.evalHandleHost = host;
+		},
+
 		registerRemovedToolHint(name: string, hint: string): void {
 			runtime.assertActive();
 			let hints = extension.removedToolHints;
@@ -519,6 +528,15 @@ function createExtensionAPI(
 		registerMessageRenderer<T>(customType: string, renderer: MessageRenderer<T>): void {
 			assertActive();
 			extension.messageRenderers.set(customType, renderer as MessageRenderer);
+		},
+
+		registerMemoryReporter(name: string, reporter: MemoryReporter): void {
+			assertActive();
+			if (RESERVED_MEMORY_REPORT_KEYS.has(name)) {
+				throw new Error(`Memory reporter name "${name}" is reserved by the memory report`);
+			}
+			extension.memoryReporters ??= new Map();
+			extension.memoryReporters.set(name, reporter);
 		},
 
 		registerMarkdownTransformer(transformer: MarkdownTransformer): void {
@@ -835,6 +853,7 @@ function createExtension(extensionPath: string, resolvedPath: string, registrati
 		lazyToolActivators: [],
 		filesystemPolicies: [],
 		messageRenderers: new Map(),
+		memoryReporters: new Map(),
 		entryRenderers: undefined,
 		commands: new Map(),
 		rpcHandlers: new Map(),

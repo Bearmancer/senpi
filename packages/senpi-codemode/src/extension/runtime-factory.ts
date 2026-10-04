@@ -8,6 +8,8 @@ import {
 	type ResolvedCodemodeSettings,
 	resolveEnabledLanguages,
 } from "../config/settings.ts";
+import { PythonEnvironments } from "../environments/python-environments.ts";
+import type { HandleRegistry } from "../handles/handle-registry.ts";
 import {
 	createInterpreterDetector,
 	getInterpreterAvailability,
@@ -46,6 +48,7 @@ export type SessionRuntime = {
 	readonly artifactsDir: string;
 	readonly executeTool: AgentExecuteTool;
 	readonly spawns: boolean;
+	readonly pythonEnvironments?: PythonEnvironments;
 };
 
 export async function createRuntime(
@@ -54,6 +57,7 @@ export async function createRuntime(
 	event: unknown,
 	complete: (request: CompletionRequest, ctx: ExtensionContext) => Promise<CompletionResult>,
 	options: RuntimeFactoryOptions,
+	handles?: HandleRegistry,
 ): Promise<SessionRuntime> {
 	const loaded = await loadCodemodeSettings({ cwd: ctx.cwd });
 	const settings: ResolvedCodemodeSettings = {
@@ -72,6 +76,7 @@ export async function createRuntime(
 	const parallelPoolWidth = Number.isFinite(configuredPoolWidth) ? Math.max(1, Math.trunc(configuredPoolWidth)) : 1;
 	const manager = await create({
 		sessionId,
+		ownerSessionId: ctx.sessionManager.getSessionId(),
 		cwd: ctx.cwd,
 		sessionEnv,
 		settings,
@@ -80,6 +85,7 @@ export async function createRuntime(
 		executeTool,
 		listTools: () => pi.getAllTools(),
 		complete,
+		...(handles === undefined ? {} : { handles }),
 	});
 	return {
 		sessionId,
@@ -92,6 +98,16 @@ export async function createRuntime(
 		artifactsDir: artifacts.dir,
 		executeTool,
 		spawns: activeTools.has(settings.taskTools.task),
+		...(availability.py.detected.ok && enabledLanguages.py
+			? {
+					pythonEnvironments: new PythonEnvironments({
+						artifactsDir: artifacts.dir,
+						cwd: ctx.cwd,
+						interpreter: availability.py.detected.path,
+						settings,
+					}),
+				}
+			: {}),
 	};
 }
 

@@ -250,6 +250,7 @@ function resolveSpawnContext(
 	delete env.PI_PROVIDER;
 	delete env.PI_MODEL;
 	delete env.PI_REASONING_LEVEL;
+	delete env.OMO_BROWSER_ENGINE;
 	if (exposeSessionEnvironment && ctx) {
 		const model = ctx.model;
 		env.PI_SESSION_ID = ctx.sessionManager.getSessionId();
@@ -262,6 +263,7 @@ function resolveSpawnContext(
 			env.PI_MODEL = model.id;
 		}
 		if (ctx.thinkingLevel) env.PI_REASONING_LEVEL = ctx.thinkingLevel;
+		if (ctx.browserEngine) env.OMO_BROWSER_ENGINE = ctx.browserEngine;
 	}
 	const baseContext: BashSpawnContext = { command, cwd, env };
 	return spawnHook ? spawnHook(baseContext) : baseContext;
