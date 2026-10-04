@@ -157,6 +157,18 @@ that project, with concurrent installs serialised by a lock. Setting
 of `environment_install_failed`, `environment_install_cancelled`,
 `environment_installer_unavailable` or `environment_resolution_conflict`.
 
+### Isolated cells
+
+With `sandbox.enabled: true`, a JavaScript call may pass `isolate: true`. The cell then runs in a fresh QuickJS VM (the vendored pi codemode runtime) instead of the persistent kernel:
+
+- Nothing persists: globals from the kernel are not visible, and a global set in one isolated cell is gone in the next. `store()` throws `eval_isolate_no_state` and `load()` returns `undefined`.
+- No ambient host: there is no `process`, `require`, file system, network, child processes or timers. The cell's only reach is `tools.<name>` (every active tool except `eval`, run through the same permission hooks as a direct call) plus `print`, `display`, `text` and `image`.
+- Output streams to the normal result as it is produced, in frames under a 256 KiB credit window, so a 20 MiB item arrives complete without either side holding it all.
+- It is a host entry in the JavaScript queue: it waits for earlier cells, Stop and the run budget end it, and the persistent kernel is never restarted for it.
+- Limits: `sandbox.memoryMb` (default 64) and `sandbox.timeoutSeconds` (default 300). Failures are named: `eval_isolate_memory_limit`, `eval_isolate_timeout`, `eval_isolate_unresolved_promise` (a top-level promise that can never settle) and `eval_isolate_unavailable` (the runtime could not start).
+
+While `sandbox.enabled` is `false` (the default) the `isolate` field is absent from the eval schema, and passing it is refused with `eval_isolate_invalid`, as are `isolate` with another language and `isolate` with `reset`.
+
 ## Settings
 
 Configuration is loaded in this order:
@@ -230,7 +242,7 @@ Configuration is loaded in this order:
 | `prompt.advertiseHelpers` | `false` | When `true`, one pointer line to `tool_schema('eval:helpers')` is appended to the eval description. |
 | `kernelTools.enabled` | `true` | Allows cells to define kernel tools (`tool(fn)`, `@tool`). `false` makes them refuse with `tools_unavailable`. |
 
-The `languages.pyInterpreter`, `environments.*`, `isolation.*`, `sandbox.*`, `prompt.*` and `kernelTools.*` keys are accepted and validated now, with the defaults shown, which match today's behaviour. The effect each of those rows describes takes effect when its feature ships; until then, setting a key changes nothing.
+The `languages.pyInterpreter`, `environments.*`, `isolation.*`, `prompt.*` and `kernelTools.*` keys are accepted and validated now, with the defaults shown, which match today's behaviour. The effect each of those rows describes takes effect when its feature ships; until then, setting a key changes nothing.
 
 `SENPI_CODEMODE_PY`, `SENPI_CODEMODE_JS`, `SENPI_CODEMODE_RB`, and
 `SENPI_CODEMODE_JL` override the corresponding file setting. `1` or `true`
