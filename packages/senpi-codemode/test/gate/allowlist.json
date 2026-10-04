@@ -391,6 +391,18 @@
 			],
 			"reason": "Julia results name their largest globals in the large-memory notice (new kernel contract)."
 		},
+		"11a": {
+			"additions": [
+				"legacyContracts/test/kernel-tools-defined-undefine.test.ts/Given a JavaScript kernel with kernel tools js-tool-explicit-name-preserves-argument-order: metadata.name registers the alias, and the positional order still comes from the function",
+				"legacyContracts/test/kernel-tools-defined-undefine.test.ts/Given a JavaScript kernel with kernel tools tool.defined() lists the registered names sorted, and tool.undefine(name) removes one and reports whether it existed",
+				"legacyContracts/test/kernel-tools-defined-undefine.test.ts/Given a JavaScript kernel with kernel tools a descriptor taken before undefine() can no longer be invoked",
+				"legacyContracts/test/kernel-tools-defined-undefine.test.ts/Given a JavaScript kernel with kernel tools a non-string metadata.name is refused with invalid_tool_definition and nothing is registered",
+				"legacyContracts/test/kernel-tools-defined-undefine.test.ts/Given a JavaScript kernel with kernel tools an alias that is not a valid tool name is refused",
+				"legacyContracts/test/kernel-tools-defined-undefine.test.ts/Given a JavaScript kernel with kernel tools registering a kernel tool named defined is refused with reserved_tool_name, by alias or by function name",
+				"legacyContracts/test/kernel-tools-defined-undefine.test.ts/Given a JavaScript kernel with kernel tools registering a kernel tool named undefine is refused with reserved_tool_name, by alias or by function name"
+			],
+			"reason": "Node 11 part 1: tool.defined()/tool.undefine() and the metadata.name alias in the JavaScript kernel. These are tool-namespace members, not top-level helpers, so the helper census and the prompt are unchanged; only these contracts are new."
+		},
 		"14-host": {
 			"additions": [
 				"imports/firstKernel/packages/senpi-codemode/src/kernels/py/host-cell.ts",
