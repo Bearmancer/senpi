@@ -231,7 +231,7 @@ async function handoffOutcome(target: HostTarget, spec: ResolvedHostLaunchSpec):
 		return refusal("refuse", before, {
 			reason: upgradeRefusal(result.reason),
 			socket: target.socket,
-			detail: result.reason,
+			detail: result.detail ?? result.reason,
 			upgradeable: result.upgradeable,
 		});
 	}
