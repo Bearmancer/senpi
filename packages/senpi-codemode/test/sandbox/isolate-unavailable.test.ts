@@ -29,11 +29,16 @@ describe("Given an isolated cell whose QuickJS runtime is missing", () => {
 		});
 		const emitted: unknown[] = [];
 		const hostLog = vi.spyOn(console, "error").mockImplementation(() => {});
+		let logged = "";
 
 		const outcome = await run({
 			signal: new AbortController().signal,
 			emit: (message) => emitted.push(message),
-		}).finally(() => hostLog.mockRestore());
+		}).finally(() => {
+			// Read before restoring: mockRestore clears the recorded calls.
+			logged = hostLog.mock.calls.map((args) => args.map(String).join(" ")).join("\n");
+			hostLog.mockRestore();
+		});
 
 		expect(outcome).toMatchObject({ ok: false, error: { name: "SandboxUnavailableError" } });
 		const message = outcome.ok ? "" : (outcome.error?.message ?? "");
@@ -42,6 +47,6 @@ describe("Given an isolated cell whose QuickJS runtime is missing", () => {
 		expect(calls).toEqual([]);
 		expect(emitted).toEqual([]);
 		// The host's own log keeps the full error, path included, for a maintainer.
-		expect(hostLog.mock.calls.map((args) => args.map(String).join(" ")).join("\n")).toContain(missing);
+		expect(logged).toContain(missing);
 	});
 });
