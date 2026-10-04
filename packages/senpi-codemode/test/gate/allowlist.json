@@ -476,7 +476,7 @@
 				"legacyContracts/test/sandbox/isolated-cell.test.ts/Given sandbox cells are turned on When an isolated cell is a %load, then it is refused and the file never runs, in the sandbox or the kernel",
 				"legacyContracts/test/sandbox/isolated-cell.test.ts/Given sandbox cells are turned on When text() runs out of memory rendering a value, then the cell still fails with eval_isolate_memory_limit",
 				"legacyContracts/test/eval-tool.test.ts/createEvalTool When sandbox cells are on and a proxy runs cells, then isolate: true is refused and never reaches the proxy",
-				"legacyContracts/test/sandbox/isolate-unavailable.test.ts/Given an isolated cell whose QuickJS runtime is missing When the cell runs, then it reports eval_isolate_unavailable without a host path and none of its code runs"
+				"legacyContracts/test/sandbox/isolate-unavailable.test.ts/Given an isolated cell whose QuickJS runtime is missing When the cell runs, then it reports eval_isolate_unavailable without a host path, none of its code runs, and the host log keeps the full error"
 			],
 			"reason": "Node 18 part 2: the setting-gated isolate field. The three '+sandbox' schema cells are measured only with sandbox.enabled; the default schema cells (js, js+py, all) and every prompt cell stay unchanged. sandbox-cell.ts joins the scoped census (the vendored runtime itself loads lazily on the first isolated cell), plus the isolated-cell contracts."
 		},

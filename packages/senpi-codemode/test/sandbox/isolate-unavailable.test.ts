@@ -2,7 +2,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AgentToolResult } from "@code-yeongyu/senpi";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { sandboxCellExecutor } from "../../src/kernels/sandbox/sandbox-cell.ts";
 
 const roots: string[] = [];
@@ -12,7 +12,7 @@ afterEach(async () => {
 });
 
 describe("Given an isolated cell whose QuickJS runtime is missing", () => {
-	it("When the cell runs, then it reports eval_isolate_unavailable without a host path and none of its code runs", async () => {
+	it("When the cell runs, then it reports eval_isolate_unavailable without a host path, none of its code runs, and the host log keeps the full error", async () => {
 		const root = await mkdtemp(join(tmpdir(), "senpi-isolate-unavailable-"));
 		roots.push(root);
 		const missing = join(root, "not-here", "quickjs.wasm");
@@ -28,8 +28,12 @@ describe("Given an isolated cell whose QuickJS runtime is missing", () => {
 			wasmPath: missing,
 		});
 		const emitted: unknown[] = [];
+		const hostLog = vi.spyOn(console, "error").mockImplementation(() => {});
 
-		const outcome = await run({ signal: new AbortController().signal, emit: (message) => emitted.push(message) });
+		const outcome = await run({
+			signal: new AbortController().signal,
+			emit: (message) => emitted.push(message),
+		}).finally(() => hostLog.mockRestore());
 
 		expect(outcome).toMatchObject({ ok: false, error: { name: "SandboxUnavailableError" } });
 		const message = outcome.ok ? "" : (outcome.error?.message ?? "");
@@ -37,5 +41,7 @@ describe("Given an isolated cell whose QuickJS runtime is missing", () => {
 		expect(message).not.toContain(root);
 		expect(calls).toEqual([]);
 		expect(emitted).toEqual([]);
+		// The host's own log keeps the full error, path included, for a maintainer.
+		expect(hostLog.mock.calls.map((args) => args.map(String).join(" ")).join("\n")).toContain(missing);
 	});
 });

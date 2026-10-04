@@ -76,7 +76,10 @@ export function sandboxCellExecutor(code: string, options: SandboxCellOptions): 
 				},
 			});
 		} catch (error) {
-			// A module-resolution or file error carries host paths; the cell gets only what failed and its code.
+			// The full error, paths included, goes to the host's own log so a maintainer can diagnose it; the cell gets
+			// only what failed and the error's code. This covers every setup step: the runtime import, the tool list,
+			// the wasm load and the sandbox itself.
+			console.error("[senpi-codemode] isolated cell setup failed:", error);
 			const code =
 				error instanceof Error && "code" in error && typeof error.code === "string" ? ` (${error.code})` : "";
 			return {
