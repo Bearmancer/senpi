@@ -10,6 +10,8 @@
 
 ### Fixed
 
+- With a `compaction.model` override on `anthropic-subscription`, senpi no longer rewrites older messages before each turn, so the resident Claude session keeps receiving only the new messages instead of re-sending the whole history every turn ([#2746](https://github.com/code-yeongyu/senpi/issues/2746)). Thanks to @trac3r00 ([#2748](https://github.com/code-yeongyu/senpi/pull/2748)).
+
 ### Removed
 
 ## [2026.10.9] - 2026-10-04
@@ -26,7 +28,6 @@
 
 - A reply that only answers a question is now the answer itself: the prompt no longer requires every final message to open with the Ask / For you / Now / Next block, which put one-line answers inside a status block ending `Now: none. Next: none.` The block stays for turns that did work ([#2723](https://github.com/code-yeongyu/senpi/issues/2723)).
 - Replies no longer arrive wrapped in a blockquote: the handoff template and the routing line in the system prompt were written as markdown quote lines, the model copied the `>`, and the desktop and the TUI drew the whole answer as a grey quoted aside that read as if the turn had paused ([#2714](https://github.com/code-yeongyu/senpi/issues/2714)).
-- With a `compaction.model` override on `anthropic-subscription`, senpi no longer rewrites older messages before each turn, so the resident Claude session keeps receiving only the new messages instead of re-sending the whole history every turn ([#2746](https://github.com/code-yeongyu/senpi/issues/2746)).
 
 ### Removed
 
