@@ -17,6 +17,7 @@ import {
 	getInterpreterAvailability,
 	type InterpreterAvailability,
 } from "../interpreters/detect.ts";
+import { processRuntimeInfo } from "../kernels/js/process-worker.ts";
 import { sessionEnvironmentFrom } from "../kernels/session-env.ts";
 import { resolveSessionArtifactsDir } from "../output/streaming-output.ts";
 import type { EnabledEvalLanguages, EvalLanguage, EvalRuntimes } from "../tool/types.ts";
@@ -99,7 +100,8 @@ export async function createRuntime(
 		enabledLanguages,
 		runtimes: runtimesFromAvailability(
 			availability,
-			jsRuntimeInfo(process.versions, process.execPath, jsProcessIsolation),
+			(jsProcessIsolation ? processRuntimeInfo(undefined) : undefined) ??
+				jsRuntimeInfo(process.versions, process.execPath, jsProcessIsolation),
 		),
 		settings,
 		artifactsDir: artifacts.dir,

@@ -34,6 +34,8 @@ export interface JavaScriptKernelOptions {
 	readonly isolation?: "process";
 	/** Resolution root for the process-mode runtime (bun, then node); `""` names a machine with none on PATH. */
 	readonly processCommandPath?: string;
+	/** The host's executable, which runs the child when it is bun or node; defaults to `process.execPath`. */
+	readonly processExecPath?: string;
 	/** Process-mode memory policy: the host reads the child's footprint instead of the in-heap worker reading. */
 	readonly processMemory?: {
 		readonly thresholds: KernelMemoryThresholds;

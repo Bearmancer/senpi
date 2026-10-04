@@ -64,19 +64,45 @@ schema; it is not an installation failure.
 By default the JavaScript kernel runs as a worker thread on the host's own
 runtime (`isolation.js: "worker"`). Setting `isolation.js: "process"` (or
 `SENPI_CODEMODE_JS_ISOLATION=process`, which wins over the file) runs each
-JavaScript kernel in its own subprocess instead, so a kernel crash — including a
-native `SIGSEGV` — cannot take down the host session; the next cell runs on a
-replacement child and its result carries the restart notice.
+JavaScript kernel in its own subprocess instead, so a kernel crash (a native
+`SIGSEGV`, an out-of-memory, `process.exit`, an uncaught error) cannot take down
+the host session. The next cell runs on a replacement child, and its result
+carries the restart notice and names the crash.
 
-The child runs the same kernel core over a framed subprocess transport: frames
-travel on fd 0 in and a private dup of fd 1 out, while the child's fd 1 is
-re-pointed at a pipe whose bytes become `text` frames, so a cell's direct
-`process.stdout.write` still reaches the active cell. The default stays
-`"worker"` and worker-mode behaviour is unchanged. There is no inline fallback
-in process mode: a failed start settles the waiting cell with a capability-gap
-result naming the missing runtime (`Install bun or node, or use isolation.js:
-"worker"`). The process-mode badge reads `js (bun 1.4.x, process)`, and the
-result's memory reading is the child's process footprint.
+**Trust model.** Process mode isolates crashes, not hostile code. A cell runs in
+the same process that talks to the host, so it can reach everything that process
+holds, exactly as a worker-mode cell can. The frame token described below guards
+only against accidental corruption of the channel. Hostile code belongs in
+`isolate: true` sandbox cells. Hostile-cell isolation for process mode is tracked
+in [#2752](https://github.com/code-yeongyu/senpi/issues/2752).
+
+How it works:
+
+- **Runtime.** The child runs on the host's own runtime: bun when senpi runs on
+  Bun, node otherwise. A compiled binary whose executable is neither falls back to
+  `bun` or `node` on `PATH`, preferring the host's kind. The badge names the
+  runtime that actually runs the child, for example `js (bun 1.4.x, process)`.
+- **Frames.** The host writes a random token as the child's first line on fd 0,
+  and every frame the child sends carries it. The host parses only lines that
+  carry the token; any other line (a cell's raw fd write, a child process's
+  output) is delivered as text. Frames are written in full. Large text is split
+  below the 10 MiB frame limit, and a result too large to return fails its cell,
+  not the kernel. A `BigInt` or an `undefined` field reaches the host as it does
+  in worker mode.
+- **File descriptors.** Under Bun, the control channel moves to a private
+  duplicate of fd 0, fd 0 becomes `/dev/null`, and fd 1 is re-pointed at a pipe
+  whose bytes become `text` frames. A cell's direct `process.stdout.write` or
+  fd 1 write arrives with that cell's own output, before its result. A node child
+  cannot move its fds: cell output shares the channel, and fd 0 is the channel.
+- **Lifetime.** The child exits as soon as its control channel closes. That
+  covers every way the host ends, including `SIGKILL`; a parent-pid check is the
+  backstop. A process-mode kernel never outlives its host.
+- **Failed start.** There is no inline fallback in process mode. A failed start
+  settles the waiting cell with a capability-gap result naming the missing
+  runtime (`Install bun or node, or use isolation.js: "worker"`). The result's
+  memory reading is the child's process footprint.
+
+The default stays `"worker"`, and worker-mode behaviour is unchanged.
 
 Python startup waits for the interpreter's `ready` event. It reports progress
 through `stdlib-imports`, `runtime-init`, and `host-init`; advancing to the next

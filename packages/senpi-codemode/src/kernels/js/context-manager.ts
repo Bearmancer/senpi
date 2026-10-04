@@ -247,8 +247,7 @@ export class JavaScriptKernel {
 		this.#activeCell.disarm();
 		this.#runs.releaseActive(active);
 		active.settledByWorker = true;
-		const settled = this.#memory.settled(message);
-		this.#runs.settle(active, active.interruptResult ?? settled);
+		this.#runs.settle(active, active.interruptResult ?? this.#memory.settled(message));
 		this.#startNext();
 		// A kernel over its memory ceiling restarts only once no cell is running or queued on it.
 		if (this.#memory.claimRecycle(!this.#runs.active && !this.#runs.hasWaiting)) void this.#restartAfterStop();

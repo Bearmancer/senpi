@@ -1,9 +1,12 @@
+import { execFileSync, spawn } from "node:child_process";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { describe, expect, it, vi } from "vitest";
 import { JavaScriptKernel } from "../src/kernels/js/context-manager.ts";
 import type { JavaScriptKernelOptions } from "../src/kernels/js/local-module-loader.ts";
+import { resolveJavaScriptProcessCommand, runtimeNameOf } from "../src/kernels/js/process-worker.ts";
 import { parseJavaScriptResult, runJavaScriptCell } from "./eval/js-kernel-harness.ts";
 
 const kernels = new Set<JavaScriptKernel>();
@@ -13,6 +16,28 @@ async function trackedTempRoot(prefix: string): Promise<string> {
 	const root = await mkdtemp(join(tmpdir(), prefix));
 	tempRoots.add(root);
 	return root;
+}
+
+/** A bun executable to run the kernel child under, when bun is installed: only bun can move fd 0 and fd 1. */
+const bunChild = (() => {
+	try {
+		const command = resolveJavaScriptProcessCommand(undefined, process.platform, "bun", "");
+		return runtimeNameOf(command) === "bun" ? command : undefined;
+	} catch {
+		return undefined;
+	}
+})();
+
+const hostFixture = join(import.meta.dirname, "fixtures", "process-kernel-host.ts");
+
+function workerKernel(): JavaScriptKernel {
+	const kernel = new JavaScriptKernel({
+		sessionId: `worker-${crypto.randomUUID()}`,
+		cwd: process.cwd(),
+		parallelPoolWidth: 2,
+	});
+	kernels.add(kernel);
+	return kernel;
 }
 
 function processKernel(options: Partial<JavaScriptKernelOptions> = {}): JavaScriptKernel {
@@ -116,7 +141,7 @@ describe("JavaScriptKernel process isolation", () => {
 				timeoutMs: 10_000,
 			});
 			const interruption = await kernel.interrupt("test stop", "process-interrupt");
-			await expect(interruption.stateRetained).resolves.toBeDefined();
+			await expect(interruption.stateRetained).resolves.toBe(true);
 			await expect(stuck).resolves.toMatchObject({ ok: false });
 			const after = await runJavaScriptCell(kernel, "return 'still alive'");
 			expect(after.result).toMatchObject({ ok: true, valueRepr: '"still alive"' });
@@ -198,9 +223,9 @@ describe("JavaScriptKernel process isolation", () => {
 	);
 
 	itProcessMode(
-		"settles the cell with a capability gap that names the runtime when none is on PATH",
+		"When the host's executable is not bun or node (a compiled binary) and neither is on PATH, then the cell settles with a capability gap naming the runtime",
 		async () => {
-			const kernel = processKernel({ processCommandPath: "" });
+			const kernel = processKernel({ processCommandPath: "", processExecPath: "/opt/senpi/bin/senpi" });
 			const run = await kernel.run({ cellId: "process-no-runtime", code: "return 1", timeoutMs: 5_000 });
 			expect(run).toMatchObject({ ok: false });
 			if (!run.ok) expect(run.error.message).toMatch(/JavaScript runtime is unavailable/);
@@ -336,17 +361,13 @@ return "done";`,
 		}
 	}, 30_000);
 
-	it("in worker mode the SIGSEGV case is skipped: a worker thread shares this test's host process, so killing it would kill the host", () => {
-		expect(true).toBe(true);
-	});
-
-	// The child always runs under bun in process mode, so Bun.WebView is available there even though
-	// the vitest fork is node. Skip only on Windows, where process-mode WebView is unsupported.
-	if (process.platform !== "win32")
+	// Bun.WebView exists only when the child runs under bun (the child runs on the host's own runtime); Windows has no
+	// process-mode WebView.
+	if (process.platform !== "win32" && bunChild !== undefined)
 		itProcessMode(
 			"drives a WebView natively on the child's main thread in process mode",
 			async () => {
-				const kernel = processKernel();
+				const kernel = processKernel({ processExecPath: bunChild ?? "" });
 				const cell = await runJavaScriptCell(
 					kernel,
 					[
@@ -363,4 +384,156 @@ return "done";`,
 			},
 			60_000,
 		);
+
+	it.each([["killed with SIGKILL"], ["exits without closing its kernel"]])(
+		"When the host is %s, then its process-mode kernel child is gone too",
+		{ timeout: 60_000 },
+		async (how) => {
+			const host = spawn(process.execPath, [hostFixture], { stdio: ["pipe", "pipe", "inherit"] });
+			const childPid = await new Promise<number>((resolve, reject) => {
+				let out = "";
+				host.stdout.on("data", (data: Buffer) => {
+					out += data.toString();
+					const match = /child (\d+)/.exec(out);
+					if (match?.[1] !== undefined) resolve(Number(match[1]));
+				});
+				host.once("exit", () => reject(new Error(`host exited before reporting its child: ${out}`)));
+			});
+			expect(pidAlive(childPid)).toBe(true);
+			const hostExited = new Promise<void>((resolve) => host.once("exit", () => resolve()));
+
+			if (how === "killed with SIGKILL") host.kill("SIGKILL");
+			else host.stdin.write("exit\n");
+			await hostExited;
+
+			await waitFor("the kernel child to exit with its host", () => !pidAlive(childPid), 10_000);
+		},
+	);
+
+	itProcessMode(
+		"When a cell prints more than the 10 MiB frame limit, then the output arrives whole and the kernel keeps its globals",
+		async () => {
+			const kernel = processKernel();
+			await runJavaScriptCell(kernel, "globalThis.keep = 1", 10_000);
+			const size = 20 * 1024 * 1024;
+
+			const big = await runJavaScriptCell(kernel, `console.log("x".repeat(${size})); "printed"`, 60_000);
+			const after = await runJavaScriptCell(kernel, "return typeof globalThis.keep", 10_000);
+			const printed = big.messages.flatMap((message) => (message.type === "text" ? [message.data] : [])).join("");
+
+			expect(big.result).toMatchObject({ ok: true });
+			expect(printed.length).toBeGreaterThanOrEqual(size);
+			expect(after.result).toMatchObject({ ok: true, valueRepr: '"number"' });
+		},
+		120_000,
+	);
+
+	itProcessMode(
+		"When a timer from a cell throws, then the crashed cell names the error and the next result says the kernel restarted",
+		async () => {
+			const kernel = processKernel();
+
+			const crashed = await runJavaScriptCell(
+				kernel,
+				'setTimeout(() => { throw new Error("stray boom"); }, 0); await new Promise(() => {})',
+				15_000,
+			);
+			const next = await runJavaScriptCell(kernel, "return 1", 15_000);
+
+			expect(crashed.result).toMatchObject({ ok: false });
+			if (!crashed.result.ok) expect(crashed.result.error.message).toContain("stray boom");
+			expect(next.result).toMatchObject({ ok: true, kernelState: "restarted" });
+		},
+		60_000,
+	);
+
+	itProcessMode(
+		"When a cell writes straight to fd 1 and returns, then the line arrives with that cell's output, before its result",
+		async () => {
+			const kernel = processKernel();
+
+			const run = await runJavaScriptCell(
+				kernel,
+				'(await import("node:fs")).writeSync(1, "in-cell raw\\n"); return "ordered"',
+				10_000,
+			);
+			const text = run.messages.flatMap((message) => (message.type === "text" ? [message.data] : [])).join("");
+
+			expect(run.result).toMatchObject({ ok: true, valueRepr: '"ordered"' });
+			expect(text).toContain("in-cell raw");
+		},
+		30_000,
+	);
+
+	// Only a bun child can point fd 0 at /dev/null; a node child shares fd 0 with the control channel.
+	(bunChild === undefined ? it.skip : itProcessMode)(
+		"When a cell in a bun child reads fd 0, then it reads nothing and the host can still interrupt it",
+		async () => {
+			const kernel = processKernel({ processExecPath: bunChild ?? "" });
+
+			const read = await runJavaScriptCell(
+				kernel,
+				'return (await import("node:fs")).readFileSync("/dev/fd/0", "utf8").length',
+				10_000,
+			);
+			const stuck = kernel.run({ cellId: "fd0-interrupt", code: "await new Promise(() => {})", timeoutMs: 10_000 });
+			const interruption = await kernel.interrupt("stop", "fd0-interrupt");
+
+			expect(read.result).toMatchObject({ ok: true, valueRepr: "0" });
+			await expect(interruption.stateRetained).resolves.toBe(true);
+			await expect(stuck).resolves.toMatchObject({ ok: false });
+		},
+		30_000,
+	);
+
+	it.each([["worker"], ["process"]] as const)(
+		"When a %s-mode cell calls a host tool with a BigInt and an undefined field, then the host receives them as worker mode does",
+		{ timeout: 30_000 },
+		async (isolation) => {
+			const kernel = isolation === "process" ? processKernel() : workerKernel();
+
+			const pending = kernel.run({
+				cellId: `parity-${isolation}`,
+				code: "return await tool.read({ path: 'x', n: 1n, opts: undefined })",
+				timeoutMs: 10_000,
+			});
+			const call = await kernel.nextToolCall();
+			kernel.deliverToolReply({ type: "tool-reply", callId: call.callId, ok: true, value: "ok" });
+			await pending;
+
+			expect(call.args).toEqual({ path: "x", n: 1n, opts: undefined });
+			expect(Object.hasOwn(call.args as object, "opts")).toBe(true);
+		},
+	);
+
+	it("When a worker-mode cell crashes, then the next result carries no restart notice, as before process mode existed", async () => {
+		const kernel = workerKernel();
+
+		await runJavaScriptCell(
+			kernel,
+			'setTimeout(() => { throw new Error("worker boom"); }, 0); await new Promise(() => {})',
+			15_000,
+		);
+		const next = await runJavaScriptCell(kernel, "return 1", 15_000);
+
+		expect(next.result).toMatchObject({ ok: true });
+		expect(next.result).not.toHaveProperty("kernelState");
+		expect(next.result).not.toHaveProperty("notice");
+	}, 60_000);
+
+	it("When the runtime is resolved under native Node ESM (no injected require), then a node on PATH is found", {
+		timeout: 30_000,
+	}, () => {
+		const node = resolveJavaScriptProcessCommand(undefined, process.platform, "node", "");
+		const workerModule = join(import.meta.dirname, "..", "src", "kernels", "js", "process-worker.ts");
+		const script = `const m = await import(${JSON.stringify(pathToFileURL(workerModule).href)}); process.stdout.write(m.resolveJavaScriptProcessCommand(undefined, process.platform, "node", ""));`;
+
+		const resolved = execFileSync(
+			node,
+			["--experimental-strip-types", "--no-warnings", "--input-type=module", "-e", script],
+			{ encoding: "utf8" },
+		);
+
+		expect(resolved).toMatch(/(^|[\\/])node(\.exe)?$/);
+	});
 });

@@ -13,6 +13,7 @@ export class JavaScriptKernelMemory {
 	readonly #bridge: KernelMemoryBridge;
 	readonly #process: JavaScriptProcessMemoryHost | null;
 	readonly #pid: () => number | undefined;
+	readonly #processMode: boolean;
 	#restartNotice: string | null = null;
 
 	constructor(options: JavaScriptKernelOptions, pid: () => number | undefined) {
@@ -23,6 +24,7 @@ export class JavaScriptKernelMemory {
 				? new JavaScriptProcessMemoryHost(options.processMemory.thresholds, options.processMemory.readFootprint)
 				: null;
 		this.#pid = pid;
+		this.#processMode = processMode;
 	}
 
 	get lastLiveBytes(): number | undefined {
@@ -61,14 +63,17 @@ export class JavaScriptKernelMemory {
 		this.#bridge.workerLost(error);
 	}
 
-	/** The worker crashed: pending readings fail and the next result says the kernel restarted. */
+	/**
+	 * The kernel crashed: pending readings fail. In process mode the next result also says the kernel restarted (a
+	 * crashed child loses every global); worker mode reports its crash as it always has, with no notice.
+	 */
 	crashed(error: Error): void {
 		this.#bridge.workerLost(error);
-		if (this.#process === null) {
-			this.#restartNotice = restartNotice("js", error.message);
+		if (this.#process !== null) {
+			this.#process.workerLost();
+			this.#process.markRestarted(error);
 			return;
 		}
-		this.#process.workerLost();
-		this.#process.markRestarted(error);
+		if (this.#processMode) this.#restartNotice = restartNotice("js", error.message);
 	}
 }

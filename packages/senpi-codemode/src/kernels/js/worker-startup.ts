@@ -55,6 +55,7 @@ function spawnWorker(options: JavaScriptKernelOptions): WorkerLike {
 			cwd: options.cwd,
 			parallelPoolWidth: options.parallelPoolWidth,
 			...(options.processCommandPath === undefined ? {} : { searchPath: options.processCommandPath }),
+			...(options.processExecPath === undefined ? {} : { execPath: options.processExecPath }),
 		});
 	}
 	try {
