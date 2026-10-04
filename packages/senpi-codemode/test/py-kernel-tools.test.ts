@@ -249,7 +249,7 @@ describe.skipIf(!(await hasPython3()))("Python kernel tools (@tool)", () => {
 	}, 60_000);
 
 	it("a cell busy in pure computation is not interrupted: a callback posted mid-loop runs only after the cell ends", async () => {
-		const { kernel, messages } = await bridge(() => ({ text: "" }));
+		const { kernel } = await bridge(() => ({ text: "" }));
 		await cell(
 			kernel,
 			"import time\nruns = []\n@tool\ndef mark() -> str:\n    runs.append('callback')\n    return 'marked'",
