@@ -61,6 +61,11 @@ export async function installPythonPackages(input: {
 				},
 			}),
 		input.signal,
+		({ holder, waitedMs }) =>
+			input.onOutput?.(
+				"stderr",
+				`[senpi] waiting ${Math.round(waitedMs / 1000)}s for another install into this environment${holder === undefined ? "" : ` (pid ${holder.pid} on ${holder.host})`}\n`,
+			),
 	);
 	const resolved = installedDistributions(stdout);
 	return receipt(input.mode, revision, requested, resolved);
