@@ -14,6 +14,7 @@
 ### Fixed
 
 - A nested tool call that is denied inside an `eval` cell (a permission denial or another hook's block) now reaches the cell as the plain denial, without the `Expected parameters:` schema hint that made it read like an argument error; argument failures still get the hint ([#2700](https://github.com/code-yeongyu/senpi/issues/2700)). Thanks to @MoerAI ([#2755](https://github.com/code-yeongyu/senpi/pull/2755)).
+- An `eval` run with an invalid `language` value (for example `"python"`, `""` or `null`) now gets its own error listing the enabled languages, instead of the "run requires language" message meant for an omitted one; `peek` and `stop` still need no language ([#1395](https://github.com/code-yeongyu/senpi/issues/1395)). Thanks to @MoerAI.
 
 ### Removed
 

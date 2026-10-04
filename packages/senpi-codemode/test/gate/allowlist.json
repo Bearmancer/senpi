@@ -851,6 +851,26 @@
 				"legacyContracts/test/tool-schema-hint.test.ts/kernel tool-call denials (senpi#2700) still appends the parameter schema to an invalid-arguments failure"
 			],
 			"reason": "A nested tool call that a hook blocked (code \"blocked\", for example a permission denial) is delivered to the cell without the parameter-schema hint; argument failures keep it. Test-only additions; no prompt, schema, helper or import surface changes."
+		},
+		"senpi#1396": {
+			"additions": [
+				"legacyContracts/test/eval-request-language.test.ts/eval request language validation distinguishes invalid language null from an omission",
+				"legacyContracts/test/eval-request-language.test.ts/eval request language validation distinguishes invalid language \"\" from an omission",
+				"legacyContracts/test/eval-request-language.test.ts/eval request language validation distinguishes invalid language \"python\" from an omission",
+				"legacyContracts/test/eval-request-language.test.ts/eval request language validation distinguishes invalid language 42 from an omission",
+				"legacyContracts/test/eval-request-language.test.ts/eval request language validation rejects an omitted language instead of selecting a default kernel",
+				"legacyContracts/test/eval-request-language.test.ts/eval request language validation accepts peek without a language",
+				"legacyContracts/test/eval-request-language.test.ts/eval request language validation accepts stop without a language",
+				"legacyContracts/test/eval-request-language.test.ts/parseEvalRequest language and code enforcement throws a distinct actionable error for an unknown language value",
+				"legacyContracts/test/eval-request-language.test.ts/parseEvalRequest language and code enforcement lists only the enabled languages when a run names an unknown language"
+			],
+			"reason": "#1395: an omitted eval language and an invalid one now fail with distinct errors, and peek/stop need no language; these contract tests pin that, and replace the 'same actionable error for an unknown language value' test.",
+			"changes": [
+				{
+					"key": "legacyContracts/test/eval-request-language.test.ts/parseEvalRequest language and code enforcement throws the same actionable error for an unknown language value",
+					"reason": "senpi#1396 makes an unknown language value fail with a distinct error from an omitted language, so this contract leaves the baseline; its honest rename 'parseEvalRequest language and code enforcement throws a distinct actionable error for an unknown language value' is listed under additions (reviewed by the gate owner on the PR)."
+				}
+			]
 		}
 	}
 }

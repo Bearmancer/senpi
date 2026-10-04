@@ -5666,7 +5666,6 @@
       "test/eval-render.test.ts/nested tool-call widgets nested widgets: collapse budget": "passed",
       "test/eval-render.test.ts/nested tool-call widgets nested widgets: streaming partial": "passed",
       "test/eval-request-language.test.ts/parseEvalRequest language and code enforcement throws an actionable error when a run omits language": "passed",
-      "test/eval-request-language.test.ts/parseEvalRequest language and code enforcement throws the same actionable error for an unknown language value": "passed",
       "test/eval-request-language.test.ts/parseEvalRequest language and code enforcement names language first when a run omits both language and code": "passed",
       "test/eval-request-language.test.ts/parseEvalRequest language and code enforcement lists only the enabled languages when a run omits language": "passed",
       "test/eval-request-language.test.ts/parseEvalRequest language and code enforcement throws an actionable error when a run omits code": "passed",
