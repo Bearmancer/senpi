@@ -10419,9 +10419,10 @@ export class AgentSession {
 		const turnClaim = new DeferredTurnClaim();
 		const admission = trackTurnAdmission({
 			disposition: turnClaim.disposition,
-			subscribe: (listener) => this.subscribe((event) => {
-				if (event.type === "agent_start") listener({ type: "agent_start" });
-			}),
+			subscribe: (listener) =>
+				this.subscribe((event) => {
+					if (event.type === "agent_start") listener({ type: "agent_start" });
+				}),
 		});
 		// The turn runs in the background. trackTurnAdmission resolves at admission;
 		// a start-time failure in sendCustomMessage rejects the race, so the client
