@@ -200,6 +200,8 @@ options object and asynchronous helpers are `await`-able.
 | `env(key?, value?)` | Reads all kernel environment values, one value, or sets one value. Includes the session's `PI_*` values (see [Session environment](#session-environment)). |
 | `tool.<name>(args)` | Invokes an active Senpi tool through the normal `pi.executeTool` pipeline and returns `{ text, images?, details?, hasError? }` in every kernel; image blocks arrive as `images[i] = { mimeType, dataBase64 }`. |
 | `tool_schema(name?)` | Returns a tool's parameter schema without calling it; omit `name` to list tool names. |
+| `tool(fn, metadata?)` (js) | Registers a named function as a kernel tool for in-process children. `metadata.name` registers it under that name instead of the function's; arguments are still passed in the function's parameter order. |
+| `tool.defined()` / `tool.undefine(name)` (js) | List the kernel tools this kernel defines (sorted), and remove one (`true` if it existed). A descriptor taken before `undefine` can no longer be invoked. |
 | `completion(prompt, model?, system?, schema?)` | Requests a one-shot host completion; `schema` asks the host to parse structured output. |
 | `agent(prompt, ...)` | Delegates to the configured active `taskTools.task` tool. Supports background handles and structured JSON results. |
 | `workpool(agent, name, mode?)` | Creates a thin adapter over the normal host `workpool` tool; exposes `pool_id`, `push(items)`, `close()`, `inspect()`, and `cancel()`. JS awaits creation and operations. |
