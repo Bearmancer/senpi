@@ -210,17 +210,17 @@ async function exitedWithin(exited: Promise<void>, ms: number): Promise<boolean>
 	}
 }
 
-/**
- * The successor's own answer on the PUBLIC socket is the only proof the rename landed: it
- * reports a different `instanceId` than the generation being replaced. An exit instead means
- * the successor refused to replace the path (a foreign socket, a live bind path) and left it alone.
- */
 /** The successor's build as the successor itself reported it on the socket; never this process's build. */
 function successorBuild(answer: HostProtocolInfo): Pick<HostRegistration, "build"> {
 	if (answer.engineVersion === undefined || answer.engineOrdinal === undefined) return {};
 	return { build: { text: answer.engineVersion, ordinal: answer.engineOrdinal } };
 }
 
+/**
+ * The successor's own answer on the PUBLIC socket is the only proof the rename landed: it
+ * reports a different `instanceId` than the generation being replaced. An exit instead means
+ * the successor refused to replace the path (a foreign socket, a live bind path) and left it alone.
+ */
 async function awaitSuccessor(
 	options: HandoffHostOptions,
 	previous: HostProtocolInfo,

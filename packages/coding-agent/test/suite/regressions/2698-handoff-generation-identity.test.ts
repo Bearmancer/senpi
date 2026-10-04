@@ -4,11 +4,12 @@
  * directory whose `package.json` carries another version, so it really is another build.
  */
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { readFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { VERSION } from "../../../src/config.ts";
 import { createHostDaemonPaths, generationPaths } from "../../../src/modes/rpc/host-daemon-paths.ts";
+import { ensureHost } from "../../../src/modes/rpc/host-ensure.ts";
 import { gcHostEndpoints } from "../../../src/modes/rpc/host-gc.ts";
 import { handoffHost } from "../../../src/modes/rpc/host-handoff.ts";
 import { probeHost } from "../../../src/modes/rpc/host-probe.ts";
@@ -100,5 +101,34 @@ describe.skipIf(process.platform === "win32")("a handoff to a different engine b
 		expect(await readJson(generationPaths(paths, result.instanceId).pidFile)).toMatchObject({
 			engineVersion: OTHER_BUILD,
 		});
+	}, 240_000);
+
+	it("reads a generation record that names no build as an unknown version, and gc and ensure still use it", async () => {
+		const qa = endpointScratch("2698-unknown");
+		const pid = await realHost(qa, qa.legacy);
+		const paths = createHostDaemonPaths({ socket: qa.legacy, agentDir: qa.agentDir });
+		const instanceId = (await probeHost({ socket: qa.legacy }))?.instanceId ?? "";
+		const pidFile = generationPaths(paths, instanceId).pidFile;
+		const { engineVersion: _version, engineOrdinal: _ordinal, ...withoutBuild } = (await readJson(pidFile)) ?? {};
+		await writeFile(pidFile, JSON.stringify(withoutBuild));
+
+		const status = await readHostStatus({ socket: qa.legacy, agentDir: qa.agentDir });
+		expect(status.generations.find((row) => row.instanceId === instanceId)).toMatchObject({
+			pid,
+			current: true,
+			engineVersion: null,
+		});
+		const gc = await gcHostEndpoints(qa.agentDir);
+		expect(gc.kept.map((entry) => entry.reason)).toContain("live_generation");
+		const attached = await ensureHost({
+			socket: qa.legacy,
+			agentDir: qa.agentDir,
+			hostArgs: hostArgs(),
+			env: hostEnv(qa),
+			_test: { readinessTimeoutMs: 60_000, launch: supervisorLaunch },
+		});
+		attached.release();
+		expect(attached).toMatchObject({ pid, reused: true });
+		expect(await readJson(pidFile)).toMatchObject({ pid, instance_id: instanceId });
 	}, 240_000);
 });
