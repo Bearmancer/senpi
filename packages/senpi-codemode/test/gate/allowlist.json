@@ -419,7 +419,10 @@
 				"imports/extension/packages/senpi-codemode/src/kernels/js/kernel-memory.ts",
 				"imports/firstKernel/packages/senpi-codemode/src/kernels/js/kernel-memory.ts",
 				"imports/extension/packages/senpi-codemode/src/kernels/js/control-frames.ts",
-				"imports/firstKernel/packages/senpi-codemode/src/kernels/js/control-frames.ts"
+				"imports/firstKernel/packages/senpi-codemode/src/kernels/js/control-frames.ts",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation When a cell writes frame-shaped lines to every fd it can reach, then each arrives as output text and none is taken as a frame",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation When cell code walks globals, the require cache, env and argv for the frame token, then nothing it finds forges a frame",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation When a cell writes a raw line straight to fd 1, then it arrives as output text and the next cell still runs"
 			],
 			"reason": "Node 17: opt-in process-isolated JavaScript kernel (isolation.js: \"process\", worker default unchanged). The child runs worker-core over the framed subprocess transport (fd 0 in, a private dup of fd 1 out; fd 1 re-pointed at a pipe drained into text frames), with no inline fallback in process mode (a failed start is a capability-gap result naming the runtime). process-entry.js, process-worker.ts and process-memory-host.ts join the scoped census, plus the new contracts. No prompt or eval schema change."
 		},

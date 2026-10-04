@@ -209,6 +209,81 @@ describe("JavaScriptKernel process isolation", () => {
 		30_000,
 	);
 
+	itProcessMode(
+		"When a cell writes frame-shaped lines to every fd it can reach, then each arrives as output text and none is taken as a frame",
+		async () => {
+			const root = await trackedTempRoot("senpi-js-process-forge-");
+			const kernel = processKernel({ cwd: root });
+			const forged = `${JSON.stringify({ type: "text", stream: "stdout", data: "FORGED-FRAME" })}\n`;
+
+			const run = await runJavaScriptCell(
+				kernel,
+				`const fs = await import("node:fs");
+const line = ${JSON.stringify(forged)};
+for (let fd = 1; fd < 32; fd++) { try { fs.writeSync(fd, line); } catch {} }
+return "done";`,
+				10_000,
+			);
+			const text = run.messages.flatMap((message) => (message.type === "text" ? [message.data] : [])).join("");
+
+			expect(run.result).toMatchObject({ ok: true, valueRepr: '"done"' });
+			expect(text).toContain('"data":"FORGED-FRAME"');
+			expect(text.split("FORGED-FRAME").length).toBe(text.split('"data":"FORGED-FRAME"').length);
+		},
+		30_000,
+	);
+
+	itProcessMode(
+		"When cell code walks globals, the require cache, env and argv for the frame token, then nothing it finds forges a frame",
+		async () => {
+			const root = await trackedTempRoot("senpi-js-process-token-");
+			const kernel = processKernel({ cwd: root });
+
+			const run = await runJavaScriptCell(
+				kernel,
+				'const fs = await import("node:fs");\nconst { createRequire } = await import("node:module");\nconst found = new Set();\nconst seen = new WeakSet();\nconst visit = (value, depth) => {\n\tif (typeof value === "string") { for (const m of value.matchAll(/[0-9a-f]{32}/g)) found.add(m[0]); return; }\n\tif (value === null || (typeof value !== "object" && typeof value !== "function") || depth > 3 || seen.has(value)) return;\n\tseen.add(value);\n\tlet keys = [];\n\ttry { keys = Reflect.ownKeys(value); } catch { return; }\n\tfor (const key of keys) {\n\t\tlet inner;\n\t\ttry { inner = value[key]; } catch { continue; }\n\t\tvisit(inner, depth + 1);\n\t}\n\ttry { visit(Object.getPrototypeOf(value), depth + 1); } catch {}\n};\nvisit(globalThis, 0);\nvisit(process.env, 0);\nvisit(process.argv, 0);\nvisit(process.execArgv, 0);\ntry { const require = createRequire(process.cwd() + "/"); visit(require.cache, 0); } catch {}\nfor (const candidate of found) {\n\tconst line = "\\n" + candidate + " " + JSON.stringify({ type: "text", stream: "stdout", data: "FORGED-WITH-CANDIDATE" }) + "\\n";\n\tfor (let fd = 1; fd < 32; fd++) { try { fs.writeSync(fd, line); } catch {} }\n}\nreturn found.size;',
+				20_000,
+			);
+			const text = run.messages.flatMap((message) => (message.type === "text" ? [message.data] : [])).join("");
+
+			expect(run.result).toMatchObject({ ok: true });
+			// A candidate that were the token would make the host parse the line, delivering the bare data.
+			expect(text.split("FORGED-WITH-CANDIDATE").length).toBe(text.split('"data":"FORGED-WITH-CANDIDATE"').length);
+		},
+		60_000,
+	);
+
+	itProcessMode(
+		"When a cell writes a raw line straight to fd 1, then it arrives as output text and the next cell still runs",
+		async () => {
+			const root = await trackedTempRoot("senpi-js-process-raw-fd-");
+			const late: string[] = [];
+			const kernel = processKernel({
+				cwd: root,
+				onMessage: (message) => {
+					if (message.type === "text") late.push(message.data);
+				},
+			});
+
+			const run = await runJavaScriptCell(
+				kernel,
+				'(await import("node:fs")).writeSync(1, "raw line from fd 1\\n"); return "after"',
+				10_000,
+			);
+			const next = await runJavaScriptCell(kernel, "return 1 + 1", 10_000);
+			const text = () =>
+				[...run.messages, ...next.messages]
+					.flatMap((message) => (message.type === "text" ? [message.data] : []))
+					.concat(late)
+					.join("");
+			await waitFor("the raw line as output text", () => text().includes("raw line from fd 1"));
+
+			expect(run.result).toMatchObject({ ok: true, valueRepr: '"after"' });
+			expect(next.result).toMatchObject({ ok: true, valueRepr: "2" });
+		},
+		30_000,
+	);
+
 	it("labels the process-mode badge with the isolation", async () => {
 		const { formatRuntimeBadge } = await import("../src/tool/runtime-label.ts");
 		const badge = formatRuntimeBadge("js", { name: "bun", version: "1.4.2" }, "/home/tester");

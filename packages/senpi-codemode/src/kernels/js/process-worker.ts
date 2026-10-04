@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import type { KernelToHostMessage } from "../../bridge/protocol.ts";
@@ -88,9 +89,18 @@ export function spawnProcessWorker(url: URL, options: JavaScriptProcessWorkerOpt
 			: options.spawn(command, args, { cwd: options.cwd, env });
 	const messageHandlers = new Set<(message: KernelToHostMessage) => void>();
 	const errorHandlers = new Set<(error: Error) => void>();
+	const frameToken = randomBytes(16).toString("hex");
+	const framePrefix = `${frameToken} `;
 	const subprocess = new SubprocessProcess(child, {
 		onLine: (_process, line) => {
-			const parsed = decodeBridgeFrame(line);
+			// Only a line carrying this process's token is a frame; any other line is output that
+			// reached the channel (a raw fd write, a child process) and is delivered as text.
+			if (!line.startsWith(framePrefix)) {
+				if (line.trim().length === 0) return;
+				for (const handler of [...messageHandlers]) handler({ type: "text", stream: "stdout", data: line });
+				return;
+			}
+			const parsed = decodeBridgeFrame(line.slice(framePrefix.length));
 			if (!parsed.ok) {
 				for (const handler of [...errorHandlers])
 					handler(new Error(`JavaScript kernel process emitted an invalid frame: ${parsed.error.message}`));
@@ -108,6 +118,8 @@ export function spawnProcessWorker(url: URL, options: JavaScriptProcessWorkerOpt
 			for (const handler of [...errorHandlers]) handler(error);
 		},
 	});
+	// The token is the first line the entry reads, before any cell can run.
+	subprocess.send(`${frameToken}\n`);
 	return {
 		mode: "process",
 		get pid() {
