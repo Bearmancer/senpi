@@ -5,6 +5,7 @@ import {
 	type SelectItem,
 	SelectList,
 	Spacer,
+	sanitizeTerminalLabel,
 	Text,
 	type TUI,
 	truncateToWidth,
@@ -70,7 +71,11 @@ export class McpManagerView implements Component {
 					const menu = await build();
 					if (settled || current !== generation) return;
 					const list = new SelectList(
-						menu.items,
+						menu.items.map((item) => ({
+							...item,
+							label: sanitizeTerminalLabel(item.label || item.value) || "(empty)",
+							description: item.description === undefined ? undefined : sanitizeTerminalLabel(item.description),
+						})),
 						Math.max(1, Math.min(12, this.tui.terminal.rows - 10)),
 						getSelectListTheme(),
 					);
@@ -84,9 +89,20 @@ export class McpManagerView implements Component {
 					list.onSelect = (item) => finish(item.value);
 					list.onCancel = () => finish(undefined);
 					const body: Component[] = [];
-					if (menu.details) body.push(new Text(this.theme.fg("muted", menu.details), 1, 0));
+					if (menu.details)
+						body.push(
+							new Text(
+								this.theme.fg("muted", menu.details.split("\n").map(sanitizeTerminalLabel).join("\n")),
+								1,
+								0,
+							),
+						);
 					body.push(new Spacer(1));
-					body.push(menu.items.length > 0 ? list : new Text(menu.empty ?? "Nothing to show.", 1, 0));
+					body.push(
+						menu.items.length > 0
+							? list
+							: new Text(sanitizeTerminalLabel(menu.empty ?? "Nothing to show."), 1, 0),
+					);
 					const footer =
 						menu.items.length > 0
 							? `${keyHint("tui.select.confirm", menu.confirmLabel)} | ${keyHint("tui.select.cancel", menu.cancelLabel)}`
@@ -111,7 +127,10 @@ export class McpManagerView implements Component {
 	}
 
 	status(title: string, message: string): void {
-		this.setContent(title, [new Spacer(1), new Text(this.theme.fg("muted", message), 1, 0)]);
+		this.setContent(title, [
+			new Spacer(1),
+			new Text(this.theme.fg("muted", message.split("\n").map(sanitizeTerminalLabel).join("\n")), 1, 0),
+		]);
 	}
 
 	get columns(): number {
@@ -122,7 +141,7 @@ export class McpManagerView implements Component {
 		if (this.disposed) return;
 		this.content = new Container();
 		this.content.addChild(new DynamicBorder((text) => this.theme.fg("accent", text)));
-		this.content.addChild(new Text(this.theme.fg("accent", this.theme.bold(title)), 1, 0));
+		this.content.addChild(new Text(this.theme.fg("accent", this.theme.bold(sanitizeTerminalLabel(title))), 1, 0));
 		for (const child of body) this.content.addChild(child);
 		if (footer) {
 			this.content.addChild(new Spacer(1));

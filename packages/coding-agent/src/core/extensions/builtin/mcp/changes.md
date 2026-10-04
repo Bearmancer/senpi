@@ -5,6 +5,7 @@
 - `packages/coding-agent/src/core/extensions/builtin/mcp/commands.ts`: blank `/mcp` opens a custom manager in TUI mode; non-TUI status and existing subcommands remain unchanged.
 - `packages/coding-agent/src/core/extensions/builtin/mcp/manager.ts` and `manager-view.ts`: compact server rows, state-specific actions, tool/detail/log screens, configured keyboard navigation, bounded lists, and event-driven refresh preserving selected identity. Existing connection/catalog subscriptions and auth/test/reconnect handlers are reused; subscriptions and stale async renders are discarded on exit.
 - `packages/coding-agent/src/core/extensions/builtin/mcp/config-edit.ts`: selected global/project definitions can persist enable/disable and exposure changes without expanding placeholders or rewriting other servers. Imported, extension, skill, and untrusted sources are not editable in the manager.
+- Review follow-ups: manager display text strips remote terminal controls while selected values remain unchanged; manager commands pass raw server names without reparsing; OAuth actions follow stored token status rather than connection state.
 
 ### Why
 

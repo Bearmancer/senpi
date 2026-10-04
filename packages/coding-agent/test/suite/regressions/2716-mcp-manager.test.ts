@@ -108,6 +108,50 @@ function menu(items: McpManagerMenu["items"]): McpManagerMenu {
 }
 
 describe("interactive MCP manager (senpi#2716)", () => {
+	it.each(["tool", ""])("sanitizes menu text with label %j and preserves raw selected values", async (label) => {
+		// Given: remote text containing terminal title and screen-clearing controls.
+		const s = surface();
+		s.setView();
+		const controls = "\x1b]2;MCP_INJECTION\x07\x1b[2J";
+		const name = `${label}${controls}`;
+		const ready = s.waitFor((text) => text.includes("safe description"));
+		const pending = s.view.menu(() => ({
+			...menu([{ value: name, label: name, description: `safe description${controls}` }]),
+			title: `MCP servers${controls}`,
+			details: `first${controls}\nsecond`,
+		}));
+		// When: the manager renders the menu and confirms the selected tool.
+		await ready;
+		const output = s.view.render(120).join("\n");
+		s.input("\r");
+		// Then: display text is safe, multiline details survive, and identity stays raw.
+		expect(output).not.toContain("MCP_INJECTION");
+		expect(output).not.toContain("\x1b[2J");
+		expect(stripVTControlCharacters(output)).toMatch(/first[ \t]*\n.*second/);
+		expect(await pending).toBe(name);
+	});
+
+	it("removes terminal controls from status and empty-menu text", async () => {
+		// Given: a view that receives display-only status and empty-state text.
+		const s = surface();
+		s.setView();
+		const controls = "\x1b]2;MCP_INJECTION\x07\x1b[2J";
+		// When: it renders the status and then an empty menu.
+		s.view.status(`status${controls}`, `message${controls}`);
+		const status = s.view.render(120).join("\n");
+		const ready = s.waitFor((text) => text.includes("empty"));
+		const pending = s.view.menu(() => ({ ...menu([]), empty: `empty${controls}` }));
+		await ready;
+		const empty = s.view.render(120).join("\n");
+		s.input("\x1b");
+		await pending;
+		// Then: neither rendering emits the untrusted controls.
+		for (const output of [status, empty]) {
+			expect(output).not.toContain("MCP_INJECTION");
+			expect(output).not.toContain("\x1b[2J");
+		}
+	});
+
 	it("preserves selected identity across event refreshes and releases the subscription on exit", async () => {
 		// Given: a real menu with a state-change signal and configured navigation.
 		const s = surface();

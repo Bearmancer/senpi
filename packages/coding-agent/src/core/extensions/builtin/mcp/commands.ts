@@ -45,7 +45,7 @@ export function registerMcpCommands(
 				// in flight. Every subcommand reports or mutates attached state, so wait for the single
 				// in-flight attach rather than rendering a half-connected snapshot.
 				await pendingAttach();
-				await handleMcpCommand(rawArgs, ctx, pi, service);
+				await handleMcpCommand(splitCommandArgs(rawArgs), ctx, pi, service);
 			} catch (error) {
 				ctx.ui.notify(error instanceof Error ? error.message : String(error), "error");
 			}
@@ -54,19 +54,18 @@ export function registerMcpCommands(
 }
 
 async function handleMcpCommand(
-	rawArgs: string,
+	args: readonly string[],
 	ctx: ExtensionCommandContext,
 	pi: ExtensionAPI,
 	service: ReturnType<typeof getMcpService>,
 ): Promise<void> {
-	const args = splitCommandArgs(rawArgs);
 	const subcommand = args[0] ?? "";
 	if (subcommand === "") {
 		if (!ctx.hasUI || ctx.mode !== "tui") {
 			ctx.ui.notify(await renderStatus("MCP servers", service));
 		} else {
 			await showMcpManager(ctx, pi, service, (command, name, commandCtx) =>
-				handleMcpCommand(`${command} ${JSON.stringify(name)}`, commandCtx, pi, service),
+				handleMcpCommand([command, name], commandCtx, pi, service),
 			);
 		}
 		return;

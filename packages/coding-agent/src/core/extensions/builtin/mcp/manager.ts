@@ -94,7 +94,7 @@ async function manage(
 				return {
 					title: `MCP server ${name}`,
 					details: [snapshot?.lastError, message].filter(Boolean).join("\n") || undefined,
-					items: snapshot ? serverActions(snapshot, config) : [],
+					items: snapshot ? serverActions(snapshot, config, service.getServerAuthStatus(name) === "oAuth") : [],
 					empty: "This server is no longer configured.",
 					confirmLabel: "select",
 					cancelLabel: "back",
@@ -170,7 +170,11 @@ function isWritable(snapshot: McpServerSnapshot): boolean {
 	return snapshot.configState !== "untrusted" && (snapshot.source === "global" || snapshot.source === "project");
 }
 
-function serverActions(snapshot: McpServerSnapshot, config: McpServerConfig | undefined): SelectItem[] {
+function serverActions(
+	snapshot: McpServerSnapshot,
+	config: McpServerConfig | undefined,
+	loggedIn: boolean,
+): SelectItem[] {
 	const items: SelectItem[] = [
 		{ value: "status", label: "Details" },
 		{ value: "logs", label: "Logs" },
@@ -180,7 +184,7 @@ function serverActions(snapshot: McpServerSnapshot, config: McpServerConfig | un
 		items.push({ value: "test", label: "Test connection" }, { value: "reconnect", label: "Reconnect" });
 		if (config && resolveAuthMode(config) === "oauth") {
 			items.push(
-				snapshot.lifecycleState === "connected"
+				loggedIn
 					? { value: "logout", label: "Sign out", description: "deletes stored credentials" }
 					: { value: "auth", label: "Sign in", description: "closes this view and opens authorization" },
 			);
