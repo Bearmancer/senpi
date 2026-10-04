@@ -2099,8 +2099,8 @@ KERNEL_MEMORY = _KernelMemory()
 TLA_FLAG = getattr(ast, "PyCF_ALLOW_TOP_LEVEL_AWAIT", 0x2000)
 
 
-def compile_cell(source: str) -> tuple[Any | None, Any | None]:
-    module = ast.parse(transform_cell(source), mode="exec")
+def compile_cell(source: str, filename: str = "<cell>") -> tuple[Any | None, Any | None]:
+    module = ast.parse(transform_cell(source), filename=filename, mode="exec")
     if not module.body:
         return None, None
     last = module.body[-1]
@@ -2108,13 +2108,13 @@ def compile_cell(source: str) -> tuple[Any | None, Any | None]:
         body = ast.Module(body=module.body[:-1], type_ignores=[])
         expression = ast.Expression(body=last.value)
         ast.copy_location(expression, last)
-        return compile(body, "<cell>", "exec", flags=TLA_FLAG), compile(
+        return compile(body, filename, "exec", flags=TLA_FLAG), compile(
             expression,
-            "<cell>",
+            filename,
             "eval",
             flags=TLA_FLAG,
         )
-    return compile(module, "<cell>", "exec", flags=TLA_FLAG), None
+    return compile(module, filename, "exec", flags=TLA_FLAG), None
 
 
 async def run_code(code: Any, want_value: bool) -> Any:
@@ -2141,7 +2141,41 @@ def apply_preludes(preludes: Any) -> None:
             exec(compile(contribution.get("python", ""), "<kernel-prelude>", "exec"), USER_NS)
 
 
-def run_cell(cell_id: str, code: str, preludes: Any = None, cell_token: str | None = None) -> None:
+def _enter_source_file(source_file: str | None) -> Callable[[], None]:
+    # A %load cell runs as its file: __file__ names it and its directory comes first on the import path,
+    # so `from sibling import x` resolves next to the file the way it does when the file runs as a script.
+    # The returned step undoes both when the cell ends, so a later cell never imports from that directory
+    # ahead of the session environment; the file's own sys.path edits stay.
+    if source_file is None:
+        return lambda: None
+    missing = object()
+    previous_file = USER_NS.get("__file__", missing)
+    directory = os.path.dirname(source_file)
+    previous_index = sys.path.index(directory) if directory in sys.path else None
+    with contextlib.suppress(ValueError):
+        sys.path.remove(directory)
+    sys.path.insert(0, directory)
+    importlib.invalidate_caches()
+    USER_NS["__file__"] = source_file
+
+    def restore() -> None:
+        with contextlib.suppress(ValueError):
+            sys.path.remove(directory)
+        if previous_index is not None:
+            sys.path.insert(min(previous_index, len(sys.path)), directory)
+        if previous_file is missing:
+            USER_NS.pop("__file__", None)
+        else:
+            USER_NS["__file__"] = previous_file
+        # Last: it calls every sys.meta_path finder, and user code may have installed one that raises.
+        importlib.invalidate_caches()
+
+    return restore
+
+
+def run_cell(
+    cell_id: str, code: str, preludes: Any = None, source_file: str | None = None, cell_token: str | None = None
+) -> None:
     start = time.monotonic()
     stdout = io.StringIO()
     stderr = io.StringIO()
@@ -2149,13 +2183,15 @@ def run_cell(cell_id: str, code: str, preludes: Any = None, cell_token: str | No
     # cells) ignores it so a late signal cannot kill the stdin-read loop.
     signal.signal(signal.SIGINT, signal.default_int_handler)
     result: dict[str, Any]
+    leave_source_file: Callable[[], None] = lambda: None
     cell_scope = CURRENT_CELL_TOKEN.set(cell_token)
     try:
         KERNEL_TOOL_TOKEN.acquire()
         cell_stdout, cell_stderr = KERNEL_TOOL_STREAMS
         with cell_stdout.capture(stdout, cell=True), cell_stderr.capture(stderr, cell=True):
             apply_preludes(preludes)
-            body, expression = compile_cell(code)
+            leave_source_file = _enter_source_file(source_file)
+            body, expression = compile_cell(code, source_file or "<cell>")
             LOOP.run_until_complete(run_code(body, False))
             value = LOOP.run_until_complete(run_code(expression, True))
         text("stdout", stdout.getvalue())
@@ -2179,8 +2215,13 @@ def run_cell(cell_id: str, code: str, preludes: Any = None, cell_token: str | No
             "durationMs": elapsed(start),
         }
     finally:
+        # Liveness and revocation first: nothing the cell installed (an import finder, a path hook) can skip them.
         KERNEL_TOOL_TOKEN.release()
         CURRENT_CELL_TOKEN.reset(cell_scope)
+        try:
+            leave_source_file()
+        except BaseException as exc:  # noqa: BROAD_EXCEPT_OK — user code can break the restore; it must not wedge the kernel.
+            text("stderr", f"[senpi] %load could not fully restore the import path: {exc}\n")
         signal.signal(signal.SIGINT, signal.SIG_IGN)
     try:
         memory = KERNEL_MEMORY.after_cell()
@@ -2215,11 +2256,13 @@ def _handle_message(message: dict[str, Any]) -> bool:
         env_root = message.get("envRoot")
         if isinstance(env_root, str):
             _activate_env_root(env_root)
+        source_file = message.get("sourceFile")
         token = message.get("bridgeCellToken")
         run_cell(
             str(message.get("cellId", "")),
             str(message.get("code", "")),
             message.get("preludes"),
+            source_file if isinstance(source_file, str) and source_file else None,
             token if isinstance(token, str) else None,
         )
         return True
