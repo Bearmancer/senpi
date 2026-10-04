@@ -58,3 +58,38 @@ for root in roots:
 }
 
 export const fixtureDir = (root: string) => join(root, "wheels");
+
+/** A build backend with just the PEP 660 hooks, so pip can make a real editable install offline. */
+export const editableBackend = `import base64, hashlib, os, zipfile
+
+def _record_line(path, data):
+    digest = base64.urlsafe_b64encode(hashlib.sha256(data).digest()).rstrip(b"=").decode()
+    return f"{path},sha256={digest},{len(data)}"
+
+def get_requires_for_build_editable(config_settings=None):
+    return []
+
+def prepare_metadata_for_build_editable(metadata_directory, config_settings=None):
+    info = os.path.join(metadata_directory, "senpi_editable-1.0.dist-info")
+    os.makedirs(info, exist_ok=True)
+    with open(os.path.join(info, "METADATA"), "w") as f:
+        f.write("Metadata-Version: 2.1\\nName: senpi-editable\\nVersion: 1.0\\n")
+    return "senpi_editable-1.0.dist-info"
+
+def build_editable(wheel_directory, config_settings=None, metadata_directory=None):
+    name = "senpi_editable-1.0-py3-none-any.whl"
+    files = {
+        "senpi_editable.pth": (os.path.abspath(".") + "\\n").encode(),
+        "senpi_editable-1.0.dist-info/METADATA": b"Metadata-Version: 2.1\\nName: senpi-editable\\nVersion: 1.0\\n",
+        "senpi_editable-1.0.dist-info/WHEEL": b"Wheel-Version: 1.0\\nGenerator: senpi-test\\nRoot-Is-Purelib: true\\nTag: py3-none-any\\n",
+    }
+    record = "senpi_editable-1.0.dist-info/RECORD"
+    with zipfile.ZipFile(os.path.join(wheel_directory, name), "w") as z:
+        lines = []
+        for path, data in files.items():
+            z.writestr(path, data)
+            lines.append(_record_line(path, data))
+        lines.append(record + ",,")
+        z.writestr(record, "\\n".join(lines) + "\\n")
+    return name
+`;

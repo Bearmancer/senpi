@@ -2,8 +2,8 @@ import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { promisify } from "node:util";
+import { assertNoEditableInstalls } from "./editable-check.ts";
 import { parsePipRequirements, runPipInstall } from "./py-installer.ts";
-import { assertNoEditableRequirements } from "./requirement-files.ts";
 import { publishNextRevision, type Revision } from "./revision-store.ts";
 
 const execFileAsync = promisify(execFile);
@@ -46,12 +46,11 @@ export async function installPythonPackages(input: {
 	readonly onOutput?: (stream: "stdout" | "stderr", data: string) => void;
 }): Promise<InstallReceipt> {
 	const requested = parsePipRequirements(input.requirements);
-	await assertNoEditableRequirements(requested, input.cwd);
 	let stdout = "";
 	const { revision } = await publishNextRevision(
 		input.base,
-		(staging) =>
-			runPipInstall({
+		async (staging) => {
+			await runPipInstall({
 				interpreter: input.interpreter,
 				root: staging,
 				args: requested,
@@ -61,7 +60,9 @@ export async function installPythonPackages(input: {
 					if (stream === "stdout") stdout += data;
 					input.onOutput?.(stream, data);
 				},
-			}),
+			});
+			await assertNoEditableInstalls(staging);
+		},
 		input.signal,
 		({ holder, waitedMs }) =>
 			input.onOutput?.(

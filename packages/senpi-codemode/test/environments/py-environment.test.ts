@@ -8,9 +8,15 @@ import { afterEach, describe, expect, it } from "vitest";
 import { withRootLock } from "../../src/environments/install-lock.ts";
 import { installPythonPackages } from "../../src/environments/py-environment.ts";
 import { parsePipRequirements } from "../../src/environments/py-installer.ts";
-import { assertNoEditableRequirements } from "../../src/environments/requirement-files.ts";
 import { readActiveRevision } from "../../src/environments/revision-store.ts";
-import { buildWheel, fixtureDir, hasPythonWithPip, importFrom, siteFilesSnapshot } from "./wheel-fixtures.ts";
+import {
+	buildWheel,
+	editableBackend,
+	fixtureDir,
+	hasPythonWithPip,
+	importFrom,
+	siteFilesSnapshot,
+} from "./wheel-fixtures.ts";
 
 const roots: string[] = [];
 const servers: Server[] = [];
@@ -127,17 +133,35 @@ describe.skipIf(!hasPythonWithPip())("Given a Python environment root", () => {
 		expect(siteFilesSnapshot()).toBe(before);
 	});
 
-	it("When a requirements file asks for an editable install, then it is refused before pip runs and nothing is published", async () => {
-		const { root, base } = await workspace();
-		await mkdir(join(root, "pkg"), { recursive: true });
-		await writeFile(join(root, "pkg", "pyproject.toml"), '[project]\nname = "senpi-editable"\nversion = "1.0"\n');
-		await writeFile(join(root, "reqs.txt"), "-e ./pkg\n");
+	it.each([
+		["a requirements file", { "reqs.txt": "-e ./pkg\n" }, "-r reqs.txt"],
+		[
+			"a constraint file included from a requirements file",
+			{ "reqs.txt": "-r nested/more.txt\n", "nested/more.txt": "-e ./pkg\n" },
+			"-r reqs.txt",
+		],
+		["a line after a comment that ends in a backslash", { "reqs.txt": "# note \\\n-e ./pkg\n" }, "-r reqs.txt"],
+	])(
+		"When %s asks for an editable install, then it is refused and nothing is published",
+		async (_case, files, args) => {
+			const { root, base } = await workspace();
+			await mkdir(join(root, "pkg"), { recursive: true });
+			await writeFile(
+				join(root, "pkg", "pyproject.toml"),
+				'[build-system]\nrequires = []\nbuild-backend = "senpi_backend"\nbackend-path = ["."]\n[project]\nname = "senpi-editable"\nversion = "1.0"\n',
+			);
+			await writeFile(join(root, "pkg", "senpi_backend.py"), editableBackend);
+			for (const [name, text] of Object.entries(files)) {
+				await mkdir(join(root, name, ".."), { recursive: true });
+				await writeFile(join(root, name), text);
+			}
 
-		const install_ = install(base, root, "install --no-index -r reqs.txt");
-
-		await expect(install_).rejects.toThrow(/editable requirements .* are not allowed/);
-		expect(await readActiveRevision(base)).toBeUndefined();
-	});
+			await expect(install(base, root, `install --no-index ${args}`)).rejects.toThrow(
+				/senpi[-_]editable.* was installed as editable/,
+			);
+			expect(await readActiveRevision(base)).toBeUndefined();
+		},
+	);
 
 	it("When pip's environment names a root to install under, then the install still lands only in the revision", async () => {
 		const { root, base, wheels } = await workspace();
@@ -153,53 +177,6 @@ describe.skipIf(!hasPythonWithPip())("Given a Python environment root", () => {
 			if (previous === undefined) delete process.env.PIP_ROOT;
 			else process.env.PIP_ROOT = previous;
 		}
-	});
-});
-
-describe("Given requirement files named by %pip", () => {
-	async function files(entries: Record<string, string>): Promise<string> {
-		const dir = await mkdtemp(join(tmpdir(), "senpi-reqs-"));
-		roots.push(dir);
-		for (const [name, text] of Object.entries(entries)) {
-			await mkdir(join(dir, name, ".."), { recursive: true });
-			await writeFile(join(dir, name), text);
-		}
-		return dir;
-	}
-
-	it.each([
-		["a direct editable line", { "reqs.txt": "six\n-e ./pkg\n" }],
-		["an attached editable line", { "reqs.txt": "-e./pkg\n" }],
-		["a long-form editable line", { "reqs.txt": "--editable=./pkg\n" }],
-		[
-			"an editable line in an included constraint file",
-			{ "reqs.txt": "-c nested/cons.txt\n", "nested/cons.txt": "-e ../pkg\n" },
-		],
-		["an editable line joined by a line continuation", { "reqs.txt": "-e \\\n  ./pkg\n" }],
-	])("When a file contains %s, then the install is refused before pip runs", async (_case, entries) => {
-		const dir = await files(entries);
-
-		await expect(assertNoEditableRequirements(["--requirement=reqs.txt"], dir)).rejects.toThrow(
-			/environment_install_failed: .*editable requirements .* are not allowed/,
-		);
-	});
-
-	it("When an editable line is commented out, then the file is accepted", async () => {
-		const dir = await files({ "reqs.txt": "six  # -e ./pkg\n# -e ./other\n" });
-
-		await expect(assertNoEditableRequirements(["--requirement=reqs.txt"], dir)).resolves.toBeUndefined();
-	});
-
-	it("When a requirement file is a URL, then it is refused because it can't be checked", async () => {
-		await expect(
-			assertNoEditableRequirements(["--requirement=https://example.invalid/reqs.txt"], tmpdir()),
-		).rejects.toThrow(/requirement files must be local/);
-	});
-
-	it("When files include each other in a cycle without editable lines, then they are accepted", async () => {
-		const dir = await files({ "a.txt": "-r b.txt\nsix\n", "b.txt": "-r a.txt\n" });
-
-		await expect(assertNoEditableRequirements(["--requirement=a.txt"], dir)).resolves.toBeUndefined();
 	});
 });
 
@@ -289,7 +266,7 @@ describe("Given an environment root's install lock", () => {
 		expect(overlaps).toBe(0);
 	}, 180_000);
 
-	it("When a waiter crashed while taking over and left its token behind, then the stale lock is still taken over by exactly one holder at a time", async () => {
+	it("When a waiter crashed while reaping a stale lock and left its claim behind, then the lock is still taken over by exactly one holder at a time", async () => {
 		const base = await lockRoot();
 		const dead = exitedPid();
 		let overlaps = 0;
@@ -299,7 +276,7 @@ describe("Given an environment root's install lock", () => {
 				JSON.stringify({ pid: dead, host: hostname(), nonce: `lock-${trial}` }),
 			);
 			await writeFile(
-				join(base, ".install.lock.takeover"),
+				join(base, `.install.lock.reap.lock-${trial}.0`),
 				JSON.stringify({ pid: dead, host: hostname(), nonce: `t-${trial}` }),
 			);
 			let inside = 0;
@@ -315,13 +292,13 @@ describe("Given an environment root's install lock", () => {
 		expect(overlaps).toBe(0);
 	}, 180_000);
 
-	it("When a live waiter is taking over a stale lock, then another waiter waits for it instead of taking over too", async () => {
+	it("When a live waiter is reaping a stale lock, then another waiter waits for it instead of reaping too", async () => {
 		const base = await lockRoot();
 		await writeFile(
 			join(base, ".install.lock"),
 			JSON.stringify({ pid: exitedPid(), host: hostname(), nonce: "stale" }),
 		);
-		const takeover = join(base, ".install.lock.takeover");
+		const takeover = join(base, ".install.lock.reap.stale.0");
 		await writeFile(takeover, JSON.stringify({ pid: process.pid, host: hostname(), nonce: "live" }));
 		let entered = false;
 
