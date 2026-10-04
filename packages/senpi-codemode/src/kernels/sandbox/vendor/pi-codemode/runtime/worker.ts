@@ -48,7 +48,10 @@ function discardOutput(memory: { readonly buffer: ArrayBufferLike }) {
 function describeException(error: JSException): string {
 	const head = error.message ? `${error.name}: ${error.message}` : error.name;
 	const stack = error.stack?.trimEnd();
-	return JSON.stringify({ name: error.name, message: error.message, stack: stack ? `${head}\n${stack}` : head });
+	// senpi-change begin: evalCode fails before any script runs, so an InternalError here is the engine's own
+	const reason = error.name === "InternalError" && error.message === "out of memory" ? "memory" : undefined;
+	return JSON.stringify({ name: error.name, message: error.message, stack: stack ? `${head}\n${stack}` : head, reason });
+	// senpi-change end
 }
 // senpi-change begin: output streaming
 /**

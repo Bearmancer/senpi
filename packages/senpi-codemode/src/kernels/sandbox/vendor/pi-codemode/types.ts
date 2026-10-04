@@ -71,6 +71,8 @@ export interface CodemodeError {
 	name?: string;
 	message: string;
 	stack?: string;
+	/** senpi-change: set by the runtime itself (never from script text) for its own memory-limit and stalled failures. */
+	reason?: "memory" | "unresolved";
 }
 
 /** Keys the script changed with `store()`. Only successful executions report writes. */

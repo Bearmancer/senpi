@@ -1,5 +1,6 @@
 import type { AgentToolResult, AgentToolUpdateCallback } from "@code-yeongyu/senpi";
 import { describe, expect, it, vi } from "vitest";
+import { defaultCodemodeSettings } from "../src/config/settings.ts";
 import { createEvalTool } from "../src/tool/eval-tool.ts";
 import { errorResult, FakeKernel, FakeManager, fakeExtensionContext, result } from "./eval/fakes.ts";
 
@@ -275,5 +276,31 @@ describe("createEvalTool", () => {
 		);
 		expect(getKernel).not.toHaveBeenCalled();
 		expect(textOf(toolResult)).toBe("proxied");
+	});
+
+	it("When sandbox cells are on and a proxy runs cells, then isolate: true is refused and never reaches the proxy", async () => {
+		// Given
+		const proxyExecutor = vi.fn();
+		const tool = createEvalTool({
+			enabledLanguages: { js: true, py: false, rb: false, jl: false },
+			kernelManager: { getKernel: vi.fn() },
+			cellTimeoutSeconds: 30,
+			executeTool: vi.fn(),
+			proxyExecutor,
+			settings: { ...defaultCodemodeSettings, sandbox: { ...defaultCodemodeSettings.sandbox, enabled: true } },
+		});
+
+		// When
+		const call = tool.execute(
+			"proxy-isolate",
+			{ language: "js", code: "return 42", summary: "isolated run", isolate: true },
+			undefined,
+			undefined,
+			fakeExtensionContext(),
+		);
+
+		// Then
+		await expect(call).rejects.toMatchObject({ name: "EvalIsolateInvalidError" });
+		expect(proxyExecutor).not.toHaveBeenCalled();
 	});
 });

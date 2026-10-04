@@ -7,12 +7,14 @@ import {
 	kernelToolsStorage,
 } from "@code-yeongyu/senpi";
 import type { KernelToHostMessage } from "../bridge/protocol.ts";
+import { resolveSandbox } from "../config/feature-settings.ts";
 import { DEFAULT_FOREGROUND_WINDOW_SECONDS, defaultCodemodeSettings } from "../config/settings.ts";
 import {
 	KERNEL_TOOLS_CAPABILITIES,
 	type KernelToolsCapability,
 	type KernelToolsDescribeResult,
 } from "../kernels/js/kernel-tools-types.ts";
+import { sandboxCellExecutor } from "../kernels/sandbox/sandbox-cell.ts";
 import { TIMEOUT_PAUSE_OP, TIMEOUT_RESUME_OP } from "../timeouts/bridge-timeout.ts";
 import { abortError, CellExecution, defaultTimeoutFactory } from "./cell-execution.ts";
 import { CellHandler, type CellState } from "./cell-handler.ts";
@@ -270,12 +272,28 @@ async function executeCell(
 			// Resolved when the cell's turn comes in the kernel's queue: a %load reads the file the cells ahead of it
 			// wrote, and a refusal settles in queue order like any cell.
 			const loadOptions = { cwd: invocation.ctx.cwd, artifactsDir: options.artifactsDir };
-			const resolveAtStart =
-				magic.kind === "load"
+			// An isolated cell never runs a file outside its sandbox: %load there is refused.
+			const isolatedLoad = invocation.input.isolate === true && magic.kind === "load";
+			const resolveAtStart = isolatedLoad
+				? () => ({
+						ok: false as const,
+						message:
+							"isolate: true cannot run a %load cell: an isolated cell sees no host files, and loading one would break that isolation. Run %load in a normal cell, or paste the code into the isolated cell.",
+					})
+				: magic.kind === "load"
 					? () => loadCell(magic.target, loadOptions)
 					: magic.kind === "refused"
 						? () => ({ ok: false as const, message: magic.message })
 						: undefined;
+			const isolated =
+				invocation.input.isolate === true && resolveAtStart === undefined
+					? sandboxCellExecutor(invocation.input.code, {
+							sandbox: resolveSandbox(options.settings ?? {}),
+							executeTool: options.executeTool,
+							toolNames: () => (options.listTools?.() ?? []).map((tool) => tool.name),
+							describeTool: (name) => options.listTools?.().find((tool) => tool.name === name)?.description,
+						})
+					: undefined;
 			const environments = invocation.input.language === "py" ? options.pythonEnvironments : undefined;
 			const envRoot = environments === undefined ? undefined : () => environments.activeRoot ?? "";
 			const jsEnvironments = invocation.input.language === "js" ? options.jsEnvironments : undefined;
@@ -286,6 +304,7 @@ async function executeCell(
 					code: invocation.input.code,
 					...(resolveAtStart === undefined ? {} : { resolveAtStart }),
 					...(magic.kind === "host" ? { host: magic.executor } : {}),
+					...(isolated === undefined ? {} : { host: isolated }),
 					...(envRoot === undefined ? {} : { envRoot }),
 					...(packageRoot === undefined ? {} : { packageRoot }),
 					...(bridgeCellToken === undefined ? {} : { bridgeCellToken }),
