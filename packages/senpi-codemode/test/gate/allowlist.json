@@ -597,7 +597,11 @@
 				"legacyContracts/test/py-kernel-startup.test.ts/Python startup progress keeps waiting for a cold interpreter that is silent in its imports but busy on the CPU",
 				"legacyContracts/test/py-kernel-startup.test.ts/Python startup progress fails a silent and idle interpreter after the guard, naming the stage it stopped in",
 				"legacyContracts/test/py-kernel-startup.test.ts/Python startup progress stops an interpreter that stays busy but never becomes ready at the startup ceiling, naming its stage",
-				"legacyContracts/test/py-kernel-startup.test.ts/Python startup progress keeps a starting interpreter alive while it writes output"
+				"legacyContracts/test/py-kernel-startup.test.ts/Python startup progress keeps a starting interpreter alive while it writes output",
+				"legacyContracts/test/py-kernel-startup.test.ts/Python startup progress keeps a starting interpreter alive while it prints on stdout",
+				"legacyContracts/test/py-kernel-startup.test.ts/Python startup progress fails an interpreter that goes idle right after a stage change within one guard period",
+				"legacyContracts/test/py-kernel-startup.test.ts/Python startup progress retires a stalled interpreter with one SIGKILL to its process group, and never through the real process table",
+				"legacyContracts/test/py-kernel-startup.test.ts/Python startup progress falls back to killing the child itself when its process group is already gone"
 			],
 			"reason": "Python startup counts CPU use and output as progress, with an absolute ceiling (senpi#2718): a shared CPU reader module and four startup behaviour cases."
 		}
