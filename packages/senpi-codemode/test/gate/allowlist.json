@@ -373,7 +373,9 @@
 				"legacyContracts/test/sandbox/vendor/upstream-sandbox.test.ts/escape hatches has no host globals",
 				"legacyContracts/test/sandbox/vendor/upstream-sandbox.test.ts/escape hatches keeps eval and Function inside the VM",
 				"legacyContracts/test/sandbox/vendor/upstream-sandbox.test.ts/escape hatches rejects dynamic import",
-				"legacyContracts/test/sandbox/vendor/upstream-sandbox.test.ts/escape hatches keeps tools and console frozen"
+				"legacyContracts/test/sandbox/vendor/upstream-sandbox.test.ts/escape hatches keeps tools and console frozen",
+				"legacyContracts/test/sandbox/vendored-host-consumer-failure.test.ts/Given a streaming run whose script has already returned When the consumer throws on a frame that drains afterwards, then the run settles as failed instead of ok",
+				"legacyContracts/test/sandbox/vendored-host-consumer-failure.test.ts/Given a streaming run whose script has already returned When an abort arrives after its only frame was consumed, then the run keeps its value and store writes"
 			],
 			"reason": "Node 18 part 1: the vendored pi codemode runtime (earendil-works/pi v1.0.1) with its ported upstream suite and the two opt-in host options. Nothing imports it yet, so the scoped census and the prompt are unchanged; only these test contracts are new."
 		},
