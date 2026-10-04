@@ -435,7 +435,15 @@
 				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation When the host is exits without closing its kernel, then its process-mode kernel child is gone too",
 				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation When a cell in a bun child reads fd 0, then it reads nothing and the host can still interrupt it",
 				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation When a worker-mode cell calls a host tool with a BigInt and an undefined field, then the host receives them as worker mode does",
-				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation When a process-mode cell calls a host tool with a BigInt and an undefined field, then the host receives them as worker mode does"
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation When a process-mode cell calls a host tool with a BigInt and an undefined field, then the host receives them as worker mode does",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation When a process-mode kernel starts, then its child runs on bun, the product's runtime",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation When a cell runs a child process that inherits fd 1 and prints 300 KB, then the cell settles with all of it",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation When a cell writes to fd 1 in a loop that ignores failed writes and returns, then the cell settles",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation When a cell returns a value whose UTF-8 form exceeds the frame limit, then the cell fails and the kernel keeps its globals",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation When a cell calls a host tool with arguments larger than the frame limit, then the call fails in the cell at once",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation When a cell sends data shaped like the value markers, then the host receives it unchanged",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation When a cell in a node child crashes while waiting on a host tool, then the cell settles with the crash at once",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation When the host is killed with SIGKILL while a cell spins, then its process-mode kernel child is gone too"
 			],
 			"reason": "Node 17: opt-in process-isolated JavaScript kernel (isolation.js: \"process\", worker default unchanged). The child runs worker-core over the framed subprocess transport (fd 0 in, a private dup of fd 1 out; fd 1 re-pointed at a pipe drained into text frames), with no inline fallback in process mode (a failed start is a capability-gap result naming the runtime). process-entry.js, process-worker.ts and process-memory-host.ts join the scoped census, plus the new contracts. No prompt or eval schema change."
 		},

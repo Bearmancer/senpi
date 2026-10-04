@@ -11,12 +11,14 @@
 // the re-point. Every frame is written as "<token> <json>", and the host parses only lines that carry it.
 //
 // Lifetime: the kernel exits the moment its control channel reaches end-of-file (the host closed it, exited or was
-// killed), with a parent-pid check as a backstop, so it never outlives its host.
+// killed). A watchdog thread also checks the parent pid and kills this process when the host is gone, so a cell
+// that never yields (a busy loop, a blocking call) cannot keep the kernel alive past its host.
 import { closeSync, createReadStream, openSync, writeSync } from "node:fs";
 import { createRequire } from "node:module";
 import { createInterface } from "node:readline";
 import { Readable } from "node:stream";
 import { StringDecoder } from "node:string_decoder";
+import { Worker } from "node:worker_threads";
 
 // Captured before any cell runs, so a cell that later replaces these never sees a frame being built.
 const stringify = JSON.stringify;
@@ -27,9 +29,10 @@ const fromString = (text) => Buffer.from(text, "utf8");
 // The host refuses a frame over 10 MiB; text is split well below it (a char can escape to 6 bytes of JSON).
 const TEXT_CHUNK_CHARS = 1 << 20;
 const FRAME_LIMIT_BYTES = 9 * 1024 * 1024;
-// Values JSON cannot carry are sent as markers the host turns back into the value, matching worker mode.
-const BIGINT_MARKER = "\u0000senpi:bigint";
-const UNDEFINED_MARKER = "\u0000senpi:undefined";
+// Values JSON cannot carry are sent as markers the host turns back into the value, matching worker mode. Each marker
+// carries the frame token, so a cell's own data can never be taken for one.
+const BIGINT_MARKER = "\u0000senpi:bigint:";
+const UNDEFINED_MARKER = "\u0000senpi:undefined:";
 const DRAIN_MARKER = "\u0000senpi-drain:";
 
 function libcSymbols() {
@@ -103,24 +106,31 @@ const framePrefix = textPipe === null ? "\n" : "";
 let frameToken;
 
 function replacer(_key, value) {
-	if (typeof value === "bigint") return { [BIGINT_MARKER]: value.toString() };
-	if (value === undefined) return { [UNDEFINED_MARKER]: 1 };
+	if (typeof value === "bigint") return { [`${BIGINT_MARKER}${frameToken}`]: value.toString() };
+	if (value === undefined) return { [`${UNDEFINED_MARKER}${frameToken}`]: 1 };
 	return value;
 }
 
 function writeFrame(message) {
-	const json = stringify(message, replacer);
-	if (json.length > FRAME_LIMIT_BYTES && message.type === "result") {
-		const error = { name: "RangeError", message: `cell result is too large to return (${json.length} bytes)` };
+	const bytes = fromString(stringify(message, replacer));
+	if (bytes.length <= FRAME_LIMIT_BYTES) {
+		writeAll(frameFd, Buffer.concat([fromString(`${framePrefix}${frameToken} `), bytes, fromString("\n")]));
+		return;
+	}
+	const tooLarge = (what) => ({ name: "RangeError", message: `${what} is too large to send (${bytes.length} bytes)` });
+	if (message.type === "result") {
+		const error = tooLarge("cell result");
 		writeFrame({ type: "result", cellId: message.cellId, ok: false, error, durationMs: message.durationMs ?? 0 });
 		return;
 	}
-	if (json.length > FRAME_LIMIT_BYTES) {
-		const data = `[a ${message.type} message of ${json.length} bytes was too large to send and was dropped]\n`;
-		writeFrame({ type: "text", stream: "stderr", data });
+	if (message.type === "tool-call") {
+		// The host never sees the call, so the cell gets the refusal as the call's own failure instead of waiting on it.
+		const reply = { type: "tool-reply", callId: message.callId, ok: false, error: tooLarge(`the ${message.toolName} call`) };
+		queueMicrotask(() => deliver(reply));
 		return;
 	}
-	writeAll(frameFd, fromString(`${framePrefix}${frameToken} ${json}\n`));
+	const data = `[a ${message.type} message of ${bytes.length} bytes was too large to send and was dropped]\n`;
+	writeFrame({ type: "text", stream: "stderr", data });
 }
 
 function sendFrame(message) {
@@ -141,11 +151,29 @@ function sendFrame(message) {
 // byte a cell wrote before it returned reaches the host before its result.
 const pendingResults = new Map();
 let drainSequence = 0;
+// The pipe is drained on its own thread: a cell that fills it from this thread (a child process inheriting fd 1, a
+// writeSync loop) must never wait on a reader that only runs once the cell yields.
+const DRAINER = `const { readSync } = require("node:fs");
+const { parentPort, workerData } = require("node:worker_threads");
+const buffer = Buffer.alloc(1 << 16);
+for (;;) {
+	let read;
+	try {
+		read = readSync(workerData.fd, buffer, 0, buffer.length, null);
+	} catch (error) {
+		if (error && error.code === "EAGAIN") continue;
+		break;
+	}
+	if (read === 0) break;
+	parentPort.postMessage(buffer.subarray(0, read).slice());
+}`;
 if (textPipe !== null) {
 	const decoder = new StringDecoder("utf8");
 	let carry = "";
-	const reader = createReadStream("", { fd: textPipe.readFd });
-	reader.on("data", (chunk) => {
+	const reader = new Worker(DRAINER, { eval: true, workerData: { fd: textPipe.readFd } });
+	reader.unref();
+	reader.on("message", (data) => {
+		const chunk = Buffer.from(data);
 		let text = carry + decoder.write(chunk);
 		carry = "";
 		for (;;) {
@@ -190,13 +218,19 @@ const frameLines = createInterface({ input: frameReader });
 // End-of-file on the control channel means the host is gone (closed, exited or killed): never outlive it.
 frameReader.once("end", () => exit(0));
 frameReader.once("close", () => exit(0));
-const parentPid = process.ppid;
+// The same, from a thread a running cell cannot block: once the parent pid changes the host is gone.
+const WATCHDOG = `const { workerData } = require("node:worker_threads");
 setInterval(() => {
-	if (process.ppid !== parentPid) exit(0);
-}, 1000).unref();
+	if (process.ppid !== workerData.parent) process.kill(process.pid, "SIGKILL");
+}, 100);`;
+new Worker(WATCHDOG, { eval: true, workerData: { parent: process.ppid } }).unref();
 
 let lineHandler;
 const bufferedLines = [];
+function deliver(message) {
+	if (lineHandler === undefined) bufferedLines.push(message);
+	else lineHandler(message);
+}
 const tokenReceived = new Promise((resolve) => {
 	frameLines.on("line", (line) => {
 		if (frameToken === undefined) {
@@ -205,9 +239,7 @@ const tokenReceived = new Promise((resolve) => {
 			return;
 		}
 		if (line.length === 0) return;
-		const message = JSON.parse(line);
-		if (lineHandler === undefined) bufferedLines.push(message);
-		else lineHandler(message);
+		deliver(JSON.parse(line));
 	});
 });
 
@@ -234,14 +266,15 @@ const transport = {
 
 await tokenReceived;
 
-// The crash cause reaches the host on stderr, tagged with the token, before the kernel exits (worker mode reports it
-// through the thread's error event).
+// The crash cause reaches the host on stderr, tagged with the token, before the kernel ends (worker mode reports it
+// through the thread's error event). It ends by SIGKILL, not process.exit: a crashed kernel runs no more code, and
+// Node's exit can stall joining its own platform threads, which would keep a dead kernel and its cell waiting.
 function reportCrash(error) {
 	const cause = error instanceof Error ? { name: error.name, message: error.message } : { name: "Error", message: String(error) };
 	try {
 		writeBytes(2, fromString(`\nsenpi-kernel-crash ${frameToken} ${stringify(cause)}\n`));
 	} finally {
-		exit(1);
+		process.kill(process.pid, "SIGKILL");
 	}
 }
 process.on("uncaughtException", reportCrash);

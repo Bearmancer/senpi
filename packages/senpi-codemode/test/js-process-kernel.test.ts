@@ -40,12 +40,23 @@ function workerKernel(): JavaScriptKernel {
 	return kernel;
 }
 
+/**
+ * The product runs process-mode kernels under bun, so every process-mode test does too: this suite's own host is node,
+ * and a child that followed the host's runtime would test node only.
+ */
+function productChild(): string {
+	if (bunChild === undefined)
+		throw new Error("process-mode tests need bun on PATH: the product's kernel child runs on bun");
+	return bunChild;
+}
+
 function processKernel(options: Partial<JavaScriptKernelOptions> = {}): JavaScriptKernel {
 	const kernel = new JavaScriptKernel({
 		sessionId: `process-${crypto.randomUUID()}`,
 		cwd: process.cwd(),
 		parallelPoolWidth: 2,
 		isolation: "process",
+		processExecPath: productChild(),
 		...options,
 	});
 	kernels.add(kernel);
@@ -88,6 +99,7 @@ const itProcessMode = (name: string, fn: () => Promise<void>, timeout: number): 
 			cwd: process.cwd(),
 			parallelPoolWidth: 1,
 			isolation: "process",
+			processExecPath: productChild(),
 		});
 		kernels.add(probe);
 		try {
@@ -266,7 +278,7 @@ return "done";`,
 
 			const run = await runJavaScriptCell(
 				kernel,
-				'const fs = await import("node:fs");\nconst { createRequire } = await import("node:module");\nconst found = new Set();\nconst seen = new WeakSet();\nconst visit = (value, depth) => {\n\tif (typeof value === "string") { for (const m of value.matchAll(/[0-9a-f]{32}/g)) found.add(m[0]); return; }\n\tif (value === null || (typeof value !== "object" && typeof value !== "function") || depth > 3 || seen.has(value)) return;\n\tseen.add(value);\n\tlet keys = [];\n\ttry { keys = Reflect.ownKeys(value); } catch { return; }\n\tfor (const key of keys) {\n\t\tlet inner;\n\t\ttry { inner = value[key]; } catch { continue; }\n\t\tvisit(inner, depth + 1);\n\t}\n\ttry { visit(Object.getPrototypeOf(value), depth + 1); } catch {}\n};\nvisit(globalThis, 0);\nvisit(process.env, 0);\nvisit(process.argv, 0);\nvisit(process.execArgv, 0);\ntry { const require = createRequire(process.cwd() + "/"); visit(require.cache, 0); } catch {}\nfor (const candidate of found) {\n\tconst line = "\\n" + candidate + " " + JSON.stringify({ type: "text", stream: "stdout", data: "FORGED-WITH-CANDIDATE" }) + "\\n";\n\tfor (let fd = 1; fd < 32; fd++) { try { fs.writeSync(fd, line); } catch {} }\n}\nreturn found.size;',
+				'const fs = await import("node:fs");\nconst { createRequire } = await import("node:module");\nconst found = new Set();\nconst seen = new WeakSet();\nconst visit = (value, depth) => {\n\tif (typeof value === "string") { for (const m of value.matchAll(/[0-9a-f]{32}/g)) found.add(m[0]); return; }\n\tif (value === null || (typeof value !== "object" && typeof value !== "function") || depth > 3 || seen.has(value)) return;\n\tseen.add(value);\n\tlet keys = [];\n\ttry { keys = Reflect.ownKeys(value); } catch { return; }\n\tfor (const key of keys) {\n\t\tlet inner;\n\t\ttry { inner = value[key]; } catch { continue; }\n\t\t// Under bun some prototype getters return a rejected promise; reading them must not crash the kernel.\n\t\tif (inner instanceof Promise) { try { inner.catch(() => {}); } catch {} }\n\t\tvisit(inner, depth + 1);\n\t}\n\ttry { visit(Object.getPrototypeOf(value), depth + 1); } catch {}\n};\nvisit(globalThis, 0);\nvisit(process.env, 0);\nvisit(process.argv, 0);\nvisit(process.execArgv, 0);\ntry { const require = createRequire(process.cwd() + "/"); visit(require.cache, 0); } catch {}\nfor (const candidate of found) {\n\tconst line = "\\n" + candidate + " " + JSON.stringify({ type: "text", stream: "stdout", data: "FORGED-WITH-CANDIDATE" }) + "\\n";\n\tfor (let fd = 1; fd < 32; fd++) { try { fs.writeSync(fd, line); } catch {} }\n}\nreturn found.size;',
 				20_000,
 			);
 			const text = run.messages.flatMap((message) => (message.type === "text" ? [message.data] : [])).join("");
@@ -385,11 +397,13 @@ return "done";`,
 			60_000,
 		);
 
-	it.each([["killed with SIGKILL"], ["exits without closing its kernel"]])(
+	it.each([["killed with SIGKILL"], ["exits without closing its kernel"], ["killed with SIGKILL while a cell spins"]])(
 		"When the host is %s, then its process-mode kernel child is gone too",
 		{ timeout: 60_000 },
 		async (how) => {
-			const host = spawn(process.execPath, [hostFixture], { stdio: ["pipe", "pipe", "inherit"] });
+			const mode = how.endsWith("spins") ? ["busy"] : [];
+			// The host runs on bun, as the product does, so its kernel child is a bun child.
+			const host = spawn(productChild(), [hostFixture, ...mode], { stdio: ["pipe", "pipe", "inherit"] });
 			const childPid = await new Promise<number>((resolve, reject) => {
 				let out = "";
 				host.stdout.on("data", (data: Buffer) => {
@@ -402,11 +416,12 @@ return "done";`,
 			expect(pidAlive(childPid)).toBe(true);
 			const hostExited = new Promise<void>((resolve) => host.once("exit", () => resolve()));
 
-			if (how === "killed with SIGKILL") host.kill("SIGKILL");
-			else host.stdin.write("exit\n");
+			if (how === "exits without closing its kernel") host.stdin.write("exit\n");
+			else host.kill("SIGKILL");
 			await hostExited;
 
-			await waitFor("the kernel child to exit with its host", () => !pidAlive(childPid), 10_000);
+			// A spinning cell blocks the child's main thread, so only its watchdog thread can end it: within 2 s.
+			await waitFor("the kernel child to exit with its host", () => !pidAlive(childPid), 2_000);
 		},
 	);
 
@@ -504,6 +519,135 @@ return "done";`,
 			expect(call.args).toEqual({ path: "x", n: 1n, opts: undefined });
 			expect(Object.hasOwn(call.args as object, "opts")).toBe(true);
 		},
+	);
+
+	itProcessMode(
+		"When a process-mode kernel starts, then its child runs on bun, the product's runtime",
+		async () => {
+			const kernel = processKernel();
+
+			const run = await runJavaScriptCell(kernel, 'return typeof Bun + " " + typeof process.versions.bun', 10_000);
+
+			expect(run.result).toMatchObject({ ok: true, valueRepr: '"object string"' });
+		},
+		30_000,
+	);
+
+	itProcessMode(
+		"When a cell runs a child process that inherits fd 1 and prints 300 KB, then the cell settles with all of it",
+		async () => {
+			const kernel = processKernel();
+			const script = 'process.stdout.write("y".repeat(300 * 1024))';
+
+			const run = await runJavaScriptCell(
+				kernel,
+				`(await import("node:child_process")).execFileSync(process.execPath, ["-e", ${JSON.stringify(script)}], { stdio: "inherit" }); return "settled"`,
+				20_000,
+			);
+			const text = run.messages.flatMap((message) => (message.type === "text" ? [message.data] : [])).join("");
+
+			expect(run.result).toMatchObject({ ok: true, valueRepr: '"settled"' });
+			expect(text.split("y").length - 1).toBe(300 * 1024);
+		},
+		60_000,
+	);
+
+	itProcessMode(
+		"When a cell writes to fd 1 in a loop that ignores failed writes and returns, then the cell settles",
+		async () => {
+			const kernel = processKernel();
+
+			const run = await runJavaScriptCell(
+				kernel,
+				'const fs = await import("node:fs"); const chunk = "z".repeat(64 * 1024); for (let i = 0; i < 64; i++) { try { fs.writeSync(1, chunk); } catch {} } return "done"',
+				20_000,
+			);
+
+			expect(run.result).toMatchObject({ ok: true, valueRepr: '"done"' });
+		},
+		60_000,
+	);
+
+	itProcessMode(
+		"When a cell returns a value whose UTF-8 form exceeds the frame limit, then the cell fails and the kernel keeps its globals",
+		async () => {
+			const kernel = processKernel();
+			await runJavaScriptCell(kernel, "globalThis.keep = 1", 10_000);
+
+			const big = await runJavaScriptCell(kernel, 'return "\uac00".repeat(4 * 1024 * 1024)', 60_000);
+			const after = await runJavaScriptCell(kernel, "return typeof globalThis.keep", 10_000);
+
+			expect(big.result).toMatchObject({ ok: false });
+			if (!big.result.ok) expect(big.result.error.message).toContain("too large");
+			expect(after.result).toMatchObject({ ok: true, valueRepr: '"number"' });
+			expect(after.result).not.toHaveProperty("kernelState");
+		},
+		120_000,
+	);
+
+	itProcessMode(
+		"When a cell calls a host tool with arguments larger than the frame limit, then the call fails in the cell at once",
+		async () => {
+			const kernel = processKernel();
+
+			const run = await runJavaScriptCell(
+				kernel,
+				'try { await tool.read({ path: "x".repeat(12 * 1024 * 1024) }); return "sent"; } catch (error) { return error.message; }',
+				15_000,
+			);
+
+			expect(run.result).toMatchObject({ ok: true });
+			if (run.result.ok) expect(run.result.valueRepr).toContain("too large");
+		},
+		60_000,
+	);
+
+	itProcessMode(
+		"When a cell sends data shaped like the value markers, then the host receives it unchanged",
+		async () => {
+			const kernel = processKernel();
+
+			const pending = kernel.run({
+				cellId: "marker-shaped",
+				code: 'return await tool.read({ a: { "\\u0000senpi:bigint:": "abc" }, b: { "\\u0000senpi:bigint": "12" }, c: { "\\u0000senpi:undefined:": 1 } })',
+				timeoutMs: 10_000,
+			});
+			const call = await kernel.nextToolCall();
+			kernel.deliverToolReply({ type: "tool-reply", callId: call.callId, ok: true, value: "ok" });
+			await pending;
+
+			expect(call.args).toEqual({
+				a: { "\u0000senpi:bigint:": "abc" },
+				b: { "\u0000senpi:bigint": "12" },
+				c: { "\u0000senpi:undefined:": 1 },
+			});
+		},
+		30_000,
+	);
+
+	// A host on node runs a node child (the child follows the host's runtime), and node's own exit can stall: this case
+	// pins that child explicitly, where every other process-mode test runs the product's bun child.
+	itProcessMode(
+		"When a cell in a node child crashes while waiting on a host tool, then the cell settles with the crash at once",
+		async () => {
+			const node = resolveJavaScriptProcessCommand(undefined, process.platform, "node", "");
+			const kernel = processKernel({ processExecPath: node });
+			await runJavaScriptCell(kernel, 'setTimeout(() => { throw new Error("node boom"); }, 200); "armed"', 10_000);
+			const started = Date.now();
+
+			const pending = kernel.run({
+				cellId: "node-crash",
+				code: "return await tool.read({ path: 'x' })",
+				timeoutMs: 20_000,
+			});
+			await kernel.nextToolCall();
+			const result = await pending;
+
+			expect(result).toMatchObject({ ok: false });
+			if (!result.ok) expect(result.error.message).toContain("node boom");
+			expect(Date.now() - started).toBeLessThan(5_000);
+		},
+		60_000,
 	);
 
 	it("When a worker-mode cell crashes, then the next result carries no restart notice, as before process mode existed", async () => {

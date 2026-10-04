@@ -158,7 +158,7 @@ export function spawnProcessWorker(url: URL, options: JavaScriptProcessWorkerOpt
 			}
 			const message = parsed.message;
 			if (!isKernelToHostMessage(message)) return;
-			reviveFrameValues(message);
+			reviveFrameValues(message, frameToken);
 			for (const handler of [...messageHandlers]) handler(message);
 		},
 		onStderr: (_process, chunk) => {
@@ -205,8 +205,9 @@ export function spawnProcessWorker(url: URL, options: JavaScriptProcessWorkerOpt
 }
 
 const STDERR_TAIL_CHARS = 16 * 1024;
-const BIGINT_MARKER = "\u0000senpi:bigint";
-const UNDEFINED_MARKER = "\u0000senpi:undefined";
+const BIGINT_MARKER = "\u0000senpi:bigint:";
+const UNDEFINED_MARKER = "\u0000senpi:undefined:";
+const BIGINT_DIGITS = /^-?\d+$/;
 
 /** The cause the child reported on stderr just before exiting (see process-entry.js `reportCrash`). */
 function crashCauseFrom(stderr: string, token: string): Error | undefined {
@@ -228,17 +229,19 @@ function crashCauseFrom(stderr: string, token: string): Error | undefined {
 
 /**
  * Turns the child's markers back, in place, into the values JSON cannot carry (a BigInt, an `undefined` property or
- * element), so a frame matches what worker mode's structured clone delivers.
+ * element), so a frame matches what worker mode's structured clone delivers. A marker carries this child's frame
+ * token, so a cell's own data that merely looks like one is delivered as it is.
  */
-function reviveFrameValues(container: object): void {
+function reviveFrameValues(container: object, token: string): void {
+	const bigintKey = `${BIGINT_MARKER}${token}`;
+	const undefinedKey = `${UNDEFINED_MARKER}${token}`;
 	for (const key of Object.keys(container)) {
 		const value: unknown = Reflect.get(container, key);
 		if (typeof value !== "object" || value === null) continue;
 		const keys = Object.keys(value);
-		const digits: unknown =
-			keys.length === 1 && keys[0] === BIGINT_MARKER ? Reflect.get(value, BIGINT_MARKER) : undefined;
-		if (typeof digits === "string") Reflect.set(container, key, BigInt(digits));
-		else if (keys.length === 1 && keys[0] === UNDEFINED_MARKER) Reflect.set(container, key, undefined);
-		else reviveFrameValues(value);
+		const digits: unknown = keys.length === 1 && keys[0] === bigintKey ? Reflect.get(value, bigintKey) : undefined;
+		if (typeof digits === "string" && BIGINT_DIGITS.test(digits)) Reflect.set(container, key, BigInt(digits));
+		else if (keys.length === 1 && keys[0] === undefinedKey) Reflect.set(container, key, undefined);
+		else reviveFrameValues(value, token);
 	}
 }
