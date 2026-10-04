@@ -162,13 +162,18 @@ describe.skipIf(process.platform === "win32")("an unregistered host on the clien
 			(record) => record.type === "session_closed" && record.sessionId === sessionId,
 		);
 		expect(parked).toMatchObject({ reason: "handoff_parked" });
+		// The old generation holds the session file's path claim until it exits; then the successor reopens it.
+		expect(await waitForPidGone(old.pid, 60_000)).toBe(true);
 		const reopened = await (await connectPeer(old.socket)).request({
 			id: "reopen",
 			type: "open_session",
 			cwd: old.qa.cwd,
 			sessionPath,
 		});
-		expect(reopened).toMatchObject({ success: true, command: "open_session" });
+		expect(reopened, JSON.stringify(reopened.errorData ?? reopened.error)).toMatchObject({
+			success: true,
+			command: "open_session",
+		});
 	}, 240_000);
 });
 
