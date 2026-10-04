@@ -52,11 +52,17 @@ function driver(): {
 	};
 }
 
-async function settlesWithin(promise: Promise<void>, ms: number): Promise<boolean> {
-	return Promise.race([
-		promise.then(() => true),
-		new Promise<boolean>((resolve) => setTimeout(() => resolve(false), ms)),
-	]);
+async function flushMicrotasks(ticks = 20): Promise<void> {
+	for (let i = 0; i < ticks; i += 1) await Promise.resolve();
+}
+
+async function settled(promise: Promise<void>): Promise<boolean> {
+	let flag = false;
+	void promise.then(() => {
+		flag = true;
+	});
+	await flushMicrotasks();
+	return flag;
 }
 
 describe("trackTurnAdmission (senpi #2708)", () => {
@@ -64,13 +70,13 @@ describe("trackTurnAdmission (senpi #2708)", () => {
 		const withSingleFlag = driver();
 		withSingleFlag.emit({ type: "agent_start" });
 		withSingleFlag.resolveDisposition("started");
-		expect(await settlesWithin(singleFlagWait(withSingleFlag), 150)).toBe(false);
+		expect(await settled(singleFlagWait(withSingleFlag))).toBe(false);
 
 		const withPair = driver();
 		const tracked = trackTurnAdmission(withPair);
 		withPair.emit({ type: "agent_start" });
 		withPair.resolveDisposition("started");
-		expect(await settlesWithin(tracked.promise, 150)).toBe(true);
+		expect(await settled(tracked.promise)).toBe(true);
 		tracked.dispose();
 	});
 
@@ -80,7 +86,7 @@ describe("trackTurnAdmission (senpi #2708)", () => {
 		withPair.resolveDisposition("started");
 		await Promise.resolve();
 		withPair.emit({ type: "agent_start" });
-		expect(await settlesWithin(tracked.promise, 150)).toBe(true);
+		expect(await settled(tracked.promise)).toBe(true);
 		tracked.dispose();
 	});
 
@@ -88,7 +94,7 @@ describe("trackTurnAdmission (senpi #2708)", () => {
 		const withPair = driver();
 		const tracked = trackTurnAdmission(withPair);
 		withPair.resolveDisposition("delegated");
-		expect(await settlesWithin(tracked.promise, 150)).toBe(true);
+		expect(await settled(tracked.promise)).toBe(true);
 		tracked.dispose();
 	});
 });
