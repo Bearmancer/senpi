@@ -93,13 +93,13 @@ class DefaultCodemodeSessionManager implements CodemodeSessionManager {
 	}
 
 	async #call(request: BridgeToolCallRequest): Promise<unknown> {
-		return await this.#cellKernelTools.run(request.cellId, () =>
+		return await this.#cellKernelTools.run(request.cellToken, () =>
 			routeBridgeToolCall(this.#options, request, this.#context?.evalHandleHost),
 		);
 	}
 
-	bindCellKernelTools(cellId: string, capability: KernelToolsCapability): () => void {
-		return this.#cellKernelTools.bind(cellId, capability);
+	bindCellKernelTools(token: string, capability: KernelToolsCapability): () => void {
+		return this.#cellKernelTools.bind(token, capability);
 	}
 
 	async getKernel(language: EvalLanguage, onMessage: (message: KernelToHostMessage) => void): Promise<EvalKernel> {

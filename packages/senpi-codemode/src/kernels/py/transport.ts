@@ -36,6 +36,7 @@ export interface PythonTransportRunInput {
 	readonly timeoutMs?: number;
 	readonly preludePlan?: KernelPreludePlan;
 	readonly envRoot?: () => string;
+	readonly bridgeCellToken?: string;
 }
 
 export interface PythonTransportOptions {
@@ -165,6 +166,7 @@ export class PythonKernelTransport {
 			timeoutMs: input.timeoutMs,
 			preludes,
 			...(input.envRoot === undefined ? {} : { envRoot: input.envRoot() }),
+			...(input.bridgeCellToken === undefined ? {} : { bridgeCellToken: input.bridgeCellToken }),
 		});
 	}
 

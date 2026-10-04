@@ -59,7 +59,8 @@ export class ReplaceableKernel implements EvalKernel {
 		this.#language = language;
 		this.#start = start;
 		this.#kernel = first;
-		if (hasKernelTools(first)) {
+		// Python is the one subprocess kernel with kernel tools; rb and jl only carry tools_unavailable stubs to hide.
+		if (language === "py" && hasKernelTools(first)) {
 			// Always the CURRENT instance: after a replacement the old definitions are gone with the old interpreter.
 			const tools: KernelToolsMethods = {
 				describeKernelTools: (names) => this.#currentTools().describeKernelTools(names),

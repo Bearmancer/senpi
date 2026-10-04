@@ -212,12 +212,15 @@ async function executeCell(
 		// Computed before the handler so its construction-time snapshot captures this cell's capability.
 		// Worker messages later restore that snapshot before calling host tools (#1754, #2512).
 		const kernelTools = kernelToolsFor(kernel);
-		// Subprocess kernels call the host over the bridge, outside this async context: bind the capability to this
-		// cell's id so those calls get it, and only while this cell runs.
+		// Subprocess kernels call the host over the bridge, outside this async context. Their calls carry a fresh secret
+		// minted for this run and sent only to this cell's kernel, never the model-visible cell id, so code in another
+		// kernel cannot name this cell into its tools. JS calls already run inside this cell's scope (#1754).
+		const bridgeCellToken =
+			kernelTools === undefined || invocation.input.language === "js" ? undefined : randomUUID();
 		releaseCellKernelTools =
-			kernelTools === undefined
+			kernelTools === undefined || bridgeCellToken === undefined
 				? undefined
-				: options.kernelManager.bindCellKernelTools?.(invocation.cellId, kernelTools);
+				: options.kernelManager.bindCellKernelTools?.(bridgeCellToken, kernelTools);
 		const runBound = async (): Promise<AgentToolResult<EvalToolDetails>> => {
 			const queue = kernel.queueSnapshot();
 			state.queuedBehind = [...(queue.activeCellId === null ? [] : [queue.activeCellId]), ...queue.queuedCellIds];
@@ -269,6 +272,7 @@ async function executeCell(
 						? { host: async () => ({ ok: false as const, error: { message: magic.message } }) }
 						: {}),
 					...(envRoot === undefined ? {} : { envRoot }),
+					...(bridgeCellToken === undefined ? {} : { bridgeCellToken }),
 					kernelPreludes: options.kernelPreludes?.(),
 					onMessage,
 					onStarted: () => {

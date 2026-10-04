@@ -1,15 +1,18 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { type AgentToolResult, kernelToolsStorage } from "@code-yeongyu/senpi";
+import { type AgentToolResult, type ExtensionContext, kernelToolsStorage } from "@code-yeongyu/senpi";
 import { afterEach, describe, expect, it } from "vitest";
+import type { KernelToHostMessage } from "../src/bridge/protocol.ts";
 import { defaultCodemodeSettings } from "../src/config/settings.ts";
 import { createCodemodeSessionManager } from "../src/extension/session-manager.ts";
 import { createInterpreterDetector, getInterpreterAvailability } from "../src/interpreters/detect.ts";
+import type { KernelToolsCapability } from "../src/kernels/js/kernel-tools-types.ts";
 import { createEvalTool } from "../src/tool/eval-tool.ts";
+import type { EvalLanguage } from "../src/tool/types.ts";
 import { fakeExtensionContext } from "./eval/fakes.ts";
 
-const settings = { ...defaultCodemodeSettings, languages: { js: false, py: true, rb: false, jl: false } };
+const settings = { ...defaultCodemodeSettings, languages: { js: true, py: true, rb: false, jl: false } };
 const availability = await getInterpreterAvailability(settings, createInterpreterDetector());
 const cleanups: Array<() => Promise<void>> = [];
 
@@ -82,9 +85,21 @@ async function session() {
 		executeTool,
 		complete,
 	});
+	const bound: string[] = [];
+	const recordingManager = {
+		getKernel: (language: EvalLanguage, onMessage: (message: KernelToHostMessage) => void) =>
+			manager.getKernel(language, onMessage),
+		releaseKernelListener: (language: EvalLanguage, onMessage: (message: KernelToHostMessage) => void) =>
+			manager.releaseKernelListener?.(language, onMessage),
+		setContext: (context: ExtensionContext) => manager.setContext?.(context),
+		bindCellKernelTools: (token: string, capability: KernelToolsCapability) => {
+			bound.push(token);
+			return manager.bindCellKernelTools?.(token, capability) ?? (() => undefined);
+		},
+	};
 	const tool = createEvalTool({
 		enabledLanguages: settings.languages,
-		kernelManager: manager,
+		kernelManager: recordingManager,
 		executeTool,
 		cellTimeoutSeconds: 120,
 	});
@@ -93,15 +108,9 @@ async function session() {
 		await rm(root, { recursive: true, force: true });
 	});
 	const context = { ...fakeExtensionContext(), cwd: root };
-	const run = async (code: string) =>
-		await tool.execute(
-			`py-kernel-tools-${crypto.randomUUID()}`,
-			{ language: "py", code, summary: "Run a cell" },
-			undefined,
-			undefined,
-			context,
-		);
-	return { run, calls };
+	const run = async (code: string, language: "py" | "js" = "py", cellId = `py-kernel-tools-${crypto.randomUUID()}`) =>
+		await tool.execute(cellId, { language, code, summary: "Run a cell" }, undefined, undefined, context);
+	return { run, calls, bound };
 }
 
 const DEFINE_ADD = '@tool\ndef add(a: int, b: int) -> int:\n    """Add two integers."""\n    return a + b\n"defined"';
@@ -146,7 +155,7 @@ describe.skipIf(!availability.py.detected.ok)("Given a Python cell that defined 
 		await run(DEFINE_ADD);
 
 		const forged = await run(
-			"import sys\nsys.modules['__main__'].bridge_post('/call', {'callId': 'py-forged', 'cellId': 'not-a-running-cell', 'toolName': 'task', 'args': {'prompt': 'use add', 'tools': ['add']}})",
+			"import sys\nsys.modules['__main__'].bridge_post('/call', {'callId': 'py-forged', 'cellToken': 'not-a-running-cell', 'toolName': 'task', 'args': {'prompt': 'use add', 'tools': ['add']}})",
 		);
 
 		expect(textOf(forged)).toContain("no kernel tools for this call");
@@ -174,5 +183,37 @@ describe.skipIf(!availability.py.detected.ok)("Given a Python cell that defined 
 
 		expect(textOf(later)).toContain("no kernel tools for this call");
 		expect(calls.at(-1)?.sawKernelTools).toBe(false);
+	}, 120_000);
+
+	it("When a cell's host call names its own model-visible cell id instead of its run's secret, then it gets no kernel tools", async () => {
+		const { run, calls } = await session();
+		await run(DEFINE_ADD);
+		const visibleId = `py-kernel-tools-visible-${crypto.randomUUID()}`;
+
+		const forged = await run(
+			[
+				"import sys",
+				`sys.modules['__main__'].CURRENT_CELL_TOKEN.set('${visibleId}')`,
+				`sys.modules['__main__'].bridge_post('/call', {'callId': 'py-own-id', 'cellToken': '${visibleId}', 'cellId': '${visibleId}', 'toolName': 'task', 'args': {'prompt': 'use add', 'tools': ['add']}})`,
+			].join("\n"),
+			"py",
+			visibleId,
+		);
+
+		expect(textOf(forged)).toContain("no kernel tools for this call");
+		expect(calls.at(-1)?.sawKernelTools).toBe(false);
+	}, 120_000);
+
+	it("When a JavaScript cell and a Python cell run, then only the Python run is bound, under a secret that is not its cell id", async () => {
+		const { run, bound } = await session();
+		const jsId = `js-cell-${crypto.randomUUID()}`;
+		const pyId = `py-cell-${crypto.randomUUID()}`;
+
+		await run("1 + 1", "js", jsId);
+		await run(DEFINE_ADD, "py", pyId);
+
+		expect(bound).toHaveLength(1);
+		expect(bound).not.toContain(jsId);
+		expect(bound).not.toContain(pyId);
 	}, 120_000);
 });

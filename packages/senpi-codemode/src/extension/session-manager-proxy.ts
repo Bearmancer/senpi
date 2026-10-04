@@ -107,9 +107,9 @@ export class SessionManagerProxy implements CodemodeSessionManager, EvalExecutio
 		this.#current?.releaseKernelListener?.(language, onMessage);
 	}
 
-	bindCellKernelTools(cellId: string, capability: KernelToolsCapability): () => void {
+	bindCellKernelTools(token: string, capability: KernelToolsCapability): () => void {
 		// Bound to the generation that runs the cell: a later generation never serves that cell's host calls.
-		return this.#current?.bindCellKernelTools?.(cellId, capability) ?? (() => undefined);
+		return this.#current?.bindCellKernelTools?.(token, capability) ?? (() => undefined);
 	}
 
 	async complete(request: CompletionRequest, ctx: ExtensionContext): Promise<CompletionResult> {

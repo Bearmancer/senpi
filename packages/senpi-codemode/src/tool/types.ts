@@ -173,6 +173,11 @@ export interface EvalKernelRunInput {
 	 * sees the revision it published. `""` means no environment: the previous revision leaves the import path.
 	 */
 	readonly envRoot?: () => string;
+	/**
+	 * Subprocess kernels attach this to the cell's host calls, and the host gives those calls the cell's kernel tools.
+	 * A fresh secret per run, sent only to the kernel that runs the cell; never a model-visible id.
+	 */
+	readonly bridgeCellToken?: string;
 }
 
 export interface KernelInterruptHandle {
@@ -212,10 +217,10 @@ export interface EvalKernelManager {
 	 */
 	releaseKernelListener?(language: EvalLanguage, onMessage: (message: KernelToHostMessage) => void): void;
 	/**
-	 * Binds a running cell's kernel-tools capability to the host calls that carry its id (subprocess kernels reach
+	 * Binds a running cell's kernel-tools capability to the host calls that carry `token` (subprocess kernels reach
 	 * the host over the bridge, outside the cell's async context). The returned release runs when the cell settles.
 	 */
-	bindCellKernelTools?(cellId: string, capability: KernelToolsCapability): () => void;
+	bindCellKernelTools?(token: string, capability: KernelToolsCapability): () => void;
 }
 
 export type ExecuteTool = (
