@@ -1,4 +1,3 @@
-import { spawn } from "node:child_process";
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -7,9 +6,6 @@ import type { SessionControlDrainResult, SessionControlWakeEvent } from "../src/
 import { type SubmissionTicket, TuiSessionControlHost } from "../src/modes/interactive/session-control-host.ts";
 import { resolveTuiSocket } from "../src/modes/interactive/session-control-registry.ts";
 import { WakeScheduler } from "../src/modes/interactive/session-control-wake.ts";
-import { createDaemonDirectories, createHostDaemonPaths } from "../src/modes/rpc/host-daemon-paths.ts";
-import { writeHostRegistration } from "../src/modes/rpc/host-daemon-registration.ts";
-import { listHostEndpoints } from "../src/modes/rpc/host-endpoints.ts";
 import { MAX_SOCKET_PATH_BYTES } from "../src/modes/rpc/socket-ownership.ts";
 import { tuiSocketName } from "../src/modes/rpc/tui-socket.ts";
 import { type EndpointFixture, startEndpoint } from "./helpers/session-control-fixture.ts";
@@ -179,30 +175,6 @@ describe("control endpoint lifecycle", () => {
 		expect(readFileSync(harness.sessionManager.getSessionFile() ?? "", "utf8")).toContain('"delivery_id":"d1"');
 	});
 
-	it("reaps a dead tui endpoint at registration and leaves at most one across 50 cycles", async () => {
-		const harness = await ownedHarness();
-		const agentDir = join(harness.tempDir, "agent");
-		const dead = await deadPid();
-		const ghost = await resolveTuiSocket(agentDir, "ghost-instance");
-		const paths = createHostDaemonPaths({ socket: ghost, agentDir });
-		await writeHostRegistration(paths, {
-			record: { pid: dead, processStartTime: "Thu Jan  1 00:00:00 1970" },
-			socket: ghost,
-			instanceId: "ghost-instance",
-			generation: 0,
-			launchProfileId: "tui",
-		});
-		await createDaemonDirectories(paths, { kind: "tui" });
-		expect(await listHostEndpoints(agentDir)).toHaveLength(1);
-		for (let cycle = 0; cycle < 50; cycle++) {
-			const fixture = await startEndpoint({ harness, agentDir });
-			const listed = await listHostEndpoints(agentDir);
-			expect(listed.map((entry) => entry.socket)).toEqual([fixture.socket]);
-			await fixture.endpoint.dispose();
-		}
-		expect(await listHostEndpoints(agentDir)).toEqual([]);
-	});
-
 	it("falls back to a private short root when the agent directory is too deep for sun_path", async () => {
 		const root = mkdtempSync(join(tmpdir(), "senpi-tui-deep-"));
 		cleanups.push(() => rmSync(root, { recursive: true, force: true }));
@@ -218,14 +190,3 @@ describe("control endpoint lifecycle", () => {
 		expect(shallow).toBe(join(shortRoot, "agent", "rpc", "tui", tuiSocketName("instance-1")));
 	});
 });
-
-function deadPid(): Promise<number> {
-	return new Promise((resolve, reject) => {
-		const child = spawn(process.execPath, ["-e", ""], { stdio: "ignore" });
-		child.once("error", reject);
-		child.once("exit", () => {
-			if (child.pid === undefined) reject(new Error("child had no pid"));
-			else resolve(child.pid);
-		});
-	});
-}

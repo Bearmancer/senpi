@@ -96,12 +96,19 @@ export async function readHostRegistration(paths: HostDaemonPaths): Promise<Regi
  * Registers a generation and points the daemon directory at it, under this process's writer stamp.
  * The stamp is what authorizes a later stop: only the process that wrote a record may signal the
  * host it names, and the recorded start time keeps a recycled pid from inheriting that right.
+ *
+ * `fresh` says the directory cannot hold an earlier generation (a terminal's endpoint, named by a
+ * socket built from a new instance id), so there is nothing to prune.
  */
-export async function writeHostRegistration(paths: HostDaemonPaths, registration: HostRegistration): Promise<void> {
+export async function writeHostRegistration(
+	paths: HostDaemonPaths,
+	registration: HostRegistration,
+	options: { readonly fresh?: boolean } = {},
+): Promise<void> {
 	// Every write is also the moment to drop what is no longer running: records of dead generations
 	// and their session-path claims otherwise accumulate for the life of the agent directory, and a
 	// stale pointer among them reads as "a daemon serves this endpoint" (#1893).
-	await pruneDeadGenerations(paths);
+	if (options.fresh !== true) await pruneDeadGenerations(paths);
 	const { generation, writer } = await writeGenerationRecord(paths, registration);
 	// The pointer is replaced by rename: a reader either sees the generation that owned the socket
 	// before this call or the one that owns it now, never a half-written pointer.

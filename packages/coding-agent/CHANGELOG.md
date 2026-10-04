@@ -10,6 +10,8 @@
 
 ### Changed
 
+- A terminal that registers a control endpoint becomes reachable sooner and admits a message sooner after it is reachable. The endpoint binds its socket while the session header is written and looks up the process start time in parallel. It no longer reaps other terminals' dead records or prunes generations before it binds, and it no longer waits for its inbox watch to arm before registration returns. That wait added 200 ms to admission whenever the watch's first sentinel event was missed. A message that reaches the inbox before the watch is armed is still picked up by one more pass once arming settles ([#PRNUM](https://github.com/code-yeongyu/senpi/pull/PRNUM)).
+
 ### Fixed
 
 - A reply that only answers a question is now the answer itself: the prompt no longer requires every final message to open with the Ask / For you / Now / Next block, which put one-line answers inside a status block ending `Now: none. Next: none.` The block stays for turns that did work ([#2723](https://github.com/code-yeongyu/senpi/issues/2723)).

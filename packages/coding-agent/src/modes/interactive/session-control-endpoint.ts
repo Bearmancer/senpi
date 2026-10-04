@@ -3,9 +3,12 @@
  * registers one (the interactive host imports it lazily), so a plain TUI pays nothing.
  *
  * Order matters and each step is undone on failure, so a failed bind leaves no half-registered
- * directory: the session header is made durable, dead `tui` endpoints are reaped, the socket is
- * bound (secret 0600, directory 0700), and only then is the endpoint registered - a visible
- * endpoint is one that answers. Wakes come from edges only (see `session-control-wake.ts`).
+ * directory: the socket is bound (secret 0600, directory 0700) while the session header is made
+ * durable, and only once both are done is the endpoint registered - a visible endpoint is one that
+ * answers, and its session id is already on disk. Nothing a sender needs waits on work it does not
+ * need: the writer stamp's process lookup starts at entry, the inbox watch arms after registration
+ * returned, and dead `tui` endpoints of other terminals are reaped after activation. Wakes come
+ * from edges only (see `session-control-wake.ts`).
  */
 import { randomUUID } from "node:crypto";
 import { rm } from "node:fs/promises";
@@ -15,6 +18,7 @@ import type {
 	SessionControlRegistration,
 	SessionControlWakeReason,
 } from "../../core/extensions/types.ts";
+import { thisProcessStartTime } from "../rpc/host-daemon-registration.ts";
 import { gcHostEndpoints } from "../rpc/host-gc.ts";
 import { createSocketSecret, socketSecretPath } from "../rpc/socket-transport.ts";
 import { runControlCommand } from "./session-control-commands.ts";
@@ -61,8 +65,12 @@ async function openEndpoint(
 	cleanups: Cleanup[],
 ): Promise<ActiveControlEndpoint> {
 	const { session, agentDir, surface } = context;
-	await session.sessionManager.persistHeaderNow();
-	await gcHostEndpoints(agentDir, { kinds: ["tui"] });
+	// The writer stamp's `ps` lookup is a process constant: started here, it overlaps the header write
+	// and the bind instead of running inside the registry lock.
+	void thisProcessStartTime();
+	// Bound while the header is written, awaited before the endpoint is registered.
+	const headerDurable = session.sessionManager.persistHeaderNow();
+	headerDurable.catch(() => undefined);
 	const instanceId = randomUUID();
 	const socket = await resolveTuiSocket(agentDir, instanceId);
 	cleanups.push(
@@ -94,16 +102,35 @@ async function openEndpoint(
 		listenerError: (error) => surface.notice(`control endpoint listener failed: ${error.message}`),
 	});
 	cleanups.push(() => server.close());
+	await headerDurable;
 	const entry = await registerTuiEndpoint({ agentDir, socket, instanceId });
 	cleanups.push(() => unregisterTuiEndpoint(entry));
-	const stopInbox = await watchInbox(
+	const inbox = await watchInbox(
 		options.inboxDir,
 		() => void wake("inbox"),
 		(error) => surface.notice(`control endpoint inbox watch failed: ${errorText(error)}`),
 	);
-	const endpoint = activateControlEndpoint({ context, options, entry, server, scheduler, feed, stopInbox, wake });
-	// Anything that reached the inbox before the watch was armed is picked up by this first pass.
+	cleanups.push(() => inbox.stop());
+	const endpoint = activateControlEndpoint({
+		context,
+		options,
+		entry,
+		server,
+		scheduler,
+		feed,
+		stopInbox: inbox.stop,
+		wake,
+	});
+	// Anything that reached the inbox before this point is picked up by this first pass, and anything
+	// written after it but before the watch was armed (no event for it) by the pass once arming settled.
 	endpoint.wake("inbox");
+	void inbox.armed.then(() => endpoint.wake("inbox"));
+	// Other terminals' dead records are nothing a sender reads: reaped after activation, off the path.
+	setImmediate(() => {
+		gcHostEndpoints(agentDir, { kinds: ["tui"] }).catch((error: unknown) =>
+			surface.notice(`control endpoint gc of dead terminals failed: ${errorText(error)}`),
+		);
+	});
 	return endpoint;
 }
 
