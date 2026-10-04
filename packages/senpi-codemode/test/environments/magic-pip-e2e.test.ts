@@ -25,13 +25,14 @@ function textOf(result: AgentToolResult<unknown>): string {
 	return result.content.map((part) => (part.type === "text" ? part.text : "")).join("\n");
 }
 
-async function session() {
-	const root = await mkdtemp(join(tmpdir(), "senpi-magic-pip-"));
+async function session(shared?: string) {
+	const root = shared ?? (await mkdtemp(join(tmpdir(), "senpi-magic-pip-")));
 	const wheels = join(root, "wheels");
 	const artifactsDir = join(root, "artifacts");
 	await mkdir(wheels, { recursive: true });
+	const artifactsOwnDir = shared === undefined ? artifactsDir : join(root, `artifacts-${crypto.randomUUID()}`);
 	const interpreter = availability.py.detected.ok ? availability.py.detected.path : "python3";
-	const environments = new PythonEnvironments({ artifactsDir, cwd: root, interpreter, settings });
+	const environments = new PythonEnvironments({ artifactsDir: artifactsOwnDir, cwd: root, interpreter, settings });
 	const manager = await createCodemodeSessionManager({
 		sessionId: `magic-pip-${crypto.randomUUID()}`,
 		cwd: root,
@@ -128,6 +129,18 @@ describe.skipIf(!pythonReady)("Given a Python eval session", () => {
 
 		expect(textOf(switched)).toContain("project");
 		expect(textOf(probe)).toContain("True");
+	}, 180_000);
+
+	it("When another session in the same project installs into the project environment, then this session's next cell imports it", async () => {
+		const first = await session();
+		const second = await session(first.root);
+		await first.run("%environment project");
+		await second.run("%environment project");
+
+		await second.run(`%pip install --no-index ${buildWheel(second.wheels, "senpi_shared", "1.0")}`);
+		const imported = await first.run("import senpi_shared; senpi_shared.VERSION");
+
+		expect(textOf(imported)).toContain("'1.0'");
 	}, 180_000);
 
 	it("When a cell mixes %pip with code, then it fails with the own-cell teaching error and installs nothing", async () => {

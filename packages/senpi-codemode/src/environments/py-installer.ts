@@ -61,11 +61,59 @@ const SHORT_ALIASES: Readonly<Record<string, string>> = {
 const STDERR_TAIL_BYTES = 4_096;
 const PIP_TREE_GRACE_MS = 2_000;
 
+/**
+ * Splits a %pip argument line the way a POSIX shell would for these inputs: single and double quotes group
+ * (`"pkg[extra]>=1.0"`), a backslash escapes the next character outside single quotes, and `#` at the start
+ * of a word begins a comment. An unclosed quote is refused rather than guessed.
+ */
+export function splitShellWords(text: string): string[] {
+	const words: string[] = [];
+	let word = "";
+	let inWord = false;
+	let quote: "'" | '"' | undefined;
+	for (let index = 0; index < text.length; index++) {
+		const char = text[index] ?? "";
+		if (quote === "'") {
+			if (char === "'") quote = undefined;
+			else word += char;
+			continue;
+		}
+		if (char === "\\" && index + 1 < text.length) {
+			const next = text[index + 1] ?? "";
+			index += 1;
+			if (next === "\n") continue;
+			word += next;
+			inWord = true;
+			continue;
+		}
+		if (quote === '"') {
+			if (char === '"') quote = undefined;
+			else word += char;
+			continue;
+		}
+		if (char === "'" || char === '"') {
+			quote = char;
+			inWord = true;
+			continue;
+		}
+		if (/\s/u.test(char)) {
+			if (inWord) words.push(word);
+			word = "";
+			inWord = false;
+			continue;
+		}
+		if (char === "#" && !inWord) break;
+		word += char;
+		inWord = true;
+	}
+	if (quote !== undefined)
+		throw new EnvironmentError("environment_install_failed", `unclosed ${quote} quote in %pip arguments`);
+	if (inWord) words.push(word);
+	return words;
+}
+
 export function parsePipRequirements(text: string): string[] {
-	const args = text
-		.trim()
-		.split(/\s+/)
-		.filter((arg) => arg !== "");
+	const args = splitShellWords(text);
 	const command = args[0] === "install" ? args.slice(1) : undefined;
 	if (command === undefined) {
 		throw new EnvironmentError("environment_install_failed", "only `%pip install <requirements>` is supported");

@@ -310,7 +310,15 @@
 				"imports/firstKernel/packages/senpi-codemode/src/environments/py-installer.ts",
 				"imports/firstKernel/packages/senpi-codemode/src/environments/revision-store.ts",
 				"imports/extension/packages/senpi-codemode/src/environments/editable-check.ts",
-				"imports/firstKernel/packages/senpi-codemode/src/environments/editable-check.ts"
+				"imports/firstKernel/packages/senpi-codemode/src/environments/editable-check.ts",
+				"legacyContracts/test/magic-cells.test.ts/magic cell detection Given leading comment lines or a backslash-continued %pip, then it is still the host magic with the joined arguments",
+				"legacyContracts/test/magic-cells.test.ts/magic cell detection Given a %pip line that is not the cell's first code line, such as inside a string, then the cell runs as ordinary Python",
+				"legacyContracts/test/magic-cells.test.ts/%pip argument parsing Given quoted requirements, then each quoted string is one requirement with its quotes removed",
+				"legacyContracts/test/magic-cells.test.ts/%pip argument parsing Given a trailing comment, then the comment is not passed to pip",
+				"legacyContracts/test/magic-cells.test.ts/%pip argument parsing Given an unclosed quote, then the install is refused naming the quote instead of guessing",
+				"legacyContracts/test/environments/magic-pip-e2e.test.ts/Given a Python eval session When an import cell is queued behind a %pip cell that is itself queued behind a running cell, then the import sees the newly installed package",
+				"legacyContracts/test/environments/magic-pip-e2e.test.ts/Given a Python eval session When the session switches to an environment with nothing installed, then packages of the environment it left no longer import",
+				"legacyContracts/test/environments/magic-pip-e2e.test.ts/Given a Python eval session When another session in the same project installs into the project environment, then this session's next cell imports it"
 			],
 			"reason": "Node 14 part 3: %pip / %environment magic cells run as host entries in the Python kernel's queue and every Python cell imports from the session's active environment revision; the magic-cell modules, and the environments library they import (install-lock, py-environment, py-installer, revision-store, first reached from the extension here), join the scoped census, plus the new contracts. No prompt or eval schema change."
 		},

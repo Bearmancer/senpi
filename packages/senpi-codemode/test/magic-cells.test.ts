@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { parsePipRequirements, splitShellWords } from "../src/environments/py-installer.ts";
 import { MagicCellError, parseMagicCell } from "../src/tool/magic-cells.ts";
 
 describe("magic cell detection", () => {
@@ -30,5 +31,36 @@ describe("magic cell detection", () => {
 		expect(parseMagicCell("py", "%%bash\necho hi")).toBeUndefined();
 		expect(parseMagicCell("py", "%pipx install black")).toBeUndefined();
 		expect(parseMagicCell("js", "%pip install six")).toBeUndefined();
+	});
+
+	it("Given leading comment lines or a backslash-continued %pip, then it is still the host magic with the joined arguments", () => {
+		expect(parseMagicCell("py", "# deps for the notebook\n%pip install six")).toEqual({
+			kind: "pip",
+			args: "install six",
+		});
+		expect(parseMagicCell("py", "%pip install six \\\n    requests")).toEqual({
+			kind: "pip",
+			args: "install six requests",
+		});
+	});
+
+	it("Given a %pip line that is not the cell's first code line, such as inside a string, then the cell runs as ordinary Python", () => {
+		expect(parseMagicCell("py", 'notes = """\n%pip install six\n"""\nprint(notes)')).toBeUndefined();
+		expect(parseMagicCell("py", "x = 5 %pip")).toBeUndefined();
+	});
+});
+
+describe("%pip argument parsing", () => {
+	it("Given quoted requirements, then each quoted string is one requirement with its quotes removed", () => {
+		expect(parsePipRequirements("install \"pkg[extra]>=1.0\" 'other pkg'")).toEqual(["pkg[extra]>=1.0", "other pkg"]);
+	});
+
+	it("Given a trailing comment, then the comment is not passed to pip", () => {
+		expect(parsePipRequirements("install six  # pinned by the lab")).toEqual(["six"]);
+		expect(splitShellWords("install six#not-a-comment")).toEqual(["install", "six#not-a-comment"]);
+	});
+
+	it("Given an unclosed quote, then the install is refused naming the quote instead of guessing", () => {
+		expect(() => parsePipRequirements('install "six')).toThrow('unclosed " quote');
 	});
 });
