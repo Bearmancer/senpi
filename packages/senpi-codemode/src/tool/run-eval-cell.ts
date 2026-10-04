@@ -267,7 +267,8 @@ async function executeCell(
 			const resolveAtStart = isolatedLoad
 				? () => ({
 						ok: false as const,
-						message: "isolate: true cannot run a %load cell; load the file without isolate",
+						message:
+							"isolate: true cannot run a %load cell: an isolated cell sees no host files, and loading one would break that isolation. Run %load in a normal cell, or paste the code into the isolated cell.",
 					})
 				: magic.kind === "load"
 					? () => loadCell(magic.target, loadOptions)

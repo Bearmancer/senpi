@@ -169,7 +169,7 @@ describe("Given sandbox cells are turned off", () => {
 		const kernelView = await run("globalThis.LOADED_OUTSIDE === undefined");
 
 		expect(refused.details).toHaveProperty("isError", true);
-		expect(textOf(refused)).toContain("isolate: true cannot run a %load cell");
+		expect(textOf(refused)).toContain("isolate: true cannot run a %load cell: an isolated cell sees no host files");
 		expect(textOf(kernelView)).toContain("true");
 	}, 120_000);
 });
