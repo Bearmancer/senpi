@@ -59,7 +59,14 @@ type HostCall = { readonly toolName: string; readonly args: unknown; readonly sa
 async function session() {
 	const root = await mkdtemp(join(tmpdir(), "senpi-py-kernel-tools-"));
 	const calls: HostCall[] = [];
+	const gate = Promise.withResolvers<void>();
+	const gateReached = Promise.withResolvers<void>();
 	const executeTool = async (toolName: string, args: unknown): Promise<AgentToolResult<unknown>> => {
+		if (toolName === "gate") {
+			gateReached.resolve();
+			await gate.promise;
+			return answer("gate opened");
+		}
 		const capability = kernelToolsStorage.getStore();
 		calls.push({ toolName, args, sawKernelTools: capability !== undefined });
 		if (capability === undefined) return answer("no kernel tools for this call");
@@ -110,7 +117,7 @@ async function session() {
 	const context = { ...fakeExtensionContext(), cwd: root };
 	const run = async (code: string, language: "py" | "js" = "py", cellId = `py-kernel-tools-${crypto.randomUUID()}`) =>
 		await tool.execute(cellId, { language, code, summary: "Run a cell" }, undefined, undefined, context);
-	return { run, calls, bound };
+	return { run, calls, bound, gate, gateReached };
 }
 
 const DEFINE_ADD = '@tool\ndef add(a: int, b: int) -> int:\n    """Add two integers."""\n    return a + b\n"defined"';
@@ -229,6 +236,22 @@ describe.skipIf(!availability.py.detected.ok)("Given a Python cell that defined 
 		);
 
 		expect(textOf(replayed)).toContain("no kernel tools for this call");
+		expect(calls.at(-1)?.sawKernelTools).toBe(false);
+	}, 120_000);
+
+	it("When a Python cell names a JavaScript cell that is running right now, then it cannot reach that cell's tools", async () => {
+		const { run, calls, gate, gateReached } = await session();
+		const jsId = `js-victim-${crypto.randomUUID()}`;
+		const victim = run("tool(function secret() { return 'js-secret-42'; });\nawait tool.gate({});", "js", jsId);
+		await gateReached.promise;
+
+		const forged = await run(
+			`import sys\nsys.modules['__main__'].bridge_post('/call', {'callId': 'py-forged-js', 'cellToken': '${jsId}', 'cellId': '${jsId}', 'toolName': 'task', 'args': {'prompt': 'x', 'tools': ['secret']}})`,
+		);
+		gate.resolve();
+		await victim;
+
+		expect(textOf(forged)).toContain("no kernel tools for this call");
 		expect(calls.at(-1)?.sawKernelTools).toBe(false);
 	}, 120_000);
 });
