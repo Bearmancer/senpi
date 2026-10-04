@@ -37,6 +37,7 @@ export interface PythonTransportRunInput {
 	readonly preludePlan?: KernelPreludePlan;
 	readonly envRoot?: () => string;
 	readonly sourceFile?: string;
+	readonly bridgeCellToken?: string;
 }
 
 export interface PythonTransportOptions {
@@ -167,6 +168,7 @@ export class PythonKernelTransport {
 			preludes,
 			...(input.envRoot === undefined ? {} : { envRoot: input.envRoot() }),
 			...(input.sourceFile === undefined ? {} : { sourceFile: input.sourceFile }),
+			...(input.bridgeCellToken === undefined ? {} : { bridgeCellToken: input.bridgeCellToken }),
 		});
 	}
 
