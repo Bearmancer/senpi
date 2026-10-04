@@ -1008,7 +1008,8 @@ export function createRpcConnectionHandler(
 			}
 
 			case "send_custom_message": {
-				turnRequested = true;
+				// A context message that asks for no turn does not block a launch-time chain, like an extension's.
+				if (command.triggerTurn === true) turnRequested = true;
 				await session.sendCustomMessage(
 					{
 						customType: command.customType,

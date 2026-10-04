@@ -2,7 +2,7 @@ import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type FauxResponseStep, fauxAssistantMessage, registerFauxProvider } from "@earendil-works/pi-ai/compat";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, expect, it } from "vitest";
 import {
 	type AgentSessionRuntime,
 	applyRetryFallbackProfile,
@@ -35,12 +35,15 @@ interface SingleProcess {
 	startPrompt(message: string): Promise<void>;
 	/** Sends a prompt without waiting for it; the returned promise settles when that turn has ended. */
 	sendPromptWithoutWaiting(message: string): Promise<void>;
+	sendWithoutWaiting(command: Record<string, unknown>): void;
 	lastAssistantText(): string;
 }
 
 async function singleRpcProcess(options: {
 	retryFallbackCommand: boolean;
 	firstTurnGate?: Promise<void>;
+	/** Called when the first provider request reaches the gate, i.e. a turn is in flight. */
+	onFirstTurnHeld?: () => void;
 }): Promise<SingleProcess> {
 	const dir = join(tmpdir(), `senpi-set-retry-fallback-${Date.now()}-${Math.random().toString(36).slice(2)}`);
 	mkdirSync(dir, { recursive: true });
@@ -56,7 +59,10 @@ async function singleRpcProcess(options: {
 	const step: FauxResponseStep = async (_context, _options, _state, model) => {
 		const held = gate;
 		gate = undefined;
-		if (held !== undefined) await held;
+		if (held !== undefined) {
+			options.onFirstTurnHeld?.();
+			await held;
+		}
 		return model.id === "primary"
 			? fauxAssistantMessage("", { stopReason: "error", errorMessage: USAGE_LIMIT })
 			: fauxAssistantMessage(`answered by ${model.id}`);
@@ -158,6 +164,9 @@ async function singleRpcProcess(options: {
 	return {
 		runtime,
 		settingsPath,
+		sendWithoutWaiting(command) {
+			void handler.handleInputLine(JSON.stringify({ ...command, id: `req-${++sequence}` }));
+		},
 		sendPromptWithoutWaiting(message) {
 			const ended = nextLine((line) => line.type === "agent_end", "agent_end");
 			void handler.handleInputLine(JSON.stringify({ type: "prompt", message, id: `req-${++sequence}` }));
@@ -308,12 +317,16 @@ it("#given an extension's turn in flight #when a chain arrives #then it is refus
 	const firstTurnGate = new Promise<void>((resolve) => {
 		release = resolve;
 	});
-	const child = await singleRpcProcess({ retryFallbackCommand: true, firstTurnGate });
+	let held = () => {};
+	const turnHeld = new Promise<void>((resolve) => {
+		held = resolve;
+	});
+	const child = await singleRpcProcess({ retryFallbackCommand: true, firstTurnGate, onFirstTurnHeld: () => held() });
 	const extensionTurn = child.runtime.session.sendCustomMessage(
 		{ customType: "component.wake", content: "wake", display: false },
 		{ triggerTurn: true },
 	);
-	await vi.waitFor(() => expect(child.runtime.session.isStreaming).toBe(true), { timeout: 20_000 });
+	await turnHeld;
 
 	// when
 	const midTurn = await child.request({ type: "set_retry_fallback", retryFallback: CHILD_CHAIN });
@@ -324,6 +337,51 @@ it("#given an extension's turn in flight #when a chain arrives #then it is refus
 	// then
 	expect(midTurn.success).toBe(false);
 	expect(String(midTurn.error)).toContain("before the session's first turn");
+}, 60_000);
+
+it.each([
+	{ label: "steer", command: { type: "steer", message: "go" } },
+	{ label: "follow_up", command: { type: "follow_up", message: "go" } },
+	{ label: "continue_from_leaf", command: { type: "continue_from_leaf" } },
+	{
+		label: "send_custom_message with triggerTurn",
+		command: { type: "send_custom_message", customType: "client.wake", content: "wake", triggerTurn: true },
+	},
+])(
+	"#given a $label just sent #when a chain arrives right behind it #then it is refused",
+	async ({ command }) => {
+		// given
+		const child = await singleRpcProcess({ retryFallbackCommand: true });
+		child.sendWithoutWaiting(command);
+
+		// when
+		const behind = await child.request({ type: "set_retry_fallback", retryFallback: CHILD_CHAIN });
+		await child.runtime.session.waitForIdle();
+
+		// then
+		expect(behind.success).toBe(false);
+		expect(String(behind.error)).toContain("before the session's first turn");
+	},
+	60_000,
+);
+
+it("#given a client context message that asks for no turn #when the chain arrives #then it is applied, like an extension's", async () => {
+	// given
+	const child = await singleRpcProcess({ retryFallbackCommand: true });
+	await child.request({
+		type: "send_custom_message",
+		customType: "client.context",
+		content: "context",
+		display: false,
+	});
+
+	// when
+	const accepted = await child.request({ type: "set_retry_fallback", retryFallback: CHILD_CHAIN });
+	await child.request({ type: "prompt", message: "go" });
+
+	// then
+	expect(accepted.success).toBe(true);
+	expect(child.lastAssistantText()).toBe("answered by spare");
 }, 60_000);
 
 it("#given a child told its chain #when it moves to a replacement session #then the replacement answers on the chain and the settings file is untouched", async () => {

@@ -2211,10 +2211,13 @@ settings file, and the process's later sessions (`new_session`, `switch_session`
 
 It is a launch-time setting:
 - It is accepted only before the session's first turn. It is refused once this connection has asked for a turn
-  (`prompt`, `steer`, `follow_up`, `continue_from_leaf`, `send_custom_message`), even one that has not started yet,
-  while any turn runs (an extension's included), and once the session holds turn history (a resumed session's). So a
-  chain never changes under a turn or a retry already in flight. Context messages an extension adds before the first
-  turn (role `custom`, e.g. on `session_start`) are not a turn and do not block it.
+  (`prompt`, `steer`, `follow_up`, `continue_from_leaf`, `send_custom_message` with `triggerTurn`), even one that has
+  not started yet, while a turn streams (an extension's included), and once the session holds turn history (a resumed
+  session's). So a chain never changes under a provider request or a retry already in flight. Context messages added
+  before the first turn (role `custom`, from an extension on `session_start` or a `send_custom_message` without
+  `triggerTurn`) are not a turn and do not block it.
+- Send it on its own and await its response: a `set_retry_fallback` pipelined while a `new_session`, `switch_session`
+  or `fork` is still being created can answer success while the session being created runs without it.
 - A malformed profile is refused with the `open_session` shape message, and nothing is applied.
 - A multi-session host refuses the command on its session connections; a host session takes its policy from
   `open_session.retryFallback`.
