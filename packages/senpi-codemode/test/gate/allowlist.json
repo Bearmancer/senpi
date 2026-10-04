@@ -258,27 +258,6 @@
 				"legacyContracts/test/completion-handle-watches.test.ts/Given a watch over a completion handle When the caller stops iterating its updates, then the registry stops tracking the watch"
 			]
 		},
-		"12": {
-			"additions": [
-				"legacyContracts/test/workpool-tools.test.ts/js workpool tools forwards tools unchanged to a host that validates with the real create schema",
-				"legacyContracts/test/workpool-tools.test.ts/js workpool tools never forwards an option the host does not know",
-				"legacyContracts/test/workpool-tools.test.ts/py workpool tools forwards tools unchanged to a host that validates with the real create schema",
-				"legacyContracts/test/workpool-tools.test.ts/py workpool tools never forwards an option the host does not know",
-				"legacyContracts/test/workpool-tools.test.ts/rb workpool tools forwards tools unchanged to a host that validates with the real create schema",
-				"legacyContracts/test/workpool-tools.test.ts/rb workpool tools never forwards an option the host does not know",
-				"legacyContracts/test/workpool-tools.test.ts/jl workpool tools forwards tools unchanged to a host that validates with the real create schema",
-				"legacyContracts/test/workpool-tools.test.ts/jl workpool tools never forwards an option the host does not know",
-				"legacyContracts/test/workpool-prelude.test.ts/js workpool prelude refuses tools given as a single string with a typed error, and posts nothing to the host",
-				"legacyContracts/test/workpool-prelude.test.ts/js workpool prelude forwards a list of tool names unchanged",
-				"legacyContracts/test/workpool-prelude.test.ts/py workpool prelude refuses tools given as a single string with a typed error, and posts nothing to the host",
-				"legacyContracts/test/workpool-prelude.test.ts/py workpool prelude forwards a list of tool names unchanged",
-				"legacyContracts/test/workpool-prelude.test.ts/rb workpool prelude refuses tools given as a single string with a typed error, and posts nothing to the host",
-				"legacyContracts/test/workpool-prelude.test.ts/rb workpool prelude forwards a list of tool names unchanged",
-				"legacyContracts/test/workpool-prelude.test.ts/jl workpool prelude refuses tools given as a single string with a typed error, and posts nothing to the host",
-				"legacyContracts/test/workpool-prelude.test.ts/jl workpool prelude forwards a list of tool names unchanged"
-			],
-			"reason": "Node 12: workpool(agent, name, {mode, tools}) forwards tools to the host create in all four languages. The helper names and the prompt are unchanged (the eval description's workpool line is untouched); the tool_schema('eval:helpers') entry gains one line. Only these contracts are new."
-		},
 		"13": {
 			"additions": [
 				"imports/extension/packages/senpi-codemode/src/config/unknown-settings.ts",
@@ -304,6 +283,45 @@
 				"legacyContracts/test/feature-settings.test.ts/codemode feature settings Given an unknown key inside environments.js when settings load then that object stays strict and the file falls back to defaults with a warning"
 			],
 			"reason": "Settings keep the user's other keys when a newer key is present, and gain optional keys for later features with today's defaults; three new config modules in the scoped census and the new settings contracts. The contract that pinned the old whole-file fallback for an unknown key is renamed in the baseline to the warn-and-keep behaviour it now asserts (status unchanged)."
+		},
+		"14": {
+			"additions": [
+				"legacyContracts/test/magic-cells.test.ts/magic cell detection Given a Python cell that is only a %pip line, then it is a host pip install with its arguments",
+				"legacyContracts/test/magic-cells.test.ts/magic cell detection Given a Python cell that is only %environment project, then it switches the environment mode",
+				"legacyContracts/test/magic-cells.test.ts/magic cell detection Given a cell that mixes %pip with code, then it is refused with the own-cell teaching error",
+				"legacyContracts/test/magic-cells.test.ts/magic cell detection Given %environment with an unknown or missing mode, then it is refused naming the two modes",
+				"legacyContracts/test/magic-cells.test.ts/magic cell detection Given ordinary code, other line magics or another language, then the cell is not a host magic",
+				"legacyContracts/test/environments/magic-pip-e2e.test.ts/Given a Python eval session When a cell runs %pip install on a local wheel, then the next cell imports the package without a kernel restart",
+				"legacyContracts/test/environments/magic-pip-e2e.test.ts/Given a Python eval session When an install fails, then the cell reports pip's error, the active revision is unchanged and earlier packages still import",
+				"legacyContracts/test/environments/magic-pip-e2e.test.ts/Given a Python eval session When a cell mixes %pip with code, then it fails with the own-cell teaching error and installs nothing",
+				"legacyContracts/test/environments/magic-pip-e2e.test.ts/Given a Python eval session When %environment project is selected, then installs go to the project-local target and the interpreter's own site-packages and the user site stay untouched",
+				"imports/extension/packages/senpi-codemode/src/tool/magic-cells.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/tool/magic-cells.ts",
+				"imports/extension/packages/senpi-codemode/src/tool/magic-cell-host.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/tool/magic-cell-host.ts",
+				"imports/extension/packages/senpi-codemode/src/environments/python-environments.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/environments/python-environments.ts",
+				"imports/extension/packages/senpi-codemode/src/environments/install-lock.ts",
+				"imports/extension/packages/senpi-codemode/src/environments/py-environment.ts",
+				"imports/extension/packages/senpi-codemode/src/environments/py-installer.ts",
+				"imports/extension/packages/senpi-codemode/src/environments/revision-store.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/environments/install-lock.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/environments/py-environment.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/environments/py-installer.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/environments/revision-store.ts",
+				"imports/extension/packages/senpi-codemode/src/environments/editable-check.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/environments/editable-check.ts",
+				"legacyContracts/test/magic-cells.test.ts/magic cell detection Given leading comment lines or a backslash-continued %pip, then it is still the host magic with the joined arguments",
+				"legacyContracts/test/magic-cells.test.ts/magic cell detection Given a %pip line that is not the cell's first code line, such as inside a string, then the cell runs as ordinary Python",
+				"legacyContracts/test/magic-cells.test.ts/%pip argument parsing Given quoted requirements, then each quoted string is one requirement with its quotes removed",
+				"legacyContracts/test/magic-cells.test.ts/%pip argument parsing Given a trailing comment, then the comment is not passed to pip",
+				"legacyContracts/test/magic-cells.test.ts/%pip argument parsing Given an unclosed quote, then the install is refused naming the quote instead of guessing",
+				"legacyContracts/test/environments/magic-pip-e2e.test.ts/Given a Python eval session When an import cell is queued behind a %pip cell that is itself queued behind a running cell, then the import sees the newly installed package",
+				"legacyContracts/test/environments/magic-pip-e2e.test.ts/Given a Python eval session When the session switches to an environment with nothing installed, then packages of the environment it left no longer import",
+				"legacyContracts/test/environments/magic-pip-e2e.test.ts/Given a Python eval session When another session in the same project installs into the project environment, then this session's next cell imports it",
+				"legacyContracts/test/magic-cells.test.ts/%pip argument parsing Given a Windows path, then its backslashes reach pip unchanged; in POSIX mode a backslash escapes"
+			],
+			"reason": "Node 14 part 3: %pip / %environment magic cells run as host entries in the Python kernel's queue and every Python cell imports from the session's active environment revision; the magic-cell modules, and the environments library they import (install-lock, py-environment, py-installer, revision-store, first reached from the extension here), join the scoped census, plus the new contracts. No prompt or eval schema change."
 		},
 		"24": {
 			"additions": [
@@ -625,6 +643,27 @@
 				"legacyContracts/test/py-kernel-startup.test.ts/Python startup progress falls back to killing the child itself when its process group is already gone"
 			],
 			"reason": "Python startup counts CPU use and output as progress, with an absolute ceiling (senpi#2718): a shared CPU reader module and four startup behaviour cases."
+		},
+		"12": {
+			"additions": [
+				"legacyContracts/test/workpool-tools.test.ts/js workpool tools forwards tools unchanged to a host that validates with the real create schema",
+				"legacyContracts/test/workpool-tools.test.ts/js workpool tools never forwards an option the host does not know",
+				"legacyContracts/test/workpool-tools.test.ts/py workpool tools forwards tools unchanged to a host that validates with the real create schema",
+				"legacyContracts/test/workpool-tools.test.ts/py workpool tools never forwards an option the host does not know",
+				"legacyContracts/test/workpool-tools.test.ts/rb workpool tools forwards tools unchanged to a host that validates with the real create schema",
+				"legacyContracts/test/workpool-tools.test.ts/rb workpool tools never forwards an option the host does not know",
+				"legacyContracts/test/workpool-tools.test.ts/jl workpool tools forwards tools unchanged to a host that validates with the real create schema",
+				"legacyContracts/test/workpool-tools.test.ts/jl workpool tools never forwards an option the host does not know",
+				"legacyContracts/test/workpool-prelude.test.ts/js workpool prelude refuses tools given as a single string with a typed error, and posts nothing to the host",
+				"legacyContracts/test/workpool-prelude.test.ts/js workpool prelude forwards a list of tool names unchanged",
+				"legacyContracts/test/workpool-prelude.test.ts/py workpool prelude refuses tools given as a single string with a typed error, and posts nothing to the host",
+				"legacyContracts/test/workpool-prelude.test.ts/py workpool prelude forwards a list of tool names unchanged",
+				"legacyContracts/test/workpool-prelude.test.ts/rb workpool prelude refuses tools given as a single string with a typed error, and posts nothing to the host",
+				"legacyContracts/test/workpool-prelude.test.ts/rb workpool prelude forwards a list of tool names unchanged",
+				"legacyContracts/test/workpool-prelude.test.ts/jl workpool prelude refuses tools given as a single string with a typed error, and posts nothing to the host",
+				"legacyContracts/test/workpool-prelude.test.ts/jl workpool prelude forwards a list of tool names unchanged"
+			],
+			"reason": "Node 12: workpool(agent, name, {mode, tools}) forwards tools to the host create in all four languages. The helper names and the prompt are unchanged (the eval description's workpool line is untouched); the tool_schema('eval:helpers') entry gains one line. Only these contracts are new."
 		}
 	}
 }
