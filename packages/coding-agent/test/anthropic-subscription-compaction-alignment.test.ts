@@ -2,11 +2,17 @@ import {
 	type AssistantMessage,
 	type FauxProviderRegistration,
 	fauxAssistantMessage,
+	fauxToolCall,
 	registerFauxProvider,
 } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AuthStorage } from "../src/core/auth-storage.ts";
 import { DEFAULT_COMPACTION_SETTINGS } from "../src/core/compaction/index.ts";
+import { decideNativeContinuity } from "../src/core/extensions/builtin/anthropic-subscription/session-continuity.ts";
+import {
+	type SentMessage,
+	sentMessageHashes,
+} from "../src/core/extensions/builtin/anthropic-subscription/session-sync.ts";
 import compactionExtension from "../src/core/extensions/builtin/compaction/index.ts";
 import {
 	ANTHROPIC_SUBSCRIPTION_COMPACT_BOUNDARY_DIAGNOSTIC,
@@ -282,6 +288,66 @@ describe("claude-sdk-oauth lane: senpi compaction stands down", () => {
 
 		expect(JSON.stringify(otherResult?.messages).length).toBeLessThan(JSON.stringify(laneResult?.messages).length);
 		expect(JSON.stringify(laneResult?.messages)).toContain("assistant answer ".repeat(4_000));
+	});
+
+	// The observable contract of #2746: the turn after usage crosses the reduction gate is still
+	// sent as a delta, because every message the resident session already received is byte-for-byte
+	// what the lane sends again. Before the fix the old tool results were cleared on that turn, the
+	// sent-message hashes no longer matched, and continuity re-sent the history as sent_stream_diverged.
+	it("keeps the next turn a delta when usage crosses the reduction gate on a senpi-owned resident lane", () => {
+		const readPairs = Array.from({ length: 8 }, (_, index) => [
+			fauxAssistantMessage([fauxToolCall("read", { path: `file-${index}.ts` }, { id: `call-${index}` })], {
+				timestamp: 10 + index * 2,
+			}) as AssistantMessage,
+			{
+				role: "toolResult" as const,
+				toolCallId: `call-${index}`,
+				toolName: "read",
+				content: [{ type: "text" as const, text: `contents of file ${index} `.repeat(400) }],
+				isError: false,
+				timestamp: 11 + index * 2,
+			},
+		]).flat();
+		const firstTurn = [
+			{ role: "user" as const, content: [{ type: "text" as const, text: "read the files" }], timestamp: 1 },
+			...readPairs,
+		];
+		const secondTurn = [
+			...firstTurn,
+			{ role: "user" as const, content: [{ type: "text" as const, text: "now summarize them" }], timestamp: 99 },
+		];
+		const lane = { provider: "anthropic-subscription", compactionModel: "anthropic-subscription/claude-test" };
+		const belowGate = createHarness({ ...lane, usageTokens: 30_000 });
+		const aboveGate = createHarness({ ...lane, usageTokens: 95_000 });
+
+		const sentFirst = belowGate.context({ type: "context", messages: structuredClone(firstTurn) }, belowGate.ctx);
+		const sentSecond = aboveGate.context({ type: "context", messages: structuredClone(secondTurn) }, aboveGate.ctx);
+		const firstHashes = sentMessageHashes((sentFirst?.messages ?? firstTurn) as SentMessage[]);
+		const secondHashes = sentMessageHashes((sentSecond?.messages ?? secondTurn) as SentMessage[]);
+		const fingerprint = { systemPromptHash: "prompt", toolsetHash: "tools" };
+
+		const decision = decideNativeContinuity({
+			entry: {
+				sdkSessionId: "sdk-1",
+				accountName: "primary",
+				modelId: "claude-test",
+				...fingerprint,
+				sentCount: firstHashes.length,
+				sentHashes: firstHashes,
+				lastAssistantUuid: "uuid-last",
+				assistantUuidByIndex: new Map([[firstHashes.length, "uuid-last"]]),
+				pendingForkReason: null,
+			},
+			binding: undefined,
+			currentHashes: secondHashes,
+			accountName: "primary",
+			modelId: "claude-test",
+			fingerprint,
+			transcriptAvailable: true,
+			crossAccountResumeSupported: true,
+		});
+
+		expect(decision).toEqual({ kind: "delta", from: firstHashes.length });
 	});
 });
 
