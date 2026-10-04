@@ -1,6 +1,6 @@
-import { existsSync } from "node:fs";
+import { existsSync, statSync } from "node:fs";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { dirname, isAbsolute, join } from "node:path";
 import type { ResolvedCodemodeSettings } from "../config/settings.ts";
 import { withRootLock } from "./install-lock.ts";
 import {
@@ -9,6 +9,7 @@ import {
 	parseJsPackages,
 	resolveJsInstaller,
 	runJsInstall,
+	withoutHostPaths,
 } from "./js-installer.ts";
 import type { EnvironmentMode } from "./py-environment.ts";
 import { EnvironmentError } from "./py-installer.ts";
@@ -71,22 +72,31 @@ export class JsEnvironments {
 		// `%bun add` and `%npm add` name their installer; the setting applies only where the magic does not.
 		const choice: JsInstallerChoice = requestedInstaller ?? environments?.js?.installer ?? "auto";
 		const { installer, command } = resolveJsInstaller(choice, this.#options.env);
+		let recordedSpecs: readonly string[] = [];
 		const run = (root: string) =>
 			runJsInstall({
 				installer,
 				command,
 				root,
 				packages,
+				recordedSpecs,
 				cwd: this.#options.cwd,
 				env: this.#options.env,
 				signal,
 				...(onOutput === undefined ? {} : { onOutput }),
 			});
+		// The lock and the revision store fail with raw file system errors; they reach the cell redacted.
+		const redacted = (root: string) => (error: unknown) => {
+			if (error instanceof EnvironmentError) throw error;
+			const message = error instanceof Error ? error.message : String(error);
+			const text = withoutHostPaths(message, { root, cwd: this.#options.cwd, packages, recordedSpecs });
+			throw new EnvironmentError("environment_install_failed", text);
+		};
 		if (this.#mode === "project") {
 			const before = await dependencyNames(this.#options.cwd);
 			const lockRoot = join(this.#options.cwd, ".senpi", "js-packages");
 			await mkdir(lockRoot, { recursive: true });
-			await withRootLock(lockRoot, async () => await run(this.#options.cwd), signal);
+			await withRootLock(lockRoot, async () => await run(this.#options.cwd), signal).catch(redacted(lockRoot));
 			const added = (await dependencyNames(this.#options.cwd)).filter((name) => !before.includes(name));
 			return { installer, mode: "project", revision: undefined, added, shadowed: [] };
 		}
@@ -95,15 +105,16 @@ export class JsEnvironments {
 			this.#managedBase(),
 			async (staging) => {
 				await carryNpmrcSettings(staging);
-				await rm(join(staging, "bunfig.toml"), { force: true });
+				await rm(join(staging, "bunfig.toml"), { recursive: true, force: true });
 				const before = await dependencyNames(staging);
+				recordedSpecs = await absoluteDependencySpecs(staging);
 				await run(staging);
 				added = (await dependencyNames(staging)).filter((name) => !before.includes(name));
 			},
 			signal,
-		);
+		).catch(redacted(this.#managedBase()));
 		this.#packageRoot = revision.dir;
-		const shadowed = added.filter((name) => projectHasPackage(this.#options.cwd, name));
+		const shadowed = added.filter((name) => projectResolves(this.#options.cwd, name));
 		return { installer, mode: "managed", revision: revision.number, added, shadowed };
 	}
 
@@ -138,7 +149,7 @@ async function carryNpmrcSettings(root: string): Promise<void> {
 	try {
 		text = await readFile(path, "utf8");
 	} catch {
-		await rm(path, { force: true });
+		await rm(path, { recursive: true, force: true });
 		return;
 	}
 	const kept = text
@@ -147,18 +158,50 @@ async function carryNpmrcSettings(root: string): Promise<void> {
 		.filter((line) => {
 			const key = line.split("=", 1)[0]?.trim() ?? "";
 			return line.includes("=") && NPMRC_CARRIED_KEY.test(key);
-		});
-	await rm(path, { force: true });
+		})
+		// A registry URL may carry `user:password@`; that is a credential, so it is dropped too.
+		.map((line) => line.replace(/^([^=]*registry\s*=\s*["']?[a-z][a-z0-9+.-]*:\/\/)[^@/\s"']*@/i, "$1"));
+	await rm(path, { recursive: true, force: true });
 	if (kept.length > 0) await writeFile(path, `${kept.join("\n")}\n`, { mode: 0o600, flag: "wx" });
 }
 
+/** Absolute paths (or `file:` paths) a revision's `package.json` already records: the installer echoes them. */
+async function absoluteDependencySpecs(root: string): Promise<string[]> {
+	try {
+		const manifest: unknown = JSON.parse(await readFile(join(root, "package.json"), "utf8"));
+		if (typeof manifest !== "object" || manifest === null || !("dependencies" in manifest)) return [];
+		const dependencies = manifest.dependencies;
+		if (typeof dependencies !== "object" || dependencies === null) return [];
+		return Object.values(dependencies).flatMap((spec) => {
+			if (typeof spec !== "string") return [];
+			const path = spec.startsWith("file:") ? spec.slice("file:".length) : spec;
+			return isAbsolute(path) ? [path] : [];
+		});
+	} catch {
+		return [];
+	}
+}
+
 /**
- * Whether a bare import of `name` resolves from the session directory first, the way the kernel resolves it: the
- * nearest `node_modules/<name>` with a `package.json`, walking up through parent directories (hoisted monorepo layouts).
+ * Whether a bare import of `name` from the session directory resolves in the project before a managed revision:
+ * the host-side twin of the kernel resolver's lookup (`worker-package-resolve.js`, which stays plain JavaScript).
+ * Like the resolver it stops at the first `node_modules/<name>` directory up the chain, and that directory wins
+ * only when it has an entry: a `package.json`, or the `index.js` a manifest-less package falls back to.
  */
-function projectHasPackage(cwd: string, name: string): boolean {
+function projectResolves(cwd: string, name: string): boolean {
 	for (let directory = cwd; ; directory = dirname(directory)) {
-		if (existsSync(join(directory, "node_modules", name, "package.json"))) return true;
+		const candidate = join(directory, "node_modules", name);
+		if (isDirectory(candidate)) {
+			return existsSync(join(candidate, "package.json")) || existsSync(join(candidate, "index.js"));
+		}
 		if (dirname(directory) === directory) return false;
+	}
+}
+
+function isDirectory(path: string): boolean {
+	try {
+		return statSync(path).isDirectory();
+	} catch {
+		return false;
 	}
 }

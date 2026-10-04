@@ -107,7 +107,7 @@ function planJsMagic(
 					receipt.revision === undefined ? receipt.mode : `${receipt.mode} (revision ${receipt.revision})`;
 				const shadow =
 					receipt.shadowed.length > 0
-						? `; environment_resolution_conflict: ${receipt.shadowed.join(", ")} still resolve from the project's node_modules first`
+						? `; environment_resolution_conflict: ${receipt.shadowed.join(", ")} still ${receipt.shadowed.length === 1 ? "resolves" : "resolve"} from the project's node_modules first`
 						: "";
 				return {
 					ok: true,

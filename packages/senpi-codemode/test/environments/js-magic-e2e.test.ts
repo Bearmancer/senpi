@@ -1,8 +1,10 @@
 import { existsSync, readdirSync, writeFileSync } from "node:fs";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, symlink, writeFile } from "node:fs/promises";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import { homedir } from "node:os";
-import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { basename, join } from "node:path";
+import { describe, expect, it, vi } from "vitest";
 import { readActiveRevision } from "../../src/environments/revision-store.ts";
 import { hasCommand, packFixture, session, textOf } from "./js-magic-session.ts";
 
@@ -203,31 +205,128 @@ describe.skipIf(!hasCommand("bun") || !hasCommand("npm"))("Given a JavaScript ev
 		expect(textOf(refused)).toContain("package names cannot contain control characters");
 	}, 180_000);
 
-	it("When the worker crashes while an install runs, then the install is stopped and no revision is published", async () => {
-		const { root, fixtures, environments, run } = await session("npm");
-		const tarball = await packFixture(fixtures, "senpi-crash-probe", "1.0.0", probeSource);
+	it("When the worker crashes while npm waits on the registry, then npm is stopped, the cell names the crash, and no revision is published", async () => {
+		const { root, run } = await session("npm");
 		const marker = join(root, "crash-now");
-		const original = environments.install.bind(environments);
-		environments.install = (requested, signal, onOutput, installer) =>
-			original(
-				requested,
-				signal,
-				(stream, data) => {
-					if (!existsSync(marker)) writeFileSync(marker, "");
-					onOutput?.(stream, data);
-				},
-				installer,
+		const requested = Promise.withResolvers<void>();
+		const dropped = Promise.withResolvers<void>();
+		// The registry takes the request and never answers, so the install is reliably still running when the
+		// worker crashes; the dropped connection shows npm itself was stopped.
+		const registry = createServer((request) => {
+			request.socket.once("close", () => dropped.resolve());
+			writeFileSync(marker, "");
+			requested.resolve();
+		});
+		await new Promise<void>((resolve) => registry.listen(0, "127.0.0.1", resolve));
+		const { port } = registry.address() as AddressInfo;
+		try {
+			await run(
+				`import { existsSync } from "node:fs";\nconst crashTimer = setInterval(() => { if (existsSync(${JSON.stringify(marker)})) { clearInterval(crashTimer); throw new Error("stray timer"); } }, 5);\n"armed"`,
 			);
-		await run(
-			`import { existsSync } from "node:fs";\nconst crashTimer = setInterval(() => { if (existsSync(${JSON.stringify(marker)})) { clearInterval(crashTimer); throw new Error("stray timer"); } }, 5);\n"armed"`,
-		);
 
-		const install = await run(`%npm add ${tarball}`);
-		const base = join(root, "artifacts", "environments", "js", "test");
+			const install = run(`%npm add http://127.0.0.1:${port}/senpi-hang-1.0.0.tgz`);
+			await requested.promise;
+			const stopped = await Promise.race([
+				dropped.promise.then(() => true),
+				new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 20_000)),
+			]);
+			const result = await Promise.race([install, new Promise<undefined>((resolve) => setTimeout(resolve, 20_000))]);
+			const base = join(root, "artifacts", "environments", "js", "test");
+
+			expect(stopped).toBe(true);
+			expect(result?.details).toHaveProperty("isError", true);
+			expect(textOf(result as NonNullable<typeof result>)).toContain("JavaScript worker crashed: stray timer");
+			expect(await readActiveRevision(base)).toBeUndefined();
+			expect(existsSync(base) ? readdirSync(base).filter((name) => /^rev-\d+$/.test(name)) : []).toEqual([]);
+		} finally {
+			registry.closeAllConnections();
+			registry.close();
+		}
+	}, 180_000);
+
+	it("When an install is cancelled and the installer's group can no longer be signalled, then the installer itself is still stopped", async () => {
+		const { run } = await session("npm");
+		const requested = Promise.withResolvers<void>();
+		const dropped = Promise.withResolvers<void>();
+		const registry = createServer((request) => {
+			request.socket.once("close", () => dropped.resolve());
+			requested.resolve();
+		});
+		await new Promise<void>((resolve) => registry.listen(0, "127.0.0.1", resolve));
+		const { port } = registry.address() as AddressInfo;
+		const kill = process.kill.bind(process);
+		// macOS answers EPERM for a process group whose leader already exited.
+		const groupKill = vi.spyOn(process, "kill").mockImplementation((pid, signal) => {
+			if (typeof pid === "number" && pid < 0) {
+				throw Object.assign(new Error("kill EPERM"), { code: "EPERM", errno: -1, syscall: "kill" });
+			}
+			return kill(pid, signal);
+		});
+		const controller = new AbortController();
+		try {
+			const install = run(`%npm add http://127.0.0.1:${port}/senpi-cancel-1.0.0.tgz`, controller.signal).then(
+				() => undefined,
+				(error: unknown) => error,
+			);
+			await requested.promise;
+			controller.abort();
+			const stopped = await Promise.race([
+				dropped.promise.then(() => true),
+				new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 20_000)),
+			]);
+			const rejection = await install;
+
+			expect(stopped).toBe(true);
+			expect(rejection).toMatchObject({ name: "AbortError" });
+		} finally {
+			groupKill.mockRestore();
+			registry.closeAllConnections();
+			registry.close();
+		}
+	}, 180_000);
+
+	it("When the active revision is a link to a project directory, then the next install is refused and the directory is untouched", async () => {
+		const { root, project, fixtures, environments, run } = await session("npm");
+		const first = await packFixture(fixtures, "senpi-link-rev-a", "1.0.0", probeSource);
+		const second = await packFixture(fixtures, "senpi-link-rev-b", "1.0.0", probeSource);
+		await run(`%npm add ${first}`);
+		const revision = environments.packageRoot ?? "";
+		const target = join(project, "looks-like-a-revision");
+		await rename(revision, target);
+		await symlink(target, revision);
+		const before = readdirSync(target).sort();
+
+		const install = await run(`%npm add ${second}`);
 
 		expect(install.details).toHaveProperty("isError", true);
-		expect(await readActiveRevision(base)).toBeUndefined();
-		expect(existsSync(base) ? readdirSync(base).filter((name) => /^rev-\d+$/.test(name)) : []).toEqual([]);
+		expect(textOf(install)).toContain("is not a real directory");
+		expect(textOf(install)).not.toContain(root);
+		expect(readdirSync(target).sort()).toEqual(before);
+	}, 180_000);
+
+	it("When the project has the package as a directory with only index.js, then the install reports the conflict", async () => {
+		const { project, fixtures, run } = await session("bun");
+		await mkdir(join(project, "node_modules", "senpi-index-only"), { recursive: true });
+		await writeFile(
+			join(project, "node_modules", "senpi-index-only", "index.js"),
+			"export const where = () => 'project';\n",
+		);
+		const tarball = await packFixture(fixtures, "senpi-index-only", "1.0.0", probeSource);
+
+		const install = await run(`%bun add ${tarball}`);
+
+		expect(textOf(install)).toContain("environment_resolution_conflict: senpi-index-only still resolves");
+	}, 180_000);
+
+	it("When an earlier install came from a tarball outside the session, then a later install never names its directory", async () => {
+		const { root, fixtures, run } = await session("bun");
+		const first = await packFixture(fixtures, "senpi-echo-first", "1.0.0", probeSource);
+		const second = await packFixture(fixtures, "senpi-echo-second", "1.0.0", probeSource);
+		await run(`%bun add ${first}`);
+
+		const later = await run(`%bun add ${second}`);
+
+		expect(textOf(later)).not.toContain(basename(root));
 	}, 180_000);
 
 	it("When the package is hoisted in a parent node_modules, then the install reports the conflict; an empty package directory does not", async () => {

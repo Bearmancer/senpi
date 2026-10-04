@@ -40,14 +40,16 @@ describe.skipIf(!hasCommand("bun") || !hasCommand("npm"))("Given JavaScript pack
 		const firstRoot = environments.packageRoot ?? "";
 		await writeFile(
 			join(firstRoot, ".npmrc"),
-			[
+			`${[
 				"@acme:registry=https://registry.example.test/",
 				"//registry.example.test/:_authToken=secret-token",
 				'"//registry.example.test/:_authToken"=secret-quoted',
 				"_auth=c2VjcmV0",
 				"key=secret-inline-key",
 				"strict-ssl=true",
-			].join("\r\n") + "\r//cr.example.test/:_authToken=secret-cr-only\r",
+				"registry=http://urluser:urlsecret@registry.example.test/",
+				'@scoped:registry="http://u:s@scoped.example.test/"',
+			].join("\r\n")}\r//cr.example.test/:_authToken=secret-cr-only\r`,
 		);
 		await writeFile(
 			join(firstRoot, "bunfig.toml"),
@@ -58,7 +60,10 @@ describe.skipIf(!hasCommand("bun") || !hasCommand("npm"))("Given JavaScript pack
 		const secondRoot = environments.packageRoot ?? "";
 		const carried = await readFile(join(secondRoot, ".npmrc"), "utf8");
 
-		expect(carried).toBe("@acme:registry=https://registry.example.test/\nstrict-ssl=true\n");
+		expect(carried).toBe(
+			'@acme:registry=https://registry.example.test/\nstrict-ssl=true\nregistry=http://registry.example.test/\n@scoped:registry="http://scoped.example.test/"\n',
+		);
+		expect(carried).not.toMatch(/urlsecret|urluser|u:s@/);
 		expect(existsSync(join(secondRoot, "bunfig.toml"))).toBe(false);
 	}, 240_000);
 
