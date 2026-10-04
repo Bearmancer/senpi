@@ -157,7 +157,7 @@ describe.skipIf(!availability.py.detected.ok)("Given a Python cell that defined 
 		expect(calls).toHaveLength(before);
 	}, 120_000);
 
-	it("When a host call names a cell that is not running, then it gets no kernel tools", async () => {
+	it("When a host call carries a secret no running cell holds, then it gets no kernel tools", async () => {
 		const { run, calls } = await session();
 		await run(DEFINE_ADD);
 
@@ -200,7 +200,6 @@ describe.skipIf(!availability.py.detected.ok)("Given a Python cell that defined 
 		const forged = await run(
 			[
 				"import sys",
-				`sys.modules['__main__'].CURRENT_CELL_TOKEN.set('${visibleId}')`,
 				`sys.modules['__main__'].bridge_post('/call', {'callId': 'py-own-id', 'cellToken': '${visibleId}', 'cellId': '${visibleId}', 'toolName': 'task', 'args': {'prompt': 'use add', 'tools': ['add']}})`,
 			].join("\n"),
 			"py",
@@ -224,16 +223,12 @@ describe.skipIf(!availability.py.detected.ok)("Given a Python cell that defined 
 		expect(bound).not.toContain(pyId);
 	}, 120_000);
 
-	it("When a cell stashes its run's secret and a later cell uses it, then that call gets no kernel tools", async () => {
+	it("When a cell stashes its run's context and a later cell replays a host call in it, then that call gets no kernel tools", async () => {
 		const { run, calls } = await session();
 		await run(DEFINE_ADD);
-		await run(
-			"import sys\nstashed_secret = sys.modules['__main__'].CURRENT_CELL_TOKEN.get()\nstashed_secret is not None",
-		);
+		await run("import contextvars\nstashed_context = contextvars.copy_context()");
 
-		const replayed = await run(
-			"sys.modules['__main__'].bridge_post('/call', {'callId': 'py-replay', 'cellToken': stashed_secret, 'toolName': 'task', 'args': {'prompt': 'use add', 'tools': ['add']}})",
-		);
+		const replayed = await run("stashed_context.run(lambda: tool.task(prompt='use add', tools=['add'])['text'])");
 
 		expect(textOf(replayed)).toContain("no kernel tools for this call");
 		expect(calls.at(-1)?.sawKernelTools).toBe(false);
