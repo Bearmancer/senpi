@@ -1,6 +1,3 @@
-import { existsSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { type BridgeHttpCallRequest, startBridgeServer } from "../src/bridge/http-server.ts";
 import type { KernelToHostMessage } from "../src/bridge/protocol.ts";
