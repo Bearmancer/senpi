@@ -193,7 +193,8 @@ it("fails a PR that removes existing change-log lines through the PR gate CLI", 
 	const entry = (title) =>
 		`## 2026-10-01 - ${title}\n\n### What changed\n\n- a\n\n### Why\n\n- b\n\n### Why an extension could not handle it\n\n- c\n\n### Expected merge conflict zones\n\n- d\n`;
 	const trackerOriginal = `${entry("First")}\n${entry("Second")}`;
-	const changelogOriginal = "# Changelog\n\n## [Unreleased]\n\n### Fixed\n\n- pending fix\n\n## [2026.9.20] - 2026-09-20\n\n### Fixed\n\n- published\n";
+	const pending = "- pending fix ([#100](https://github.com/o/r/issues/100))";
+	const changelogOriginal = `# Changelog\n\n## [Unreleased]\n\n### Fixed\n\n${pending}\n\n## [2026.9.20] - 2026-09-20\n\n### Fixed\n\n- published\n`;
 	for (const [file, text] of [[tracker, trackerOriginal], [changelog, changelogOriginal]]) {
 		mkdirSync(dirname(join(root, file)), { recursive: true });
 		writeFileSync(join(root, file), text);
@@ -222,12 +223,33 @@ it("fails a PR that removes existing change-log lines through the PR gate CLI", 
 	await t.test("deleted tracker", () => check(tracker, null, 1, /packages\/ai\/src\/changes\.md: removes \d+ existing line/));
 	await t.test("tracker prepend", () => check(tracker, `${entry("New")}\n${trackerOriginal}`, 0));
 	await t.test("deleted Unreleased entry", () =>
-		check(changelog, changelogOriginal.replace("- pending fix\n", ""), 1, /packages\/ai\/CHANGELOG\.md: removes 1 existing \[Unreleased\] entry/));
+		check(changelog, changelogOriginal.replace(`${pending}\n`, ""), 1, /packages\/ai\/CHANGELOG\.md: removes 1 existing \[Unreleased\] entry/));
+	await t.test("another PR's Unreleased entry deleted while adding this PR's own", () =>
+		check(
+			changelog,
+			changelogOriginal.replace(pending, "- this PR's fix ([#200](https://github.com/o/r/issues/200))"),
+			1,
+			/removes 1 existing \[Unreleased\] entry, first: - pending fix/,
+		));
 	await t.test("Unreleased entry credited in place", () =>
-		check(changelog, changelogOriginal.replace("- pending fix", "- pending fix. Thanks to @contributor"), 0));
+		check(changelog, changelogOriginal.replace(pending, `${pending}. Thanks to @contributor ([#300](https://github.com/o/r/pull/300))`), 0));
+	await t.test("unreferenced Unreleased entry credited in place", () => {
+		const bare = changelogOriginal.replace(pending, "- bare fix.");
+		writeFileSync(join(root, changelog), bare);
+		git("add", changelog);
+		git("commit", "-qm", "bare base");
+		const bareBase = git("rev-parse", "HEAD");
+		writeFileSync(join(root, changelog), bare.replace("- bare fix.", "- bare fix ([#400](https://github.com/o/r/pull/400) by @someone)."));
+		git("add", changelog);
+		git("commit", "-qm", "credit");
+		const result = spawnSync(process.execPath, [cli, "--base", bareBase, "--labels", ""], { cwd: root, env, encoding: "utf8", timeout: 30_000 });
+		assert.equal(result.status, 0, result.stdout + result.stderr);
+	});
 	await t.test("Unreleased entry reworded in place", () =>
-		check(changelog, changelogOriginal.replace("- pending fix", "- the pending fix, reworded"), 0));
-	await t.test("Unreleased prepend", () => check(changelog, changelogOriginal.replace("- pending fix", "- new fix\n- pending fix"), 0));
+		check(changelog, changelogOriginal.replace(pending, "- the pending fix, reworded ([#100](https://github.com/o/r/issues/100))"), 0));
+	await t.test("Unreleased entry stamped into a release", () =>
+		check(changelog, changelogOriginal.replace("## [Unreleased]\n", "## [Unreleased]\n\n## [2026.10.1] - 2026-10-01\n"), 0));
+	await t.test("Unreleased prepend", () => check(changelog, changelogOriginal.replace(pending, `- new fix\n${pending}`), 0));
 });
 
 // #1884: drive the real CLI over committed diffs, including the actual release transformation.

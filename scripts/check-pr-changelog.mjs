@@ -78,17 +78,40 @@ function unreleasedBullets(text) {
 		.filter((line) => line.startsWith("- ") || line.startsWith("* "));
 }
 
+// Issue and PR numbers a bullet cites, from `#123` and from `/issues/123` or `/pull/123` links.
+function bulletReferences(line) {
+	return new Set([...line.matchAll(/(?:#|\/(?:issues|pull)\/)(\d+)/g)].map((match) => match[1]));
+}
+
 // An [Unreleased] bullet may be edited in place (a credit, a wording fix) or carried into a released section
-// by release stamping; only a net loss of bullets is a removal. A base bullet still present anywhere in the
-// head is kept; each base bullet that is gone is offset by one new [Unreleased] bullet (its edited form).
+// by release stamping. A base bullet still present anywhere in the head is kept. A base bullet that is gone
+// is accepted only as edited, one for one, by a new [Unreleased] bullet that either cites every issue/PR it
+// cited (a credit or a reword keeps those) or starts with its full text (a credit or link appended to a bullet
+// that cited nothing). Anything else is a removal, including deleting another PR's bullet while adding this
+// PR's own; a bullet that cites nothing can be extended but not reworded.
 function unreleasedRemovalViolation({ path, before, after }) {
 	const kept = new Set(after.split("\n").map((line) => line.trim()));
 	const baseBullets = unreleasedBullets(before);
-	const missing = baseBullets.filter((line) => !kept.has(line));
 	const baseSet = new Set(baseBullets);
-	const added = unreleasedBullets(after).filter((line) => !baseSet.has(line)).length;
-	const lost = missing.length - added;
-	return lost > 0 ? `${path}: removes ${lost} existing [Unreleased] entr${lost === 1 ? "y" : "ies"}, first: ${missing[0]}` : undefined;
+	const candidates = unreleasedBullets(after)
+		.filter((line) => !baseSet.has(line))
+		.map((line) => ({ line, references: bulletReferences(line) }));
+	const removed = baseBullets.filter((line) => {
+		if (kept.has(line)) return false;
+		const references = bulletReferences(line);
+		const stem = line.replace(/[\s.]+$/, "");
+		const match = candidates.findIndex(
+			(candidate) =>
+				candidate.line.startsWith(stem) ||
+				(references.size > 0 && [...references].every((reference) => candidate.references.has(reference))),
+		);
+		if (match === -1) return true;
+		candidates.splice(match, 1);
+		return false;
+	});
+	return removed.length > 0
+		? `${path}: removes ${removed.length} existing [Unreleased] entr${removed.length === 1 ? "y" : "ies"}, first: ${removed[0]}`
+		: undefined;
 }
 
 export function checkPrChangelog({ changedFiles, labels, trackerPolicy, changelogChanges = [], trackerRemovals = [] }) {
