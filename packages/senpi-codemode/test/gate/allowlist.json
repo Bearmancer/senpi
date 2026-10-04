@@ -352,7 +352,8 @@
 				"legacyContracts/test/load-cell-turn.test.ts/Given a %load target written as a URL When it is local:// under the session artifacts, then the file runs as the cell",
 				"legacyContracts/test/load-cell-turn.test.ts/Given a %load target written as a URL When local:// climbs out of the artifacts root, then the cell is refused",
 				"imports/extension/packages/senpi-codemode/src/kernels/shared/cell-source-at-start.ts",
-				"imports/firstKernel/packages/senpi-codemode/src/kernels/shared/cell-source-at-start.ts"
+				"imports/firstKernel/packages/senpi-codemode/src/kernels/shared/cell-source-at-start.ts",
+				"legacyContracts/test/py-kernel-tools-bridge.test.ts/Given a Python cell that defined @tool add When a %load file installs an import finder that raises on cache invalidation, then the next cell still grants its kernel tools and the loaded run's secret is refused"
 			],
 			"reason": "Node 16: %load runs a local file as a Python or JavaScript cell, read at the cell's turn in the kernel queue; load-cell.ts and kernels/shared/cell-source-at-start.ts join the scoped census, plus the %load contracts. No prompt or eval schema change."
 		},

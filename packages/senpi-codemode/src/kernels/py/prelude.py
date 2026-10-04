@@ -2163,11 +2163,12 @@ def _enter_source_file(source_file: str | None) -> Callable[[], None]:
             sys.path.remove(directory)
         if previous_index is not None:
             sys.path.insert(min(previous_index, len(sys.path)), directory)
-        importlib.invalidate_caches()
         if previous_file is missing:
             USER_NS.pop("__file__", None)
         else:
             USER_NS["__file__"] = previous_file
+        # Last: it calls every sys.meta_path finder, and user code may have installed one that raises.
+        importlib.invalidate_caches()
 
     return restore
 
@@ -2214,9 +2215,13 @@ def run_cell(
             "durationMs": elapsed(start),
         }
     finally:
-        leave_source_file()
+        # Liveness and revocation first: nothing the cell installed (an import finder, a path hook) can skip them.
         KERNEL_TOOL_TOKEN.release()
         CURRENT_CELL_TOKEN.reset(cell_scope)
+        try:
+            leave_source_file()
+        except BaseException as exc:  # noqa: BROAD_EXCEPT_OK — user code can break the restore; it must not wedge the kernel.
+            text("stderr", f"[senpi] %load could not fully restore the import path: {exc}\n")
         signal.signal(signal.SIGINT, signal.SIG_IGN)
     try:
         memory = KERNEL_MEMORY.after_cell()

@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type AgentToolResult, type ExtensionContext, kernelToolsStorage } from "@code-yeongyu/senpi";
@@ -117,7 +117,7 @@ async function session() {
 	const context = { ...fakeExtensionContext(), cwd: root };
 	const run = async (code: string, language: "py" | "js" = "py", cellId = `py-kernel-tools-${crypto.randomUUID()}`) =>
 		await tool.execute(cellId, { language, code, summary: "Run a cell" }, undefined, undefined, context);
-	return { run, calls, bound, gate, gateReached };
+	return { root, run, calls, bound, gate, gateReached };
 }
 
 const DEFINE_ADD = '@tool\ndef add(a: int, b: int) -> int:\n    """Add two integers."""\n    return a + b\n"defined"';
@@ -247,6 +247,35 @@ describe.skipIf(!availability.py.detected.ok)("Given a Python cell that defined 
 		await victim;
 
 		expect(textOf(forged)).toContain("no kernel tools for this call");
+		expect(calls.at(-1)?.sawKernelTools).toBe(false);
+	}, 120_000);
+
+	it("When a %load file installs an import finder that raises on cache invalidation, then the next cell still grants its kernel tools and the loaded run's secret is refused", async () => {
+		const { root, run, calls } = await session();
+		await run(DEFINE_ADD);
+		await writeFile(
+			join(root, "breaks_imports.py"),
+			[
+				"import builtins, sys",
+				"class RaisingFinder:",
+				"    def find_spec(self, *args, **kwargs):",
+				"        return None",
+				"    def invalidate_caches(self):",
+				"        raise RuntimeError('finder broke')",
+				"sys.meta_path.insert(0, RaisingFinder())",
+				"builtins.STASHED_SECRET = sys.modules['__main__'].CURRENT_CELL_TOKEN.get()",
+				"",
+			].join("\n"),
+		);
+
+		await run("%load ./breaks_imports.py");
+		const next = await run("tool.task(prompt='use add', tools=['add'])['text']");
+		const replayed = await run(
+			"import sys\nsys.modules['__main__'].bridge_post('/call', {'callId': 'py-replay-load', 'cellToken': STASHED_SECRET, 'toolName': 'task', 'args': {'prompt': 'use add', 'tools': ['add']}})['text']",
+		);
+
+		expect(textOf(next)).toContain("py:add -> 3");
+		expect(textOf(replayed)).toContain("no kernel tools for this call");
 		expect(calls.at(-1)?.sawKernelTools).toBe(false);
 	}, 120_000);
 });
