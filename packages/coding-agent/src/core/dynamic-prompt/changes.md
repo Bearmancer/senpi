@@ -20,6 +20,25 @@
 
 - Fork-only files. The template line in `buildHandoffSection` and `TERMINAL_ROUTING`.
 
+## 2026-10-04 - A reply that only answers a question is the answer itself, not a handoff block (senpi#2723)
+
+### What changed
+
+- `packages/coding-agent/src/core/dynamic-prompt/handoff.ts`: `HANDOFF_MOMENTS` names "the final message of a turn that did work" instead of "the final message", and adds "a reply that only answers a question is the answer itself".
+- `packages/coding-agent/src/core/dynamic-prompt/style.ts`: "The final message of work opens with the Handoff block" (was "The final message opens with ...").
+
+### Why
+
+- Every final message had to open with the handoff block, so a one-line answer went into the `For you:` slot of a status block that ended `Now: none. Next: none.` and read as a progress report. The model said so in its own reasoning: "Since the final message needs the handoff block format but the user just wants a single line, I should put that one-line answer in the For you section." The rule is narrowed at its source; the block stays for turns that did work.
+
+### Why an extension could not handle it
+
+- These sections are built inside the shared prompt builder; an extension could only append a competing rule.
+
+### Expected merge conflict zones
+
+- Fork-only files. `HANDOFF_MOMENTS` in `handoff.ts`; the final-message sentence in `style.ts`.
+
 ## 2026-10-04 - Handoff: the Fable-only between-handoff sentence names the moment and the shape (senpi#2681)
 
 ### What changed
