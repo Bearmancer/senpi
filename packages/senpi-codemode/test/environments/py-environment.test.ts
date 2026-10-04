@@ -292,6 +292,27 @@ describe("Given an environment root's install lock", () => {
 		expect(overlaps).toBe(0);
 	}, 180_000);
 
+	it("When the only waiter that claimed a stale lock died with no successor, then the next waiter takes the lock over promptly and clears the dead claims", async () => {
+		const base = await lockRoot();
+		const dead = exitedPid();
+		await writeFile(join(base, ".install.lock"), JSON.stringify({ pid: dead, host: hostname(), nonce: "stale" }));
+		await writeFile(
+			join(base, ".install.lock.reap.stale.0"),
+			JSON.stringify({ pid: dead, host: hostname(), nonce: "c0" }),
+		);
+		await writeFile(
+			join(base, ".install.lock.reap.stale.1"),
+			JSON.stringify({ pid: dead, host: hostname(), nonce: "c1" }),
+		);
+		const started = Date.now();
+
+		const entered = await withRootLock(base, async () => "entered", AbortSignal.timeout(5_000));
+
+		expect(entered).toBe("entered");
+		expect(Date.now() - started).toBeLessThan(2_000);
+		expect((await readdir(base)).filter((name) => name.startsWith(".install.lock.reap."))).toEqual([]);
+	});
+
 	it("When a live waiter is reaping a stale lock, then another waiter waits for it instead of reaping too", async () => {
 		const base = await lockRoot();
 		await writeFile(
