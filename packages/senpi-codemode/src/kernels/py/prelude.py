@@ -375,7 +375,15 @@ _BRIDGE_SOCKET_TIMEOUT_SECONDS = 60
 _WAIT_SOCKET_GRACE_SECONDS = 30
 
 
+# The host's secret for the run in this context. Every host call carries it, so the host gives the call that run's
+# kernel tools; copied contexts (parallel workers) keep it, plain threads do not, and the host forgets it at settle.
+CURRENT_CELL_TOKEN: contextvars.ContextVar[str | None] = contextvars.ContextVar("senpi_cell_token", default=None)
+
+
 def bridge_post(path: str, payload: dict[str, Any], *, socket_timeout: float | None = _BRIDGE_SOCKET_TIMEOUT_SECONDS) -> Any:
+    cell_token = CURRENT_CELL_TOKEN.get()
+    if path == "/call" and cell_token is not None and "cellToken" not in payload:
+        payload = {**payload, "cellToken": cell_token}
     port = CONNECTION.get("port")
     token = CONNECTION.get("token")
     if not isinstance(port, int) or not isinstance(token, str):
@@ -1178,8 +1186,11 @@ def agent(
     apply: bool | None = None,
     merge: bool | str | None = None,
     handle: bool = False,
+    tools: list[str] | None = None,
 ) -> Any:
     """Delegate work; isolated/apply/merge need a host that supports isolation, otherwise a warning.
+
+    tools grants the child this kernel's @tool functions by name, as JavaScript's agent(prompt, { tools }) does.
 
     merge accepts "patch"/"branch" or False/True respectively. Unapplied foreground
     changes raise an error with recovery instructions. A handle returns immediately;
@@ -1202,6 +1213,10 @@ def agent(
         args["merge"] = merge
     if handle:
         args["handle"] = True
+    if tools is not None:
+        if not isinstance(tools, (list, tuple)) or not all(isinstance(name, str) for name in tools):
+            raise PreludeRuntimeError(f"agent(tools=...) takes a list of tool names; got {type(tools).__name__}", "invalid_tools")
+        args["tools"] = list(tools)
 
     response = bridge_post(
         "/call",
@@ -2157,7 +2172,9 @@ def _enter_source_file(source_file: str | None) -> Callable[[], None]:
     return restore
 
 
-def run_cell(cell_id: str, code: str, preludes: Any = None, source_file: str | None = None) -> None:
+def run_cell(
+    cell_id: str, code: str, preludes: Any = None, source_file: str | None = None, cell_token: str | None = None
+) -> None:
     start = time.monotonic()
     stdout = io.StringIO()
     stderr = io.StringIO()
@@ -2166,6 +2183,7 @@ def run_cell(cell_id: str, code: str, preludes: Any = None, source_file: str | N
     signal.signal(signal.SIGINT, signal.default_int_handler)
     result: dict[str, Any]
     leave_source_file: Callable[[], None] = lambda: None
+    cell_scope = CURRENT_CELL_TOKEN.set(cell_token)
     try:
         KERNEL_TOOL_TOKEN.acquire()
         cell_stdout, cell_stderr = KERNEL_TOOL_STREAMS
@@ -2198,6 +2216,7 @@ def run_cell(cell_id: str, code: str, preludes: Any = None, source_file: str | N
     finally:
         leave_source_file()
         KERNEL_TOOL_TOKEN.release()
+        CURRENT_CELL_TOKEN.reset(cell_scope)
         signal.signal(signal.SIGINT, signal.SIG_IGN)
     try:
         memory = KERNEL_MEMORY.after_cell()
@@ -2233,11 +2252,13 @@ def _handle_message(message: dict[str, Any]) -> bool:
         if isinstance(env_root, str):
             _activate_env_root(env_root)
         source_file = message.get("sourceFile")
+        token = message.get("bridgeCellToken")
         run_cell(
             str(message.get("cellId", "")),
             str(message.get("code", "")),
             message.get("preludes"),
             source_file if isinstance(source_file, str) and source_file else None,
+            token if isinstance(token, str) else None,
         )
         return True
     if message_type == "close":
