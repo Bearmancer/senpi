@@ -19,6 +19,15 @@ export type { KernelChild, KernelSpawnOptions, KernelSpawnProcess } from "./proc
 
 const interruptEscalationMs = 5_000;
 
+// Every interpreter this process starts gets its own generation, so a kernel tool descriptor taken from one
+// never resolves in another, whether it was replaced by reset, by a lazy restart after a crash, or by a new
+// kernel instance an owner created.
+let lastInterpreterGeneration = 0;
+function nextInterpreterGeneration(): number {
+	lastInterpreterGeneration += 1;
+	return lastInterpreterGeneration;
+}
+
 export class PythonKernel {
 	readonly #options: PythonKernelStartOptions;
 	#transport: PythonKernelTransport | null = null;
@@ -310,7 +319,7 @@ export class PythonKernel {
 				callback?.(message);
 			},
 			startupTimeoutMs: this.#options.startupTimeoutMs ?? pythonStartupHangGuardMs,
-			kernelGeneration: generation + 1,
+			kernelGeneration: nextInterpreterGeneration(),
 			isOwned: () => !this.#closed && generation === this.#generation,
 			onRetirementFailure: (transport, error) => {
 				if (!this.#transport) this.#transport = transport;

@@ -445,12 +445,18 @@ def validate_tool_name(name: Any) -> str:
 
 
 def _resolved_hints(fn: Callable[..., Any], params: list[inspect.Parameter]) -> dict[str, Any]:
+    # Only parameters shape the input schema; the return annotation may name a class defined later.
+    def parameters_only() -> None: ...
+
+    parameters_only.__annotations__ = {
+        param.name: param.annotation for param in params if param.annotation is not inspect.Parameter.empty
+    }
     try:
-        return typing.get_type_hints(fn, globalns=getattr(fn, "__globals__", None), include_extras=True)
+        return typing.get_type_hints(parameters_only, globalns=getattr(fn, "__globals__", None), include_extras=True)
     except Exception as exc:  # noqa: BROAD_EXCEPT_OK — any resolution failure is reported with the annotation that caused it.
         globalns = getattr(fn, "__globals__", {})
         for param in params:
-            annotation = param.annotation
+            annotation = getattr(param.annotation, "__forward_arg__", param.annotation)
             if not isinstance(annotation, str):
                 continue
             try:
@@ -520,11 +526,22 @@ def _description(fn: Callable[..., Any], explicit: Any) -> str:
     return doc.split("\n\n", 1)[0].strip()
 
 
+def _signature(fn: Callable[..., Any]) -> inspect.Signature:
+    # Python 3.14 evaluates annotations lazily; asking for forward references keeps a return type that names
+    # a class defined later from failing here.
+    try:
+        import annotationlib
+
+        return inspect.signature(fn, annotation_format=annotationlib.Format.FORWARDREF)
+    except ImportError:
+        return inspect.signature(fn)
+
+
 def infer_tool(fn: Any, *, name: Any = None, description: Any = None, schema: Any = None) -> dict[str, Any]:
     if not callable(fn) or not hasattr(fn, "__name__"):
         raise KernelToolError("invalid_tool_definition", "@tool requires a named function")
     tool_name = validate_tool_name(fn.__name__ if name is None else name)
-    params = list(inspect.signature(fn).parameters.values())
+    params = list(_signature(fn).parameters.values())
     for param in params:
         if param.kind is inspect.Parameter.POSITIONAL_ONLY:
             raise KernelToolError("invalid_tool_definition", "positional-only parameters are not supported")
@@ -555,14 +572,29 @@ def infer_tool(fn: Any, *, name: Any = None, description: Any = None, schema: An
     return {"name": tool_name, "description": text, "input_schema": input_schema, "params": names}
 
 
+TOKEN_GROUP: contextvars.ContextVar[int | None] = contextvars.ContextVar("senpi_kernel_token_group", default=None)
+
+
+def _token_key() -> int:
+    group = TOKEN_GROUP.get()
+    return group if group is not None else threading.get_ident()
+
+
 class OwnerToken:
+    """
+    The right to run user code, held by the cell or one kernel tool call at a time. Its key is the thread
+    that acquired it, inherited by that thread's parallel()/pipeline() workers, so a host call from any of
+    them parks the token for the whole group; the group takes it back once its last host call returns.
+    """
+
     def __init__(self) -> None:
         self._cond = threading.Condition()
         self._owner: int | None = None
         self._depth = 0
+        self._parked: dict[int, list[int]] = {}
 
     def acquire(self) -> None:
-        me = threading.get_ident()
+        me = _token_key()
         with self._cond:
             while self._owner not in (None, me):
                 self._cond.wait()
@@ -571,7 +603,7 @@ class OwnerToken:
 
     def release(self) -> None:
         with self._cond:
-            if self._owner != threading.get_ident():
+            if self._owner != _token_key():
                 return
             self._depth -= 1
             if self._depth == 0:
@@ -580,20 +612,31 @@ class OwnerToken:
 
     @contextlib.contextmanager
     def parked(self) -> Iterator[None]:
-        me = threading.get_ident()
+        me = _token_key()
         with self._cond:
-            held = self._depth if self._owner == me else 0
-            if held:
+            record = self._parked.get(me)
+            if self._owner == me:
+                self._parked[me] = [1, self._depth]
                 self._owner, self._depth = None, 0
                 self._cond.notify_all()
+                mine = True
+            elif record is not None:
+                record[0] += 1
+                mine = True
+            else:
+                mine = False
         try:
             yield
         finally:
-            if held:
+            if mine:
                 with self._cond:
-                    while self._owner not in (None, me):
-                        self._cond.wait()
-                    self._owner, self._depth = me, held
+                    record = self._parked[me]
+                    record[0] -= 1
+                    if record[0] == 0:
+                        while self._owner is not None:
+                            self._cond.wait()
+                        del self._parked[me]
+                        self._owner, self._depth = me, record[1]
 
 
 class ThreadRoutedStream(io.TextIOBase):
@@ -602,6 +645,10 @@ class ThreadRoutedStream(io.TextIOBase):
     def __init__(self, stderr: bool) -> None:
         self._stderr = stderr
         self._targets: dict[int, io.StringIO] = {}
+        # Followed by the parallel()/pipeline() workers a capturing thread starts (they run in a copy of its context).
+        self._inherited: contextvars.ContextVar[io.StringIO | None] = contextvars.ContextVar(
+            f"senpi_output_{'stderr' if stderr else 'stdout'}", default=None
+        )
         self.cell_target: io.StringIO | None = None
 
     @contextlib.contextmanager
@@ -609,11 +656,13 @@ class ThreadRoutedStream(io.TextIOBase):
         me = threading.get_ident()
         previous = self._targets.get(me)
         self._targets[me] = buffer
+        inherited = self._inherited.set(buffer)
         if cell:
             self.cell_target = buffer
         try:
             yield
         finally:
+            self._inherited.reset(inherited)
             if previous is None:
                 self._targets.pop(me, None)
             else:
@@ -622,7 +671,7 @@ class ThreadRoutedStream(io.TextIOBase):
                 self.cell_target = None
 
     def write(self, text: str) -> int:
-        target = self._targets.get(threading.get_ident()) or self.cell_target
+        target = self._targets.get(threading.get_ident()) or self._inherited.get() or self.cell_target
         if target is None:
             return sys.__stderr__.write(text)
         return target.write(text)
@@ -649,6 +698,8 @@ class Registry:
     def __init__(self, on_change: Callable[[list[str]], None]) -> None:
         self._lock = threading.Lock()
         self._entries: dict[str, _Entry] = {}
+        # Revisions outlive undefine: a redefined name never reuses a revision an old descriptor carries.
+        self._revisions: dict[str, int] = {}
         self._on_change = on_change
         self.generation = 1
 
@@ -659,7 +710,8 @@ class Registry:
             existing = self._entries.get(key)
             if existing is not None and existing.name != inferred["name"]:
                 raise KernelToolError("tool_name_collision", f"Kernel tool name collides: {inferred['name']}")
-            revision = existing.revision + 1 if existing is not None else 1
+            revision = self._revisions.get(key, 0) + 1
+            self._revisions[key] = revision
             self._entries[key] = _Entry(fn=fn, revision=revision, **inferred)
             names = sorted(entry.name for entry in self._entries.values())
         self._on_change(names)
@@ -801,6 +853,10 @@ class KernelToolRunner:
             self._cancel(str(message.get("requestId", "")))
             return True
         return False
+
+    def pending(self) -> bool:
+        with self._lock:
+            return bool(self._invocations)
 
     def close(self) -> None:
         with self._lock:
@@ -1322,8 +1378,17 @@ def _pool_map(items: Iterable[Any], function: Callable[[Any], Any]) -> list[Any]
     workers = min(max(1, width), len(values))
     results: list[Any] = [None] * len(values)
     errors: dict[int, BaseException] = {}
+    group = _token_key()
+
+    def submit(pool: ThreadPoolExecutor, value: Any) -> Any:
+        # Each worker runs in a copy of this thread's context: the kernel tool call it serves (scope),
+        # its output buffer, and its token group, so its host calls park this thread's token.
+        context = contextvars.copy_context()
+        context.run(TOKEN_GROUP.set, group)
+        return pool.submit(context.run, function, value)
+
     with ThreadPoolExecutor(max_workers=workers) as pool:
-        futures = {pool.submit(function, value): index for index, value in enumerate(values)}
+        futures = {submit(pool, value): index for index, value in enumerate(values)}
         for future in as_completed(futures):
             index = futures[future]
             try:
