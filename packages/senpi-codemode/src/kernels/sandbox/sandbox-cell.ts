@@ -9,6 +9,8 @@ export interface SandboxCellOptions {
 	readonly executeTool: ExecuteTool;
 	readonly toolNames: () => readonly string[];
 	readonly describeTool?: (name: string) => string | undefined;
+	/** Where the QuickJS wasm lives; by default the installed `quickjs-wasi` package's file. */
+	readonly wasmPath?: string;
 }
 
 // On the script's first line so reported line numbers still match the cell; globals, so a cell's own
@@ -34,8 +36,12 @@ export function sandboxCellExecutor(code: string, options: SandboxCellOptions): 
 	return async ({ signal, emit }) => {
 		let sandbox: CodemodeSandbox;
 		try {
-			// Lazy: the vendored QuickJS runtime loads only when a session runs its first isolated cell.
+			// Lazy: the vendored QuickJS runtime loads only when a session runs its first isolated cell. The wasm is loaded
+			// here, before any of the cell runs, so a missing runtime is reported as unavailable instead of failing inside
+			// the script.
 			const runtime = await import("./vendor/pi-codemode/runtime/host.ts");
+			const { loadQuickJSWasm } = await import("./vendor/pi-codemode/wasm.ts");
+			const wasm = await loadQuickJSWasm(options.wasmPath);
 			const items = new Map<number, string[]>();
 			const tools: CodemodeTool[] = options
 				.toolNames()
@@ -47,6 +53,7 @@ export function sandboxCellExecutor(code: string, options: SandboxCellOptions): 
 						marshalToolResult(await options.executeTool(name, args, { signal: context.signal })),
 				}));
 			sandbox = new runtime.CodemodeSandbox({
+				wasm,
 				tools,
 				timeoutMs: options.sandbox.timeoutSeconds * 1_000,
 				memoryLimitBytes: options.sandbox.memoryMb * 1024 * 1024,
@@ -69,10 +76,15 @@ export function sandboxCellExecutor(code: string, options: SandboxCellOptions): 
 				},
 			});
 		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
+			// A module-resolution or file error carries host paths; the cell gets only what failed and its code.
+			const code =
+				error instanceof Error && "code" in error && typeof error.code === "string" ? ` (${error.code})` : "";
 			return {
 				ok: false,
-				error: { name: "SandboxUnavailableError", message: `eval_isolate_unavailable: ${message}` },
+				error: {
+					name: "SandboxUnavailableError",
+					message: `eval_isolate_unavailable: the QuickJS runtime for isolated cells could not be loaded${code}; nothing in the cell ran`,
+				},
 			};
 		}
 		try {

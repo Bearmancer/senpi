@@ -13,6 +13,8 @@
 
 ### Fixed
 
+- An isolated (`isolate: true`) cell whose QuickJS runtime is missing now fails with `eval_isolate_unavailable` before any of its code runs, instead of a module-resolution error that named a host path ([#2452](https://github.com/code-yeongyu/senpi/issues/2452)).
+
 - A nested tool call that is denied inside an `eval` cell (a permission denial or another hook's block) now reaches the cell as the plain denial, without the `Expected parameters:` schema hint that made it read like an argument error; argument failures still get the hint ([#2700](https://github.com/code-yeongyu/senpi/issues/2700)). Thanks to @MoerAI ([#2755](https://github.com/code-yeongyu/senpi/pull/2755)).
 
 ### Removed
