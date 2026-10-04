@@ -6,6 +6,8 @@
 
 ### Added
 
+- A single-session `--mode rpc` process accepts `set_retry_fallback` before its first turn is asked for (capability `retry_fallback_command`): the `open_session.retryFallback` profile for a caller that spawns one process per session, applied in memory only and kept by the process's later sessions. omo's task children that run as their own process (every Windows child, and `task.process_runner: "child-process"`) can now carry their category's fallback chain past a tool call without touching the user's settings file ([omo#9582](https://github.com/code-yeongyu/oh-my-openagent/issues/9582)).
+
 ### Changed
 
 ### Fixed

@@ -1,3 +1,27 @@
+## 2026-10-05 - `set_retry_fallback` for a single-session rpc process (omo#9582)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: new command `set_retry_fallback { retryFallback: SessionRetryFallbackProfile }` and its response.
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: `RpcConnectionOptions.retryFallbackCommand`. When set, the handler advertises `retry_fallback_command` in `get_protocol_info` and accepts `set_retry_fallback`: it validates with `sessionRetryFallbackError` (the `open_session.retryFallback` rules), refuses once the connection has asked for a turn (`turnRequested`, set by `prompt`, `steer`, `follow_up`, `continue_from_leaf` and a `send_custom_message` with `triggerTurn`) while any turn streams, or once the session holds turn history (any message other than an extension's `custom` context message), so a launch-time setting never changes under a turn or retry in flight while a fresh child whose components added context on `session_start` still accepts it, and calls `runtimeHost.setRetryFallback`. Without the option, as on a host's session connections, the command is refused and the capability is not advertised.
+- `packages/coding-agent/src/modes/rpc/rpc-mode.ts`: the single-session stdio handler passes `retryFallbackCommand: true`.
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts`: `RpcClient.setRetryFallback(profile)`.
+- `packages/coding-agent/src/modes/rpc/custom-capability.ts`: `RETRY_FALLBACK_COMMAND_CAPABILITY`.
+
+### Why
+
+- omo's task children that run as their own process (`task.process_runner: "child-process"`, and every child on win32) could not carry their category's fallback chain, so a usage limit after a tool call ended them. An RPC command reaches only that process: an environment variable would leak into everything its tools spawn (Bun does not unsetenv), and argv has a command-line length limit on Windows and shows in a process listing.
+
+### Why an extension could not handle it
+
+- Extensions cannot register RPC protocol commands or capabilities, and the connection handler's per-connection options are set by the mode that owns the transport.
+
+### Expected merge conflict zones
+
+- `connection-handler.ts`: `RpcConnectionOptions`, the `get_protocol_info` capability list, and the retry command block after `abort_retry`.
+- `rpc-types.ts`: the retry command and response unions.
+- `rpc-mode.ts`: the `createRpcConnectionHandler` call.
+
 ## 2026-10-04 - A handoff replaces an idle host no layout-2 record proves (senpi#2701)
 
 ### What changed

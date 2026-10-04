@@ -1,3 +1,21 @@
+## 2026-10-05 - A single-session rpc process takes its fallback chain over the wire (omo#9582)
+
+### What changed
+
+- `packages/coding-agent/src/main.ts`: `createServices` applies a launch profile's `retryFallback` through the shared `applyRetryFallbackProfile` helper (`core/agent-session-runtime.ts`) instead of an inline `applyOverrides` block, so `open_session` and `set_retry_fallback` apply the policy the same way.
+
+### Why
+
+- omo task children that run as their own `--mode rpc` process (every Windows child) had no way to receive their category's fallback chain, so a usage limit after a tool call ended the child even with `fallback_models` configured. `set_retry_fallback` gives that process the same in-memory policy `open_session.retryFallback` gives a host session; the runtime factory has to apply it identically for later sessions of the process.
+
+### Why an extension could not handle it
+
+- The runtime factory builds each session's `SettingsManager` before any extension loads. An extension cannot reach a later replacement session's settings before its first turn.
+
+### Expected merge conflict zones
+
+- `main.ts`: the `createServices` block directly after `SettingsManager.create(cwd, agentDir, { projectTrusted })`.
+
 ## 2026-10-03 - EvalHandleHost capability exports (codemode plan node 10)
 
 ### What changed
