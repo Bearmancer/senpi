@@ -24,6 +24,8 @@ export function buildCompactionContext(input: {
 	toolAdmissionEnabled: boolean;
 	breakerFallback: boolean;
 	laneOwnsCompaction: boolean;
+	/** The lane replays into a resident transcript that only accepts appends; skip per-turn reduction. */
+	appendOnlyTranscript?: boolean;
 	emergencyPruneLatch: EmergencyPruneLatch;
 	/** Emits the compaction log event for a real emergency prune at its one true site. */
 	logEmergencyPrune?: (fields: { route: string; tokensBefore: number; tokens: number }) => void;
@@ -43,7 +45,10 @@ export function buildCompactionContext(input: {
 			shouldApplyContextReduction({
 				usageTokens: input.ctx.getContextUsage()?.tokens ?? null,
 				contextWindow: input.contextWindow,
-				isProviderNativeCompactionPath: isOpenAiRemoteCompactionModel(input.ctx.model) || input.laneOwnsCompaction,
+				isProviderNativeCompactionPath:
+					isOpenAiRemoteCompactionModel(input.ctx.model) ||
+					input.laneOwnsCompaction ||
+					input.appendOnlyTranscript === true,
 			}))
 			? reduceContextMessages(admittedMessages, BUILTIN_CONTEXT_REDUCTION_OPTIONS).messages
 			: admittedMessages;

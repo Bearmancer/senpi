@@ -65,6 +65,13 @@ export interface CompactionLanePolicy {
 	disablesSenpiCompaction(context: LaneContext): boolean;
 	/** Manual requests are explicitly owned by senpi for recovery, even on SDK lanes. */
 	ownsCompaction(context: LaneContext, reason: CompactionReason): boolean;
+	/**
+	 * True when the active lane replays its transcript into a resident SDK session that
+	 * only accepts appended messages. Per-turn history rewrites (no-LLM context reduction)
+	 * would diverge it and force a full cold re-send every turn, so they must not run;
+	 * compaction (one summary, one cold-seed) is the reduction path there.
+	 */
+	hasAppendOnlyTranscript(context: LaneContext): boolean;
 }
 
 export interface CompactBoundaryEntry {
@@ -115,6 +122,21 @@ export function createCompactionLanePolicy(
 	const load = options.loadProviderSettings ?? loadAnthropicSubscriptionProviderSettingsFromDisk;
 	let cachedCwd: string | undefined;
 	let cachedResumeMode: string | undefined;
+	// Per-cwd cache is the intended contract (pinned by lane-policy.test.ts):
+	// resumeMode is read once per cwd. A mid-session switch takes effect on
+	// the next cwd or session. Returns false when the settings cannot be read,
+	// so callers fail closed to senpi's full behavior.
+	const resolveResumeMode = (cwd: string): boolean => {
+		if (cachedCwd === cwd) return true;
+		try {
+			cachedResumeMode = load(cwd).resumeMode;
+		} catch {
+			cachedCwd = undefined;
+			return false;
+		}
+		cachedCwd = cwd;
+		return true;
+	};
 	// Declared as a local so `ownsCompaction` never depends on `this`: the policy object
 	// is routinely destructured at call sites, which would otherwise unbind the receiver.
 	const disablesSenpiCompaction = (context: LaneContext): boolean => {
@@ -123,24 +145,18 @@ export function createCompactionLanePolicy(
 		// for the lane, so the SDK-native stand-down no longer applies. This is
 		// the escape hatch for lanes whose SDK never fires native compaction.
 		if (context.getCompactionSettings?.().model) return false;
-		// Per-cwd cache is the intended contract (pinned by lane-policy.test.ts):
-		// resumeMode is read once per cwd. A mid-session switch takes effect on
-		// the next cwd or session.
-		if (cachedCwd !== context.cwd) {
-			try {
-				cachedResumeMode = load(context.cwd).resumeMode;
-			} catch {
-				// A settings read failure must never silently disable senpi compaction:
-				// fail closed by keeping senpi's own compaction fully active.
-				cachedCwd = undefined;
-				return false;
-			}
-			cachedCwd = context.cwd;
-		}
+		// A settings read failure must never silently disable senpi compaction:
+		// fail closed by keeping senpi's own compaction fully active.
+		if (!resolveResumeMode(context.cwd)) return false;
 		return isSdkNativeCompactionLane({ model: context.model, resumeMode: cachedResumeMode });
 	};
 	return {
 		disablesSenpiCompaction,
+		hasAppendOnlyTranscript(context: LaneContext): boolean {
+			if (context.model?.provider !== ANTHROPIC_SUBSCRIPTION_PROVIDER_ID) return false;
+			if (!resolveResumeMode(context.cwd)) return false;
+			return cachedResumeMode !== "off";
+		},
 		ownsCompaction(context: LaneContext, reason: CompactionReason): boolean {
 			// Manual is senpi-owned everywhere: it is the user's explicit recovery path,
 			// including on an SDK-native lane whose automatic routes stay SDK-owned.
