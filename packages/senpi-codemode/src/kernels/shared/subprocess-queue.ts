@@ -120,6 +120,7 @@ export class SubprocessRunQueue {
 				return false;
 			case "webview-connect":
 			case "memory-query-result":
+			case "kernel-tools-defined":
 				return false;
 			default: {
 				const exhaustive: never = message;

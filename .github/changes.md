@@ -16,6 +16,24 @@
 
 - LOW: the `python-kernel-windows` job's step list.
 
+## 2026-10-04 - The Windows Python job runs the kernel-tool suites (codemode plan node 11)
+
+### What changed
+
+- `.github/workflows/ci.yml` (`python-kernel-windows`): a new step runs `test/py-kernel-tools.test.ts`, `test/kernel-tools-registry.test.ts` and `test/kernel-tools-reentrancy.test.ts` with the JSON reporter, and the next step fails unless they all ran: no failures, no skips, and at least 15 Python kernel-tool cases passed.
+
+### Why
+
+- Python kernel tools serve callbacks on threads beside a runner whose interrupt is SIGTERM-only on Windows; the plan requires those suites to run on Windows, and a skipped suite must not count as a pass.
+
+### Why an extension could not handle it
+
+- This is CI configuration.
+
+### Expected merge conflict zones
+
+- LOW: the `python-kernel-windows` job's step list.
+
 ## 2026-10-03 - codemode-gate checks out full history to review baseline changes (senpi#2452)
 
 ### What changed
