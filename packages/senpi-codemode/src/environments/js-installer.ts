@@ -114,19 +114,19 @@ export async function requestedPackageName(spec: string): Promise<string | undef
  * `package/`, or a GitHub-style `<repo>-<sha>/`. tar detects the compression itself, so a plain `.tar` works too.
  */
 async function tarballManifest(path: string): Promise<string> {
-	const tops = new Set(
-		(await tarOutput(["-tf", path]))
-			.split("\n")
-			.map((entry) => entry.replace(/^(\.\/)+/, "").split("/")[0] ?? "")
-			.filter((top) => top !== ""),
-	);
+	const entries = (await tarOutput(["-tf", path])).split("\n").filter((entry) => entry !== "");
+	const normalized = (entry: string) => entry.replace(/^(\.\/)+/, "");
+	const tops = new Set(entries.map((entry) => normalized(entry).split("/")[0] ?? "").filter((top) => top !== ""));
 	// An archive whose entries do not all sit under one directory has no single package to name: judging it by
 	// whichever entry comes first could name the wrong one.
 	const [top, ...others] = [...tops];
 	if (top === undefined || others.length > 0 || top === "." || top === "..") {
 		throw new Error("the archive does not hold one top-level directory");
 	}
-	return await tarOutput(["-xOf", path, `${top}/package.json`]);
+	// Extract by the member's own name: GNU tar matches it exactly, so a leading "./" must be kept.
+	const manifest = entries.find((entry) => normalized(entry) === `${top}/package.json`);
+	if (manifest === undefined) throw new Error("the archive holds no package.json in its top-level directory");
+	return await tarOutput(["-xOf", path, manifest]);
 }
 
 function tarOutput(args: readonly string[]): Promise<string> {
