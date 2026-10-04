@@ -2196,7 +2196,7 @@ def _handle_message(message: dict[str, Any]) -> bool:
         return True
     if message_type == "run":
         env_root = message.get("envRoot")
-        if isinstance(env_root, str) and env_root:
+        if isinstance(env_root, str):
             _activate_env_root(env_root)
         source_file = message.get("sourceFile")
         run_cell(
@@ -2219,13 +2219,16 @@ _ACTIVE_ENV_ROOT: list[str] = []
 def _activate_env_root(root: str) -> None:
     # One environment revision is on the import path at a time: a newer revision already holds every
     # package of the previous one, so it replaces that entry instead of stacking another.
-    if _ACTIVE_ENV_ROOT == [root]:
+    # An empty root means the session's current mode has nothing installed: the previous revision leaves too.
+    wanted = [root] if root else []
+    if _ACTIVE_ENV_ROOT == wanted:
         return
     for previous in _ACTIVE_ENV_ROOT:
         with contextlib.suppress(ValueError):
             sys.path.remove(previous)
-    _ACTIVE_ENV_ROOT[:] = [root]
-    sys.path.insert(0, root)
+    _ACTIVE_ENV_ROOT[:] = wanted
+    if root:
+        sys.path.insert(0, root)
     importlib.invalidate_caches()
 
 

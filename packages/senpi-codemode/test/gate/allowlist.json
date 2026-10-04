@@ -310,7 +310,16 @@
 				"imports/firstKernel/packages/senpi-codemode/src/environments/py-installer.ts",
 				"imports/firstKernel/packages/senpi-codemode/src/environments/revision-store.ts",
 				"imports/extension/packages/senpi-codemode/src/environments/editable-check.ts",
-				"imports/firstKernel/packages/senpi-codemode/src/environments/editable-check.ts"
+				"imports/firstKernel/packages/senpi-codemode/src/environments/editable-check.ts",
+				"legacyContracts/test/magic-cells.test.ts/magic cell detection Given leading comment lines or a backslash-continued %pip, then it is still the host magic with the joined arguments",
+				"legacyContracts/test/magic-cells.test.ts/magic cell detection Given a %pip line that is not the cell's first code line, such as inside a string, then the cell runs as ordinary Python",
+				"legacyContracts/test/magic-cells.test.ts/%pip argument parsing Given quoted requirements, then each quoted string is one requirement with its quotes removed",
+				"legacyContracts/test/magic-cells.test.ts/%pip argument parsing Given a trailing comment, then the comment is not passed to pip",
+				"legacyContracts/test/magic-cells.test.ts/%pip argument parsing Given an unclosed quote, then the install is refused naming the quote instead of guessing",
+				"legacyContracts/test/environments/magic-pip-e2e.test.ts/Given a Python eval session When an import cell is queued behind a %pip cell that is itself queued behind a running cell, then the import sees the newly installed package",
+				"legacyContracts/test/environments/magic-pip-e2e.test.ts/Given a Python eval session When the session switches to an environment with nothing installed, then packages of the environment it left no longer import",
+				"legacyContracts/test/environments/magic-pip-e2e.test.ts/Given a Python eval session When another session in the same project installs into the project environment, then this session's next cell imports it",
+				"legacyContracts/test/magic-cells.test.ts/%pip argument parsing Given a Windows path, then its backslashes reach pip unchanged; in POSIX mode a backslash escapes"
 			],
 			"reason": "Node 14 part 3: %pip / %environment magic cells run as host entries in the Python kernel's queue and every Python cell imports from the session's active environment revision; the magic-cell modules, and the environments library they import (install-lock, py-environment, py-installer, revision-store, first reached from the extension here), join the scoped census, plus the new contracts. No prompt or eval schema change."
 		},
@@ -633,6 +642,21 @@
 				"legacyContracts/test/environments/py-environment.test.ts/Given an environment root's install lock When a live process on this host holds the lock, then a waiter enters only after it is released"
 			],
 			"reason": "Node 14 part 3: the Python environments library (versioned revisions published by an atomic pointer switch, per-root install lock, pip --target installer) and its contracts. Not wired into any cell yet, so no import-census, prompt or helper change."
+		},
+		"2718": {
+			"additions": [
+				"imports/extension/packages/senpi-codemode/src/kernels/shared/process-cpu.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/kernels/shared/process-cpu.ts",
+				"legacyContracts/test/py-kernel-startup.test.ts/Python startup progress keeps waiting for a cold interpreter that is silent in its imports but busy on the CPU",
+				"legacyContracts/test/py-kernel-startup.test.ts/Python startup progress fails a silent and idle interpreter after the guard, naming the stage it stopped in",
+				"legacyContracts/test/py-kernel-startup.test.ts/Python startup progress stops an interpreter that stays busy but never becomes ready at the startup ceiling, naming its stage",
+				"legacyContracts/test/py-kernel-startup.test.ts/Python startup progress keeps a starting interpreter alive while it writes output",
+				"legacyContracts/test/py-kernel-startup.test.ts/Python startup progress keeps a starting interpreter alive while it prints on stdout",
+				"legacyContracts/test/py-kernel-startup.test.ts/Python startup progress fails an interpreter that goes idle right after a stage change within one guard period",
+				"legacyContracts/test/py-kernel-startup.test.ts/Python startup progress retires a stalled interpreter with one SIGKILL to its process group, and never through the real process table",
+				"legacyContracts/test/py-kernel-startup.test.ts/Python startup progress falls back to killing the child itself when its process group is already gone"
+			],
+			"reason": "Python startup counts CPU use and output as progress, with an absolute ceiling (senpi#2718): a shared CPU reader module and four startup behaviour cases."
 		}
 	}
 }

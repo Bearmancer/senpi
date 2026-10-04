@@ -268,7 +268,8 @@ async function executeCell(
 					durationMs: 0,
 				});
 			}
-			const envRoot = invocation.input.language === "py" ? options.pythonEnvironments?.activeRoot : undefined;
+			const environments = invocation.input.language === "py" ? options.pythonEnvironments : undefined;
+			const envRoot = environments === undefined ? undefined : () => environments.activeRoot ?? "";
 			const result = await execution.wait(
 				kernel.run({
 					cellId: invocation.cellId,

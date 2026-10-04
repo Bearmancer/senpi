@@ -7,10 +7,26 @@ export type MagicCell =
 
 const HOST_MAGICS = ["pip", "environment", "load"] as const;
 const LOAD_LANGUAGES: ReadonlySet<EvalLanguage> = new Set(["py", "js"]);
+const COMMENT_PREFIX: Partial<Record<EvalLanguage, string>> = { py: "#", js: "//" };
 type HostMagic = (typeof HOST_MAGICS)[number];
 
 export class MagicCellError extends Error {
 	readonly name = "MagicCellError";
+}
+
+function joinContinuations(lines: readonly string[]): string[] {
+	const joined: string[] = [];
+	let pending: string | undefined;
+	for (const line of lines) {
+		const current = pending === undefined ? line : `${pending} ${line.trim()}`;
+		if (current.trimEnd().endsWith("\\")) pending = current.trimEnd().slice(0, -1).trimEnd();
+		else {
+			joined.push(current);
+			pending = undefined;
+		}
+	}
+	if (pending !== undefined) joined.push(pending);
+	return joined;
 }
 
 function hostMagicOf(language: EvalLanguage, line: string): HostMagic | undefined {
@@ -22,16 +38,21 @@ function hostMagicOf(language: EvalLanguage, line: string): HostMagic | undefine
 }
 
 /**
- * A Python cell whose only non-blank line is `%pip ...` or `%environment ...` runs on the host instead of
- * the interpreter. Any other cell is ordinary; a cell that mixes one of these lines with code is refused,
- * because the install must finish before the code that imports from it runs.
+ * A cell whose first code line (blank and comment lines skipped) is a host magic runs on the host instead of
+ * the interpreter: `%pip` and `%environment` in Python, `%load` in Python and JavaScript. In Python a trailing
+ * backslash continues the line. Any other cell is ordinary code, so a magic-looking line later in the cell
+ * (say, inside a string) is left alone. A magic followed by more code is refused, because the host step must
+ * finish before the code that depends on it runs.
  */
 export function parseMagicCell(language: EvalLanguage, code: string): MagicCell | undefined {
-	const lines = code.split("\n").filter((line) => line.trim() !== "");
-	const magicLines = lines.filter((line) => hostMagicOf(language, line) !== undefined);
-	if (magicLines.length === 0) return undefined;
-	const first = magicLines[0] ?? "";
+	const comment = COMMENT_PREFIX[language];
+	const raw = code.split("\n");
+	const lines = (language === "py" ? joinContinuations(raw) : raw).filter(
+		(line) => line.trim() !== "" && (comment === undefined || !line.trim().startsWith(comment)),
+	);
+	const first = lines[0] ?? "";
 	const magic = hostMagicOf(language, first);
+	if (magic === undefined) return undefined;
 	if (lines.length > 1)
 		throw new MagicCellError(`put %${magic} on its own cell, then run the code that uses it in the next cell`);
 	const args = first.trim().slice(`%${magic}`.length).trim();
