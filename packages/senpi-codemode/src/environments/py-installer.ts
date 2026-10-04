@@ -67,6 +67,8 @@ const PIP_TREE_GRACE_MS = 2_000;
  * character only in POSIX mode; on Windows it is a path separator and stays as written. An unclosed quote is
  * refused rather than guessed.
  */
+const DOUBLE_QUOTE_ESCAPES: ReadonlySet<string> = new Set(['"', "\\", "$", "`"]);
+
 export function splitShellWords(text: string, posix = process.platform !== "win32"): string[] {
 	const words: string[] = [];
 	let word = "";
@@ -81,8 +83,17 @@ export function splitShellWords(text: string, posix = process.platform !== "win3
 		}
 		if (posix && char === "\\" && index + 1 < text.length) {
 			const next = text[index + 1] ?? "";
+			// A backslash-newline is a line continuation in a shell, inside double quotes or not: both characters go.
+			if (next === "\n") {
+				index += 1;
+				continue;
+			}
+			// Inside double quotes a shell only escapes these; any other backslash stays as written.
+			if (quote === '"' && !DOUBLE_QUOTE_ESCAPES.has(next)) {
+				word += char;
+				continue;
+			}
 			index += 1;
-			if (next === "\n") continue;
 			word += next;
 			inWord = true;
 			continue;

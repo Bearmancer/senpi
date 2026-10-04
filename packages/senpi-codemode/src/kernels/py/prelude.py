@@ -1578,8 +1578,14 @@ _LINE_MAGICS: dict[str, Callable[[str], Any]] = {
 }
 
 
+_HOST_MAGICS = frozenset({"pip", "environment"})
+
+
 def _magic(name: str, args: str) -> Any:
     handler = _LINE_MAGICS.get(name)
+    if handler is None and name in _HOST_MAGICS:
+        # The host runs these only as a cell's first code line; anywhere else they reach here.
+        raise PreludeRuntimeError(f"put %{name} on its own cell, then run the code that uses it in the next cell")
     if handler is None:
         raise PreludeRuntimeError(f"Unsupported line magic: %{name}")
     return handler(args)

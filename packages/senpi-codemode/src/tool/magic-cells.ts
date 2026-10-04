@@ -40,8 +40,9 @@ function hostMagicOf(line: string): HostMagic | undefined {
  */
 export function parseMagicCell(language: EvalLanguage, code: string): MagicCell | undefined {
 	if (language !== "py") return undefined;
-	const lines = joinContinuations(code.split("\n")).filter(
-		(line) => line.trim() !== "" && !line.trim().startsWith("#"),
+	// Python never continues a comment line, so comments go before backslash continuations are joined.
+	const lines = joinContinuations(code.split("\n").filter((line) => !line.trim().startsWith("#"))).filter(
+		(line) => line.trim() !== "",
 	);
 	const first = lines[0] ?? "";
 	const magic = hostMagicOf(first);
