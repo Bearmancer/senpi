@@ -1,5 +1,6 @@
-import { spawn } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { existsSync, realpathSync } from "node:fs";
+import { readFile, stat } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { basename, delimiter, isAbsolute, join, resolve, sep } from "node:path";
 import { EnvironmentError } from "./py-installer.ts";
@@ -73,11 +74,56 @@ export function jsInstallArgv(installer: JsInstaller, root: string, packages: re
 		: ["install", "--ignore-scripts", "--no-audit", "--no-fund", "--prefix", root, ...packages];
 }
 
+export function jsRemoveArgv(installer: JsInstaller, root: string, name: string): string[] {
+	return installer === "bun"
+		? ["remove", "--ignore-scripts", "--cwd", root, name]
+		: ["uninstall", "--ignore-scripts", "--no-audit", "--no-fund", "--prefix", root, name];
+}
+
+const REGISTRY_NAME = /^((?:@[a-z0-9][\w.-]*\/)?[a-z0-9][\w.-]*)(?:@[^/]*)?$/i;
+
+/**
+ * The package name a spec installs, when it can be known before the install: a local directory's or tarball's own
+ * `package.json` name, or the name of a registry spec (`name`, `name@range`, `@scope/name@range`). Undefined for URL
+ * and git specs.
+ */
+export async function requestedPackageName(spec: string): Promise<string | undefined> {
+	const path = spec.startsWith("file:") ? spec.slice("file:".length) : spec;
+	if (isAbsolute(path)) {
+		try {
+			const manifest: unknown = JSON.parse(
+				(await stat(path)).isDirectory()
+					? await readFile(join(path, "package.json"), "utf8")
+					: await tarballManifest(path),
+			);
+			return typeof manifest === "object" &&
+				manifest !== null &&
+				"name" in manifest &&
+				typeof manifest.name === "string"
+				? manifest.name
+				: undefined;
+		} catch {
+			return undefined;
+		}
+	}
+	return REGISTRY_NAME.exec(spec)?.[1];
+}
+
+function tarballManifest(path: string): Promise<string> {
+	return new Promise((resolveText, reject) => {
+		execFile("tar", ["-xzOf", path, "package/package.json"], { maxBuffer: 1 << 20 }, (error, stdout) =>
+			error === null ? resolveText(stdout) : reject(error),
+		);
+	});
+}
+
 export function runJsInstall(input: {
 	readonly installer: JsInstaller;
 	readonly command: string;
 	readonly root: string;
 	readonly packages: readonly string[];
+	/** Remove this package instead of adding `packages`. */
+	readonly remove?: string;
 	/** Absolute specs already recorded in the revision; the installer echoes them, so they are redacted too. */
 	readonly recordedSpecs?: readonly string[];
 	readonly cwd: string;
@@ -90,7 +136,11 @@ export function runJsInstall(input: {
 			reject(new EnvironmentError("environment_install_cancelled", "the install was cancelled before it started"));
 			return;
 		}
-		const child = spawn(input.command, jsInstallArgv(input.installer, input.root, input.packages), {
+		const argv =
+			input.remove === undefined
+				? jsInstallArgv(input.installer, input.root, input.packages)
+				: jsRemoveArgv(input.installer, input.root, input.remove);
+		const child = spawn(input.command, argv, {
 			cwd: input.cwd,
 			stdio: ["ignore", "pipe", "pipe"],
 			// npm reads `global`/`location` from any .npmrc and the env; a global install would land where the import never looks.
