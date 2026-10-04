@@ -196,6 +196,72 @@ describe("Python startup progress", () => {
 		await (await started).close();
 	});
 
+	it("keeps a starting interpreter alive while it prints on stdout", async () => {
+		// Given: CPU cannot be read here, but the interpreter prints to stdout during its imports.
+		vi.useFakeTimers();
+		const child = new FakeChild({ autoReady: false });
+		const started = PythonKernel.start({
+			interpreterPath: "python3",
+			sessionId: "stdout-start",
+			cwd: process.cwd(),
+			connection: { port: 1, token: "fixture" },
+			startupTimeoutMs: 200,
+			startupCeilingMs: 10_000,
+			readCpuTime: () => undefined,
+			spawnProcess: () => child,
+		});
+		let settled = false;
+		started.then(
+			() => {
+				settled = true;
+			},
+			() => {
+				settled = true;
+			},
+		);
+		child.emitMessage({ type: "status", event: { op: "kernel-startup", stage: "stdlib-imports" } });
+
+		// When: it prints a text frame every 150 ms for a second.
+		for (let tick = 0; tick < 7; tick++) {
+			await vi.advanceTimersByTimeAsync(150);
+			child.emitMessage({ type: "text", stream: "stdout", data: "warming up\n" });
+		}
+
+		// Then: it is still starting, and ready completes it.
+		expect(settled).toBe(false);
+		child.emitMessage({ type: "ready" });
+		await (await started).close();
+	});
+
+	it("fails an interpreter that goes idle right after a stage change within one guard period", async () => {
+		// Given: CPU advances up to the stage frame, then stops for good.
+		vi.useFakeTimers();
+		const child = new FakeChild({ autoReady: false, pid: 4245 });
+		let cpu = 0n;
+		let busy = true;
+		const started = PythonKernel.start({
+			interpreterPath: "python3",
+			sessionId: "idle-after-stage",
+			cwd: process.cwd(),
+			connection: { port: 1, token: "fixture" },
+			startupTimeoutMs: 200,
+			startupCeilingMs: 10_000,
+			readCpuTime: () => (busy ? (cpu += 10n) : cpu),
+			spawnProcess: () => child,
+		});
+		const outcome = started.catch((error: unknown) => error);
+		await vi.advanceTimersByTimeAsync(150);
+		child.emitMessage({ type: "status", event: { op: "kernel-startup", stage: "runtime-init" } });
+		busy = false;
+
+		// When: one guard period passes after the stage change.
+		await vi.advanceTimersByTimeAsync(200);
+
+		// Then: it fails at runtime-init, not a period later.
+		expect(await outcome).toMatchObject({ stage: "runtime-init" });
+		expect(child.killSignals).toEqual(["SIGKILL"]);
+	});
+
 	it("does not extend a hung stage for repeated progress frames", async () => {
 		// Given: an interpreter stuck in imports.
 		vi.useFakeTimers();

@@ -48,7 +48,6 @@ export class PythonStartup {
 
 	constructor(options: PythonStartupOptions) {
 		this.#options = options;
-		this.#lastCpu = options.readCpuTime();
 		this.#ceiling = setTimeout(
 			() => this.#fail(`not ready after ${Math.round(options.ceilingMs / 1000)} s`),
 			options.ceilingMs,
@@ -87,6 +86,7 @@ export class PythonStartup {
 	}
 
 	#arm(): void {
+		this.#lastCpu = this.#options.readCpuTime();
 		clearTimeout(this.#timer);
 		this.#timer = setTimeout(() => this.#expire(), this.#options.noProgressMs);
 	}
@@ -96,7 +96,6 @@ export class PythonStartup {
 		const cpu = this.#options.readCpuTime();
 		// Where CPU can't be read, stage and output are the only signs of life, as before.
 		if (cpu !== undefined && cpu !== this.#lastCpu) {
-			this.#lastCpu = cpu;
 			this.#arm();
 			return;
 		}
