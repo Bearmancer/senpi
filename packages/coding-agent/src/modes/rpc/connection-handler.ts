@@ -288,6 +288,8 @@ export function createRpcConnectionHandler(
 	let session = runtimeHost.session;
 	let sessionControl: HostSessionControl | undefined;
 	const promptCalls = new Set<Promise<unknown>>();
+	// Set by the first command that asks this session for a turn; `set_retry_fallback` is refused after it.
+	let turnRequested = false;
 	let unsubscribe: (() => void) | undefined;
 	let unsubscribeBackpressure: (() => void) | undefined;
 	let unsubscribeLoadedSurfaces: (() => void) | undefined;
@@ -971,6 +973,7 @@ export function createRpcConnectionHandler(
 			// =================================================================
 
 			case "prompt": {
+				turnRequested = true;
 				const admission = handleClientInput(session, command, { output, promptCalls });
 				promptCalls.add(admission);
 				void admission.finally(() => promptCalls.delete(admission));
@@ -994,6 +997,7 @@ export function createRpcConnectionHandler(
 			}
 
 			case "continue_from_leaf": {
+				turnRequested = true;
 				try {
 					await session.continueFromLeaf();
 					return success(id, "continue_from_leaf");
@@ -1004,6 +1008,7 @@ export function createRpcConnectionHandler(
 			}
 
 			case "send_custom_message": {
+				turnRequested = true;
 				await session.sendCustomMessage(
 					{
 						customType: command.customType,
@@ -1018,6 +1023,7 @@ export function createRpcConnectionHandler(
 
 			case "steer":
 			case "follow_up": {
+				turnRequested = true;
 				await handleClientInput(session, command, { output, promptCalls });
 				return undefined;
 			}
@@ -1268,8 +1274,9 @@ export function createRpcConnectionHandler(
 				if (profileError !== undefined || command.retryFallback === undefined) {
 					return error(id, "set_retry_fallback", profileError ?? "set_retry_fallback needs retryFallback.");
 				}
-				// A launch-time setting: a chain never changes under a turn or a retry already in flight.
-				if (session.isStreaming || session.messages.length > 0) {
+				// A launch-time setting: refused once a turn was asked for (even one not started yet) or the session
+				// holds messages from any turn, so a chain never changes under a turn or a retry already in flight.
+				if (turnRequested || session.messages.length > 0) {
 					return error(
 						id,
 						"set_retry_fallback",

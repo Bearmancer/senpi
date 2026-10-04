@@ -2210,8 +2210,10 @@ overrides the session's `retry.modelFallback` and `retry.fallbackChains` in memo
 settings file, and the process's later sessions (`new_session`, `switch_session`, `fork`) keep it.
 
 It is a launch-time setting:
-- It is accepted only before the session's first turn. Once a turn has started (or the session already holds
-  messages), it is refused, so a chain never changes under a turn or a retry already in flight.
+- It is accepted only before the session's first turn. It is refused once this connection has asked for a turn
+  (`prompt`, `steer`, `follow_up`, `continue_from_leaf`, `send_custom_message`), even one that has not started yet, and
+  once the session holds messages from any turn (an extension's, or a resumed session's). So a chain never changes
+  under a turn or a retry already in flight.
 - A malformed profile is refused with the `open_session` shape message, and nothing is applied.
 - A multi-session host refuses the command on its session connections; a host session takes its policy from
   `open_session.retryFallback`.

@@ -32,10 +32,16 @@ interface SingleProcess {
 	readonly runtime: AgentSessionRuntime;
 	readonly settingsPath: string;
 	request(command: Record<string, unknown>): Promise<Record<string, unknown>>;
+	startPrompt(message: string): Promise<void>;
+	/** Sends a prompt without waiting for it; the returned promise settles when that turn has ended. */
+	sendPromptWithoutWaiting(message: string): Promise<void>;
 	lastAssistantText(): string;
 }
 
-async function singleRpcProcess(options: { retryFallbackCommand: boolean }): Promise<SingleProcess> {
+async function singleRpcProcess(options: {
+	retryFallbackCommand: boolean;
+	firstTurnGate?: Promise<void>;
+}): Promise<SingleProcess> {
 	const dir = join(tmpdir(), `senpi-set-retry-fallback-${Date.now()}-${Math.random().toString(36).slice(2)}`);
 	mkdirSync(dir, { recursive: true });
 	const settingsPath = join(dir, "settings.json");
@@ -46,10 +52,15 @@ async function singleRpcProcess(options: { retryFallbackCommand: boolean }): Pro
 		provider: "faux-fallback",
 		models: [{ id: "primary" }, { id: "spare" }],
 	});
-	const step: FauxResponseStep = (_context, _options, _state, model) =>
-		model.id === "primary"
+	let gate = options.firstTurnGate;
+	const step: FauxResponseStep = async (_context, _options, _state, model) => {
+		const held = gate;
+		gate = undefined;
+		if (held !== undefined) await held;
+		return model.id === "primary"
 			? fauxAssistantMessage("", { stopReason: "error", errorMessage: USAGE_LIMIT })
 			: fauxAssistantMessage(`answered by ${model.id}`);
+	};
 	faux.setResponses(Array.from({ length: 12 }, () => step));
 	const auth = AuthStorage.inMemory();
 	await auth.modify("faux-fallback", async () => ({ type: "api_key", key: "faux-key" }));
@@ -101,6 +112,19 @@ async function singleRpcProcess(options: { retryFallbackCommand: boolean }): Pro
 	await runtime.session.bindExtensions({});
 
 	const lines: Record<string, unknown>[] = [];
+	const lineWaiters: Array<{ readonly match: (line: Record<string, unknown>) => boolean; readonly resolve: () => void }> =
+		[];
+	const nextLine = (match: (line: Record<string, unknown>) => boolean, label: string): Promise<void> =>
+		new Promise<void>((resolve, reject) => {
+			const timer = setTimeout(() => reject(new Error(`no ${label} line within 20s`)), 20_000);
+			lineWaiters.push({
+				match,
+				resolve: () => {
+					clearTimeout(timer);
+					resolve();
+				},
+			});
+		});
 	const waiters = new Map<string, (line: Record<string, unknown>) => void>();
 	const handler: RpcConnectionHandler = createRpcConnectionHandler(
 		runtime,
@@ -111,6 +135,10 @@ async function singleRpcProcess(options: { retryFallbackCommand: boolean }): Pro
 					const line = JSON.parse(text) as Record<string, unknown>;
 					lines.push(line);
 					if (line.type === "response" && typeof line.id === "string") waiters.get(line.id)?.(line);
+					for (const waiter of lineWaiters.splice(0)) {
+						if (waiter.match(line)) waiter.resolve();
+						else lineWaiters.push(waiter);
+					}
 				}
 			},
 			waitForBackpressure: async () => {},
@@ -128,6 +156,16 @@ async function singleRpcProcess(options: { retryFallbackCommand: boolean }): Pro
 	return {
 		runtime,
 		settingsPath,
+		sendPromptWithoutWaiting(message) {
+			const ended = nextLine((line) => line.type === "agent_end", "agent_end");
+			void handler.handleInputLine(JSON.stringify({ type: "prompt", message, id: `req-${++sequence}` }));
+			return ended;
+		},
+		async startPrompt(message) {
+			const started = nextLine((line) => line.type === "agent_start", "agent_start");
+			await handler.handleInputLine(JSON.stringify({ type: "prompt", message, id: `req-${++sequence}` }));
+			await started;
+		},
 		async request(command) {
 			const id = `req-${++sequence}`;
 			const answered = new Promise<Record<string, unknown>>((resolve, reject) => {
@@ -199,17 +237,70 @@ it("#given a child that has already run a turn #when a chain arrives #then it is
 	);
 }, 60_000);
 
-it("#given a child told its chain #when it moves to a replacement session #then the replacement keeps the chain", async () => {
+it("#given a child whose first turn is in flight #when a chain arrives #then it is refused and the turn finishes on the policy it started with", async () => {
+	// given
+	let release = () => {};
+	const firstTurnGate = new Promise<void>((resolve) => {
+		release = resolve;
+	});
+	const child = await singleRpcProcess({ retryFallbackCommand: true, firstTurnGate });
+	await child.startPrompt("go");
+
+	// when
+	const midTurn = await child.request({ type: "set_retry_fallback", retryFallback: CHILD_CHAIN });
+	release();
+	await child.runtime.session.waitForIdle();
+
+	// then
+	expect(midTurn.success).toBe(false);
+	expect(String(midTurn.error)).toContain("before the session's first turn");
+	expect(child.lastAssistantText()).toContain("session limit");
+}, 60_000);
+
+it("#given a prompt that was just accepted #when a chain arrives right behind it #then it is refused: the turn it would change has begun", async () => {
 	// given
 	const child = await singleRpcProcess({ retryFallbackCommand: true });
+	const turnEnded = child.sendPromptWithoutWaiting("go");
+
+	// when
+	const behind = await child.request({ type: "set_retry_fallback", retryFallback: CHILD_CHAIN });
+	await turnEnded;
+	await child.runtime.session.waitForIdle();
+
+	// then
+	expect(behind.success).toBe(false);
+	expect(child.lastAssistantText()).toContain("session limit");
+}, 60_000);
+
+it("#given a turn the child ran without this connection (an extension's or a resumed session's) #when a chain arrives #then it is refused", async () => {
+	// given
+	const child = await singleRpcProcess({ retryFallbackCommand: true });
+	await child.runtime.session.prompt("go");
+	await child.runtime.session.waitForIdle();
+
+	// when
+	const late = await child.request({ type: "set_retry_fallback", retryFallback: CHILD_CHAIN });
+
+	// then
+	expect(late.success).toBe(false);
+	expect(String(late.error)).toContain("before the session's first turn");
+}, 60_000);
+
+it("#given a child told its chain #when it moves to a replacement session #then the replacement answers on the chain and the settings file is untouched", async () => {
+	// given
+	const child = await singleRpcProcess({ retryFallbackCommand: true });
+	const settingsBefore = readFileSync(child.settingsPath);
 	await child.request({ type: "set_retry_fallback", retryFallback: CHILD_CHAIN });
 
 	// when
 	const replaced = await child.runtime.newSession();
 	await child.runtime.session.bindExtensions({});
+	await child.request({ type: "prompt", message: "go" });
 
 	// then
 	expect(replaced.cancelled).toBe(false);
+	expect(child.lastAssistantText()).toBe("answered by spare");
+	expect(readFileSync(child.settingsPath)).toEqual(settingsBefore);
 	expect(child.runtime.session.settingsManager.getRetryFallbackSettings().chains).toMatchObject({
 		"faux-fallback/primary": ["faux-fallback/spare"],
 	});
@@ -231,18 +322,4 @@ it("#given a malformed chain #when it is sent #then it is refused with the open_
 	expect(child.runtime.session.settingsManager.getRetryFallbackSettings().chains).not.toHaveProperty(
 		"faux-fallback/primary",
 	);
-}, 60_000);
-
-it("#given a host session connection #when a chain arrives over set_retry_fallback #then it is refused and the capability is not advertised", async () => {
-	// given
-	const hosted = await singleRpcProcess({ retryFallbackCommand: false });
-
-	// when
-	const info = await hosted.request({ type: "get_protocol_info" });
-	const set = await hosted.request({ type: "set_retry_fallback", retryFallback: CHILD_CHAIN });
-
-	// then
-	expect((info.data as { capabilities: string[] }).capabilities).not.toContain("retry_fallback_command");
-	expect(set.success).toBe(false);
-	expect(String(set.error)).toContain("open_session.retryFallback");
 }, 60_000);

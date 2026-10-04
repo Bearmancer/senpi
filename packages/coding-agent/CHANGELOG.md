@@ -6,7 +6,7 @@
 
 ### Added
 
-- A single-session `--mode rpc` process accepts `set_retry_fallback` before its first turn (capability `retry_fallback_command`): the `open_session.retryFallback` profile for a caller that spawns one process per session, applied in memory only and kept by the process's later sessions. omo's task children that run as their own process (every Windows child, and `task.process_runner: "child-process"`) can now carry their category's fallback chain past a tool call without touching the user's settings file ([omo#9582](https://github.com/code-yeongyu/oh-my-openagent/issues/9582)).
+- A single-session `--mode rpc` process accepts `set_retry_fallback` before its first turn is asked for (capability `retry_fallback_command`): the `open_session.retryFallback` profile for a caller that spawns one process per session, applied in memory only and kept by the process's later sessions. omo's task children that run as their own process (every Windows child, and `task.process_runner: "child-process"`) can now carry their category's fallback chain past a tool call without touching the user's settings file ([omo#9582](https://github.com/code-yeongyu/oh-my-openagent/issues/9582)).
 - A permission prompt sent to RPC clients now names the tool call it approves (`toolCallId`, plus `parentToolCallId` for a call another tool issued), and so does the feedback `input` after "Deny with feedback". The engine raises the prompts for every call of a message before any of them runs, so a client could not tell which of several calls of the same tool a prompt was for; an app can now show each prompt with its own call's input ([#2710](https://github.com/code-yeongyu/senpi/issues/2710)).
 
 ### Changed
