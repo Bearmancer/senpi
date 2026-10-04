@@ -21,7 +21,12 @@ import { randomUUID } from "node:crypto";
 import { open, rm, writeFile } from "node:fs/promises";
 import { waitForStartTime } from "../app-server/daemon/process.ts";
 import { generationPaths, HOST_STATE_FILE_MODE, type HostDaemonPaths } from "./host-daemon-paths.ts";
-import { releaseGeneration, writeGenerationRecord, writeHostRegistration } from "./host-daemon-registration.ts";
+import {
+	type HostRegistration,
+	releaseGeneration,
+	writeGenerationRecord,
+	writeHostRegistration,
+} from "./host-daemon-registration.ts";
 import { readFileOrUndefined, readHostSettings, writeHostSettings } from "./host-daemon-state.ts";
 import type { HandoffHostOptions, HandoffRefusal, HandoffResult } from "./host-handoff.ts";
 import { defaultHostLaunch, PINNED_HOST_CLIENT_CAPABILITIES } from "./host-launch.ts";
@@ -139,7 +144,7 @@ export async function startSuccessor(context: {
 		// The pointer moves to the successor only now: until the rename landed, the generation the
 		// clients reach is still the predecessor, and the pointer has to name whoever owns the socket.
 		await options._test?.beforeRegistration?.();
-		await writeHostRegistration(paths, registration);
+		await writeHostRegistration(paths, { ...registration, ...successorBuild(answer) });
 		child.unref();
 		// The successor owns the socket now: the predecessor may drain. SIGUSR1 is sent only here,
 		// to a pid the record proved and a host that advertised it can survive the signal. A
@@ -207,6 +212,12 @@ async function exitedWithin(exited: Promise<void>, ms: number): Promise<boolean>
 	} finally {
 		clearTimeout(timer);
 	}
+}
+
+/** The successor's build as the successor itself reported it on the socket; never this process's build. */
+function successorBuild(answer: HostProtocolInfo): Pick<HostRegistration, "build"> {
+	if (answer.engineVersion === undefined || answer.engineOrdinal === undefined) return {};
+	return { build: { text: answer.engineVersion, ordinal: answer.engineOrdinal } };
 }
 
 /**
