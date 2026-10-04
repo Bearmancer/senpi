@@ -5087,3 +5087,25 @@ The RPC extension UI context is built by the RPC connection handler; an extensio
 ### Expected merge conflict zones
 
 The `select` / `input` lines of `createExtensionUIContext` in `connection-handler.ts`, and the `RpcExtensionUIRequest` union in `rpc-types.ts`.
+
+## 2026-10-05 - Daemon directories in parallel, no prune for a fresh registration, host inbox arming off the registration path (senpi#2756)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-daemon-paths.ts`: `createDaemonDirectories` creates the endpoint directory, then its `generations/` and `reservations/` and the flat `layout.json` concurrently. Each endpoint directory is re-moded to 0700 only when it already existed (`mkdir` returned no created path); one `mkdir` just created already has the mode. The flat directory is still never re-moded.
+- `packages/coding-agent/src/modes/rpc/host-daemon-registration.ts`: `writeHostRegistration(paths, registration, { fresh? })` skips `pruneDeadGenerations` when `fresh` is true. Only a terminal's registration passes it; every host path still prunes first (#1893).
+- `packages/coding-agent/src/modes/rpc/host-session-control.ts`: follows the new `watchInbox` contract (`InboxWatch { armed, stop }`): a host session's registration returns once the watch exists, and one more `inbox` pass runs when arming settled.
+- Tests: `test/suite/rpc-daemon-directory-modes.test.ts`.
+
+### Why
+
+- Part of the terminal control endpoint's registration cost (see the matching entry in `../interactive/changes.md`): `createDaemonDirectories` was 4 sequential `mkdir`s, 3 `chmod`s and the marker write, 2.1 ms after `settled`. The chmods exist for directories that predate the call; a directory `mkdir` created is already private. A terminal's endpoint directory is named by a fresh instance id, so pruning it reads empty directories.
+- The host session registers through the same `watchInbox`; keeping the old "return only once armed" contract there would have needed a second function for the same watch.
+
+### Why an extension could not handle it
+
+- These are the engine's daemon-state primitives and its host-side control endpoint; no extension hook runs inside them.
+
+### Expected merge conflict zones
+
+- LOW: `createDaemonDirectories` in `host-daemon-paths.ts`, the head of `writeHostRegistration`, and the `watchInbox` call in `HostSessionControl.register`. All three files are fork-only.
