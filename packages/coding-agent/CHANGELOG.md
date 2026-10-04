@@ -12,6 +12,8 @@
 
 ### Fixed
 
+- `continue_from_leaf` now acknowledges when the continued turn starts (its `agent_start`, or a delegated queue), like a prompt, instead of after the whole turn. This stops a desktop continuation longer than the RPC deadline from timing out. ([#2708](https://github.com/code-yeongyu/senpi/issues/2708))
+
 ### Removed
 
 ## [2026.10.7] - 2026-10-04
