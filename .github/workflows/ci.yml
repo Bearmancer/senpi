@@ -554,6 +554,16 @@ jobs:
       - name: Install dependencies
         run: npm ci --ignore-scripts
 
+      # How this runner handles a crashing process: a piped core-dump handler keeps a crashed kernel child alive
+      # until its dump is consumed, which the SIGSEGV case waits on.
+      - name: Show the crash-handling environment
+        shell: bash
+        run: |
+          echo "core_pattern: $(cat /proc/sys/kernel/core_pattern 2>/dev/null || sysctl -n kern.corefile 2>/dev/null || echo n/a)"
+          echo "ulimit -c: $(ulimit -c)"
+          ( bun -e 'process.kill(process.pid, "SIGSEGV")' >/dev/null 2>&1; echo "bun SIGSEGV exit status: $?" ) &
+          start=$(date +%s); wait; echo "bun SIGSEGV took $(( $(date +%s) - start ))s to exit"
+
       # Process mode spawns its kernel child with bun on both platforms; a platform where the child cannot start
       # (senpi#2706: a Linux spawn's stdout is a socket) fails here instead of shipping.
       - name: Run the process-mode kernel suite
