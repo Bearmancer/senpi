@@ -251,7 +251,8 @@ async function executeCell(
 			if (invocation.input.reset) await execution.wait(kernel.reset());
 			execution.setKernel(kernel);
 			const magic = planMagicCell(invocation.input.language, invocation.input.code, options.pythonEnvironments);
-			const envRoot = invocation.input.language === "py" ? options.pythonEnvironments?.activeRoot : undefined;
+			const environments = invocation.input.language === "py" ? options.pythonEnvironments : undefined;
+			const envRoot = environments === undefined ? undefined : () => environments.activeRoot ?? "";
 			const result = await execution.wait(
 				kernel.run({
 					cellId: invocation.cellId,

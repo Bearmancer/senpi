@@ -33,7 +33,7 @@ export interface PythonTransportRunInput {
 	readonly code: string;
 	readonly timeoutMs?: number;
 	readonly preludePlan?: KernelPreludePlan;
-	readonly envRoot?: string;
+	readonly envRoot?: () => string;
 }
 
 export interface PythonTransportOptions {
@@ -159,7 +159,7 @@ export class PythonKernelTransport {
 			code: input.code,
 			timeoutMs: input.timeoutMs,
 			preludes,
-			...(input.envRoot === undefined ? {} : { envRoot: input.envRoot }),
+			...(input.envRoot === undefined ? {} : { envRoot: input.envRoot() }),
 		});
 	}
 

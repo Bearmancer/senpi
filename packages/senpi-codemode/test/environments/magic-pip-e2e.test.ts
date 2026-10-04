@@ -100,6 +100,36 @@ describe.skipIf(!pythonReady)("Given a Python eval session", () => {
 		expect(textOf(still)).toContain("'1.0'");
 	}, 180_000);
 
+	it("When an import cell is queued behind a %pip cell that is itself queued behind a running cell, then the import sees the newly installed package", async () => {
+		const { wheels, run } = await session();
+		const wheel = buildWheel(wheels, "senpi_queued", "1.0");
+		await run("import time");
+
+		// All three are submitted before the install runs: the import was queued when no revision existed yet.
+		const [, install, imported] = await Promise.all([
+			run("time.sleep(1.5)"),
+			run(`%pip install --no-index ${wheel}`),
+			run("import senpi_queued; senpi_queued.VERSION"),
+		]);
+
+		expect(textOf(install)).toMatch(/installed senpi-queued-1\.0 into managed/);
+		expect(textOf(imported)).toContain("'1.0'");
+	}, 180_000);
+
+	it("When the session switches to an environment with nothing installed, then packages of the environment it left no longer import", async () => {
+		const { wheels, run } = await session();
+		await run(`%pip install --no-index ${buildWheel(wheels, "senpi_left", "1.0")}`);
+		await run("import senpi_left");
+
+		const switched = await run("%environment project");
+		const probe = await run(
+			"import importlib.util, sys; sys.modules.pop('senpi_left', None); importlib.util.find_spec('senpi_left') is None",
+		);
+
+		expect(textOf(switched)).toContain("project");
+		expect(textOf(probe)).toContain("True");
+	}, 180_000);
+
 	it("When a cell mixes %pip with code, then it fails with the own-cell teaching error and installs nothing", async () => {
 		const { wheels, run, artifactsDir } = await session();
 		const wheel = buildWheel(wheels, "senpi_probe", "1.0");
