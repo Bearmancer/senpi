@@ -8,9 +8,13 @@
 
 - The desktop sends `continue_from_leaf` with a deadline. Answering only after the whole turn timed out every continuation longer than the deadline and left the editor stuck on "submitting" while the agent kept going (omo-desktop-app#1571 review HIGH-1). `prompt` acknowledges at admission; the continuation now does the same.
 
-### How to verify
+### Why an extension could not handle it
 
-- The regression "resolves when the continued turn STARTS, not after the turn ends (#848)" is RED on v2026.10.6 (a continuation whose response is released after the reply) and GREEN here.
+- Admission timing is session-core behavior inside `AgentSession.continueFromLeaf()` / `_promptAgent`, not an extension hook. No extension event can change when the method resolves without owning the prompt admission it shares with `prompt()`.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/agent-session.ts` (`continueFromLeaf()` and the surrounding admission helpers), against any upstream change to prompt admission or `sendCustomMessage`.
 
 ### Must not break
 
