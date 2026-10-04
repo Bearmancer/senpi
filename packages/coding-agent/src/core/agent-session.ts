@@ -10404,20 +10404,56 @@ export class AgentSession {
 	 * hidden custom message, never as a trailing assistant message (see continue-from-leaf.ts).
 	 * Refuses while streaming and on a session with no messages; resolves once the turn starts.
 	 */
+	/**
+	 * Continue from the session's leaf with no new prompt. Resolves once the
+	 * runtime took the continuation (its turn started, or it was queued into a
+	 * running turn) - like a prompt, NOT after the whole continued turn. Before
+	 * this it awaited the whole turn, so a desktop continuation longer than the
+	 * RPC control deadline always timed out (#848). The turn keeps running in
+	 * the background after this resolves.
+	 */
 	async continueFromLeaf(): Promise<void> {
 		if (this.isStreaming) throw new ContinueFromLeafError("streaming");
 		if (this.agent.state.messages.length === 0) throw new ContinueFromLeafError("nothing_to_continue");
 		// Only an answer can be continued; a prompt left as the leaf (an edited one) is retried, not continued.
 		const leaf = this.agent.state.messages[this.agent.state.messages.length - 1];
 		if (leaf?.role !== "assistant") throw new ContinueFromLeafError("leaf_not_assistant");
-		await this.sendCustomMessage(
+		let resolveStarted: (() => void) | undefined;
+		let rejectStarted: ((error: unknown) => void) | undefined;
+		const started = new Promise<void>((resolve, reject) => {
+			resolveStarted = resolve;
+			rejectStarted = reject;
+		});
+		let turnStarted = false;
+		const turnClaim = new DeferredTurnClaim();
+		void turnClaim.disposition.then((disposition) => {
+			if (disposition === "delegated") resolveStarted?.();
+			else if (disposition === "started") turnStarted = true;
+		});
+		const unsubscribe = this.subscribe((event) => {
+			if (event.type === "agent_start" && turnStarted) resolveStarted?.();
+		});
+		// The turn runs in the background; admission is reported through the
+		// subscription above, and a start-time failure rejects the start promise.
+		void this.sendCustomMessage(
 			{
 				customType: CONTINUE_FROM_LEAF_CUSTOM_TYPE,
 				content: CONTINUE_FROM_LEAF_DIRECTIVE,
 				display: false,
 			},
 			{ triggerTurn: true },
-		);
+			turnClaim,
+		).then(
+			() => {
+				resolveStarted?.();
+			},
+			(error: unknown) => {
+				rejectStarted?.(error);
+			},
+		).finally(() => {
+			unsubscribe();
+		});
+		await started;
 	}
 
 	/**

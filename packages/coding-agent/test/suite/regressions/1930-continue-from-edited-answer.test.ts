@@ -177,6 +177,36 @@ describe("continue from an edited answer with no new prompt (#1930)", () => {
 			.map(getMessageText);
 		expect(answers).toContain("The capital of France is Lyon.");
 	});
+	it("resolves when the continued turn STARTS, not after the turn ends (#848)", async () => {
+		const { harness } = await conversation("anthropic-messages");
+		// A continuation whose response hangs until released: any design that answers
+		// only after the turn ends cannot return before this release fires.
+		let releaseTurn: (() => void) | undefined;
+		const turnDone = new Promise<void>((resolve) => {
+			releaseTurn = resolve;
+		});
+		harness.setResponses([
+			() => turnDone.then(() => fauxAssistantMessage("The capital of France is Paris, finally.")),
+		]);
+
+		const reply = harness.session.continueFromLeaf();
+		// The reply must be ready while the continued turn is still in flight. A
+		// turn-end acknowledgment would leave this pending until releaseTurn runs.
+		await Promise.race([
+			reply,
+			new Promise((_, reject) => setTimeout(() => reject(new Error("reply not sent at admission")), 5000)),
+		]);
+
+		// The turn is still running (its response was never released); release it and
+		// let the continuation finish so the session tears down cleanly.
+		releaseTurn?.();
+		await harness.session.agent.waitForIdle();
+		const last = harness.session.agent.state.messages.at(-1);
+		expect(last?.role === "assistant" ? getMessageText(last) : undefined).toBe(
+			"The capital of France is Paris, finally.",
+		);
+	});
+
 });
 
 describe("assistant prefill capability", () => {

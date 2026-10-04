@@ -52,7 +52,7 @@
 
 ### What changed
 
-- `packages/coding-agent/src/core/continue-from-leaf.ts` (new): `CONTINUE_FROM_LEAF_CUSTOM_TYPE` ("continue-from-leaf"), the hidden `CONTINUE_FROM_LEAF_DIRECTIVE`, and `ContinueFromLeafError` with codes `streaming | nothing_to_continue | leaf_not_assistant`; `AgentSession.continueFromLeaf()` refuses unless the last message is an assistant answer.
+- `packages/coding-agent/src/core/continue-from-leaf.ts` (new): `CONTINUE_FROM_LEAF_CUSTOM_TYPE` ("continue-from-leaf"), the hidden `CONTINUE_FROM_LEAF_DIRECTIVE`, and `ContinueFromLeafError` with codes `streaming | nothing_to_continue | leaf_not_assistant`; `AgentSession.continueFromLeaf()` refuses unless the last message is an assistant answer, and resolves when the continued turn STARTS (its `agent_start` or a delegated queue), not after the turn ends (#2708). Before v2026.10.7 it awaited the whole turn.
 - `packages/coding-agent/src/core/agent-session.ts`: `continueFromLeaf()` starts a turn from the current leaf by sending the directive as a hidden custom message (`display: false`, `triggerTurn: true`), the same mechanism as the "." manual continue. It refuses while streaming and on a session with no messages. After `editAssistantMessage` makes an edited answer the leaf, the model continues from the edited text.
 
 ### Why
