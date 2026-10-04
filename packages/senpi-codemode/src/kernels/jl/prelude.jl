@@ -210,9 +210,14 @@ function Base.getproperty(pool::SenpiWorkpool, name::Symbol)
     getfield(pool, name)
 end
 
-function workpool(agent::AbstractDict, name::AbstractString; mode=nothing)
+function workpool(agent::AbstractDict, name::AbstractString; mode=nothing, tools=nothing)
     args = Dict{String, Any}("op" => "create", "agent" => agent, "name" => name)
     mode !== nothing && (args["mode"] = mode)
+    if tools !== nothing
+        (tools isa AbstractVector && all(name -> name isa AbstractString, tools)) ||
+            throw(SenpiBridgeError("workpool(tools=...) takes a vector of tool names; got $(typeof(tools))", "invalid_tools"))
+        args["tools"] = collect(String, tools)
+    end
     result = senpi_workpool_call(args)
     details = get(result, "details", nothing)
     if details isa AbstractDict

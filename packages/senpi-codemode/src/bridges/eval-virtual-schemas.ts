@@ -52,6 +52,7 @@ const helpersEntry: EvalSchemaResult = {
 		"control.status() goes through the host subscription; control.send/cancel/output are fenced by owner, id and run_epoch inside the task owner (stale -> eval_handle_stale, foreign -> eval_handle_forbidden); control.output() returns only that epoch's transcript. The plain output() helper and task tools are unchanged.",
 		"The legacy agent(..., {handle: true}) record is unchanged: .output stays a string and no enumerable key is added. A saved {kind, id, run_epoch} (or the record itself) can be rebound with handle(ref) in a later cell or after a kernel reset while the owner and run epoch are valid.",
 		"completion(prompt, {handle: true}) (py: handle=True) returns a control handle after preflight validation; provider failures surface in its outcome; its deadline derives from the creating cell's hard deadline. Completion handles are codemode-owned and need no host capability; once the session generation is dropped they fail with eval_handle_stale.",
+		"workpool(agent, name, {mode?, tools?}) (py/jl: mode=, tools=; rb: mode:, tools:) forwards tools (kernel-tool names, e.g. from @tool or tool(fn)) unchanged to the host workpool tool's create; the host checks them. There is no pool.wait(): the host delivers the aggregate and the kernel stays free to serve kernel tools.",
 		"See tool_schema('eval:wait') for the barrier semantics.",
 	].join("\n"),
 	parameters: {

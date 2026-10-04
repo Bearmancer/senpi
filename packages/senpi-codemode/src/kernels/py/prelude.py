@@ -1089,10 +1089,18 @@ class Workpool:
         return _workpool_call({"op": "cancel", "pool_id": self.pool_id})
 
 
-def workpool(agent: dict[str, JsonValue], name: str, *, mode: str | None = None) -> Workpool:
+def workpool(
+    agent: dict[str, JsonValue], name: str, *, mode: str | None = None, tools: list[str] | None = None
+) -> Workpool:
     args: dict[str, JsonValue] = {"op": "create", "agent": agent, "name": name}
     if mode is not None:
         args["mode"] = mode
+    if tools is not None:
+        if not isinstance(tools, (list, tuple)) or not all(isinstance(name, str) for name in tools):
+            raise PreludeRuntimeError(
+                f"workpool(tools=...) takes a list of tool names; got {type(tools).__name__}", "invalid_tools"
+            )
+        args["tools"] = list(tools)
     result = _workpool_call(args)
     details = result.get("details")
     if isinstance(details, dict):

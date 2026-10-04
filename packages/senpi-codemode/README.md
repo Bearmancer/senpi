@@ -276,7 +276,7 @@ options object and asynchronous helpers are `await`-able.
 | `agent(prompt, ...)` | Delegates to the configured active `taskTools.task` tool. Supports background handles and structured JSON results. |
 | `wait(handles, timeout?, mode?)` | Blocks the cell until the given handles settle (agent handle records, `handle()` views, completion handles, closed workpools, or saved `{kind, id, run_epoch}` references). `mode` is `all` (values in input order; the first failed, cancelled, or lost handle raises), `any` (`{index, ref, value}` of the first success), or `settled` (one outcome per input slot). `timeout` is wall-clock seconds from entry; on expiry `eval_wait_timeout` is raised and nothing is cancelled. Rides the bridge-call path, so the run budget pauses while parked. Agent and workpool handles need the host's `EvalHandleHost` capability (`eval_wait_unavailable` without it); completion handles always work. Julia extends `Base.wait` for handle views (`wait(handle(node))`). Details: `tool_schema("eval:wait")`. |
 | `handle(node \| ref \| {pool_id})` | Returns a rich view: the legacy record's fields plus a non-enumerable `control` (Python: attribute on a `dict` subclass; Ruby: singleton method) with `status()`, `output(format?, offset?, limit?)`, `send(message)` (agent handles only), `cancel()` (idempotent for that run epoch; never touches a successor run), and `wait(timeout?)`. Every control call is fenced by owner, id, and `run_epoch` inside the task owner (`eval_handle_stale`, `eval_handle_forbidden`). `completion(prompt, handle: true)` returns such a view for a host completion. The `agent(..., handle: true)` record itself is unchanged. Details: `tool_schema("eval:helpers")`. |
-| `workpool(agent, name, mode?)` | Creates a thin adapter over the normal host `workpool` tool; exposes `pool_id`, `push(items)`, `close()`, `inspect()`, and `cancel()`. JS awaits creation and operations. |
+| `workpool(agent, name, mode?, tools?)` | Creates a thin adapter over the normal host `workpool` tool; exposes `pool_id`, `push(items)`, `close()`, `inspect()`, and `cancel()`. JS awaits creation and operations. `tools` is a list of kernel-tool names this cell defined; the pool's workers may call exactly those, the host refuses any name the caller doesn't hold, and a value that isn't a list of names raises `invalid_tools`. Ruby and Julia define no kernel tools, so they have nothing to grant. |
 | `output(ids, format?, offset?, limit?)` | Delegates transcript retrieval to the configured active `taskTools.output` tool. |
 | `parallel(thunks)` | Runs thunks through the configured bounded pool while preserving input order. |
 | `pipeline(items, ...stages)` | Applies stages left to right with a barrier between stages. |
@@ -325,8 +325,11 @@ Any isolation metadata supplied by the host on a handle is preserved as
 `{subagent_type, prompt, model?}` as its plain-data agent spec. Mode is `fresh`
 or `keep_alive`: pass `{mode: "fresh"}` in JS, `mode="fresh"` in Python/Julia,
 or `mode: "fresh"` in Ruby. Omission is forwarded unchanged to the engine;
-hosts without an approved default still require an explicit mode. Custom tool
-names are not enabled by this adapter.
+hosts without an approved default still require an explicit mode. `tools`
+(kernel-tool names, for example from Python `@tool` or JavaScript `tool(fn)`) is
+forwarded unchanged to the host's `create`, which validates it: `{tools: ["add"]}`
+in JS, `tools=["add"]` in Python/Julia, `tools: ["add"]` in Ruby. There is no
+`pool.wait()`; the host delivers the aggregate.
 
 `push` forwards `[{key, input}]` and returns the host receipt without waiting
 for admission. Operations return the same `{text, details, images?, hasError?}`
