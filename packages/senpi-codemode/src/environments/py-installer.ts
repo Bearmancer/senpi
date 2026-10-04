@@ -107,7 +107,7 @@ export function parsePipRequirements(text: string): string[] {
  * pip's environment with every PIP_* variable removed and its config file pointed at nothing: `--isolated`
  * alone still honours PIP_CONFIG_FILE, and a configured target, root or prefix would install outside the revision.
  */
-function isolatedPipEnv(): NodeJS.ProcessEnv {
+export function isolatedPipEnv(): NodeJS.ProcessEnv {
 	const env: NodeJS.ProcessEnv = {};
 	for (const [key, value] of Object.entries(process.env)) {
 		if (!key.toUpperCase().startsWith("PIP_")) env[key] = value;

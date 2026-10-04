@@ -8,7 +8,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { assertInstalledInRevision, assertNoEditableInstalls } from "../../src/environments/editable-check.ts";
 import { withRootLock } from "../../src/environments/install-lock.ts";
 import { installPythonPackages } from "../../src/environments/py-environment.ts";
-import { parsePipRequirements } from "../../src/environments/py-installer.ts";
+import { isolatedPipEnv, parsePipRequirements } from "../../src/environments/py-installer.ts";
 import { readActiveRevision } from "../../src/environments/revision-store.ts";
 import {
 	buildWheel,
@@ -304,6 +304,21 @@ describe("Given a staged revision pip has just written", () => {
 		await expect(
 			assertInstalledInRevision("Successfully installed Senpi.Probe-1.0\n", staging),
 		).resolves.toBeUndefined();
+	});
+
+	it("When an old pip installed a setup.py project as an egg-info inside the revision, then it is accepted", async () => {
+		const { staging } = await staged();
+		await mkdir(join(staging, "senpi_legacy-1.0-py3.11.egg-info"));
+
+		await expect(
+			assertInstalledInRevision("Successfully installed senpi-legacy-1.0\n", staging),
+		).resolves.toBeUndefined();
+	});
+
+	it("When pip's config file is pointed at the null device, then it is the exact path the interpreter calls os.devnull, so pip skips every config file", () => {
+		const devnull = spawnSync("python3", ["-c", "import os; print(os.devnull)"], { encoding: "utf8" }).stdout.trim();
+
+		expect(isolatedPipEnv().PIP_CONFIG_FILE).toBe(devnull);
 	});
 
 	it("When its .pth lines and links stay inside the revision, then it is accepted", async () => {

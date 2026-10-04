@@ -537,6 +537,8 @@
 				"legacyContracts/test/environments/py-environment.test.ts/Given a staged revision pip has just written When an entry is a link to a directory outside the revision, then the revision is refused",
 				"legacyContracts/test/environments/py-environment.test.ts/Given a staged revision pip has just written When a link deep inside a package points outside the revision, then the revision is refused",
 				"legacyContracts/test/environments/py-environment.test.ts/Given a staged revision pip has just written When pip reports a distribution the revision doesn't contain, then the install fails instead of publishing it empty",
+				"legacyContracts/test/environments/py-environment.test.ts/Given a staged revision pip has just written When an old pip installed a setup.py project as an egg-info inside the revision, then it is accepted",
+				"legacyContracts/test/environments/py-environment.test.ts/Given a staged revision pip has just written When pip's config file is pointed at the null device, then it is the exact path the interpreter calls os.devnull, so pip skips every config file",
 				"legacyContracts/test/environments/py-environment.test.ts/Given a staged revision pip has just written When its .pth lines and links stay inside the revision, then it is accepted",
 				"legacyContracts/test/environments/py-environment.test.ts/Given an environment root's install lock When several waiters find one dead holder's lock at once, then exactly one holder is ever inside, across many trials",
 				"legacyContracts/test/environments/py-environment.test.ts/Given an environment root's install lock When a waiter crashed while reaping a stale lock and left its claim behind, then the lock is still taken over by exactly one holder at a time",

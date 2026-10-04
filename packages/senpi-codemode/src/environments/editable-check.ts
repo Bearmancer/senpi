@@ -60,12 +60,7 @@ async function refuseOutsideLinks(root: string, dir: string): Promise<void> {
 export async function assertInstalledInRevision(stdout: string, staging: string): Promise<void> {
 	const line = stdout.split("\n").find((entry) => entry.startsWith("Successfully installed "));
 	if (line === undefined) return;
-	const present = new Set(
-		(await readdir(staging).catch(() => [] as string[]))
-			.filter((entry) => entry.endsWith(".dist-info"))
-			.map((entry) => entry.slice(0, -".dist-info".length))
-			.map((stem) => canonicalName(stem.slice(0, stem.lastIndexOf("-")))),
-	);
+	const present = new Set((await readdir(staging).catch(() => [] as string[])).flatMap(installedName));
 	for (const token of line.slice("Successfully installed ".length).trim().split(/\s+/u)) {
 		const name = token.slice(0, token.lastIndexOf("-"));
 		if (!present.has(canonicalName(name))) {
@@ -75,6 +70,19 @@ export async function assertInstalledInRevision(stdout: string, staging: string)
 			);
 		}
 	}
+}
+
+/**
+ * The project a metadata entry records: `name-version.dist-info` (wheels), or `name-version[-pyX.Y].egg-info`
+ * (a setup.py project pip <= 23.0 installs without the wheel package). Both escape `-` in the name to `_`.
+ */
+function installedName(entry: string): string[] {
+	if (entry.endsWith(".dist-info")) {
+		const stem = entry.slice(0, -".dist-info".length);
+		return [canonicalName(stem.slice(0, stem.lastIndexOf("-")))];
+	}
+	if (entry.endsWith(".egg-info")) return [canonicalName(entry.split("-")[0] ?? "")];
+	return [];
 }
 
 function canonicalName(name: string): string {

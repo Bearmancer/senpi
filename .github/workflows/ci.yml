@@ -547,10 +547,10 @@ jobs:
         working-directory: packages/senpi-codemode
         shell: pwsh
         run: |
-          bun ../../node_modules/vitest/vitest.mjs run test/environments/py-environment.test.ts -t "pip config file|staged revision" --reporter=default --reporter=json --outputFile="$env:RUNNER_TEMP/py-env-win.json"
+          bun ../../node_modules/vitest/vitest.mjs run test/environments/py-environment.test.ts -t "pip config file|staged revision|null device" --reporter=default --reporter=json --outputFile="$env:RUNNER_TEMP/py-env-win.json"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           # A skipped test is not a pass: the pip-config case must have run on this Windows interpreter.
-          bun -e "const r = JSON.parse(await Bun.file(process.argv[1]).text()); const t = r.testResults.flatMap((f) => f.assertionResults).find((a) => a.title.startsWith('When a pip config file names a root')); if (!t || t.status !== 'passed') { console.error('pip config test status: ' + (t ? t.status : 'missing')); process.exit(1) }" "$env:RUNNER_TEMP/py-env-win.json"
+          bun -e "const r = JSON.parse(await Bun.file(process.argv[1]).text()); const t = r.testResults.flatMap((f) => f.assertionResults).find((a) => a.title.startsWith('When a pip config file names a root')); const d = r.testResults.flatMap((f) => f.assertionResults).find((a) => a.title.includes('pointed at the null device')); if (!t || t.status !== 'passed' || !d || d.status !== 'passed') { console.error('pip config test: ' + (t ? t.status : 'missing') + ', null device test: ' + (d ? d.status : 'missing')); process.exit(1) }" "$env:RUNNER_TEMP/py-env-win.json"
       - name: Build isolated packaged Python host
         shell: pwsh
         run: |
