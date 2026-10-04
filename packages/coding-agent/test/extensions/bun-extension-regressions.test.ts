@@ -91,6 +91,11 @@ await assert.rejects(load("./unloaded.ts"), { name: "ExtensionGenerationDisposed
 			`
 const factory = await createBunExtensionImporter({}).import(entry, { default: true });
 for (let n = 0; n < 2000; n++) createBunExtensionImporter({});
+// Two job boundaries, not one: on macOS arm64 the most recently created importer is still
+// reachable from the runtime for one turn after it was dropped, so a GC right after a single
+// turn finds it alive even though nothing in the importer retains it (#2521). A real retention
+// path survives any number of turns and still fails this assertion.
+await new Promise(setImmediate);
 await new Promise(setImmediate);
 Bun.gc(true);
 // Then: no timing-dependent finalizer wait; dereference observes actual liveness.
