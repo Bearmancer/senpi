@@ -319,7 +319,11 @@
 				"legacyContracts/test/environments/magic-pip-e2e.test.ts/Given a Python eval session When an import cell is queued behind a %pip cell that is itself queued behind a running cell, then the import sees the newly installed package",
 				"legacyContracts/test/environments/magic-pip-e2e.test.ts/Given a Python eval session When the session switches to an environment with nothing installed, then packages of the environment it left no longer import",
 				"legacyContracts/test/environments/magic-pip-e2e.test.ts/Given a Python eval session When another session in the same project installs into the project environment, then this session's next cell imports it",
-				"legacyContracts/test/magic-cells.test.ts/%pip argument parsing Given a Windows path, then its backslashes reach pip unchanged; in POSIX mode a backslash escapes"
+				"legacyContracts/test/magic-cells.test.ts/%pip argument parsing Given a Windows path, then its backslashes reach pip unchanged; in POSIX mode a backslash escapes",
+				"legacyContracts/test/magic-cells.test.ts/magic cell detection Given a comment line ending in a backslash, then the comment does not swallow the %pip line after it",
+				"legacyContracts/test/magic-cells.test.ts/%pip argument parsing Given a backslash inside double quotes in POSIX mode, then it stays unless it escapes a quote, backslash, dollar or backtick",
+				"legacyContracts/test/environments/magic-pip-e2e.test.ts/Given a Python eval session When %pip comes after code in a cell, then the kernel's error says to put it on its own cell",
+				"legacyContracts/test/magic-cells.test.ts/%pip argument parsing Given a backslash-newline in POSIX mode, then it continues the word inside or outside double quotes"
 			],
 			"reason": "Node 14 part 3: %pip / %environment magic cells run as host entries in the Python kernel's queue and every Python cell imports from the session's active environment revision; the magic-cell modules, and the environments library they import (install-lock, py-environment, py-installer, revision-store, first reached from the extension here), join the scoped census, plus the new contracts. No prompt or eval schema change."
 		},
