@@ -78,6 +78,8 @@ export function runJsInstall(input: {
 	readonly command: string;
 	readonly root: string;
 	readonly packages: readonly string[];
+	/** Absolute specs already recorded in the revision; the installer echoes them, so they are redacted too. */
+	readonly recordedSpecs?: readonly string[];
 	readonly cwd: string;
 	readonly env: NodeJS.ProcessEnv;
 	readonly signal: AbortSignal;
@@ -128,7 +130,7 @@ export function runJsInstall(input: {
 				reject(
 					new EnvironmentError(
 						"environment_install_cancelled",
-						`the install was cancelled; ${input.installer} was stopped`,
+						`the install was cancelled${cancelReason(input.signal, input)}; ${input.installer} was stopped`,
 					),
 				);
 			} else if (code === 0) resolve();
@@ -144,14 +146,24 @@ export function runJsInstall(input: {
 	});
 }
 
+function cancelReason(signal: AbortSignal, input: Parameters<typeof withoutHostPaths>[1]): string {
+	const reason: unknown = signal.reason;
+	return reason instanceof Error && reason.name !== "AbortError" ? `: ${withoutHostPaths(reason.message, input)}` : "";
+}
+
 /** Installer output names the session's own roots; error text says `<root>`/`<cwd>`/`~` instead of absolute paths. */
-function withoutHostPaths(
+export function withoutHostPaths(
 	text: string,
-	input: { readonly root: string; readonly cwd: string; readonly packages: readonly string[] },
+	input: {
+		readonly root: string;
+		readonly cwd: string;
+		readonly packages: readonly string[];
+		readonly recordedSpecs?: readonly string[];
+	},
 ): string {
 	const home = homedir();
 	// A spec that is an absolute file path names the user's file system; it is shown by its file name only.
-	const specPaths = input.packages
+	const specPaths = [...input.packages, ...(input.recordedSpecs ?? [])]
 		.map((spec) => (spec.startsWith("file:") ? spec.slice("file:".length) : spec))
 		.filter((path) => isAbsolute(path))
 		.map((path) => [path, `<path>/${basename(path)}`] as const);
