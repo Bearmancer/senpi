@@ -73,5 +73,30 @@ describe.skipIf(!hasCommand("bun") || !hasCommand("npm"))(
 
 			expect(textOf(imported).trim()).toBe('"esm"');
 		}, 180_000);
+
+		it("When a subpath pattern match climbs out with .., then the import is refused like Node refuses it", async () => {
+			const { project, run } = await session();
+			const dir = join(project, "node_modules", "senpi-pattern");
+			await mkdir(join(dir, "features"), { recursive: true });
+			await writeFile(
+				join(dir, "package.json"),
+				JSON.stringify({
+					name: "senpi-pattern",
+					version: "1.0.0",
+					type: "module",
+					exports: { "./features/*": "./features/*.js" },
+				}),
+			);
+			await writeFile(join(dir, "features", "a.js"), 'export const where = () => "feature";\n');
+			await writeFile(join(dir, "secret.js"), 'export const where = () => "unexported";\n');
+
+			const allowed = await run('const { where } = await import("senpi-pattern/features/a");\nwhere()');
+			const escaped = await run(
+				'await import("senpi-pattern/features/../secret").then((mod) => mod.where(), () => "refused")',
+			);
+
+			expect(textOf(allowed).trim()).toBe('"feature"');
+			expect(textOf(escaped).trim()).toBe('"refused"');
+		}, 180_000);
 	},
 );

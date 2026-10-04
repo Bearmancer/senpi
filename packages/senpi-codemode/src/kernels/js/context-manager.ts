@@ -256,7 +256,8 @@ export class JavaScriptKernel {
 		this.#activeCell.disarm();
 		this.#kernelTools.rejectAll(kernelToolError("kernel_tool_stale", error.message));
 		this.#memory.workerLost(error);
-		if (active) {
+		// An install runs on the host, not in the worker: it settles with its own outcome, never the worker's crash.
+		if (active && !this.#hostEntries.has(active)) {
 			this.#runs.releaseActive(active);
 			this.#runs.settle(
 				active,

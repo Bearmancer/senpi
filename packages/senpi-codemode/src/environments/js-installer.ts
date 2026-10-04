@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
-import { existsSync } from "node:fs";
-import { homedir } from "node:os";
-import { delimiter, join, resolve, sep } from "node:path";
+import { existsSync, realpathSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
+import { basename, delimiter, isAbsolute, join, resolve, sep } from "node:path";
 import { EnvironmentError } from "./py-installer.ts";
 
 export type JsInstallerChoice = "auto" | "bun" | "npm";
@@ -145,13 +145,32 @@ export function runJsInstall(input: {
 }
 
 /** Installer output names the session's own roots; error text says `<root>`/`<cwd>`/`~` instead of absolute paths. */
-function withoutHostPaths(text: string, input: { readonly root: string; readonly cwd: string }): string {
+function withoutHostPaths(
+	text: string,
+	input: { readonly root: string; readonly cwd: string; readonly packages: readonly string[] },
+): string {
 	const home = homedir();
+	// A spec that is an absolute file path names the user's file system; it is shown by its file name only.
+	const specPaths = input.packages
+		.map((spec) => (spec.startsWith("file:") ? spec.slice("file:".length) : spec))
+		.filter((path) => isAbsolute(path))
+		.map((path) => [path, `<path>/${basename(path)}`] as const);
 	return [
+		...specPaths,
 		[input.root, "<root>"],
 		[input.cwd, "<cwd>"],
+		[realpathOrSelf(tmpdir()), "<tmp>"],
+		[tmpdir(), "<tmp>"],
 		[home, "~"],
 	]
 		.filter(([path]) => path !== "" && path !== sep)
 		.reduce((current, [path, label]) => current.replaceAll(path, label), text);
+}
+
+function realpathOrSelf(path: string): string {
+	try {
+		return realpathSync(path);
+	} catch {
+		return path;
+	}
 }

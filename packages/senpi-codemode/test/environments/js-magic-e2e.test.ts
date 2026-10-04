@@ -186,4 +186,52 @@ describe.skipIf(!hasCommand("bun") || !hasCommand("npm"))("Given a JavaScript ev
 		expect(textOf(refused)).toContain("environment_install_failed");
 		expect(textOf(refused)).toContain("package names cannot contain control characters");
 	}, 180_000);
+
+	it("When a timer from an earlier cell crashes the worker while an install runs, then the install reports its own success and its revision is active", async () => {
+		const { fixtures, environments, run } = await session("npm");
+		const tarball = await packFixture(fixtures, "senpi-crash-probe", "1.0.0", probeSource);
+		const installStarted = Promise.withResolvers<void>();
+		const original = environments.install.bind(environments);
+		environments.install = (requested, signal, onOutput) => {
+			installStarted.resolve();
+			return original(requested, signal, onOutput);
+		};
+		await run('setTimeout(() => { throw new Error("stray timer"); }, 300); "armed"');
+
+		const install = await run(`%npm add ${tarball}`);
+
+		expect(textOf(install)).toMatch(/added senpi-crash-probe with npm into managed \(revision 1\)/);
+		expect(environments.packageRoot).toBeDefined();
+	}, 180_000);
+
+	it("When the package is hoisted in a parent node_modules, then the install reports the conflict; an empty package directory does not", async () => {
+		const { root, project, fixtures, run } = await session("bun");
+		await mkdir(join(root, "node_modules", "senpi-hoisted"), { recursive: true });
+		await writeFile(
+			join(root, "node_modules", "senpi-hoisted", "package.json"),
+			JSON.stringify({ name: "senpi-hoisted", version: "9.9.9" }),
+		);
+		await mkdir(join(project, "node_modules", "senpi-empty"), { recursive: true });
+		const hoisted = await packFixture(fixtures, "senpi-hoisted", "1.0.0", probeSource);
+		const empty = await packFixture(fixtures, "senpi-empty", "1.0.0", probeSource);
+
+		const hoistedInstall = await run(`%bun add ${hoisted}`);
+		const emptyInstall = await run(`%bun add ${empty}`);
+
+		expect(textOf(hoistedInstall)).toContain("environment_resolution_conflict: senpi-hoisted");
+		expect(textOf(emptyInstall)).not.toContain("environment_resolution_conflict");
+	}, 180_000);
+
+	it("When %environment switches and a tarball outside the session directory is installed, then no absolute path reaches the cell", async () => {
+		const { root, fixtures, run } = await session("npm");
+		const tarball = await packFixture(fixtures, "senpi-path-probe", "1.0.0", probeSource);
+
+		const switched = await run("%environment managed");
+		const install = await run(`%npm add ${tarball}`);
+
+		for (const text of [textOf(switched), textOf(install)]) {
+			expect(text).not.toContain(root);
+			expect(text).not.toContain(fixtures);
+		}
+	}, 180_000);
 });
