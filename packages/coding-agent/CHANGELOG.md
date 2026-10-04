@@ -10,6 +10,8 @@
 
 ### Fixed
 
+- With a `compaction.model` override on `anthropic-subscription`, senpi no longer rewrites older messages before each turn, so the resident Claude session keeps receiving only the new messages instead of re-sending the whole history every turn ([#2746](https://github.com/code-yeongyu/senpi/issues/2746)). Thanks to @trac3r00 ([#2748](https://github.com/code-yeongyu/senpi/pull/2748)).
+
 ### Removed
 
 ## [2026.10.9] - 2026-10-04
