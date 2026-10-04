@@ -1,15 +1,14 @@
 import { randomUUID } from "node:crypto";
 import { watch } from "node:fs";
-import { link, mkdir, readFile, rm, rmdir, stat, writeFile } from "node:fs/promises";
+import { link, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { hostname } from "node:os";
 import { join } from "node:path";
 
 const LOCK_FILE = ".install.lock";
-const TAKEOVER_DIR = ".install.lock.takeover";
+const TAKEOVER_FILE = ".install.lock.takeover";
 const RECHECK_MS = 500;
 // An unparseable lock can only come from a crash in an older version's create-then-write; it is stale once old.
 const UNREADABLE_STALE_MS = 5_000;
-const TAKEOVER_STALE_MS = 30_000;
 const WAIT_NOTICE_MS = 30_000;
 
 type Holder = { readonly pid: number; readonly host: string; readonly nonce: string };
@@ -24,9 +23,10 @@ export type LockWaitNotice = {
  *
  * The lock file is published complete (written to a unique temp file, then `link`ed into place, which fails
  * if a lock exists), so it is never seen empty. A lock whose holder is a dead process on this host, or
- * that is unreadable and old, is stale; it is removed only inside a takeover section guarded by an
- * exclusively created directory, after re-reading it there. Inside that section nobody else can remove
- * the lock, so the re-read and the remove can't race, and a live lock is never deleted.
+ * that is unreadable and old, is stale. It is removed only by a waiter holding the takeover token (a second
+ * file published the same way, itself stale once its holder dies), and only if it is still byte-for-byte
+ * the lock judged stale: it is renamed aside and compared first, and anything else is put back. A live
+ * lock is never deleted, even if two waiters somehow both hold the takeover.
  */
 export async function withRootLock<T>(
 	base: string,
@@ -72,50 +72,79 @@ async function tryCreate(base: string, path: string, holder: Holder): Promise<bo
 }
 
 async function takeOverIfStale(base: string, path: string): Promise<boolean> {
-	if (!(await isStale(path))) return false;
-	const takeover = join(base, TAKEOVER_DIR);
-	if (!(await enterTakeover(takeover))) return false;
+	const stale = await staleContent(path);
+	if (stale === undefined) return false;
+	const takeover = join(base, TAKEOVER_FILE);
+	if (!(await tryCreate(base, takeover, { pid: process.pid, host: hostname(), nonce: randomUUID() }))) {
+		const crashed = await staleContent(takeover);
+		if (crashed !== undefined) await removeIfUnchanged(base, takeover, crashed);
+		return false;
+	}
 	try {
-		if (!(await isStale(path))) return false;
-		await rm(path, { force: true });
-		return true;
+		return await removeIfUnchanged(base, path, stale);
 	} finally {
-		await rmdir(takeover).catch(() => undefined);
+		await rm(takeover, { force: true });
 	}
 }
 
-async function enterTakeover(takeover: string): Promise<boolean> {
+/**
+ * Deletes `path` only if it still holds exactly `seen`: the file is first renamed to a name nobody else
+ * uses, so what is compared is what gets deleted. Anything else is put back, so a live lock (or takeover)
+ * that replaced the stale one is never removed.
+ */
+async function removeIfUnchanged(base: string, path: string, seen: string): Promise<boolean> {
+	const moved = join(base, `${LOCK_FILE}.removing.${randomUUID()}`);
 	try {
-		await mkdir(takeover);
-		return true;
+		await rename(path, moved);
 	} catch (error) {
-		if (errorCode(error) !== "EEXIST") throw error;
+		if (errorCode(error) === "ENOENT") return false;
+		throw error;
 	}
-	const age = await ageMs(takeover);
-	if (age !== undefined && age > TAKEOVER_STALE_MS) await rmdir(takeover).catch(() => undefined);
-	return false;
+	try {
+		if ((await readFile(moved, "utf8")) === seen) return true;
+		await link(moved, path).catch(() => undefined);
+		return false;
+	} finally {
+		await rm(moved, { force: true });
+	}
 }
 
-async function isStale(path: string): Promise<boolean> {
-	const holder = await readHolder(path);
-	if (holder !== undefined) return holder.host === hostname() && !isAlive(holder.pid);
+/** The file's content when it is stale (its holder is a dead process on this host, or it is unreadable and old). */
+async function staleContent(path: string): Promise<string | undefined> {
+	let content: string;
+	try {
+		content = await readFile(path, "utf8");
+	} catch {
+		return undefined;
+	}
+	const holder = parseHolder(content);
+	if (holder !== undefined) return holder.host === hostname() && !isAlive(holder.pid) ? content : undefined;
 	const age = await ageMs(path);
-	return age !== undefined && age > UNREADABLE_STALE_MS;
+	return age !== undefined && age > UNREADABLE_STALE_MS ? content : undefined;
 }
 
 async function readHolder(path: string): Promise<Holder | undefined> {
 	try {
-		const value: unknown = JSON.parse(await readFile(path, "utf8"));
-		if (typeof value !== "object" || value === null) return undefined;
-		const pid = "pid" in value ? value.pid : undefined;
-		const host = "host" in value ? value.host : undefined;
-		const nonce = "nonce" in value ? value.nonce : undefined;
-		return typeof pid === "number" && typeof host === "string"
-			? { pid, host, nonce: typeof nonce === "string" ? nonce : "" }
-			: undefined;
+		return parseHolder(await readFile(path, "utf8"));
 	} catch {
 		return undefined;
 	}
+}
+
+function parseHolder(content: string): Holder | undefined {
+	let value: unknown;
+	try {
+		value = JSON.parse(content);
+	} catch {
+		return undefined;
+	}
+	if (typeof value !== "object" || value === null) return undefined;
+	const pid = "pid" in value ? value.pid : undefined;
+	const host = "host" in value ? value.host : undefined;
+	const nonce = "nonce" in value ? value.nonce : undefined;
+	return typeof pid === "number" && typeof host === "string"
+		? { pid, host, nonce: typeof nonce === "string" ? nonce : "" }
+		: undefined;
 }
 
 async function ageMs(path: string): Promise<number | undefined> {
@@ -139,6 +168,16 @@ function errorCode(error: unknown): string | undefined {
 	return error instanceof Error && "code" in error && typeof error.code === "string" ? error.code : undefined;
 }
 
+async function takeoverFree(base: string): Promise<boolean> {
+	const takeover = join(base, TAKEOVER_FILE);
+	try {
+		await stat(takeover);
+	} catch {
+		return true;
+	}
+	return (await staleContent(takeover)) !== undefined;
+}
+
 /** Wakes when the lock file goes away; the periodic recheck covers dropped file-watch events and staleness. */
 function waitForRelease(base: string, path: string, signal?: AbortSignal): Promise<void> {
 	return new Promise((resolve, reject) => {
@@ -157,7 +196,11 @@ function waitForRelease(base: string, path: string, signal?: AbortSignal): Promi
 		}
 		function check(): void {
 			void stat(path).then(
-				() => isStale(path).then((stale) => stale && done(resolve)),
+				// A stale lock is worth retrying only when no live takeover is removing it; otherwise wait for that.
+				() =>
+					staleContent(path).then(
+						async (stale) => stale !== undefined && (await takeoverFree(base)) && done(resolve),
+					),
 				() => done(resolve),
 			);
 		}

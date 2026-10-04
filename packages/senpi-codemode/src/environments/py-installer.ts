@@ -114,6 +114,8 @@ export function runPipInstall(input: {
 		"-m",
 		"pip",
 		"install",
+		// Ignore pip's config files and PIP_* variables: a configured `root` or `prefix` would write outside the revision.
+		"--isolated",
 		"--disable-pip-version-check",
 		"--no-input",
 		"--target",
