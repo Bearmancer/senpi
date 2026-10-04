@@ -785,6 +785,200 @@ return "done";`,
 		120_000,
 	);
 
+	itProcessMode(
+		"When a process-mode kernel starts, then fd 1 carries no non-blocking, append, async or sync flag",
+		async () => {
+			const kernel = processKernel();
+			// Per platform: O_NONBLOCK | O_APPEND | O_ASYNC | O_SYNC.
+			const mask = process.platform === "darwin" ? 0x4 | 0x8 | 0x40 | 0x80 : 0x800 | 0x400 | 0x2000 | 0x101000;
+			const libcPath = process.platform === "darwin" ? "/usr/lib/libSystem.B.dylib" : "libc.so.6";
+
+			const run = await runJavaScriptCell(
+				kernel,
+				`const { dlopen, FFIType } = await import("bun:ffi"); const libc = dlopen(${JSON.stringify(libcPath)}, { fcntl: { args: [FFIType.i32, FFIType.i32, FFIType.i32], returns: FFIType.i32 } }); return libc.symbols.fcntl(1, 3, 0)`,
+				10_000,
+			);
+			const flags = Number(parseJavaScriptResult(run.result));
+
+			expect(flags).toBeGreaterThanOrEqual(0);
+			expect(flags & mask).toBe(0);
+		},
+		30_000,
+	);
+
+	itProcessMode(
+		"When a bun child writes to the inherited fd 1, then a 4 MB cat in the next cell still delivers every byte",
+		async () => {
+			const root = await trackedTempRoot("senpi-js-process-nonblock-");
+			const file = join(root, "four-mb.txt");
+			writeFileSync(file, "d".repeat(4_000_000));
+			const kernel = processKernel({ cwd: root });
+
+			await runJavaScriptCell(
+				kernel,
+				`(await import("node:child_process")).execSync(${JSON.stringify(`${productChild()} -e 'process.stdout.write("x")'`)}, { stdio: "inherit" }); return 1`,
+				20_000,
+			);
+			const run = await runJavaScriptCell(
+				kernel,
+				`(await import("node:child_process")).execSync(${JSON.stringify(`cat ${file}`)}, { stdio: "inherit" }); return "settled"`,
+				30_000,
+			);
+			const bytes = run.messages.reduce(
+				(total, message) => total + (message.type === "text" ? message.data.split("d").length - 1 : 0),
+				0,
+			);
+
+			expect(run.result).toMatchObject({ ok: true, valueRepr: '"settled"' });
+			expect(bytes).toBe(4_000_000);
+		},
+		60_000,
+	);
+
+	itProcessMode(
+		"When one cell runs a bun child that writes to fd 1 and then a 4 MB cat, then the cat delivers every byte",
+		async () => {
+			const root = await trackedTempRoot("senpi-js-process-nonblock-same-");
+			const file = join(root, "four-mb.txt");
+			writeFileSync(file, "e".repeat(4_000_000));
+			const kernel = processKernel({ cwd: root });
+
+			const run = await runJavaScriptCell(
+				kernel,
+				[
+					`const { execSync } = await import("node:child_process");`,
+					`execSync(${JSON.stringify(`${productChild()} -e 'process.stdout.write("x")'`)}, { stdio: "inherit" });`,
+					`execSync(${JSON.stringify(`cat ${file}`)}, { stdio: "inherit" });`,
+					`return "settled"`,
+				].join("\n"),
+				30_000,
+			);
+			const bytes = run.messages.reduce(
+				(total, message) => total + (message.type === "text" ? message.data.split("e").length - 1 : 0),
+				0,
+			);
+
+			expect(run.result).toMatchObject({ ok: true, valueRepr: '"settled"' });
+			expect(bytes).toBe(4_000_000);
+		},
+		60_000,
+	);
+
+	itProcessMode(
+		"When a node child is SIGKILLed after writing to fd 1, then a 4 MB cat afterwards still delivers every byte",
+		async () => {
+			const root = await trackedTempRoot("senpi-js-process-nonblock-kill-");
+			const file = join(root, "four-mb.txt");
+			writeFileSync(file, "f".repeat(4_000_000));
+			const kernel = processKernel({ cwd: root });
+			const node = resolveJavaScriptProcessCommand(undefined, process.platform, "node", "");
+			const killed = `${node} -e 'process.stdout.write("y"); process.kill(process.pid, "SIGKILL")'`;
+
+			await runJavaScriptCell(
+				kernel,
+				`try { (await import("node:child_process")).execSync(${JSON.stringify(killed)}, { stdio: "inherit" }); } catch {} return 1`,
+				20_000,
+			);
+			const run = await runJavaScriptCell(
+				kernel,
+				`(await import("node:child_process")).execSync(${JSON.stringify(`cat ${file}`)}, { stdio: "inherit" }); return "settled"`,
+				30_000,
+			);
+			const bytes = run.messages.reduce(
+				(total, message) => total + (message.type === "text" ? message.data.split("f").length - 1 : 0),
+				0,
+			);
+
+			expect(run.result).toMatchObject({ ok: true, valueRepr: '"settled"' });
+			expect(bytes).toBe(4_000_000);
+		},
+		60_000,
+	);
+
+	itProcessMode(
+		"When the kernel crashes while a child floods fd 1, then every crashed cell names its crash cause",
+		async () => {
+			const kernel = processKernel();
+			const causes: string[] = [];
+
+			for (let attempt = 0; attempt < 20; attempt++) {
+				const run = await runJavaScriptCell(
+					kernel,
+					'(await import("node:child_process")).spawn("sh", ["-c", "yes | head -c 20000000"], { stdio: ["ignore", "inherit", "inherit"] }); setTimeout(() => { throw new Error("boom-mid-write"); }, 300); await new Promise(() => {})',
+					30_000,
+				);
+				causes.push(run.result.ok ? "ok" : run.result.error.message);
+			}
+
+			expect(causes.filter((cause) => !cause.includes("boom-mid-write"))).toEqual([]);
+		},
+		240_000,
+	);
+
+	itProcessMode(
+		"When the host stalls while a child and the cell both write, then every output line arrives whole and the result is ok",
+		async () => {
+			const kernel = processKernel();
+			const pause = new Int32Array(new SharedArrayBuffer(4));
+			let stalled = false;
+			const messages: string[] = [];
+
+			const result = await kernel.run({
+				cellId: "stalled-host",
+				code: [
+					`const { spawn } = await import("node:child_process");`,
+					`const child = spawn("seq", ["1", "200000"], { stdio: ["ignore", "inherit", "inherit"] });`,
+					`const pad = "m".repeat(16_000);`,
+					`for (let i = 0; i < 1000; i++) console.log("main-line-" + i + "-" + pad);`,
+					`await new Promise((resolve) => child.once("exit", resolve));`,
+					`return "r".repeat(1_200_000).length`,
+				].join("\n"),
+				timeoutMs: 60_000,
+				onMessage: (message) => {
+					if (message.type !== "text") return;
+					messages.push(message.data);
+					// Block the host on the first text frame, so the frame pipe fills while both threads keep writing.
+					if (stalled) return;
+					stalled = true;
+					Atomics.wait(pause, 0, 0, 2_000);
+				},
+			});
+			// Two writers share the channel: a reader-thread frame can end mid-line where a main-thread frame lands, so each
+			// stream is checked on its own. Whole frames means every main-thread line arrives as one intact frame, and the
+			// child's bytes, joined in order, are exactly its output.
+			const mainFrames = messages.filter((data) => data.startsWith("main-line-"));
+			const childText = messages.filter((data) => !data.startsWith("main-line-")).join("");
+			const numbers = childText
+				.split("\n")
+				.filter((line) => line !== "")
+				.map(Number);
+
+			expect(stalled).toBe(true);
+			expect(result).toMatchObject({ ok: true, valueRepr: "1200000" });
+			const pad = "m".repeat(16_000);
+			expect(mainFrames).toEqual(Array.from({ length: 1000 }, (_, index) => `main-line-${index}-${pad}\n`));
+			expect(numbers).toEqual(Array.from({ length: 200_000 }, (_, index) => index + 1));
+		},
+		120_000,
+	);
+
+	itProcessMode(
+		"When a crash's message is longer than the stderr window, then the crashed cell still names it",
+		async () => {
+			const kernel = processKernel();
+
+			const run = await runJavaScriptCell(
+				kernel,
+				'setTimeout(() => { throw new Error("long-cause-" + "z".repeat(20_000)); }, 0); await new Promise(() => {})',
+				15_000,
+			);
+
+			expect(run.result).toMatchObject({ ok: false });
+			if (!run.result.ok) expect(run.result.error.message).toContain("long-cause-zzz");
+		},
+		60_000,
+	);
+
 	it("When a worker-mode cell crashes, then the next result carries no restart notice, as before process mode existed", async () => {
 		const kernel = workerKernel();
 

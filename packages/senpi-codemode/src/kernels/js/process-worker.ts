@@ -141,21 +141,33 @@ export function spawnProcessWorker(url: URL, options: JavaScriptProcessWorkerOpt
 	const framePrefix = `${frameToken} `;
 	let crashCause: Error | undefined;
 	let stderrTail = "";
+	// A line that fails to parse may be the end of a frame a dying child was writing; it is reported only once the
+	// channel carries on, so the crash cause or the exit itself, not "invalid frame", settles the cell.
+	let pendingInvalidFrame: Error | undefined;
+	const reportPendingInvalidFrame = () => {
+		const error = pendingInvalidFrame;
+		pendingInvalidFrame = undefined;
+		if (error !== undefined) for (const handler of [...errorHandlers]) handler(error);
+	};
 	const subprocess = new SubprocessProcess(child, {
 		onLine: (_process, line) => {
 			// Only a line carrying this process's token is a frame; any other line is output that
 			// reached the channel (a raw fd write, a child process) and is delivered as text.
 			if (!line.startsWith(framePrefix)) {
 				if (line.trim().length === 0) return;
+				reportPendingInvalidFrame();
 				for (const handler of [...messageHandlers]) handler({ type: "text", stream: "stdout", data: line });
 				return;
 			}
 			const parsed = decodeBridgeFrame(line.slice(framePrefix.length));
 			if (!parsed.ok) {
-				for (const handler of [...errorHandlers])
-					handler(new Error(`JavaScript kernel process emitted an invalid frame: ${parsed.error.message}`));
+				reportPendingInvalidFrame();
+				pendingInvalidFrame = new Error(
+					`JavaScript kernel process emitted an invalid frame: ${parsed.error.message}`,
+				);
 				return;
 			}
+			reportPendingInvalidFrame();
 			const message = parsed.message;
 			if (!isKernelToHostMessage(message)) return;
 			reviveFrameValues(message, frameToken);
@@ -167,6 +179,7 @@ export function spawnProcessWorker(url: URL, options: JavaScriptProcessWorkerOpt
 			if (crash !== undefined) crashCause = crash;
 		},
 		onExit: (_process, code, signal) => {
+			pendingInvalidFrame = undefined;
 			// The child's own report of what killed it, as worker mode reports a thread's error; else the exit itself.
 			const error = crashCause ?? new JavaScriptWorkerExitedError(code ?? -1, signal);
 			for (const handler of [...errorHandlers]) handler(error);

@@ -45,12 +45,33 @@ function libcSymbols() {
 	} catch {
 		return null;
 	}
-	return ffi.dlopen(libcPath, {
+	const symbols = ffi.dlopen(libcPath, {
 		dup: { args: [ffi.FFIType.i32], returns: ffi.FFIType.i32 },
 		dup2: { args: [ffi.FFIType.i32, ffi.FFIType.i32], returns: ffi.FFIType.i32 },
 		fcntl: { args: [ffi.FFIType.i32, ffi.FFIType.i32, ffi.FFIType.i32], returns: ffi.FFIType.i32 },
 		pipe: { args: [ffi.FFIType.ptr], returns: ffi.FFIType.i32 },
 	}).symbols;
+	if (!(process.platform === "darwin" && process.arch === "arm64")) return symbols;
+	// fcntl is variadic. bun:ffi makes only non-variadic calls, and on Apple arm64 a variadic argument is read from the
+	// stack, not a register: declared with six padding arguments, the value is the ninth argument, which is the first
+	// stack slot. Elsewhere the three-argument form passes it where fcntl reads it.
+	const stackArgs = ffi.dlopen(libcPath, {
+		fcntl: {
+			args: [
+				ffi.FFIType.i32,
+				ffi.FFIType.i32,
+				ffi.FFIType.i64,
+				ffi.FFIType.i64,
+				ffi.FFIType.i64,
+				ffi.FFIType.i64,
+				ffi.FFIType.i64,
+				ffi.FFIType.i64,
+				ffi.FFIType.i64,
+			],
+			returns: ffi.FFIType.i32,
+		},
+	}).symbols;
+	return { ...symbols, fcntlStack: stackArgs.fcntl };
 }
 
 const libc = libcSymbols();
@@ -73,6 +94,25 @@ function privateControlFd() {
 const F_GETFL = 3;
 const F_SETFL = 4;
 const O_NONBLOCK = process.platform === "darwin" ? 0x4 : 0x800;
+const variadicOnStack = process.platform === "darwin" && process.arch === "arm64";
+
+function setFileStatusFlags(fd, flags) {
+	if (libc === null) return;
+	if (variadicOnStack) libc.fcntlStack(fd, F_SETFL, 0, 0, 0, 0, 0, 0, flags);
+	else libc.fcntl(fd, F_SETFL, flags);
+}
+
+/**
+ * Keeps fd 1 blocking. O_NONBLOCK belongs to the pipe's open file description, which every child inheriting fd 1
+ * shares: bun sets it the first time a process touches process.stdout and never clears it, and a SIGKILLed node child
+ * cannot restore it. A writer that does not retry EAGAIN (`cat`, writeSync) would then lose output whenever it outran
+ * the reader thread, so this runs before every cell and before and after every child process a cell starts.
+ */
+function ensureBlocking() {
+	if (libc === null || textPipe === null) return;
+	const flags = libc.fcntl(1, F_GETFL, 0);
+	if (flags !== -1 && (flags & O_NONBLOCK) !== 0) setFileStatusFlags(1, flags & ~O_NONBLOCK);
+}
 
 /** Points fd 1 at a pipe this process reads, so raw fd 1 writes become text frames; null when unavailable. */
 function repointStdoutToPipe() {
@@ -81,20 +121,73 @@ function repointStdoutToPipe() {
 	if (libc.pipe(fds) !== 0) return null;
 	// dup2 returns the new descriptor (1) on success and -1 on failure.
 	if (libc.dup2(fds[1], 1) === -1) return null;
-	// Bun makes fd 1 non-blocking when process.stdout is first touched. A writer that does not retry EAGAIN (`cat`
-	// inheriting fd 1, writeSync) would then lose output whenever it outran the reader, so set it up now and put the
-	// pipe back to blocking: a writer simply waits for the reader thread.
+	// Bun makes fd 1 non-blocking when process.stdout is first touched: set it up now, then keep it blocking.
 	void process.stdout;
-	const flags = libc.fcntl(1, F_GETFL, 0);
-	if (flags !== -1 && (flags & O_NONBLOCK) !== 0) libc.fcntl(1, F_SETFL, flags & ~O_NONBLOCK);
 	return { readFd: fds[0] };
 }
 
 const controlFd = privateControlFd();
 // Frames go out on a duplicate of the original fd 1, taken before the re-point. A duplicate rather than a reopen of
 // /dev/fd/1: on Linux the spawn's stdout is a socket, which cannot be opened by path.
-const frameFd = libc === null ? 1 : libc.dup(1);
-const textPipe = frameFd === -1 ? null : repointStdoutToPipe();
+const duplicatedFd = libc === null ? -1 : libc.dup(1);
+const frameFd = duplicatedFd === -1 ? 1 : duplicatedFd;
+const textPipe = duplicatedFd === -1 ? null : repointStdoutToPipe();
+ensureBlocking();
+keepChildProcessesBlocking();
+
+/** Wraps the ways a cell starts a child process, so fd 1 is blocking again before each starts and after it ends. */
+function keepChildProcessesBlocking() {
+	if (textPipe === null) return;
+	const childProcess = createRequire(import.meta.url)("node:child_process");
+	for (const name of ["execSync", "execFileSync", "spawnSync"]) {
+		const original = childProcess[name];
+		childProcess[name] = function (...args) {
+			ensureBlocking();
+			try {
+				return original.apply(this, args);
+			} finally {
+				ensureBlocking();
+			}
+		};
+	}
+	for (const name of ["spawn", "exec", "execFile", "fork"]) {
+		const original = childProcess[name];
+		childProcess[name] = function (...args) {
+			ensureBlocking();
+			const child = original.apply(this, args);
+			child.once("exit", ensureBlocking);
+			return child;
+		};
+	}
+	if (globalThis.Bun === undefined) return;
+	const bun = globalThis.Bun;
+	const spawnSync = bun.spawnSync;
+	const spawn = bun.spawn;
+	try {
+		Object.defineProperty(bun, "spawnSync", {
+			configurable: true,
+			value: (...args) => {
+				ensureBlocking();
+				try {
+					return spawnSync.apply(bun, args);
+				} finally {
+					ensureBlocking();
+				}
+			},
+		});
+		Object.defineProperty(bun, "spawn", {
+			configurable: true,
+			value: (...args) => {
+				ensureBlocking();
+				const child = spawn.apply(bun, args);
+				child.exited.then(ensureBlocking, ensureBlocking);
+				return child;
+			},
+		});
+	} catch {
+		// Bun's spawn functions are not configurable on this runtime; cell starts still restore the flag
+	}
+}
 const pause = new Int32Array(new SharedArrayBuffer(4));
 // Frames are written by this thread and by the fd 1 reader thread; one lock keeps every frame line whole.
 const frameLock = new Int32Array(new SharedArrayBuffer(4));
@@ -199,6 +292,7 @@ new Worker(WATCHDOG, { eval: true, workerData: { parent: process.ppid } }).unref
 let lineHandler;
 const bufferedLines = [];
 function deliver(message) {
+	if (message.type === "run") ensureBlocking();
 	if (lineHandler === undefined) bufferedLines.push(message);
 	else lineHandler(message);
 }
@@ -246,7 +340,7 @@ let drainSequence = 0;
 const DRAINER = `const { readSync, writeSync } = require("node:fs");
 const { StringDecoder } = require("node:string_decoder");
 const { parentPort, workerData } = require("node:worker_threads");
-const { fd, frameFd, token, lock, chunkChars, marker } = workerData;
+const { fd, frameFd, token, lock, marker } = workerData;
 const pause = new Int32Array(new SharedArrayBuffer(4));
 function writeAll(bytes) {
 	let offset = 0;
@@ -255,19 +349,16 @@ function writeAll(bytes) {
 			offset += writeSync(frameFd, bytes, offset, bytes.length - offset);
 		} catch (error) {
 			if (error && error.code === "EAGAIN") { Atomics.wait(pause, 0, 0, 2); continue; }
-			process.exit(0);
+			// The host is gone. process.exit would end only this thread, leaving the frame lock held.
+			process.kill(process.pid, "SIGKILL");
 		}
 	}
 }
+// One read is at most 64 KiB, so a text frame never nears the frame limit.
 function sendText(data) {
-	for (let start = 0; start < data.length; ) {
-		let end = Math.min(start + chunkChars, data.length);
-		if (end < data.length && /[\\uD800-\\uDBFF]/.test(data[end - 1])) end -= 1;
-		const line = Buffer.from(token + " " + JSON.stringify({ type: "text", stream: "stdout", data: data.slice(start, end) }) + "\\n", "utf8");
-		while (Atomics.compareExchange(lock, 0, 0, 1) !== 0) Atomics.wait(lock, 0, 1, 5);
-		try { writeAll(line); } finally { Atomics.store(lock, 0, 0); Atomics.notify(lock, 0, 1); }
-		start = end;
-	}
+	const line = Buffer.from(token + " " + JSON.stringify({ type: "text", stream: "stdout", data }) + "\\n", "utf8");
+	while (Atomics.compareExchange(lock, 0, 0, 1) !== 0) Atomics.wait(lock, 0, 1, 5);
+	try { writeAll(line); } finally { Atomics.store(lock, 0, 0); Atomics.notify(lock, 0, 1); }
 }
 const decoder = new StringDecoder("utf8");
 const buffer = Buffer.alloc(1 << 16);
@@ -307,7 +398,6 @@ if (textPipe !== null) {
 			frameFd,
 			token: frameToken,
 			lock: frameLock,
-			chunkChars: TEXT_CHUNK_CHARS,
 			marker: DRAIN_MARKER,
 		},
 	});
@@ -325,6 +415,10 @@ function reportCrash(error) {
 	const message = error instanceof Error ? error.message : String(error);
 	// Capped well below the host's stderr window, so the cause line is never cut off.
 	const cause = { name: error instanceof Error ? error.name : "Error", message: message.slice(0, 4096) };
+	// Wait (briefly) for a frame another thread is writing, so the channel ends on a frame boundary and the host reads
+	// the crash, not a cut line. Holding the lock past this point keeps any new frame from starting.
+	const deadline = Date.now() + 200;
+	while (Atomics.compareExchange(frameLock, 0, 0, 1) !== 0 && Date.now() < deadline) Atomics.wait(frameLock, 0, 1, 5);
 	try {
 		writeBytes(2, fromString(`\nsenpi-kernel-crash ${frameToken} ${stringify(cause)}\n`));
 	} finally {
