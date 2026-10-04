@@ -179,6 +179,7 @@
 			"reason": "The kernel-tools pump moved to kernels/shared/ (the baseline census entry is renamed to the new path) and descriptors may name any eval language; two contracts pin the widened descriptor."
 		},
 		"10": {
+			"reason": "Plan node 10: in-cell wait(handles, {timeout, mode}) and handle(node).control over the EvalHandleHost capability, plus opt-in completion handles. Additive helper census (wait and handle in js/py/rb; handle in jl, whose barrier is Base.wait on the view types so no Main.wait appears); the new handle/wait/completion-handle modules on the extension and first-kernel import paths (no installer or sandbox runtime, no task-engine import); and the RED/GREEN contracts for input order, atomic subscribe, epoch fencing, any/settled/empty/timeout, unavailable host, completion handles, detach, kernel death, generation drop and the four prelude surfaces. Prompt cells, the eval input schema and the invariants are unchanged; tool_schema(\"eval:helpers\") and tool_schema(\"eval:wait\") are documentation-only virtual entries outside the ordinary catalog.",
 			"additions": [
 				"helperCensus/js-bun/handle",
 				"helperCensus/js-bun/wait",
@@ -255,8 +256,7 @@
 				"legacyContracts/test/wait-barrier.test.ts/wait() barrier over the handle registry Given a runtime without the host capability, when one wait mixes a completion handle with an agent ref, then it fails as unavailable and leaves no completion subscription behind",
 				"legacyContracts/test/completion-handle-watches.test.ts/Given a watch over a completion handle When the watch is closed, then the registry stops tracking it",
 				"legacyContracts/test/completion-handle-watches.test.ts/Given a watch over a completion handle When the caller stops iterating its updates, then the registry stops tracking the watch"
-			],
-			"reason": "Plan node 10: in-cell wait(handles, {timeout, mode}) and handle(node).control over the EvalHandleHost capability, plus opt-in completion handles. Additive helper census (wait and handle in js/py/rb; handle in jl, whose barrier is Base.wait on the view types so no Main.wait appears); the new handle/wait/completion-handle modules on the extension and first-kernel import paths (no installer or sandbox runtime, no task-engine import); and the RED/GREEN contracts for input order, atomic subscribe, epoch fencing, any/settled/empty/timeout, unavailable host, completion handles, detach, kernel death, generation drop and the four prelude surfaces. Prompt cells, the eval input schema and the invariants are unchanged; tool_schema(\"eval:helpers\") and tool_schema(\"eval:wait\") are documentation-only virtual entries outside the ordinary catalog."
+			]
 		},
 		"12": {
 			"additions": [
