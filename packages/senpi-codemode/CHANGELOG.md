@@ -12,6 +12,7 @@
 
 ### Fixed
 
+- The Ruby kernel's memory notice names the largest globals again on Ruby 2.6 (the sizer used a Ruby 2.7 method) ([#2696](https://github.com/code-yeongyu/senpi/issues/2696)).
 - Eval no longer fails with "codemode session manager is disposed" for the rest of a session after a session switch or fork that another extension cancelled: codemode only tears its kernels down when the session actually ends ([#1706](https://github.com/code-yeongyu/senpi/issues/1706)).
 - A session whose codemode runtime failed to start is recovered by the next eval call (once, with one stderr line naming the failed start); if re-creation also fails, the call says "codemode runtime could not be re-created: <reason>" and how to bring eval back ([#1706](https://github.com/code-yeongyu/senpi/issues/1706)).
 
