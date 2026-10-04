@@ -854,10 +854,6 @@ class KernelToolRunner:
             return True
         return False
 
-    def pending(self) -> bool:
-        with self._lock:
-            return bool(self._invocations)
-
     def close(self) -> None:
         with self._lock:
             self._closed = True

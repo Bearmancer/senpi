@@ -18,6 +18,9 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The gate reviews baseline.json changes against the pull request's merge base, so it needs history.
+          fetch-depth: 0
       - name: Setup Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
@@ -540,10 +543,18 @@ jobs:
       - name: Slow and hung bootstrap regressions
         working-directory: packages/senpi-codemode
         run: bun ../../node_modules/vitest/vitest.mjs run test/py-kernel-startup.test.ts test/py-kernel.test.ts test/py-kernel-child-error.test.ts
+      - name: Python environments stay inside the revision on Windows
+        working-directory: packages/senpi-codemode
+        shell: pwsh
+        run: |
+          bun ../../node_modules/vitest/vitest.mjs run test/environments/py-environment.test.ts -t "pip config file|staged revision|null device" --reporter=default --reporter=json --outputFile="$env:RUNNER_TEMP/py-env-win.json"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          # A skipped test is not a pass: the pip-config case must have run on this Windows interpreter.
+          bun -e "const r = JSON.parse(await Bun.file(process.argv[1]).text()); const t = r.testResults.flatMap((f) => f.assertionResults).find((a) => a.title.startsWith('When a pip config file names a root')); const d = r.testResults.flatMap((f) => f.assertionResults).find((a) => a.title.includes('pointed at the null device')); if (!t || t.status !== 'passed' || !d || d.status !== 'passed') { console.error('pip config test: ' + (t ? t.status : 'missing') + ', null device test: ' + (d ? d.status : 'missing')); process.exit(1) }" "$env:RUNNER_TEMP/py-env-win.json"
       # Plan node 11: Python kernel tools serve callbacks on threads beside a SIGTERM-only interrupt; run them on Windows too.
       - name: Kernel-tool suites
         working-directory: packages/senpi-codemode
-        run: bun ../../node_modules/vitest/vitest.mjs run test/py-kernel-tools.test.ts test/kernel-tools-registry.test.ts test/kernel-tools-reentrancy.test.ts --reporter=default --reporter=json --outputFile.json=vitest-kernel-tools.json
+        run: python --version && bun ../../node_modules/vitest/vitest.mjs run test/py-kernel-tools.test.ts test/kernel-tools-registry.test.ts test/kernel-tools-reentrancy.test.ts --reporter=default --reporter=json --outputFile.json=vitest-kernel-tools.json
       - name: Require the kernel-tool suites to have executed
         shell: bash
         run: |
@@ -556,6 +567,8 @@ jobs:
             const skipped = results.length - passed - failed;
             console.log("kernel-tool suites: passed=" + passed + " failed=" + failed + " skipped=" + skipped + " python=" + python.length);
             if (failed !== 0 || skipped !== 0 || python.length < 15 || python.some((a) => a.status !== "passed")) process.exit(1);
+            const forward = python.find((a) => a.title.startsWith("a cell compiles a bare forward annotation"));
+            if (!forward || forward.status !== "passed") { console.error("bare forward annotation test: " + (forward ? forward.status : "missing")); process.exit(1); }
           '
         working-directory: packages/senpi-codemode
       - name: Build isolated packaged Python host

@@ -6146,7 +6146,6 @@
       "test/kernel-tools-scope.test.js/kernel-tool call scope policy matches host tool names exactly": "passed",
       "test/kernel-tools-scope.test.js/kernel-tool call scope policy fails closed on a malformed list instead of widening the scope": "passed",
       "test/kernel-tools-scope.test.js/kernel-tool call scope policy builds a typed refusal carrying the tool, the invoking call id and the reason": "passed",
-      "test/kernel-tools-unavailable.test.ts/py/rb/jl kernel tools returns tools_unavailable from real non-JS kernel classes": "passed",
       "test/memory-settings.test.ts/codemode memory settings defaults the ceiling to a quarter of 4294967296 bytes kept within 2-8 GiB": "passed",
       "test/memory-settings.test.ts/codemode memory settings defaults the ceiling to a quarter of 17179869184 bytes kept within 2-8 GiB": "passed",
       "test/memory-settings.test.ts/codemode memory settings defaults the ceiling to a quarter of 137438953472 bytes kept within 2-8 GiB": "passed",

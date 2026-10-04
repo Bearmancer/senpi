@@ -347,6 +347,10 @@ describe.skipIf(!(await hasPython3()))("Python kernel tools (@tool)", () => {
 		const queued = cell(kernel, "len(runs)");
 		controller.abort();
 		await expect(invoked).rejects.toMatchObject({ code: "kernel_tool_stale" });
+		// The cancel frame and the host call's reply travel on different channels (stdin vs the bridge socket).
+		// The kernel serves control frames in order, so a describe answered after the cancel proves the
+		// cancel reached the kernel before the parked host call is allowed to return.
+		await within(descriptor(kernel, "slow"), 20_000, "the kernel to read the cancel");
 		releaseHost.open();
 		const queuedResult = await within(queued, 20_000, "queued cell");
 		await within(
@@ -599,5 +603,21 @@ describe.skipIf(!(await hasPython3()))("Python kernel tool descriptors after the
 		expect(result.ok).toBe(true);
 		expect(await kernel.invokeKernelTool(invokeRequest(await descriptor(kernel, "later"), {}))).toBe(7);
 		expect(await kernel.invokeKernelTool(invokeRequest(await descriptor(kernel, "bare"), {}))).toBe(7);
+	}, 60_000);
+
+	it("a cell compiles a bare forward annotation on the interpreter in use, whatever its version", async () => {
+		const { kernel, messages } = await bridge(() => ({ text: "" }));
+		const result = await cell(
+			kernel,
+			"import sys\ndef bare() -> NotYetDefined:\n    return 1\nprint(f'{sys.version_info[0]}.{sys.version_info[1]}', bare(), bare.__annotations__['return'])",
+		);
+
+		expect(result.ok).toBe(true);
+		const [version = "", value, annotation] = stdout(messages).trim().split(" ");
+		expect(Number(version.split(".")[1])).toBeGreaterThanOrEqual(10);
+		expect(value).toBe("1");
+		// Cells inherit the prelude's deferred annotations, so the annotation stays the unevaluated name.
+		expect(annotation).toBe("NotYetDefined");
+		process.stdout.write(`py kernel compiled a bare forward annotation on Python ${version}\n`);
 	}, 60_000);
 });
