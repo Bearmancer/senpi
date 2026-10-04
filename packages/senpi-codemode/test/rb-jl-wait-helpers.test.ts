@@ -35,10 +35,7 @@ function reply(request: BridgeHttpCallRequest): unknown {
 }
 
 async function withBridge<T>(
-	run: (
-		connection: { port: number; token: string; hardLimitSeconds: number },
-		calls: BridgeHttpCallRequest[],
-	) => Promise<T>,
+	run: (connection: { port: number; token: string }, calls: BridgeHttpCallRequest[]) => Promise<T>,
 ) {
 	const calls: BridgeHttpCallRequest[] = [];
 	const server = await startBridgeServer({
@@ -50,7 +47,7 @@ async function withBridge<T>(
 		onCompletion: async () => "unused",
 	});
 	try {
-		return await run({ port: server.port, token: server.token, hardLimitSeconds: 600 }, calls);
+		return await run({ port: server.port, token: server.token }, calls);
 	} finally {
 		await server.close();
 	}

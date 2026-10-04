@@ -3,7 +3,9 @@ import { virtualEvalSchema } from "../src/bridges/eval-virtual-schemas.ts";
 
 describe("tool_schema('eval:kernel-tools')", () => {
 	it("documents @tool, tool.defined()/undefine(), the inference rules and grant staleness", () => {
-		const entry = virtualEvalSchema("eval:kernel-tools");
+		const found = virtualEvalSchema("eval:kernel-tools");
+		if (found === undefined || !("name" in found)) throw new Error("eval:kernel-tools is not a named schema entry");
+		const entry = found;
 
 		expect(entry?.name).toBe("eval:kernel-tools");
 		expect(entry?.description).toContain("@tool");

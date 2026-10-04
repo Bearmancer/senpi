@@ -233,7 +233,9 @@
 				"legacyContracts/test/wait-barrier.test.ts/wait() barrier over the handle registry ends with its cell when the cell is cancelled while a settled handle's result is still being fetched",
 				"legacyContracts/test/wait-barrier.test.ts/wait() barrier over the handle registry Given a timeout longer than the platform timer limit, when time passes, then wait() keeps waiting past one timer span and still returns the settled value",
 				"legacyContracts/test/wait-barrier.test.ts/wait() barrier over the handle registry Given a timeout longer than the platform timer limit that runs out, then wait() times out at the full deadline, not one timer span early",
-				"legacyContracts/test/wait-barrier.test.ts/wait() barrier over the handle registry Given a runtime without the host capability, when one wait mixes a completion handle with an agent ref, then it fails as unavailable and leaves no completion subscription behind"
+				"legacyContracts/test/wait-barrier.test.ts/wait() barrier over the handle registry Given a runtime without the host capability, when one wait mixes a completion handle with an agent ref, then it fails as unavailable and leaves no completion subscription behind",
+				"legacyContracts/test/completion-handle-watches.test.ts/Given a watch over a completion handle When the watch is closed, then the registry stops tracking it",
+				"legacyContracts/test/completion-handle-watches.test.ts/Given a watch over a completion handle When the caller stops iterating its updates, then the registry stops tracking the watch"
 			]
 		},
 		"13": {
