@@ -390,13 +390,32 @@
 				"legacyContracts/test/environments/py-environment.test.ts/Given pip arguments from a magic cell When they include a destination flag (--prefix=/usr x), then they are refused",
 				"legacyContracts/test/environments/py-environment.test.ts/Given pip arguments from a magic cell When they include a destination flag (--root / x), then they are refused",
 				"legacyContracts/test/environments/py-environment.test.ts/Given pip arguments from a magic cell When they include a destination flag (-e .), then they are refused",
+				"legacyContracts/test/environments/py-environment.test.ts/Given pip arguments from a magic cell When they include a destination flag (--targ /tmp/elsewhere x), then they are refused",
+				"legacyContracts/test/environments/py-environment.test.ts/Given pip arguments from a magic cell When they include a destination flag (--tar=/tmp/elsewhere x), then they are refused",
+				"legacyContracts/test/environments/py-environment.test.ts/Given pip arguments from a magic cell When they include a destination flag (--pref=/usr x), then they are refused",
+				"legacyContracts/test/environments/py-environment.test.ts/Given pip arguments from a magic cell When they include a destination flag (--roo / x), then they are refused",
+				"legacyContracts/test/environments/py-environment.test.ts/Given pip arguments from a magic cell When they include a destination flag (--edit .), then they are refused",
+				"legacyContracts/test/environments/py-environment.test.ts/Given pip arguments from a magic cell When they include a destination flag (-Ut/tmp/elsewhere x), then they are refused",
+				"legacyContracts/test/environments/py-environment.test.ts/Given pip arguments from a magic cell When they include a destination flag (-Ue.), then they are refused",
+				"legacyContracts/test/environments/py-environment.test.ts/Given pip arguments from a magic cell When they include a destination flag (--src /tmp x), then they are refused",
+				"legacyContracts/test/environments/py-environment.test.ts/Given pip arguments from a magic cell When they include a destination flag (--isolated x), then they are refused",
 				"legacyContracts/test/environments/py-environment.test.ts/Given pip arguments from a magic cell When the command is not install, then it is refused with the supported form",
-				"legacyContracts/test/environments/py-environment.test.ts/Given pip arguments from a magic cell When only requirements and ordinary flags are given, then they pass through as an argv"
+				"legacyContracts/test/environments/py-environment.test.ts/Given pip arguments from a magic cell When allowed options use short or attached spellings, then they are passed to pip spelled out in full",
+				"legacyContracts/test/environments/py-environment.test.ts/Given pip arguments from a magic cell When an option's value is missing or not allowed (--index-url), then the arguments are refused",
+				"legacyContracts/test/environments/py-environment.test.ts/Given pip arguments from a magic cell When an option's value is missing or not allowed (--upgrade=1), then the arguments are refused",
+				"legacyContracts/test/environments/py-environment.test.ts/Given pip arguments from a magic cell When an option's value is missing or not allowed (--find-links --no-index), then the arguments are refused",
+				"legacyContracts/test/environments/py-environment.test.ts/Given pip arguments from a magic cell When only requirements and ordinary flags are given, then they pass through as an argv",
+				"legacyContracts/test/environments/py-environment.test.ts/Given an environment root's install lock When several waiters find one dead holder's lock at once, then exactly one holder is ever inside, across many trials",
+				"legacyContracts/test/environments/py-environment.test.ts/Given an environment root's install lock When an empty lock file older than a few seconds is found (a crash between create and write), then it is taken over",
+				"legacyContracts/test/environments/py-environment.test.ts/Given an environment root's install lock When a freshly created lock can't be read yet, then it is waited for, not taken over",
+				"legacyContracts/test/environments/py-environment.test.ts/Given an environment root's install lock When a live process on this host holds the lock, then a waiter enters only after it is released"
 			],
 			"reason": "Node 14 part 3: the Python environments library (versioned revisions published by an atomic pointer switch, per-root install lock, pip --target installer) and its contracts. Not wired into any cell yet, so no import-census, prompt or helper change."
 		},
 		"14-host": {
 			"additions": [
+				"imports/firstKernel/packages/senpi-codemode/src/kernels/py/host-cell.ts",
+				"imports/extension/packages/senpi-codemode/src/kernels/py/host-cell.ts",
 				"legacyContracts/test/py-kernel-host-cell.test.ts/Given a host-executed entry in the Python kernel's queue When it reaches the front, then it runs on the host in FIFO order and the interpreter receives no run frame for it",
 				"legacyContracts/test/py-kernel-host-cell.test.ts/Given a host-executed entry in the Python kernel's queue When it is cancelled while queued, then it is removed like any queued cell and its executor never runs",
 				"legacyContracts/test/py-kernel-host-cell.test.ts/Given a host-executed entry in the Python kernel's queue When the active entry is interrupted, then its executor is aborted, the cell settles interrupted and the interpreter is not signalled",
@@ -405,8 +424,11 @@
 				"legacyContracts/test/py-kernel-host-cell.test.ts/Given a host-executed entry in the Python kernel's queue When its executor rejects, then the cell fails with that message and the next queued cell still runs",
 				"legacyContracts/test/py-kernel-host-cell.test.ts/Given a host-executed entry in the Python kernel's queue When the kernel closes with an entry active, then its executor is aborted",
 				"legacyContracts/test/py-kernel-host-cell.test.ts/Given a live Python interpreter When a host entry is interrupted mid-run, then the interpreter keeps its pid and globals",
-				"imports/firstKernel/packages/senpi-codemode/src/kernels/py/host-cell.ts",
-				"imports/extension/packages/senpi-codemode/src/kernels/py/host-cell.ts"
+				"legacyContracts/test/py-kernel-host-cell.test.ts/Given an aborted host entry in the Python kernel's queue When an interrupted executor keeps running after the abort, then the next entry waits until it stops",
+				"legacyContracts/test/py-kernel-host-cell.test.ts/Given an aborted host entry in the Python kernel's queue When the executor finishes successfully as the interrupt arrives, then the cell reports that its work committed",
+				"legacyContracts/test/py-kernel-host-cell.test.ts/Given an aborted host entry in the Python kernel's queue When the executor throws synchronously, then only its cell fails and the next queued cell still runs",
+				"legacyContracts/test/py-kernel-host-cell.test.ts/Given an aborted host entry in the Python kernel's queue When an aborted executor still emits output, then that output reaches no cell",
+				"legacyContracts/test/py-kernel-host-cell.test.ts/Given an aborted host entry in the Python kernel's queue When an aborted executor never stops, then the cell still settles after the interpreter's escalation bound"
 			],
 			"reason": "Node 14 part 2: the Python kernel's queue can hold host-executed entries (the interpreter receives nothing; interrupt, timeout and close abort the host work without restarting the interpreter). Its module loads with the first Python kernel, and the new contracts. No caller submits one yet."
 		},

@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { terminateProcessTrees } from "../kernels/js/process-tree-host.ts";
 
 export type EnvironmentErrorCode =
 	| "environment_install_failed"
@@ -18,8 +19,46 @@ export class EnvironmentError extends Error {
 	}
 }
 
-const DESTINATION_FLAGS = ["--target", "-t", "--prefix", "--root", "--user", "--home", "--src", "--editable", "-e"];
+// pip accepts any unambiguous prefix of a long option and grouped short flags, so a denylist of destination
+// options can't be complete. Only these options are accepted, each spelled out in full.
+const ALLOWED_FLAGS = new Set([
+	"--upgrade",
+	"--no-deps",
+	"--pre",
+	"--force-reinstall",
+	"--no-index",
+	"--no-cache-dir",
+	"--only-binary",
+	"--no-binary",
+	"--prefer-binary",
+	"--index-url",
+	"--extra-index-url",
+	"--find-links",
+	"--constraint",
+	"--requirement",
+	"--quiet",
+	"--verbose",
+]);
+const FLAGS_WITH_VALUE = new Set([
+	"--only-binary",
+	"--no-binary",
+	"--index-url",
+	"--extra-index-url",
+	"--find-links",
+	"--constraint",
+	"--requirement",
+]);
+const SHORT_ALIASES: Readonly<Record<string, string>> = {
+	"-U": "--upgrade",
+	"-i": "--index-url",
+	"-f": "--find-links",
+	"-c": "--constraint",
+	"-r": "--requirement",
+	"-q": "--quiet",
+	"-v": "--verbose",
+};
 const STDERR_TAIL_BYTES = 4_096;
+const PIP_TREE_GRACE_MS = 2_000;
 
 export function parsePipRequirements(text: string): string[] {
 	const args = text
@@ -31,17 +70,36 @@ export function parsePipRequirements(text: string): string[] {
 		throw new EnvironmentError("environment_install_failed", "only `%pip install <requirements>` is supported");
 	}
 	if (command.length === 0) throw new EnvironmentError("environment_install_failed", "name at least one requirement");
-	for (const arg of command) {
-		const flag = arg.split("=")[0] ?? arg;
-		const attachedShort = !arg.startsWith("--") && (arg.startsWith("-t") || arg.startsWith("-e"));
-		if (DESTINATION_FLAGS.includes(flag) || attachedShort) {
+	const normalized: string[] = [];
+	for (let index = 0; index < command.length; index++) {
+		const arg = command[index] ?? "";
+		if (!arg.startsWith("-")) {
+			normalized.push(arg);
+			continue;
+		}
+		const [spelled = arg, attached] = arg.split(/=(.*)/su, 2);
+		const flag = SHORT_ALIASES[spelled] ?? spelled;
+		if (!ALLOWED_FLAGS.has(flag)) {
 			throw new EnvironmentError(
 				"environment_install_failed",
-				`${flag} is not allowed: packages always install into the session's environment root`,
+				`${spelled} is not allowed: %pip accepts ${[...ALLOWED_FLAGS].join(", ")} (each spelled out in full); packages always install into the session's environment root`,
 			);
 		}
+		if (!FLAGS_WITH_VALUE.has(flag)) {
+			if (attached !== undefined)
+				throw new EnvironmentError("environment_install_failed", `${spelled} takes no value`);
+			normalized.push(flag);
+			continue;
+		}
+		const value = attached ?? command[++index];
+		if (value === undefined || value === "" || value.startsWith("-")) {
+			throw new EnvironmentError("environment_install_failed", `${spelled} needs a value`);
+		}
+		normalized.push(`${flag}=${value}`);
 	}
-	return command;
+	const named = normalized.some((arg) => !arg.startsWith("-") || arg.startsWith("--requirement="));
+	if (!named) throw new EnvironmentError("environment_install_failed", "name at least one requirement");
+	return normalized;
 }
 
 export function runPipInstall(input: {
@@ -78,7 +136,12 @@ export function runPipInstall(input: {
 			stderrTail = (stderrTail + data).slice(-STDERR_TAIL_BYTES);
 			input.onOutput?.("stderr", data);
 		});
-		const onAbort = () => child.kill("SIGKILL");
+		// pip's build backends run in their own subprocesses; stopping only pip would leave them writing.
+		const onAbort = () => {
+			const pid = child.pid;
+			if (pid === undefined) child.kill("SIGKILL");
+			else void terminateProcessTrees([pid], { graceMs: PIP_TREE_GRACE_MS }).catch(() => child.kill("SIGKILL"));
+		};
 		input.signal.addEventListener("abort", onAbort, { once: true });
 		child.once("error", (error) => {
 			input.signal.removeEventListener("abort", onAbort);

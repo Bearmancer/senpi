@@ -40,4 +40,5 @@ export interface PendingRun {
 	/** Set while an interrupt outcome is pending; resolved once the kernel knows whether state survived. */
 	resolveStateRetained?: (retained: boolean) => void;
 	hostAbort?: AbortController;
+	hostDone?: Promise<ResultMessage>;
 }
