@@ -157,6 +157,7 @@ export default function senpiCodemode(pi: CodemodeExtensionAPI, options: SenpiCo
 					complete,
 					settings: runtime.settings,
 					artifactsDir: runtime.artifactsDir,
+					...(runtime.pythonEnvironments === undefined ? {} : { pythonEnvironments: runtime.pythonEnvironments }),
 					cellManager,
 					handles,
 					executionTracker: manager,

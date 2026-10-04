@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { cp, mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { type LockWaitNotice, withRootLock } from "./install-lock.ts";
@@ -12,11 +13,25 @@ export interface Revision {
 	readonly dir: string;
 }
 
+/** The same read, synchronous: the pointer is one short file, read when a Python cell starts running. */
+export function readActiveRevisionSync(base: string): Revision | undefined {
+	try {
+		return parsePointer(base, readFileSync(join(base, POINTER), "utf8"));
+	} catch (error) {
+		if (error instanceof Error && "code" in error && error.code === "ENOENT") return undefined;
+		throw error;
+	}
+}
+
+function parsePointer(base: string, text: string): Revision | undefined {
+	const name = text.trim();
+	const match = REVISION.exec(name);
+	return match?.[1] === undefined ? undefined : { number: Number(match[1]), dir: join(base, name) };
+}
+
 export async function readActiveRevision(base: string): Promise<Revision | undefined> {
 	try {
-		const name = (await readFile(join(base, POINTER), "utf8")).trim();
-		const match = REVISION.exec(name);
-		return match?.[1] === undefined ? undefined : { number: Number(match[1]), dir: join(base, name) };
+		return parsePointer(base, await readFile(join(base, POINTER), "utf8"));
 	} catch (error) {
 		if (error instanceof Error && "code" in error && error.code === "ENOENT") return undefined;
 		throw error;

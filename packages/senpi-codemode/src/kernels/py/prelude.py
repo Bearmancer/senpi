@@ -13,6 +13,7 @@ import asyncio  # noqa: ANYIO_OK — stdlib-only embedded kernel runner.
 import base64
 import codecs
 import contextlib
+import importlib
 import gc
 import inspect
 import io
@@ -2180,6 +2181,9 @@ def _handle_message(message: dict[str, Any]) -> bool:
         emit({"type": "ready"})
         return True
     if message_type == "run":
+        env_root = message.get("envRoot")
+        if isinstance(env_root, str):
+            _activate_env_root(env_root)
         run_cell(str(message.get("cellId", "")), str(message.get("code", "")), message.get("preludes"))
         return True
     if message_type == "close":
@@ -2187,6 +2191,25 @@ def _handle_message(message: dict[str, Any]) -> bool:
         emit({"type": "closed"})
         return False
     return True
+
+
+_ACTIVE_ENV_ROOT: list[str] = []
+
+
+def _activate_env_root(root: str) -> None:
+    # One environment revision is on the import path at a time: a newer revision already holds every
+    # package of the previous one, so it replaces that entry instead of stacking another.
+    # An empty root means the session's current mode has nothing installed: the previous revision leaves too.
+    wanted = [root] if root else []
+    if _ACTIVE_ENV_ROOT == wanted:
+        return
+    for previous in _ACTIVE_ENV_ROOT:
+        with contextlib.suppress(ValueError):
+            sys.path.remove(previous)
+    _ACTIVE_ENV_ROOT[:] = wanted
+    if root:
+        sys.path.insert(0, root)
+    importlib.invalidate_caches()
 
 
 def _terminate_process_group() -> None:

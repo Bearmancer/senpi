@@ -8,6 +8,7 @@ import type {
 import type { EvalSchemaToolInfo } from "../bridges/schema-bridge.ts";
 import type { CompletionRequest, CompletionResult } from "../completion/handler.ts";
 import type { ResolvedCodemodeSettings } from "../config/settings.ts";
+import type { PythonEnvironments } from "../environments/python-environments.ts";
 import type { EvalExecutionTracker } from "../extension/session-manager.ts";
 import type { HandleRegistry } from "../handles/handle-registry.ts";
 import type { EvalTimeoutFactory } from "./cell-execution.ts";
@@ -69,6 +70,8 @@ export interface CreateEvalToolOptions {
 	readonly bunSkillPath?: string;
 	/** Kernel globals of the tools active when a cell is submitted; read once per cell. */
 	readonly kernelPreludes?: () => readonly KernelPreludeContribution[];
+	/** The session's Python environments: `%pip` / `%environment` cells and the import root of every Python cell. */
+	readonly pythonEnvironments?: PythonEnvironments;
 	/** Contributions whose documentation lines the description lists; snapshot taken when the tool is (re)registered. */
 	readonly promptKernelPreludes?: readonly KernelPreludeContribution[];
 }
