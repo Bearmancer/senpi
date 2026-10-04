@@ -31,8 +31,8 @@ const APP_HANDOFF_LANGUAGE_RULE = HANDOFF_LANGUAGE_RULE.replace("the routing lin
 
 const HANDOFF_MOMENTS: Record<TerminalOrApp, string> = {
 	terminal:
-		"A handoff is the todo list's creation (in the message that creates it, after the routing line, or the next one), each todo phase change, a blocker or plan change, and the final message; the routing line is not one.",
-	app: "A handoff is the todo list's creation (in the message that creates it or the next one), each todo phase change, a blocker or plan change, and the final message.",
+		"A handoff is the todo list's creation (in the message that creates it, after the routing line, or the next one), each todo phase change, a blocker or plan change, and the final message of a turn that did work; the routing line is not one, and a reply that only answers a question is the answer itself.",
+	app: "A handoff is the todo list's creation (in the message that creates it or the next one), each todo phase change, a blocker or plan change, and the final message of a turn that did work; a reply that only answers a question is the answer itself.",
 };
 
 /**
@@ -61,7 +61,7 @@ export function buildHandoffSection(options: HandoffSectionOptions = {}): string
 
 ${HANDOFF_MOMENTS[surface]} Before writing one, weigh what the user originally asked for and what they would want to know right now; then state it in one short block:
 
-> Ask: [the user's original request] - wanted: [the outcome they asked for]. For you: [what they need to know now - ledger N/M done, findings, blockers]. Now: [the todo task in progress]. Next: [the next open task].
+Ask: [the user's original request] - wanted: [the outcome they asked for]. For you: [what they need to know now - ledger N/M done, findings, blockers]. Now: [the todo task in progress]. Next: [the next open task].
 
 ${languageRule} ${nextRule} ${betweenRule}`;
 }
