@@ -742,7 +742,13 @@
 				"legacyContracts/test/eval-request-language.test.ts/parseEvalRequest language and code enforcement throws a distinct actionable error for an unknown language value",
 				"legacyContracts/test/eval-request-language.test.ts/parseEvalRequest language and code enforcement lists only the enabled languages when a run names an unknown language"
 			],
-			"reason": "#1395: an omitted eval language and an invalid one now fail with distinct errors, and peek/stop need no language; these contract tests pin that, and replace the 'same actionable error for an unknown language value' test."
+			"reason": "#1395: an omitted eval language and an invalid one now fail with distinct errors, and peek/stop need no language; these contract tests pin that, and replace the 'same actionable error for an unknown language value' test.",
+			"changes": [
+				{
+					"key": "legacyContracts/test/eval-request-language.test.ts/parseEvalRequest language and code enforcement throws the same actionable error for an unknown language value",
+					"reason": "senpi#1396 makes an unknown language value fail with a distinct error from an omitted language, so this contract leaves the baseline; its honest rename 'parseEvalRequest language and code enforcement throws a distinct actionable error for an unknown language value' is listed under additions (reviewed by the gate owner on the PR)."
+				}
+			]
 		}
 	}
 }
