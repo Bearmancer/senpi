@@ -216,4 +216,19 @@ describe.skipIf(!availability.py.detected.ok)("Given a Python cell that defined 
 		expect(bound).not.toContain(jsId);
 		expect(bound).not.toContain(pyId);
 	}, 120_000);
+
+	it("When a cell stashes its run's secret and a later cell uses it, then that call gets no kernel tools", async () => {
+		const { run, calls } = await session();
+		await run(DEFINE_ADD);
+		await run(
+			"import sys\nstashed_secret = sys.modules['__main__'].CURRENT_CELL_TOKEN.get()\nstashed_secret is not None",
+		);
+
+		const replayed = await run(
+			"sys.modules['__main__'].bridge_post('/call', {'callId': 'py-replay', 'cellToken': stashed_secret, 'toolName': 'task', 'args': {'prompt': 'use add', 'tools': ['add']}})",
+		);
+
+		expect(textOf(replayed)).toContain("no kernel tools for this call");
+		expect(calls.at(-1)?.sawKernelTools).toBe(false);
+	}, 120_000);
 });

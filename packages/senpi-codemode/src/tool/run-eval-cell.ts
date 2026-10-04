@@ -305,13 +305,14 @@ async function executeCell(
 		if (error instanceof Error && error.name === "TimeoutError") throw await describeTimeoutState(error, execution);
 		throw error;
 	} finally {
+		// First, so nothing below can skip it: from here on a host call carrying this run's secret gets no kernel tools.
+		releaseCellKernelTools?.();
 		state.active = false;
 		bridgeAbortController.abort();
 		execution.finish();
 		if (handler) await handler.flushOutput();
 		// The cell settled: stop the kernel dispatcher from holding this cell's listener (#2260).
 		options.kernelManager.releaseKernelListener?.(invocation.input.language, onMessage);
-		releaseCellKernelTools?.();
 	}
 }
 
