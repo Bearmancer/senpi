@@ -112,8 +112,10 @@ async function singleRpcProcess(options: {
 	await runtime.session.bindExtensions({});
 
 	const lines: Record<string, unknown>[] = [];
-	const lineWaiters: Array<{ readonly match: (line: Record<string, unknown>) => boolean; readonly resolve: () => void }> =
-		[];
+	const lineWaiters: Array<{
+		readonly match: (line: Record<string, unknown>) => boolean;
+		readonly resolve: () => void;
+	}> = [];
 	const nextLine = (match: (line: Record<string, unknown>) => boolean, label: string): Promise<void> =>
 		new Promise<void>((resolve, reject) => {
 			const timer = setTimeout(() => reject(new Error(`no ${label} line within 20s`)), 20_000);
