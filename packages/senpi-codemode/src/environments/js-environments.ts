@@ -1,21 +1,22 @@
-import { mkdir, readFile, rm } from "node:fs/promises";
-import { join } from "node:path";
+import { mkdir, readFile, realpath, rm, stat } from "node:fs/promises";
+import { isAbsolute, join } from "node:path";
 import type { ResolvedCodemodeSettings } from "../config/settings.ts";
 import { withRootLock } from "./install-lock.ts";
 import {
 	absoluteSpec,
 	type JsInstallerChoice,
 	parseJsPackages,
+	requestedPackageName,
 	resolveJsInstaller,
 	runJsInstall,
 	withoutHostPaths,
 } from "./js-installer.ts";
 import { carryNpmrcSettings, recordedFileSpecs, seedPackageJson } from "./js-revision-files.ts";
-import { assertNoLinksBelow } from "./no-links.ts";
+import { assertBuiltRevisionLinks, assertNoLinksBelow, recordedInstallSources } from "./no-links.ts";
 import { projectResolves } from "./project-resolves.ts";
 import type { EnvironmentMode } from "./py-environment.ts";
 import { EnvironmentError } from "./py-installer.ts";
-import { publishNextRevision, readActiveRevision } from "./revision-store.ts";
+import { mkdirPrivate, publishNextRevision, readActiveRevision } from "./revision-store.ts";
 
 /** The paths in a revision that the installer writes. */
 const INSTALLER_WRITES = [
@@ -86,12 +87,13 @@ export class JsEnvironments {
 		const choice: JsInstallerChoice = requestedInstaller ?? environments?.js?.installer ?? "auto";
 		const { installer, command } = resolveJsInstaller(choice, this.#options.env);
 		let recordedSpecs: readonly string[] = [];
-		const run = (root: string) =>
+		const run = (root: string, remove?: string) =>
 			runJsInstall({
 				installer,
 				command,
 				root,
 				packages,
+				...(remove === undefined ? {} : { remove }),
 				recordedSpecs,
 				cwd: this.#options.cwd,
 				env: this.#options.env,
@@ -99,18 +101,23 @@ export class JsEnvironments {
 				...(onOutput === undefined ? {} : { onOutput }),
 			});
 		// The lock and the revision store fail with raw file system errors; they reach the cell redacted.
-		const redacted = (root: string) => (error: unknown) => {
-			const raw =
-				error instanceof EnvironmentError
-					? error.message.slice(error.code.length + 2)
-					: String(error instanceof Error ? error.message : error);
-			const text = withoutHostPaths(raw, { root, cwd: this.#options.cwd, packages, recordedSpecs });
-			if (error instanceof EnvironmentError) throw new EnvironmentError(error.code, text);
-			// An abort while waiting for the lock or before the publish is a cancel, not a failure.
-			if (signal.aborted)
-				throw new EnvironmentError("environment_install_cancelled", `the install was cancelled: ${text}`);
-			throw new EnvironmentError("environment_install_failed", text);
-		};
+		const redacted =
+			(...roots: string[]) =>
+			(error: unknown) => {
+				const raw =
+					error instanceof EnvironmentError
+						? error.message.slice(error.code.length + 2)
+						: String(error instanceof Error ? error.message : error);
+				const text = roots.reduce(
+					(message, root) => withoutHostPaths(message, { root, cwd: this.#options.cwd, packages, recordedSpecs }),
+					raw,
+				);
+				if (error instanceof EnvironmentError) throw new EnvironmentError(error.code, text);
+				// An abort while waiting for the lock or before the publish is a cancel, not a failure.
+				if (signal.aborted)
+					throw new EnvironmentError("environment_install_cancelled", `the install was cancelled: ${text}`);
+				throw new EnvironmentError("environment_install_failed", text);
+			};
 		if (this.#mode === "project") {
 			const before = await dependencyNames(this.#options.cwd);
 			const lockRoot = join(this.#options.cwd, ".senpi", "js-packages");
@@ -120,8 +127,8 @@ export class JsEnvironments {
 			return { installer, mode: "project", revision: undefined, added, shadowed: [] };
 		}
 		let added: string[] = [];
-		const base = this.#managedBase();
-		await assertNoLinksBelow(this.#managedRoot(), base).catch(redacted(base));
+		const requestedBase = this.#managedBase();
+		const base = await canonicalBase(this.#managedRoot(), requestedBase).catch(redacted(requestedBase));
 		const { revision } = await publishNextRevision(
 			base,
 			async (staging) => {
@@ -132,11 +139,15 @@ export class JsEnvironments {
 				for (const entry of INSTALLER_WRITES) await assertNoLinksBelow(base, join(staging, entry));
 				const before = await dependencyNames(staging);
 				recordedSpecs = await recordedFileSpecs(staging);
+				// A package whose source changes kind (a directory to a tarball or registry version, or back) is removed
+				// first: bun keeps its per-file links into the old directory otherwise (#2758).
+				for (const name of await sourceKindChanges(staging, packages)) await run(staging, name);
 				await run(staging);
+				await assertBuiltRevisionLinks(staging);
 				added = (await dependencyNames(staging)).filter((name) => !before.includes(name));
 			},
 			signal,
-		).catch(redacted(base));
+		).catch(redacted(base, requestedBase));
 		this.#packageRoot = revision.dir;
 		const shadowed = added.filter((name) => projectResolves(this.#options.cwd, name));
 		return { installer, mode: "managed", revision: revision.number, added, shadowed };
@@ -161,4 +172,37 @@ async function dependencyNames(root: string): Promise<string[]> {
 		if (error instanceof Error && "code" in error && error.code === "ENOENT") return [];
 		throw error;
 	}
+}
+
+/**
+ * Creates the managed base, checks that nothing below the managed root is a link, and returns its realpath: npm keys
+ * a linked package in its lockfile by a path relative to the prefix, and a prefix under a linked directory (macOS
+ * `/var` is a link to `/private/var`) gives keys that stop resolving once the staged revision is renamed.
+ */
+async function canonicalBase(managedRoot: string, base: string): Promise<string> {
+	await assertNoLinksBelow(managedRoot, base);
+	await mkdirPrivate(base);
+	await assertNoLinksBelow(managedRoot, base);
+	return await realpath(base);
+}
+
+/** Names among `packages` whose recorded source is a directory and is not the same directory now, or the reverse. */
+async function sourceKindChanges(revision: string, packages: readonly string[]): Promise<string[]> {
+	const installed = new Set(await dependencyNames(revision));
+	const sources = await recordedInstallSources(revision);
+	const changed: string[] = [];
+	for (const spec of packages) {
+		const name = await requestedPackageName(spec);
+		if (name === undefined || !installed.has(name)) continue;
+		const directory = await localDirectory(spec);
+		if (directory !== sources.get(name)) changed.push(name);
+	}
+	return changed;
+}
+
+async function localDirectory(spec: string): Promise<string | undefined> {
+	const path = spec.startsWith("file:") ? spec.slice("file:".length) : spec;
+	if (!isAbsolute(path)) return undefined;
+	const resolved = await realpath(path).catch(() => undefined);
+	return resolved !== undefined && (await stat(resolved)).isDirectory() ? resolved : undefined;
 }

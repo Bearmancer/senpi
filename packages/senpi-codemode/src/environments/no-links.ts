@@ -1,4 +1,4 @@
-import { lstat, readFile, readlink, realpath, stat } from "node:fs/promises";
+import { lstat, readdir, readFile, readlink, realpath, stat } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { EnvironmentError } from "./py-installer.ts";
 
@@ -55,7 +55,8 @@ export async function recordedInstallSources(revision: string): Promise<Readonly
 /**
  * A copy filter. A link inside `tree` may point inside it (relatively: an absolute link would keep pointing at the
  * previous revision from the copy), or out of it only to exactly the matching file of a recorded install source:
- * the link at `node_modules/<name>/<rest>` may resolve to `<source of name>/<rest>` and to nothing else.
+ * the link at `node_modules/<name>/<rest>` may resolve to `<source of name>/<rest>` and to nothing else. Whether a
+ * target is inside is judged from the link's own text, without following further links.
  */
 export async function assertLinkStaysInside(
 	path: string,
@@ -92,15 +93,40 @@ async function isRecordedSourceLink(
 	const name = scoped ? `${parts[1]}/${parts[2] ?? ""}` : parts[1];
 	const source = sources.get(name);
 	if (source === undefined) return false;
+	// `source` is a realpath; the expected target is that path plus the link's own path below the package, taken
+	// literally, so a file of the source that is itself a link out of it does not count as the source.
 	const expected = join(source, ...parts.slice(scoped ? 3 : 2));
-	const [actual, wanted] = await Promise.all([
-		realpath(resolved).catch(() => undefined),
-		realpath(expected).catch(() => undefined),
-	]);
-	return actual !== undefined && actual === wanted;
+	const actual = await realpath(resolved).catch(() => undefined);
+	return actual !== undefined && actual === expected;
 }
 
 function missing(error: unknown): undefined {
 	if (error instanceof Error && "code" in error && error.code === "ENOENT") return undefined;
 	throw error;
+}
+
+/**
+ * Checks every link in a built revision as the next copy will, so an install that leaves a link the next install
+ * would refuse (an installer keeping links into a directory the manifest no longer records) is refused now, while
+ * the previous revision is still active.
+ */
+export async function assertBuiltRevisionLinks(revision: string): Promise<void> {
+	const sources = await recordedInstallSources(revision);
+	const walk = async (dir: string): Promise<void> => {
+		for (const entry of await readdir(dir, { withFileTypes: true })) {
+			const path = join(dir, entry.name);
+			if (entry.isSymbolicLink()) {
+				await assertLinkStaysInside(path, revision, sources).catch((error: unknown) => {
+					const where = relative(revision, path);
+					throw error instanceof EnvironmentError
+						? new EnvironmentError(
+								"environment_install_failed",
+								`the install left ${where} linked outside the revision, so nothing was published`,
+							)
+						: error;
+				});
+			} else if (entry.isDirectory()) await walk(path);
+		}
+	};
+	await walk(revision);
 }
