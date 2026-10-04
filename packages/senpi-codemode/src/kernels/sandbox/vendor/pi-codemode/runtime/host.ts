@@ -3,7 +3,7 @@
 import { Worker } from "node:worker_threads";
 import { toCodemodeIdentifier } from "../identifier.ts";
 import type {
-	CodemodeOutputFrame,
+	CodemodeOutputFrame, // senpi-change
 	CodemodeCall,
 	CodemodeCallStatus,
 	CodemodeError,
@@ -84,7 +84,6 @@ interface ExecutionOptions {
 	storePolicy: "collect" | "reject";
 	// senpi-change end
 }
-
 // senpi-change begin: output streaming
 interface StreamOptions {
 	onOutputFrame: (frame: CodemodeOutputFrame) => void | Promise<void>;
@@ -124,6 +123,7 @@ class Execution {
 	private frameFailure: string | undefined;
 	/** Set when an abort or timeout settles the run: frames still queued are dropped, never handed over. */
 	private abandoned = false;
+	private abandonDrain: ((late: CodemodeError) => void) | undefined;
 	// senpi-change end
 
 	constructor(options: ExecutionOptions) {
@@ -285,7 +285,6 @@ class Execution {
 		}
 		this.post(reply);
 	}
-
 	// senpi-change begin: output streaming
 	/**
 	 * Hands frames to the consumer one at a time, in arrival order, and returns their credit only once consumed.
@@ -315,10 +314,24 @@ class Execution {
 	// senpi-change end
 
 	private finish(error: CodemodeError | undefined, value?: unknown, writes?: string): void {
-		if (this.finished) return;
+		// senpi-change begin: output streaming
+		// A settled run whose last frames are still being consumed keeps its timer and abort listener armed:
+		// a late abort, timeout or close() abandons those frames and settles the run, so a consumer that never
+		// returns can't keep it alive.
+		if (this.finished) {
+			if (this.abandonDrain !== undefined && (error?.kind === "aborted" || error?.kind === "timeout")) {
+				this.abandonDrain(error);
+			}
+			return;
+		}
 		this.finished = true;
-		clearTimeout(this.timer);
-		this.signal?.removeEventListener("abort", this.onAbort);
+		const abandon = error?.kind === "aborted" || error?.kind === "timeout";
+		const draining = this.stream !== undefined && !abandon;
+		if (!draining) {
+			clearTimeout(this.timer);
+			this.signal?.removeEventListener("abort", this.onAbort);
+		}
+		// senpi-change end
 
 		const now = performance.now();
 		for (const pending of this.pending.values()) {
@@ -338,19 +351,33 @@ class Execution {
 				};
 		// senpi-change begin: output streaming
 		// Settle only after every frame that arrived has been consumed, so output precedes the result. An abort or
-		// timeout settles at once instead: a consumer that never returns must not keep the run alive.
-		const abandon = error?.kind === "aborted" || error?.kind === "timeout";
+		// timeout settles at once instead, and one arriving while frames drain abandons them (see the top).
 		if (abandon) this.abandoned = true;
-		const afterFrames = (): Promise<void> => (abandon ? Promise.resolve() : this.frameChain);
+		let lateResult: CodemodeResult | undefined;
+		const abandoned = new Promise<void>((resolve) => {
+			this.abandonDrain = (late) => {
+				this.abandoned = true;
+				lateResult = { ok: false, error: late, output: this.output, calls: this.calls };
+				resolve();
+			};
+		});
+		const afterFrames = (): Promise<void> => (abandon ? Promise.resolve() : Promise.race([this.frameChain, abandoned]));
+		let settled = false;
 		const settle = (): void => {
+			if (settled) return;
+			settled = true;
+			this.abandonDrain = undefined;
+			clearTimeout(this.timer);
+			this.signal?.removeEventListener("abort", this.onAbort);
+			const final = lateResult ?? result;
 			if (this.stream !== undefined) {
-				result.streamed = {
+				final.streamed = {
 					frames: this.frames,
 					maxInFlightBytes: this.maxInFlightBytes,
 					windowBytes: this.stream.windowBytes,
 				};
 			}
-			this.resolveResult(result);
+			this.resolveResult(final);
 		};
 		if (!this.worker) {
 			void afterFrames().then(settle);
@@ -402,7 +429,8 @@ export class CodemodeSandbox {
 			if (options.onOutputFrame === undefined) throw new Error('output: "stream" needs onOutputFrame');
 			const windowBytes = options.windowBytes ?? DEFAULT_WINDOW_BYTES;
 			const frameBytes = Math.min(options.frameBytes ?? DEFAULT_FRAME_BYTES, windowBytes);
-			if (!(windowBytes >= 2 && frameBytes >= 2)) throw new Error("windowBytes and frameBytes must be at least 2");
+			// A frame must hold a whole surrogate pair (4 bytes), or the worker can't avoid splitting one.
+			if (!(windowBytes >= 4 && frameBytes >= 4)) throw new Error("windowBytes and frameBytes must be at least 4");
 			this.stream = { onOutputFrame: options.onOutputFrame, windowBytes, frameBytes };
 		}
 		// senpi-change end

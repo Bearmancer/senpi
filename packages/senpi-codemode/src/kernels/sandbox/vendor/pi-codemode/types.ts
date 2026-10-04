@@ -79,7 +79,6 @@ export interface CodemodeStoreWrites {
 	/** Keys stored as `undefined`. */
 	delete: string[];
 }
-
 // senpi-change begin: output streaming
 /**
  * One transport frame of an output item in `output: "stream"` mode. An item is split into frames of at most
@@ -103,6 +102,7 @@ export interface CodemodeStreamStats {
 }
 // senpi-change end
 
+// senpi-change begin: output streaming (replaces upstream's CodemodeResult union to add `streamed`)
 /** `output` is kept for failed executions too, up to the failure. `exit()` completes with `value: undefined`. */
 export type CodemodeResult = (
 	| {
@@ -114,11 +114,10 @@ export type CodemodeResult = (
 	  }
 	| { ok: false; error: CodemodeError; output: CodemodeOutputItem[]; calls: CodemodeCall[] }
 ) & {
-	// senpi-change begin: output streaming
 	/** Set in `output: "stream"` mode, where `output` stays empty because every item went to `onOutputFrame`. */
 	streamed?: CodemodeStreamStats;
-	// senpi-change end
 };
+// senpi-change end
 
 export interface CodemodeSandboxOptions {
 	tools?: CodemodeTool[];

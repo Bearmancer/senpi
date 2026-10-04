@@ -1,6 +1,6 @@
 // Vendored from https://github.com/earendil-works/pi (packages/codemode/src) at v1.0.1, commit a7229ddc21810d6245105978033b7df645ecc2f7.
 // MIT license; see LICENSE beside this file. Local changes are listed in VENDORED.md.
-import type { CodemodeOutputFrame, CodemodeOutputItem } from "../types.ts";
+import type { CodemodeOutputFrame, CodemodeOutputItem } from "../types.ts"; // senpi-change
 import type { CodemodeWasmModule } from "../wasm.ts";
 
 /**
@@ -53,7 +53,7 @@ export type HostToWorkerMessage =
 export function isWorkerToHostMessage(value: unknown): value is WorkerToHostMessage {
 	if (typeof value !== "object" || value === null) return false;
 	const type = (value as { type?: unknown }).type;
-	return type === "call" || type === "output" || type === "output-frame" || type === "done" || type === "crash";
+	return type === "call" || type === "output" || type === "output-frame" || type === "done" || type === "crash"; // senpi-change
 }
 
 export function isHostToWorkerMessage(value: unknown): value is HostToWorkerMessage {
