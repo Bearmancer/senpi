@@ -46,6 +46,8 @@ export const PRELUDE_SOURCE: string = `(function (bridge, toolsJson, globalsJson
 	const options = optionsJson === undefined ? {} : JSON.parse(optionsJson);
 	const streamOutput = options.streamOutput === true;
 	const rejectStore = options.store === "reject";
+	// The engine's own InternalError, captured before user code runs: a failure is tagged by identity, never by its text.
+	const EngineInternalError = typeof InternalError === "function" ? InternalError : undefined;
 	// senpi-change end
 	"use strict";
 	const stringify = JSON.stringify;
@@ -94,7 +96,13 @@ export const PRELUDE_SOURCE: string = `(function (bridge, toolsJson, globalsJson
 
 	function describeError(error) {
 		if (error instanceof ErrorCtor) {
-			return stringify({ name: error.name, message: error.message, stack: errorText(error) });
+			// senpi-change begin: the engine's out-of-memory error is reported by identity, not by matching its message
+			const reason =
+				EngineInternalError !== undefined && error instanceof EngineInternalError && error.message === "out of memory"
+					? "memory"
+					: undefined;
+			return stringify({ name: error.name, message: error.message, stack: errorText(error), reason });
+			// senpi-change end
 		}
 		return stringify({ message: format(error) });
 	}
@@ -423,6 +431,7 @@ export const PRELUDE_SOURCE: string = `(function (bridge, toolsJson, globalsJson
 					name: "Error",
 					message:
 						"The script is waiting on a promise that can never settle: no tool call is pending, and timers do not exist here.",
+					reason: "unresolved", // senpi-change: tagged by the runtime, so a script's own error text never matches it
 				}),
 			);
 			return true;

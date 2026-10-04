@@ -178,8 +178,9 @@ of `environment_install_failed`, `environment_install_cancelled`,
 With `sandbox.enabled: true`, a JavaScript call may pass `isolate: true`. The cell then runs in a fresh QuickJS VM (the vendored pi codemode runtime) instead of the persistent kernel:
 
 - Nothing persists: globals from the kernel are not visible, and a global set in one isolated cell is gone in the next. `store()` throws `eval_isolate_no_state` and `load()` returns `undefined`.
-- No ambient host: there is no `process`, `require`, file system, network, child processes or timers. The cell's only reach is `tools.<name>` (every active tool except `eval`, run through the same permission hooks as a direct call) plus `print`, `display`, `text` and `image`.
-- Output streams to the normal result as it is produced, in frames under a 256 KiB credit window, so a 20 MiB item arrives complete without either side holding it all.
+- No ambient host: there is no `process`, `require`, file system, network, child processes or timers. The cell's only reach is `tools.<name>` (also `tool.<name>`; every active tool except `eval`, run through the same permission hooks as a direct call) plus `print`, `display`, `text` and `image`.
+- `isolate: true` isolates the JavaScript, not the tools it calls: a tool keeps its normal reach. `tools.bash`, for example, runs a shell with the session's environment and files, under the same permission hooks as any other call.
+- Output streams from the VM in frames under a 256 KiB credit window, so the VM never holds a large item; the host joins an item's frames before adding it to the result, and memory stays bounded by `sandbox.memoryMb`.
 - It is a host entry in the JavaScript queue: it waits for earlier cells, Stop and the run budget end it, and the persistent kernel is never restarted for it.
 - Limits: `sandbox.memoryMb` (default 64) and `sandbox.timeoutSeconds` (default 300). Failures are named: `eval_isolate_memory_limit`, `eval_isolate_timeout`, `eval_isolate_unresolved_promise` (a top-level promise that can never settle) and `eval_isolate_unavailable` (the runtime could not start).
 

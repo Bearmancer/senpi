@@ -1,4 +1,3 @@
-import type { AgentToolResult } from "@code-yeongyu/senpi";
 import type { ResolvedSandbox } from "../../config/feature-settings.ts";
 import { marshalToolResult } from "../../tool/image.ts";
 import type { ExecuteTool, HostCellExecutor } from "../../tool/types.ts";
@@ -10,18 +9,12 @@ export interface SandboxCellOptions {
 	readonly executeTool: ExecuteTool;
 	readonly toolNames: () => readonly string[];
 	readonly describeTool?: (name: string) => string | undefined;
-	readonly loadRuntime?: () => Promise<typeof import("./vendor/pi-codemode/runtime/host.ts")>;
 }
 
 // On the script's first line so reported line numbers still match the cell; globals, so a cell's own
 // `const print` shadows them instead of failing as a redeclaration.
 const OUTPUT_ALIASES =
-	'globalThis.print = (...values) => text(values.map((value) => (typeof value === "string" ? value : JSON.stringify(value))).join(" ")); globalThis.display = (value) => (typeof value === "string" || (value !== null && typeof value === "object" && ("image_url" in value || value.type === "image")) ? image(value) : text(value)); ';
-
-export class SandboxUnavailableError extends Error {
-	readonly name = "SandboxUnavailableError";
-	readonly code = "eval_isolate_unavailable";
-}
+	'globalThis.print = (...values) => text(values.map((value) => (typeof value === "string" ? value : JSON.stringify(value))).join(" ")); globalThis.display = (value) => ((typeof value === "string" && value.startsWith("data:image/")) || (value !== null && typeof value === "object" && ("image_url" in value || value.type === "image")) ? image(value) : text(typeof value === "string" ? value : JSON.stringify(value))); globalThis.tool = tools; ';
 
 const ERROR_CODES: Partial<Record<CodemodeError["kind"], string>> = {
 	timeout: "eval_isolate_timeout",
@@ -30,16 +23,10 @@ const ERROR_CODES: Partial<Record<CodemodeError["kind"], string>> = {
 };
 
 function codeFor(error: CodemodeError): string | undefined {
-	if (error.kind === "script" && /out of memory/i.test(error.message)) return "eval_isolate_memory_limit";
+	if (error.kind === "script" && error.reason === "memory") return "eval_isolate_memory_limit";
 	if (error.kind === "script" && error.name === "CodemodeStoreDisabledError") return "eval_isolate_no_state";
-	if (error.kind === "script" && /never settle|unresolved|waits on nothing/i.test(error.message)) {
-		return "eval_isolate_unresolved_promise";
-	}
+	if (error.kind === "script" && error.reason === "unresolved") return "eval_isolate_unresolved_promise";
 	return ERROR_CODES[error.kind];
-}
-
-function senpiToolEnvelope(result: AgentToolResult<unknown>) {
-	return marshalToolResult(result);
 }
 
 /** The persistent kernel never sees an isolated cell; its tools go through executeTool so permission hooks still apply. */
@@ -47,7 +34,8 @@ export function sandboxCellExecutor(code: string, options: SandboxCellOptions): 
 	return async ({ signal, emit }) => {
 		let sandbox: CodemodeSandbox;
 		try {
-			const runtime = await (options.loadRuntime?.() ?? import("./vendor/pi-codemode/runtime/host.ts"));
+			// Lazy: the vendored QuickJS runtime loads only when a session runs its first isolated cell.
+			const runtime = await import("./vendor/pi-codemode/runtime/host.ts");
 			const items = new Map<number, string[]>();
 			const tools: CodemodeTool[] = options
 				.toolNames()
@@ -56,7 +44,7 @@ export function sandboxCellExecutor(code: string, options: SandboxCellOptions): 
 					name,
 					description: options.describeTool?.(name) ?? "",
 					execute: async (args: unknown, context: { signal: AbortSignal }) =>
-						senpiToolEnvelope(await options.executeTool(name, args, { signal: context.signal })),
+						marshalToolResult(await options.executeTool(name, args, { signal: context.signal })),
 				}));
 			sandbox = new runtime.CodemodeSandbox({
 				tools,

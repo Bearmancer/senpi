@@ -104,7 +104,10 @@ describe("Given sandbox cells are turned on", () => {
 		const { run } = await session();
 		const size = 20 * 1024 * 1024;
 
-		const isolated = await run(`print("x".repeat(${size})); return "ok"`, true);
+		const isolated = await run(
+			`print("x".repeat(${size})); return typeof process === "undefined" ? "ok" : "no"`,
+			true,
+		);
 		const persistent = await run(`console.log("x".repeat(${size})); "ok"`);
 		const meta = (result: AgentToolResult<unknown>) =>
 			(result.details as unknown as { meta: { totalBytes: number; totalLines: number; truncatedBy: string } }).meta;
@@ -116,6 +119,8 @@ describe("Given sandbox cells are turned on", () => {
 		});
 		expect(Math.abs(meta(isolated).totalBytes - meta(persistent).totalBytes)).toBeLessThanOrEqual(2);
 		expect((isolated.details as unknown as { cells: { status: string }[] }).cells[0]?.status).toBe("complete");
+		expect(textOf(isolated)).toContain("ok");
+		expect(textOf(isolated)).not.toContain('"no"');
 	}, 180_000);
 
 	it("a 256 MiB allocation fails with eval_isolate_memory_limit and the persistent kernel keeps its globals", async () => {
@@ -149,17 +154,38 @@ describe("Given sandbox cells are turned on", () => {
 		expect(textOf(loaded)).toContain("undefined");
 		expect(textOf(stored)).toContain("eval_isolate_no_state");
 	}, 60_000);
-});
 
-describe("Given sandbox cells are turned off", () => {
-	it("isolate: true is refused with eval_isolate_invalid and the code does not run", async () => {
-		const { run } = await session({ enabled: false });
+	it("When a cell's own error mentions running out of memory or an unresolved promise, then it keeps the script error code", async () => {
+		const { run } = await session();
 
-		await expect(run("globalThis.ran = true", true)).rejects.toThrow("eval_isolate_invalid");
-		const check = await run("typeof ran");
+		const memoryText = await run('throw new Error("my parser ran out of memory budget")', true);
+		const unresolvedText = await run('throw new Error("unresolved symbol foo")', true);
 
-		expect(textOf(check)).toContain("undefined");
-	}, 60_000);
+		for (const result of [memoryText, unresolvedText]) {
+			expect(result.details).toMatchObject({ isError: true });
+			expect(JSON.stringify(result.details)).not.toMatch(
+				/eval_isolate_memory_limit|eval_isolate_unresolved_promise/,
+			);
+		}
+	}, 120_000);
+
+	it("When an isolated cell displays text, then it prints the text like the persistent kernel does", async () => {
+		const { run } = await session();
+
+		const shown = await run('display("plain text"); display({ a: 1 }); "done"', true);
+
+		expect(textOf(shown)).toContain("plain text");
+		expect(textOf(shown)).toContain('{"a":1}');
+	}, 120_000);
+
+	it("When an isolated cell calls tool.read as the prompt teaches, then it reaches the host tool", async () => {
+		const { run, reads } = await session();
+
+		const result = await run('return await tool.read({ path: "a.txt" })', true);
+
+		expect(reads).toHaveLength(1);
+		expect(textOf(result)).toContain("file body");
+	}, 120_000);
 
 	it("When an isolated cell is a %load, then it is refused and the file never runs, in the sandbox or the kernel", async () => {
 		const { root, run } = await session();
@@ -172,4 +198,15 @@ describe("Given sandbox cells are turned off", () => {
 		expect(textOf(refused)).toContain("isolate: true cannot run a %load cell: an isolated cell sees no host files");
 		expect(textOf(kernelView)).toContain("true");
 	}, 120_000);
+});
+
+describe("Given sandbox cells are turned off", () => {
+	it("isolate: true is refused with eval_isolate_invalid and the code does not run", async () => {
+		const { run } = await session({ enabled: false });
+
+		await expect(run("globalThis.ran = true", true)).rejects.toThrow("eval_isolate_invalid");
+		const check = await run("typeof ran");
+
+		expect(textOf(check)).toContain("undefined");
+	}, 60_000);
 });
