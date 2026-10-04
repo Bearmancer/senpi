@@ -340,7 +340,9 @@
 				"imports/firstKernel/packages/senpi-codemode/src/environments/js-environments.ts",
 				"imports/extension/packages/senpi-codemode/src/environments/js-installer.ts",
 				"imports/firstKernel/packages/senpi-codemode/src/environments/js-installer.ts",
-				"legacyContracts/test/environments/js-magic-e2e.test.ts/Given a JavaScript eval session When an import cell is queued behind a %bun add cell that is itself queued behind a running cell, then the import resolves the newly installed package"
+				"legacyContracts/test/environments/js-magic-e2e.test.ts/Given a JavaScript eval session When an import cell is queued behind a %bun add cell that is itself queued behind a running cell, then the import resolves the newly installed package",
+				"legacyContracts/test/load-cell-bounded-read.test.ts/Given a %load file read through one handle When the file grows after it was checked, then the read stops one byte past the limit",
+				"legacyContracts/test/load-cell-bounded-read.test.ts/Given a %load file read through one handle When the file is shorter than the limit, then the whole file is read"
 			],
 			"reason": "Node 15: %bun add / %npm add install into a per-session managed JavaScript environment (bare-import fallback root on the run input, host entries in the JS kernel queue); the two environment modules join the scoped census, plus the new contracts. No prompt or eval schema change."
 		},
