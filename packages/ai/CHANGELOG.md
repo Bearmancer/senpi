@@ -8,6 +8,18 @@
 
 ### Changed
 
+### Fixed
+
+### Removed
+
+## [2026.10.8] - 2026-10-04
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
 - The advertised Claude Code fingerprint floor follows the bundled Claude Agent SDK to Claude Code 2.1.289 ([#2545](https://github.com/code-yeongyu/senpi/issues/2545)).
 
 ### Fixed
