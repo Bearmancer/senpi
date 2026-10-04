@@ -109,9 +109,29 @@ export async function requestedPackageName(spec: string): Promise<string | undef
 	return REGISTRY_NAME.exec(spec)?.[1];
 }
 
-function tarballManifest(path: string): Promise<string> {
+/**
+ * An archive's own `package.json`, read from its single top-level directory as both installers unpack it: npm's
+ * `package/`, or a GitHub-style `<repo>-<sha>/`. tar detects the compression itself, so a plain `.tar` works too.
+ */
+async function tarballManifest(path: string): Promise<string> {
+	const entries = (await tarOutput(["-tf", path])).split("\n").filter((entry) => entry !== "");
+	const normalized = (entry: string) => entry.replace(/^(\.\/)+/, "");
+	const tops = new Set(entries.map((entry) => normalized(entry).split("/")[0] ?? "").filter((top) => top !== ""));
+	// An archive whose entries do not all sit under one directory has no single package to name: judging it by
+	// whichever entry comes first could name the wrong one.
+	const [top, ...others] = [...tops];
+	if (top === undefined || others.length > 0 || top === "." || top === "..") {
+		throw new Error("the archive does not hold one top-level directory");
+	}
+	// Extract by the member's own name: GNU tar matches it exactly, so a leading "./" must be kept.
+	const manifest = entries.find((entry) => normalized(entry) === `${top}/package.json`);
+	if (manifest === undefined) throw new Error("the archive holds no package.json in its top-level directory");
+	return await tarOutput(["-xOf", path, manifest]);
+}
+
+function tarOutput(args: readonly string[]): Promise<string> {
 	return new Promise((resolveText, reject) => {
-		execFile("tar", ["-xzOf", path, "package/package.json"], { maxBuffer: 1 << 20 }, (error, stdout) =>
+		execFile("tar", [...args], { maxBuffer: 64 << 20 }, (error, stdout) =>
 			error === null ? resolveText(stdout) : reject(error),
 		);
 	});
