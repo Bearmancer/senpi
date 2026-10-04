@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { entriesNewSinceBase, readBaseBaseline, reviewBaselineChanges } from "../../scripts/gate-baseline-review.ts";
+import { baselineApprovals, readBaseBaseline, reviewBaselineChanges } from "../../scripts/gate-baseline-review.ts";
 import type { GateReport } from "../../scripts/gate-report.ts";
 
 const base: GateReport = {
@@ -163,10 +163,10 @@ describe("Given allowlist entries merged by earlier pull requests", () => {
 	};
 
 	it("When a later PR edits the same cell again without a new entry, then the earlier entry does not approve it", () => {
-		const fresh = entriesNewSinceBase({ base: earlier, head: earlier });
+		const fresh = baselineApprovals({ base: earlier, head: earlier });
 		const head = withSchema(changedSchema);
 
-		expect(fresh).toEqual({ changes: [], additions: [] });
+		expect(fresh).toEqual({ changes: [], additions: ["imports/extension/src/a.ts"] });
 		expect(reviewBaselineChanges({ base, committed: head, report: head, ...fresh })).toEqual([
 			'unreviewed baseline change: schemas/js (list it under "changes" in test/gate/allowlist.json with a reason)',
 		]);
@@ -182,11 +182,11 @@ describe("Given allowlist entries merged by earlier pull requests", () => {
 				},
 			},
 		};
-		const fresh = entriesNewSinceBase({ base: earlier, head });
+		const fresh = baselineApprovals({ base: earlier, head });
 
 		expect(fresh).toEqual({
 			changes: [{ key: "schemas/js", reason: "language becomes required" }],
-			additions: ["imports/extension/src/b.ts"],
+			additions: ["imports/extension/src/a.ts", "imports/extension/src/b.ts"],
 		});
 		expect(
 			reviewBaselineChanges({
@@ -198,8 +198,24 @@ describe("Given allowlist entries merged by earlier pull requests", () => {
 		).toEqual([]);
 	});
 
+	it("When a later PR re-records the baseline with an addition an earlier PR approved, then the review passes", () => {
+		const recorded: GateReport = {
+			...structuredClone(base),
+			imports: { extension: [...(base.imports.extension ?? []), "src/a.ts"] },
+		};
+
+		expect(
+			reviewBaselineChanges({
+				base,
+				committed: recorded,
+				report: recorded,
+				...baselineApprovals({ base: earlier, head: earlier }),
+			}),
+		).toEqual([]);
+	});
+
 	it("When the base has no allowlist file, then every head entry counts as new", () => {
-		expect(entriesNewSinceBase({ base: undefined, head: earlier })).toEqual({
+		expect(baselineApprovals({ base: undefined, head: earlier })).toEqual({
 			changes: [{ key: "schemas/js", reason: "rename (earlier PR)" }],
 			additions: ["imports/extension/src/a.ts"],
 		});

@@ -8,20 +8,21 @@ export type BaselineChange = { readonly key: string; readonly reason: string };
 type AllowlistNodes = { readonly nodes: Readonly<Record<string, { readonly additions: readonly string[]; readonly changes?: readonly BaselineChange[] }>> };
 
 /**
- * Only allowlist entries this pull request adds count as its approvals: an entry merged by an earlier PR
- * approved that PR's value, so it must not pre-approve a later edit of the same cell.
+ * A `changes` entry approves one edit: only entries this pull request adds count, because an entry merged by
+ * an earlier PR approved that PR's value and must not pre-approve a later edit of the same cell. An
+ * `additions` entry approves a cell's existence, so every entry at the head counts: a cell approved earlier
+ * may still be written into the baseline later (a re-record), and its value is checked against the head.
  */
-export function entriesNewSinceBase(input: { readonly base: AllowlistNodes | undefined; readonly head: AllowlistNodes }): {
+export function baselineApprovals(input: { readonly base: AllowlistNodes | undefined; readonly head: AllowlistNodes }): {
 	readonly changes: readonly BaselineChange[];
 	readonly additions: readonly string[];
 } {
 	const baseNodes = Object.values(input.base?.nodes ?? {});
 	const baseChanges = new Set(baseNodes.flatMap((node) => (node.changes ?? []).map((change) => JSON.stringify([change.key, change.reason]))));
-	const baseAdditions = new Set(baseNodes.flatMap((node) => node.additions));
 	const headNodes = Object.values(input.head.nodes);
 	return {
 		changes: headNodes.flatMap((node) => node.changes ?? []).filter((change) => !baseChanges.has(JSON.stringify([change.key, change.reason]))),
-		additions: headNodes.flatMap((node) => node.additions).filter((key) => !baseAdditions.has(key)),
+		additions: headNodes.flatMap((node) => node.additions),
 	};
 }
 
@@ -37,7 +38,7 @@ export function reviewBaselineChanges(input: {
 	readonly committed: GateReport;
 	readonly report: GateReport;
 	readonly changes: readonly BaselineChange[];
-	/** Addition keys this pull request lists; a cell it writes into the baseline must be one of them. */
+	/** Addition keys the allowlist lists; a cell written into the baseline must be one of them. */
 	readonly additions: readonly string[];
 }): string[] {
 	const base = cellsOf(input.base);
