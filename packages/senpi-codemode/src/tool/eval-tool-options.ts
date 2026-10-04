@@ -11,6 +11,7 @@ import type { ResolvedCodemodeSettings } from "../config/settings.ts";
 import type { JsEnvironments } from "../environments/js-environments.ts";
 import type { PythonEnvironments } from "../environments/python-environments.ts";
 import type { EvalExecutionTracker } from "../extension/session-manager.ts";
+import type { HandleRegistry } from "../handles/handle-registry.ts";
 import type { EvalTimeoutFactory } from "./cell-execution.ts";
 import type { EvalDetachedCellManager } from "./detached-cell-manager.ts";
 import type { EvalExecutionEventPayload } from "./eval-execution-event.ts";
@@ -52,6 +53,8 @@ export interface CreateEvalToolOptions {
 	readonly imageResizer?: EvalImageResizer;
 	readonly executionTracker?: EvalExecutionTracker;
 	readonly cellManager?: EvalDetachedCellManager;
+	/** The session generation's handle registry (`wait()`, `handle()`, completion handles); absent before session_start. */
+	readonly handles?: HandleRegistry;
 	readonly onCellSettled?: (payload: EvalExecutionEventPayload) => void;
 	readonly timeoutFactory?: EvalTimeoutFactory;
 	readonly proxyExecutor?: (params: EvalToolInput, signal?: AbortSignal) => Promise<AgentToolResult<EvalToolDetails>>;

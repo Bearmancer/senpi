@@ -8,6 +8,7 @@ import { awaitMaybePromise, indirectEval, wrapUserCode } from "./worker-indirect
 import { installShellCapture } from "./worker-shell-capture.js";
 import { bindKernelBun } from "./worker-webview.js";
 import { createWorkpool } from "./workpool.js";
+import { createHandleHelpers } from "./handles.js";
 import { inKernelToolInvoke } from "./kernel-tools-context.js";
 import { kernelToolError } from "./kernel-tools-errors.js";
 import { createKernelToolRegistry, createToolNamespace } from "./kernel-tools-registry.js";
@@ -139,10 +140,18 @@ export class JsWorkerRuntime {
 		globalThis.workpool = (agent, name, options) => createWorkpool((toolName, args) => this.#callTool(toolName, args), agent, name, options);
 		globalThis.parallel = async thunks => await this.#parallel(thunks);
 		globalThis.pipeline = async (items, ...stages) => await this.#pipeline(items, stages);
-		globalThis.completion = async (prompt, opts) => await this.#callTool("completion", { prompt, opts });
+		const handles = createHandleHelpers(async (toolName, args) => await this.#callTool(toolName, args));
+		globalThis.completion = async (prompt, opts) => {
+			const value = await this.#callTool("completion", { prompt, opts });
+			// The host answers a {handle: true} request with a saved reference; the cell gets the control view.
+			return isPlainObject(opts) && opts.handle === true ? handles.handle(value) : value;
+		};
+		globalThis.wait = async (list, options) => await handles.wait(list, options);
+		globalThis.handle = value => handles.handle(value);
 		globalThis.tool = createToolNamespace(
 			(fn, metadata) => this.#tools.define(fn, metadata),
 			async (name, args) => await this.#callTool(name, args),
+			{ defined: () => this.#tools.defined(), undefine: (name) => this.#tools.undefine(name) },
 		);
 		globalThis.tools = globalThis.tool;
 		const originalLog = console.log.bind(console);

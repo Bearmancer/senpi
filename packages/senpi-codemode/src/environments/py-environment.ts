@@ -2,6 +2,7 @@ import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { promisify } from "node:util";
+import { assertInstalledInRevision, assertNoEditableInstalls } from "./editable-check.ts";
 import { parsePipRequirements, runPipInstall } from "./py-installer.ts";
 import { publishNextRevision, type Revision } from "./revision-store.ts";
 
@@ -48,8 +49,8 @@ export async function installPythonPackages(input: {
 	let stdout = "";
 	const { revision } = await publishNextRevision(
 		input.base,
-		(staging) =>
-			runPipInstall({
+		async (staging) => {
+			await runPipInstall({
 				interpreter: input.interpreter,
 				root: staging,
 				args: requested,
@@ -59,7 +60,10 @@ export async function installPythonPackages(input: {
 					if (stream === "stdout") stdout += data;
 					input.onOutput?.(stream, data);
 				},
-			}),
+			});
+			await assertInstalledInRevision(stdout, staging);
+			await assertNoEditableInstalls(staging);
+		},
 		input.signal,
 		({ holder, waitedMs }) =>
 			input.onOutput?.(

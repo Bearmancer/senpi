@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { devNull } from "node:os";
 import { terminateProcessTrees } from "../kernels/js/process-tree-host.ts";
 
 export type EnvironmentErrorCode =
@@ -102,6 +103,19 @@ export function parsePipRequirements(text: string): string[] {
 	return normalized;
 }
 
+/**
+ * pip's environment with every PIP_* variable removed and its config file pointed at nothing: `--isolated`
+ * alone still honours PIP_CONFIG_FILE, and a configured target, root or prefix would install outside the revision.
+ */
+export function isolatedPipEnv(): NodeJS.ProcessEnv {
+	const env: NodeJS.ProcessEnv = {};
+	for (const [key, value] of Object.entries(process.env)) {
+		if (!key.toUpperCase().startsWith("PIP_")) env[key] = value;
+	}
+	// pip skips every config file when PIP_CONFIG_FILE equals Python's os.devnull: "nul" on Windows, not Node's "\\\\.\\nul".
+	return { ...env, PIP_CONFIG_FILE: process.platform === "win32" ? "nul" : devNull, PYTHONNOUSERSITE: "1" };
+}
+
 export function runPipInstall(input: {
 	readonly interpreter: string;
 	readonly root: string;
@@ -114,6 +128,8 @@ export function runPipInstall(input: {
 		"-m",
 		"pip",
 		"install",
+		// Ignore pip's config files and PIP_* variables: a configured `root` or `prefix` would write outside the revision.
+		"--isolated",
 		"--disable-pip-version-check",
 		"--no-input",
 		"--target",
@@ -128,7 +144,7 @@ export function runPipInstall(input: {
 		const child = spawn(input.interpreter, argv, {
 			cwd: input.cwd,
 			stdio: ["ignore", "pipe", "pipe"],
-			env: { ...process.env, PYTHONNOUSERSITE: "1", PIP_REQUIRE_VIRTUALENV: "0", PIP_USER: "0" },
+			env: isolatedPipEnv(),
 		});
 		let stderrTail = "";
 		child.stdout.setEncoding("utf8").on("data", (data: string) => input.onOutput?.("stdout", data));

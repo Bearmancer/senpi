@@ -8,7 +8,29 @@
 
 ### Changed
 
+- The bundled Claude Agent SDK is updated to 0.3.289 (from 0.3.288), so the Anthropic subscription lane runs Claude Code 2.1.289 and the models it knows ([#2545](https://github.com/code-yeongyu/senpi/issues/2545)).
+
 ### Fixed
+
+- An RPC host shard's supervisor exits after its idle window again once its sessions are done. It counted a session busy per `agent_start`, but a run emits one on every loop iteration (a provider retry, a post-compaction continue, a follow-up) and settles once, so any run that continued left the shard busy forever; a session closed mid-run did the same. It now tracks runs, and drops a session when it closes ([#2713](https://github.com/code-yeongyu/senpi/issues/2713), reported by [@DevNewbie1826](https://github.com/DevNewbie1826)).
+- `continue_from_leaf` now acknowledges when the continued turn starts (its `agent_start`, or a delegated queue), like a prompt, instead of after the whole turn. This stops a desktop continuation longer than the RPC deadline from timing out. ([#2708](https://github.com/code-yeongyu/senpi/issues/2708))
+
+### Removed
+
+## [2026.10.7] - 2026-10-04
+
+### Breaking Changes
+
+### Added
+
+- Extensions can provide and read a session-scoped `EvalHandleHost` (`pi.provideEvalHandleHost(host)` / `ctx.evalHandleHost`): the capability behind codemode's in-cell `wait()` and `handle()` helpers, fenced by owner session, id and run epoch. It is absent until a task owner provides it and is cleared when the session runtime is replaced ([#2687](https://github.com/code-yeongyu/senpi/pull/2687)).
+
+### Changed
+
+### Fixed
+
+- After an upgrade, an old host that was still serving the client's own socket with no session open can now be replaced: `host handoff` (which the desktop runs when the engine changed) starts the new engine there instead of refusing `unknown_owner`, so the first turn no longer fails with "No provider available" until the old host is drained by hand. A host from before layout 2 is sent a drain only while a recount still finds no session, a host nothing proves is never signalled (it drains itself once it loses the socket), and a host that holds a session is still refused, with the command that retires it ([#2701](https://github.com/code-yeongyu/senpi/issues/2701)).
+- `host status` now reports the right engine version for a host generation started by a handoff to a different build: the generation's record names the build the new host reported, not the build of the process that ran the handoff ([#2698](https://github.com/code-yeongyu/senpi/issues/2698)).
 
 ### Removed
 
