@@ -6,6 +6,21 @@
 
 ### Added
 
+### Changed
+
+### Fixed
+
+- Eval no longer fails with "codemode session manager is disposed" for the rest of a session after a session switch or fork that another extension cancelled: codemode only tears its kernels down when the session actually ends ([#1706](https://github.com/code-yeongyu/senpi/issues/1706)).
+- A session whose codemode runtime failed to start is recovered by the next eval call (once, with one stderr line naming the failed start); if re-creation also fails, the call says "codemode runtime could not be re-created: <reason>" and how to bring eval back ([#1706](https://github.com/code-yeongyu/senpi/issues/1706)).
+
+### Removed
+
+## [2026.10.6] - 2026-10-04
+
+### Breaking Changes
+
+### Added
+
 - An opt-in `memory.idleParkMinutes` setting (off by default) closes a kernel that had no cell running or queued for that many minutes to give its memory back; the next cell starts a fresh kernel and its result says every earlier global is lost ([#2452](https://github.com/code-yeongyu/senpi/issues/2452)).
 - Ruby eval results name their largest globals, and Ruby and Julia kernels now get the same large-memory notice as JavaScript and Python when the interpreter footprint crosses `memory.noticeMb` ([#2452](https://github.com/code-yeongyu/senpi/issues/2452)).
 - Julia eval results name their largest globals in that notice ([#2452](https://github.com/code-yeongyu/senpi/issues/2452)).

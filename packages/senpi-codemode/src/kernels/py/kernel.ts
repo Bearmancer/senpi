@@ -5,6 +5,7 @@ import { rejectKernelToolsUnavailable } from "../kernel-tools-unavailable.ts";
 import { describeExit } from "../shared/kernel-death.ts";
 import { KernelMemoryHost } from "../shared/kernel-memory-host.ts";
 import { KernelPreludeTracker } from "../shared/kernel-prelude-plan.ts";
+import { runHostCell } from "./host-cell.ts";
 import type { PendingRun, PythonKernelRunOptions, PythonKernelStartOptions, ResultMessage } from "./kernel-contract.ts";
 import { pythonStartupHangGuardMs } from "./startup.ts";
 import { failedPythonResult, PythonKernelTransport } from "./transport.ts";
@@ -104,6 +105,11 @@ export class PythonKernel {
 			}
 		}
 		const active = this.#active;
+		if (active?.hostAbort && active.interruptReason === undefined) {
+			active.interruptReason = reason;
+			void this.#stopHostEntry(active, failedPythonResult(active.input.cellId, "Eval interrupted"));
+			return { stateRetained: Promise.resolve(true) };
+		}
 		const transport = this.#transport;
 		if (!active || !transport || active.interruptReason !== undefined)
 			return { stateRetained: Promise.resolve(true) };
@@ -201,6 +207,14 @@ export class PythonKernel {
 		const timeoutMs = pending.input.timeoutMs;
 		if (timeoutMs !== undefined)
 			pending.timeoutTimer = setTimeout(() => this.#timeoutRun(pending, timeoutMs), timeoutMs);
+		const host = pending.input.host;
+		if (host !== undefined) {
+			runHostCell(pending, host, {
+				emit: (message) => (pending.input.onMessage ?? this.#options.onMessage)?.(message),
+				settle: (result) => this.#settleRun(pending, result),
+			});
+			return;
+		}
 		try {
 			this.#transport?.run({
 				...pending.input,
@@ -219,11 +233,40 @@ export class PythonKernel {
 
 	#timeoutRun(pending: PendingRun, timeoutMs: number): void {
 		if (this.#active !== pending) return;
+		const timedOut = failedPythonResult(pending.input.cellId, `Python kernel timed out after ${timeoutMs}ms`);
+		if (pending.hostAbort) {
+			void this.#stopHostEntry(pending, timedOut);
+			return;
+		}
 		if (this.#transport) void this.#beginRetirement(this.#transport).catch(() => undefined);
-		this.#settleRun(
-			pending,
-			failedPythonResult(pending.input.cellId, `Python kernel timed out after ${timeoutMs}ms`),
-		);
+		this.#settleRun(pending, timedOut);
+	}
+
+	/**
+	 * Aborts a running host entry and settles it only once its executor has stopped (or after the same bound the
+	 * interpreter gets before escalation), so the next queue entry never overlaps the aborted host work. An
+	 * executor that finished successfully despite the abort reports that outcome: its work did commit.
+	 */
+	async #stopHostEntry(pending: PendingRun, stopped: ResultMessage): Promise<void> {
+		pending.hostAbort?.abort();
+		const done = pending.hostDone;
+		let bound: ReturnType<typeof setTimeout> | undefined;
+		const outcome =
+			done === undefined
+				? undefined
+				: await Promise.race([
+						done,
+						new Promise<undefined>((resolve) => {
+							bound = setTimeout(() => resolve(undefined), interruptEscalationMs);
+						}),
+					]);
+		if (bound !== undefined) clearTimeout(bound);
+		if (outcome?.ok === true) {
+			pending.interruptReason = undefined;
+			this.#settleRun(pending, outcome);
+			return;
+		}
+		this.#settleRun(pending, stopped);
 	}
 
 	async #ensureStarted(): Promise<void> {
@@ -354,6 +397,7 @@ export class PythonKernel {
 	}
 
 	#removePending(pending: PendingRun): void {
+		pending.hostAbort?.abort();
 		if (pending.timeoutTimer) clearTimeout(pending.timeoutTimer);
 		if (pending.escalationTimer) clearTimeout(pending.escalationTimer);
 		pending.timeoutTimer = null;
