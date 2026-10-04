@@ -1,5 +1,24 @@
 # prompt-preset Extension Changes
 
+## 2026-10-04 - Routing and handoff format examples are no longer markdown quote lines (senpi#2714)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/prompt-preset/claude-fable-5-1.ts`, `claude-fable-5.ts`, `claude-opus-5-5.ts`, `claude-opus-5.ts`, `claude-sonnet-5-5.ts`, `gpt-5.5.ts`, `gpt-5.6.ts`, `gpt-6-astra.ts`, `grok-4.5.ts`, `grok-4.6.ts`, `grok-4.7.ts`, `kimi-k3.ts`: the routing line reads `I read this as ...` instead of `> I read this as ...`; in `gpt-5.5.ts`, `gpt-5.6.ts` and `gpt-6-astra.ts` the handoff template reads `[Outcome so far] toward ...` instead of `> [Outcome so far] toward ...`. Nothing else changes.
+- `test/suite/prompt-presets-app-surface.test.ts`: for every prompt (the dynamic prompt and every preset) on the terminal, app and chat surfaces, the assembled prompt has no line that starts with `>`. RED on main: 30 of 30 prompts. `regressions/2366-handoff-user-language.test.ts` keeps checking the label order the ttsr detector parses, without pinning where the line starts.
+
+### Why
+
+- Same cause as `dynamic-prompt/changes.md` (senpi#2714): the model copies the quote marker into its reply, which renders the answer as a blockquote.
+
+### Why an extension could not handle it
+
+- These lines are the preset cores themselves.
+
+### Expected merge conflict zones
+
+- Fork-only files. The routing line and the `## Handoff` template line in each preset.
+
 ## 2026-10-04 - Claude Fable 5.1: the between-handoff update becomes an instruction; three twice-stated rules go back to one home (senpi#2681)
 
 ### What changed

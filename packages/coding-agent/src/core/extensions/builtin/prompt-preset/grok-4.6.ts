@@ -44,7 +44,7 @@ import { APP_UNRUN_CHECK_RULE, buildTestDisciplineSection } from "../../../dynam
 const INTENT_GATE_LEAD: Record<TerminalOrApp, string> = {
 	terminal: `Open every turn with one short visible routing line - required even on confirmation turns:
 
-> I read this as [intent] - [plan]. I'll stop when [the exact, observable condition that ends this turn].
+I read this as [intent] - [plan]. I'll stop when [the exact, observable condition that ends this turn].
 
 Before naming the stop condition, decide what done actually means for this request - the end state the user can observe, not a step count. Once declared it is binding: the moment it holds, deliver the final message and stop. Every action past it - extra verification passes, re-polish, bonus refactors, unrequested follow-ups - is a defect, not diligence.`,
 	app: `Before acting, decide what done actually means for this request - the end state the user can observe, not a step count. It is binding: the moment it holds, deliver the final message and stop. Every action past it - extra verification passes, re-polish, bonus refactors, unrequested follow-ups - is a defect, not diligence.`,

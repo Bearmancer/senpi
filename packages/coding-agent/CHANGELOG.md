@@ -10,6 +10,8 @@
 
 ### Fixed
 
+- Replies no longer arrive wrapped in a blockquote: the handoff template and the routing line in the system prompt were written as markdown quote lines, the model copied the `>`, and the desktop and the TUI drew the whole answer as a grey quoted aside that read as if the turn had paused ([#2714](https://github.com/code-yeongyu/senpi/issues/2714)).
+
 ### Removed
 
 ## [2026.10.8] - 2026-10-04

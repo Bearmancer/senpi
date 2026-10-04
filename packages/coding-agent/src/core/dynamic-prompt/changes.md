@@ -1,5 +1,25 @@
 # changes.md — dynamic-prompt
 
+## 2026-10-04 - Format examples are no longer markdown quote lines (senpi#2714)
+
+### What changed
+
+- `packages/coding-agent/src/core/dynamic-prompt/handoff.ts`: the handoff template line reads `Ask: [the user's original request] - wanted: ...` instead of `> Ask: ...`.
+- `packages/coding-agent/src/core/dynamic-prompt/intent-gate.ts`: the terminal routing line reads `I read this as [intent] - [plan]. ...` instead of `> I read this as ...`.
+- Labels, slots and every other sentence are unchanged; each prompt loses two characters per line.
+
+### Why
+
+- The model copies a format example as the shape of its reply, `>` included. A recorded app-surface session on claude-opus-5-5 stored its final messages as `> Ask: ...`, and the desktop drew each whole answer as a grey blockquote that read like a paused turn; the TUI quotes the routing line the same way. Live A/B on the real engine (RPC, app surface, Opus 5.5, same prompts, only the template line changed): before 2 of 3 handoff replies quoted, after 0 of 6. Prompt-engineering category B (misframing): the marker meant "this is the example" and was read as "this is the format", so it is removed at its source; nothing is added.
+
+### Why an extension could not handle it
+
+- These sections are built inside the shared prompt builder; an extension could only append a competing rule.
+
+### Expected merge conflict zones
+
+- Fork-only files. The template line in `buildHandoffSection` and `TERMINAL_ROUTING`.
+
 ## 2026-10-04 - Handoff: the Fable-only between-handoff sentence names the moment and the shape (senpi#2681)
 
 ### What changed

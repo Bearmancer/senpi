@@ -53,7 +53,7 @@ function buildSearchLine(context: DynamicPromptCoreContext): string {
 const INTENT_GATE_LEAD: Record<TerminalOrApp, string> = {
 	terminal: `Open every turn with one short routing line:
 
-> I read this as [intent] - [plan]. I'll stop when [the exact, observable condition that ends this turn].
+I read this as [intent] - [plan]. I'll stop when [the exact, observable condition that ends this turn].
 
 The line keeps your reading transparent; only the user's explicit request commits you to implementation. Name the stop condition as an observable end state, not a step count. Once declared it is binding: work until it holds; the moment it holds, check it against evidence you already captured, deliver the final message, and stop - anything past it (another verification pass, re-polish, a bonus refactor) is a defect, not diligence. Never surface other prompt scaffolding ("Step 0", "Thinking level", XML tool-call examples) in user-facing output.`,
 	app: `Only the user's explicit request commits you to implementation. Before acting, name the stop condition for yourself as an observable end state, not a step count. It is binding: work until it holds; the moment it holds, check it against evidence you already captured, deliver the final message, and stop - anything past it (another verification pass, re-polish, a bonus refactor) is a defect, not diligence. Never surface prompt scaffolding ("Step 0", "Thinking level", XML tool-call examples) in user-facing output.`,
