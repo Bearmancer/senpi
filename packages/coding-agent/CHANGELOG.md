@@ -6,6 +6,20 @@
 
 ### Added
 
+### Changed
+
+### Fixed
+
+- `host status` now reports the right engine version for a host generation started by a handoff to a different build: the generation's record names the build the new host reported, not the build of the process that ran the handoff ([#2698](https://github.com/code-yeongyu/senpi/issues/2698)).
+
+### Removed
+
+## [2026.10.6] - 2026-10-04
+
+### Breaking Changes
+
+### Added
+
 - `open_session` accepts `retryFallback` (`{ modelFallback, fallbackChains }`) and hosts advertise the `retry_fallback_profile` capability: the chain is that session's own, applied as an in-memory override that is never written to a settings file and never seen by another session on the host, so a task child running on a shared host can fall back to its own models mid-turn ([code-yeongyu/oh-my-openagent#9512](https://github.com/code-yeongyu/oh-my-openagent/issues/9512)).
 - `auto` permission preset: approves, without asking, only actions it can prove stay inside the project, judged on the exact file each tool will open: reads, listings and writes of project files, `apply_patch` on project files, a content search of one or more project files, and a small set of read-only shell commands with plain in-project arguments. Everything else asks, including dotfiles such as `.env`, `.git/`, keys, anything outside the project, directory-wide searches, shell writes, `cd`, pipes, `git show`, test runners, builds and installs. Your own `deny` and `ask` rules always win, from settings, the CLI or RPC; your `allow` rules never widen it. Hosts advertise `permission_preset_auto` ([#2614](https://github.com/code-yeongyu/senpi/pull/2614)).
 
@@ -16,7 +30,6 @@
 
 ### Fixed
 
-- `host status` now reports the right engine version for a host generation started by a handoff to a different build: the generation's record names the build the new host reported, not the build of the process that ran the handoff ([#2698](https://github.com/code-yeongyu/senpi/issues/2698)).
 - Linux x64 and the other newly shipped targets get the native PTY backend for terminal sessions instead of the pipe fallback: releases now ship the native PTY prebuild for every supported target, and a release missing one fails. Thanks to [@Altairpaca](https://github.com/Altairpaca) ([#1193](https://github.com/code-yeongyu/senpi/issues/1193), [#1224](https://github.com/code-yeongyu/senpi/pull/1224)).
 - `auto` permission preset: a git revision argument that names an existing path, a dangling symlink included, is checked as a path, so `auto` asks for it; in print mode and the unbound SDK, a request `auto` or your rules still ask about is always refused with a reason ([#2688](https://github.com/code-yeongyu/senpi/pull/2688)).
 - A rate limit (429) or a server error (5xx) from the provider now shows as one retry banner with a countdown in the status line, as a dropped connection already did, instead of printing the provider's raw JSON on every retry; authentication, quota and billing failures still show in full ([#2652](https://github.com/code-yeongyu/senpi/issues/2652)).
