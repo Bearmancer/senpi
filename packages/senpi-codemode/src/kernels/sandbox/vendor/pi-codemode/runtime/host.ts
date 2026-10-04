@@ -356,6 +356,8 @@ class Execution {
 		let lateResult: CodemodeResult | undefined;
 		const abandoned = new Promise<void>((resolve) => {
 			this.abandonDrain = (late) => {
+				// Every frame that arrived was consumed: the run finished as it reports, and an abort changes nothing.
+				if (this.inFlightBytes === 0) return;
 				this.abandoned = true;
 				lateResult = { ok: false, error: late, output: this.output, calls: this.calls };
 				resolve();
@@ -369,7 +371,17 @@ class Execution {
 			this.abandonDrain = undefined;
 			clearTimeout(this.timer);
 			this.signal?.removeEventListener("abort", this.onAbort);
-			const final = lateResult ?? result;
+			// A consumer that failed while the last frames drained lost output, so the run cannot report success.
+			const final =
+				lateResult ??
+				(this.frameFailure !== undefined && result.ok
+					? {
+							ok: false,
+							error: { kind: "sandbox", message: `Output consumer failed: ${this.frameFailure}` },
+							output: this.output,
+							calls: this.calls,
+						}
+					: result);
 			if (this.stream !== undefined) {
 				final.streamed = {
 					frames: this.frames,

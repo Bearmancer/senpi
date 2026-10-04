@@ -269,8 +269,13 @@ options object and asynchronous helpers are `await`-able.
 | `env(key?, value?)` | Reads all kernel environment values, one value, or sets one value. Includes the session's `PI_*` values (see [Session environment](#session-environment)). |
 | `tool.<name>(args)` | Invokes an active Senpi tool through the normal `pi.executeTool` pipeline and returns `{ text, images?, details?, hasError? }` in every kernel; image blocks arrive as `images[i] = { mimeType, dataBase64 }`. |
 | `tool_schema(name?)` | Returns a tool's parameter schema without calling it; omit `name` to list tool names. |
+| `tool(fn, metadata?)` (js) | Registers a named function as a kernel tool for in-process children. `metadata.name` registers it under that name instead of the function's; arguments are still passed in the function's parameter order. |
+| `tool.defined()` / `tool.undefine(name)` (js) | List the kernel tools this kernel defines (sorted), and remove one (`true` if it existed). A descriptor taken before `undefine` can no longer be invoked. Both names are reserved: a kernel tool can't be registered as `defined` or `undefine` (`reserved_tool_name`), and a host tool with either name is shadowed in the `tool` namespace, so it can't be called from a JavaScript cell. |
+| `@tool` / `@tool(name=, description=, schema=)` (py) | Registers a Python function as a kernel tool for in-process children; the schema is inferred from its type hints (`tool_schema("eval:kernel-tools")` lists the rules). Callbacks run while the kernel is idle or its cell is parked in a host call, never in the middle of a running computation. `tool.defined()` and `tool.undefine(name)` work as in JavaScript. Ruby and Julia kernels answer `tools_unavailable`. |
 | `completion(prompt, model?, system?, schema?)` | Requests a one-shot host completion; `schema` asks the host to parse structured output. |
 | `agent(prompt, ...)` | Delegates to the configured active `taskTools.task` tool. Supports background handles and structured JSON results. |
+| `wait(handles, timeout?, mode?)` | Blocks the cell until the given handles settle (agent handle records, `handle()` views, completion handles, closed workpools, or saved `{kind, id, run_epoch}` references). `mode` is `all` (values in input order; the first failed, cancelled, or lost handle raises), `any` (`{index, ref, value}` of the first success), or `settled` (one outcome per input slot). `timeout` is wall-clock seconds from entry; on expiry `eval_wait_timeout` is raised and nothing is cancelled. Rides the bridge-call path, so the run budget pauses while parked. Agent and workpool handles need the host's `EvalHandleHost` capability (`eval_wait_unavailable` without it); completion handles always work. Julia extends `Base.wait` for handle views (`wait(handle(node))`). Details: `tool_schema("eval:wait")`. |
+| `handle(node \| ref \| {pool_id})` | Returns a rich view: the legacy record's fields plus a non-enumerable `control` (Python: attribute on a `dict` subclass; Ruby: singleton method) with `status()`, `output(format?, offset?, limit?)`, `send(message)` (agent handles only), `cancel()` (idempotent for that run epoch; never touches a successor run), and `wait(timeout?)`. Every control call is fenced by owner, id, and `run_epoch` inside the task owner (`eval_handle_stale`, `eval_handle_forbidden`). `completion(prompt, handle: true)` returns such a view for a host completion. The `agent(..., handle: true)` record itself is unchanged. Details: `tool_schema("eval:helpers")`. |
 | `workpool(agent, name, mode?)` | Creates a thin adapter over the normal host `workpool` tool; exposes `pool_id`, `push(items)`, `close()`, `inspect()`, and `cancel()`. JS awaits creation and operations. |
 | `output(ids, format?, offset?, limit?)` | Delegates transcript retrieval to the configured active `taskTools.output` tool. |
 | `parallel(thunks)` | Runs thunks through the configured bounded pool while preserving input order. |
@@ -526,8 +531,21 @@ Homebrew (put `/opt/homebrew/opt/ruby/bin` first on `PATH`; macOS's system Ruby
 before `--write-baseline`.
 
 The report is gitignored `gate-report.json` by default (`--report <path>` overrides it).
-`test/gate/allowlist.json` contains reviewed additive changes keyed by plan node;
-it cannot authorize removal or modification of a legacy entry. The test-only
+`test/gate/allowlist.json` contains reviewed additive changes keyed by plan node.
+A pull request that changes the committed `baseline.json` itself (an intended
+schema or prompt change, a renamed contract, a deleted module) must list every
+cell it edits or removes under that node's `changes`, each as
+`{ "key": "<section>/<cell>", "reason": "..." }`. In a pull request the gate reads
+the baseline at the merge base and fails any baseline edit or removal that is
+not listed, any edited or added cell that differs from what the head measures,
+and any listed removal the head still measures. A cell written into the baseline that
+was absent at the merge base must be listed under some node's `additions` (an entry an earlier
+pull request added counts, so a re-record can write in cells approved before); only `changes`
+entries must be new in this pull request. Reviewers read each `changes`
+entry: it is the only record of why a protected surface moved. If the merge
+base cannot be resolved in a pull request, the gate fails closed; the gate job
+checks out full history for this. A local run outside a pull request reviews
+baseline changes only with `--base-ref <ref>`. The test-only
 `SENPI_CODEMODE_GATE_MUTATE=drop-phase` report mutation proves that helper removal
 is rejected. `SENPI_CODEMODE_GATE_MUTATE=leak-kernel` leaves the real kernel
 alive at the teardown witness, then closes it in `finally`; nonzero process,

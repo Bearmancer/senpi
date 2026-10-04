@@ -48,6 +48,8 @@ export interface PythonTransportOptions {
 	readonly startupTimeoutMs: number;
 	readonly onStartupProgress?: (stage: PythonStartupStage) => void;
 	readonly memory?: KernelMemoryThresholds;
+	/** Kernel-tool descriptors carry this; a restarted interpreter gets a new one, so old descriptors go stale. */
+	readonly kernelGeneration?: number;
 	readonly onMessage?: (message: KernelToHostMessage) => void;
 	readonly spawnProcess?: KernelSpawnProcess;
 	readonly isOwned: () => boolean;
@@ -142,6 +144,11 @@ export class PythonKernelTransport {
 		return transport;
 	}
 
+	/** Kernel-tool frames for the runner's control reader (served even while a cell runs). */
+	post(message: HostToKernelMessage): void {
+		if (this.#active && !this.#exited) this.#write(message);
+	}
+
 	run(input: PythonTransportRunInput): void {
 		const preludes = input.preludePlan && {
 			install: input.preludePlan.install.map(({ exports, python }) => ({ exports: [...exports], python })),
@@ -221,8 +228,14 @@ export class PythonKernelTransport {
 		this.#child.stderr.on("data", onStderr);
 		this.#child.on("error", onError);
 		this.#child.on("exit", onExit);
-		const { sessionId, connection, memory } = this.#options;
-		this.#write({ type: "init", sessionId, connection, ...(memory === undefined ? {} : { memory }) });
+		const { sessionId, connection, memory, kernelGeneration } = this.#options;
+		this.#write({
+			type: "init",
+			sessionId,
+			connection,
+			...(memory === undefined ? {} : { memory }),
+			...(kernelGeneration === undefined ? {} : { kernelGeneration }),
+		});
 		await startup.ready;
 	}
 
