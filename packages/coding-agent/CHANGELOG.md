@@ -8,7 +8,11 @@
 
 ### Changed
 
+- The bundled Claude Agent SDK is updated to 0.3.289 (from 0.3.288), so the Anthropic subscription lane runs Claude Code 2.1.289 and the models it knows ([#2545](https://github.com/code-yeongyu/senpi/issues/2545)).
+
 ### Fixed
+
+- `continue_from_leaf` now acknowledges when the continued turn starts (its `agent_start`, or a delegated queue), like a prompt, instead of after the whole turn. This stops a desktop continuation longer than the RPC deadline from timing out. ([#2708](https://github.com/code-yeongyu/senpi/issues/2708))
 
 ### Removed
 
