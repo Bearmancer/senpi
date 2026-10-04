@@ -1,3 +1,21 @@
+## 2026-10-04 - The Windows Python job checks that environment installs stay inside the revision (codemode plan node 14)
+
+### What changed
+
+- `.github/workflows/ci.yml` (`python-kernel-windows`): a new step runs the environment tests for pip's config file and staged revisions with the JSON reporter, and fails unless the pip-config test actually ran and passed.
+
+### Why
+
+- pip skips every config file only when `PIP_CONFIG_FILE` equals Python's `os.devnull`, which is `nul` on Windows. A string check on another OS can't prove that, and a skipped test must not count as a pass.
+
+### Why an extension could not handle it
+
+- This is CI configuration.
+
+### Expected merge conflict zones
+
+- LOW: the `python-kernel-windows` job's step list.
+
 ## 2026-10-04 - The Windows Python job runs the kernel-tool suites (codemode plan node 11)
 
 ### What changed
