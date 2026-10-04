@@ -61,6 +61,33 @@ describe("detached cell notification state note", () => {
 	});
 
 	it.each([
+		{ kernelState: "lost", says: "every global is lost" },
+		{ kernelState: "restarted", says: "globals from earlier cells are gone" },
+		{ kernelState: "not-run", says: "never ran and changed no kernel state" },
+	] as const)(
+		"Given a failed py cell whose kernel died ($kernelState) when the notification is built then it does not claim the variables survived",
+		async ({ kernelState, says }) => {
+			const snapshot: EvalDetachedCellSnapshot = {
+				cellId: `death-${kernelState}`,
+				language: "py",
+				startedAtMs: 0,
+				state: "failed",
+				outputTail: "",
+				stateRetained: undefined,
+				result: {
+					content: [{ type: "text", text: "Python kernel died" }],
+					details: { language: "py", durationMs: 0, toolCalls: [], truncated: false, kernelState },
+				},
+			};
+
+			const notification = await buildDetachedCellNotification(snapshot, undefined);
+
+			expect(notification.content).toContain(says);
+			expect(notification.content).not.toContain(memoryStateNote(undefined));
+		},
+	);
+
+	it.each([
 		{ name: "over its ceiling", memory: { liveBytes: 1, measure: "heap", overCeiling: true } },
 		{ name: "just recycled", memory: { liveBytes: 1, measure: "heap", recycled: true } },
 	] satisfies readonly { name: string; memory: EvalMemoryDetails }[])(

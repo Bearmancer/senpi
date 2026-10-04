@@ -1,5 +1,59 @@
 # TUI delta rendering fork changes
 
+## 2026-10-04 - Accepting a suggestion list that predates the text re-queries instead of splicing
+
+### What changed
+
+- `packages/tui/src/components/editor.ts`: `applyAutocompleteSuggestions()` records the text and cursor the shown list was computed for. When Tab, or Enter on a non-slash list, arrives after either changed, the editor re-queries the provider for the current token (`acceptRefreshedAutocomplete()`, `AutocompleteRequestOptions.acceptSelection`) and applies the best match of the fresh suggestions instead of the stale selected item.
+
+### Why
+
+- `applyCompletion()` was called with the cached `autocompletePrefix` against the live line. While a slow refresh was pending (an `fd` walk over `$HOME` takes longer than a typing gap), the `@` list stayed on screen and accepting it spliced the stale item into the new text: `@~/Dev` + Tab gave `@~/De@go/` instead of `@~/Developer/`.
+
+### Why an extension could not handle it
+
+- The key handling, the cached prefix, and the request sequencing are private to `Editor`; an `AutocompleteProvider` only sees the prefix it is handed.
+
+### Expected merge conflict zones
+
+- `packages/tui/src/components/editor.ts`: the autocomplete field declarations, the Tab and confirm branches of the autocomplete-mode input handler, `runAutocompleteRequest()`, `applyAutocompleteSuggestions()`, `clearAutocompleteUi()`, and the request option signatures.
+
+## 2026-10-03 - The paste burst window is configurable and longer over SSH (senpi#2622)
+
+### What changed
+
+- `packages/tui/src/terminal.ts`: `resolveBurstWindowMs()` returns `PI_TUI_BURST_WINDOW_MS` when it is a finite number of at least 0, otherwise 100 ms over SSH (`SSH_CONNECTION` / `SSH_TTY`) and 20 ms locally, mirroring `resolveEscapeTimeoutMs()`. `ProcessTerminal.setupStdinBuffer` passes it to `StdinBuffer` as `burstWindowMs`; `0` never holds a line break.
+
+### Why
+
+- The marker-free paste fallback (#2606) held a trailing line break for a fixed 20 ms on every transport, so paste chunks arriving further apart (routine over SSH) still split into separate prompts, with no way to widen the window (reported in senpi#2622).
+
+### Why an extension could not handle it
+
+- Stdin framing and the terminal's environment-derived settings are set up before any extension runs.
+
+### Expected merge conflict zones
+
+- `packages/tui/src/terminal.ts`: the escape/burst constants, `resolveBurstWindowMs()` after `resolveEscapeTimeoutMs()`, and the `StdinBuffer` construction in `setupStdinBuffer`.
+
+## 2026-10-03 - A held paste line break survives an empty read and never joins a late paste (senpi#2621)
+
+### What changed
+
+- `packages/tui/src/stdin-buffer.ts`: `process()` clears the burst-release timer only once a read adds input, so a read that returns early (an empty decode of half a multibyte character, a dropped mouse fragment) keeps a held line break's release on time. When a read arrives while a line break is held, the clock decides: outside `burstWindowMs` the held break is released first (as Enter, or as the end of the paste it closes), so it never joins a later read's paste; inside the window it joins the read as before.
+
+### Why
+
+- An empty decoded read cleared the release timer and returned before re-arming it, so the held line break was stranded; when the rest of the character arrived, the break was prepended and glued into a paste, and an Enter never submitted (reported in senpi#2621).
+
+### Why an extension could not handle it
+
+- Stdin framing happens before any input reaches an extension.
+
+### Expected merge conflict zones
+
+- `packages/tui/src/stdin-buffer.ts`: the top of `process()` and the held-line-break block after `this.buffer += str`.
+
 ## 2026-10-03 - Coalesce marker-free paste bursts into one paste event (senpi#2600)
 
 ### What changed

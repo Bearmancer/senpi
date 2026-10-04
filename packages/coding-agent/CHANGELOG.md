@@ -6,9 +6,125 @@
 
 ### Added
 
+- A single-session `--mode rpc` process accepts `set_retry_fallback` before its first turn is asked for (capability `retry_fallback_command`): the `open_session.retryFallback` profile for a caller that spawns one process per session, applied in memory only and kept by the process's later sessions. omo's task children that run as their own process (every Windows child, and `task.process_runner: "child-process"`) can now carry their category's fallback chain past a tool call without touching the user's settings file ([omo#9582](https://github.com/code-yeongyu/oh-my-openagent/issues/9582)).
+
+### Changed
+
+### Fixed
+
+- With a `compaction.model` override on `anthropic-subscription`, senpi no longer rewrites older messages before each turn, so the resident Claude session keeps receiving only the new messages instead of re-sending the whole history every turn ([#2746](https://github.com/code-yeongyu/senpi/issues/2746)). Thanks to @trac3r00 ([#2748](https://github.com/code-yeongyu/senpi/pull/2748)).
+
+### Removed
+
+## [2026.10.9] - 2026-10-04
+
+### Breaking Changes
+
+### Added
+
+- A permission prompt sent to RPC clients now names the tool call it approves (`toolCallId`, plus `parentToolCallId` for a call another tool issued), and so does the feedback `input` after "Deny with feedback". The engine raises the prompts for every call of a message before any of them runs, so a client could not tell which of several calls of the same tool a prompt was for; an app can now show each prompt with its own call's input ([#2710](https://github.com/code-yeongyu/senpi/issues/2710)).
+
+### Changed
+
+### Fixed
+
+- A reply that only answers a question is now the answer itself: the prompt no longer requires every final message to open with the Ask / For you / Now / Next block, which put one-line answers inside a status block ending `Now: none. Next: none.` The block stays for turns that did work ([#2723](https://github.com/code-yeongyu/senpi/issues/2723)).
+- Replies no longer arrive wrapped in a blockquote: the handoff template and the routing line in the system prompt were written as markdown quote lines, the model copied the `>`, and the desktop and the TUI drew the whole answer as a grey quoted aside that read as if the turn had paused ([#2714](https://github.com/code-yeongyu/senpi/issues/2714)).
+
+### Removed
+
+## [2026.10.8] - 2026-10-04
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+- The bundled Claude Agent SDK is updated to 0.3.289 (from 0.3.288), so the Anthropic subscription lane runs Claude Code 2.1.289 and the models it knows ([#2545](https://github.com/code-yeongyu/senpi/issues/2545)).
+
+### Fixed
+
+- An RPC host shard's supervisor exits after its idle window again once its sessions are done. It counted a session busy per `agent_start`, but a run emits one on every loop iteration (a provider retry, a post-compaction continue, a follow-up) and settles once, so any run that continued left the shard busy forever; a session closed mid-run did the same. It now tracks runs, and drops a session when it closes ([#2713](https://github.com/code-yeongyu/senpi/issues/2713), reported by [@DevNewbie1826](https://github.com/DevNewbie1826)).
+- `continue_from_leaf` now acknowledges when the continued turn starts (its `agent_start`, or a delegated queue), like a prompt, instead of after the whole turn. This stops a desktop continuation longer than the RPC deadline from timing out. ([#2708](https://github.com/code-yeongyu/senpi/issues/2708))
+
+### Removed
+
+## [2026.10.7] - 2026-10-04
+
+### Breaking Changes
+
+### Added
+
+- Extensions can provide and read a session-scoped `EvalHandleHost` (`pi.provideEvalHandleHost(host)` / `ctx.evalHandleHost`): the capability behind codemode's in-cell `wait()` and `handle()` helpers, fenced by owner session, id and run epoch. It is absent until a task owner provides it and is cleared when the session runtime is replaced ([#2687](https://github.com/code-yeongyu/senpi/pull/2687)).
+
+### Changed
+
+### Fixed
+
+- After an upgrade, an old host that was still serving the client's own socket with no session open can now be replaced: `host handoff` (which the desktop runs when the engine changed) starts the new engine there instead of refusing `unknown_owner`, so the first turn no longer fails with "No provider available" until the old host is drained by hand. A host from before layout 2 is sent a drain only while a recount still finds no session, a host nothing proves is never signalled (it drains itself once it loses the socket), and a host that holds a session is still refused, with the command that retires it ([#2701](https://github.com/code-yeongyu/senpi/issues/2701)).
+- `host status` now reports the right engine version for a host generation started by a handoff to a different build: the generation's record names the build the new host reported, not the build of the process that ran the handoff ([#2698](https://github.com/code-yeongyu/senpi/issues/2698)).
+
+### Removed
+
+## [2026.10.6] - 2026-10-04
+
+### Breaking Changes
+
+### Added
+
+- `open_session` accepts `retryFallback` (`{ modelFallback, fallbackChains }`) and hosts advertise the `retry_fallback_profile` capability: the chain is that session's own, applied as an in-memory override that is never written to a settings file and never seen by another session on the host, so a task child running on a shared host can fall back to its own models mid-turn ([code-yeongyu/oh-my-openagent#9512](https://github.com/code-yeongyu/oh-my-openagent/issues/9512)).
+- `auto` permission preset: approves, without asking, only actions it can prove stay inside the project, judged on the exact file each tool will open: reads, listings and writes of project files, `apply_patch` on project files, a content search of one or more project files, and a small set of read-only shell commands with plain in-project arguments. Everything else asks, including dotfiles such as `.env`, `.git/`, keys, anything outside the project, directory-wide searches, shell writes, `cd`, pipes, `git show`, test runners, builds and installs. Your own `deny` and `ask` rules always win, from settings, the CLI or RPC; your `allow` rules never widen it. Hosts advertise `permission_preset_auto` ([#2614](https://github.com/code-yeongyu/senpi/pull/2614)).
+
+### Changed
+
+- Startup no longer fills the first screen: a long loaded-resource list shows its first names and a `+N more` hint with the key that expands it, and several startup model warnings collapse into one expandable notice when startup details are hidden; the full list and every warning stay one keypress away ([#2651](https://github.com/code-yeongyu/senpi/issues/2651)).
+- The Claude Fable 5.1 prompt preset now asks for a one-line progress update after each tool wave that changes what the agent knows (an instruction naming the moment and the shape, in place of a recommendation that produced no more updates than presets asking for none), and three rules the preset stated twice are stated once: the Style section no longer repeats Scope's proceed-without-asking rule, the Verification section keeps only the claim audit, and the fourth Hard Limit drops the tail Scope already carries. Every other preset and the default prompt render unchanged ([#2681](https://github.com/code-yeongyu/senpi/issues/2681)).
+
+### Fixed
+
+- Linux x64 and the other newly shipped targets get the native PTY backend for terminal sessions instead of the pipe fallback: releases now ship the native PTY prebuild for every supported target, and a release missing one fails. Thanks to [@Altairpaca](https://github.com/Altairpaca) ([#1193](https://github.com/code-yeongyu/senpi/issues/1193), [#1224](https://github.com/code-yeongyu/senpi/pull/1224)).
+- `auto` permission preset: a git revision argument that names an existing path, a dangling symlink included, is checked as a path, so `auto` asks for it; in print mode and the unbound SDK, a request `auto` or your rules still ask about is always refused with a reason ([#2688](https://github.com/code-yeongyu/senpi/pull/2688)).
+- A rate limit (429) or a server error (5xx) from the provider now shows as one retry banner with a countdown in the status line, as a dropped connection already did, instead of printing the provider's raw JSON on every retry; authentication, quota and billing failures still show in full ([#2652](https://github.com/code-yeongyu/senpi/issues/2652)).
+- The apply_patch streaming preview is tail-windowed with a sticky per-file change count, so a long patch no longer fills the screen, and it no longer re-renders the whole box on every streamed chunk ([#2656](https://github.com/code-yeongyu/senpi/issues/2656), [#2670](https://github.com/code-yeongyu/senpi/pull/2670)).
+- The edit tool card header now shows the aggregate change count next to the path (for example `edit src/greet.ts (+2/-1)`), so an edit's size is visible at a glance ([#2653](https://github.com/code-yeongyu/senpi/issues/2653), [#2668](https://github.com/code-yeongyu/senpi/pull/2668)).
+- Diff lines in tool cards are readable again in both built-in themes: added and removed lines keep distinct backgrounds and read at 7:1 contrast or better, where the saturated card backgrounds had dropped them to about 4.5:1 ([#2655](https://github.com/code-yeongyu/senpi/issues/2655)).
+- `/files` and `/diff` open a selected file on Windows again: drive-letter paths are passed to VS Code as a plain file argument instead of through `--goto`, which rejected them while exiting 0. A `code` launcher that exits 0 but prints to stderr is now reported as a warning instead of being swallowed ([#2646](https://github.com/code-yeongyu/senpi/issues/2646), [#2676](https://github.com/code-yeongyu/senpi/pull/2676) by [@MoerAI](https://github.com/MoerAI)).
+- A model whose free or plan limit is reached ("Reached free model rate limit ... switch to a different model", as Devin reports it) is now a model-scoped usage limit: the turn moves to the next model in the fallback chain at once, and the refused model stays cooled down for the stated reset window ("reset in 9 minutes") instead of being retried or restored early ([#2660](https://github.com/code-yeongyu/senpi/issues/2660)).
+- Quiet, detached worker sessions on the shared in-process RPC host now release their runtimes on the next occupancy sweep once their history is persisted, while active jobs, wake sources, queued deliveries, and requests remain protected. Observational session commands such as `get_state` and `memory_report` no longer prolong idle retention for detached sessions; attached clients polling `get_state` keep their session alive as before, and parked sessions reopen by path with their durable identity and history ([#2643](https://github.com/code-yeongyu/senpi/pull/2643) by [@effortprogrammer](https://github.com/effortprogrammer)).
+- A first run with no provider configured no longer reports "Context remains above the compaction threshold" when a message is sent: a turn an extension triggers now checks the model and credentials first, as a typed prompt already did, and fails with the `/login` guidance; a model with an undeclared context window (0) is treated as unknown instead of always over the compaction threshold. A background turn refused that way is not reported as an extension error: the session emits `provider_required` (once, until a turn is admitted again) with the same guidance, for an extension's triggered turn and its `sendUserMessage` alike, and the TUI shows it unless the startup "No models available" warning has just said it ([#2677](https://github.com/code-yeongyu/senpi/issues/2677)).
+
+### Removed
+
+## [2026.10.5] - 2026-10-03
+
+### Breaking Changes
+
+### Added
+
+- `open_session` accepts `browserEngine` (`connected`, `builtin` or `none`) and hosts advertise the `browser_engine` capability: the choice is per session, so that session's tool subprocesses and eval kernels see `OMO_BROWSER_ENGINE` and no other session does, a reattach moves or keeps it, and `BSK_HOME` / `BSK_BIN` pass through unchanged ([#2611](https://github.com/code-yeongyu/senpi/issues/2611)).
+- A `media_placeholders` client now gets an `image_ref` placeholder whose `path` names the stored image (written before the placeholder is emitted under the session's `media/<durableSessionId>/` directory, private and read-only, deleted with the session), or an `unavailableReason` of `image_too_large`, `session_limit` or `storage_error`, so tool images other than `read` can be rendered from disk.
+- An edited assistant response can be continued with no new prompt: the RPC `continue_from_leaf` command (advertised as the `continue_from_leaf` capability) starts a turn from the session leaf through a hidden nudge the transcript never shows, refusing with `streaming`, `nothing_to_continue`, or `leaf_not_assistant` (the conversation ends on a user message). `get_available_models` rows report `supportsAssistantPrefill` (false for every model today) ([#1930](https://github.com/code-yeongyu/senpi/issues/1930)).
+
+### Changed
+
+### Fixed
+
+- `nvidia` starts on a model its catalog still has: the v2026.10.4 catalog no longer lists `nvidia/nemotron-3-super-120b-a12b`, so an NVIDIA-only user without a saved model silently started on the catalog's first entry (`deepseek-ai/deepseek-v4.1-flash`) instead of the provider default. The default is now `nvidia/nemotron-3-ultra-550b-a55b`, and a release now stops when a catalog regeneration drops any bundled provider's default ([#2645](https://github.com/code-yeongyu/senpi/issues/2645)).
+- `apply_patch` keeps each line's ending when it updates a file: CRLF and mixed-ending files are no longer rewritten to LF, inserted lines take the file's line ending, and context lines stay exactly as they were, so a one-line change is a one-line diff ([#2638](https://github.com/code-yeongyu/senpi/issues/2638)).
+- `apply_patch` no longer drops a file section whose header is indented while reporting success: indented headers apply as in Codex, any other line between file sections rejects the patch before anything changes, and the permission system's per-file approval lists exactly the files the patch writes ([#2636](https://github.com/code-yeongyu/senpi/issues/2636)).
+
+### Removed
+
+## [2026.10.4] - 2026-10-03
+
+### Breaking Changes
+
+### Added
+
 - Shared RPC hosts now report the per-session memory split: the `host_memory_pressure` record carries `main` (the main-thread heap) and `kernels` (every live eval kernel's heap by session), and `list_sessions` rows carry `memory` (`main_heap_bytes`, `kernel_heap_bytes`, `kernel_count`), surfaced on `host status --all --include-workers --json` as `{ main_heap_mb, kernel_heap_mb, kernel_count }`. The terminal tool-card render cache and the TUI frame are now measurable too: the memory report's `tuiRenderCache` gains `finishedCards`, exact `cachedLinesBytes` and `resultBytes`, and a new `tui.previousLinesBytes` reports the frame's line bytes, so a later bound is designed from the measurement ([#1960](https://github.com/code-yeongyu/senpi/issues/1960)).
 - A running session can report where its memory goes, on demand and only when started with `SENPI_MEMORY_REPORT=1`: `SIGUSR2` (POSIX; reports every session registered in the signalled process, so a worker-runtime multi-session host's sessions answer only over RPC) or the RPC `memory_report` request writes `<session>-artifacts/memory/<iso>.json` with the main thread's heap and footprint, every live eval kernel's last-known heap (marked stale while a cell runs), the resident session-string store, the terminal tool-card render cache, and figures extensions add through `pi.registerMemoryReporter(name, reporter)`. `SENPI_MEMORY_REPORT_SNAPSHOT=1` adds a heap snapshot. Without the flag nothing is installed and `SIGUSR2` keeps its default behaviour ([#2561](https://github.com/code-yeongyu/senpi/issues/2561)).
-- RPC session state now reports a model switch that is held until the next compaction: `pendingModelSwitch` is the held model's `{ provider, id }`, or `null` when nothing is held, so a client can tell a held switch from one a later selection superseded. The key is always present on current hosts, so a missing key identifies an older host.
+- RPC session state now reports a model switch that is held until the next compaction: `pendingModelSwitch` is the held model's `{ provider, id }`, or `null` when nothing is held, so a client can tell a held switch from one a later selection superseded. The key is always present on current hosts, so a missing key identifies an older host ([#2593](https://github.com/code-yeongyu/senpi/pull/2593) by [@effortprogrammer](https://github.com/effortprogrammer)).
 
 ### Changed
 
@@ -16,10 +132,12 @@
 
 ### Fixed
 
+- **Permission checks stay on when the permission setup fails.** In every release since 2026.6.23, a failure while the permission system started (an unknown, misspelled or non-string `permissionPreset` in global or project `settings.json`, an unknown `--permission-preset` or RPC `open_session.permissionPreset`, a `null` permission rule value, or an unreadable `permissions-approved.jsonl`) left every tool call running with no permission check, behind a single extension error at startup. The session now refuses tool calls with `Permission setup failed: <reason>` until the setting is fixed, and a valid preset works as before. If you can't update yet, use exactly one of `full-access`, `workspace`, `accept-edits`, `read-only` or `ask`, keep `permission` rule values as strings or objects, and treat a permission-system extension error at startup as a session with no checks: quit and fix the setting. ([#2617](https://github.com/code-yeongyu/senpi/issues/2617), [#2618](https://github.com/code-yeongyu/senpi/pull/2618))
+- The GPT-6 preset keeps few-call reading, lookups and the checks on the model's own change in the main session, and spawns a subagent only for a track that runs beside its own and lands the task sooner (a wide investigation across many files, or an implementation unit beyond one coherent edit in files it is not touching); the bold asynchronous-work lead no longer names child tasks first, and a result needed next is no longer a licence to spawn a background child and end the turn ([#2630](https://github.com/code-yeongyu/senpi/issues/2630)).
 - An idle shared RPC host now gives its cost back. A session closed, parked or released mid-turn no longer pins the host's idle exit forever: the host publishes the turn's `agent_settled` (`reason: "session_closed"`) before it seals the session. A host whose last session closes collects once and reports the footprint it returned (`host_trimmed`, at most once a minute), and each `host ensure` schedules a bounded background `host gc` pass (at most every 5 minutes per agent directory, never on the awaited path) so dead endpoint records stop accumulating ([#2567](https://github.com/code-yeongyu/senpi/issues/2567)).
 - A client attaching to a host built from the same plugin set installed under a different directory no longer logs a profile mismatch on every ensure, and a build that loads a proper superset of the host's extensions can take over from it: host launch profiles now compare the plugin's extensions by role instead of by absolute path.
-- `logs/session.log` lines written by a session now carry its `sessionId` and the active `provider` and `model`, and `provider_error` names the provider and model of the failing response, so lines from parent and child sessions sharing one agent dir can be told apart ([#2541](https://github.com/code-yeongyu/senpi/issues/2541))
-- `RpcClient.closeSession` now rejects with `RpcCommandError` when the host refuses `close_session` (`success: false`), instead of resolving as if the session had closed. A gone transport still counts as closed ([#2572](https://github.com/code-yeongyu/senpi/issues/2572))
+- `logs/session.log` lines written by a session now carry its `sessionId` and the active `provider` and `model`, and `provider_error` names the provider and model of the failing response, so lines from parent and child sessions sharing one agent dir can be told apart ([#2541](https://github.com/code-yeongyu/senpi/issues/2541), [#2605](https://github.com/code-yeongyu/senpi/pull/2605) by [@MoerAI](https://github.com/MoerAI))
+- `RpcClient.closeSession` now rejects with `RpcCommandError` when the host refuses `close_session` (`success: false`), instead of resolving as if the session had closed. A gone transport still counts as closed ([#2572](https://github.com/code-yeongyu/senpi/issues/2572), [#2602](https://github.com/code-yeongyu/senpi/pull/2602) by [@MoerAI](https://github.com/MoerAI))
 
 ### Removed
 

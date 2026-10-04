@@ -1,3 +1,23 @@
+## 2026-10-04 - The resident anthropic-subscription transcript stays append-only
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/compaction/lane-policy.ts`: new `hasAppendOnlyTranscript` on the lane policy, true on the resident `anthropic-subscription` lane (`resumeMode` not `off`) whoever owns compaction. The per-cwd `resumeMode` read moved into a shared `resolveResumeMode` with the same fail-closed behavior.
+- `packages/coding-agent/src/core/extensions/builtin/compaction/context-pipeline.ts` + `index.ts`: the `context` handler passes it to `buildCompactionContext`, which then skips the no-LLM context reduction on that lane, including the tripped circuit breaker's deterministic fallback (the same per-turn rewrite). Tool-result admission (a fixed per-result cap, so a sent result never changes), the latched hard-limit emergency prune and every compaction route are unchanged.
+- Tests: `test/compaction/lane-policy.test.ts` (the predicate), `test/compaction/external-owner-breaker-isolation.test.ts` (a tripped breaker leaves an append-only transcript untouched), and `test/anthropic-subscription-compaction-alignment.test.ts` (a `compaction.model` override on the lane leaves the context messages untouched while the same load reduces them for other providers, and the turn after usage crosses the reduction gate still continues as a `delta` instead of `sent_stream_diverged`).
+
+### Why
+
+- The resident SDK session only accepts appended messages. With the documented `compaction.model` escape hatch senpi owns compaction on the lane, so the context reduction ran there: past its 50% gate it rewrites older messages, the sent stream diverges from the SDK transcript (`sent_stream_diverged`) and every later turn re-sends the history through a fork or a cold-seed instead of a delta. Measured on the real lane (claude-haiku-4-5, 120k window, senpi-owned): from the first rewrite on, cache reads dropped to the ~20k system prompt with 13-43k cache writes per turn; with the reduction skipped every turn stayed `delta / prefix_matched` and cache reads grew turn by turn.
+
+### Why an extension could not handle it
+
+- The context pipeline and lane policy are this builtin's own policy.
+
+### Expected merge conflict zones
+
+- LOW: `hasAppendOnlyTranscript` / `resolveResumeMode` in `lane-policy.ts`; the reduction gate in `context-pipeline.ts`; the `context` handler arguments in `index.ts`.
+
 ## 2026-10-01 - Remote compaction budget scales with the context size, and timeouts are reported (senpi#2434)
 
 ### What changed

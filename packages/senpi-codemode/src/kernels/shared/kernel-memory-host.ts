@@ -10,8 +10,9 @@ export type FootprintReader = (pid: number) => { readonly bytes: number } | unde
 
 export interface KernelMemoryHostOptions {
 	/**
-	 * Host-measured kernel (rb, jl): the kernel reports no memory itself, so the host reads the
-	 * interpreter's footprint after each result. Such a kernel gets the ceiling only - no notice, no globals.
+	 * Host-measured kernel (rb, jl): the host reads the interpreter's footprint after each result and
+	 * replaces the runner's live reading with it; the runner still names its largest globals, so the
+	 * notice and the ceiling both apply, with every reading counting (no collection precedes it).
 	 */
 	readonly readFootprint?: FootprintReader;
 }
@@ -31,12 +32,15 @@ export class KernelMemoryHost {
 		this.#policy =
 			this.#readFootprint === undefined
 				? new KernelMemoryPolicy(language, thresholds)
-				: new KernelMemoryPolicy(language, { ...thresholds, noticeBytes: 0 }, { collects: false });
+				: new KernelMemoryPolicy(language, thresholds, { collects: false });
 	}
 
 	annotate(result: ResultMessage, pid?: number): ResultMessage {
+		const runnerReport = result.memory;
 		const report =
-			this.#readFootprint === undefined ? result.memory : this.#footprintReport(this.#readFootprint, pid);
+			this.#readFootprint === undefined
+				? runnerReport
+				: this.#footprintReport(this.#readFootprint, pid, runnerReport);
 		return report === undefined ? result : { ...result, memory: this.#policy.annotate(report) };
 	}
 
@@ -54,10 +58,14 @@ export class KernelMemoryHost {
 		this.#policy.kernelRetired();
 	}
 
-	#footprintReport(read: FootprintReader, pid: number | undefined) {
+	#footprintReport(read: FootprintReader, pid: number | undefined, runnerReport: ResultMessage["memory"]) {
 		if (pid === undefined) return undefined;
 		const footprint = read(pid);
 		if (footprint === undefined) return undefined;
-		return { liveBytes: Math.round(footprint.bytes), measure: "footprint" as const };
+		return {
+			liveBytes: Math.round(footprint.bytes),
+			measure: "footprint" as const,
+			...(runnerReport?.globals === undefined ? {} : { globals: runnerReport.globals }),
+		};
 	}
 }

@@ -28,10 +28,31 @@ const sourceOnlyPackages = new Set(["@code-yeongyu/senpi-codemode"]);
 const temporaryPublishDirectories = [];
 
 const dryRun = process.argv.includes("--dry-run");
-const unknownArgs = process.argv.slice(2).filter((arg) => arg !== "--dry-run");
+const requiredNativePrebuildFlag = "--require-native-prebuilds=";
+const legacyRequiredNativePrebuildFlag = "--require-native-prebuild=";
+// The publish-only job of publish-npm.yml explicitly names every non-best-effort
+// target; the required set is validated against SUPPORTED_NATIVE_PREBUILD_TARGETS by
+// the pack check itself (senpi#1193).
+const requiredNativePrebuildTargets = process.argv
+	.slice(2)
+	.filter(
+		(arg) =>
+			arg.startsWith(requiredNativePrebuildFlag) || arg.startsWith(legacyRequiredNativePrebuildFlag),
+	)
+	.flatMap((arg) => arg.slice(arg.indexOf("=") + 1).split(","))
+	.map((target) => target.trim())
+	.filter((target) => target.length > 0);
+const unknownArgs = process.argv
+	.slice(2)
+	.filter(
+		(arg) =>
+			arg !== "--dry-run" &&
+			!arg.startsWith(requiredNativePrebuildFlag) &&
+			!arg.startsWith(legacyRequiredNativePrebuildFlag),
+	);
 
 if (unknownArgs.length > 0) {
-	console.error(`Usage: node scripts/publish.mjs [--dry-run]`);
+	console.error(`Usage: node scripts/publish.mjs [--dry-run] [--require-native-prebuilds=<platform>-<arch>[,...]]`);
 	process.exit(1);
 }
 
@@ -99,7 +120,7 @@ function validatePack(pkg) {
 	if (pkg.directory === "packages/coding-agent") {
 		assertSenpiPackedWorkspaceFiles(packed, readPackageJson(pkg.publishDirectory));
 	} else {
-		assertPublishedWorkspacePackFiles(packed, readPackageJson(pkg.directory).name);
+		assertPublishedWorkspacePackFiles(packed, readPackageJson(pkg.directory).name, { requiredNativePrebuildTargets });
 	}
 	console.log(`  ${packed.filename}: ${packed.files.length} files, ${packed.size} bytes packed, ${packed.unpackedSize} bytes unpacked`);
 }

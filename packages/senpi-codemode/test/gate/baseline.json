@@ -4968,7 +4968,7 @@
       "packages/senpi-codemode/src/kernels/js/kernel-contract.ts",
       "packages/senpi-codemode/src/kernels/js/kernel-memory-bridge.ts",
       "packages/senpi-codemode/src/kernels/js/kernel-tools-errors.ts",
-      "packages/senpi-codemode/src/kernels/js/kernel-tools-host.ts",
+      "packages/senpi-codemode/src/kernels/shared/kernel-tools-pump.ts",
       "packages/senpi-codemode/src/kernels/js/kernel-tools-types.ts",
       "packages/senpi-codemode/src/kernels/js/local-module-loader.ts",
       "packages/senpi-codemode/src/kernels/js/process-tree-host.ts",
@@ -5107,7 +5107,7 @@
       "packages/senpi-codemode/src/kernels/js/kernel-tools-define.js",
       "packages/senpi-codemode/src/kernels/js/kernel-tools-errors.js",
       "packages/senpi-codemode/src/kernels/js/kernel-tools-errors.ts",
-      "packages/senpi-codemode/src/kernels/js/kernel-tools-host.ts",
+      "packages/senpi-codemode/src/kernels/shared/kernel-tools-pump.ts",
       "packages/senpi-codemode/src/kernels/js/kernel-tools-naming.js",
       "packages/senpi-codemode/src/kernels/js/kernel-tools-parse.js",
       "packages/senpi-codemode/src/kernels/js/kernel-tools-pump.js",
@@ -5385,7 +5385,7 @@
       "test/config.test.ts/codemode settings uses taskTools defaults": "passed",
       "test/config.test.ts/codemode settings uses statusEvents default true": "passed",
       "test/config.test.ts/codemode settings env override beats file settings": "passed",
-      "test/config.test.ts/codemode settings rejects unknown settings keys with a warning": "passed",
+      "test/config.test.ts/codemode settings ignores an unknown top-level key with a warning and keeps today's defaults": "passed",
       "test/config.test.ts/codemode settings warns for malformed new settings values": "passed",
       "test/config.test.ts/codemode settings returns defaults with warnings for invalid json and invalid values": "passed",
       "test/config.test.ts/codemode settings defaults hardLimitSeconds to the bash-parity kill deadline": "passed",
@@ -6154,7 +6154,6 @@
       "test/kernel-tools-scope.test.js/kernel-tool call scope policy matches host tool names exactly": "passed",
       "test/kernel-tools-scope.test.js/kernel-tool call scope policy fails closed on a malformed list instead of widening the scope": "passed",
       "test/kernel-tools-scope.test.js/kernel-tool call scope policy builds a typed refusal carrying the tool, the invoking call id and the reason": "passed",
-      "test/kernel-tools-unavailable.test.ts/py/rb/jl kernel tools returns tools_unavailable from real non-JS kernel classes": "passed",
       "test/memory-settings.test.ts/codemode memory settings defaults the ceiling to a quarter of 4294967296 bytes kept within 2-8 GiB": "passed",
       "test/memory-settings.test.ts/codemode memory settings defaults the ceiling to a quarter of 17179869184 bytes kept within 2-8 GiB": "passed",
       "test/memory-settings.test.ts/codemode memory settings defaults the ceiling to a quarter of 137438953472 bytes kept within 2-8 GiB": "passed",
@@ -6572,9 +6571,9 @@
       "test/kernels/rb/subprocess-lifecycle.test.ts/SubprocessKernel lifecycle drops output calls results errors and exit from a retiring generation": "passed",
       "test/kernels/rb/subprocess-lifecycle.test.ts/SubprocessKernel lifecycle settles queued work once when replacement startup fails": "passed",
       "test/kernels/rb/subprocess-memory-ceiling.test.ts/SubprocessKernel (rb) memory ceiling Given an interpreter footprint over the ceiling with a cell queued behind it when both settle then the queued cell runs on the same interpreter and the next cell on a fresh one": "passed",
-      "test/kernels/rb/subprocess-memory-ceiling.test.ts/SubprocessKernel (rb) memory ceiling Given an interpreter footprint over the notice threshold but under the ceiling when a cell settles then the result reports the footprint without a notice": "passed",
+      "test/kernels/rb/subprocess-memory-ceiling.test.ts/SubprocessKernel (rb) memory ceiling Given an interpreter footprint over the notice threshold but under the ceiling when a cell settles then the result carries the large-memory notice without a restart": "passed",
       "test/kernels/rb/subprocess-memory-ceiling.test.ts/SubprocessKernel (jl) memory ceiling Given an interpreter footprint over the ceiling with a cell queued behind it when both settle then the queued cell runs on the same interpreter and the next cell on a fresh one": "passed",
-      "test/kernels/rb/subprocess-memory-ceiling.test.ts/SubprocessKernel (jl) memory ceiling Given an interpreter footprint over the notice threshold but under the ceiling when a cell settles then the result reports the footprint without a notice": "passed"
+      "test/kernels/rb/subprocess-memory-ceiling.test.ts/SubprocessKernel (jl) memory ceiling Given an interpreter footprint over the notice threshold but under the ceiling when a cell settles then the result carries the large-memory notice without a restart": "passed"
     }
   },
   "unmeasured": []

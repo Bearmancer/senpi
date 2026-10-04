@@ -336,11 +336,6 @@ export class StdinBuffer extends EventEmitter<StdinBufferEventMap> {
 			clearTimeout(this.timeout);
 			this.timeout = null;
 		}
-		if (this.burstTimer) {
-			clearTimeout(this.burstTimer);
-			this.burstTimer = null;
-		}
-
 		let str: string;
 		let decodedFromBuffer = false;
 		if (Buffer.isBuffer(data)) {
@@ -374,6 +369,12 @@ export class StdinBuffer extends EventEmitter<StdinBufferEventMap> {
 			}
 			this.discardingMouseFragment = false;
 		}
+		// Only a read that adds input takes over a held line break. A read that leaves above (an empty
+		// decode of half a multibyte character, a dropped mouse fragment) must keep its release timer running.
+		if (this.burstTimer) {
+			clearTimeout(this.burstTimer);
+			this.burstTimer = null;
+		}
 		this.buffer += str;
 		const chunkAt = str.length > 0 ? this.clock() : undefined;
 		const burstGap = chunkAt !== undefined && this.lastInputAt !== undefined ? chunkAt - this.lastInputAt : undefined;
@@ -381,8 +382,15 @@ export class StdinBuffer extends EventEmitter<StdinBufferEventMap> {
 			this.lastInputAt = chunkAt;
 		}
 		if (this.heldNewline.length > 0) {
-			this.buffer = this.heldNewline + this.buffer;
-			this.heldNewline = "";
+			// The clock decides, not timer delivery: a read outside the window means the held line
+			// break was an Enter, even when its release timer has not fired yet (a stalled loop).
+			if (burstGap !== undefined && burstGap >= this.burstWindowMs) {
+				this.releaseHeldNewline();
+			} else {
+				this.buffer = this.heldNewline + this.buffer;
+				this.heldNewline = "";
+				this.heldNewlineEndsPaste = false;
+			}
 		}
 
 		if (this.pasteMode) {

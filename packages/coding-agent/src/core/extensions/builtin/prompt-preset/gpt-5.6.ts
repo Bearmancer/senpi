@@ -140,7 +140,7 @@ export const GPT56_EXECUTION_RULES = [
 const INTENT_GATE_LEAD: Record<TerminalOrApp, string> = {
 	terminal: `Open every turn with one short visible line before anything else:
 
-> I read this as [intent] - [plan]. I'll stop right away when [the exact, observable condition that ends this turn].
+I read this as [intent] - [plan]. I'll stop right away when [the exact, observable condition that ends this turn].
 
 That line is your preamble; it commits you to finish the named work this turn, and the declared stop condition is BINDING - the instant it holds, stop (see Stop Goal). Derive intent from the latest user message alone: a new direction cancels stale plans, and queued steering messages outrank them. Never surface prompt scaffolding in user-visible output.`,
 	app: `Before acting, fix the exact, observable condition that ends this turn. It commits you to finish the named work this turn, and that stop condition is BINDING - the instant it holds, stop (see Stop Goal). Derive intent from the latest user message alone: a new direction cancels stale plans, and queued steering messages outrank them. Never surface prompt scaffolding in user-visible output.`,
@@ -222,14 +222,14 @@ ${
 
 At a handoff - ${GPT_HANDOFF_MOMENTS[context.surface]} - first work out what the user asked for and what they need to know now, then open with one block:
 
-> [Outcome so far] toward [the user's original ask and the result they wanted]. You need: [ledger N/M done, findings, blockers]. Now: [todo task in progress]. Next: [next open task].
+[Outcome so far] toward [the user's original ask and the result they wanted]. You need: [ledger N/M done, findings, blockers]. Now: [todo task in progress]. Next: [next open task].
 
 Now and Next are todo labels verbatim; the Next stated is executed in this same response with tool calls. Between handoffs, no narration.`
 }
 
 ## Output
 
-Final message: ${context.surface === "chat" ? "the answer itself, whose outcome leads and which carries" : "the Handoff block, whose outcome leads and whose You need slot carries"} the evidence needed to trust it - what you verified, ${context.surface !== "terminal" ? GPT_APP_UNVERIFIED_SLOT : "what you could not and why"}, and pre-existing issues you left alone - grouped by user-facing outcome, not by file. Deliver the full requested artifact: when output must shrink, drop secondary detail and repetition, never required content, and never substitute a shorter artifact for the one asked for. Trim introductions and generic reassurance first.
+Final message: ${context.surface === "chat" ? "the answer itself, whose outcome leads and which carries" : "for work, the Handoff block, whose outcome leads and whose You need slot carries"} the evidence needed to trust it - what you verified, ${context.surface !== "terminal" ? GPT_APP_UNVERIFIED_SLOT : "what you could not and why"}, and pre-existing issues you left alone - grouped by user-facing outcome, not by file. Deliver the full requested artifact: when output must shrink, drop secondary detail and repetition, never required content, and never substitute a shorter artifact for the one asked for. Trim introductions and generic reassurance first.
 
 Code reviews: findings first, ordered by severity with file references; then open questions and assumptions; change summary last. With no findings, say so and name residual risks or testing gaps.
 

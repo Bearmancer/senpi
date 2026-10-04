@@ -1,7 +1,8 @@
 import { SettingsManager } from "../../../settings-manager.ts";
 import type { ExtensionAPI } from "../../types.ts";
 import { extractPatchedPaths } from "../gpt-apply-patch/index.ts";
-import { parsePermissionFlag, parsePermissionPresetFlag } from "./cli.ts";
+import { decideAuto } from "./auto-policy.ts";
+import { PERMISSION_PRESET_NAMES, parsePermissionFlag, parsePermissionPresetFlag } from "./cli.ts";
 import { disabled } from "./config.ts";
 import { createEventEmitter } from "./events.ts";
 import { INTERNAL_PERMISSION_TOOLS } from "./internal-tools.ts";
@@ -11,7 +12,14 @@ import { showPermissionPrompt } from "./prompt.ts";
 import { PermissionService } from "./service.ts";
 import { loadPermissionSettings } from "./settings.ts";
 import { appendApproved } from "./storage.ts";
-import { CorrectedError, DeniedError, RejectedError, type Request, type Ruleset } from "./types.ts";
+import {
+	CorrectedError,
+	DeniedError,
+	type PermissionPresetName,
+	RejectedError,
+	type Request,
+	type Ruleset,
+} from "./types.ts";
 
 function createRequestIDFactory(): () => string {
 	let counter = 0;
@@ -60,7 +68,9 @@ export default function permissionSystemExtension(pi: ExtensionAPI): void {
 	let parserRegistry: ParserRegistry | null = null;
 	let cliRuleset: Ruleset = [];
 	let staticRuleset: Ruleset = [];
+	let activePreset: PermissionPresetName | null = null;
 	let initialApprovedCount = 0;
+	let setupError: string | null = null;
 
 	const nextRequestID = createRequestIDFactory();
 
@@ -69,12 +79,25 @@ export default function permissionSystemExtension(pi: ExtensionAPI): void {
 		type: "string",
 	});
 	pi.registerFlag("permission-preset", {
-		description: "Set permission preset (full-access, workspace, accept-edits, read-only, or ask)",
+		description: `Set permission preset (${PERMISSION_PRESET_NAMES.join(", ")})`,
 		type: "string",
 	});
 
 	pi.on("session_start", async (_event, ctx) => {
-		const settingsManager = SettingsManager.create(ctx.cwd);
+		setupError = null;
+		try {
+			loadPermissionRules(ctx.cwd);
+		} catch (error) {
+			// The runner reports a throwing handler and keeps the session running, so a rules
+			// failure must block tool calls itself instead of leaving them unchecked (#2617).
+			setupError = getReason(error);
+			throw error;
+		}
+		applyToolDenials();
+	});
+
+	const loadPermissionRules = (cwd: string): void => {
+		const settingsManager = SettingsManager.create(cwd);
 		const permissionFlag = pi.getFlag("permission");
 		const permissionPresetFlag = pi.getFlag("permission-preset");
 		cliRuleset = typeof permissionFlag === "string" ? parsePermissionFlag(permissionFlag) : [];
@@ -83,26 +106,32 @@ export default function permissionSystemExtension(pi: ExtensionAPI): void {
 
 		if (typeof permissionPresetFlag === "string" && !cliPreset) {
 			throw new Error(
-				`Invalid --permission-preset "${permissionPresetFlag}". Expected one of: full-access, workspace, accept-edits, read-only, ask.`,
+				`Invalid --permission-preset "${permissionPresetFlag}". Expected one of: ${PERMISSION_PRESET_NAMES.join(", ")}.`,
 			);
 		}
 
-		const loadedSettings = loadPermissionSettings(settingsManager, cliRuleset, ctx.cwd, cliPreset);
+		const loadedSettings = loadPermissionSettings(settingsManager, cliRuleset, cwd, cliPreset);
 		staticRuleset = loadedSettings.staticRuleset;
+		activePreset = loadedSettings.preset;
 		const approved = loadedSettings.approved;
 		parserRegistry = createBuiltinParserRegistry();
 		service = new PermissionService(staticRuleset, approved, createEventEmitter(pi));
 		initialApprovedCount = approved.length;
+	};
 
+	const applyToolDenials = (): void => {
 		const allTools = pi.getAllTools().map((tool) => tool.name);
 		const disabledTools = disabled(allTools, staticRuleset);
 		const activeTools = pi
 			.getActiveTools()
 			.filter((toolName) => INTERNAL_PERMISSION_TOOLS.has(toolName) || !disabledTools.has(toolName));
 		pi.setActiveTools(activeTools);
-	});
+	};
 
 	pi.on("tool_call", async (event, ctx) => {
+		if (setupError !== null) {
+			return { block: true, reason: `Permission setup failed: ${setupError}` };
+		}
 		if (!service || !parserRegistry) {
 			return undefined;
 		}
@@ -129,11 +158,21 @@ export default function permissionSystemExtension(pi: ExtensionAPI): void {
 				patterns: permissionRequest.patterns,
 				always: permissionRequest.always,
 				metadata: createRequestMetadata(event.toolName, event.input),
+				tool: {
+					callID: event.toolCallId,
+					...(event.parentToolCallId === undefined ? {} : { parentCallID: event.parentToolCallId }),
+				},
 			};
 
+			const auto =
+				activePreset === "auto"
+					? await decideAuto(event.toolName, event.input, permissionRequest, ctx.cwd)
+					: undefined;
 			const askResultPromise = service
 				.ask(request, {
 					autoApproveAsk: permissionRequest.autoApproveAsk ?? false,
+					approveBlanketAsk: auto?.approveBlanketAsk ?? false,
+					presetBound: activePreset === "auto",
 					...(permissionRequest.ruleAliases ? { ruleAliases: permissionRequest.ruleAliases } : {}),
 				})
 				.then(
@@ -154,14 +193,16 @@ export default function permissionSystemExtension(pi: ExtensionAPI): void {
 				const reply = await showPermissionPrompt(ctx, request);
 				service.reply(reply);
 			} else {
-				const reply = handleNoUI(request, staticRuleset, cliRuleset, (eventName, data) => {
-					if (eventName !== "permission_asked") {
-						pi.events.emit(eventName, data);
-					}
-				});
-				if (reply) {
-					service.reply(reply);
-				}
+				service.reply(
+					handleNoUI(request, {
+						emitEvent: (eventName, data) => {
+							if (eventName !== "permission_asked") {
+								pi.events.emit(eventName, data);
+							}
+						},
+						presetBound: activePreset === "auto",
+					}),
+				);
 			}
 
 			const askResult = await askResultPromise;

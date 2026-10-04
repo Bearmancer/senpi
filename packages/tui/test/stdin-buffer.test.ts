@@ -756,6 +756,44 @@ describe("StdinBuffer unbracketed paste bursts", () => {
 		assert.deepStrictEqual(burstData, ["\r"]);
 	});
 
+	it("releases a held newline on time even when an empty read arrives while it is held", async () => {
+		const timed = new StdinBuffer({ timeout: 10, burstWindowMs: 20 });
+		const data: string[] = [];
+		const pastes: string[] = [];
+		timed.on("data", (sequence) => data.push(sequence));
+		timed.on("paste", (content) => pastes.push(content));
+		const released = new Promise<void>((resolve, reject) => {
+			const bound = setTimeout(() => reject(new Error("held newline was never released")), 2000);
+			timed.on("data", (sequence) => {
+				if (sequence === "\n") {
+					clearTimeout(bound);
+					resolve();
+				}
+			});
+		});
+		timed.process("a");
+		timed.process("b\n");
+		timed.process(Buffer.from([0xf0, 0x9f]));
+		await released;
+		assert.deepStrictEqual(data, ["a", "b", "\n"]);
+		assert.deepStrictEqual(pastes, []);
+		timed.destroy();
+	});
+
+	it("does not glue a newline held before an empty read into a later read's paste", () => {
+		burst.process("a");
+		now += 5;
+		burst.process("b\n");
+		burst.process(Buffer.from([0xf0, 0x9f]));
+		now += 1000;
+		burst.process(Buffer.from([0x98, 0x80, 0x0a, 0x78]));
+		assert.deepStrictEqual(burstData.slice(0, 3), ["a", "b", "\n"]);
+		assert.ok(
+			burstPastes.every((paste) => !paste.startsWith("\n")),
+			JSON.stringify(burstPastes),
+		);
+	});
+
 	it("treats CRLF and CR-only bursts like LF bursts", () => {
 		burst.process("l1\r\nl2\r\n");
 		assert.deepStrictEqual(burstPastes, ["l1\r\nl2\r\n"]);

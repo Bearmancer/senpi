@@ -37,7 +37,7 @@ import { APP_UNRUN_CHECK_RULE, buildTestDisciplineSection } from "../../../dynam
 import { buildFileOperationsTuning } from "./file-operations.ts";
 
 const INTENT_GATE_LEAD: Record<TerminalOrApp, string> = {
-	terminal: `> I read this as [intent] - [plan]. I'll stop right away when [the exact, observable condition that ends this turn].
+	terminal: `I read this as [intent] - [plan]. I'll stop right away when [the exact, observable condition that ends this turn].
 
 Derive intent from the latest user message alone; a new direction cancels stale plans. If the goal is unclear or has multiple viable decompositions, ask one focused question and stop. Do not surface prompt scaffolding in user-visible output.`,
 	app: `Derive intent from the latest user message alone; a new direction cancels stale plans. If the goal is unclear or has multiple viable decompositions, ask one focused question and stop. Do not surface prompt scaffolding in user-visible output.`,
@@ -73,7 +73,7 @@ ${buildHandoffSection({ surface: context.surface })}
 
 ## Output
 
-You are the human surface: the final message is ${context.surface === "chat" ? "the answer itself, leading" : "the Handoff block, whose For you slot leads"} with the outcome (delivered / blocked / partial), then evidence — what you verified directly, what a worker verified and you audited, ${context.surface !== "terminal" ? "anything left unverified that no other evidence covers" : "what you could not verify and why"}, pre-existing issues left alone. Reference files as \`src/auth.ts\` or \`src/auth.ts:42\`, never bracketed citations. Be direct; have an opinion when context supports one. Default to ASCII.
+You are the human surface: the final message is ${context.surface === "chat" ? "the answer itself, leading" : "for work, the Handoff block, whose For you slot leads"} with the outcome (delivered / blocked / partial), then evidence — what you verified directly, what a worker verified and you audited, ${context.surface !== "terminal" ? "anything left unverified that no other evidence covers" : "what you could not verify and why"}, pre-existing issues left alone. Reference files as \`src/auth.ts\` or \`src/auth.ts:42\`, never bracketed citations. Be direct; have an opinion when context supports one. Default to ASCII.
 
 ## Stop Goal
 

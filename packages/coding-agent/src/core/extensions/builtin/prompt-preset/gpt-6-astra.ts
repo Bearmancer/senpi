@@ -157,6 +157,20 @@
 // the edit-plus-proof todo pairing, the enumerated verification floor, the never-present
 // hard limit, the verified/unverified report slots, the user-mentioned-run watch, the stop-goal
 // audit, and the read-bun-1-4-first mandate. The 09-11 early-stop set is untouched.
+//
+// 2026-10-03 (senpi#2630): Astra handed few-call reading, credential lookups and the checks on
+// its own change to subagents on executable lanes, then ended its turn to wait for them. A 10-day
+// survey put its delegation share level with the Claude and Kimi presets, but 86% of its spawns
+// went to executable categories (30-50% for the others), nine were read-only investigations, and
+// in the trigger session the main thread idled 90 s for a child whose evidence memory already
+// held. Three sentences licensed that and are replaced at their source (category B): `delegation`
+// tested a call count and independence, so a six-call investigation was rule compliance - it now
+// keeps reading, lookups and checks on your own change however many calls they take, and hands
+// out only a track that runs beside yours and lands the task sooner, in the hephaestus prompts'
+// terms (a wide investigation across many files, or an implementation unit beyond one coherent
+// edit in files you are not touching); `async-default` no longer opens its bold lead with child
+// tasks; `foreground-exception` drops the sentence that let a result needed next be a background
+// child plus a turn end. The bold set, the rule ids and their sections are unchanged.
 
 import { APP_NAME } from "../../../../config.ts";
 import {
@@ -264,7 +278,7 @@ const LSP_SYMBOL_ROUTING =
 	"Where LSP tools exist, let the language server answer symbol questions - a definition, its callers, the blast radius of a rename, the diagnostics on a file you just touched. Plain text search earns its place on literal strings, filenames, and commit history.";
 
 const DELEGATION =
-	"Do the work yourself by default: whatever closes in a handful of calls is yours, and a follow-up on work you delegated is yours to take back, not to forward. Only a sizeable track independent of your own earns a subagent; spawn such tracks together in the background, each brief stating what to produce, where its edits may land, the observable condition that ends it, and the evidence it hands back for you to check.";
+	"Do the work yourself by default: reading, lookups, and checks on your own change are yours however many calls they take, and a follow-up on work you delegated is yours to take back, not to forward. A subagent is for a track that runs beside yours and lands the task sooner - a wide investigation across many files, or an implementation unit beyond one coherent edit in files you are not touching; spawn such tracks together in the background, each brief naming its output, allowed edit paths, stop condition, and returned evidence.";
 
 const LEGIBLE_MESSAGES =
 	"Messages to other agents and your final answer are read by people: full sentences, proper spaces between words and numbers, no private shorthand.";
@@ -273,10 +287,10 @@ const TODO_GRANULARITY =
 	"Given a todo tool, cut multi-step work into the smallest items that still stand alone and move each one the instant its state changes: opened, finished, newly discovered and appended, abandoned and dropped. A one-step ask or a question carries no list.";
 
 const ASYNC_DEFAULT =
-	"**ASYNCHRONOUS IS THE DEFAULT FORM OF EVERY CALL THAT OFFERS ONE: CHILD TASKS AND BASH SESSIONS START IN THE BACKGROUND, A LONG COMPUTATION DETACHES ITS EVAL CELL, AND A WAIT IS A `tool.monitor` SUBSCRIPTION - NEVER A CELL THAT SITS ON A `--watch` OR A SPAWNED PROCESS, NEVER A CHILD SPAWNED TO WATCH.** Each returns a handle at once and delivers its result later as a message; treat the handle like a pending async call and keep working on everything that does not need it.";
+	"**ASYNCHRONOUS IS THE DEFAULT FORM OF EVERY CALL THAT OFFERS ONE: BASH SESSIONS START IN THE BACKGROUND, A LONG COMPUTATION DETACHES ITS EVAL CELL, AND A WAIT IS A `tool.monitor` SUBSCRIPTION - NEVER A CELL THAT SITS ON A `--watch` OR A SPAWNED PROCESS, NEVER A CHILD SPAWNED TO WATCH.** Each returns a handle at once and delivers its result later as a message; treat the handle like a pending async call and keep working on everything that does not need it.";
 
 const FOREGROUND_EXCEPTION =
-	"Block only on a call that finishes within the time a reply takes and decides your very next call, or on an approval-gated or destructive action you must watch directly. A child task never meets the first test; when its result would be your next input, either the work was small enough to do yourself or the child runs in the background and its completion delivers it.";
+	"Block only on a call that finishes within the time a reply takes and decides your very next call, or on an approval-gated or destructive action you must watch directly. A child task never meets the first test; it runs in the background and its completion delivers its result.";
 
 const TURN_END_IS_WAIT =
 	"**THERE IS NO WAIT TOOL. END YOUR TURN WHEN THE NEXT STEP NEEDS A PENDING RESULT AND A HANDLE WILL WAKE YOU; WITH NOTHING PENDING AND WORK STILL OPEN, THE TURN KEEPS GOING.** Repeated status reads, sleeps, and timed retries replay the whole context for nothing; a single peek serves a midpoint decision only.";
@@ -309,10 +323,10 @@ const NO_REFLEXIVE_APOLOGY =
 	"Apologize or fault yourself only for an avoidable mistake of your own, and then plainly: acknowledge it, correct it, move on. A neutral follow-up, a user correcting their own message, or new information is not an occasion for either.";
 
 const HANDOFF_REPORT =
-	"At a handoff - the todo list's creation (in the message that creates it, after the routing line, or the next one), a todo phase change, a blocker or plan change, the final message; the routing line is not one - first work out what the user asked for and what they need to know now, then open with one block:\n\n> [Outcome so far] toward [the user's original ask and the result they wanted]. You need: [ledger N/M done, findings, blockers]. Now: [todo task in progress]. Next: [next open task].\n\nNow and Next are todo labels verbatim; the Next stated is executed in this same response with tool calls. Between handoffs, no narration. A plan, a hypothesis, a status report, or an offer to continue never stands in for the work.";
+	"At a handoff - the todo list's creation (in the message that creates it, after the routing line, or the next one), a todo phase change, a blocker or plan change, the final message of a turn that did work (a reply that only answers a question is the answer itself); the routing line is not one - first work out what the user asked for and what they need to know now, then open with one block:\n\n[Outcome so far] toward [the user's original ask and the result they wanted]. You need: [ledger N/M done, findings, blockers]. Now: [todo task in progress]. Next: [next open task].\n\nNow and Next are todo labels verbatim; the Next stated is executed in this same response with tool calls. Between handoffs, no narration. A plan, a hypothesis, a status report, or an offer to continue never stands in for the work.";
 
 const FINAL_MESSAGE_SHAPE =
-	"The final message is the handoff block and stands alone: the outcome first, then in its You need slot what a reader needs to trust it - the checks that ran, summarized rather than listed, anything left unverified, and any pre-existing problem you left in place - ordered so the conclusion is easiest to check rather than in the order you worked. Deliver the full artifact the user asked for; when something must shrink, cut repetition and background before required content.";
+	"The final message of work is the handoff block and stands alone: the outcome first, then in its You need slot what a reader needs to trust it - the checks that ran, summarized rather than listed, anything left unverified, and any pre-existing problem you left in place - ordered so the conclusion is easiest to check rather than in the order you worked. Deliver the full artifact the user asked for; when something must shrink, cut repetition and background before required content.";
 
 export const GPT6_ASTRA_RULES = [
 	{ id: "initiative-bias", concern: "initiative", directive: INITIATIVE_BIAS },
@@ -351,7 +365,7 @@ export const GPT6_ASTRA_RULES = [
 const INTENT_GATE_LEAD: Record<TerminalOrApp, string> = {
 	terminal: `Open a new request with one short routing line:
 
-> I read this as [intent] - [plan]. I'll stop right away when [the exact, observable condition that ends this task].
+I read this as [intent] - [plan]. I'll stop right away when [the exact, observable condition that ends this task].
 
 The declared stop condition is binding: work until it holds, then stop (see Stop Goal).`,
 	app: "Open a new request by settling the exact, observable condition that ends the task. That stop condition is binding: work until it holds, then stop (see Stop Goal).",
@@ -376,7 +390,7 @@ const SURFACE_DIRECTIVE: Record<PromptSurface, { steering: string; handoffReport
 			steering: APP_STEERING,
 			handoffReport: HANDOFF_REPORT.replace(/^[\s\S]*Between handoffs, no narration\. /, `${CHAT_REPLY_RULE} `),
 			finalMessageShape: APP_FINAL_MESSAGE_SHAPE.replace(
-				"The final message is the handoff block and stands alone: the outcome first, then in its You need slot what a reader needs",
+				"The final message of work is the handoff block and stands alone: the outcome first, then in its You need slot what a reader needs",
 				`${CHAT_FINAL_MESSAGE} and stands alone: the outcome first, then what a reader needs`,
 			),
 		},

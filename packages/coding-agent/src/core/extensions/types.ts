@@ -60,6 +60,7 @@ import type {
 import type { Static, TSchema } from "typebox";
 import type { Theme } from "../../modes/interactive/theme/theme.ts";
 import type { BashResult } from "../bash-executor.ts";
+import type { BrowserEngine } from "../browser-engine.ts";
 import type { CompactionPreparation, CompactionResult } from "../compaction/index.ts";
 import type { WarmAnchorSnapshot } from "../compaction/warm-anchor.ts";
 import type { EventBus } from "../event-bus.ts";
@@ -104,6 +105,7 @@ import type {
 import type { ReadClassifier } from "../tools/read-classifiers.ts";
 import type { ModelRoute, ModelRouteRequest, VirtualModelDefinition } from "../virtual-models.ts";
 import type { McpServerDeclaration } from "./builtin/mcp/config-schema.ts";
+import type { EvalHandleHost } from "./eval-handle-host.ts";
 import type { ExtensionKernelTools } from "./kernel-tools-context.ts";
 import type { SessionControlActions, SessionControlWakeEvent } from "./session-control-types.ts";
 
@@ -134,6 +136,10 @@ export interface ExtensionUIDialogOptions {
 	signal?: AbortSignal;
 	/** Timeout in milliseconds. Dialog auto-dismisses with live countdown display. */
 	timeout?: number;
+	/** The tool call this dialog is about (a permission request), sent to RPC clients as is. */
+	toolCallId?: string;
+	/** Set with `toolCallId` when another tool (for example a codemode script) issued that call. */
+	parentToolCallId?: string;
 }
 
 /** Placement for extension widgets. */
@@ -477,6 +483,8 @@ export interface ExtensionContext {
 	sessionManager: ReadonlySessionManager;
 	/** Absolute goal-store path for this session; reading it does not create the file. */
 	readonly goalStoreFile?: string;
+	/** Browser engine the opener chose for THIS session (`open_session.browserEngine`); absent when it chose none. */
+	readonly browserEngine?: BrowserEngine;
 	/** Model registry for API key resolution */
 	modelRegistry: ModelRegistry;
 	/** Current model (may be undefined) */
@@ -510,6 +518,12 @@ export interface ExtensionContext {
 	 * JavaScript eval owns the host-tool context; absent on older runtimes.
 	 */
 	readonly kernelTools?: ExtensionKernelTools;
+	/**
+	 * Session-scoped host capability behind the in-cell `wait()` / `handle()` helpers: watch, send to,
+	 * cancel and read host-owned work (agent runs, workpools) fenced by owner, id and run epoch.
+	 * Provided by the task owner through `pi.provideEvalHandleHost`; absent on runtimes without a provider.
+	 */
+	readonly evalHandleHost?: EvalHandleHost;
 	/** Abort the current agent operation */
 	abort(source?: "user" | "system"): void;
 	/** Whether there are queued messages waiting */
@@ -2299,6 +2313,13 @@ export interface ExtensionAPI {
 	registerRemovedToolHint(name: string, hint: string): void;
 
 	/**
+	 * Provide this session's `EvalHandleHost` (the task/workpool owner implements it). Session-scoped:
+	 * every extension loaded in the same session reads it back as `ctx.evalHandleHost`; the last
+	 * provider wins, and a replaced or reloaded session starts without one.
+	 */
+	provideEvalHandleHost(host: EvalHandleHost): void;
+
+	/**
 	 * Register a callback that may activate a registered-but-inactive tool on demand.
 	 * Called only when executeTool would otherwise fail with `inactive_tool`. Return
 	 * true only after the tool has actually been activated; returning false preserves
@@ -2947,6 +2968,8 @@ export interface ExtensionRuntimeState {
 	registerRemovedToolHint: RegisterRemovedToolHintHandler;
 	registerVirtualModel: (definition: VirtualModelDefinition, extensionPath?: string) => void;
 	unregisterVirtualModel: (provider: string, id: string) => void;
+	/** The session's eval handle host, set by `pi.provideEvalHandleHost`; cleared when the runtime is invalidated. */
+	evalHandleHost?: EvalHandleHost;
 }
 
 /**
@@ -3010,6 +3033,7 @@ export interface ExtensionContextActions {
 	};
 	getLookAtSettings: () => { enabled: boolean; models: string[] | undefined };
 	getAskUserSettings?: () => { enabled: boolean; timeoutMinutes: number };
+	getBrowserEngine?: () => BrowserEngine | undefined;
 	getImageSettings: () => { autoResize: boolean; blockImages: boolean };
 	sessionSettings: ExtensionSessionSettings;
 	compact: (options?: CompactOptions) => void;

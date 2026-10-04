@@ -1,5 +1,82 @@
 # prompt-preset Extension Changes
 
+## 2026-10-04 - Routing and handoff format examples are no longer markdown quote lines (senpi#2714)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/prompt-preset/claude-fable-5-1.ts`, `claude-fable-5.ts`, `claude-opus-5-5.ts`, `claude-opus-5.ts`, `claude-sonnet-5-5.ts`, `gpt-5.5.ts`, `gpt-5.6.ts`, `gpt-6-astra.ts`, `grok-4.5.ts`, `grok-4.6.ts`, `grok-4.7.ts`, `kimi-k3.ts`: the routing line reads `I read this as ...` instead of `> I read this as ...`; in `gpt-5.5.ts`, `gpt-5.6.ts` and `gpt-6-astra.ts` the handoff template reads `[Outcome so far] toward ...` instead of `> [Outcome so far] toward ...`. Nothing else changes.
+- `test/suite/prompt-presets-app-surface.test.ts`: for every prompt (the dynamic prompt and every preset) on the terminal, app and chat surfaces, the assembled prompt has no line that starts with `>`. RED on main: 30 of 30 prompts. `regressions/2366-handoff-user-language.test.ts` keeps checking the label order the ttsr detector parses, without pinning where the line starts.
+
+### Why
+
+- Same cause as `dynamic-prompt/changes.md` (senpi#2714): the model copies the quote marker into its reply, which renders the answer as a blockquote.
+
+### Why an extension could not handle it
+
+- These lines are the preset cores themselves.
+
+### Expected merge conflict zones
+
+- Fork-only files. The routing line and the `## Handoff` template line in each preset.
+
+## 2026-10-04 - Final-message rules leave a plain answer as the answer itself (senpi#2723)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/prompt-preset/gpt-surface.ts`: `GPT_HANDOFF_MOMENTS` names "the final message of a turn that did work (a reply that only answers a question is the answer itself)"; `gpt-6-astra.ts` carries the same words in `HANDOFF_REPORT` (its app variant is derived by replacing the terminal moments).
+- Final-message rules now apply to work: `claude-opus-5-5.ts`, `claude-opus-5.ts`, `claude-sonnet-5-5.ts` ("open with the Handoff block if the turn did work"); `claude-fable-5.ts`, `claude-fable-5-1.ts`, `kimi-k3.ts`, `gpt-5.5.ts` ("The final message of work ..."); `gpt-5.6.ts`, `grok-4.5.ts` ("for work, the Handoff block ..."); `gpt-6-astra.ts` `FINAL_MESSAGE_SHAPE` and its chat replacement ("The final message of work is the handoff block ...").
+
+### Why
+
+- Same cause as `dynamic-prompt/changes.md` (senpi#2723): the block was mandatory for every final message, so plain answers were wrapped in a status block.
+
+### Why an extension could not handle it
+
+- These lines are the preset cores themselves.
+
+### Expected merge conflict zones
+
+- Fork-only files. The final-message sentence and the handoff moments in each preset.
+
+## 2026-10-04 - Claude Fable 5.1: the between-handoff update becomes an instruction; three twice-stated rules go back to one home (senpi#2681)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/prompt-preset/claude-fable-5-1.ts`: three sentences are deleted at their source, none added. `## Style` no longer opens with "Act, then report: for reversible steps the request already covers, proceed without asking" (Scope's "Make routine judgment calls yourself; ask only when ..." is the one home); `## Verification` drops `"Should pass" is not verification: run the validator.` and keeps the claim audit ("audit each claim against a tool result from this session; report only evidence-backed work ..."); the fourth `## Hard Limits` bullet drops "; say what is done, what is not, and why you stopped" (Scope's "finish every other part and say exactly what you left out and why" is the one home).
+- The between-handoff sentence this preset renders through `buildHandoffSection({ briefUpdatesBetweenHandoffs: true })` is replaced in `dynamic-prompt/handoff.ts` (see that tracker): an instruction naming the moment and the shape instead of a recommendation.
+- Render diff against `main` (24 renders: the dynamic prompt and seven presets on terminal, app and chat): only the three `claude-fable-5-1` renders differ; the terminal core goes from 1,550 to 1,522 words.
+
+### Why
+
+- Over two weeks of real sessions Fable 5.1 wrote reply text on 14% of its tool-using steps, the same rate as cores whose handoff section says "work without narration", so the advisory sentence had no measurable effect (prompt-engineering category B: a reason in place of an instruction, with no stated moment). The Fable 5.1 guide says to state when user-facing text is wanted and what each update contains. The three duplicates were left by the 2026-09-02 diet; a rule stated twice competes with itself for a literal instruction follower.
+
+### Why an extension could not handle it
+
+- These sentences are the preset core itself.
+
+### Expected merge conflict zones
+
+- Fork-only file. `claude-fable-5-1.ts` header comment, `## Verification`, `## Hard Limits`, `## Style`.
+
+## 2026-10-03 - GPT-6 Astra: keep few-call reading and own-change checks; a subagent only for a track that lands the task sooner (senpi#2630)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/prompt-preset/gpt-6-astra.ts`: three rules are replaced at their source, none added. `DELEGATION` keeps reading, lookups and checks on your own change "however many calls they take" (was: "whatever closes in a handful of calls is yours"), and hands out only "a track that runs beside yours and lands the task sooner - a wide investigation across many files, or an implementation unit beyond one coherent edit in files you are not touching" (was: "Only a sizeable track independent of your own earns a subagent"); the brief clause shrinks to its four nouns. `ASYNC_DEFAULT` drops "CHILD TASKS AND" from its bold lead. `FOREGROUND_EXCEPTION` ends "A child task never meets the first test; it runs in the background and its completion delivers its result." (was: "... when its result would be your next input, either the work was small enough to do yourself or the child runs in the background and its completion delivers it").
+- Rule ids, concerns, sections and the bold set are unchanged; `test/suite/prompt-presets-gpt-6-astra.test.ts` passes as is. The preset loses four words net.
+
+### Why
+
+- Astra handed few-call reading, credential lookups and the checks on its own change to subagents on executable lanes, then ended its turn to wait for them. A 10-day session survey put its delegation share level with the Claude and Kimi presets (the 2026-09-08 reframe did its job by count), but 86% of its spawns went to executable categories against 30-50% for the others, nine were read-only investigations, and in the trigger session the main thread idled 90 s for a child whose evidence memory already held. The model's stated reasons repeated the rule's words ("independent", "non-overlapping"), so the defect is the rule's framing (prompt-engineering category B): a six-call investigation failed the call-count keep-it test and passed the independence spawn test, the loudest rule in the file named child tasks first, and the foreground exception sanctioned the result-needed-next -> background child -> turn-end path. The replacement carries the clauses the Opus 5.5 preset already had (a parallel run must finish the task sooner; your own verification is yours) in the hephaestus prompts' terms (direct execution by default; a category only for a unit beyond one coherent edit). The 2026-09-11 early-stop set is untouched.
+
+### Why an extension could not handle it
+
+- These sentences are the preset core itself.
+
+### Expected merge conflict zones
+
+- `gpt-6-astra.ts` header comment, `DELEGATION`, `ASYNC_DEFAULT`, `FOREGROUND_EXCEPTION`.
+
 ## 2026-10-01 - GPT-6 Astra: delete the verification gates codex does not carry (senpi#2505)
 
 ### What changed
