@@ -1,4 +1,5 @@
 import { execFileSync, spawn } from "node:child_process";
+import { writeFileSync } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -29,6 +30,18 @@ const bunChild = (() => {
 })();
 
 const hostFixture = join(import.meta.dirname, "fixtures", "process-kernel-host.ts");
+const subreaperFixture = join(import.meta.dirname, "fixtures", "process-kernel-subreaper.ts");
+
+/** A child the subreaper has not reaped yet is a zombie: it no longer runs. */
+function isZombie(pid: number): boolean {
+	try {
+		return execFileSync("ps", ["-o", "stat=", "-p", String(pid)], { encoding: "utf8" })
+			.trim()
+			.startsWith("Z");
+	} catch {
+		return false;
+	}
+}
 
 function workerKernel(): JavaScriptKernel {
 	const kernel = new JavaScriptKernel({
@@ -413,15 +426,19 @@ return "done";`,
 				});
 				host.once("exit", () => reject(new Error(`host exited before reporting its child: ${out}`)));
 			});
-			expect(pidAlive(childPid)).toBe(true);
-			const hostExited = new Promise<void>((resolve) => host.once("exit", () => resolve()));
+			try {
+				expect(pidAlive(childPid)).toBe(true);
+				const hostExited = new Promise<void>((resolve) => host.once("exit", () => resolve()));
 
-			if (how === "exits without closing its kernel") host.stdin.write("exit\n");
-			else host.kill("SIGKILL");
-			await hostExited;
+				if (how === "exits without closing its kernel") host.stdin.write("exit\n");
+				else host.kill("SIGKILL");
+				await hostExited;
 
-			// A spinning cell blocks the child's main thread, so only its watchdog thread can end it: within 2 s.
-			await waitFor("the kernel child to exit with its host", () => !pidAlive(childPid), 2_000);
+				// A spinning cell blocks the child's main thread, so only its watchdog thread can end it: within 2 s.
+				await waitFor("the kernel child to exit with its host", () => !pidAlive(childPid), 2_000);
+			} finally {
+				host.kill("SIGKILL");
+			}
 		},
 	);
 
@@ -521,6 +538,40 @@ return "done";`,
 		},
 	);
 
+	// Linux lets a process adopt orphaned descendants (PR_SET_CHILD_SUBREAPER); a kernel child whose host dies is then
+	// reparented to that process, not to pid 1, so the watchdog must compare against the parent it started with.
+	(process.platform === "linux" ? it : it.skip)(
+		"When the host's parent is a subreaper and the host is killed while a cell spins, then the kernel child is gone too",
+		{ timeout: 60_000 },
+		async () => {
+			const wrapper = spawn(productChild(), [subreaperFixture, productChild(), hostFixture], {
+				stdio: ["pipe", "pipe", "inherit"],
+			});
+			try {
+				const pids = await new Promise<{ host: number; child: number }>((resolve, reject) => {
+					let out = "";
+					wrapper.stdout.on("data", (data: Buffer) => {
+						out += data.toString();
+						const host = /host (\d+)/.exec(out)?.[1];
+						const child = /child (\d+)/.exec(out)?.[1];
+						if (host !== undefined && child !== undefined) resolve({ host: Number(host), child: Number(child) });
+					});
+					wrapper.once("exit", () => reject(new Error(`subreaper exited before reporting: ${out}`)));
+				});
+
+				process.kill(pids.host, "SIGKILL");
+
+				await waitFor(
+					"the kernel child to exit under a subreaper",
+					() => !pidAlive(pids.child) || isZombie(pids.child),
+					2_000,
+				);
+			} finally {
+				wrapper.kill("SIGKILL");
+			}
+		},
+	);
+
 	itProcessMode(
 		"When a process-mode kernel starts, then its child runs on bun, the product's runtime",
 		async () => {
@@ -592,12 +643,13 @@ return "done";`,
 
 			const run = await runJavaScriptCell(
 				kernel,
-				'try { await tool.read({ path: "x".repeat(12 * 1024 * 1024) }); return "sent"; } catch (error) { return error.message; }',
+				'const started = Date.now(); try { await tool.read({ path: "x".repeat(12 * 1024 * 1024) }); return "sent"; } catch (error) { return [error.message, Date.now() - started]; }',
 				15_000,
 			);
+			const [message, waitedMs] = parseJavaScriptResult(run.result) as [string, number];
 
-			expect(run.result).toMatchObject({ ok: true });
-			if (run.result.ok) expect(run.result.valueRepr).toContain("too large");
+			expect(message).toContain("too large");
+			expect(waitedMs).toBeLessThan(2_000);
 		},
 		60_000,
 	);
@@ -648,6 +700,89 @@ return "done";`,
 			expect(Date.now() - started).toBeLessThan(5_000);
 		},
 		60_000,
+	);
+
+	itProcessMode(
+		"When a cell runs cat on a 4 MB file with fd 1 inherited, then the command succeeds and every byte arrives",
+		async () => {
+			const root = await trackedTempRoot("senpi-js-process-cat-");
+			const file = join(root, "four-mb.txt");
+			writeFileSync(file, "c".repeat(4_000_000));
+			const kernel = processKernel({ cwd: root });
+
+			const run = await runJavaScriptCell(
+				kernel,
+				`(await import("node:child_process")).execSync(${JSON.stringify(`cat ${file}`)}, { stdio: "inherit" }); return "settled"`,
+				30_000,
+			);
+			const bytes = run.messages.reduce(
+				(total, message) => total + (message.type === "text" ? message.data.split("c").length - 1 : 0),
+				0,
+			);
+
+			expect(run.result).toMatchObject({ ok: true, valueRepr: '"settled"' });
+			expect(bytes).toBe(4_000_000);
+		},
+		60_000,
+	);
+
+	itProcessMode(
+		"When a cell writes 4 MB to fd 1 in one writeSync call, then the call writes it all and every byte arrives",
+		async () => {
+			const kernel = processKernel();
+
+			const run = await runJavaScriptCell(
+				kernel,
+				'return (await import("node:fs")).writeSync(1, "w".repeat(4_000_000))',
+				30_000,
+			);
+			const bytes = run.messages.reduce(
+				(total, message) => total + (message.type === "text" ? message.data.split("w").length - 1 : 0),
+				0,
+			);
+
+			expect(run.result).toMatchObject({ ok: true, valueRepr: "4000000" });
+			expect(bytes).toBe(4_000_000);
+		},
+		60_000,
+	);
+
+	itProcessMode(
+		"When a blocked cell's child process prints 100 MiB through fd 1, then the kernel's memory stays flat and all of it arrives",
+		async () => {
+			const kernel = processKernel();
+			await runJavaScriptCell(kernel, "return 1", 10_000);
+			const pid = kernel.processPid ?? 0;
+			const rssKiB = () =>
+				Number(execFileSync("ps", ["-o", "rss=", "-p", String(pid)], { encoding: "utf8" }).trim());
+			const idle = rssKiB();
+			let peak = idle;
+			let bytes = 0;
+			const size = 100 * 1024 * 1024;
+
+			const pending = kernel.run({
+				cellId: "burst",
+				code: `(await import("node:child_process")).execSync("head -c ${size} /dev/zero | tr '\\\\0' b", { stdio: "inherit" }); return "settled"`,
+				timeoutMs: 60_000,
+				onMessage: (message) => {
+					if (message.type === "text") bytes += message.data.length;
+				},
+			});
+			// Sampled while the cell is blocked in execSync: before, the reader held the whole burst until the cell returned.
+			const sampler = setInterval(() => {
+				try {
+					peak = Math.max(peak, rssKiB());
+				} catch {
+					// the child is gone; the result below says why
+				}
+			}, 50);
+			const result = await pending.finally(() => clearInterval(sampler));
+
+			expect(result).toMatchObject({ ok: true, valueRepr: '"settled"' });
+			expect(bytes).toBe(size);
+			expect((peak - idle) / 1024).toBeLessThan(64);
+		},
+		120_000,
 	);
 
 	it("When a worker-mode cell crashes, then the next result carries no restart notice, as before process mode existed", async () => {

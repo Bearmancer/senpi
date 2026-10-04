@@ -258,6 +258,27 @@
 				"legacyContracts/test/completion-handle-watches.test.ts/Given a watch over a completion handle When the caller stops iterating its updates, then the registry stops tracking the watch"
 			]
 		},
+		"12": {
+			"additions": [
+				"legacyContracts/test/workpool-tools.test.ts/js workpool tools forwards tools unchanged to a host that validates with the real create schema",
+				"legacyContracts/test/workpool-tools.test.ts/js workpool tools never forwards an option the host does not know",
+				"legacyContracts/test/workpool-tools.test.ts/py workpool tools forwards tools unchanged to a host that validates with the real create schema",
+				"legacyContracts/test/workpool-tools.test.ts/py workpool tools never forwards an option the host does not know",
+				"legacyContracts/test/workpool-tools.test.ts/rb workpool tools forwards tools unchanged to a host that validates with the real create schema",
+				"legacyContracts/test/workpool-tools.test.ts/rb workpool tools never forwards an option the host does not know",
+				"legacyContracts/test/workpool-tools.test.ts/jl workpool tools forwards tools unchanged to a host that validates with the real create schema",
+				"legacyContracts/test/workpool-tools.test.ts/jl workpool tools never forwards an option the host does not know",
+				"legacyContracts/test/workpool-prelude.test.ts/js workpool prelude refuses tools given as a single string with a typed error, and posts nothing to the host",
+				"legacyContracts/test/workpool-prelude.test.ts/js workpool prelude forwards a list of tool names unchanged",
+				"legacyContracts/test/workpool-prelude.test.ts/py workpool prelude refuses tools given as a single string with a typed error, and posts nothing to the host",
+				"legacyContracts/test/workpool-prelude.test.ts/py workpool prelude forwards a list of tool names unchanged",
+				"legacyContracts/test/workpool-prelude.test.ts/rb workpool prelude refuses tools given as a single string with a typed error, and posts nothing to the host",
+				"legacyContracts/test/workpool-prelude.test.ts/rb workpool prelude forwards a list of tool names unchanged",
+				"legacyContracts/test/workpool-prelude.test.ts/jl workpool prelude refuses tools given as a single string with a typed error, and posts nothing to the host",
+				"legacyContracts/test/workpool-prelude.test.ts/jl workpool prelude forwards a list of tool names unchanged"
+			],
+			"reason": "Node 12: workpool(agent, name, {mode, tools}) forwards tools to the host create in all four languages. The helper names and the prompt are unchanged (the eval description's workpool line is untouched); the tool_schema('eval:helpers') entry gains one line. Only these contracts are new."
+		},
 		"13": {
 			"additions": [
 				"imports/extension/packages/senpi-codemode/src/config/unknown-settings.ts",
@@ -488,7 +509,11 @@
 				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation When a cell calls a host tool with arguments larger than the frame limit, then the call fails in the cell at once",
 				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation When a cell sends data shaped like the value markers, then the host receives it unchanged",
 				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation When a cell in a node child crashes while waiting on a host tool, then the cell settles with the crash at once",
-				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation When the host is killed with SIGKILL while a cell spins, then its process-mode kernel child is gone too"
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation When the host is killed with SIGKILL while a cell spins, then its process-mode kernel child is gone too",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation When a cell runs cat on a 4 MB file with fd 1 inherited, then the command succeeds and every byte arrives",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation When a cell writes 4 MB to fd 1 in one writeSync call, then the call writes it all and every byte arrives",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation When a blocked cell's child process prints 100 MiB through fd 1, then the kernel's memory stays flat and all of it arrives",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation When the host's parent is a subreaper and the host is killed while a cell spins, then the kernel child is gone too"
 			],
 			"reason": "Node 17: opt-in process-isolated JavaScript kernel (isolation.js: \"process\", worker default unchanged). The child runs worker-core over the framed subprocess transport (fd 0 in, a private dup of fd 1 out; fd 1 re-pointed at a pipe drained into text frames), with no inline fallback in process mode (a failed start is a capability-gap result naming the runtime). process-entry.js, process-worker.ts and process-memory-host.ts join the scoped census, plus the new contracts. No prompt or eval schema change."
 		},
@@ -526,6 +551,45 @@
 				"legacyContracts/test/js-kernel-shell-stop-bun.test.ts/Bun shell Stop cleans up when the shell exits before connecting"
 			],
 			"reason": "Lead decision A (2026-10-01), node 32: add event-ordered shell restart notice and preservation witnesses without changing default prompts, schemas, helpers, or native shell semantics."
+		},
+		"2718": {
+			"additions": [
+				"imports/extension/packages/senpi-codemode/src/kernels/shared/process-cpu.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/kernels/shared/process-cpu.ts",
+				"legacyContracts/test/py-kernel-startup.test.ts/Python startup progress keeps waiting for a cold interpreter that is silent in its imports but busy on the CPU",
+				"legacyContracts/test/py-kernel-startup.test.ts/Python startup progress fails a silent and idle interpreter after the guard, naming the stage it stopped in",
+				"legacyContracts/test/py-kernel-startup.test.ts/Python startup progress stops an interpreter that stays busy but never becomes ready at the startup ceiling, naming its stage",
+				"legacyContracts/test/py-kernel-startup.test.ts/Python startup progress keeps a starting interpreter alive while it writes output",
+				"legacyContracts/test/py-kernel-startup.test.ts/Python startup progress keeps a starting interpreter alive while it prints on stdout",
+				"legacyContracts/test/py-kernel-startup.test.ts/Python startup progress fails an interpreter that goes idle right after a stage change within one guard period",
+				"legacyContracts/test/py-kernel-startup.test.ts/Python startup progress retires a stalled interpreter with one SIGKILL to its process group, and never through the real process table",
+				"legacyContracts/test/py-kernel-startup.test.ts/Python startup progress falls back to killing the child itself when its process group is already gone"
+			],
+			"reason": "Python startup counts CPU use and output as progress, with an absolute ceiling (senpi#2718): a shared CPU reader module and four startup behaviour cases."
+		},
+		"2731": {
+			"reason": "senpi#2731: host calls from a Python cell carry a per-run host-minted secret, and the host gives them that run's kernel-tools capability (CellKernelTools, the #1754 scope); ReplaceableKernel forwards Python's kernel tools to its current instance; Python agent(tools=...).",
+			"additions": [
+				"imports/extension/packages/senpi-codemode/src/extension/cell-kernel-tools.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/extension/cell-kernel-tools.ts",
+				"legacyContracts/test/py-kernel-tools-bridge.test.ts/Given a Python cell that defined @tool add When the cell grants it through a host tool, then the host sees the cell's kernel tools and add runs back in the kernel",
+				"legacyContracts/test/py-kernel-tools-bridge.test.ts/Given a Python cell that defined @tool add When the cell calls agent(..., tools=[...]), then the grant reaches the host task tool with the cell's kernel tools",
+				"legacyContracts/test/py-kernel-tools-bridge.test.ts/Given a Python cell that defined @tool add When agent(tools=...) is given a single string, then it is refused with a typed error before reaching the host",
+				"legacyContracts/test/py-kernel-tools-bridge.test.ts/Given a Python cell that defined @tool add When a host call carries a secret no running cell holds, then it gets no kernel tools",
+				"legacyContracts/test/py-kernel-tools-bridge.test.ts/Given a Python cell that defined @tool add When a thread keeps a finished cell's context and calls the host later, then that call gets no kernel tools",
+				"legacyContracts/test/py-kernel-tools-bridge.test.ts/Given a Python cell that defined @tool add When a cell's host call names its own model-visible cell id instead of its run's secret, then it gets no kernel tools",
+				"legacyContracts/test/py-kernel-tools-bridge.test.ts/Given a Python cell that defined @tool add When a JavaScript cell and a Python cell run, then only the Python run is bound, under a secret that is not its cell id",
+				"legacyContracts/test/py-kernel-tools-bridge.test.ts/Given a Python cell that defined @tool add When a cell stashes its run's context and a later cell replays a host call in it, then that call gets no kernel tools",
+				"legacyContracts/test/py-kernel-tools-bridge.test.ts/Given a Python cell that defined @tool add When a Python cell names a JavaScript cell that is running right now, then it cannot reach that cell's tools",
+				"legacyContracts/test/kernel-tools-host-dispatch.test.ts/kernel tools on the real worker tool-call path Given the replaceable kernel a session holds for rb and jl when it is probed for kernel tools then it exposes none of the interpreter's stubs",
+				"legacyContracts/test/kernel-tools-host-dispatch.test.ts/kernel tools on the real worker tool-call path Given the replaceable kernel a session holds for py when its interpreter is replaced then kernel tools reach only the new instance"
+			],
+			"changes": [
+				{
+					"key": "legacyContracts/test/kernel-tools-host-dispatch.test.ts/kernel tools on the real worker tool-call path Given the replaceable kernel a session holds for py, rb and jl when it is probed for kernel tools then it exposes none of the interpreter's stubs",
+					"reason": "Python now has real kernel tools that a Python cell can grant (#2731), so py leaves this contract: the replaceable kernel forwards them to its current instance (new contract 'Given the replaceable kernel a session holds for py when its interpreter is replaced then kernel tools reach only the new instance'); the rb/jl case is the new contract 'Given the replaceable kernel a session holds for rb and jl ...'."
+				}
+			]
 		},
 		"senpi#2444": {
 			"additions": [
@@ -797,66 +861,6 @@
 				"legacyContracts/test/environments/py-environment.test.ts/Given an environment root's install lock When a live process on this host holds the lock, then a waiter enters only after it is released"
 			],
 			"reason": "Node 14 part 3: the Python environments library (versioned revisions published by an atomic pointer switch, per-root install lock, pip --target installer) and its contracts. Not wired into any cell yet, so no import-census, prompt or helper change."
-		},
-		"2718": {
-			"additions": [
-				"imports/extension/packages/senpi-codemode/src/kernels/shared/process-cpu.ts",
-				"imports/firstKernel/packages/senpi-codemode/src/kernels/shared/process-cpu.ts",
-				"legacyContracts/test/py-kernel-startup.test.ts/Python startup progress keeps waiting for a cold interpreter that is silent in its imports but busy on the CPU",
-				"legacyContracts/test/py-kernel-startup.test.ts/Python startup progress fails a silent and idle interpreter after the guard, naming the stage it stopped in",
-				"legacyContracts/test/py-kernel-startup.test.ts/Python startup progress stops an interpreter that stays busy but never becomes ready at the startup ceiling, naming its stage",
-				"legacyContracts/test/py-kernel-startup.test.ts/Python startup progress keeps a starting interpreter alive while it writes output",
-				"legacyContracts/test/py-kernel-startup.test.ts/Python startup progress keeps a starting interpreter alive while it prints on stdout",
-				"legacyContracts/test/py-kernel-startup.test.ts/Python startup progress fails an interpreter that goes idle right after a stage change within one guard period",
-				"legacyContracts/test/py-kernel-startup.test.ts/Python startup progress retires a stalled interpreter with one SIGKILL to its process group, and never through the real process table",
-				"legacyContracts/test/py-kernel-startup.test.ts/Python startup progress falls back to killing the child itself when its process group is already gone"
-			],
-			"reason": "Python startup counts CPU use and output as progress, with an absolute ceiling (senpi#2718): a shared CPU reader module and four startup behaviour cases."
-		},
-		"12": {
-			"additions": [
-				"legacyContracts/test/workpool-tools.test.ts/js workpool tools forwards tools unchanged to a host that validates with the real create schema",
-				"legacyContracts/test/workpool-tools.test.ts/js workpool tools never forwards an option the host does not know",
-				"legacyContracts/test/workpool-tools.test.ts/py workpool tools forwards tools unchanged to a host that validates with the real create schema",
-				"legacyContracts/test/workpool-tools.test.ts/py workpool tools never forwards an option the host does not know",
-				"legacyContracts/test/workpool-tools.test.ts/rb workpool tools forwards tools unchanged to a host that validates with the real create schema",
-				"legacyContracts/test/workpool-tools.test.ts/rb workpool tools never forwards an option the host does not know",
-				"legacyContracts/test/workpool-tools.test.ts/jl workpool tools forwards tools unchanged to a host that validates with the real create schema",
-				"legacyContracts/test/workpool-tools.test.ts/jl workpool tools never forwards an option the host does not know",
-				"legacyContracts/test/workpool-prelude.test.ts/js workpool prelude refuses tools given as a single string with a typed error, and posts nothing to the host",
-				"legacyContracts/test/workpool-prelude.test.ts/js workpool prelude forwards a list of tool names unchanged",
-				"legacyContracts/test/workpool-prelude.test.ts/py workpool prelude refuses tools given as a single string with a typed error, and posts nothing to the host",
-				"legacyContracts/test/workpool-prelude.test.ts/py workpool prelude forwards a list of tool names unchanged",
-				"legacyContracts/test/workpool-prelude.test.ts/rb workpool prelude refuses tools given as a single string with a typed error, and posts nothing to the host",
-				"legacyContracts/test/workpool-prelude.test.ts/rb workpool prelude forwards a list of tool names unchanged",
-				"legacyContracts/test/workpool-prelude.test.ts/jl workpool prelude refuses tools given as a single string with a typed error, and posts nothing to the host",
-				"legacyContracts/test/workpool-prelude.test.ts/jl workpool prelude forwards a list of tool names unchanged"
-			],
-			"reason": "Node 12: workpool(agent, name, {mode, tools}) forwards tools to the host create in all four languages. The helper names and the prompt are unchanged (the eval description's workpool line is untouched); the tool_schema('eval:helpers') entry gains one line. Only these contracts are new."
-		},
-		"2731": {
-			"reason": "senpi#2731: host calls from a Python cell carry a per-run host-minted secret, and the host gives them that run's kernel-tools capability (CellKernelTools, the #1754 scope); ReplaceableKernel forwards Python's kernel tools to its current instance; Python agent(tools=...).",
-			"additions": [
-				"imports/extension/packages/senpi-codemode/src/extension/cell-kernel-tools.ts",
-				"imports/firstKernel/packages/senpi-codemode/src/extension/cell-kernel-tools.ts",
-				"legacyContracts/test/py-kernel-tools-bridge.test.ts/Given a Python cell that defined @tool add When the cell grants it through a host tool, then the host sees the cell's kernel tools and add runs back in the kernel",
-				"legacyContracts/test/py-kernel-tools-bridge.test.ts/Given a Python cell that defined @tool add When the cell calls agent(..., tools=[...]), then the grant reaches the host task tool with the cell's kernel tools",
-				"legacyContracts/test/py-kernel-tools-bridge.test.ts/Given a Python cell that defined @tool add When agent(tools=...) is given a single string, then it is refused with a typed error before reaching the host",
-				"legacyContracts/test/py-kernel-tools-bridge.test.ts/Given a Python cell that defined @tool add When a host call carries a secret no running cell holds, then it gets no kernel tools",
-				"legacyContracts/test/py-kernel-tools-bridge.test.ts/Given a Python cell that defined @tool add When a thread keeps a finished cell's context and calls the host later, then that call gets no kernel tools",
-				"legacyContracts/test/py-kernel-tools-bridge.test.ts/Given a Python cell that defined @tool add When a cell's host call names its own model-visible cell id instead of its run's secret, then it gets no kernel tools",
-				"legacyContracts/test/py-kernel-tools-bridge.test.ts/Given a Python cell that defined @tool add When a JavaScript cell and a Python cell run, then only the Python run is bound, under a secret that is not its cell id",
-				"legacyContracts/test/py-kernel-tools-bridge.test.ts/Given a Python cell that defined @tool add When a cell stashes its run's context and a later cell replays a host call in it, then that call gets no kernel tools",
-				"legacyContracts/test/py-kernel-tools-bridge.test.ts/Given a Python cell that defined @tool add When a Python cell names a JavaScript cell that is running right now, then it cannot reach that cell's tools",
-				"legacyContracts/test/kernel-tools-host-dispatch.test.ts/kernel tools on the real worker tool-call path Given the replaceable kernel a session holds for rb and jl when it is probed for kernel tools then it exposes none of the interpreter's stubs",
-				"legacyContracts/test/kernel-tools-host-dispatch.test.ts/kernel tools on the real worker tool-call path Given the replaceable kernel a session holds for py when its interpreter is replaced then kernel tools reach only the new instance"
-			],
-			"changes": [
-				{
-					"key": "legacyContracts/test/kernel-tools-host-dispatch.test.ts/kernel tools on the real worker tool-call path Given the replaceable kernel a session holds for py, rb and jl when it is probed for kernel tools then it exposes none of the interpreter's stubs",
-					"reason": "Python now has real kernel tools that a Python cell can grant (#2731), so py leaves this contract: the replaceable kernel forwards them to its current instance (new contract 'Given the replaceable kernel a session holds for py when its interpreter is replaced then kernel tools reach only the new instance'); the rb/jl case is the new contract 'Given the replaceable kernel a session holds for rb and jl ...'."
-				}
-			]
 		},
 		"senpi#2700": {
 			"additions": [

@@ -526,6 +526,58 @@ jobs:
           '
         working-directory: packages/senpi-codemode
 
+  process-kernel:
+    name: Eval kernel process isolation (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+          cache: npm
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: "1.4.2"
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      # Process mode spawns its kernel child with bun on both platforms; a platform where the child cannot start
+      # (senpi#2706: a Linux spawn's stdout is a socket) fails here instead of shipping.
+      - name: Run the process-mode kernel suite
+        timeout-minutes: 12
+        run: npx vitest run test/js-process-kernel.test.ts --reporter=verbose --reporter=json --outputFile=vitest-process.json
+        working-directory: packages/senpi-codemode
+
+      - name: Require the process-mode suite to have executed, with no orphaned kernel child
+        if: always()
+        shell: bash
+        run: |
+          node -e '
+            const r = JSON.parse(require("fs").readFileSync("vitest-process.json", "utf8"));
+            const results = r.testResults.flatMap((file) => file.assertionResults);
+            const passed = results.filter((a) => a.status === "passed").length;
+            const failed = results.filter((a) => a.status === "failed").length;
+            const skipped = results.filter((a) => a.status !== "passed" && a.status !== "failed").length;
+            // Only the subreaper case is Linux-only.
+            const allowedSkips = process.platform === "linux" ? 0 : 1;
+            console.log("process-mode suite: passed=" + passed + " failed=" + failed + " skipped=" + skipped);
+            if (passed < 30 || failed !== 0 || skipped > allowedSkips) process.exit(1);
+          '
+          orphans=$(ps -eo pid,ppid,command | grep '[p]rocess-entry.js' | awk '$2 == 1' || true)
+          if [ -n "$orphans" ]; then echo "$orphans"; echo "::error::kernel children outlived the suite"; exit 1; fi
+        working-directory: packages/senpi-codemode
+
   python-kernel-windows:
     name: Python kernel cold startup (Windows)
     runs-on: windows-latest
