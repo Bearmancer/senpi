@@ -19,6 +19,26 @@
 
 - LOW: the `open_session` field list in `rpc-types.ts` and the capability list in `session-command-router.ts`.
 
+## 2026-10-04 - A generation record names its own build (#2698)
+
+### What changed
+
+- `host-daemon-registration.ts`: `HostRegistration` carries the `build` (engine version text and ordinal) of the process the record names, and `writeGenerationRecord` stamps that instead of `engineBuildIdentity()` of the writing process. With no `build` the record claims no engine version.
+- `host-successor.ts` `startSuccessor`: the record written at spawn (kept so `host gc` sees a successor that has not registered itself yet) carries no build; the record written once the successor owns the socket carries the `engineVersion` / `engineOrdinal` the successor reported on that socket.
+- `host-ensure-start.ts` and `interactive/session-control-registry.ts`: their own registrations pass `engineBuildIdentity()`, unchanged in effect.
+
+### Why
+
+- A handoff to a different build (an older desktop runtime taking over a newer idle host, or the reverse) recorded the new generation with the build of the process that ran the handoff, so `host status` `generations[]` showed the wrong engine version for exactly the case that list exists for.
+
+### Why an extension could not handle it
+
+- The record is written by the host lifecycle itself; no extension sees it.
+
+### Expected merge conflict zones
+
+- `host-successor.ts` (`startSuccessor`) and `host-daemon-registration.ts` (`HostRegistration`, `writeGenerationRecord`).
+
 ## 2026-10-03 - `continue_from_leaf` command and model prefill capability (senpi#1930)
 
 ### What changed

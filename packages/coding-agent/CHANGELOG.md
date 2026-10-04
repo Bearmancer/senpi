@@ -16,6 +16,7 @@
 
 ### Fixed
 
+- `host status` now reports the right engine version for a host generation started by a handoff to a different build: the generation's record names the build the new host reported, not the build of the process that ran the handoff ([#2698](https://github.com/code-yeongyu/senpi/issues/2698)).
 - Linux x64 and the other newly shipped targets get the native PTY backend for terminal sessions instead of the pipe fallback: releases now ship the native PTY prebuild for every supported target, and a release missing one fails. Thanks to [@Altairpaca](https://github.com/Altairpaca) ([#1193](https://github.com/code-yeongyu/senpi/issues/1193), [#1224](https://github.com/code-yeongyu/senpi/pull/1224)).
 - `auto` permission preset: a git revision argument that names an existing path, a dangling symlink included, is checked as a path, so `auto` asks for it; in print mode and the unbound SDK, a request `auto` or your rules still ask about is always refused with a reason ([#2688](https://github.com/code-yeongyu/senpi/pull/2688)).
 - A rate limit (429) or a server error (5xx) from the provider now shows as one retry banner with a countdown in the status line, as a dropped connection already did, instead of printing the provider's raw JSON on every retry; authentication, quota and billing failures still show in full ([#2652](https://github.com/code-yeongyu/senpi/issues/2652)).
