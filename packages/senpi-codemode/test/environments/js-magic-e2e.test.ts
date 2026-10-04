@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { existsSync, readdirSync, writeFileSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -103,10 +103,16 @@ describe.skipIf(!hasCommand("bun") || !hasCommand("npm"))("Given a JavaScript ev
 		const controller = new AbortController();
 		const installerStarted = Promise.withResolvers<void>();
 		const original = environments.install.bind(environments);
-		environments.install = (requested, signal, onOutput) => {
-			installerStarted.resolve();
-			return original(requested, signal, onOutput);
-		};
+		environments.install = (requested, signal, onOutput, installer) =>
+			original(
+				requested,
+				signal,
+				(stream, data) => {
+					installerStarted.resolve();
+					onOutput?.(stream, data);
+				},
+				installer,
+			);
 
 		const pending = run(`%npm add ${tarball}`, controller.signal);
 		await installerStarted.promise;
@@ -133,14 +139,24 @@ describe.skipIf(!hasCommand("bun") || !hasCommand("npm"))("Given a JavaScript ev
 		const tarball = await packFixture(fixtures, "senpi-close-probe", "1.0.0", probeSource);
 		const installStarted = Promise.withResolvers<{ readonly installing: Promise<unknown> }>();
 		const original = environments.install.bind(environments);
-		environments.install = (requested, signal, onOutput) => {
-			const installing = original(requested, signal, onOutput);
+		const installerOutput = Promise.withResolvers<void>();
+		environments.install = (requested, signal, onOutput, installer) => {
+			const installing = original(
+				requested,
+				signal,
+				(stream, data) => {
+					installerOutput.resolve();
+					onOutput?.(stream, data);
+				},
+				installer,
+			);
 			installStarted.resolve({ installing });
 			return installing;
 		};
 
 		const pending = run(`%npm add ${tarball}`).catch((error: unknown) => error);
 		const { installing } = await installStarted.promise;
+		await installerOutput.promise;
 		await dispose();
 		const outcome = await installing.then(
 			() => "published",
@@ -185,5 +201,63 @@ describe.skipIf(!hasCommand("bun") || !hasCommand("npm"))("Given a JavaScript ev
 
 		expect(textOf(refused)).toContain("environment_install_failed");
 		expect(textOf(refused)).toContain("package names cannot contain control characters");
+	}, 180_000);
+
+	it("When the worker crashes while an install runs, then the install is stopped and no revision is published", async () => {
+		const { root, fixtures, environments, run } = await session("npm");
+		const tarball = await packFixture(fixtures, "senpi-crash-probe", "1.0.0", probeSource);
+		const marker = join(root, "crash-now");
+		const original = environments.install.bind(environments);
+		environments.install = (requested, signal, onOutput, installer) =>
+			original(
+				requested,
+				signal,
+				(stream, data) => {
+					if (!existsSync(marker)) writeFileSync(marker, "");
+					onOutput?.(stream, data);
+				},
+				installer,
+			);
+		await run(
+			`import { existsSync } from "node:fs";\nconst crashTimer = setInterval(() => { if (existsSync(${JSON.stringify(marker)})) { clearInterval(crashTimer); throw new Error("stray timer"); } }, 5);\n"armed"`,
+		);
+
+		const install = await run(`%npm add ${tarball}`);
+		const base = join(root, "artifacts", "environments", "js", "test");
+
+		expect(install.details).toHaveProperty("isError", true);
+		expect(await readActiveRevision(base)).toBeUndefined();
+		expect(existsSync(base) ? readdirSync(base).filter((name) => /^rev-\d+$/.test(name)) : []).toEqual([]);
+	}, 180_000);
+
+	it("When the package is hoisted in a parent node_modules, then the install reports the conflict; an empty package directory does not", async () => {
+		const { root, project, fixtures, run } = await session("bun");
+		await mkdir(join(root, "node_modules", "senpi-hoisted"), { recursive: true });
+		await writeFile(
+			join(root, "node_modules", "senpi-hoisted", "package.json"),
+			JSON.stringify({ name: "senpi-hoisted", version: "9.9.9" }),
+		);
+		await mkdir(join(project, "node_modules", "senpi-empty"), { recursive: true });
+		const hoisted = await packFixture(fixtures, "senpi-hoisted", "1.0.0", probeSource);
+		const empty = await packFixture(fixtures, "senpi-empty", "1.0.0", probeSource);
+
+		const hoistedInstall = await run(`%bun add ${hoisted}`);
+		const emptyInstall = await run(`%bun add ${empty}`);
+
+		expect(textOf(hoistedInstall)).toContain("environment_resolution_conflict: senpi-hoisted");
+		expect(textOf(emptyInstall)).not.toContain("environment_resolution_conflict");
+	}, 180_000);
+
+	it("When %environment switches and a tarball outside the session directory is installed, then no absolute path reaches the cell", async () => {
+		const { root, fixtures, run } = await session("npm");
+		const tarball = await packFixture(fixtures, "senpi-path-probe", "1.0.0", probeSource);
+
+		const switched = await run("%environment managed");
+		const install = await run(`%npm add ${tarball}`);
+
+		for (const text of [textOf(switched), textOf(install)]) {
+			expect(text).not.toContain(root);
+			expect(text).not.toContain(fixtures);
+		}
 	}, 180_000);
 });

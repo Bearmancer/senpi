@@ -1,4 +1,5 @@
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { lstat, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -31,7 +32,7 @@ describe.skipIf(!hasCommand("bun") || !hasCommand("npm"))("Given JavaScript pack
 		expect(Object.keys(manifest.dependencies).sort()).toEqual(["senpi-left", "senpi-right"]);
 	}, 240_000);
 
-	it("When a revision holds an .npmrc with credentials, then the next revision keeps its registry settings and drops every credential", async () => {
+	it("When a revision holds an .npmrc with credentials in any form, then the next revision carries only the registry settings", async () => {
 		const { fixtures, environments, run } = await session("npm");
 		const first = await packFixture(fixtures, "senpi-first", "1.0.0", probe("first"));
 		const second = await packFixture(fixtures, "senpi-second", "1.0.0", probe("second"));
@@ -42,19 +43,40 @@ describe.skipIf(!hasCommand("bun") || !hasCommand("npm"))("Given JavaScript pack
 			[
 				"@acme:registry=https://registry.example.test/",
 				"//registry.example.test/:_authToken=secret-token",
+				'"//registry.example.test/:_authToken"=secret-quoted',
 				"_auth=c2VjcmV0",
-				"//registry.example.test/:_password=c2VjcmV0",
+				"key=secret-inline-key",
 				"strict-ssl=true",
-				"",
-			].join("\n"),
+			].join("\r\n") + "\r//cr.example.test/:_authToken=secret-cr-only\r",
+		);
+		await writeFile(
+			join(firstRoot, "bunfig.toml"),
+			'[install.registry]\nurl = "https://registry.example.test/"\ntoken = "secret-bunfig"\n',
 		);
 
 		await run(`%npm add ${second}`);
-		const carried = await readFile(join(environments.packageRoot ?? "", ".npmrc"), "utf8");
+		const secondRoot = environments.packageRoot ?? "";
+		const carried = await readFile(join(secondRoot, ".npmrc"), "utf8");
 
-		expect(carried).toContain("@acme:registry=https://registry.example.test/");
-		expect(carried).toContain("strict-ssl=true");
-		expect(carried).not.toContain("secret");
-		expect(carried).not.toMatch(/_auth|_password/);
+		expect(carried).toBe("@acme:registry=https://registry.example.test/\nstrict-ssl=true\n");
+		expect(existsSync(join(secondRoot, "bunfig.toml"))).toBe(false);
+	}, 240_000);
+
+	it("When a revision's .npmrc is a symlink to a real config file, then that file stays byte-identical and the next revision has a regular file", async () => {
+		const { root, fixtures, environments, run } = await session("npm");
+		const first = await packFixture(fixtures, "senpi-link-first", "1.0.0", probe("first"));
+		const second = await packFixture(fixtures, "senpi-link-second", "1.0.0", probe("second"));
+		await run(`%npm add ${first}`);
+		const realConfig = join(root, "real.npmrc");
+		const original = "registry=https://registry.example.test/\n//registry.example.test/:_authToken=keep-me\n";
+		await writeFile(realConfig, original);
+		await symlink(realConfig, join(environments.packageRoot ?? "", ".npmrc"));
+
+		await run(`%npm add ${second}`);
+		const carriedPath = join(environments.packageRoot ?? "", ".npmrc");
+
+		expect(await readFile(realConfig, "utf8")).toBe(original);
+		expect((await lstat(carriedPath)).isSymbolicLink()).toBe(false);
+		expect(await readFile(carriedPath, "utf8")).toBe("registry=https://registry.example.test/\n");
 	}, 240_000);
 });

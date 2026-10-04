@@ -37,8 +37,9 @@ export function planMagicCell(
 		return {
 			kind: "host",
 			executor: async () => {
-				const root = await environments.setMode(mode);
-				return { ok: true, valueRepr: `environment: ${mode} (${root})` };
+				await environments.setMode(mode);
+				const where = mode === "project" ? "the session directory" : "this session's managed revisions";
+				return { ok: true, valueRepr: `environment: ${mode} (${where})` };
 			},
 		};
 	}
@@ -82,8 +83,9 @@ function planJsMagic(
 		return {
 			kind: "host",
 			executor: async () => {
-				const root = await environments.setMode(mode);
-				return { ok: true, valueRepr: `environment: ${mode} (${root})` };
+				await environments.setMode(mode);
+				const where = mode === "project" ? "the session directory" : "this session's managed revisions";
+				return { ok: true, valueRepr: `environment: ${mode} (${where})` };
 			},
 		};
 	}

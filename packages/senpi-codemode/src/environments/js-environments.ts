@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import type { ResolvedCodemodeSettings } from "../config/settings.ts";
 import { withRootLock } from "./install-lock.ts";
 import {
@@ -94,7 +94,8 @@ export class JsEnvironments {
 		const { revision } = await publishNextRevision(
 			this.#managedBase(),
 			async (staging) => {
-				await dropNpmrcCredentials(staging);
+				await carryNpmrcSettings(staging);
+				await rm(join(staging, "bunfig.toml"), { force: true });
 				const before = await dependencyNames(staging);
 				await run(staging);
 				added = (await dependencyNames(staging)).filter((name) => !before.includes(name));
@@ -102,7 +103,7 @@ export class JsEnvironments {
 			signal,
 		);
 		this.#packageRoot = revision.dir;
-		const shadowed = added.filter((name) => existsSync(join(this.#options.cwd, "node_modules", name)));
+		const shadowed = added.filter((name) => projectHasPackage(this.#options.cwd, name));
 		return { installer, mode: "managed", revision: revision.number, added, shadowed };
 	}
 
@@ -124,21 +125,40 @@ async function dependencyNames(root: string): Promise<string[]> {
 	}
 }
 
-const NPMRC_CREDENTIAL =
-	/^\s*(?:\/\/[^\s=]*:)?(?:_authToken|_auth|_password|username|password|email|certfile|keyfile)\s*=/i;
+const NPMRC_CARRIED_KEY = /^(?:registry|@[^\s=:/]+:registry|strict-ssl|ca|cafile)$/;
 
 /**
- * A revision carries its `.npmrc` forward, so registry and scope settings keep working; credentials never do: any auth
- * line (global or `//host/:` scoped) is dropped before the next revision is built.
+ * A revision carries forward only the registry settings of its `.npmrc`: `registry`, `@scope:registry`, `strict-ssl`,
+ * `ca` and `cafile`. Every other key, credentials included, is dropped by default, and the file is rewritten as a
+ * regular file: a symlinked `.npmrc` is replaced, never written through, so the file it pointed at stays untouched.
  */
-async function dropNpmrcCredentials(root: string): Promise<void> {
+async function carryNpmrcSettings(root: string): Promise<void> {
 	const path = join(root, ".npmrc");
 	let text: string;
 	try {
 		text = await readFile(path, "utf8");
 	} catch {
+		await rm(path, { force: true });
 		return;
 	}
-	const kept = text.split(/\r?\n/).filter((line) => !NPMRC_CREDENTIAL.test(line));
-	if (kept.length !== text.split(/\r?\n/).length) await writeFile(path, kept.join("\n"), { mode: 0o600 });
+	const kept = text
+		.split(/\r\n|\r|\n/)
+		.map((line) => line.trim())
+		.filter((line) => {
+			const key = line.split("=", 1)[0]?.trim() ?? "";
+			return line.includes("=") && NPMRC_CARRIED_KEY.test(key);
+		});
+	await rm(path, { force: true });
+	if (kept.length > 0) await writeFile(path, `${kept.join("\n")}\n`, { mode: 0o600, flag: "wx" });
+}
+
+/**
+ * Whether a bare import of `name` resolves from the session directory first, the way the kernel resolves it: the
+ * nearest `node_modules/<name>` with a `package.json`, walking up through parent directories (hoisted monorepo layouts).
+ */
+function projectHasPackage(cwd: string, name: string): boolean {
+	for (let directory = cwd; ; directory = dirname(directory)) {
+		if (existsSync(join(directory, "node_modules", name, "package.json"))) return true;
+		if (dirname(directory) === directory) return false;
+	}
 }

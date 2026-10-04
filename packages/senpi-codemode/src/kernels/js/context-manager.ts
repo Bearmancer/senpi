@@ -1,12 +1,10 @@
-// allow: SIZE_OK — one persistent JavaScript lifecycle state machine owns the queue, the worker slot, host entries and recovery.
 import type { HostToKernelMessage, KernelToHostMessage } from "../../bridge/protocol.ts";
-import { CHILD_LIFECYCLE_OP, INTERRUPT_ACK_OP } from "../../bridge/reserved.ts";
-import type { HostCellExecutor, KernelInterruptHandle } from "../../tool/types.ts";
-import { inputAtStart } from "../shared/cell-source-at-start.ts";
-import { restartNotice } from "../shared/kernel-death.ts";
+import type { KernelInterruptHandle } from "../../tool/types.ts";
 import { KernelToolHostPump } from "../shared/kernel-tools-pump.ts";
 import { ActiveCellControl } from "./active-cell-control.ts";
-import { HostEntries, refusedEntry } from "./host-entries.ts";
+import { dispatchCell } from "./cell-dispatch.ts";
+import { consumeControlFrame } from "./control-frames.ts";
+import { HostEntries } from "./host-entries.ts";
 import { DEFAULT_INTERRUPT_BOUNDS, JS_INTERRUPT_GRACE_MS, type WorkerRetirement } from "./interrupt-bounds.ts";
 import {
 	assertJavaScriptKernelOpen,
@@ -14,10 +12,10 @@ import {
 	type JavaScriptRunInput,
 	type LifecycleState,
 	type ResultMessage,
-	resolveKernelToolNameSource,
 	type ToolCallMessage,
 } from "./kernel-contract.ts";
-import { type JavaScriptMemoryReading, KernelMemoryBridge } from "./kernel-memory-bridge.ts";
+import { JavaScriptKernelMemory } from "./kernel-memory.ts";
+import type { JavaScriptMemoryReading } from "./kernel-memory-bridge.ts";
 import { kernelToolError } from "./kernel-tools-errors.ts";
 import type {
 	KernelToolsDescribeResult,
@@ -25,11 +23,9 @@ import type {
 	KernelToolsInvokeRequest,
 } from "./kernel-tools-types.ts";
 import { type JavaScriptKernelOptions, LocalModuleLoader } from "./local-module-loader.ts";
-import { JavaScriptProcessMemoryHost } from "./process-memory-host.ts";
 import { JavaScriptRunQueue, type PendingJavaScriptRun } from "./run-queue.ts";
 import { ToolCallQueue } from "./tool-call-queue.ts";
 import { WorkerChildren } from "./worker-children.ts";
-import { crashedResult } from "./worker-host.ts";
 import { WorkerRecovery } from "./worker-recovery.ts";
 import { WorkerSlot } from "./worker-slot.ts";
 
@@ -39,7 +35,15 @@ export type { JavaScriptKernelOptions } from "./local-module-loader.ts";
 export { type JavaScriptWorkerEntryUrlOptions, resolveJsWorkerEntryUrl } from "./worker-startup.ts";
 
 export class JavaScriptKernel {
-	readonly #hostEntries = new HostEntries<PendingJavaScriptRun>();
+	readonly #hostEntries = new HostEntries<PendingJavaScriptRun>({
+		emit: (run, message) => (run.input.onMessage ?? this.#options.onMessage)?.(message),
+		settle: (run, result) => {
+			if (!this.#runs.releaseActive(run)) return;
+			this.#runs.settle(run, result);
+			this.#startNext();
+		},
+		durationMs: (run) => this.#runs.durationMs(run, performance.now()),
+	});
 	readonly #options: JavaScriptKernelOptions;
 	readonly #moduleLoader: LocalModuleLoader;
 	readonly #slot: WorkerSlot;
@@ -53,9 +57,7 @@ export class JavaScriptKernel {
 	);
 	readonly #toolCalls = new ToolCallQueue();
 	readonly #children: WorkerChildren;
-	readonly #memory: KernelMemoryBridge;
-	readonly #processMemory: JavaScriptProcessMemoryHost | null;
-	#processRestartNotice: string | null = null;
+	readonly #memory: JavaScriptKernelMemory;
 	readonly #activeCell: ActiveCellControl;
 	readonly #recovery = new WorkerRecovery({
 		runs: this.#runs,
@@ -74,15 +76,7 @@ export class JavaScriptKernel {
 			recover: () => void this.#recovery.recover(() => Promise.resolve()),
 			clearToolCalls: () => this.#toolCalls.clear(),
 		});
-		this.#memory = new KernelMemoryBridge(
-			options.isolation === "process" ? undefined : options.memory,
-			options.onMemoryCollected,
-		);
-		this.#processMemory =
-			options.isolation === "process" && options.processMemory !== undefined
-				? new JavaScriptProcessMemoryHost(options.processMemory.thresholds, options.processMemory.readFootprint)
-				: null;
-		this.#processRestartNotice = null;
+		this.#memory = new JavaScriptKernelMemory(options, () => this.#slot.processPid);
 		this.#children = new WorkerChildren(options.collectOrphanedChildren);
 		this.#moduleLoader = new LocalModuleLoader(options);
 		this.#slot = new WorkerSlot(options, {
@@ -96,21 +90,20 @@ export class JavaScriptKernel {
 		return this.#slot.mode;
 	}
 
-	/** The last heap reading the worker sent (a result, an idle collection, a query); none before the first. */
+	/** The kernel process's pid in process mode; none in worker mode or before it starts. */
 	get processPid(): number | undefined {
 		return this.#slot.processPid;
 	}
 
+	/** The last memory reading (a result, an idle collection, a query); none before the first. */
 	get lastLiveBytes(): number | undefined {
-		if (this.#processMemory !== null) return this.#processMemory.lastLiveBytes(() => this.#slot.processPid);
 		return this.#memory.lastLiveBytes;
 	}
 
 	/** A heap reading taken between cells without running one; nothing when no worker is live to ask. */
 	async queryMemory(): Promise<JavaScriptMemoryReading | undefined> {
-		if (this.#processMemory !== null) return this.#processMemory.query(() => this.#slot.processPid);
-		if (this.#lifecycle !== "open" || !this.#slot.present || this.#slot.startingUp) return undefined;
-		return await this.#memory.query((message) => this.#slot.postMessage(message));
+		const ready = this.#lifecycle === "open" && this.#slot.present && !this.#slot.startingUp;
+		return await this.#memory.query(ready ? (message) => this.#slot.postMessage(message) : undefined);
 	}
 
 	get kernelToolEvents(): EventTarget {
@@ -185,10 +178,8 @@ export class JavaScriptKernel {
 		if (this.#closePromise) return await this.#closePromise;
 		this.#slot.postMessage({ type: "close" });
 		this.#lifecycle = "closing";
-		const hostEntriesStopped = this.#hostEntries.stopAll(
-			"JS kernel closed",
-			this.#options.interruptBounds?.graceMs ?? JS_INTERRUPT_GRACE_MS,
-		);
+		const graceMs = this.#options.interruptBounds?.graceMs ?? JS_INTERRUPT_GRACE_MS;
+		const hostEntriesStopped = this.#hostEntries.stopAll("JS kernel closed", graceMs);
 		this.#runs.settleAll("JS kernel closed");
 		this.#kernelTools.rejectAll(kernelToolError("kernel_tool_stale", "JS kernel closed"));
 		this.#toolCalls.clear();
@@ -229,32 +220,13 @@ export class JavaScriptKernel {
 		if (this.#lifecycle !== "open" || this.#runs.active || !this.#slot.present) return;
 		const next = this.#runs.startNext(performance.now());
 		if (!next) return;
-		const input = inputAtStart(next.input);
-		if ("refused" in input) {
-			this.#runHostEntry(next, refusedEntry(input.refused));
-			return;
-		}
-		if (input.host !== undefined) {
-			this.#runHostEntry(next, input.host);
+		const dispatch = dispatchCell(next.input, this.#moduleLoader, this.#options);
+		if (dispatch.kind === "host") {
+			this.#hostEntries.start(next, dispatch.host);
 			return;
 		}
 		this.#activeCell.arm(next);
-		this.#slot.postMessage({
-			type: "kernel-tools-names",
-			hostToolNames: resolveKernelToolNameSource(this.#options.hostToolNames),
-			foreignLanguageNames: resolveKernelToolNameSource(this.#options.foreignLanguageNames),
-		});
-		this.#slot.postMessage({
-			type: "run",
-			cellId: next.input.cellId,
-			code: this.#moduleLoader.prepareCell(
-				input.code,
-				input.kernelPreludes,
-				input.sourceFile,
-				input.packageRoot?.(),
-			),
-			timeoutMs: next.input.timeoutMs,
-		});
+		for (const frame of dispatch.frames) this.#slot.postMessage(frame);
 	}
 
 	async #restartAfterStop(): Promise<void> {
@@ -263,15 +235,7 @@ export class JavaScriptKernel {
 
 	#handleMessage(message: KernelToHostMessage): void {
 		if (this.#kernelTools.consume(message) && message.type !== "tool-call") return;
-		if (this.#memory.consume(message)) return;
-		if (message.type === "status" && message.event.op === INTERRUPT_ACK_OP) {
-			this.#runs.acknowledgeInterrupt(message.event);
-			return;
-		}
-		if (message.type === "status" && message.event.op === CHILD_LIFECYCLE_OP) {
-			this.#children.track(message.event);
-			return;
-		}
+		if (consumeControlFrame(message, { memory: this.#memory, runs: this.#runs, children: this.#children })) return;
 		(this.#runs.active?.input.onMessage ?? this.#options.onMessage)?.(message);
 		if (message.type === "tool-call") {
 			this.#toolCalls.push(message);
@@ -283,36 +247,11 @@ export class JavaScriptKernel {
 		this.#activeCell.disarm();
 		this.#runs.releaseActive(active);
 		active.settledByWorker = true;
-		let settled =
-			this.#processMemory === null
-				? this.#memory.settled(message)
-				: this.#processMemory.settled(message, () => this.#slot.processPid);
-		if (this.#processRestartNotice !== null && this.#processMemory === null) {
-			const notice = this.#processRestartNotice;
-			this.#processRestartNotice = null;
-			settled = { ...settled, notice, kernelState: "restarted" };
-		}
+		const settled = this.#memory.settled(message);
 		this.#runs.settle(active, active.interruptResult ?? settled);
 		this.#startNext();
 		// A kernel over its memory ceiling restarts only once no cell is running or queued on it.
 		if (this.#memory.claimRecycle(!this.#runs.active && !this.#runs.hasWaiting)) void this.#restartAfterStop();
-		if (this.#processMemory?.claimRecycle(!this.#runs.active && !this.#runs.hasWaiting) === true)
-			void this.#restartAfterStop();
-	}
-
-	// A host-executed entry (an install magic) holds the queue slot like a cell but never reaches the worker,
-	// so a cancel aborts the host work and the worker's state is untouched.
-	#runHostEntry(run: PendingJavaScriptRun, host: HostCellExecutor): void {
-		this.#hostEntries.start(run, run.input.cellId, host, {
-			emit: (message) => (run.input.onMessage ?? this.#options.onMessage)?.(message),
-			settle: (result) => {
-				if (!this.#runs.releaseActive(run)) return;
-				this.#runs.settle(run, result);
-				this.#startNext();
-			},
-			durationMs: () => this.#runs.durationMs(run, performance.now()),
-			settleAfterAbort: true,
-		});
 	}
 
 	#handleCrash(error: Error): void {
@@ -320,21 +259,12 @@ export class JavaScriptKernel {
 		if (!active && this.#slot.startingUp) return;
 		this.#activeCell.disarm();
 		this.#kernelTools.rejectAll(kernelToolError("kernel_tool_stale", error.message));
-		this.#memory.workerLost(error);
-		this.#processMemory?.workerLost();
-		if (active) {
-			this.#runs.releaseActive(active);
-			this.#runs.settle(
-				active,
-				crashedResult(active.input.cellId, error, this.#runs.durationMs(active, performance.now())),
-			);
+		this.#memory.crashed(error);
+		// A crash mid-install stops the install (process group killed, nothing published); it settles itself once stopped.
+		if (active && !this.#hostEntries.abort(active, `JavaScript worker crashed: ${error.message}`)) {
+			this.#runs.settleCrashed(active, error);
 		}
 		this.#toolCalls.clear();
-		if (this.#processMemory === null) {
-			this.#processRestartNotice = restartNotice("js", error.message);
-		} else {
-			this.#processMemory.markRestarted(error);
-		}
 		void this.#restartAfterStop();
 	}
 

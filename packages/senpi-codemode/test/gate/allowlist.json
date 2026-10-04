@@ -357,7 +357,14 @@
 				"legacyContracts/test/environments/js-magic-e2e.test.ts/Given a JavaScript eval session When %bun add names a package directory relative to the session directory, then it installs as %npm add would",
 				"legacyContracts/test/environments/js-magic-e2e.test.ts/Given a JavaScript eval session When a package name carries a control character, then the cell is refused with an environment error before any installer runs",
 				"legacyContracts/test/environments/js-revision-isolation-e2e.test.ts/Given JavaScript package revisions When two sessions sharing one managed root install at the same time, then each install lands in its own revision and both packages survive",
-				"legacyContracts/test/environments/js-revision-isolation-e2e.test.ts/Given JavaScript package revisions When a revision holds an .npmrc with credentials, then the next revision keeps its registry settings and drops every credential"
+				"legacyContracts/test/environments/js-revision-isolation-e2e.test.ts/Given JavaScript package revisions When a revision holds an .npmrc with credentials in any form, then the next revision carries only the registry settings",
+				"legacyContracts/test/environments/js-revision-isolation-e2e.test.ts/Given JavaScript package revisions When a revision's .npmrc is a symlink to a real config file, then that file stays byte-identical and the next revision has a regular file",
+				"legacyContracts/test/environments/js-magic-e2e.test.ts/Given a JavaScript eval session When the worker crashes while an install runs, then the install is stopped and no revision is published",
+				"legacyContracts/test/environments/js-magic-e2e.test.ts/Given a JavaScript eval session When the package is hoisted in a parent node_modules, then the install reports the conflict; an empty package directory does not",
+				"legacyContracts/test/environments/js-magic-e2e.test.ts/Given a JavaScript eval session When %environment switches and a tarball outside the session directory is installed, then no absolute path reaches the cell",
+				"legacyContracts/test/environments/js-import-resolution-e2e.test.ts/Given a JavaScript cell importing a package by bare name When a subpath pattern match climbs out with .., then the import is refused like Node refuses it",
+				"imports/extension/packages/senpi-codemode/src/kernels/js/cell-dispatch.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/kernels/js/cell-dispatch.ts"
 			],
 			"reason": "Node 15: %bun add / %npm add install into a per-session managed JavaScript environment (bare-import fallback root on the run input, host entries in the JS kernel queue); the two environment modules join the scoped census, plus the new contracts. No prompt or eval schema change."
 		},
@@ -408,7 +415,11 @@
 				"imports/extension/packages/senpi-codemode/src/kernels/js/process-memory-host.ts",
 				"imports/firstKernel/packages/senpi-codemode/src/kernels/js/process-memory-host.ts",
 				"imports/extension/packages/senpi-codemode/src/kernels/js/process-entry.js",
-				"imports/firstKernel/packages/senpi-codemode/src/kernels/js/process-entry.js"
+				"imports/firstKernel/packages/senpi-codemode/src/kernels/js/process-entry.js",
+				"imports/extension/packages/senpi-codemode/src/kernels/js/kernel-memory.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/kernels/js/kernel-memory.ts",
+				"imports/extension/packages/senpi-codemode/src/kernels/js/control-frames.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/kernels/js/control-frames.ts"
 			],
 			"reason": "Node 17: opt-in process-isolated JavaScript kernel (isolation.js: \"process\", worker default unchanged). The child runs worker-core over the framed subprocess transport (fd 0 in, a private dup of fd 1 out; fd 1 re-pointed at a pipe drained into text frames), with no inline fallback in process mode (a failed start is a capability-gap result naming the runtime). process-entry.js, process-worker.ts and process-memory-host.ts join the scoped census, plus the new contracts. No prompt or eval schema change."
 		},

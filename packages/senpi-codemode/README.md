@@ -150,18 +150,19 @@ artifacts directory, never into the project's `package.json` or `node_modules`. 
 installs are serialized and each revision carries the packages installed before it.
 A bare import resolves from the session directory's `node_modules` first and then from the
 active revision, using each package's `exports` for `import` (ESM-only packages load), so the
-project's own packages still win; Senpi's own dependencies are never what a cell gets. When a
+project's own packages still win, and both win over Senpi's own dependencies (a package neither has may still load from Senpi's install). When a
 newly added package is also in the project's `node_modules`, the result says
 `environment_resolution_conflict` because the project copy resolves first.
 
 Each install builds a new revision that carries the previous one forward (its `package.json`,
-lockfile and `.npmrc`, minus every credential line such as `_authToken` or `//host/:_auth`)
+lockfile, and from `.npmrc` only `registry`, `@scope:registry`, `strict-ssl`, `ca` and `cafile`, rewritten as a regular file; credentials and every other key are dropped, and `bunfig.toml` is not carried)
 and is published only when the installer succeeds; a failed or cancelled install, or one still
 running when the session closes, leaves the previous revision active. Lifecycle scripts never run
 (`--ignore-scripts`), installer flags are refused because the host picks the destination, and a
 path-like package (`./pkg`, `file:../pkg`) is a path from the session directory. Package names
-are split on whitespace; quoting is not supported. Error text names the session directory as
-`<cwd>`, the revision as `<root>` and the home directory as `~`. `%environment project` installs
+are split on whitespace; quoting is not supported. Error and installer text names the session directory as
+`<cwd>`, the revision as `<root>`, the temp directory as `<tmp>`, the home directory as `~`, and an
+absolute package path by its file name only. `%environment project` installs
 into the session directory itself instead.
 
 ### Python packages

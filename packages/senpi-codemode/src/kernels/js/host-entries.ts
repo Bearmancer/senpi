@@ -1,24 +1,34 @@
+import type { KernelToHostMessage } from "../../bridge/protocol.ts";
 import type { HostCellExecutor } from "../../tool/types.ts";
 import { runHostCell } from "../shared/host-cell.ts";
 import type { ResultMessage } from "./kernel-contract.ts";
 
+export interface HostEntryKernel<Run> {
+	emit(run: Run, message: KernelToHostMessage): void;
+	settle(run: Run, result: ResultMessage): void;
+	durationMs(run: Run): number;
+}
+
 /** The host entries (installs) a JavaScript kernel is running: started per queue slot, stopped by interrupt and close. */
-export class HostEntries<Run> {
+export class HostEntries<Run extends { readonly input: { readonly cellId: string } }> {
 	readonly #aborts = new Map<Run, AbortController>();
 	readonly #done = new Map<Run, Promise<unknown>>();
+	readonly #kernel: HostEntryKernel<Run>;
 
-	start(
-		run: Run,
-		cellId: string,
-		host: HostCellExecutor,
-		io: Parameters<typeof runHostCell>[2] & { readonly settle: (result: ResultMessage) => void },
-	): void {
-		const entry = runHostCell(cellId, host, {
-			...io,
+	constructor(kernel: HostEntryKernel<Run>) {
+		this.#kernel = kernel;
+	}
+
+	/** Runs `host` for `run`'s queue slot; it holds the slot like a cell but never reaches the worker. */
+	start(run: Run, host: HostCellExecutor): void {
+		const entry = runHostCell(run.input.cellId, host, {
+			emit: (message) => this.#kernel.emit(run, message),
 			settle: (result) => {
 				this.#aborts.delete(run);
-				io.settle(result);
+				this.#kernel.settle(run, result);
 			},
+			durationMs: () => this.#kernel.durationMs(run),
+			settleAfterAbort: true,
 		});
 		this.#aborts.set(run, entry.abort);
 		this.#done.set(run, entry.done);
