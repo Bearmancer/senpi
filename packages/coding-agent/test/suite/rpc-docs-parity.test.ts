@@ -15,7 +15,7 @@ const UNDOCUMENTED: Record<string, string> = {
 	// Described in prose (daemon handshake, client capabilities, extensions, OAuth) but with no
 	// per-command block a reader can jump to.
 	get_protocol_info: "daemon handshake; described in the daemon sections",
-	open_session: "daemon attach; described in the daemon sections",
+	open_session: "daemon session open; described in the daemon sections",
 	close_session: "daemon detach; described in the daemon sections",
 	list_sessions: "daemon listing; described in the daemon sections",
 	set_client_info: "capability negotiation; described under `### Client capabilities`",

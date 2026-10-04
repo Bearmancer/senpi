@@ -46,10 +46,9 @@ function hostMagicOf(language: EvalLanguage, line: string): HostMagic | undefine
  */
 export function parseMagicCell(language: EvalLanguage, code: string): MagicCell | undefined {
 	const comment = COMMENT_PREFIX[language];
-	const raw = code.split("\n");
-	const lines = (language === "py" ? joinContinuations(raw) : raw).filter(
-		(line) => line.trim() !== "" && (comment === undefined || !line.trim().startsWith(comment)),
-	);
+	// Comment lines go before Python's backslash continuations are joined: Python never continues a comment line.
+	const raw = code.split("\n").filter((line) => comment === undefined || !line.trim().startsWith(comment));
+	const lines = (language === "py" ? joinContinuations(raw) : raw).filter((line) => line.trim() !== "");
 	const first = lines[0] ?? "";
 	const magic = hostMagicOf(language, first);
 	if (magic === undefined) return undefined;
