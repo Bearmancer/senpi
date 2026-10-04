@@ -490,6 +490,46 @@
 				"legacyContracts/test/kernel-tools-defined-undefine.test.ts/Given a JavaScript kernel with kernel tools registering a kernel tool named undefine is refused with reserved_tool_name, by alias or by function name"
 			],
 			"reason": "Node 11 part 1: tool.defined()/tool.undefine() and the metadata.name alias in the JavaScript kernel. These are tool-namespace members, not top-level helpers, so the helper census and the prompt are unchanged; only these contracts are new."
+		},
+		"11b": {
+			"additions": [
+				"legacyContracts/test/eval-virtual-kernel-tools-schema.test.ts/tool_schema('eval:kernel-tools') documents @tool, tool.defined()/undefine(), the inference rules and grant staleness",
+				"legacyContracts/test/eval-virtual-kernel-tools-schema.test.ts/tool_schema('eval:kernel-tools') is not listed under an unrelated name",
+				"legacyContracts/test/kernel-tools-unavailable.test.ts/rb/jl kernel tools returns tools_unavailable from the Ruby and Julia kernel class",
+				"imports/extension/packages/senpi-codemode/src/kernels/py/kernel-tools-host.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/kernels/py/kernel-tools-host.ts",
+				"legacyContracts/test/py-kernel-tools.test.ts/Python kernel tools (@tool) Given @tool def add(a: int, b: int = 1) -> int, describe returns the inferred schema and invoking {a: 2} returns 3",
+				"legacyContracts/test/py-kernel-tools.test.ts/Python kernel tools (@tool) with `from __future__ import annotations`, string annotations resolve through the function's globals",
+				"legacyContracts/test/py-kernel-tools.test.ts/Python kernel tools (@tool) an annotation that can't be resolved is refused with invalid_tool_definition naming it, and nothing registers",
+				"legacyContracts/test/py-kernel-tools.test.ts/Python kernel tools (@tool) positional-only parameters are refused with invalid_tool_definition and nothing registers",
+				"legacyContracts/test/py-kernel-tools.test.ts/Python kernel tools (@tool) registering a kernel tool named defined is refused with reserved_tool_name",
+				"legacyContracts/test/py-kernel-tools.test.ts/Python kernel tools (@tool) registering a kernel tool named undefine is refused with reserved_tool_name",
+				"legacyContracts/test/py-kernel-tools.test.ts/Python kernel tools (@tool) tool.defined() lists names sorted and tool.undefine() removes one; describe then reports it missing",
+				"legacyContracts/test/py-kernel-tools.test.ts/Python kernel tools (@tool) python-tool-callback-during-parent-wait: the parent parked in wait() serves a callback that does a scoped host read; both finish and the FIFO doesn't move",
+				"legacyContracts/test/py-kernel-tools.test.ts/Python kernel tools (@tool) a callback's host call outside its scope is refused with kernel_tool_host_denied and never reaches the host",
+				"legacyContracts/test/py-kernel-tools.test.ts/Python kernel tools (@tool) a cell busy in pure computation is not interrupted: a callback that arrives mid-loop runs only after the cell ends",
+				"legacyContracts/test/py-kernel-tools.test.ts/Python kernel tools (@tool) nested host calls: the parent's host call, a callback's own host call and a second callback finish without deadlock, in park order",
+				"legacyContracts/test/py-kernel-tools.test.ts/Python kernel tools (@tool) cancellation during a callback parked in a host call: the reply says so explicitly, the callback settles once, and a queued cell runs once",
+				"legacyContracts/test/py-kernel-tools.test.ts/Python kernel tools (@tool) a sync callback cancelled mid-computation finishes, and its late result is dropped with an explicit reply",
+				"legacyContracts/test/py-kernel-tools.test.ts/Python kernel tools (@tool) kernel-tool-reset-revokes-child-grant: a descriptor taken before a reset is kernel_tool_stale after it, the new definition never satisfies it, and queued cells run once",
+				"legacyContracts/test/py-kernel-tools.test.ts/Python kernel tools (@tool) a reset while a callback is mid-flight ends it as kernel_tool_stale and leaves no thread or token behind",
+				"legacyContracts/test/py-kernel-tools.test.ts/Python kernel tools (@tool) an awaited future from the parent cell's loop fails fast with kernel_tool_loop_mismatch",
+				"legacyContracts/test/py-kernel-tools.test.ts/Python kernel tools (@tool) a tool's printed text goes to its own reply, never into the parent cell's output",
+				"legacyContracts/test/py-kernel-tools.test.ts/Python kernel tools inside parallel() and pipeline() a callback whose parallel() worker is parked in a host call lets a second callback run",
+				"legacyContracts/test/py-kernel-tools.test.ts/Python kernel tools inside parallel() and pipeline() a parallel() worker's host call is held to the calling tool's scope",
+				"legacyContracts/test/py-kernel-tools.test.ts/Python kernel tools inside parallel() and pipeline() text a pipeline() worker prints goes to its tool's reply, not to a parked cell",
+				"legacyContracts/test/py-kernel-tools.test.ts/Python kernel tool descriptors after the definition changes a descriptor taken before the interpreter crashed is kernel_tool_stale on the restarted kernel, even for a same-named tool",
+				"legacyContracts/test/py-kernel-tools.test.ts/Python kernel tool descriptors after the definition changes a descriptor taken before undefine is kernel_tool_stale after the name is defined again",
+				"legacyContracts/test/py-kernel-tools.test.ts/Python kernel tool descriptors after the definition changes a return annotation naming a class defined later in the cell does not stop the tool from registering",
+				"legacyContracts/test/py-kernel-tools.test.ts/Python kernel tool descriptors after the definition changes a cell compiles a bare forward annotation on the interpreter in use, whatever its version"
+			],
+			"reason": "Node 11 part 2: Python kernel tools. The new contracts, plus kernel-tools-host.ts (the Python kernel's describe/invoke over the shared pump) joining the scoped census at extension load (the key the eval gate reported on this head). The prompt is unchanged; tool_schema('eval:kernel-tools') is a virtual on-demand entry, absent from the catalog listing.",
+			"changes": [
+				{
+					"key": "legacyContracts/test/kernel-tools-unavailable.test.ts/py/rb/jl kernel tools returns tools_unavailable from real non-JS kernel classes",
+					"reason": "Python now defines kernel tools (@tool), so py leaves this contract; the remaining rb/jl case is the new contract 'rb/jl kernel tools returns tools_unavailable from the Ruby and Julia kernel class'."
+				}
+			]
 		}
 	}
 }

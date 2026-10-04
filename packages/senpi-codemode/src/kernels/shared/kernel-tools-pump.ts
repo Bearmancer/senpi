@@ -159,6 +159,9 @@ function codeOf(
 	| "kernel_tool_missing"
 	| "kernel_tool_recursion"
 	| "kernel_tool_host_denied"
+	| "kernel_tool_cancelled"
+	| "kernel_tool_loop_mismatch"
+	| "tool_name_collision"
 	| "tools_unavailable"
 	| "invalid_tool_definition" {
 	if (
@@ -166,6 +169,9 @@ function codeOf(
 		code === "kernel_tool_missing" ||
 		code === "kernel_tool_recursion" ||
 		code === "kernel_tool_host_denied" ||
+		code === "kernel_tool_cancelled" ||
+		code === "kernel_tool_loop_mismatch" ||
+		code === "tool_name_collision" ||
 		code === "tools_unavailable" ||
 		code === "invalid_tool_definition"
 	) {
