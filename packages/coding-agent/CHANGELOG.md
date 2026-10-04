@@ -14,6 +14,7 @@
 
 ### Fixed
 
+- Project rule discovery no longer escapes the project root on Windows. A `read`/`edit`/`write` target on a different drive, or one whose drive-letter case differs from the project root, made the rules finder walk the unrelated location and inject any `AGENTS.md`, `CLAUDE.md`, `.claude/rules`, `.cursor/rules`, or `.github/instructions` it found there as *project* rules ([#568](https://github.com/code-yeongyu/senpi/pull/568) by [@MoerAI](https://github.com/MoerAI)). POSIX behavior is unchanged.
 - With a `compaction.model` override on `anthropic-subscription`, senpi no longer rewrites older messages before each turn, so the resident Claude session keeps receiving only the new messages instead of re-sending the whole history every turn ([#2746](https://github.com/code-yeongyu/senpi/issues/2746)). Thanks to @trac3r00 ([#2748](https://github.com/code-yeongyu/senpi/pull/2748)).
 
 ### Removed
