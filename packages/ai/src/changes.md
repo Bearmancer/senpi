@@ -1,3 +1,21 @@
+## 2026-10-04 - Claude Agent SDK 0.3.289
+
+### What changed
+
+- `packages/ai/src/api/anthropic-messages.ts`: `claudeCodeVersion` 2.1.288 -> 2.1.289, the Claude Code version the bundled SDK 0.3.289 declares.
+
+### Why
+
+The Releasability gate's SDK currency check fails while a newer SDK is published; 0.3.289 bundles Claude Code 2.1.289.
+
+### Why an extension could not handle it
+
+The SDK pin and the advertised Claude Code version are fixed at build time in the package manifest and the provider module.
+
+### Expected merge conflict zones
+
+The SDK pin line and the lockfiles at the next upstream dependency sync.
+
 ## 2026-10-03 - Cursor resource_exhausted signatures are Cursor-only; "reset in N minutes" is a retry hint (senpi#2660)
 
 ### What changed

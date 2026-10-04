@@ -69,9 +69,30 @@ const helpersEntry: EvalSchemaResult = {
 	},
 };
 
+const kernelToolsEntry: EvalSchemaResult = {
+	name: "eval:kernel-tools",
+	description: [
+		"Kernel tools: functions a cell defines that in-process children can call (js and py; rb/jl answer tools_unavailable).",
+		"js: tool(fn, {name?, description?, schema?}) registers a named function; arguments are passed in its parameter order; without schema only the parameter names are inferred and every one is required.",
+		'py: @tool or @tool(name=..., description=..., schema=...) registers the function and returns it unchanged. The schema is inferred from type hints (str, int, float, bool, None, list[T], dict[str, T], Literal, unions and Optional as nullable, Annotated[T, "description"], keyword-only parameters); a JSON default makes a parameter optional; string annotations (from __future__ import annotations) resolve through the function\'s globals. Positional-only, *args, **kwargs and unresolvable or unsupported annotations are refused with invalid_tool_definition unless schema= is given. The function is never called to infer anything.',
+		"tool.defined() lists this kernel's kernel tools (sorted); tool.undefine(name) removes one (true if it existed). The names defined and undefine are reserved.",
+		"Grants: a child is given descriptors (name, kernel_generation, definition_revision) before it starts. A reset, restart or redefinition makes an old descriptor fail with kernel_tool_stale; the new definition never satisfies it. A name defined in both js and py fails describe with tool_name_collision.",
+		"py callbacks run while the kernel is idle or its cell is parked in a host call (a tool call, wait(), an install); a cell busy in pure computation is never interrupted, the callback waits. A callback's printed text goes to its own reply, never the parent cell's output. Cancelling a call ends it at its next host call (kernel_tool_cancelled); a computation already running finishes and its result is dropped. An awaited object from the parent cell's event loop fails with kernel_tool_loop_mismatch.",
+	].join("\n"),
+	parameters: {
+		type: "object",
+		properties: {
+			tool: { description: "js: tool(fn, metadata?); py: @tool / @tool(name=, description=, schema=)" },
+			"tool.defined": { description: "() -> names[]" },
+			"tool.undefine": { description: "(name) -> boolean" },
+		},
+	},
+};
+
 const VIRTUAL_ENTRIES: ReadonlyMap<string, EvalSchemaResult> = new Map([
 	[waitEntry.name, waitEntry],
 	[helpersEntry.name, helpersEntry],
+	[kernelToolsEntry.name, kernelToolsEntry],
 ]);
 
 export function virtualEvalSchema(name: string): EvalSchemaResult | undefined {

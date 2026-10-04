@@ -212,6 +212,11 @@ function waitForRelease(base: string, path: string, signal?: AbortSignal): Promi
 				() => done(resolve),
 			);
 		}
+		// An abort during the claim inspection that led here fired before this listener existed.
+		if (signal?.aborted) {
+			onAbort();
+			return;
+		}
 		// The holder may have released between the failed create and the watcher starting; no event would follow.
 		check();
 	});

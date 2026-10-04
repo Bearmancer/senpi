@@ -1,14 +1,16 @@
 import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, readdir, rm, utimes, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, rm, symlink, utimes, writeFile } from "node:fs/promises";
 import { createServer, type Server } from "node:http";
 import { hostname, tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { assertInstalledInRevision, assertNoEditableInstalls } from "../../src/environments/editable-check.ts";
 import { withRootLock } from "../../src/environments/install-lock.ts";
 import { installPythonPackages } from "../../src/environments/py-environment.ts";
-import { parsePipRequirements } from "../../src/environments/py-installer.ts";
+import { isolatedPipEnv, parsePipRequirements } from "../../src/environments/py-installer.ts";
 import { readActiveRevision } from "../../src/environments/revision-store.ts";
+import { createInterpreterDetector } from "../../src/interpreters/detect.ts";
 import {
 	buildWheel,
 	editableBackend,
@@ -157,11 +159,29 @@ describe.skipIf(!hasPythonWithPip())("Given a Python environment root", () => {
 			}
 
 			await expect(install(base, root, `install --no-index ${args}`)).rejects.toThrow(
-				/senpi[-_]editable.* was installed as editable/,
+				/senpi[-_]editable.* was installed as an editable install/,
 			);
 			expect(await readActiveRevision(base)).toBeUndefined();
 		},
 	);
+
+	it("When a pip config file names a root to install under, then the install still lands only in the revision", async () => {
+		const { root, base, wheels } = await workspace();
+		const elsewhere = join(root, "elsewhere");
+		const config = join(root, "pip.conf");
+		await writeFile(config, `[install]\nroot = ${elsewhere}\n`);
+		const previous = process.env.PIP_CONFIG_FILE;
+		process.env.PIP_CONFIG_FILE = config;
+		try {
+			const receipt = await install(base, root, `install --no-index ${buildWheel(wheels, "senpi_probe", "1.0")}`);
+
+			expect(importFrom(receipt.root, "senpi_probe")).toBe("1.0");
+			expect(existsSync(elsewhere)).toBe(false);
+		} finally {
+			if (previous === undefined) delete process.env.PIP_CONFIG_FILE;
+			else process.env.PIP_CONFIG_FILE = previous;
+		}
+	});
 
 	it("When pip's environment names a root to install under, then the install still lands only in the revision", async () => {
 		const { root, base, wheels } = await workspace();
@@ -229,6 +249,90 @@ describe("Given pip arguments from a magic cell", () => {
 			"six==1.16.0",
 			"./x.whl",
 		]);
+	});
+});
+
+describe("Given a staged revision pip has just written", () => {
+	async function staged(): Promise<{ readonly staging: string; readonly outside: string }> {
+		const root = await mkdtemp(join(tmpdir(), "senpi-staged-"));
+		roots.push(root);
+		const staging = join(root, "rev-1");
+		const outside = join(root, "checkout");
+		await mkdir(join(staging, "pkg"), { recursive: true });
+		await mkdir(outside, { recursive: true });
+		return { staging, outside };
+	}
+
+	// pip 24's `setup.py develop` path leaves an egg-link and an easy-install.pth line, and no direct_url.json.
+	it("When it holds a legacy develop install's egg-link, then the revision is refused", async () => {
+		const { staging, outside } = await staged();
+		await writeFile(join(staging, "senpi-legacy.egg-link"), `${outside}\n.\n`);
+
+		await expect(assertNoEditableInstalls(staging)).rejects.toThrow(
+			/senpi-legacy was installed as a legacy editable install/,
+		);
+	});
+
+	it("When a .pth line points outside the revision, then the revision is refused", async () => {
+		const { staging, outside } = await staged();
+		await writeFile(join(staging, "easy-install.pth"), `${outside}\n`);
+
+		await expect(assertNoEditableInstalls(staging)).rejects.toThrow(/a path outside the environment/);
+	});
+
+	it("When an entry is a link to a directory outside the revision, then the revision is refused", async () => {
+		const { staging, outside } = await staged();
+		await symlink(outside, join(staging, "linked"));
+
+		await expect(assertNoEditableInstalls(staging)).rejects.toThrow(/a link that points outside the environment/);
+	});
+
+	it("When a link deep inside a package points outside the revision, then the revision is refused", async () => {
+		const { staging, outside } = await staged();
+		await mkdir(join(staging, "pkg", "data"), { recursive: true });
+		await symlink(outside, join(staging, "pkg", "data", "linked"));
+
+		await expect(assertNoEditableInstalls(staging)).rejects.toThrow(/a link that points outside the environment/);
+	});
+
+	it("When pip reports a distribution the revision doesn't contain, then the install fails instead of publishing it empty", async () => {
+		const { staging } = await staged();
+		await mkdir(join(staging, "senpi_probe-1.0.dist-info"));
+
+		await expect(
+			assertInstalledInRevision("Successfully installed Senpi.Probe-1.0 other-pkg-2.1\n", staging),
+		).rejects.toThrow(/other-pkg was installed outside the session's environment/);
+		await expect(
+			assertInstalledInRevision("Successfully installed Senpi.Probe-1.0\n", staging),
+		).resolves.toBeUndefined();
+	});
+
+	it("When an old pip installed a setup.py project as an egg-info inside the revision, then it is accepted", async () => {
+		const { staging } = await staged();
+		await mkdir(join(staging, "senpi_legacy-1.0-py3.11.egg-info"));
+
+		await expect(
+			assertInstalledInRevision("Successfully installed senpi-legacy-1.0\n", staging),
+		).resolves.toBeUndefined();
+	});
+
+	it("When pip's config file is pointed at the null device, then it is the exact path the interpreter calls os.devnull, so pip skips every config file", async () => {
+		// The interpreter the kernel resolves is the one whose pip installs into the environment.
+		const python = await createInterpreterDetector().detect("py");
+		if (!python.ok) throw new Error("no Python interpreter resolved; this test must run where the kernel can start");
+		const executable = python.resolvedPath ?? python.path;
+		const probe = spawnSync(executable, ["-c", "import os; print(os.devnull)"], { encoding: "utf8" });
+
+		expect(probe.status, probe.stderr).toBe(0);
+		expect(isolatedPipEnv().PIP_CONFIG_FILE).toBe(probe.stdout.trim());
+	});
+
+	it("When its .pth lines and links stay inside the revision, then it is accepted", async () => {
+		const { staging } = await staged();
+		await writeFile(join(staging, "inside.pth"), "pkg\n# a comment\nimport os\n");
+		await symlink(join(staging, "pkg"), join(staging, "alias"));
+
+		await expect(assertNoEditableInstalls(staging)).resolves.toBeUndefined();
 	});
 });
 

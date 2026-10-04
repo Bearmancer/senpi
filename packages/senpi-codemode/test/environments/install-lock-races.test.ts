@@ -26,6 +26,7 @@ const { withRootLock } = await import("../../src/environments/install-lock.ts");
 const roots: string[] = [];
 
 afterEach(async () => {
+	vi.useRealTimers();
 	fsHook.onRead = undefined;
 	for (const root of roots.splice(0)) await fsHook.real?.rm(root, { recursive: true, force: true });
 });
@@ -75,5 +76,111 @@ describe("Given a waiter that judged the root lock stale", () => {
 		expect(entered).toBe("waited");
 		expect(onDisk).toBe(replacement);
 		expect((await fs.readdir(base)).filter((name) => name.startsWith(".install.lock.reap."))).toEqual([]);
+	});
+});
+
+describe("Given two waiters that find the same stale lock", () => {
+	it("When both try to reap it, then only the waiter holding the reap claim removes it and they hold the lock one at a time", async () => {
+		const fs = fsHook.real as Fs;
+		const base = await fs.mkdtemp(join(tmpdir(), "senpi-lock-claim-"));
+		roots.push(base);
+		const lock = join(base, ".install.lock");
+		const stale = JSON.stringify({ pid: exitedPid(), host: hostname(), nonce: "stale" });
+		await fs.writeFile(lock, stale);
+		let staleReads = 0;
+		let secondRead = (): void => undefined;
+		const bothJudged = new Promise<void>((resolve) => {
+			secondRead = resolve;
+		});
+		fsHook.onRead = async (path, content) => {
+			if (path !== lock || content !== stale) return;
+			staleReads += 1;
+			// Both waiters judge the lock stale before either claims it.
+			if (staleReads === 1) await bothJudged;
+			if (staleReads === 2) secondRead();
+			// A fourth read of the stale lock is a second waiter re-reading it under its own claim: hold it
+			// until the first waiter has replaced the lock, which is exactly when a removal by path would hit it.
+			if (staleReads === 4) {
+				for (let turn = 0; turn < 1_000; turn++) {
+					if ((await fs.readFile(lock, "utf8").catch(() => stale)) !== stale) return;
+					await new Promise((resolve) => setImmediate(resolve));
+				}
+			}
+		};
+		let inside = 0;
+		let peak = 0;
+		const holder = async () => {
+			inside += 1;
+			peak = Math.max(peak, inside);
+			// Hold long enough, in filesystem round trips, for the other waiter to act on what it read.
+			for (let trip = 0; trip < 200; trip++) await fs.stat(base);
+			inside -= 1;
+		};
+
+		await Promise.all([
+			withRootLock(base, holder, AbortSignal.timeout(10_000)),
+			withRootLock(base, holder, AbortSignal.timeout(10_000)),
+		]);
+
+		expect(peak).toBe(1);
+	});
+});
+
+describe("Given a stale lock that a live waiter is reaping", () => {
+	it("When another waiter finds it, then that waiter waits quietly instead of re-reading the lock in a loop", async () => {
+		const fs = fsHook.real as Fs;
+		const base = await fs.mkdtemp(join(tmpdir(), "senpi-lock-quiet-"));
+		roots.push(base);
+		const lock = join(base, ".install.lock");
+		await fs.writeFile(lock, JSON.stringify({ pid: exitedPid(), host: hostname(), nonce: "stale" }));
+		await fs.writeFile(
+			join(base, ".install.lock.reap.stale.0"),
+			JSON.stringify({ pid: process.pid, host: hostname(), nonce: "live" }),
+		);
+		let lockReads = 0;
+		fsHook.onRead = async (path) => {
+			if (path === lock) lockReads += 1;
+		};
+		const controller = new AbortController();
+		// The periodic recheck is time-driven; with it frozen, only a waiter that loops adds reads.
+		vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+
+		const waiting = withRootLock(base, async () => "entered", controller.signal).catch((error: unknown) => error);
+		// Let the waiter make as much filesystem progress as 1,000 round trips of our own.
+		for (let trip = 0; trip < 1_000; trip++) await fs.stat(base);
+		const readsWhileWaiting = lockReads;
+		controller.abort();
+		await waiting;
+		vi.useRealTimers();
+
+		expect(readsWhileWaiting).toBeLessThan(10);
+	});
+});
+
+describe("Given a waiter inspecting a reap claim", () => {
+	it("When its install is cancelled during that inspection, then it stops promptly instead of waiting for the lock", async () => {
+		const fs = fsHook.real as Fs;
+		const base = await fs.mkdtemp(join(tmpdir(), "senpi-lock-abort-"));
+		roots.push(base);
+		await fs.writeFile(
+			join(base, ".install.lock"),
+			JSON.stringify({ pid: exitedPid(), host: hostname(), nonce: "stale" }),
+		);
+		const claim = join(base, ".install.lock.reap.stale.0");
+		await fs.writeFile(claim, JSON.stringify({ pid: process.pid, host: hostname(), nonce: "live" }));
+		const controller = new AbortController();
+		fsHook.onRead = async (path) => {
+			if (path === claim) controller.abort(new Error("install cancelled"));
+		};
+
+		const outcome = await Promise.race([
+			withRootLock(base, async () => "entered", controller.signal).then(
+				() => "entered",
+				(error: unknown) => (error instanceof Error ? error.message : String(error)),
+			),
+			new Promise<string>((resolve) => setTimeout(() => resolve("still waiting"), 2_000).unref()),
+		]);
+
+		expect(outcome).toBe("install cancelled");
 	});
 });
