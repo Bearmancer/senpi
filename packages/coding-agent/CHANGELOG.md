@@ -10,6 +10,8 @@
 
 ### Fixed
 
+- `host status` now reports the right engine version for a host generation started by a handoff to a different build: the generation's record names the build the new host reported, not the build of the process that ran the handoff ([#2698](https://github.com/code-yeongyu/senpi/issues/2698)).
+
 ### Removed
 
 ## [2026.10.6] - 2026-10-04
