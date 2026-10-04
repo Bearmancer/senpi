@@ -1,10 +1,11 @@
 import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, rm, utimes, writeFile } from "node:fs/promises";
 import { createServer, type Server } from "node:http";
 import { hostname, tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { withRootLock } from "../../src/environments/install-lock.ts";
 import { installPythonPackages } from "../../src/environments/py-environment.ts";
 import { parsePipRequirements } from "../../src/environments/py-installer.ts";
 import { readActiveRevision } from "../../src/environments/revision-store.ts";
@@ -135,6 +136,15 @@ describe("Given pip arguments from a magic cell", () => {
 		["--prefix=/usr x"],
 		["--root / x"],
 		["-e ."],
+		["--targ /tmp/elsewhere x"],
+		["--tar=/tmp/elsewhere x"],
+		["--pref=/usr x"],
+		["--roo / x"],
+		["--edit ."],
+		["-Ut/tmp/elsewhere x"],
+		["-Ue."],
+		["--src /tmp x"],
+		["--isolated x"],
 	])("When they include a destination flag (%s), then they are refused", (args) => {
 		expect(() => parsePipRequirements(`install ${args}`)).toThrow(/environment_install_failed: .* is not allowed/);
 	});
@@ -143,11 +153,107 @@ describe("Given pip arguments from a magic cell", () => {
 		expect(() => parsePipRequirements("uninstall x")).toThrow(/only `%pip install <requirements>` is supported/);
 	});
 
+	it("When allowed options use short or attached spellings, then they are passed to pip spelled out in full", () => {
+		expect(parsePipRequirements("install -U -q --index-url https://pypi.example/simple -f ./wheels x")).toEqual([
+			"--upgrade",
+			"--quiet",
+			"--index-url=https://pypi.example/simple",
+			"--find-links=./wheels",
+			"x",
+		]);
+	});
+
+	it.each([["--index-url"], ["--upgrade=1"], ["--find-links --no-index"]])(
+		"When an option's value is missing or not allowed (%s), then the arguments are refused",
+		(args) => {
+			expect(() => parsePipRequirements(`install ${args} x`)).toThrow(/environment_install_failed/);
+		},
+	);
+
 	it("When only requirements and ordinary flags are given, then they pass through as an argv", () => {
 		expect(parsePipRequirements("install --no-index  six==1.16.0 ./x.whl")).toEqual([
 			"--no-index",
 			"six==1.16.0",
 			"./x.whl",
 		]);
+	});
+});
+
+describe("Given an environment root's install lock", () => {
+	async function lockRoot(): Promise<string> {
+		const base = await mkdtemp(join(tmpdir(), "senpi-lock-"));
+		roots.push(base);
+		return base;
+	}
+
+	function exitedPid(): number {
+		return Number(
+			spawnSync(process.execPath, ["-e", "process.stdout.write(String(process.pid))"], { encoding: "utf8" }).stdout,
+		);
+	}
+
+	it("When several waiters find one dead holder's lock at once, then exactly one holder is ever inside, across many trials", async () => {
+		const base = await lockRoot();
+		const dead = exitedPid();
+		let overlaps = 0;
+		// The old check-then-remove takeover let two holders in on about a quarter of 8-waiter trials, so 40 clean
+		// trials rule it out (0.77^40 < 1e-4).
+		for (let trial = 0; trial < 40; trial++) {
+			await writeFile(join(base, ".install.lock"), JSON.stringify({ pid: dead, host: hostname() }));
+			let inside = 0;
+			const holder = async () => {
+				inside++;
+				if (inside > 1) overlaps++;
+				await new Promise((resolve) => setTimeout(resolve, 1));
+				inside--;
+			};
+			await Promise.all(Array.from({ length: 8 }, () => withRootLock(base, holder)));
+		}
+
+		expect(overlaps).toBe(0);
+	}, 180_000);
+
+	it("When an empty lock file older than a few seconds is found (a crash between create and write), then it is taken over", async () => {
+		const base = await lockRoot();
+		const lock = join(base, ".install.lock");
+		await writeFile(lock, "");
+		const old = new Date(Date.now() - 60_000);
+		await utimes(lock, old, old);
+
+		const value = await withRootLock(base, async () => "ran", AbortSignal.timeout(10_000));
+
+		expect(value).toBe("ran");
+	});
+
+	it("When a freshly created lock can't be read yet, then it is waited for, not taken over", async () => {
+		const base = await lockRoot();
+		await writeFile(join(base, ".install.lock"), "");
+
+		const waited = withRootLock(base, async () => "ran", AbortSignal.timeout(1_500));
+
+		await expect(waited).rejects.toThrow();
+	});
+
+	it("When a live process on this host holds the lock, then a waiter enters only after it is released", async () => {
+		const base = await lockRoot();
+		const order: string[] = [];
+		let release = (): void => undefined;
+		const held = withRootLock(base, async () => {
+			order.push("first in");
+			await new Promise<void>((resolve) => {
+				release = resolve;
+			});
+			order.push("first out");
+		});
+		while (order.length === 0) await new Promise((resolve) => setImmediate(resolve));
+
+		const second = withRootLock(base, async () => {
+			order.push("second in");
+		});
+		await new Promise((resolve) => setTimeout(resolve, 50));
+		release();
+		await Promise.all([held, second]);
+
+		expect(order).toEqual(["first in", "first out", "second in"]);
 	});
 });
