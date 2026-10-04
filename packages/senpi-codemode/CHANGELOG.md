@@ -6,6 +6,8 @@
 
 ### Added
 
+- In-cell `wait(handles, {timeout, mode})` barrier and `handle(node | ref | {pool_id})` rich views in all four kernels: `wait` returns values in input order (`all`), the first success (`any`) or every outcome (`settled`), times out with `eval_wait_timeout` without cancelling work, and pauses the run budget while parked; `handle(node).control` offers `status()`, `output()`, `send()`, `cancel()` and `wait()` fenced by owner, id and `run_epoch` through the host's `EvalHandleHost` capability (agent and workpool handles fail with `eval_wait_unavailable` on a host without it); `completion(prompt, {handle: true})` returns an opt-in completion handle bounded by its cell's hard deadline; `tool_schema("eval:helpers")` and `tool_schema("eval:wait")` document the surface and the removed-tool hint for `wait` points at them. The legacy `agent(..., {handle: true})` record, the eval description and the eval input schema are unchanged; the Python runner's dispatcher was renamed `_handle_message` so `handle()` is the helper.
+
 ### Changed
 
 ### Fixed

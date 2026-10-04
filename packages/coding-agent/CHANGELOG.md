@@ -6,6 +6,8 @@
 
 ### Added
 
+- Extensions can provide and read a session-scoped `EvalHandleHost` (`pi.provideEvalHandleHost(host)` / `ctx.evalHandleHost`): the capability behind codemode's in-cell `wait()` and `handle()` helpers, fenced by owner session, id and run epoch. It is absent until a task owner provides it and is cleared when the session runtime is replaced.
+
 ### Changed
 
 ### Fixed
