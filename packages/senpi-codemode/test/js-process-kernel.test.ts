@@ -215,7 +215,9 @@ describe("JavaScriptKernel process isolation", () => {
 				const pid = kernel.processPid;
 				expect(pid).toBeTypeOf("number");
 
-				const crashed = await runJavaScriptCell(kernel, 'process.kill(process.pid, "SIGSEGV")');
+				// The assertion is that the crash is reported, not how fast: a loaded CI runner can take over the harness's
+				// default 2 s to start the child, crash it and read the exit, so the cell gets a budget that only a hang exceeds.
+				const crashed = await runJavaScriptCell(kernel, 'process.kill(process.pid, "SIGSEGV")', 15_000);
 				expect(crashed.result).toMatchObject({ ok: false });
 				if (!crashed.result.ok) expect(crashed.result.error.message).toMatch(/SIGSEGV|signal 11/);
 				await waitFor("crashed child exit", () => !pidAlive(pid as number));
