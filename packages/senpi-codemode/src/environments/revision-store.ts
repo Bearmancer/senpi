@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { cp, mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { cp, lstat, mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { type LockWaitNotice, withRootLock } from "./install-lock.ts";
 import { EnvironmentError } from "./py-installer.ts";
@@ -60,7 +60,14 @@ export async function publishNextRevision(
 			const dir = join(base, `rev-${number}`);
 			try {
 				if (previous === undefined) await mkdir(staging, { recursive: true });
-				else await cp(previous.dir, staging, { recursive: true, verbatimSymlinks: true });
+				else {
+					// A revision that is a link would carry the link itself into staging, and the build would
+					// then write through it into whatever it points at.
+					if (!(await lstat(previous.dir)).isDirectory()) {
+						throw new Error(`rev-${previous.number} is not a real directory; refusing to build on it`);
+					}
+					await cp(previous.dir, staging, { recursive: true, verbatimSymlinks: true });
+				}
 				await build(staging, previous);
 				signal?.throwIfAborted();
 				await renameRetrying(staging, dir);

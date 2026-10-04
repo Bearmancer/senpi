@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
-import { existsSync } from "node:fs";
-import { homedir } from "node:os";
-import { delimiter, join, resolve, sep } from "node:path";
+import { existsSync, realpathSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
+import { basename, delimiter, isAbsolute, join, resolve, sep } from "node:path";
 import { EnvironmentError } from "./py-installer.ts";
 
 export type JsInstallerChoice = "auto" | "bun" | "npm";
@@ -78,6 +78,8 @@ export function runJsInstall(input: {
 	readonly command: string;
 	readonly root: string;
 	readonly packages: readonly string[];
+	/** Absolute specs already recorded in the revision; the installer echoes them, so they are redacted too. */
+	readonly recordedSpecs?: readonly string[];
 	readonly cwd: string;
 	readonly env: NodeJS.ProcessEnv;
 	readonly signal: AbortSignal;
@@ -106,8 +108,9 @@ export function runJsInstall(input: {
 				try {
 					process.kill(-child.pid, "SIGKILL");
 					return;
-				} catch (error) {
-					if (!(error instanceof Error && "code" in error && error.code === "ESRCH")) throw error;
+				} catch {
+					// ESRCH (the group is gone) or EPERM (macOS refuses a group whose leader already exited): stop the
+					// installer itself. An abort listener must never throw: nothing above it can catch the error.
 				}
 			}
 			child.kill("SIGKILL");
@@ -128,7 +131,7 @@ export function runJsInstall(input: {
 				reject(
 					new EnvironmentError(
 						"environment_install_cancelled",
-						`the install was cancelled; ${input.installer} was stopped`,
+						`the install was cancelled${cancelReason(input.signal, input)}; ${input.installer} was stopped`,
 					),
 				);
 			} else if (code === 0) resolve();
@@ -144,14 +147,43 @@ export function runJsInstall(input: {
 	});
 }
 
+function cancelReason(signal: AbortSignal, input: Parameters<typeof withoutHostPaths>[1]): string {
+	const reason: unknown = signal.reason;
+	return reason instanceof Error && reason.name !== "AbortError" ? `: ${withoutHostPaths(reason.message, input)}` : "";
+}
+
 /** Installer output names the session's own roots; error text says `<root>`/`<cwd>`/`~` instead of absolute paths. */
-function withoutHostPaths(text: string, input: { readonly root: string; readonly cwd: string }): string {
+export function withoutHostPaths(
+	text: string,
+	input: {
+		readonly root: string;
+		readonly cwd: string;
+		readonly packages: readonly string[];
+		readonly recordedSpecs?: readonly string[];
+	},
+): string {
 	const home = homedir();
+	// A spec that is an absolute file path names the user's file system; it is shown by its file name only.
+	const specPaths = [...input.packages, ...(input.recordedSpecs ?? [])]
+		.map((spec) => (spec.startsWith("file:") ? spec.slice("file:".length) : spec))
+		.filter((path) => isAbsolute(path))
+		.map((path) => [path, `<path>/${basename(path)}`] as const);
 	return [
+		...specPaths,
 		[input.root, "<root>"],
 		[input.cwd, "<cwd>"],
+		[realpathOrSelf(tmpdir()), "<tmp>"],
+		[tmpdir(), "<tmp>"],
 		[home, "~"],
 	]
 		.filter(([path]) => path !== "" && path !== sep)
 		.reduce((current, [path, label]) => current.replaceAll(path, label), text);
+}
+
+function realpathOrSelf(path: string): string {
+	try {
+		return realpathSync(path);
+	} catch {
+		return path;
+	}
 }

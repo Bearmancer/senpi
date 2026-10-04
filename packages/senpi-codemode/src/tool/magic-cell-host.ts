@@ -37,8 +37,9 @@ export function planMagicCell(
 		return {
 			kind: "host",
 			executor: async () => {
-				const root = await environments.setMode(mode);
-				return { ok: true, valueRepr: `environment: ${mode} (${root})` };
+				await environments.setMode(mode);
+				const where = mode === "project" ? "the session directory" : "this session's managed revisions";
+				return { ok: true, valueRepr: `environment: ${mode} (${where})` };
 			},
 		};
 	}
@@ -82,8 +83,9 @@ function planJsMagic(
 		return {
 			kind: "host",
 			executor: async () => {
-				const root = await environments.setMode(mode);
-				return { ok: true, valueRepr: `environment: ${mode} (${root})` };
+				await environments.setMode(mode);
+				const where = mode === "project" ? "the session directory" : "this session's managed revisions";
+				return { ok: true, valueRepr: `environment: ${mode} (${where})` };
 			},
 		};
 	}
@@ -105,7 +107,7 @@ function planJsMagic(
 					receipt.revision === undefined ? receipt.mode : `${receipt.mode} (revision ${receipt.revision})`;
 				const shadow =
 					receipt.shadowed.length > 0
-						? `; environment_resolution_conflict: ${receipt.shadowed.join(", ")} still resolve from the project's node_modules first`
+						? `; environment_resolution_conflict: ${receipt.shadowed.join(", ")} still ${receipt.shadowed.length === 1 ? "resolves" : "resolve"} from the project's node_modules first`
 						: "";
 				return {
 					ok: true,

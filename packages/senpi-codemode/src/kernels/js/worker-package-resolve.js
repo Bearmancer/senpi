@@ -73,9 +73,14 @@ function exportsTarget(exportsField, subpath) {
 			best = { key, prefix, match: subpath.slice(prefix.length, subpath.length - suffix.length) };
 		}
 	}
-	if (best === undefined) return undefined;
+	if (best === undefined || hasInvalidSegment(best.match)) return undefined;
 	const target = conditionalTarget(exportsField[best.key]);
 	return target === undefined ? undefined : target.replaceAll("*", best.match);
+}
+
+// Node refuses a pattern match or target with "." / ".." / "node_modules" segments (ERR_INVALID_MODULE_SPECIFIER).
+function hasInvalidSegment(path) {
+	return path.split(/[\\/]/).some((segment) => segment === "." || segment === ".." || segment === "node_modules");
 }
 
 function legacyFile(path) {
@@ -94,7 +99,7 @@ function packageEntry(packageDir, subpath, specifier) {
 	}
 	if (manifest.exports !== undefined && manifest.exports !== null) {
 		const target = exportsTarget(manifest.exports, subpath);
-		if (typeof target !== "string" || !target.startsWith("./")) {
+		if (typeof target !== "string" || !target.startsWith("./") || hasInvalidSegment(target.slice(2))) {
 			const error = new Error(`Package subpath '${subpath}' is not exported for import by '${specifier}'`);
 			error.code = "ERR_PACKAGE_PATH_NOT_EXPORTED";
 			throw error;
