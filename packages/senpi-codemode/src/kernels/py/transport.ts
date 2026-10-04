@@ -11,6 +11,7 @@ import {
 } from "../../bridge/protocol.ts";
 import { applySessionEnvironment, type SessionEnvironment } from "../session-env.ts";
 import type { KernelPreludePlan } from "../shared/kernel-prelude-plan.ts";
+import { readKernelCpuTime } from "../shared/process-cpu.ts";
 import { type CodemodeRuntimeAssetEnvironment, requireCodemodeRuntimeAsset } from "../shared/runtime-asset.ts";
 import {
 	defaultSpawn,
@@ -44,6 +45,8 @@ export interface PythonTransportOptions {
 	/** Per-session PI_* values merged into the interpreter environment at spawn. */
 	readonly sessionEnv?: SessionEnvironment;
 	readonly startupTimeoutMs: number;
+	readonly startupCeilingMs: number;
+	readonly readCpuTime?: (pid: number) => bigint | undefined;
 	readonly onStartupProgress?: (stage: PythonStartupStage) => void;
 	readonly memory?: KernelMemoryThresholds;
 	/** Kernel-tool descriptors carry this; a restarted interpreter gets a new one, so old descriptors go stale. */
@@ -202,7 +205,13 @@ export class PythonKernelTransport {
 	}
 
 	async #initialize(): Promise<void> {
-		const startup = new PythonStartup(this.#options.startupTimeoutMs, () => this.#stderrTail);
+		const pid = this.#child.pid;
+		const startup = new PythonStartup({
+			noProgressMs: this.#options.startupTimeoutMs,
+			ceilingMs: this.#options.startupCeilingMs,
+			failureDetail: () => this.#stderrTail,
+			readCpuTime: () => (pid === undefined ? undefined : (this.#options.readCpuTime ?? readKernelCpuTime)(pid)),
+		});
 		this.#startup = startup;
 		const onStdout = (chunk: unknown) => this.#onStdout(String(chunk));
 		const onStderr = (chunk: unknown) => this.#onStderr(String(chunk));
@@ -247,6 +256,7 @@ export class PythonKernelTransport {
 
 	#onStderr(chunk: string): void {
 		if (!this.#active) return;
+		this.#startup?.activity();
 		this.#stderrTail = `${this.#stderrTail}${chunk}`.slice(-4_000);
 		this.#options.onMessage?.({ type: "text", stream: "stderr", data: chunk });
 	}
@@ -264,6 +274,7 @@ export class PythonKernelTransport {
 			if (stage !== undefined) this.#options.onStartupProgress?.(stage);
 			return;
 		}
+		if (message.type === "text") this.#startup?.activity();
 		if (message.type === "ready") this.#settleStartup();
 		else if (message.type === "init-failed") this.#settleStartup(new Error(message.error.message));
 		else if (message.type === "result") this.#options.onResult(this, message);

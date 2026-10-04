@@ -11,7 +11,7 @@ import { KernelPreludeTracker } from "../shared/kernel-prelude-plan.ts";
 import { runHostCell } from "./host-cell.ts";
 import type { PendingRun, PythonKernelRunOptions, PythonKernelStartOptions, ResultMessage } from "./kernel-contract.ts";
 import { PythonKernelTools } from "./kernel-tools-host.ts";
-import { pythonStartupHangGuardMs } from "./startup.ts";
+import { pythonStartupCeilingMs, pythonStartupHangGuardMs } from "./startup.ts";
 import { failedPythonResult, PythonKernelTransport } from "./transport.ts";
 
 export type { PythonKernelRunOptions, PythonKernelStartOptions } from "./kernel-contract.ts";
@@ -319,6 +319,7 @@ export class PythonKernel {
 				callback?.(message);
 			},
 			startupTimeoutMs: this.#options.startupTimeoutMs ?? pythonStartupHangGuardMs,
+			startupCeilingMs: this.#options.startupCeilingMs ?? pythonStartupCeilingMs,
 			kernelGeneration: nextInterpreterGeneration(),
 			isOwned: () => !this.#closed && generation === this.#generation,
 			onRetirementFailure: (transport, error) => {

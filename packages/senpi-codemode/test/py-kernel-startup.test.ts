@@ -65,6 +65,137 @@ describe("Python startup progress", () => {
 		expect(child.killSignals).toEqual(["SIGKILL"]);
 	});
 
+	it("keeps waiting for a cold interpreter that is silent in its imports but busy on the CPU", async () => {
+		// Given: a contended cold start that stays in stdlib imports far longer than the guard, using CPU throughout.
+		vi.useFakeTimers();
+		const child = new FakeChild({ autoReady: false, pid: 4242 });
+		let cpu = 0n;
+		const started = PythonKernel.start({
+			interpreterPath: "python3",
+			sessionId: "slow-cold-start",
+			cwd: process.cwd(),
+			connection: { port: 1, token: "fixture" },
+			startupTimeoutMs: 200,
+			startupCeilingMs: 10_000,
+			readCpuTime: () => (cpu += 10n),
+			spawnProcess: () => child,
+		});
+		let settled = false;
+		started.then(
+			() => {
+				settled = true;
+			},
+			() => {
+				settled = true;
+			},
+		);
+		child.emitMessage({ type: "status", event: { op: "kernel-startup", stage: "stdlib-imports" } });
+
+		// When: five guard periods pass with no stage change and no output.
+		await vi.advanceTimersByTimeAsync(1_000);
+
+		// Then: it is still starting; the ready event then completes the start.
+		expect(settled).toBe(false);
+		child.emitMessage({ type: "ready" });
+		const result = await started;
+		expect(child.killSignals).toEqual([]);
+		await result.close();
+	});
+
+	it("fails a silent and idle interpreter after the guard, naming the stage it stopped in", async () => {
+		// Given: an interpreter that reached stdlib imports, then neither writes nor uses any CPU.
+		vi.useFakeTimers();
+		const child = new FakeChild({ autoReady: false, pid: 4243 });
+		const started = PythonKernel.start({
+			interpreterPath: "python3",
+			sessionId: "idle-stall",
+			cwd: process.cwd(),
+			connection: { port: 1, token: "fixture" },
+			startupTimeoutMs: 200,
+			startupCeilingMs: 10_000,
+			readCpuTime: () => 500n,
+			spawnProcess: () => child,
+		});
+		const outcome = started.catch((error: unknown) => error);
+		child.emitMessage({ type: "status", event: { op: "kernel-startup", stage: "stdlib-imports" } });
+
+		// When: one guard period passes with nothing at all.
+		await vi.advanceTimersByTimeAsync(200);
+
+		// Then: startup fails at stdlib-imports and the child is retired.
+		const error = await outcome;
+		expect(error).toMatchObject({
+			stage: "stdlib-imports",
+			message: expect.stringContaining("no output, stage change or CPU use"),
+		});
+		expect(child.killSignals).toEqual(["SIGKILL"]);
+	});
+
+	it("stops an interpreter that stays busy but never becomes ready at the startup ceiling, naming its stage", async () => {
+		// Given: an interpreter spinning in stdlib imports (CPU always advancing, never ready).
+		vi.useFakeTimers();
+		const child = new FakeChild({ autoReady: false, pid: 4244 });
+		let cpu = 0n;
+		const started = PythonKernel.start({
+			interpreterPath: "python3",
+			sessionId: "livelock",
+			cwd: process.cwd(),
+			connection: { port: 1, token: "fixture" },
+			startupTimeoutMs: 200,
+			startupCeilingMs: 2_000,
+			readCpuTime: () => (cpu += 10n),
+			spawnProcess: () => child,
+		});
+		const outcome = started.catch((error: unknown) => error);
+		child.emitMessage({ type: "status", event: { op: "kernel-startup", stage: "stdlib-imports" } });
+
+		// When: the ceiling passes.
+		await vi.advanceTimersByTimeAsync(2_000);
+
+		// Then: startup fails at stdlib-imports with the ceiling named, and the child is retired.
+		const error = await outcome;
+		expect(error).toMatchObject({ stage: "stdlib-imports", message: expect.stringContaining("not ready after 2 s") });
+		expect(child.killSignals).toEqual(["SIGKILL"]);
+		expect(vi.getTimerCount()).toBe(0);
+	});
+
+	it("keeps a starting interpreter alive while it writes output", async () => {
+		// Given: CPU cannot be read here, but the interpreter keeps printing during its imports.
+		vi.useFakeTimers();
+		const child = new FakeChild({ autoReady: false });
+		const started = PythonKernel.start({
+			interpreterPath: "python3",
+			sessionId: "chatty-start",
+			cwd: process.cwd(),
+			connection: { port: 1, token: "fixture" },
+			startupTimeoutMs: 200,
+			startupCeilingMs: 10_000,
+			readCpuTime: () => undefined,
+			spawnProcess: () => child,
+		});
+		let settled = false;
+		started.then(
+			() => {
+				settled = true;
+			},
+			() => {
+				settled = true;
+			},
+		);
+		child.emitMessage({ type: "status", event: { op: "kernel-startup", stage: "stdlib-imports" } });
+
+		// When: it writes a line every 150 ms for a second.
+		for (let tick = 0; tick < 7; tick++) {
+			await vi.advanceTimersByTimeAsync(150);
+			child.stderr.write("warming up\n");
+		}
+
+		// Then: it is still starting, and ready completes it.
+		expect(settled).toBe(false);
+		child.emitMessage({ type: "ready" });
+		await (await started).close();
+	});
+
 	it("does not extend a hung stage for repeated progress frames", async () => {
 		// Given: an interpreter stuck in imports.
 		vi.useFakeTimers();

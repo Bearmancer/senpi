@@ -16,13 +16,14 @@ export interface FakeChildOptions {
 	readonly rejectKill?: boolean;
 	readonly throwOnInterruptFrame?: boolean;
 	readonly onRun?: (message: Extract<HostToKernelMessage, { type: "run" }>) => void;
+	readonly pid?: number;
 }
 
 export class FakeChild implements KernelChild {
 	readonly stdin = new PassThrough();
 	readonly stdout = new PassThrough();
 	readonly stderr = new PassThrough();
-	readonly pid: number | undefined = undefined;
+	readonly pid: number | undefined;
 	readonly runMessages: Extract<HostToKernelMessage, { type: "run" }>[] = [];
 	readonly killSignals: NodeJS.Signals[] = [];
 	killed = false;
@@ -33,6 +34,7 @@ export class FakeChild implements KernelChild {
 
 	constructor(options: FakeChildOptions = {}) {
 		this.#options = options;
+		this.pid = options.pid;
 		this.stdin.on("data", (chunk) => {
 			const lines = String(chunk).split("\n").filter(Boolean);
 			for (const line of lines) {
@@ -194,6 +196,10 @@ export async function liveKernel(
 	});
 }
 
+// The cell's result event is what a test waits for; its budget only bounds a hang, inside the 30 s test
+// timeout. A 3 s budget failed live cells on a contended Windows runner (senpi#2718).
+const LIVE_CELL_HANG_BOUND_MS = 25_000;
+
 export async function runCell(kernel: PythonKernel, code: string): Promise<ResultMessage> {
-	return await kernel.run({ cellId: `cell-${crypto.randomUUID()}`, code, timeoutMs: 3_000 });
+	return await kernel.run({ cellId: `cell-${crypto.randomUUID()}`, code, timeoutMs: LIVE_CELL_HANG_BOUND_MS });
 }

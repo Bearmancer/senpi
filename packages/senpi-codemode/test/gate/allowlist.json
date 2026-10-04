@@ -530,6 +530,17 @@
 					"reason": "Python now defines kernel tools (@tool), so py leaves this contract; the remaining rb/jl case is the new contract 'rb/jl kernel tools returns tools_unavailable from the Ruby and Julia kernel class'."
 				}
 			]
+		},
+		"2718": {
+			"additions": [
+				"imports/extension/packages/senpi-codemode/src/kernels/shared/process-cpu.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/kernels/shared/process-cpu.ts",
+				"legacyContracts/test/py-kernel-startup.test.ts/Python startup progress keeps waiting for a cold interpreter that is silent in its imports but busy on the CPU",
+				"legacyContracts/test/py-kernel-startup.test.ts/Python startup progress fails a silent and idle interpreter after the guard, naming the stage it stopped in",
+				"legacyContracts/test/py-kernel-startup.test.ts/Python startup progress stops an interpreter that stays busy but never becomes ready at the startup ceiling, naming its stage",
+				"legacyContracts/test/py-kernel-startup.test.ts/Python startup progress keeps a starting interpreter alive while it writes output"
+			],
+			"reason": "Python startup counts CPU use and output as progress, with an absolute ceiling (senpi#2718): a shared CPU reader module and four startup behaviour cases."
 		}
 	}
 }
