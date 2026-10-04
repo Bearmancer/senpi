@@ -206,11 +206,21 @@ async function executeCell(
 		const pending = handler.handle(message);
 		void pending.catch((error: unknown) => execution.cancel(error));
 	};
+	let releaseCellKernelTools: (() => void) | undefined;
 	try {
 		const kernel = await execution.wait(options.kernelManager.getKernel(invocation.input.language, onMessage));
 		// Computed before the handler so its construction-time snapshot captures this cell's capability.
 		// Worker messages later restore that snapshot before calling host tools (#1754, #2512).
 		const kernelTools = kernelToolsFor(kernel);
+		// Subprocess kernels call the host over the bridge, outside this async context. Their calls carry a fresh secret
+		// minted for this run and sent only to this cell's kernel, never the model-visible cell id, so code in another
+		// kernel cannot name this cell into its tools. JS calls already run inside this cell's scope (#1754).
+		const bridgeCellToken =
+			kernelTools === undefined || invocation.input.language === "js" ? undefined : randomUUID();
+		releaseCellKernelTools =
+			kernelTools === undefined || bridgeCellToken === undefined
+				? undefined
+				: options.kernelManager.bindCellKernelTools?.(bridgeCellToken, kernelTools);
 		const runBound = async (): Promise<AgentToolResult<EvalToolDetails>> => {
 			const queue = kernel.queueSnapshot();
 			state.queuedBehind = [...(queue.activeCellId === null ? [] : [queue.activeCellId]), ...queue.queuedCellIds];
@@ -262,6 +272,7 @@ async function executeCell(
 						? { host: async () => ({ ok: false as const, error: { message: magic.message } }) }
 						: {}),
 					...(envRoot === undefined ? {} : { envRoot }),
+					...(bridgeCellToken === undefined ? {} : { bridgeCellToken }),
 					kernelPreludes: options.kernelPreludes?.(),
 					onMessage,
 					onStarted: () => {
@@ -294,6 +305,8 @@ async function executeCell(
 		if (error instanceof Error && error.name === "TimeoutError") throw await describeTimeoutState(error, execution);
 		throw error;
 	} finally {
+		// First, so nothing below can skip it: from here on a host call carrying this run's secret gets no kernel tools.
+		releaseCellKernelTools?.();
 		state.active = false;
 		bridgeAbortController.abort();
 		execution.finish();
