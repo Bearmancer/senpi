@@ -70,6 +70,7 @@ import {
 	EXTENSION_EVENTS_CAPABILITY,
 	MEDIA_PLACEHOLDERS_CAPABILITY,
 	QUESTION_CAPABILITY,
+	RETRY_FALLBACK_COMMAND_CAPABILITY,
 } from "./custom-capability.ts";
 import { createRpcEventOutputBuffer } from "./event-output-buffer.ts";
 import { settleExtensionUiResponse } from "./extension-ui-response.ts";
@@ -78,7 +79,12 @@ import { createRpcLoginPromptCallbacks } from "./login-prompts.ts";
 import { answerMemoryReport } from "./memory-report-command.ts";
 import { protocolIdentity } from "./protocol-identity.ts";
 import { buildRpcCommandsForSession, createCommandsChangedEvent, rpcCommandListDigest } from "./rpc-command-surface.ts";
-import { rpcCommandPayloadError, rpcCommandShapeError, rpcMessageLengthError } from "./rpc-input-validation.ts";
+import {
+	rpcCommandPayloadError,
+	rpcCommandShapeError,
+	rpcMessageLengthError,
+	sessionRetryFallbackError,
+} from "./rpc-input-validation.ts";
 import { buildRpcSessionState } from "./rpc-session-state.ts";
 import type {
 	RpcAuthProvider,
@@ -112,6 +118,11 @@ export interface RpcConnectionOptions {
 	eventFlushScheduler?: (flush: () => void) => void;
 	/** Multi-session routing handle. Absent preserves classic wire output exactly. */
 	sessionId?: string;
+	/**
+	 * A single-session `--mode rpc` process: it accepts `set_retry_fallback` and advertises it. A host's
+	 * session connection leaves it off; a host session takes its chain from `open_session.retryFallback`.
+	 */
+	retryFallbackCommand?: boolean;
 	/**
 	 * Shared-session capability registry. A `set_client_info` carrying `capabilities`
 	 * registers them for the connection that sent it; absent on a classic connection.
@@ -944,6 +955,7 @@ export function createRpcConnectionHandler(
 								MEDIA_PLACEHOLDERS_CAPABILITY,
 								DURABLE_CLIENT_MESSAGE_ID_CAPABILITY,
 								CONTINUE_FROM_LEAF_CAPABILITY,
+								...(options.retryFallbackCommand ? [RETRY_FALLBACK_COMMAND_CAPABILITY] : []),
 								...(options.capabilities ?? []),
 							]),
 						],
@@ -1242,6 +1254,30 @@ export function createRpcConnectionHandler(
 			case "abort_retry": {
 				session.abortRetry();
 				return success(id, "abort_retry");
+			}
+
+			case "set_retry_fallback": {
+				if (!options.retryFallbackCommand) {
+					return error(
+						id,
+						"set_retry_fallback",
+						"set_retry_fallback is for a single-session rpc process; a host session takes open_session.retryFallback.",
+					);
+				}
+				const profileError = sessionRetryFallbackError(command.retryFallback);
+				if (profileError !== undefined || command.retryFallback === undefined) {
+					return error(id, "set_retry_fallback", profileError ?? "set_retry_fallback needs retryFallback.");
+				}
+				// A launch-time setting: a chain never changes under a turn or a retry already in flight.
+				if (session.isStreaming || session.messages.length > 0) {
+					return error(
+						id,
+						"set_retry_fallback",
+						"set_retry_fallback must arrive before the session's first turn.",
+					);
+				}
+				runtimeHost.setRetryFallback(command.retryFallback);
+				return success(id, "set_retry_fallback");
 			}
 
 			// =================================================================

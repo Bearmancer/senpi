@@ -2191,6 +2191,35 @@ Response:
 {"type": "response", "command": "abort_retry", "success": true}
 ```
 
+#### set_retry_fallback
+
+A single-session `--mode rpc` process has no `open_session`. A caller that spawns one process per session (e.g. a task
+child that runs as its own process) gives it its fallback policy with `set_retry_fallback`:
+
+```json
+{"type": "set_retry_fallback", "retryFallback": {"modelFallback": true, "fallbackChains": {"provider/model": ["provider/spare"]}}}
+```
+
+Response:
+```json
+{"type": "response", "command": "set_retry_fallback", "success": true}
+```
+
+The profile is the same shape, with the same limits, as `open_session.retryFallback`, and it has the same effect. It
+overrides the session's `retry.modelFallback` and `retry.fallbackChains` in memory only, it is never written to a
+settings file, and the process's later sessions (`new_session`, `switch_session`, `fork`) keep it.
+
+It is a launch-time setting:
+- It is accepted only before the session's first turn. Once a turn has started (or the session already holds
+  messages), it is refused, so a chain never changes under a turn or a retry already in flight.
+- A malformed profile is refused with the `open_session` shape message, and nothing is applied.
+- A multi-session host refuses the command on its session connections; a host session takes its policy from
+  `open_session.retryFallback`.
+
+Probe `retry_fallback_command` in `get_protocol_info` before sending it. Only a single-session process advertises it.
+Unlike an environment variable, the profile reaches this process only, never what its tools spawn. Unlike argv, it has
+no command-line length limit and is not visible in a process listing.
+
 ### Bash
 
 #### bash

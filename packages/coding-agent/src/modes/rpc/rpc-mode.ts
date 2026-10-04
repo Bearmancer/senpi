@@ -148,7 +148,7 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 	// it from a client handshake; a plain stdio client that sets nothing gets
 	// byte-identical default behavior.
 	const capabilities = parseClientCapabilities(envValue("RPC_CLIENT_CAPABILITIES"));
-	const handler = createRpcConnectionHandler(runtimeHost, sink, { capabilities });
+	const handler = createRpcConnectionHandler(runtimeHost, sink, { capabilities, retryFallbackCommand: true });
 
 	const signalCleanupHandlers: Array<() => void> = [];
 
