@@ -288,8 +288,9 @@ Two guards decide whether a handoff is attempted at all, and both fail closed:
   handler for it, so a host from before the drain existed is never signalled - `handoffHost` answers
   `{ action: "refuse", reason: "handoff_unsupported" }` and `decideHostAction` reports `upgradeable: false`.
 - The registration must prove which process serves the socket (pid + start time, and the record's `socket`
-  must be this endpoint). An unprovable owner refuses with `unknown_owner` rather than signalling a
-  stranger (I1).
+  must be this endpoint) before that process is signalled. Without such a registration a handoff never
+  signals a stranger (I1): it refuses while that host holds a session, and replaces an idle one without
+  a signal unless a flat pre-layout-2 record proves it (see "Daemon state directory (layout 2)").
 
 On win32 a named pipe can be neither renamed nor drained: `handoffHost` refuses with `upgrade_unsupported`
 and `decideHostAction` never yields `handoff` there. Upgrades apply after `stopHost({ drain: true })` or an

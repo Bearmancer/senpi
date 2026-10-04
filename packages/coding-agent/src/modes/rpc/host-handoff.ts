@@ -31,15 +31,18 @@ import { createDaemonDirectories, createHostDaemonPaths } from "./host-daemon-pa
 import { provenOwner, readHostRegistration } from "./host-daemon-registration.ts";
 import { GENERATION_HANDOFF_CAPABILITY } from "./host-decision.ts";
 import { acquireHostEnsureLock } from "./host-ensure-lock.ts";
-import { handoffUnregisteredHost } from "./host-handoff-unregistered.ts";
+import { handoffUnregisteredHost, SESSION_COUNT_TIMEOUT_MS } from "./host-handoff-unregistered.ts";
 import type { HostLifecyclePolicyInput } from "./host-lifecycle.ts";
 import { probeProtocolInfo } from "./host-probe.ts";
 import { SUCCESSOR_START_BUDGET_MS, startSuccessor } from "./host-successor.ts";
 
 const HANDOFF_PROBE_TIMEOUT_MS = 10_000;
 
-/** The longest a handoff holds the ensure lock: its probe of the running host, then the successor's start. */
-export const HANDOFF_LOCK_HOLD_MS = HANDOFF_PROBE_TIMEOUT_MS + SUCCESSOR_START_BUDGET_MS;
+/**
+ * The longest a handoff holds the ensure lock: its probe of the running host, the two session counts
+ * an unregistered host gets (before the swap and the recount after it), then the successor's start.
+ */
+export const HANDOFF_LOCK_HOLD_MS = HANDOFF_PROBE_TIMEOUT_MS + 2 * SESSION_COUNT_TIMEOUT_MS + SUCCESSOR_START_BUDGET_MS;
 
 /**
  * How long a handoff waits for the lock. The longest holder is an ensure that probes the running host

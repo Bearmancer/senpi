@@ -22,7 +22,8 @@ import { busyLegacyHostDetail, describeSessions, provenLegacyOwner } from "./hos
 import { holdSessionCount } from "./host-probe.ts";
 import { startSuccessor } from "./host-successor.ts";
 
-const SESSION_COUNT_TIMEOUT_MS = 10_000;
+/** One session count; an unregistered host is counted twice (before the swap and over the held connection after). */
+export const SESSION_COUNT_TIMEOUT_MS = 10_000;
 
 export async function handoffUnregisteredHost(
 	options: HandoffHostOptions,
@@ -53,7 +54,7 @@ export async function handoffUnregisteredHost(
 			options,
 			paths,
 			host,
-			owner: legacy === undefined ? undefined : { ...legacy, instanceId: host.instanceId ?? "" },
+			owner: legacy,
 			drainGate: async () => (await counted?.recount(SESSION_COUNT_TIMEOUT_MS)) === 0,
 		});
 		if (result.action === "handoff" && legacy === undefined) warnUnsignalledPredecessor(options.socket, host);

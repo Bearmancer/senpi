@@ -110,6 +110,8 @@ describe.skipIf(process.platform === "win32")("an unregistered host on the clien
 		const old = await startOldHost("u2c", "legacy");
 		await openSessionOn(old, await connectPeer(old.socket));
 
+		const signals = watchSignals();
+
 		const result = await handoffOn(old);
 
 		expect(result).toMatchObject({ action: "refuse", reason: "legacy_host" });
@@ -117,6 +119,7 @@ describe.skipIf(process.platform === "win32")("an unregistered host on the clien
 		expect(detail).toContain(`pid ${old.pid}`);
 		expect(detail).toContain("1 open session");
 		expect(detail).toContain("host stop --drain");
+		expect(signals.sentTo(old.pid)).toEqual([]);
 		expect(processAlive(old.pid)).toBe(true);
 		expect((await probeHost({ socket: old.socket, timeoutMs: 10_000 }))?.instanceId).toBe(old.instanceId);
 		expect(await readFile(flatPidFile(old), "utf8")).toBe(old.flatRecord);
@@ -126,10 +129,13 @@ describe.skipIf(process.platform === "win32")("an unregistered host on the clien
 		const old = await startOldHost("u2d", "unprovable");
 		await openSessionOn(old, await connectPeer(old.socket));
 
+		const signals = watchSignals();
+
 		const result = await handoffOn(old);
 
 		expect(result).toMatchObject({ action: "refuse", reason: "unknown_owner" });
 		expect(result.action === "refuse" ? result.detail : undefined).toContain("1 open session");
+		expect(signals.sentTo(old.pid)).toEqual([]);
 		expect(processAlive(old.pid)).toBe(true);
 		expect((await probeHost({ socket: old.socket, timeoutMs: 10_000 }))?.instanceId).toBe(old.instanceId);
 	}, 240_000);
@@ -261,14 +267,14 @@ function stderrLog(old: OldHost): string {
 
 /**
  * Records every signal this process delivers while still delivering it: the handoff runs in-process.
- * Signal 0 is a liveness probe that delivers nothing, so it is not counted.
+ * Signal 0 is a liveness probe that delivers nothing, so it is not counted; a bare kill is SIGTERM.
  */
 function watchSignals(): { sentTo(pid: number): string[] } {
 	const kill = vi.spyOn(process, "kill");
 	return {
 		sentTo: (pid) =>
 			kill.mock.calls
-				.filter(([target, signal]) => target === pid && signal !== 0 && signal !== undefined)
-				.map(([, signal]) => String(signal)),
+				.filter(([target, signal]) => target === pid && signal !== 0)
+				.map(([, signal]) => String(signal ?? "SIGTERM")),
 	};
 }

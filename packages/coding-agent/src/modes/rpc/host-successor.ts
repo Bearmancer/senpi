@@ -52,7 +52,7 @@ export async function startSuccessor(context: {
 	paths: HostDaemonPaths;
 	host: HostProtocolInfo;
 	/** The predecessor's proven identity; `undefined` when nothing proves it, and then it is never signalled. */
-	owner: { pid: number; processStartTime: string; instanceId: string } | undefined;
+	owner: { readonly pid: number } | undefined;
 	/** Asked once the successor owns the socket: the drain request is sent only when it answers true. */
 	drainGate?: () => Promise<boolean>;
 }): Promise<HandoffResult> {
