@@ -420,7 +420,8 @@
 				"legacyContracts/test/py-kernel-tools.test.ts/Python kernel tools inside parallel() and pipeline() text a pipeline() worker prints goes to its tool's reply, not to a parked cell",
 				"legacyContracts/test/py-kernel-tools.test.ts/Python kernel tool descriptors after the definition changes a descriptor taken before the interpreter crashed is kernel_tool_stale on the restarted kernel, even for a same-named tool",
 				"legacyContracts/test/py-kernel-tools.test.ts/Python kernel tool descriptors after the definition changes a descriptor taken before undefine is kernel_tool_stale after the name is defined again",
-				"legacyContracts/test/py-kernel-tools.test.ts/Python kernel tool descriptors after the definition changes a return annotation naming a class defined later in the cell does not stop the tool from registering"
+				"legacyContracts/test/py-kernel-tools.test.ts/Python kernel tool descriptors after the definition changes a return annotation naming a class defined later in the cell does not stop the tool from registering",
+				"legacyContracts/test/py-kernel-tools.test.ts/Python kernel tool descriptors after the definition changes a cell compiles a bare forward annotation on the interpreter in use, whatever its version"
 			],
 			"reason": "Node 11 part 2: Python kernel tools. The new contracts, plus kernel-tools-host.ts (the Python kernel's describe/invoke over the shared pump) joining the scoped census at extension load (the key the eval gate reported on this head). The prompt is unchanged; tool_schema('eval:kernel-tools') is a virtual on-demand entry, absent from the catalog listing.",
 			"changes": [

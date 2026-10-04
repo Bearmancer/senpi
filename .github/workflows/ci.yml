@@ -546,7 +546,7 @@ jobs:
       # Plan node 11: Python kernel tools serve callbacks on threads beside a SIGTERM-only interrupt; run them on Windows too.
       - name: Kernel-tool suites
         working-directory: packages/senpi-codemode
-        run: bun ../../node_modules/vitest/vitest.mjs run test/py-kernel-tools.test.ts test/kernel-tools-registry.test.ts test/kernel-tools-reentrancy.test.ts --reporter=default --reporter=json --outputFile.json=vitest-kernel-tools.json
+        run: python --version && bun ../../node_modules/vitest/vitest.mjs run test/py-kernel-tools.test.ts test/kernel-tools-registry.test.ts test/kernel-tools-reentrancy.test.ts --reporter=default --reporter=json --outputFile.json=vitest-kernel-tools.json
       - name: Require the kernel-tool suites to have executed
         shell: bash
         run: |
@@ -559,6 +559,8 @@ jobs:
             const skipped = results.length - passed - failed;
             console.log("kernel-tool suites: passed=" + passed + " failed=" + failed + " skipped=" + skipped + " python=" + python.length);
             if (failed !== 0 || skipped !== 0 || python.length < 15 || python.some((a) => a.status !== "passed")) process.exit(1);
+            const forward = python.find((a) => a.title.startsWith("a cell compiles a bare forward annotation"));
+            if (!forward || forward.status !== "passed") { console.error("bare forward annotation test: " + (forward ? forward.status : "missing")); process.exit(1); }
           '
         working-directory: packages/senpi-codemode
       - name: Build isolated packaged Python host
