@@ -102,7 +102,13 @@ describe("provider error episode: event-driven success-then-terminal", () => {
 		stub.compactionTransferAbortControllers = new Map();
 		await h.event({ type: "message_start", message: { role: "user", content: "go", timestamp: 1 } });
 		for (let i = 0; i < 3; i++)
-			await h.event({ type: "summarization_retry_scheduled", reason: "threshold", errorMessage: providerEnvelope });
+			await h.event({
+				type: "summarization_retry_scheduled",
+				attempt: i + 1,
+				maxAttempts: 5,
+				delayMs: 20000,
+				errorMessage: providerEnvelope,
+			});
 		await h.event({ type: "summarization_retry_finished" });
 		// Successful compaction: the success branch must clear the episode marker via the wiring.
 		await h.event({
