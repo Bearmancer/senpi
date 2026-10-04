@@ -159,7 +159,12 @@ describe.skipIf(process.platform === "win32")("tui endpoint registration order",
 		const socket = await within(bound, 5_000, "the bind while the header is held");
 
 		header.fail();
-		expect(await registration.then(() => "resolved", (error: unknown) => String(error))).toContain("header write refused");
+		expect(
+			await registration.then(
+				() => "resolved",
+				(error: unknown) => String(error),
+			),
+		).toContain("header write refused");
 		expect(existsSync(socket)).toBe(false);
 		expect(existsSync(socketSecretPath(socket))).toBe(false);
 		expect(await listHostEndpoints(join(harness.tempDir, "agent"))).toEqual([]);
