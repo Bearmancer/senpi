@@ -64,6 +64,27 @@ describe("Given a spec to install", () => {
 		},
 	);
 
+	it("When it is an archive with two top-level directories, then its name is not taken from either", async () => {
+		const root = await scratch();
+		const stage = join(root, "stage-two");
+		await packageDir(stage, "first", "first-package");
+		await packageDir(stage, "second", "second-package");
+		const path = join(root, "two-tops.tgz");
+		execFileSync("tar", ["-czf", path, "-C", stage, "first", "second"]);
+
+		expect(await requestedPackageName(path)).toBeUndefined();
+	});
+
+	it("When it is an archive packed from inside its directory (entries start with ./), then its name still comes from it", async () => {
+		const root = await scratch();
+		const stage = join(root, "stage-dot");
+		await packageDir(stage, "package", "dot-entries");
+		const path = join(root, "dot-entries.tgz");
+		execFileSync("tar", ["-czf", path, "-C", stage, "./package"]);
+
+		expect(await requestedPackageName(path)).toBe("dot-entries");
+	});
+
 	it.each([
 		["left-pad", "left-pad"],
 		["left-pad@1.3.0", "left-pad"],
