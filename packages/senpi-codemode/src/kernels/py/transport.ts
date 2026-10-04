@@ -11,6 +11,7 @@ import {
 } from "../../bridge/protocol.ts";
 import { applySessionEnvironment, type SessionEnvironment } from "../session-env.ts";
 import type { KernelPreludePlan } from "../shared/kernel-prelude-plan.ts";
+import { readKernelCpuTime } from "../shared/process-cpu.ts";
 import { type CodemodeRuntimeAssetEnvironment, requireCodemodeRuntimeAsset } from "../shared/runtime-asset.ts";
 import {
 	defaultSpawn,
@@ -18,6 +19,7 @@ import {
 	type KernelChild,
 	type KernelSpawnOptions,
 	type KernelSpawnProcess,
+	type KillProcessGroup,
 	numberOrNull,
 	signalOrNull,
 	splitCommand,
@@ -33,7 +35,7 @@ export interface PythonTransportRunInput {
 	readonly code: string;
 	readonly timeoutMs?: number;
 	readonly preludePlan?: KernelPreludePlan;
-	readonly envRoot?: string;
+	readonly envRoot?: () => string;
 	readonly sourceFile?: string;
 }
 
@@ -46,8 +48,13 @@ export interface PythonTransportOptions {
 	/** Per-session PI_* values merged into the interpreter environment at spawn. */
 	readonly sessionEnv?: SessionEnvironment;
 	readonly startupTimeoutMs: number;
+	readonly startupCeilingMs: number;
+	readonly readCpuTime?: (pid: number | undefined) => bigint | undefined;
+	readonly killProcessGroup?: KillProcessGroup;
 	readonly onStartupProgress?: (stage: PythonStartupStage) => void;
 	readonly memory?: KernelMemoryThresholds;
+	/** Kernel-tool descriptors carry this; a restarted interpreter gets a new one, so old descriptors go stale. */
+	readonly kernelGeneration?: number;
 	readonly onMessage?: (message: KernelToHostMessage) => void;
 	readonly spawnProcess?: KernelSpawnProcess;
 	readonly isOwned: () => boolean;
@@ -142,6 +149,11 @@ export class PythonKernelTransport {
 		return transport;
 	}
 
+	/** Kernel-tool frames for the runner's control reader (served even while a cell runs). */
+	post(message: HostToKernelMessage): void {
+		if (this.#active && !this.#exited) this.#write(message);
+	}
+
 	run(input: PythonTransportRunInput): void {
 		const preludes = input.preludePlan && {
 			install: input.preludePlan.install.map(({ exports, python }) => ({ exports: [...exports], python })),
@@ -153,7 +165,7 @@ export class PythonKernelTransport {
 			code: input.code,
 			timeoutMs: input.timeoutMs,
 			preludes,
-			...(input.envRoot === undefined ? {} : { envRoot: input.envRoot }),
+			...(input.envRoot === undefined ? {} : { envRoot: input.envRoot() }),
 			...(input.sourceFile === undefined ? {} : { sourceFile: input.sourceFile }),
 		});
 	}
@@ -176,7 +188,7 @@ export class PythonKernelTransport {
 			return;
 		}
 		if (!this.#active) {
-			await hardKill(this.#child, hardKillWaitMs);
+			await hardKill(this.#child, hardKillWaitMs, this.#options.killProcessGroup);
 			return;
 		}
 		this.#active = false;
@@ -188,15 +200,15 @@ export class PythonKernelTransport {
 		}
 		// hardKill kills the whole group; a graceful leader exit does not, so sweep it
 		// to retire any subprocess the cell left running in the kernel's process group.
-		if (await exited) sweepProcessGroup(this.#child);
-		else await hardKill(this.#child, hardKillWaitMs);
+		if (await exited) sweepProcessGroup(this.#child, this.#options.killProcessGroup);
+		else await hardKill(this.#child, hardKillWaitMs, this.#options.killProcessGroup);
 	}
 
 	retire(): Promise<void> {
 		if (this.#exited || this.#isGone) return Promise.resolve();
 		if (this.#retirement) return this.#retirement;
 		this.#active = false;
-		const retirement = hardKill(this.#child, hardKillWaitMs).finally(() => {
+		const retirement = hardKill(this.#child, hardKillWaitMs, this.#options.killProcessGroup).finally(() => {
 			this.#detachListeners();
 			if (this.#retirement === retirement) this.#retirement = null;
 		});
@@ -205,7 +217,16 @@ export class PythonKernelTransport {
 	}
 
 	async #initialize(): Promise<void> {
-		const startup = new PythonStartup(this.#options.startupTimeoutMs, () => this.#stderrTail);
+		const pid = this.#child.pid;
+		const startup = new PythonStartup({
+			noProgressMs: this.#options.startupTimeoutMs,
+			ceilingMs: this.#options.startupCeilingMs,
+			failureDetail: () => this.#stderrTail,
+			readCpuTime: () => {
+				if (this.#options.readCpuTime) return this.#options.readCpuTime(pid);
+				return pid === undefined ? undefined : readKernelCpuTime(pid);
+			},
+		});
 		this.#startup = startup;
 		const onStdout = (chunk: unknown) => this.#onStdout(String(chunk));
 		const onStderr = (chunk: unknown) => this.#onStderr(String(chunk));
@@ -221,8 +242,14 @@ export class PythonKernelTransport {
 		this.#child.stderr.on("data", onStderr);
 		this.#child.on("error", onError);
 		this.#child.on("exit", onExit);
-		const { sessionId, connection, memory } = this.#options;
-		this.#write({ type: "init", sessionId, connection, ...(memory === undefined ? {} : { memory }) });
+		const { sessionId, connection, memory, kernelGeneration } = this.#options;
+		this.#write({
+			type: "init",
+			sessionId,
+			connection,
+			...(memory === undefined ? {} : { memory }),
+			...(kernelGeneration === undefined ? {} : { kernelGeneration }),
+		});
 		await startup.ready;
 	}
 
@@ -244,6 +271,7 @@ export class PythonKernelTransport {
 
 	#onStderr(chunk: string): void {
 		if (!this.#active) return;
+		this.#startup?.activity();
 		this.#stderrTail = `${this.#stderrTail}${chunk}`.slice(-4_000);
 		this.#options.onMessage?.({ type: "text", stream: "stderr", data: chunk });
 	}
@@ -261,6 +289,7 @@ export class PythonKernelTransport {
 			if (stage !== undefined) this.#options.onStartupProgress?.(stage);
 			return;
 		}
+		if (message.type === "text") this.#startup?.activity();
 		if (message.type === "ready") this.#settleStartup();
 		else if (message.type === "init-failed") this.#settleStartup(new Error(message.error.message));
 		else if (message.type === "result") this.#options.onResult(this, message);

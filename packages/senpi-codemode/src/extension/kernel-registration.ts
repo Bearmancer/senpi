@@ -4,6 +4,7 @@ import type { BridgeConnectionConfig, KernelToHostMessage } from "../bridge/prot
 import { JuliaKernel } from "../kernels/jl/kernel.ts";
 import type { JavaScriptKernel } from "../kernels/js/context-manager.ts";
 import { PythonKernel } from "../kernels/py/kernel.ts";
+import type { PeerKernelToolsDescribe } from "../kernels/py/kernel-tools-host.ts";
 import { defaultSpawn } from "../kernels/py/process.ts";
 import { RubyKernel } from "../kernels/rb/kernel.ts";
 import type { SessionEnvironment } from "../kernels/session-env.ts";
@@ -27,6 +28,7 @@ export interface SubprocessKernelStart {
 		readonly connection: BridgeConnectionConfig;
 		readonly onMessage: (message: KernelToHostMessage) => void;
 	};
+	readonly peerKernelToolsDescribe?: PeerKernelToolsDescribe;
 }
 
 export function registerKernel(sessionId: string, language: EvalLanguage, memory: RegisteredKernelSource): string {
@@ -87,6 +89,9 @@ export async function startSubprocessKernel(start: SubprocessKernelStart): Promi
 			...shared,
 			interpreterPath: start.interpreterPath,
 			memory,
+			...(start.peerKernelToolsDescribe === undefined
+				? {}
+				: { peerKernelToolsDescribe: start.peerKernelToolsDescribe }),
 			spawnProcess: (options) => {
 				const child = defaultSpawn(options);
 				pid = child.pid;

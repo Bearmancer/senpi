@@ -288,8 +288,9 @@ Two guards decide whether a handoff is attempted at all, and both fail closed:
   handler for it, so a host from before the drain existed is never signalled - `handoffHost` answers
   `{ action: "refuse", reason: "handoff_unsupported" }` and `decideHostAction` reports `upgradeable: false`.
 - The registration must prove which process serves the socket (pid + start time, and the record's `socket`
-  must be this endpoint). An unprovable owner refuses with `unknown_owner` rather than signalling a
-  stranger (I1).
+  must be this endpoint) before that process is signalled. Without such a registration a handoff never
+  signals a stranger (I1): it refuses while that host holds a session, and replaces an idle one without
+  a signal unless a flat pre-layout-2 record proves it (see "Daemon state directory (layout 2)").
 
 On win32 a named pipe can be neither renamed nor drained: `handoffHost` refuses with `upgrade_unsupported`
 and `decideHostAction` never yields `handoff` there. Upgrades apply after `stopHost({ drain: true })` or an
@@ -430,6 +431,13 @@ pid and start time must match the live process, so a recycled pid proves nothing
   its endpoint answers with `generation_handoff` and `list_sessions` (workers included) lists no session.
   Otherwise it refuses `legacy_host`, and the CLI refusal carries `detail`: the pid, its endpoint, how many
   sessions it holds and the `host stop --drain --socket <endpoint>` that retires it.
+- A handoff (`host handoff`, and an ensure's upgrade) on an endpoint no layout-2 record proves counts the
+  running host's sessions over a connection it keeps open. With any session, or no answer, it refuses:
+  `legacy_host` with the same `detail` when a flat record proves the process, `unknown_owner` with the
+  session count otherwise. With none, the successor takes the socket; a proven legacy process is sent the
+  drain only if a recount over that held connection still lists no session, and a host no record proves
+  is never signalled - it drains itself once another generation owns the public entry, and the handoff
+  writes one stderr warning naming the socket, that host's instance and its engine.
 
 `ensureHost` fails with a typed `HostDaemonStateError` naming the directory it could not create or write,
 and starts no host in that case.

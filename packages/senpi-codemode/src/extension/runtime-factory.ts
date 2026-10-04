@@ -11,6 +11,7 @@ import {
 } from "../config/settings.ts";
 import { JsEnvironments } from "../environments/js-environments.ts";
 import { PythonEnvironments } from "../environments/python-environments.ts";
+import type { HandleRegistry } from "../handles/handle-registry.ts";
 import {
 	createInterpreterDetector,
 	getInterpreterAvailability,
@@ -59,6 +60,7 @@ export async function createRuntime(
 	event: unknown,
 	complete: (request: CompletionRequest, ctx: ExtensionContext) => Promise<CompletionResult>,
 	options: RuntimeFactoryOptions,
+	handles?: HandleRegistry,
 ): Promise<SessionRuntime> {
 	const loaded = await loadCodemodeSettings({ cwd: ctx.cwd });
 	const settings: ResolvedCodemodeSettings = {
@@ -87,6 +89,7 @@ export async function createRuntime(
 		executeTool,
 		listTools: () => pi.getAllTools(),
 		complete,
+		...(handles === undefined ? {} : { handles }),
 	});
 	return {
 		sessionId,

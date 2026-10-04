@@ -11,6 +11,7 @@ import { createHash } from "node:crypto";
 import { rmSync } from "node:fs";
 import { chmod, lstat, mkdir, realpath, rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { engineBuildIdentity } from "../../core/engine-build-identity.ts";
 import { createDaemonDirectories, createHostDaemonPaths, type HostDaemonPaths } from "../rpc/host-daemon-paths.ts";
 import { thisProcessStartTime, writeHostRegistration } from "../rpc/host-daemon-registration.ts";
 import { acquireHostEnsureLock } from "../rpc/host-ensure-lock.ts";
@@ -77,6 +78,7 @@ export async function registerTuiEndpoint(options: {
 			instanceId: options.instanceId,
 			generation: 0,
 			launchProfileId: "tui",
+			build: engineBuildIdentity(),
 		});
 		await createDaemonDirectories(paths, { kind: "tui" });
 	} finally {

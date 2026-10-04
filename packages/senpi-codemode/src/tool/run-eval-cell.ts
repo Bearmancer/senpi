@@ -226,6 +226,8 @@ async function executeCell(
 					: { artifactPath: join(options.artifactsDir, `eval-${randomUUID()}.log`) }),
 				...(options.imageResizer === undefined ? {} : { imageResizer: options.imageResizer }),
 				...(kernelTools === undefined ? {} : { kernelTools }),
+				...(options.handles === undefined ? {} : { handles: options.handles }),
+				hardDeadlineMs: cell.startedAtMs + cell.hardLimitSeconds * 1_000,
 			});
 			handler = activeHandler;
 			cellManager.bindKernel(
@@ -271,7 +273,8 @@ async function executeCell(
 					durationMs: 0,
 				});
 			}
-			const envRoot = invocation.input.language === "py" ? options.pythonEnvironments?.activeRoot : undefined;
+			const environments = invocation.input.language === "py" ? options.pythonEnvironments : undefined;
+			const envRoot = environments === undefined ? undefined : () => environments.activeRoot ?? "";
 			const packageRoot = invocation.input.language === "js" ? options.jsEnvironments?.packageRoot : undefined;
 			const result = await execution.wait(
 				kernel.run({
