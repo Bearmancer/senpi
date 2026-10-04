@@ -5,7 +5,16 @@
 
 ### What changed
 
-- `packages/senpi-codemode/src/kernels/sandbox/vendor/pi-codemode/`: seven files of @earendil-works/pi-codemode 1.0.1 (`runtime/host.ts`, `runtime/worker.ts`, `runtime/prelude-source.ts`, `runtime/protocol.ts`, `types.ts`, `wasm.ts`, `identifier.ts`) from the upstream repository at tag v1.0.1, with the upstream LICENSE and `VENDORED.md` (provenance, per-file SHA-256, local changes). Two opt-in host options sit in `// senpi-change` blocks: `output: "stream"` (frames under a credit window, delivered in order, nothing collected) and `builtins.store: "reject"` (store/load defined but stateless). The defaults are upstream's behaviour.
+- `packages/senpi-codemode/src/kernels/sandbox/vendor/pi-codemode/`: seven files of @earendil-works/pi-codemode 1.0.1 from the upstream repository at tag v1.0.1:
+  - `packages/senpi-codemode/src/kernels/sandbox/vendor/pi-codemode/runtime/host.ts`
+  - `packages/senpi-codemode/src/kernels/sandbox/vendor/pi-codemode/runtime/worker.ts`
+  - `packages/senpi-codemode/src/kernels/sandbox/vendor/pi-codemode/runtime/prelude-source.ts`
+  - `packages/senpi-codemode/src/kernels/sandbox/vendor/pi-codemode/runtime/protocol.ts`
+  - `packages/senpi-codemode/src/kernels/sandbox/vendor/pi-codemode/types.ts`
+  - `packages/senpi-codemode/src/kernels/sandbox/vendor/pi-codemode/wasm.ts`
+  - `packages/senpi-codemode/src/kernels/sandbox/vendor/pi-codemode/identifier.ts`
+
+  They come with the upstream LICENSE and `VENDORED.md` (provenance, per-file SHA-256, local changes). Two opt-in host options sit in `// senpi-change` blocks: `output: "stream"` (frames under a credit window, delivered in order, nothing collected) and `builtins.store: "reject"` (store/load defined but stateless). The defaults are upstream's behaviour.
 - `packages/senpi-codemode/package.json`: `quickjs-wasi` 3.6.2, exact pin.
 
 ### Why
