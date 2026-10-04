@@ -16,6 +16,24 @@
 
 - LOW: the job list in `ci.yml`, where the new job sits before `python-kernel-windows`.
 
+## 2026-10-05 - CI runs on pull requests to any branch (senpi#2759)
+
+### What changed
+
+- `.github/workflows/ci.yml`: the `pull_request` trigger no longer filters on `branches: [main]`, so a pull request stacked on another feature branch runs the same CI as one that targets `main`. The existing concurrency group (`ci-${{ github.ref }}`, which is `refs/pull/<n>/merge` for a pull request) with `cancel-in-progress` keeps one run per pull request.
+
+### Why
+
+- A stacked pull request ran no test workflow, so its code could look reviewed while it had never run in CI. The process-mode kernel in #2706 could not start on Linux and nothing caught it.
+
+### Why an extension could not handle it
+
+- This is CI configuration.
+
+### Expected merge conflict zones
+
+- LOW: the `on:` block at the top of `ci.yml`.
+
 ## 2026-10-04 - The Windows Python job checks that environment installs stay inside the revision (codemode plan node 14)
 
 ### What changed

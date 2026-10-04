@@ -187,7 +187,7 @@ async function canonicalBase(managedRoot: string, base: string): Promise<string>
 }
 
 /** Names among `packages` whose recorded source is a directory and is not the same directory now, or the reverse. */
-async function sourceKindChanges(revision: string, packages: readonly string[]): Promise<string[]> {
+export async function sourceKindChanges(revision: string, packages: readonly string[]): Promise<string[]> {
 	const installed = new Set(await dependencyNames(revision));
 	const sources = await recordedInstallSources(revision);
 	const changed: string[] = [];

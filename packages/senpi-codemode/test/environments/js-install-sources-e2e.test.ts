@@ -1,5 +1,8 @@
+import { execFileSync } from "node:child_process";
 import { lstatSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -93,6 +96,77 @@ describe.skipIf(!hasCommand("bun") || !hasCommand("npm"))("Given a package insta
 		},
 		240_000,
 	);
+
+	it("When bun replaces a directory install with a same-name tarball from a URL, then the stale links are refused before publishing and the previous revision stays usable", async () => {
+		const { root, fixtures, run } = await session("bun");
+		const source = await packageDir(fixtures, "senpi-url-swap", 'export const which = () => "dir";\n');
+		const tarball = await packFixture(fixtures, "senpi-url-swap", "2.0.0", 'export const which = () => "tarball";\n');
+		const later = await packFixture(fixtures, "senpi-url-later", "1.0.0", probeSource);
+		// A URL names no package before the install, so nothing is removed first and only the post-build check stands
+		// between bun's leftover links (#2758) and the next revision.
+		const server = createServer((_request, response) => {
+			response.writeHead(200, { "content-type": "application/octet-stream" });
+			response.end(readFileSync(tarball));
+		});
+		await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+		try {
+			const { port } = server.address() as AddressInfo;
+			await run(`%bun add ${source}`);
+			const active = (await readActiveRevision(activeBase(root)))?.dir ?? "";
+			const before = tree(active);
+
+			const swap = await run(`%bun add http://127.0.0.1:${port}/senpi-url-swap-2.0.0.tgz`);
+			const imported = await run('const { which } = await import("senpi-url-swap");\nwhich()');
+			const next = await run(`%bun add ${later}`);
+
+			expect(swap.details).toHaveProperty("isError", true);
+			expect(textOf(swap)).toContain(
+				"the install left node_modules/senpi-url-swap/index.js linked outside the revision, so nothing was published",
+			);
+			expect(tree(active)).toEqual(before);
+			expect(textOf(imported).trim()).toBe('"dir"');
+			expect(next.details).not.toHaveProperty("isError", true);
+		} finally {
+			server.close();
+		}
+	}, 240_000);
+
+	it("When bun replaces a directory install with a same-name archive whose top directory is not package/, then the import gets the archive's code", async () => {
+		const { fixtures, run } = await session("bun");
+		const source = await packageDir(fixtures, "senpi-gh-swap", 'export const which = () => "dir";\n');
+		const stage = join(fixtures, "gh-stage", "repo-abc123");
+		await mkdir(stage, { recursive: true });
+		await writeFile(
+			join(stage, "package.json"),
+			JSON.stringify({ name: "senpi-gh-swap", version: "2.0.0", type: "module", main: "index.js" }),
+		);
+		await writeFile(join(stage, "index.js"), 'export const which = () => "archive";\n');
+		const archive = join(fixtures, "repo-abc123.tgz");
+		execFileSync("tar", ["-czf", archive, "-C", join(fixtures, "gh-stage"), "repo-abc123"]);
+
+		await run(`%bun add ${source}`);
+		const swap = await run(`%bun add ${archive}`);
+		const imported = await run('const { which } = await import("senpi-gh-swap");\nwhich()');
+
+		expect(swap.details).not.toHaveProperty("isError", true);
+		expect(textOf(imported).trim()).toBe('"archive"');
+	}, 240_000);
+
+	it("When the managed root cannot be created because a file is in the way, then the error names no host path", async () => {
+		const outer = await mkdtemp(join(tmpdir(), "senpi-js-blocked-"));
+		cleanupDirs.push(outer);
+		await writeFile(join(outer, "a-file"), "not a directory\n");
+		const managedRoot = join(outer, "a-file", "managed");
+		const { fixtures, run } = await session("npm", managedRoot);
+		const tarball = await packFixture(fixtures, "senpi-blocked-root", "1.0.0", probeSource);
+
+		const install = await run(`%npm add ${tarball}`);
+
+		expect(install.details).toHaveProperty("isError", true);
+		expect(textOf(install)).toContain("environment_install_failed");
+		expect(textOf(install)).not.toContain(outer);
+		expect(textOf(install)).not.toContain(realpathSync(outer));
+	}, 120_000);
 
 	it.each([["npm"], ["bun"]] as const)(
 		"When %s replaces a tarball install with a same-name directory, then the import gets the directory's code",
