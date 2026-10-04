@@ -10,6 +10,8 @@
 
 ### Fixed
 
+- Replies no longer arrive wrapped in a blockquote: the handoff template and the routing line in the system prompt were written as markdown quote lines, the model copied the `>`, and the desktop and the TUI drew the whole answer as a grey quoted aside that read as if the turn had paused ([#2714](https://github.com/code-yeongyu/senpi/issues/2714)).
+
 ### Removed
 
 ## [2026.10.8] - 2026-10-04
@@ -24,7 +26,6 @@
 
 ### Fixed
 
-- Replies no longer arrive wrapped in a blockquote: the handoff template and the routing line in the system prompt were written as markdown quote lines, the model copied the `>`, and the desktop and the TUI drew the whole answer as a grey quoted aside that read as if the turn had paused ([#2714](https://github.com/code-yeongyu/senpi/issues/2714)).
 - An RPC host shard's supervisor exits after its idle window again once its sessions are done. It counted a session busy per `agent_start`, but a run emits one on every loop iteration (a provider retry, a post-compaction continue, a follow-up) and settles once, so any run that continued left the shard busy forever; a session closed mid-run did the same. It now tracks runs, and drops a session when it closes ([#2713](https://github.com/code-yeongyu/senpi/issues/2713), reported by [@DevNewbie1826](https://github.com/DevNewbie1826)).
 - `continue_from_leaf` now acknowledges when the continued turn starts (its `agent_start`, or a delegated queue), like a prompt, instead of after the whole turn. This stops a desktop continuation longer than the RPC deadline from timing out. ([#2708](https://github.com/code-yeongyu/senpi/issues/2708))
 
