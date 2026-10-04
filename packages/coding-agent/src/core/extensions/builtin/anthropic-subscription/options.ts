@@ -257,7 +257,9 @@ export function buildAnthropicSubscriptionQueryOptions(input: AnthropicSubscript
 		canUseTool,
 		hooks: HOST_TOOL_DENIAL_HOOKS,
 		systemPrompt,
-		settings: { autoCompactEnabled: true },
+		// Exactly one compaction owner: Claude Code's native auto-compact by default, off under the
+		// opt-in `compactionOwner: "senpi"` (senpi's overflow recovery then covers the hard limit).
+		settings: { autoCompactEnabled: providerSettings.compactionOwner !== "senpi" },
 		settingSources: resolveSettingSources(providerSettings, mode, authLane),
 	};
 	if (input.pathToClaudeCodeExecutable) queryOptions.pathToClaudeCodeExecutable = input.pathToClaudeCodeExecutable;

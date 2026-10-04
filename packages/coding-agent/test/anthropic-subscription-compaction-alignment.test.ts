@@ -270,25 +270,28 @@ describe("claude-sdk-oauth lane: senpi compaction stands down", () => {
 	// documented `compaction.model` escape hatch senpi owns the lane, and a per-turn
 	// context reduction would diverge the transcript and re-send the whole history cold
 	// on every later turn.
-	it("keeps the resident transcript append-only when a compaction.model override makes senpi own the lane", () => {
-		const reductionMessages = () => [
-			{ role: "user" as const, content: [{ type: "text" as const, text: "u1" }], timestamp: 1 },
-			bigAssistantMessage("assistant answer ".repeat(4_000)),
-			{ role: "user" as const, content: [{ type: "text" as const, text: "u2" }], timestamp: 3 },
-		];
-		const lane = createHarness({
-			provider: "anthropic-subscription",
-			usageTokens: 95_000,
-			compactionModel: "anthropic-subscription/claude-test",
-		});
-		const other = createHarness({ usageTokens: 95_000, compactionModel: "anthropic-subscription/claude-test" });
+	it.each([
+		["a compaction.model override", "anthropic-subscription/claude-test", undefined],
+		["compactionOwner: senpi", undefined, "senpi"],
+	])(
+		"keeps the resident transcript append-only when %s makes senpi own the lane",
+		(_label, compactionModel, owner) => {
+			if (owner) vi.stubEnv("SENPI_CLAUDE_SDK_OAUTH_COMPACTION_OWNER", owner);
+			const reductionMessages = () => [
+				{ role: "user" as const, content: [{ type: "text" as const, text: "u1" }], timestamp: 1 },
+				bigAssistantMessage("assistant answer ".repeat(4_000)),
+				{ role: "user" as const, content: [{ type: "text" as const, text: "u2" }], timestamp: 3 },
+			];
+			const lane = createHarness({ provider: "anthropic-subscription", usageTokens: 95_000, compactionModel });
+			const other = createHarness({ usageTokens: 95_000, compactionModel });
 
-		const laneResult = lane.context({ type: "context", messages: reductionMessages() }, lane.ctx);
-		const otherResult = other.context({ type: "context", messages: reductionMessages() }, other.ctx);
+			const laneResult = lane.context({ type: "context", messages: reductionMessages() }, lane.ctx);
+			const otherResult = other.context({ type: "context", messages: reductionMessages() }, other.ctx);
 
-		expect(JSON.stringify(otherResult?.messages).length).toBeLessThan(JSON.stringify(laneResult?.messages).length);
-		expect(JSON.stringify(laneResult?.messages)).toContain("assistant answer ".repeat(4_000));
-	});
+			expect(JSON.stringify(otherResult?.messages).length).toBeLessThan(JSON.stringify(laneResult?.messages).length);
+			expect(JSON.stringify(laneResult?.messages)).toContain("assistant answer ".repeat(4_000));
+		},
+	);
 
 	// The observable contract of #2746: the turn after usage crosses the reduction gate is still
 	// sent as a delta, because every message the resident session already received is byte-for-byte

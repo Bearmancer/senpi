@@ -96,6 +96,7 @@ describe("Claude SDK OAuth provider settings", () => {
 			systemPromptMode: "append",
 			systemPromptFile: "",
 			resumeMode: "yes",
+			compactionOwner: "claude",
 		});
 		expect(loadAnthropicSubscriptionProviderSettings(settings, {})).toEqual({});
 	});
@@ -107,6 +108,7 @@ describe("Claude SDK OAuth provider settings", () => {
 		["tokenInjection", "SENPI_CLAUDE_SDK_OAUTH_TOKEN_INJECTION", "ambient", "config-dir", "oauth-slots", "bad"],
 		["settingSources", "SENPI_CLAUDE_SDK_OAUTH_SETTING_SOURCES", ["user"], ["project"], "local,user", "bad"],
 		["pinnedAccount", "SENPI_CLAUDE_SDK_OAUTH_PINNED_ACCOUNT", "global", "project", "env", ""],
+		["compactionOwner", "SENPI_CLAUDE_SDK_OAUTH_COMPACTION_OWNER", "sdk", "senpi", "sdk", "bad"],
 	] as const)("applies env > project > global > default for %s", (key, envName, global, project, env, invalid) => {
 		const manager = layeredSettings({ [key]: global }, { [key]: project });
 		const expectedEnv = key === "settingSources" ? ["local", "user"] : env;
@@ -215,10 +217,11 @@ describe("preset-append deprecation warning in buildAnthropicSubscriptionQueryOp
 });
 
 describe("Claude SDK OAuth query options", () => {
-	it("pins native auto-compaction when provider settings omit compaction preferences", () => {
-		const queryOptions = optionsFor({});
-
-		expect(queryOptions.settings).toEqual({ autoCompactEnabled: true });
+	// One compaction owner per session: native auto-compact is pinned on by default (the SDK owns)
+	// and off only for the opt-in senpi owner, overriding the user's global Claude Code preference.
+	it("pins native auto-compaction on by default and off for the senpi compaction owner", () => {
+		expect(optionsFor({}).settings).toEqual({ autoCompactEnabled: true });
+		expect(optionsFor({ compactionOwner: "senpi" }).settings).toEqual({ autoCompactEnabled: false });
 	});
 
 	it("keeps preset-append as the Claude Code preset with the three extracted blocks joined", () => {

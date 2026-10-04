@@ -1,3 +1,22 @@
+## 2026-10-04 - Opt-in senpi-owned compaction on the anthropic-subscription lane
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/compaction/lane-policy.ts`: `isSdkNativeCompactionLane` is false when `compactionOwner` is `"senpi"` (resolved from `anthropicSubscriptionProvider.compactionOwner` / `SENPI_CLAUDE_SDK_OAUTH_COMPACTION_OWNER`, cached per cwd with `resumeMode`). The default (`"sdk"` or unset) keeps the SDK-native stand-down exactly as before. With `"senpi"`, `disablesSenpiCompaction` is false on the resident lane, so the speculative, idle, threshold, overflow, hard-limit, degradation and restoration routes run there as on every other provider (the per-turn context reduction stays off, see the append-only entry below).
+- Tests: `test/compaction/lane-policy.test.ts` pins the opt-in next to the unchanged default; `test/anthropic-subscription-compaction-alignment.test.ts` covers the append-only transcript for the senpi owner; the #7975 file gains a senpi-owner case (threshold compaction accepted, next turn on a fresh SDK session).
+
+### Why
+
+- On the resident lane the context grows to the SDK's native trigger (~967k of a 1M window, observed in real sessions) with every senpi compaction feature off. Since senpi#2440 an accepted compaction always cold-seeds the compacted branch, so senpi can own the lane when the user asks for it: the summary uses the session model through the same subscription, and the SDK's native auto-compact is pinned off for a senpi-owned session (see `anthropic-subscription/changes.md`, same date) so exactly one side compacts. The default stays the SDK until the change in owner is a maintainer decision (senpi#2746).
+
+### Why an extension could not handle it
+
+- Lane ownership is this builtin's own policy.
+
+### Expected merge conflict zones
+
+- LOW: `isSdkNativeCompactionLane`, `SdkNativeLaneInput` and the per-cwd settings cache in `lane-policy.ts`.
+
 ## 2026-10-04 - The resident anthropic-subscription transcript stays append-only
 
 ### What changed

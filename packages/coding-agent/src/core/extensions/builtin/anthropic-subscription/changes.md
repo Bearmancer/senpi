@@ -1,3 +1,23 @@
+## 2026-10-04 - `compactionOwner` provider setting (sdk default, senpi opt-in)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/settings.ts`: new `compactionOwner` (`"sdk"` | `"senpi"`) in `anthropicSubscriptionProvider`, env override `SENPI_CLAUDE_SDK_OAUTH_COMPACTION_OWNER`, same precedence and invalid-value handling as `resumeMode`. Consumed by `compaction/lane-policy.ts`; absent means the SDK owns compaction on the resident lane, as before.
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/options.ts`: the session-scoped inline settings pin `autoCompactEnabled: providerSettings.compactionOwner !== "senpi"` instead of always `true`, so a senpi-owned session has exactly one compaction owner (its overflow recovery covers the hard limit). The default is unchanged.
+- `docs/providers.md`: the lane's compaction contract, settings list and env table.
+
+### Why
+
+- Lets a user hand the lane to senpi's full compaction stack while the default stays the SDK-native stand-down (senpi#2746). With both sides enabled, senpi's between-turn trigger (`window - reserve`, 960k on a 1M window) and Claude Code's native trigger (~967k observed) would race on estimates, so ownership is exclusive. See `compaction/changes.md` (same date).
+
+### Why an extension could not handle it
+
+- The provider settings block is parsed here.
+
+### Expected merge conflict zones
+
+- LOW: `parseProviderSettings` / `parseEnvironmentSettings` return objects in `settings.ts`; the `settings` line of `buildAnthropicSubscriptionQueryOptions` in `options.ts`.
+
 ## 2026-10-02 - A one-model usage limit blocks only that model on the account (senpi#2555)
 
 ### What changed
