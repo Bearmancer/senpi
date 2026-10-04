@@ -346,7 +346,7 @@
 				"legacyContracts/test/environments/js-import-resolution-e2e.test.ts/Given a JavaScript cell importing a package by bare name When the managed package is ESM-only, exporting just an import entry, then the import loads it",
 				"legacyContracts/test/environments/js-revision-isolation-e2e.test.ts/Given JavaScript package revisions When two sessions sharing one managed root install at the same time, then each install lands in its own revision and both packages survive",
 				"legacyContracts/test/environments/js-revision-isolation-e2e.test.ts/Given JavaScript package revisions When a revision holds an .npmrc with credentials in any form, then the next revision carries only the registry settings",
-				"legacyContracts/test/environments/js-revision-isolation-e2e.test.ts/Given JavaScript package revisions When a revision's .npmrc is a symlink to a real config file, then that file stays byte-identical and the next revision has a regular file",
+				"legacyContracts/test/environments/js-revision-isolation-e2e.test.ts/Given JavaScript package revisions When a revision's .npmrc is a symlink to a real config file, then the next install is refused and that file stays byte-identical",
 				"legacyContracts/test/environments/js-import-resolution-e2e.test.ts/Given a JavaScript cell importing a package by bare name When a subpath pattern match climbs out with .., then the import is refused like Node refuses it",
 				"imports/extension/packages/senpi-codemode/src/kernels/js/cell-dispatch.ts",
 				"imports/firstKernel/packages/senpi-codemode/src/kernels/js/cell-dispatch.ts",
@@ -379,7 +379,13 @@
 				"legacyContracts/test/environments/js-install-containment-e2e.test.ts/Given a managed JavaScript environment When environments/js under the managed root is a link to another directory, then the install is refused and that directory is untouched",
 				"legacyContracts/test/environments/js-install-containment-e2e.test.ts/Given a managed JavaScript environment When environments/js/test under the managed root is a link to another directory, then the install is refused and that directory is untouched",
 				"legacyContracts/test/environments/js-install-containment-e2e.test.ts/Given a managed JavaScript environment When the active revision's package.json is a link into the project, then the next install is refused and the project is untouched",
-				"legacyContracts/test/environments/js-install-containment-e2e.test.ts/Given a managed JavaScript environment When the active revision's node_modules is a link into the project, then the next install is refused and the project is untouched"
+				"legacyContracts/test/environments/js-install-containment-e2e.test.ts/Given a managed JavaScript environment When the active revision's node_modules is a link into the project, then the next install is refused and the project is untouched",
+				"imports/extension/packages/senpi-codemode/src/environments/js-revision-files.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/environments/js-revision-files.ts",
+				"imports/extension/packages/senpi-codemode/src/environments/no-links.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/environments/no-links.ts",
+				"imports/extension/packages/senpi-codemode/src/environments/project-resolves.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/environments/project-resolves.ts"
 			],
 			"reason": "Node 15: %bun add / %npm add install into a per-session managed JavaScript environment (bare-import fallback root on the run input, host entries in the JS kernel queue); the two environment modules join the scoped census, plus the new contracts. No prompt or eval schema change."
 		},

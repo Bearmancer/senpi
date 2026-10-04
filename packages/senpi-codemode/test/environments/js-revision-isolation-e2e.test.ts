@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { lstat, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -79,7 +79,7 @@ describe.skipIf(!hasCommand("bun") || !hasCommand("npm"))("Given JavaScript pack
 		expect(existsSync(join(secondRoot, "bunfig.toml"))).toBe(false);
 	}, 240_000);
 
-	it("When a revision's .npmrc is a symlink to a real config file, then that file stays byte-identical and the next revision has a regular file", async () => {
+	it("When a revision's .npmrc is a symlink to a real config file, then the next install is refused and that file stays byte-identical", async () => {
 		const { root, fixtures, environments, run } = await session("npm");
 		const first = await packFixture(fixtures, "senpi-link-first", "1.0.0", probe("first"));
 		const second = await packFixture(fixtures, "senpi-link-second", "1.0.0", probe("second"));
@@ -89,11 +89,10 @@ describe.skipIf(!hasCommand("bun") || !hasCommand("npm"))("Given JavaScript pack
 		await writeFile(realConfig, original);
 		await symlink(realConfig, join(environments.packageRoot ?? "", ".npmrc"));
 
-		await run(`%npm add ${second}`);
-		const carriedPath = join(environments.packageRoot ?? "", ".npmrc");
+		const install = await run(`%npm add ${second}`);
 
+		expect(install.details).toHaveProperty("isError", true);
+		expect(textOf(install)).toContain(".npmrc links outside its revision");
 		expect(await readFile(realConfig, "utf8")).toBe(original);
-		expect((await lstat(carriedPath)).isSymbolicLink()).toBe(false);
-		expect(await readFile(carriedPath, "utf8")).toBe("registry=https://registry.example.test/\n");
 	}, 240_000);
 });
