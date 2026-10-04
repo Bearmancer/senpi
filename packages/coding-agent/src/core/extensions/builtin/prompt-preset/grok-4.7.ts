@@ -64,7 +64,7 @@ import { APP_UNRUN_CHECK_RULE, buildTestDisciplineSection } from "../../../dynam
 const INTENT_GATE_LEAD: Record<TerminalOrApp, string> = {
 	terminal: `Open every turn with one short visible routing line - required even on confirmation turns:
 
-> I read this as [intent] - [plan]. I'll stop when [the exact, observable condition that ends this turn].
+I read this as [intent] - [plan]. I'll stop when [the exact, observable condition that ends this turn].
 
 Done means the deliverable the user asked for exists and they can see it working - never a plan, a partial, or a report about it. Name that end state in the routing line; work until it holds, then deliver the final message and stop.`,
 	app: `Done means the deliverable the user asked for exists and they can see it working - never a plan, a partial, or a report about it. Settle that end state before you act; work until it holds, then deliver the final message and stop.`,
