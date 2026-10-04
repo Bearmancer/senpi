@@ -264,6 +264,7 @@ import { getModelSearchText } from "./model-search.ts";
 import {
 	isNetworkProviderError,
 	isNetworkProviderMessage,
+	isRetryableProviderError,
 	ProviderErrorPresentation,
 } from "./provider-error-presentation.ts";
 import { replayAssistantTools } from "./replay-assistant-tools.ts";
@@ -1878,8 +1879,24 @@ export class InteractiveMode {
 			this.showError(`models.json error: ${modelsJsonError}`);
 		}
 
-		for (const warning of this.session.modelRuntime.getWarnings()) {
-			this.showWarning(warning);
+		const modelRuntimeWarnings = this.session.modelRuntime.getWarnings();
+		// Fold repeated warnings only in quiet startup; a hand-built context without getQuietStartup
+		// is treated as not-quiet so full detail shows (the safe default, and what the old path did).
+		const getQuietStartup = this.settingsManager?.getQuietStartup?.bind(this.settingsManager);
+		const quietStartup = getQuietStartup ? getQuietStartup() : false;
+		if (showsStartupDetails(this.options.verbose, quietStartup)) {
+			for (const warning of modelRuntimeWarnings) {
+				this.showWarning(warning);
+			}
+		} else if (modelRuntimeWarnings.length === 1) {
+			this.showWarning(modelRuntimeWarnings[0]!);
+		} else if (modelRuntimeWarnings.length > 1) {
+			this.showNoticeBox({
+				title: `${modelRuntimeWarnings.length} model warnings`,
+				tone: "warning",
+				why: modelRuntimeWarnings[0]!,
+				extra: modelRuntimeWarnings.slice(1).map((text) => ({ text })),
+			});
 		}
 
 		if (modelFallbackMessage) {
@@ -2444,7 +2461,13 @@ export class InteractiveMode {
 			if (options?.sort !== false) {
 				labels.sort((a, b) => a.localeCompare(b));
 			}
-			return theme.fg("dim", `  ${labels.join(", ")}`);
+			// A short listing fits on one line and shows in full; a long one (dozens of skills) is
+			// what flooded the first screen on a narrow terminal, so it truncates to a few names
+			// with a +N more hint. The full list is one Ctrl+O away.
+			const shown = labels.length <= 8 ? labels : labels.slice(0, 3);
+			const hidden = labels.length - shown.length;
+			const more = hidden > 0 ? theme.fg("muted", ` +${hidden} more (${keyText("app.tools.expand")})`) : "";
+			return theme.fg("dim", `  ${shown.join(", ")}`) + more;
 		};
 		// System resources are left out of the compact body; a section with nothing else to show stays
 		// hidden until the listing is expanded, where the system group lists them. Bodies are built on
@@ -5511,6 +5534,9 @@ export class InteractiveMode {
 						this.showStatus("Auto-compaction cancelled");
 					}
 				} else if (event.result) {
+					// A successful compaction ends the retry episode: no finish is owed, so a later
+					// never-retried terminal failure must not reopen the banner.
+					this.providerErrors?.clear();
 					// Compaction event consumers in the fork are session-backed and do not
 					// necessarily expose InteractiveMode's SessionManager convenience getter.
 					// Keep the structural fallback for focused handler consumers while using
@@ -5559,7 +5585,11 @@ export class InteractiveMode {
 					this.footer?.setCompactionDelegated?.(false);
 				} else if (event.errorMessage) {
 					const errorMessage = sanitizeTerminalLabel(event.errorMessage);
-					if (isNetworkProviderError(errorMessage)) {
+					// The quiet provider-retry banner's finish() closes out a retry recorded in the CURRENT
+					// episode. A terminal compaction failure after an episode that already finished (or one
+					// that never retried) must always surface as an error, even when its message looks
+					// transient ("timeout", "truncated generator").
+					if (isRetryableProviderError(errorMessage) && this.providerErrors?.awaitingRetryFinish === true) {
 						this.getProviderErrors().finish(errorMessage);
 					} else if (event.reason === "manual") {
 						this.showError(errorMessage);
@@ -5676,7 +5706,7 @@ export class InteractiveMode {
 				break;
 
 			case "retry_fallback_exhausted":
-				if (isNetworkProviderError(event.lastError)) {
+				if (isRetryableProviderError(event.lastError)) {
 					this.getProviderErrors().finish(event.lastError);
 					this.setExtensionStatus(FALLBACK_STATUS_KEY, undefined);
 					break;
@@ -5700,7 +5730,7 @@ export class InteractiveMode {
 				break;
 
 			case "auto_retry_start": {
-				if (isNetworkProviderError(event.errorMessage)) {
+				if (isRetryableProviderError(event.errorMessage)) {
 					this.getProviderErrors().retrying(event.errorMessage, this.toolOutputExpanded);
 				}
 				// During retry waits, isStreaming flips false between attempts. The main Esc handler
@@ -5738,7 +5768,7 @@ export class InteractiveMode {
 				// Show error only on final failure (success shows normal response)
 				if (event.success || event.finalError === "Retry cancelled") {
 					this.providerErrors?.clear();
-				} else if (isNetworkProviderError(event.finalError)) {
+				} else if (isRetryableProviderError(event.finalError)) {
 					this.getProviderErrors().finish(event.finalError, event.attempt);
 				} else {
 					this.showError(`Retry failed after ${event.attempt} attempts: ${event.finalError || "Unknown error"}`);
@@ -5748,7 +5778,7 @@ export class InteractiveMode {
 			}
 
 			case "summarization_retry_scheduled": {
-				if (isNetworkProviderError(event.errorMessage)) {
+				if (isRetryableProviderError(event.errorMessage)) {
 					this.getProviderErrors().retrying(event.errorMessage, this.toolOutputExpanded);
 				} else {
 					this.showError(event.errorMessage);
@@ -5769,7 +5799,7 @@ export class InteractiveMode {
 			}
 
 			case "summarization_retry_finished": {
-				this.providerErrors?.clear();
+				this.providerErrors?.clearTransient();
 				this.clearStatusIndicator("retry");
 				this.ui.requestRender();
 				break;
@@ -5830,7 +5860,7 @@ export class InteractiveMode {
 				event.maxAttempts,
 				event.delayMs,
 				indicator,
-				isNetworkProviderError(event.errorMessage),
+				isRetryableProviderError(event.errorMessage),
 			),
 		);
 		this.ui.requestRender();
