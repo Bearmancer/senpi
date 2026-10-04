@@ -1,4 +1,4 @@
-import { readFileSync, statSync } from "node:fs";
+import { closeSync, constants, fstatSync, openSync, readFileSync } from "node:fs";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -11,6 +11,7 @@ export interface LoadCellOptions {
 	readonly artifactsDir: string | undefined;
 }
 
+const MAX_LOAD_BYTES = 8 * 1024 * 1024;
 const URL_SCHEME = /^([a-z][a-z0-9+.-]*):\/\//i;
 
 function errorCode(error: unknown): string | undefined {
@@ -52,13 +53,21 @@ function resolveTarget(target: string, options: LoadCellOptions): { path: string
 export function loadCell(target: string, options: LoadCellOptions): LoadedCell {
 	const resolved = resolveTarget(target, options);
 	if ("message" in resolved) return { ok: false, message: resolved.message };
+	let fd: number | undefined;
 	try {
-		if (!statSync(resolved.path).isFile()) return { ok: false, message: `not a file: ${target}` };
-		return { ok: true, code: readFileSync(resolved.path, "utf8"), sourceFile: resolved.path };
+		// One non-blocking open, then checks on that same handle: a FIFO or device swapped in after a check can
+		// neither block the host nor be read, and the size cap keeps a huge file from stalling the event loop.
+		fd = openSync(resolved.path, constants.O_RDONLY | constants.O_NONBLOCK);
+		const info = fstatSync(fd);
+		if (!info.isFile()) return { ok: false, message: `not a file: ${target}` };
+		if (info.size > MAX_LOAD_BYTES) return { ok: false, message: `%load reads files up to 8 MiB: ${target}` };
+		return { ok: true, code: readFileSync(fd, "utf8"), sourceFile: resolved.path };
 	} catch (error) {
 		const code = errorCode(error);
 		if (code === "ENOENT" || code === "ENOTDIR") return { ok: false, message: `file not found: ${target}` };
 		if (code === "EACCES" || code === "EPERM") return { ok: false, message: `permission denied: ${target}` };
 		return { ok: false, message: `%load could not read ${target}${code === undefined ? "" : ` (${code})`}` };
+	} finally {
+		if (fd !== undefined) closeSync(fd);
 	}
 }

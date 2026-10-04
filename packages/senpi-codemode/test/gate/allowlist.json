@@ -346,6 +346,7 @@
 				"legacyContracts/test/load-cell-turn.test.ts/Given a %load path that cannot be read When it is a file:// URL with an encoded slash, then the cell fails with a message naming the target and no absolute path",
 				"legacyContracts/test/load-cell-turn.test.ts/Given a %load path that cannot be read When it is a malformed local:// escape, then the cell fails with a message naming the target and no absolute path",
 				"legacyContracts/test/load-cell-turn.test.ts/Given a %load path that cannot be read When it is a path through a file, then the cell fails with a message naming the target and no absolute path",
+				"legacyContracts/test/load-cell-turn.test.ts/Given a %load path that cannot be read When the file is larger than 8 MiB, then the cell is refused before anything is read",
 				"legacyContracts/test/load-cell-turn.test.ts/Given a %load path that cannot be read When the file is unreadable, then the cell fails with permission denied and no absolute path",
 				"legacyContracts/test/load-cell-turn.test.ts/Given a %load target written as a URL When it is a file:// URL of a real file, then the file runs as the cell",
 				"legacyContracts/test/load-cell-turn.test.ts/Given a %load target written as a URL When it is local:// under the session artifacts, then the file runs as the cell",
@@ -353,7 +354,7 @@
 				"imports/extension/packages/senpi-codemode/src/kernels/shared/cell-source-at-start.ts",
 				"imports/firstKernel/packages/senpi-codemode/src/kernels/shared/cell-source-at-start.ts"
 			],
-			"reason": "Node 16: %load runs a local file as a Python or JavaScript cell; load-cell.ts joins the scoped census, plus the %load contracts. No prompt or eval schema change."
+			"reason": "Node 16: %load runs a local file as a Python or JavaScript cell, read at the cell's turn in the kernel queue; load-cell.ts and kernels/shared/cell-source-at-start.ts join the scoped census, plus the %load contracts. No prompt or eval schema change."
 		},
 		"24": {
 			"additions": [
