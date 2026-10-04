@@ -8,7 +8,7 @@ import {
 	pythonAbiTag,
 } from "./py-environment.ts";
 import { EnvironmentError } from "./py-installer.ts";
-import { readActiveRevision } from "./revision-store.ts";
+import { readActiveRevisionSync } from "./revision-store.ts";
 
 export interface PythonEnvironmentsOptions {
 	readonly artifactsDir: string;
@@ -20,7 +20,7 @@ export interface PythonEnvironmentsOptions {
 export class PythonEnvironments {
 	readonly #options: PythonEnvironmentsOptions;
 	#mode: EnvironmentMode = "managed";
-	#activeRoot: string | undefined;
+	#currentBase: string | undefined;
 	#managedBase: Promise<string> | undefined;
 
 	constructor(options: PythonEnvironmentsOptions) {
@@ -31,15 +31,18 @@ export class PythonEnvironments {
 		return this.#mode;
 	}
 
-	/** The revision the next Python cell imports from; undefined until something was installed in this mode. */
+	/**
+	 * The revision a Python cell imports from, read from the current mode's root each time a cell starts, so an
+	 * install by another session sharing the project root is seen. Undefined while nothing is installed there.
+	 */
 	get activeRoot(): string | undefined {
-		return this.#activeRoot;
+		return this.#currentBase === undefined ? undefined : readActiveRevisionSync(this.#currentBase)?.dir;
 	}
 
 	async setMode(mode: EnvironmentMode): Promise<string> {
 		const base = await this.#base(mode);
 		this.#mode = mode;
-		this.#activeRoot = (await readActiveRevision(base))?.dir;
+		this.#currentBase = base;
 		return base;
 	}
 
@@ -55,8 +58,9 @@ export class PythonEnvironments {
 			);
 		}
 		const mode = this.#mode;
+		const base = await this.#base(mode);
 		const receipt = await installPythonPackages({
-			base: await this.#base(mode),
+			base,
 			mode,
 			interpreter: this.#options.interpreter,
 			requirements,
@@ -64,7 +68,7 @@ export class PythonEnvironments {
 			signal,
 			...(onOutput === undefined ? {} : { onOutput }),
 		});
-		this.#activeRoot = receipt.root;
+		if (this.#mode === mode) this.#currentBase = base;
 		return receipt;
 	}
 

@@ -25,13 +25,14 @@ function textOf(result: AgentToolResult<unknown>): string {
 	return result.content.map((part) => (part.type === "text" ? part.text : "")).join("\n");
 }
 
-async function session() {
-	const root = await mkdtemp(join(tmpdir(), "senpi-magic-pip-"));
+async function session(shared?: string) {
+	const root = shared ?? (await mkdtemp(join(tmpdir(), "senpi-magic-pip-")));
 	const wheels = join(root, "wheels");
 	const artifactsDir = join(root, "artifacts");
 	await mkdir(wheels, { recursive: true });
+	const artifactsOwnDir = shared === undefined ? artifactsDir : join(root, `artifacts-${crypto.randomUUID()}`);
 	const interpreter = availability.py.detected.ok ? availability.py.detected.path : "python3";
-	const environments = new PythonEnvironments({ artifactsDir, cwd: root, interpreter, settings });
+	const environments = new PythonEnvironments({ artifactsDir: artifactsOwnDir, cwd: root, interpreter, settings });
 	const manager = await createCodemodeSessionManager({
 		sessionId: `magic-pip-${crypto.randomUUID()}`,
 		cwd: root,
@@ -98,6 +99,48 @@ describe.skipIf(!pythonReady)("Given a Python eval session", () => {
 		expect(textOf(failure)).toContain("No matching distribution");
 		expect(environments.activeRoot).toBe(activeBefore);
 		expect(textOf(still)).toContain("'1.0'");
+	}, 180_000);
+
+	it("When an import cell is queued behind a %pip cell that is itself queued behind a running cell, then the import sees the newly installed package", async () => {
+		const { wheels, run } = await session();
+		const wheel = buildWheel(wheels, "senpi_queued", "1.0");
+		await run("import time");
+
+		// All three are submitted before the install runs: the import was queued when no revision existed yet.
+		const [, install, imported] = await Promise.all([
+			run("time.sleep(1.5)"),
+			run(`%pip install --no-index ${wheel}`),
+			run("import senpi_queued; senpi_queued.VERSION"),
+		]);
+
+		expect(textOf(install)).toMatch(/installed senpi-queued-1\.0 into managed/);
+		expect(textOf(imported)).toContain("'1.0'");
+	}, 180_000);
+
+	it("When the session switches to an environment with nothing installed, then packages of the environment it left no longer import", async () => {
+		const { wheels, run } = await session();
+		await run(`%pip install --no-index ${buildWheel(wheels, "senpi_left", "1.0")}`);
+		await run("import senpi_left");
+
+		const switched = await run("%environment project");
+		const probe = await run(
+			"import importlib.util, sys; sys.modules.pop('senpi_left', None); importlib.util.find_spec('senpi_left') is None",
+		);
+
+		expect(textOf(switched)).toContain("project");
+		expect(textOf(probe)).toContain("True");
+	}, 180_000);
+
+	it("When another session in the same project installs into the project environment, then this session's next cell imports it", async () => {
+		const first = await session();
+		const second = await session(first.root);
+		await first.run("%environment project");
+		await second.run("%environment project");
+
+		await second.run(`%pip install --no-index ${buildWheel(second.wheels, "senpi_shared", "1.0")}`);
+		const imported = await first.run("import senpi_shared; senpi_shared.VERSION");
+
+		expect(textOf(imported)).toContain("'1.0'");
 	}, 180_000);
 
 	it("When a cell mixes %pip with code, then it fails with the own-cell teaching error and installs nothing", async () => {
