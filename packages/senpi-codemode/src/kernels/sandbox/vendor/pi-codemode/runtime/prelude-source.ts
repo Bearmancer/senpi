@@ -41,7 +41,7 @@ export const MAX_OUTPUT_ITEMS = 100_000;
 const IMAGE_HELPER_EXPECTS =
 	"image expects a non-empty image URL string, an object with image_url, or a raw MCP image block";
 
-export const PRELUDE_SOURCE: string = `(function (bridge, toolsJson, globalsJson, storeJson, optionsJson) {
+export const PRELUDE_SOURCE: string = `(function (bridge, toolsJson, globalsJson, storeJson, optionsJson) { // senpi-change
 	// senpi-change begin: output streaming and builtin policy
 	const options = optionsJson === undefined ? {} : JSON.parse(optionsJson);
 	const streamOutput = options.streamOutput === true;
@@ -259,7 +259,7 @@ export const PRELUDE_SOURCE: string = `(function (bridge, toolsJson, globalsJson
 		outputChars += data.length;
 		outputItems++;
 		// senpi-change begin: output streaming (the credit window bounds memory; nothing is kept to cap)
-		if (!streamOutput && (outputChars > ${MAX_OUTPUT_CHARS} || outputItems > ${MAX_OUTPUT_ITEMS})) {
+		if (!streamOutput && (outputChars > ${MAX_OUTPUT_CHARS} || outputItems > ${MAX_OUTPUT_ITEMS})) { // senpi-change
 		// senpi-change end
 			const error = new RangeErrorCtor(
 				"script output exceeded the limit of ${MAX_OUTPUT_CHARS} characters or ${MAX_OUTPUT_ITEMS} text(), image(), and console calls. " +

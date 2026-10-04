@@ -9,7 +9,7 @@
 
 Building `packages/codemode` at that commit with its pinned compiler (`typescript` 7.0.2, `tsc -p tsconfig.build.json`) reproduces all 40 files of the published npm `@earendil-works/pi-codemode@1.0.1` `dist` byte for byte, so this source is the released code.
 
-Each file below is the upstream file unchanged, with only the two-line attribution header added at the top. The SHA-256 is of the upstream file, which is this file minus its first two lines.
+Each file below starts with a two-line attribution header. `wasm.ts` and `identifier.ts` are otherwise the upstream file unchanged. The other five carry the local changes listed below, and nothing else: outside the `senpi-change` blocks and the lines marked `// senpi-change`, every line is upstream's, in upstream's order. The SHA-256 is of the upstream file.
 
 | file | upstream SHA-256 |
 | --- | --- |
@@ -25,12 +25,18 @@ Only these seven files are vendored: the closure of `runtime/host.ts` (the sandb
 
 ## Local changes
 
-Every change sits between `// senpi-change begin: <topic>` and `// senpi-change end` lines, so a sync re-applies them block by block. Each one is an option whose default is upstream's behaviour: with the defaults, the ported upstream suite (`test/sandbox/vendor/upstream-sandbox.test.ts`, 47 cases, only its imports changed) passes unchanged.
+Every change is marked, in one of two ways, so a sync can find each one:
+
+- a block between `// senpi-change begin: <topic>` and `// senpi-change end`, which adds code or replaces the upstream lines it stands in place of (for example `types.ts`'s `CodemodeResult`, and the end of `finish()` in `runtime/host.ts`);
+- a single upstream line edited in place, ending in `// senpi-change` (an extra import name, the `"output-frame"` message type in `isWorkerToHostMessage`, the prelude's `optionsJson` parameter and its stream-mode output-cap condition).
+
+A sync must re-apply both kinds: dropping a marked line (for example `"output-frame"` in the protocol guard) would make the host ignore every frame. Each one is an option whose default is upstream's behaviour: with the defaults, the ported upstream suite (`test/sandbox/vendor/upstream-sandbox.test.ts`, 47 cases, only its imports changed) passes unchanged.
 
 1. **Output streaming** (`output: "stream"`, `onOutputFrame`, `windowBytes`, `frameBytes`; `types.ts`, `runtime/protocol.ts`, `runtime/worker.ts`, `runtime/host.ts`, `runtime/prelude-source.ts`). Upstream keeps every output item until the script settles, which is why it caps output at 16 Mi characters. In stream mode:
    - The host keeps nothing; `result.output` stays empty and `result.streamed` reports frames and the peak bytes in flight.
    - The worker splits each item into frames of at most `frameBytes` (default 64 KiB), never splitting a surrogate pair, tagged with item id, sequence and a final flag.
    - It sends a frame only after taking that many bytes from a shared credit counter (default window 256 KiB). It sleeps on the counter with `Atomics.wait` while the window is full, and re-checks the interrupt flag each time it wakes.
    - The host hands frames to the consumer one at a time, in order, and returns their credit only once the consumer has finished. The output cap does not apply, because memory is bounded by the window.
-   - A normal finish settles only after every frame is consumed. An abort or timeout settles at once and drops frames still queued, so a stuck consumer cannot keep a run alive.
+   - A normal finish settles only after every frame is consumed. An abort or timeout settles at once and drops frames still queued. The timer and the abort signal stay armed while a finished run's last frames drain, so a late abort, timeout or `close()` abandons them too (the run settles with that error): a consumer that never returns cannot keep a run alive.
+   - `frameBytes` and `windowBytes` must be at least 4, so a frame can always hold a whole surrogate pair.
 2. **Builtin store policy** (`builtins: { store: "collect" | "reject" }`; `types.ts`, `runtime/protocol.ts`, `runtime/worker.ts`, `runtime/host.ts`, `runtime/prelude-source.ts`). With `"reject"`, `load()` returns `undefined` and `store()` throws `CodemodeStoreDisabledError`. The names stay defined, so scripts written for upstream fail with a clear message instead of a ReferenceError.

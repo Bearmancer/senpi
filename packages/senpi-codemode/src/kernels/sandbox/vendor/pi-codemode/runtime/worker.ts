@@ -50,7 +50,6 @@ function describeException(error: JSException): string {
 	const stack = error.stack?.trimEnd();
 	return JSON.stringify({ name: error.name, message: error.message, stack: stack ? `${head}\n${stack}` : head });
 }
-
 // senpi-change begin: output streaming
 /**
  * Sends one output item as frames of at most `frameBytes` UTF-16 bytes, each only after taking that many bytes

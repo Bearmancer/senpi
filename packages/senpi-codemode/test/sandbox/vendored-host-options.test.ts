@@ -114,6 +114,114 @@ describe("Given a sandbox in output stream mode", () => {
 	}, 30_000);
 });
 
+describe("Given a streaming run whose consumer never returns", () => {
+	function stuckSandbox(timeoutMs = 60_000) {
+		const sandbox = new CodemodeSandbox({
+			output: "stream",
+			onOutputFrame: () => new Promise<void>(() => undefined),
+			timeoutMs,
+		});
+		sandboxes.push(sandbox);
+		return sandbox;
+	}
+
+	function settledWithin<T>(promise: Promise<T>, ms: number): Promise<T | "pending"> {
+		return Promise.race([
+			promise,
+			new Promise<"pending">((resolve) => setTimeout(() => resolve("pending"), ms).unref()),
+		]);
+	}
+
+	it("When the script finishes and the run is aborted afterwards, then it settles as aborted instead of waiting on the consumer", async () => {
+		const controller = new AbortController();
+		const run = stuckSandbox().execute('text("a"); return 1', { signal: controller.signal });
+		await new Promise((resolve) => setTimeout(resolve, 300));
+
+		controller.abort();
+
+		await expect(settledWithin(run, 3_000)).resolves.toMatchObject({ ok: false, error: { kind: "aborted" } });
+	}, 15_000);
+
+	it("When the script finishes and the timeout passes while frames drain, then it settles as timed out", async () => {
+		const run = stuckSandbox(800).execute('text("a"); return 1');
+
+		await expect(settledWithin(run, 5_000)).resolves.toMatchObject({ ok: false, error: { kind: "timeout" } });
+	}, 15_000);
+
+	it("When the sandbox is closed while frames drain, then the run settles", async () => {
+		const sandbox = stuckSandbox();
+		const run = sandbox.execute('text("a"); return 1');
+		await new Promise((resolve) => setTimeout(resolve, 300));
+
+		await sandbox.close();
+
+		await expect(settledWithin(run, 3_000)).resolves.toMatchObject({ ok: false, error: { kind: "aborted" } });
+	}, 15_000);
+});
+
+describe("Given a streaming run aborted with frames still queued", () => {
+	it("When it settles, then the consumer is handed no frame afterwards", async () => {
+		let release = (): void => undefined;
+		let settled = false;
+		let afterSettle = 0;
+		let first = true;
+		const sandbox = new CodemodeSandbox({
+			output: "stream",
+			frameBytes: 16,
+			windowBytes: 4096,
+			onOutputFrame: async () => {
+				if (settled) afterSettle++;
+				if (first) {
+					first = false;
+					await new Promise<void>((resolve) => {
+						release = resolve;
+					});
+				}
+			},
+			timeoutMs: 60_000,
+		});
+		sandboxes.push(sandbox);
+		const controller = new AbortController();
+		const run = sandbox.execute('for (let i = 0; i < 50; i++) text("0123456789abcdef");', {
+			signal: controller.signal,
+		});
+		await new Promise((resolve) => setTimeout(resolve, 300));
+
+		controller.abort();
+		const result = await run;
+		settled = true;
+		release();
+		await new Promise((resolve) => setTimeout(resolve, 200));
+
+		expect(result).toMatchObject({ ok: false, error: { kind: "aborted" } });
+		expect(afterSettle).toBe(0);
+	}, 15_000);
+});
+
+describe("Given stream options too small to hold a surrogate pair", () => {
+	it.each([[2], [3]])("When frameBytes is %i, then the sandbox refuses it", (frameBytes) => {
+		expect(() => new CodemodeSandbox({ output: "stream", onOutputFrame: () => undefined, frameBytes })).toThrow(
+			"must be at least 4",
+		);
+	});
+
+	it("When frameBytes is 4, then a two-emoji text arrives with no lone surrogate in any frame", async () => {
+		const frames: string[] = [];
+		const sandbox = new CodemodeSandbox({
+			output: "stream",
+			onOutputFrame: (frame) => void frames.push(frame.chunk),
+			frameBytes: 4,
+			timeoutMs: 30_000,
+		});
+		sandboxes.push(sandbox);
+
+		await sandbox.execute('text("\u{1F600}\u{1F601}")');
+
+		expect(frames.join("")).toBe("\u{1F600}\u{1F601}");
+		expect(frames.every((chunk) => !/[\uD800-\uDBFF]$|^[\uDC00-\uDFFF]/u.test(chunk))).toBe(true);
+	}, 30_000);
+});
+
 describe("Given a sandbox with the store builtin rejected", () => {
 	it("When a script calls store and load, then store throws CodemodeStoreDisabledError and load finds nothing", async () => {
 		const sandbox = new CodemodeSandbox({ builtins: { store: "reject" } });
