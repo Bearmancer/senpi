@@ -100,4 +100,19 @@ describe("Given a JavaScript kernel with kernel tools", () => {
 			"MCP name grammar",
 		);
 	}, 30_000);
+	it.each(["defined", "undefine"])(
+		"registering a kernel tool named %s is refused with reserved_tool_name, by alias or by function name",
+		async (name) => {
+			const target = kernel();
+
+			await expect(run(target, `function f(a) { return a }; tool(f, { name: "${name}" })`)).rejects.toThrow(
+				`Kernel tool name is reserved: ${name}`,
+			);
+			await expect(run(target, `function ${name}(a) { return a }; tool(${name})`)).rejects.toThrow(
+				`Kernel tool name is reserved: ${name}`,
+			);
+			expect(JSON.parse(await run(target, "tool.defined()"))).toEqual([]);
+		},
+		30_000,
+	);
 });

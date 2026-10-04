@@ -6,7 +6,8 @@ import { orderedArgs, resolveToolMetadata, validateInvokeArgs } from "./kernel-t
 
 export { createToolNamespace };
 
-const DEFAULT_RESERVED = Object.freeze(["__agent__", "__output__", "__schema__"]);
+// "defined" and "undefine" are the tool namespace's own members, so a kernel tool by those names could never be reached.
+const DEFAULT_RESERVED = Object.freeze(["__agent__", "__output__", "__schema__", "defined", "undefine"]);
 
 function currentNames(source) {
 	return typeof source === "function" ? source() : (source ?? []);
