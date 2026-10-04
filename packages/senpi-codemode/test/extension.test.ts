@@ -5,6 +5,7 @@ import type { ExtensionContext, ExtensionToolContext } from "@code-yeongyu/senpi
 import type { Api, Model } from "@earendil-works/pi-ai/compat";
 import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 import type { CodemodeSessionManager } from "../src/extension/session-manager.ts";
+import { CodemodeSessionDisposedError } from "../src/extension/session-manager.ts";
 import senpiCodemode, { type CodemodeExtensionAPI } from "../src/index.ts";
 import type { EvalKernelResult, EvalKernelRunInput, KernelInterruptHandle } from "../src/tool/types.ts";
 import { fakeExtensionContext, result } from "./eval/fakes.ts";
@@ -589,7 +590,7 @@ describe("senpi-codemode extension lifecycle", () => {
 		{ path: "a reload", shutdown: "reload", start: "reload" },
 		{ path: "a new session", shutdown: "new", start: "new" },
 	] as const)(
-		"Given a failed re-creation that later evals keep reporting, when $path starts the session again, then eval works without a restart",
+		"Given a failed re-creation that later evals keep reporting, when $path starts the session again and that start fails too, then the next eval retries instead of repeating the old failure",
 		async ({ shutdown, start }) => {
 			const pi = new FakePi();
 			const manager = new DisposableManager();
@@ -597,7 +598,7 @@ describe("senpi-codemode extension lifecycle", () => {
 			senpiCodemode(pi, {
 				createSessionManager: async () => {
 					attempts += 1;
-					if (attempts <= 2) throw new Error("bridge port unavailable");
+					if (attempts <= 3) throw new Error(`bridge port unavailable (attempt ${attempts})`);
 					return manager;
 				},
 			});
@@ -606,10 +607,11 @@ describe("senpi-codemode extension lifecycle", () => {
 			const evalOnce = (id: string) =>
 				pi.registeredTool?.execute(id, { language: "js", code: "1", summary: id }, undefined, undefined, ctx);
 			await emit(pi, "session_start", { reason: "startup" }, ctx).catch(() => undefined);
-			await expect(evalOnce("recreation-fails")).rejects.toThrow("codemode runtime could not be re-created");
+			await expect(evalOnce("recreation-fails")).rejects.toThrow("(attempt 2)");
 
 			if (shutdown !== undefined) await emit(pi, "session_shutdown", { reason: shutdown }, ctx);
-			await emit(pi, "session_start", { reason: start }, ctx);
+			await emit(pi, "session_start", { reason: start }, ctx).catch(() => undefined);
+			expect(attempts).toBe(3);
 			const run = evalOnce("after-fresh-start");
 			const outcome = await Promise.race([
 				manager.runStarted.promise.then(() => "kernel reached"),
@@ -620,11 +622,62 @@ describe("senpi-codemode extension lifecycle", () => {
 			]);
 
 			expect(outcome).toBe("kernel reached");
-			expect(attempts).toBe(3);
+			expect(attempts).toBe(4);
 			await emit(pi, "session_shutdown", {}, ctx);
 			await Promise.allSettled([run]);
 		},
 	);
+
+	it("Given a failed re-creation, when a later start succeeds and its manager is then disposed outside the session lifecycle, then eval reports the disposal, not the old failure", async () => {
+		const pi = new FakePi();
+		const manager = new DisposableManager();
+		let attempts = 0;
+		senpiCodemode(pi, {
+			createSessionManager: async () => {
+				attempts += 1;
+				if (attempts <= 2) throw new Error("bridge port unavailable");
+				return manager;
+			},
+		});
+		const ctx = extensionContext();
+		vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+		const evalOnce = (id: string) =>
+			pi.registeredTool?.execute(id, { language: "js", code: "1", summary: id }, undefined, undefined, ctx);
+		await emit(pi, "session_start", { reason: "startup" }, ctx).catch(() => undefined);
+		await expect(evalOnce("recreation-fails")).rejects.toThrow("codemode runtime could not be re-created");
+		await emit(pi, "session_start", { reason: "startup" }, ctx);
+
+		await manager.dispose();
+		// The real manager reports a disposed state with this typed error; recovery only acts on it.
+		vi.spyOn(manager, "getKernel").mockRejectedValue(new CodemodeSessionDisposedError());
+		const after = evalOnce("after-dispose");
+
+		await expect(after).rejects.toThrow("codemode session manager is disposed");
+		expect(attempts).toBe(3);
+	});
+
+	it("Given a failed re-creation, when the session ends, then a later eval reports the ended session, not the old failure", async () => {
+		const pi = new FakePi();
+		let attempts = 0;
+		senpiCodemode(pi, {
+			createSessionManager: async () => {
+				attempts += 1;
+				throw new Error("bridge port unavailable");
+			},
+		});
+		const ctx = extensionContext();
+		vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+		const evalOnce = (id: string) =>
+			pi.registeredTool?.execute(id, { language: "js", code: "1", summary: id }, undefined, undefined, ctx);
+		await emit(pi, "session_start", { reason: "startup" }, ctx).catch(() => undefined);
+		await expect(evalOnce("recreation-fails")).rejects.toThrow("codemode runtime could not be re-created");
+
+		await emit(pi, "session_shutdown", {}, ctx);
+		const after = evalOnce("after-end");
+
+		await expect(after).rejects.not.toThrow("codemode runtime could not be re-created");
+		expect(attempts).toBe(2);
+	});
 
 	it("Given a failed start, when two evals arrive together, then they share one re-creation and one diagnostic", async () => {
 		const pi = new FakePi();
