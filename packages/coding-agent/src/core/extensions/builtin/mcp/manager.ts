@@ -10,7 +10,13 @@ import type { McpServerSnapshot } from "./service-types.ts";
 import { buildMcpStatusRows, formatMcpStatus } from "./status.ts";
 
 type McpManagerCommand = "test" | "reconnect" | "auth" | "logout";
-type RunCommand = (command: McpManagerCommand, name: string, ctx: ExtensionCommandContext) => Promise<void>;
+type Notify = ExtensionCommandContext["ui"]["notify"];
+type RunCommand = (
+	command: McpManagerCommand,
+	name: string,
+	ctx: ExtensionCommandContext,
+	notify?: Notify,
+) => Promise<void>;
 const EXPOSURES = ["auto", "direct", "search", "proxy"] as const;
 
 export async function showMcpManager(
@@ -153,10 +159,7 @@ async function manage(
 				} else if (action === "test" || action === "reconnect") {
 					view.status(`MCP server ${name}`, action === "test" ? "Testing..." : "Reconnecting...");
 					const notices: string[] = [];
-					await run(action, name, {
-						...ctx,
-						ui: { ...ctx.ui, notify: (text) => notices.push(text) },
-					});
+					await run(action, name, ctx, (text) => notices.push(text));
 					message = notices.join("\n");
 				}
 			} catch (error) {

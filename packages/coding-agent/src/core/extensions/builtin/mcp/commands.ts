@@ -23,6 +23,7 @@ const SUBCOMMANDS = [
 ] as const;
 
 const AUTH_SUBCOMMANDS = new Set(["auth", "auth-start", "auth-complete", "logout"]);
+type Notify = ExtensionCommandContext["ui"]["notify"];
 
 export function registerMcpCommands(
 	pi: ExtensionAPI,
@@ -58,14 +59,15 @@ async function handleMcpCommand(
 	ctx: ExtensionCommandContext,
 	pi: ExtensionAPI,
 	service: ReturnType<typeof getMcpService>,
+	notify?: Notify,
 ): Promise<void> {
 	const subcommand = args[0] ?? "";
 	if (subcommand === "") {
 		if (!ctx.hasUI || ctx.mode !== "tui") {
 			ctx.ui.notify(await renderStatus("MCP servers", service));
 		} else {
-			await showMcpManager(ctx, pi, service, (command, name, commandCtx) =>
-				handleMcpCommand([command, name], commandCtx, pi, service),
+			await showMcpManager(ctx, pi, service, (command, name, commandCtx, commandNotify) =>
+				handleMcpCommand([command, name], commandCtx, pi, service, commandNotify),
 			);
 		}
 		return;
@@ -87,7 +89,7 @@ async function handleMcpCommand(
 		return;
 	}
 	if (subcommand === "test") {
-		await testServer(args[1] ?? "", ctx, service);
+		await testServer(args[1] ?? "", ctx, service, notify);
 		return;
 	}
 	if (subcommand === "logs") {
@@ -95,7 +97,7 @@ async function handleMcpCommand(
 		return;
 	}
 	if (subcommand === "reconnect") {
-		await reconnectServer(args[1] ?? "", ctx, pi, service);
+		await reconnectServer(args[1] ?? "", ctx, pi, service, notify);
 		return;
 	}
 	ctx.ui.notify(`Unknown /mcp subcommand: ${subcommand}`, "error");
@@ -155,8 +157,13 @@ async function setServerEnabled(
 	ctx.ui.notify(`${enabled ? "Enabled" : "Disabled"} MCP server ${name}`);
 }
 
-async function testServer(name: string, ctx: ExtensionCommandContext, service: McpCommandService): Promise<void> {
-	if (!ensureKnown(name, ctx, service)) return;
+async function testServer(
+	name: string,
+	ctx: ExtensionCommandContext,
+	service: McpCommandService,
+	notify: Notify = (text, type) => ctx.ui.notify(text, type),
+): Promise<void> {
+	if (!ensureKnown(name, ctx, service, notify)) return;
 	const connection = service.getConnection(name);
 	if (connection === undefined) return;
 	const started = Date.now();
@@ -165,12 +172,12 @@ async function testServer(name: string, ctx: ExtensionCommandContext, service: M
 		const result = await connection.client.listTools({}, { timeout: 2000 });
 		const elapsedMs = Date.now() - started;
 		service.recordCall(name, elapsedMs, false);
-		ctx.ui.notify(`MCP test ${name} ok (${elapsedMs}ms): ${result.tools.length} tools`);
+		notify(`MCP test ${name} ok (${elapsedMs}ms): ${result.tools.length} tools`);
 	} catch (error) {
 		const elapsedMs = Date.now() - started;
 		service.recordCall(name, elapsedMs, true);
 		const message = error instanceof Error ? error.message : String(error);
-		ctx.ui.notify(`MCP test ${name} failed (${elapsedMs}ms): ${message}`, "error");
+		notify(`MCP test ${name} failed (${elapsedMs}ms): ${message}`, "error");
 	}
 }
 
@@ -185,25 +192,31 @@ async function reconnectServer(
 	ctx: ExtensionCommandContext,
 	pi: Pick<ExtensionAPI, "getActiveTools" | "setActiveTools" | "registerTool">,
 	service: McpCommandService,
+	notify: Notify = (text, type) => ctx.ui.notify(text, type),
 ): Promise<void> {
-	if (!ensureKnown(name, ctx, service)) return;
+	if (!ensureKnown(name, ctx, service, notify)) return;
 	try {
 		await service.reconnectServer(name);
 		await service.attachSession({ type: "session_start", reason: "reload" }, ctx, pi);
-		ctx.ui.notify(`MCP reconnect ${name} connected`);
+		notify(`MCP reconnect ${name} connected`);
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
-		ctx.ui.notify(`MCP reconnect ${name} failed: ${message}`, "error");
+		notify(`MCP reconnect ${name} failed: ${message}`, "error");
 	}
 }
 
-function ensureKnown(name: string, ctx: ExtensionCommandContext, service: McpCommandService): boolean {
+function ensureKnown(
+	name: string,
+	ctx: ExtensionCommandContext,
+	service: McpCommandService,
+	notify: Notify = (text, type) => ctx.ui.notify(text, type),
+): boolean {
 	if (name.length > 0 && service.getServerSnapshots().some((snapshot) => snapshot.name === name)) return true;
 	const known = service
 		.getServerSnapshots()
 		.map((snapshot) => snapshot.name)
 		.join(", ");
-	ctx.ui.notify(`Unknown MCP server: ${name || "<missing>"}\nKnown MCP servers: ${known || "(none)"}`, "error");
+	notify(`Unknown MCP server: ${name || "<missing>"}\nKnown MCP servers: ${known || "(none)"}`, "error");
 	return false;
 }
 

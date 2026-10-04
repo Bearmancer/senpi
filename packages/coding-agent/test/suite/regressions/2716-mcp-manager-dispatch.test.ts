@@ -1,3 +1,5 @@
+import { existsSync } from "node:fs";
+import { dirname } from "node:path";
 import { TUI } from "@earendil-works/pi-tui";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { VirtualTerminal } from "../../../../tui/test/virtual-terminal.ts";
@@ -10,6 +12,7 @@ import { KeybindingsManager } from "../../../src/core/keybindings.ts";
 import { initTheme, theme } from "../../../src/modes/interactive/theme/theme.ts";
 import { createUi } from "../../mcp/fixtures/commands.ts";
 import { cleanupRoots, fakePi, makeRoot, setConfig, stdioServer } from "../../mcp/fixtures/service-lifecycle.ts";
+import { waitForSignalBeforeCompletion } from "../../promise-test-utils.ts";
 import { createHarness } from "../harness.ts";
 
 const cleanup: Array<() => Promise<void>> = [];
@@ -68,6 +71,109 @@ async function setup(name: string, oauth = false) {
 // senpi#2716, PR #2747: exercise the registered slash command and real manager,
 // replacing only menu input and network operations, never the dispatch callback.
 describe("MCP manager structured dispatch", () => {
+	it("retains the original guarded context through gated reconnect, rebinding, invalidation, and release", async () => {
+		// senpi#2716, PR #2747 owner item 2: observe the registered command and
+		// real service attach, not a copied context or a mocked attach result.
+		const name = "owner-context";
+		const { root, service, harness, ui } = await setup(name);
+		const initialPid = service.getConnection(name)?.getRootPid();
+		if (!initialPid) throw new Error("Initial fixture did not spawn");
+		const runner = harness.getExtensionRunner();
+		const createContext = vi.spyOn(runner, "createCommandContext");
+		const attachSession = service.attachSession.bind(service);
+		const bindings: Array<{
+			ctx: Parameters<typeof service.attachSession>[1];
+			pi: NonNullable<Parameters<typeof service.attachSession>[2]>;
+		}> = [];
+		vi.spyOn(service, "attachSession").mockImplementation(async (event, ctx, pi, options) => {
+			await attachSession(event, ctx, pi, options);
+			if (!pi) throw new Error("Reconnect did not attach its extension API");
+			bindings.push({ ctx, pi });
+		});
+		const entered = Promise.withResolvers<void>();
+		const resume = Promise.withResolvers<void>();
+		const reconnectServer = service.reconnectServer.bind(service);
+		vi.spyOn(service, "reconnectServer").mockImplementation(async (server) => {
+			entered.resolve();
+			await resume.promise;
+			await reconnectServer(server);
+		});
+		const choices: Array<string | undefined> = [name, "test", "reconnect", undefined, undefined];
+		const details: string[] = [];
+		vi.spyOn(McpManagerView.prototype, "menu").mockImplementation(async (build) => {
+			const menu = await build();
+			if (menu.details) details.push(menu.details);
+			const choice = choices.shift();
+			if (choice === undefined) return undefined;
+			expect(menu.items.some((item) => item.value === choice)).toBe(true);
+			return choice;
+		});
+		const notify = ui.notify;
+		const reboundUi = createUi();
+		const deadline = setTimeout(() => entered.reject(new Error("Reconnect did not enter its gate")), 2000);
+		const operation = harness.session.prompt("/mcp");
+		try {
+			await waitForSignalBeforeCompletion(operation, entered.promise, "reconnect gate");
+			clearTimeout(deadline);
+			const original = createContext.mock.results[0]?.value;
+			if (!original) throw new Error("Registered command did not create a runner context");
+			expect(original.mode).toBe("tui");
+			const originalUi = original.ui;
+			runner.setUIContext(reboundUi, "print");
+			expect(original.mode).toBe("print");
+			expect(original.ui).not.toBe(originalUi);
+			resume.resolve();
+			await operation;
+			const binding = bindings[0];
+			if (!binding) throw new Error("Reconnect did not finish its real service attach");
+
+			expect(binding.ctx).toBe(original);
+			expect(binding.ctx.mode).toBe("print");
+			expect(binding.ctx.sessionManager).toBe(harness.sessionManager);
+			expect(ui.notify).toBe(notify);
+			expect(ui.notifications).toEqual([]);
+			expect(reboundUi.notifications).toEqual([]);
+			expect(details.some((text) => /^MCP test owner-context ok \(\d+ms\): 1 tools$/.test(text))).toBe(true);
+			expect(details).toContain(`MCP reconnect ${name} connected`);
+			expect(service.getConnection(name)?.state).toBe("connected");
+			expect(binding.pi.getActiveTools()).toContain("mcp_owner-context_tool_1");
+			const reconnectPid = service.getConnection(name)?.getRootPid();
+			if (!reconnectPid) throw new Error("Reconnect fixture did not spawn");
+
+			runner.invalidate();
+			expect(() => binding.ctx.mode).toThrow("This extension ctx is stale");
+			expect(() => binding.ctx.sessionManager).toThrow("This extension ctx is stale");
+			await service.releaseSession({}, "quit");
+			expect(service.isDisposed()).toBe(false);
+			await service.releaseSession(binding.pi, "quit");
+			expect(service.getSnapshot()).toMatchObject({
+				disposed: true,
+				disposeCount: 1,
+				lastDisposeReason: "quit",
+				hasSessionContext: false,
+				connectionCount: 0,
+			});
+			expect(service.getConnection(name)).toBeUndefined();
+			for (const pid of new Set([initialPid, reconnectPid])) {
+				expect(() => process.kill(pid, 0)).toThrow(expect.objectContaining({ code: "ESRCH" }));
+			}
+			console.info(
+				"owner-context: original identity; live mode=print; stale mode/sessionManager throw; exact pi release disposes; both fixture PIDs reaped",
+			);
+		} finally {
+			clearTimeout(deadline);
+			resume.resolve();
+			await operation;
+			vi.restoreAllMocks();
+			await cleanupRoots(cleanup);
+			expect(existsSync(dirname(root.agentDir))).toBe(false);
+			expect(existsSync(harness.tempDir)).toBe(false);
+			console.info(
+				"owner-context cleanup: gate resumed; deadline cleared; command joined; mocks restored; TUI stopped; harness/provider disposed; service disposed; temporary roots removed",
+			);
+		}
+	});
+
 	for (const action of ["test", "reconnect", "auth", "logout"] as const) {
 		it.each(names)(`preserves raw server identity when the manager selects ${action}: %j`, async (name) => {
 			// Given: a configured server whose identity JSON encoding would change.
