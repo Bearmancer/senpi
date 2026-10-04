@@ -1,5 +1,24 @@
 # prompt-preset Extension Changes
 
+## 2026-10-04 - GPT handoff templates are no longer markdown quote lines (senpi#2714)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/prompt-preset/gpt-5.5.ts`, `gpt-5.6.ts`, `gpt-6-astra.ts`: the handoff template line reads `[Outcome so far] toward ...` instead of `> [Outcome so far] toward ...`. Nothing else changes.
+- `test/suite/prompt-presets-app-surface.test.ts`: for every prompt on the terminal and app surfaces, every handoff template line (a line with `Now: [` and a `For you` / `You need` slot) exists and does not start with `>`. RED on main: 30 of 30 prompts fail; the `2366` template regression now pins `^Ask: \[`.
+
+### Why
+
+- Same cause as `dynamic-prompt/changes.md` (senpi#2714): the model copies the quote marker into its reply, which renders the answer as a blockquote.
+
+### Why an extension could not handle it
+
+- These lines are the preset cores themselves.
+
+### Expected merge conflict zones
+
+- Fork-only files. The `## Handoff` template line in each preset.
+
 ## 2026-10-04 - Claude Fable 5.1: the between-handoff update becomes an instruction; three twice-stated rules go back to one home (senpi#2681)
 
 ### What changed

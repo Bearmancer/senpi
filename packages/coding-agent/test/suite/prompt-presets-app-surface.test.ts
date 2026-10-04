@@ -19,7 +19,7 @@ import { createHarness, type Harness } from "./harness.ts";
 const ROUTING_LINE_SENTINEL = "I read this as";
 const FEEDBACK_GUIDANCE = /tool and hook feedback/i;
 const COVERED_BY_EVIDENCE = "covered by the evidence that did run";
-const HANDOFF_TEMPLATE = [/> Ask:/, /For you:/, /Now: \[/, /handoff block/i];
+const HANDOFF_TEMPLATE = [/Ask: \[/, /For you:/, /Now: \[/, /handoff block/i];
 const HANDOFF_SLOT = /For you|You need/;
 const UNRUN_CHECK_REPORTING =
 	/flag the unverified explicitly|could not (verify|run)|cannot run, say so|what you could not and why/i;
@@ -92,6 +92,18 @@ describe("prompt surface contract", () => {
 		for (const pattern of HANDOFF_TEMPLATE) expect(chat).not.toMatch(pattern);
 		expect(chat).not.toMatch(HANDOFF_SLOT);
 		expect(render(prompt, "app")).toMatch(HANDOFF_SLOT);
+	});
+
+	// senpi#2714: the model copies the template line as its reply, and a leading `>` made the whole answer a blockquote.
+	it.each(PROMPTS)("%s renders its handoff template as plain text, not a markdown quote", (prompt) => {
+		for (const surface of ["terminal", "app"] as const) {
+			const template = render(prompt, surface)
+				.split("\n")
+				.filter((line) => /Now: \[/.test(line) && HANDOFF_SLOT.test(line));
+
+			expect(template.length).toBeGreaterThan(0);
+			for (const line of template) expect(line).not.toMatch(/^\s*>/);
+		}
 	});
 
 	it.each(PROMPTS)("%s on the terminal surface keeps the routing line", (prompt) => {

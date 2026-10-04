@@ -1,5 +1,23 @@
 # changes.md — dynamic-prompt
 
+## 2026-10-04 - Handoff: the block template is no longer a markdown quote line (senpi#2714)
+
+### What changed
+
+- `packages/coding-agent/src/core/dynamic-prompt/handoff.ts`: the template line of `buildHandoffSection` reads `Ask: [the user's original request] - wanted: ...` instead of `> Ask: ...`. Labels, slots and every other sentence are unchanged; the prompt loses two characters.
+
+### Why
+
+- The model copies the template line as the shape of its reply, `>` included, so in the desktop (and the TUI) the whole final message rendered as a blockquote and read as a paused aside instead of an answer. A recorded app-surface session on claude-opus-5-5 stored all five final messages as `> Ask: ...`. Prompt-engineering category B (misframing): the marker meant "this is the template" and was read as "this is the format", so it is removed at its source; nothing is added.
+
+### Why an extension could not handle it
+
+- The handoff section is built inside the shared prompt builder; an extension could only append a competing rule.
+
+### Expected merge conflict zones
+
+- Fork-only file. The template line in `buildHandoffSection`.
+
 ## 2026-10-04 - Handoff: the Fable-only between-handoff sentence names the moment and the shape (senpi#2681)
 
 ### What changed
