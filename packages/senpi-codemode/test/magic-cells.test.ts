@@ -60,6 +60,14 @@ describe("%pip argument parsing", () => {
 		expect(splitShellWords("install six#not-a-comment")).toEqual(["install", "six#not-a-comment"]);
 	});
 
+	it("Given a Windows path, then its backslashes reach pip unchanged; in POSIX mode a backslash escapes", () => {
+		expect(splitShellWords(String.raw`install C:\Users\me\wheels\pkg.whl`, false)).toEqual([
+			"install",
+			String.raw`C:\Users\me\wheels\pkg.whl`,
+		]);
+		expect(splitShellWords(String.raw`install my\ pkg`, true)).toEqual(["install", "my pkg"]);
+	});
+
 	it("Given an unclosed quote, then the install is refused naming the quote instead of guessing", () => {
 		expect(() => parsePipRequirements('install "six')).toThrow('unclosed " quote');
 	});

@@ -62,11 +62,12 @@ const STDERR_TAIL_BYTES = 4_096;
 const PIP_TREE_GRACE_MS = 2_000;
 
 /**
- * Splits a %pip argument line the way a POSIX shell would for these inputs: single and double quotes group
- * (`"pkg[extra]>=1.0"`), a backslash escapes the next character outside single quotes, and `#` at the start
- * of a word begins a comment. An unclosed quote is refused rather than guessed.
+ * Splits a %pip argument line the way the platform's shell would for these inputs: single and double quotes
+ * group (`"pkg[extra]>=1.0"`) and `#` at the start of a word begins a comment. A backslash escapes the next
+ * character only in POSIX mode; on Windows it is a path separator and stays as written. An unclosed quote is
+ * refused rather than guessed.
  */
-export function splitShellWords(text: string): string[] {
+export function splitShellWords(text: string, posix = process.platform !== "win32"): string[] {
 	const words: string[] = [];
 	let word = "";
 	let inWord = false;
@@ -78,7 +79,7 @@ export function splitShellWords(text: string): string[] {
 			else word += char;
 			continue;
 		}
-		if (char === "\\" && index + 1 < text.length) {
+		if (posix && char === "\\" && index + 1 < text.length) {
 			const next = text[index + 1] ?? "";
 			index += 1;
 			if (next === "\n") continue;
