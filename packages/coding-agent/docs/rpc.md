@@ -2211,9 +2211,10 @@ settings file, and the process's later sessions (`new_session`, `switch_session`
 
 It is a launch-time setting:
 - It is accepted only before the session's first turn. It is refused once this connection has asked for a turn
-  (`prompt`, `steer`, `follow_up`, `continue_from_leaf`, `send_custom_message`), even one that has not started yet, and
-  once the session holds messages from any turn (an extension's, or a resumed session's). So a chain never changes
-  under a turn or a retry already in flight.
+  (`prompt`, `steer`, `follow_up`, `continue_from_leaf`, `send_custom_message`), even one that has not started yet,
+  while any turn runs (an extension's included), and once the session holds turn history (a resumed session's). So a
+  chain never changes under a turn or a retry already in flight. Context messages an extension adds before the first
+  turn (role `custom`, e.g. on `session_start`) are not a turn and do not block it.
 - A malformed profile is refused with the `open_session` shape message, and nothing is applied.
 - A multi-session host refuses the command on its session connections; a host session takes its policy from
   `open_session.retryFallback`.

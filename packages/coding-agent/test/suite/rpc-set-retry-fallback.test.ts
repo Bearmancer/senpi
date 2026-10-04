@@ -2,7 +2,7 @@ import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type FauxResponseStep, fauxAssistantMessage, registerFauxProvider } from "@earendil-works/pi-ai/compat";
-import { afterEach, expect, it } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 import {
 	type AgentSessionRuntime,
 	applyRetryFallbackProfile,
@@ -286,6 +286,44 @@ it("#given a turn the child ran without this connection (an extension's or a res
 	// then
 	expect(late.success).toBe(false);
 	expect(String(late.error)).toContain("before the session's first turn");
+}, 60_000);
+
+it("#given an extension added a context message on session start #when the chain arrives before the first turn #then it is applied", async () => {
+	// given
+	const child = await singleRpcProcess({ retryFallbackCommand: true });
+	await child.runtime.session.sendCustomMessage({ customType: "component.usage", content: "context", display: false });
+
+	// when
+	const accepted = await child.request({ type: "set_retry_fallback", retryFallback: CHILD_CHAIN });
+	await child.request({ type: "prompt", message: "go" });
+
+	// then
+	expect(accepted.success).toBe(true);
+	expect(child.lastAssistantText()).toBe("answered by spare");
+}, 60_000);
+
+it("#given an extension's turn in flight #when a chain arrives #then it is refused", async () => {
+	// given
+	let release = () => {};
+	const firstTurnGate = new Promise<void>((resolve) => {
+		release = resolve;
+	});
+	const child = await singleRpcProcess({ retryFallbackCommand: true, firstTurnGate });
+	const extensionTurn = child.runtime.session.sendCustomMessage(
+		{ customType: "component.wake", content: "wake", display: false },
+		{ triggerTurn: true },
+	);
+	await vi.waitFor(() => expect(child.runtime.session.isStreaming).toBe(true), { timeout: 20_000 });
+
+	// when
+	const midTurn = await child.request({ type: "set_retry_fallback", retryFallback: CHILD_CHAIN });
+	release();
+	await extensionTurn;
+	await child.runtime.session.waitForIdle();
+
+	// then
+	expect(midTurn.success).toBe(false);
+	expect(String(midTurn.error)).toContain("before the session's first turn");
 }, 60_000);
 
 it("#given a child told its chain #when it moves to a replacement session #then the replacement answers on the chain and the settings file is untouched", async () => {

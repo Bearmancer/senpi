@@ -1274,9 +1274,11 @@ export function createRpcConnectionHandler(
 				if (profileError !== undefined || command.retryFallback === undefined) {
 					return error(id, "set_retry_fallback", profileError ?? "set_retry_fallback needs retryFallback.");
 				}
-				// A launch-time setting: refused once a turn was asked for (even one not started yet) or the session
-				// holds messages from any turn, so a chain never changes under a turn or a retry already in flight.
-				if (turnRequested || session.messages.length > 0) {
+				// A launch-time setting: refused once this connection asked for a turn (even one not started yet), while
+				// any turn runs, or once the session holds turn history, so a chain never changes under a turn or a
+				// retry already in flight. Extension context messages (`custom`, e.g. one a component adds on
+				// session_start) are not a turn and do not count.
+				if (turnRequested || session.isStreaming || session.messages.some((message) => message.role !== "custom")) {
 					return error(
 						id,
 						"set_retry_fallback",
