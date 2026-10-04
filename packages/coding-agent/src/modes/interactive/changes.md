@@ -2367,7 +2367,7 @@ The startup banner and the startup-warning loop are interactive-mode internals b
 
 Upstream edits to `showLoadedResources` or the startup-warning block in interactive-mode.ts at the next sync.
 
-## 2026-10-05 - A terminal's control endpoint registers without the work a sender does not need (senpi#PRNUM)
+## 2026-10-05 - A terminal's control endpoint registers without the work a sender does not need (senpi#2756)
 
 ### What changed
 

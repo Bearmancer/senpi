@@ -5064,7 +5064,7 @@ The RPC extension UI context is built by the RPC connection handler; an extensio
 
 The `select` / `input` lines of `createExtensionUIContext` in `connection-handler.ts`, and the `RpcExtensionUIRequest` union in `rpc-types.ts`.
 
-## 2026-10-05 - Daemon directories in parallel, no prune for a fresh registration, host inbox arming off the registration path (senpi#PRNUM)
+## 2026-10-05 - Daemon directories in parallel, no prune for a fresh registration, host inbox arming off the registration path (senpi#2756)
 
 ### What changed
 

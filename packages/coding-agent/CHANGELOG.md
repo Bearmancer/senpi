@@ -10,7 +10,7 @@
 
 ### Changed
 
-- A terminal that registers a control endpoint becomes reachable sooner and admits a message sooner after it is reachable. The endpoint binds its socket while the session header is written and looks up the process start time in parallel. It no longer reaps other terminals' dead records or prunes generations before it binds, and it no longer waits for its inbox watch to arm before registration returns. That wait added 200 ms to admission whenever the watch's first sentinel event was missed. A message that reaches the inbox before the watch is armed is still picked up by one more pass once arming settles ([#PRNUM](https://github.com/code-yeongyu/senpi/pull/PRNUM)).
+- A terminal that registers a control endpoint becomes reachable sooner and admits a message sooner after it is reachable. The endpoint binds its socket while the session header is written and looks up the process start time in parallel. It no longer reaps other terminals' dead records or prunes generations before it binds, and it no longer waits for its inbox watch to arm before registration returns. That wait added 200 ms to admission whenever the watch's first sentinel event was missed. A message that reaches the inbox before the watch is armed is still picked up by one more pass once arming settles ([#2756](https://github.com/code-yeongyu/senpi/pull/2756)).
 
 ### Fixed
 
