@@ -90,19 +90,30 @@ How it works:
   not the kernel. A `BigInt` or an `undefined` field reaches the host as it does
   in worker mode.
 - **File descriptors.** Under Bun, the control channel moves to a private
-  duplicate of fd 0, fd 0 becomes `/dev/null`, and fd 1 is re-pointed at a pipe
-  whose bytes become `text` frames. A cell's direct `process.stdout.write` or
-  fd 1 write arrives with that cell's own output, before its result. A node child
-  cannot move its fds: cell output shares the channel, and fd 0 is the channel.
+  duplicate of fd 0, fd 0 becomes `/dev/null`, and fd 1 is re-pointed at a
+  blocking pipe that a reader thread turns into `text` frames as it is written,
+  so output is never held in memory while a cell is busy. A cell's direct
+  `process.stdout.write` or fd 1 write (or a child process inheriting fd 1)
+  arrives before that cell's result. In a bun child, raw fd 1 bytes are not
+  interleaved with `console` output in the order they were written. A node
+  child cannot move its fds: cell output shares the channel, and fd 0 is the
+  channel.
 - **Lifetime.** The child exits as soon as its control channel closes. That
-  covers every way the host ends, including `SIGKILL`; a parent-pid check is the
-  backstop. A process-mode kernel never outlives its host.
+  covers every way the host ends, including `SIGKILL`. A watchdog thread also
+  compares the parent pid with the one recorded at start, so a child whose cell
+  never yields (a busy loop, a blocking call) still ends with its host, including
+  under a Linux subreaper. A process-mode kernel never outlives its host.
 - **Failed start.** There is no inline fallback in process mode. A failed start
   settles the waiting cell with a capability-gap result naming the missing
   runtime (`Install bun or node, or use isolation.js: "worker"`). The result's
   memory reading is the child's process footprint.
 
 The default stays `"worker"`, and worker-mode behaviour is unchanged.
+
+To run the `environments` suites with bun children (the runtime the product
+uses), run them under bun: `SENPI_CODEMODE_JS_ISOLATION=process bunx --bun vitest
+run test/environments`. Under plain `vitest` the children follow the test
+runner's runtime, which is node.
 
 Python startup waits for the interpreter's `ready` event. It reports progress
 through `stdlib-imports`, `runtime-init`, and `host-init`; advancing to the next
