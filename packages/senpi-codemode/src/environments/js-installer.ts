@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
-import { delimiter, join } from "node:path";
+import { homedir } from "node:os";
+import { delimiter, join, resolve, sep } from "node:path";
 import { EnvironmentError } from "./py-installer.ts";
 
 export type JsInstallerChoice = "auto" | "bun" | "npm";
@@ -37,6 +38,9 @@ export function resolveJsInstaller(
 }
 
 export function parseJsPackages(text: string): string[] {
+	if (/[\u0000-\u0008\u000e-\u001f\u007f]/.test(text)) {
+		throw new EnvironmentError("environment_install_failed", "package names cannot contain control characters");
+	}
 	const packages = text.split(/\s+/).filter((token) => token !== "");
 	const flag = packages.find((token) => token.startsWith("-"));
 	if (flag !== undefined) {
@@ -48,6 +52,19 @@ export function parseJsPackages(text: string): string[] {
 	if (packages.length === 0)
 		throw new EnvironmentError("environment_install_failed", "name at least one package to add");
 	return packages;
+}
+
+/**
+ * A path-like spec (`./pkg`, `../x.tgz`, `file:./pkg`) means a path from the session directory; both installers get it
+ * absolute, because bun resolves a relative spec from the revision it builds and npm from its own cwd.
+ */
+export function absoluteSpec(spec: string, cwd: string): string {
+	const file = spec.startsWith("file:") ? spec.slice("file:".length) : undefined;
+	const path = file ?? spec;
+	const pathLike = path.startsWith("./") || path.startsWith("../") || path === "." || path === "..";
+	if (!pathLike) return spec;
+	const absolute = resolve(cwd, path);
+	return file === undefined ? absolute : `file:${absolute}`;
 }
 
 export function jsInstallArgv(installer: JsInstaller, root: string, packages: readonly string[]): string[] {
@@ -80,7 +97,7 @@ export function runJsInstall(input: {
 		let output = "";
 		const record = (stream: "stdout" | "stderr") => (data: string) => {
 			output = (output + data).slice(-STDERR_TAIL_BYTES);
-			input.onOutput?.(stream, data);
+			input.onOutput?.(stream, withoutHostPaths(data, input));
 		};
 		child.stdout.setEncoding("utf8").on("data", record("stdout"));
 		child.stderr.setEncoding("utf8").on("data", record("stderr"));
@@ -98,7 +115,12 @@ export function runJsInstall(input: {
 		input.signal.addEventListener("abort", onAbort, { once: true });
 		child.once("error", (error) => {
 			input.signal.removeEventListener("abort", onAbort);
-			reject(new EnvironmentError("environment_installer_unavailable", `${input.installer}: ${error.message}`));
+			reject(
+				new EnvironmentError(
+					"environment_installer_unavailable",
+					`${input.installer}: ${withoutHostPaths(error.message, input)}`,
+				),
+			);
 		});
 		child.once("close", (code, signal) => {
 			input.signal.removeEventListener("abort", onAbort);
@@ -114,10 +136,22 @@ export function runJsInstall(input: {
 				reject(
 					new EnvironmentError(
 						"environment_install_failed",
-						output.trim() || `${input.installer} exited with ${code ?? signal}`,
+						withoutHostPaths(output.trim(), input) || `${input.installer} exited with ${code ?? signal}`,
 					),
 				);
 			}
 		});
 	});
+}
+
+/** Installer output names the session's own roots; error text says `<root>`/`<cwd>`/`~` instead of absolute paths. */
+function withoutHostPaths(text: string, input: { readonly root: string; readonly cwd: string }): string {
+	const home = homedir();
+	return [
+		[input.root, "<root>"],
+		[input.cwd, "<cwd>"],
+		[home, "~"],
+	]
+		.filter(([path]) => path !== "" && path !== sep)
+		.reduce((current, [path, label]) => current.replaceAll(path, label), text);
 }

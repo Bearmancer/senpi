@@ -94,8 +94,11 @@ function planJsMagic(
 		executor: async ({ signal, emit }) => {
 			emit({ type: "status", event: { op: TIMEOUT_PAUSE_OP } });
 			try {
-				const receipt = await environments.install(requested, signal, (stream, data) =>
-					emit({ type: "text", stream, data }),
+				const receipt = await environments.install(
+					requested,
+					signal,
+					(stream, data) => emit({ type: "text", stream, data }),
+					magic.installer,
 				);
 				const added = receipt.added.length > 0 ? receipt.added.join(", ") : "nothing new";
 				const where =

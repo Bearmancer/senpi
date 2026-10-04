@@ -340,7 +340,9 @@
 				"imports/firstKernel/packages/senpi-codemode/src/environments/js-environments.ts",
 				"imports/extension/packages/senpi-codemode/src/environments/js-installer.ts",
 				"imports/firstKernel/packages/senpi-codemode/src/environments/js-installer.ts",
-				"legacyContracts/test/environments/js-magic-e2e.test.ts/Given a JavaScript eval session When an import cell is queued behind a %bun add cell that is itself queued behind a running cell, then the import resolves the newly installed package"
+				"legacyContracts/test/environments/js-magic-e2e.test.ts/Given a JavaScript eval session When an import cell is queued behind a %bun add cell that is itself queued behind a running cell, then the import resolves the newly installed package",
+				"legacyContracts/test/load-cell-bounded-read.test.ts/Given a %load file read through one handle When the file grows after it was checked, then the read stops one byte past the limit",
+				"legacyContracts/test/load-cell-bounded-read.test.ts/Given a %load file read through one handle When the file is shorter than the limit, then the whole file is read"
 			],
 			"reason": "Node 15: %bun add / %npm add install into a per-session managed JavaScript environment (bare-import fallback root on the run input, host entries in the JS kernel queue); the two environment modules join the scoped census, plus the new contracts. No prompt or eval schema change."
 		},
@@ -363,14 +365,16 @@
 				"legacyContracts/test/load-cell-turn.test.ts/Given a %load path that cannot be read When it is a file:// URL with an encoded slash, then the cell fails with a message naming the target and no absolute path",
 				"legacyContracts/test/load-cell-turn.test.ts/Given a %load path that cannot be read When it is a malformed local:// escape, then the cell fails with a message naming the target and no absolute path",
 				"legacyContracts/test/load-cell-turn.test.ts/Given a %load path that cannot be read When it is a path through a file, then the cell fails with a message naming the target and no absolute path",
+				"legacyContracts/test/load-cell-turn.test.ts/Given a %load path that cannot be read When the file is larger than 8 MiB, then the cell is refused before anything is read",
 				"legacyContracts/test/load-cell-turn.test.ts/Given a %load path that cannot be read When the file is unreadable, then the cell fails with permission denied and no absolute path",
 				"legacyContracts/test/load-cell-turn.test.ts/Given a %load target written as a URL When it is a file:// URL of a real file, then the file runs as the cell",
 				"legacyContracts/test/load-cell-turn.test.ts/Given a %load target written as a URL When it is local:// under the session artifacts, then the file runs as the cell",
 				"legacyContracts/test/load-cell-turn.test.ts/Given a %load target written as a URL When local:// climbs out of the artifacts root, then the cell is refused",
 				"imports/extension/packages/senpi-codemode/src/kernels/shared/cell-source-at-start.ts",
-				"imports/firstKernel/packages/senpi-codemode/src/kernels/shared/cell-source-at-start.ts"
+				"imports/firstKernel/packages/senpi-codemode/src/kernels/shared/cell-source-at-start.ts",
+				"legacyContracts/test/py-kernel-tools-bridge.test.ts/Given a Python cell that defined @tool add When a %load file installs an import finder that raises on cache invalidation, then the next cell still grants its kernel tools and the loaded run's secret is refused"
 			],
-			"reason": "Node 16: %load runs a local file as a Python or JavaScript cell; load-cell.ts joins the scoped census, plus the %load contracts. No prompt or eval schema change."
+			"reason": "Node 16: %load runs a local file as a Python or JavaScript cell, read at the cell's turn in the kernel queue; load-cell.ts and kernels/shared/cell-source-at-start.ts join the scoped census, plus the %load contracts. No prompt or eval schema change."
 		},
 		"17": {
 			"additions": [
@@ -734,6 +738,30 @@
 				"legacyContracts/test/workpool-prelude.test.ts/jl workpool prelude forwards a list of tool names unchanged"
 			],
 			"reason": "Node 12: workpool(agent, name, {mode, tools}) forwards tools to the host create in all four languages. The helper names and the prompt are unchanged (the eval description's workpool line is untouched); the tool_schema('eval:helpers') entry gains one line. Only these contracts are new."
+		},
+		"2731": {
+			"reason": "senpi#2731: host calls from a Python cell carry a per-run host-minted secret, and the host gives them that run's kernel-tools capability (CellKernelTools, the #1754 scope); ReplaceableKernel forwards Python's kernel tools to its current instance; Python agent(tools=...).",
+			"additions": [
+				"imports/extension/packages/senpi-codemode/src/extension/cell-kernel-tools.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/extension/cell-kernel-tools.ts",
+				"legacyContracts/test/py-kernel-tools-bridge.test.ts/Given a Python cell that defined @tool add When the cell grants it through a host tool, then the host sees the cell's kernel tools and add runs back in the kernel",
+				"legacyContracts/test/py-kernel-tools-bridge.test.ts/Given a Python cell that defined @tool add When the cell calls agent(..., tools=[...]), then the grant reaches the host task tool with the cell's kernel tools",
+				"legacyContracts/test/py-kernel-tools-bridge.test.ts/Given a Python cell that defined @tool add When agent(tools=...) is given a single string, then it is refused with a typed error before reaching the host",
+				"legacyContracts/test/py-kernel-tools-bridge.test.ts/Given a Python cell that defined @tool add When a host call carries a secret no running cell holds, then it gets no kernel tools",
+				"legacyContracts/test/py-kernel-tools-bridge.test.ts/Given a Python cell that defined @tool add When a thread keeps a finished cell's context and calls the host later, then that call gets no kernel tools",
+				"legacyContracts/test/py-kernel-tools-bridge.test.ts/Given a Python cell that defined @tool add When a cell's host call names its own model-visible cell id instead of its run's secret, then it gets no kernel tools",
+				"legacyContracts/test/py-kernel-tools-bridge.test.ts/Given a Python cell that defined @tool add When a JavaScript cell and a Python cell run, then only the Python run is bound, under a secret that is not its cell id",
+				"legacyContracts/test/py-kernel-tools-bridge.test.ts/Given a Python cell that defined @tool add When a cell stashes its run's context and a later cell replays a host call in it, then that call gets no kernel tools",
+				"legacyContracts/test/py-kernel-tools-bridge.test.ts/Given a Python cell that defined @tool add When a Python cell names a JavaScript cell that is running right now, then it cannot reach that cell's tools",
+				"legacyContracts/test/kernel-tools-host-dispatch.test.ts/kernel tools on the real worker tool-call path Given the replaceable kernel a session holds for rb and jl when it is probed for kernel tools then it exposes none of the interpreter's stubs",
+				"legacyContracts/test/kernel-tools-host-dispatch.test.ts/kernel tools on the real worker tool-call path Given the replaceable kernel a session holds for py when its interpreter is replaced then kernel tools reach only the new instance"
+			],
+			"changes": [
+				{
+					"key": "legacyContracts/test/kernel-tools-host-dispatch.test.ts/kernel tools on the real worker tool-call path Given the replaceable kernel a session holds for py, rb and jl when it is probed for kernel tools then it exposes none of the interpreter's stubs",
+					"reason": "Python now has real kernel tools that a Python cell can grant (#2731), so py leaves this contract: the replaceable kernel forwards them to its current instance (new contract 'Given the replaceable kernel a session holds for py when its interpreter is replaced then kernel tools reach only the new instance'); the rb/jl case is the new contract 'Given the replaceable kernel a session holds for rb and jl ...'."
+				}
+			]
 		}
 	}
 }

@@ -1,3 +1,4 @@
+// allow: SIZE_OK — one persistent JavaScript lifecycle state machine owns the queue, the worker slot, host entries and recovery.
 import type { HostToKernelMessage, KernelToHostMessage } from "../../bridge/protocol.ts";
 import { CHILD_LIFECYCLE_OP, INTERRUPT_ACK_OP } from "../../bridge/reserved.ts";
 import type { HostCellExecutor, KernelInterruptHandle } from "../../tool/types.ts";
@@ -5,7 +6,8 @@ import { inputAtStart } from "../shared/cell-source-at-start.ts";
 import { restartNotice } from "../shared/kernel-death.ts";
 import { KernelToolHostPump } from "../shared/kernel-tools-pump.ts";
 import { ActiveCellControl } from "./active-cell-control.ts";
-import { DEFAULT_INTERRUPT_BOUNDS, type WorkerRetirement } from "./interrupt-bounds.ts";
+import { HostEntries, refusedEntry } from "./host-entries.ts";
+import { DEFAULT_INTERRUPT_BOUNDS, JS_INTERRUPT_GRACE_MS, type WorkerRetirement } from "./interrupt-bounds.ts";
 import {
 	assertJavaScriptKernelOpen,
 	type JavaScriptKernelMode,
@@ -37,7 +39,7 @@ export type { JavaScriptKernelOptions } from "./local-module-loader.ts";
 export { type JavaScriptWorkerEntryUrlOptions, resolveJsWorkerEntryUrl } from "./worker-startup.ts";
 
 export class JavaScriptKernel {
-	readonly #hostAborts = new Map<PendingJavaScriptRun, AbortController>();
+	readonly #hostEntries = new HostEntries<PendingJavaScriptRun>();
 	readonly #options: JavaScriptKernelOptions;
 	readonly #moduleLoader: LocalModuleLoader;
 	readonly #slot: WorkerSlot;
@@ -148,11 +150,7 @@ export class JavaScriptKernel {
 			const cancelled = this.cancelQueued(cellId, reason);
 			return { stateRetained: Promise.resolve(true), ...(cancelled ? {} : { note: "cell not found" }) };
 		}
-		const hostAbort = active === null ? undefined : this.#hostAborts.get(active);
-		if (active && hostAbort !== undefined) {
-			hostAbort.abort(new Error(reason));
-			return { stateRetained: Promise.resolve(true) };
-		}
+		if (active && this.#hostEntries.abort(active, reason)) return { stateRetained: Promise.resolve(true) };
 		if (!active) {
 			// A worker still stuck in startup is not a healthy idle worker: retiring it is the only recovery.
 			const wedgedInStartup = this.#slot.startingUp;
@@ -187,11 +185,16 @@ export class JavaScriptKernel {
 		if (this.#closePromise) return await this.#closePromise;
 		this.#slot.postMessage({ type: "close" });
 		this.#lifecycle = "closing";
+		const hostEntriesStopped = this.#hostEntries.stopAll(
+			"JS kernel closed",
+			this.#options.interruptBounds?.graceMs ?? JS_INTERRUPT_GRACE_MS,
+		);
 		this.#runs.settleAll("JS kernel closed");
 		this.#kernelTools.rejectAll(kernelToolError("kernel_tool_stale", "JS kernel closed"));
 		this.#toolCalls.clear();
 		const recovery = this.#recovery.inFlight;
 		const closePromise = (async () => {
+			await hostEntriesStopped;
 			if (recovery) await recovery;
 			await this.#terminate();
 		})().finally(() => {
@@ -226,22 +229,13 @@ export class JavaScriptKernel {
 		if (this.#lifecycle !== "open" || this.#runs.active || !this.#slot.present) return;
 		const next = this.#runs.startNext(performance.now());
 		if (!next) return;
-		const host = next.input.host;
-		if (host !== undefined) {
-			this.#runHostEntry(next, host);
-			return;
-		}
 		const input = inputAtStart(next.input);
 		if ("refused" in input) {
-			this.#runs.releaseActive(next);
-			this.#runs.settle(next, {
-				type: "result",
-				cellId: next.input.cellId,
-				ok: false,
-				error: { message: input.refused },
-				durationMs: 0,
-			});
-			this.#startNext();
+			this.#runHostEntry(next, refusedEntry(input.refused));
+			return;
+		}
+		if (input.host !== undefined) {
+			this.#runHostEntry(next, input.host);
 			return;
 		}
 		this.#activeCell.arm(next);
@@ -309,38 +303,16 @@ export class JavaScriptKernel {
 	// A host-executed entry (an install magic) holds the queue slot like a cell but never reaches the worker,
 	// so a cancel aborts the host work and the worker's state is untouched.
 	#runHostEntry(run: PendingJavaScriptRun, host: HostCellExecutor): void {
-		const abort = new AbortController();
-		this.#hostAborts.set(run, abort);
-		const emit = (message: KernelToHostMessage) => (run.input.onMessage ?? this.#options.onMessage)?.(message);
-		const finish = (result: ResultMessage) => {
-			this.#hostAborts.delete(run);
-			if (!this.#runs.releaseActive(run)) return;
-			this.#runs.settle(run, result);
-			this.#startNext();
-		};
-		const cellId = run.input.cellId;
-		host({ signal: abort.signal, emit }).then(
-			(outcome) =>
-				finish(
-					outcome.ok
-						? {
-								type: "result",
-								cellId,
-								ok: true,
-								durationMs: this.#runs.durationMs(run, performance.now()),
-								...(outcome.valueRepr === undefined ? {} : { valueRepr: outcome.valueRepr }),
-							}
-						: { type: "result", cellId, ok: false, error: outcome.error, durationMs: 0 },
-				),
-			(error: unknown) =>
-				finish({
-					type: "result",
-					cellId,
-					ok: false,
-					error: { message: error instanceof Error ? error.message : String(error) },
-					durationMs: 0,
-				}),
-		);
+		this.#hostEntries.start(run, run.input.cellId, host, {
+			emit: (message) => (run.input.onMessage ?? this.#options.onMessage)?.(message),
+			settle: (result) => {
+				if (!this.#runs.releaseActive(run)) return;
+				this.#runs.settle(run, result);
+				this.#startNext();
+			},
+			durationMs: () => this.#runs.durationMs(run, performance.now()),
+			settleAfterAbort: true,
+		});
 	}
 
 	#handleCrash(error: Error): void {

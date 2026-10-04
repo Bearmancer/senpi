@@ -1,9 +1,15 @@
 import { existsSync } from "node:fs";
-import { mkdir, readFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { ResolvedCodemodeSettings } from "../config/settings.ts";
 import { withRootLock } from "./install-lock.ts";
-import { type JsInstallerChoice, parseJsPackages, resolveJsInstaller, runJsInstall } from "./js-installer.ts";
+import {
+	absoluteSpec,
+	type JsInstallerChoice,
+	parseJsPackages,
+	resolveJsInstaller,
+	runJsInstall,
+} from "./js-installer.ts";
 import type { EnvironmentMode } from "./py-environment.ts";
 import { EnvironmentError } from "./py-installer.ts";
 import { publishNextRevision, readActiveRevision } from "./revision-store.ts";
@@ -52,6 +58,7 @@ export class JsEnvironments {
 		requested: string,
 		signal: AbortSignal,
 		onOutput?: (stream: "stdout" | "stderr", data: string) => void,
+		requestedInstaller?: "bun" | "npm",
 	): Promise<JsInstallReceipt> {
 		const environments = this.#options.settings.environments;
 		if (environments?.autoProvision === false) {
@@ -60,8 +67,9 @@ export class JsEnvironments {
 				"installs are turned off for this project (environments.autoProvision is false)",
 			);
 		}
-		const packages = parseJsPackages(requested);
-		const choice: JsInstallerChoice = environments?.js?.installer ?? "auto";
+		const packages = parseJsPackages(requested).map((spec) => absoluteSpec(spec, this.#options.cwd));
+		// `%bun add` and `%npm add` name their installer; the setting applies only where the magic does not.
+		const choice: JsInstallerChoice = requestedInstaller ?? environments?.js?.installer ?? "auto";
 		const { installer, command } = resolveJsInstaller(choice, this.#options.env);
 		const run = (root: string) =>
 			runJsInstall({
@@ -86,6 +94,7 @@ export class JsEnvironments {
 		const { revision } = await publishNextRevision(
 			this.#managedBase(),
 			async (staging) => {
+				await dropNpmrcCredentials(staging);
 				const before = await dependencyNames(staging);
 				await run(staging);
 				added = (await dependencyNames(staging)).filter((name) => !before.includes(name));
@@ -113,4 +122,23 @@ async function dependencyNames(root: string): Promise<string[]> {
 		if (error instanceof Error && "code" in error && error.code === "ENOENT") return [];
 		throw error;
 	}
+}
+
+const NPMRC_CREDENTIAL =
+	/^\s*(?:\/\/[^\s=]*:)?(?:_authToken|_auth|_password|username|password|email|certfile|keyfile)\s*=/i;
+
+/**
+ * A revision carries its `.npmrc` forward, so registry and scope settings keep working; credentials never do: any auth
+ * line (global or `//host/:` scoped) is dropped before the next revision is built.
+ */
+async function dropNpmrcCredentials(root: string): Promise<void> {
+	const path = join(root, ".npmrc");
+	let text: string;
+	try {
+		text = await readFile(path, "utf8");
+	} catch {
+		return;
+	}
+	const kept = text.split(/\r?\n/).filter((line) => !NPMRC_CREDENTIAL.test(line));
+	if (kept.length !== text.split(/\r?\n/).length) await writeFile(path, kept.join("\n"), { mode: 0o600 });
 }

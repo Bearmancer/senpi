@@ -128,25 +128,41 @@ refused and nothing is fetched. The cell runs as its file: Python compiles it un
 the file's name, so tracebacks name the file and line, and sets `__file__` and puts
 the file's directory first on the import path, so `from sibling import g` resolves
 next to it. JavaScript evaluates it under the file's name and resolves its relative
-imports from the file's directory. A missing file fails the cell with
-`file not found: <path>`.
+imports from the file's directory. The file is read when the cell's turn comes in
+the kernel's queue, so a `%load` queued behind the cell that writes the file runs
+what that cell wrote. When the cell ends, Python takes the file's directory back off
+the import path and restores `__file__`, so later cells import as before. A file that
+cannot be read fails the cell with a message naming the path as written
+(`file not found: <path>`, `permission denied: <path>`); files over 8 MiB, and
+anything that is not a regular file, are refused.
 
 ### JavaScript packages
 
 A JavaScript cell whose only line is `%bun add <package ...>` or `%npm add <package ...>`
 installs packages without restarting the kernel; the next cell imports them by bare name.
-In the default managed mode they go into a per-session environment revision under the
-artifacts directory (or `environments.managedRoot`), never into the project's
-`package.json` or `node_modules`: a bare import that does not resolve from the session
-directory falls back to that revision, so the project's own packages still win. Each install
-builds a new revision that carries the previous packages and is published only when the
-installer succeeds; a failed or cancelled install leaves the previous revision active.
-Lifecycle scripts never run (`--ignore-scripts`), and installer flags are refused because
-the host picks the destination. `environments.js.installer` chooses `bun`, `npm` or `auto`
-(bun when it is on `PATH`, else npm; the kernel's own runtime never changes to get one).
-`%environment project` installs into the session directory itself instead. When a newly added
-package is also present in the project's `node_modules`, the result says
-`environment_resolution_conflict` because the project copy still resolves first.
+`%bun add` uses bun and `%npm add` uses npm; `environments.js.installer` (`bun`, `npm` or
+`auto`: bun when it is on `PATH`, else npm) applies only where the magic names none, and the
+kernel's own runtime never changes to get one.
+
+In the default managed mode packages go into an environment revision under the session's
+artifacts directory, never into the project's `package.json` or `node_modules`. With
+`environments.managedRoot` set, every session using that root shares one revision chain: their
+installs are serialized and each revision carries the packages installed before it.
+A bare import resolves from the session directory's `node_modules` first and then from the
+active revision, using each package's `exports` for `import` (ESM-only packages load), so the
+project's own packages still win; Senpi's own dependencies are never what a cell gets. When a
+newly added package is also in the project's `node_modules`, the result says
+`environment_resolution_conflict` because the project copy resolves first.
+
+Each install builds a new revision that carries the previous one forward (its `package.json`,
+lockfile and `.npmrc`, minus every credential line such as `_authToken` or `//host/:_auth`)
+and is published only when the installer succeeds; a failed or cancelled install, or one still
+running when the session closes, leaves the previous revision active. Lifecycle scripts never run
+(`--ignore-scripts`), installer flags are refused because the host picks the destination, and a
+path-like package (`./pkg`, `file:../pkg`) is a path from the session directory. Package names
+are split on whitespace; quoting is not supported. Error text names the session directory as
+`<cwd>`, the revision as `<root>` and the home directory as `~`. `%environment project` installs
+into the session directory itself instead.
 
 ### Python packages
 
