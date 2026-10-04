@@ -257,22 +257,15 @@ async function executeCell(
 				options.pythonEnvironments,
 				options.jsEnvironments,
 			);
-			const loaded =
+			// Resolved when the cell's turn comes in the kernel's queue: a %load reads the file the cells ahead of it
+			// wrote, and a refusal settles in queue order like any cell.
+			const loadOptions = { cwd: invocation.ctx.cwd, artifactsDir: options.artifactsDir };
+			const resolveAtStart =
 				magic.kind === "load"
-					? await execution.wait(
-							loadCell(magic.target, { cwd: invocation.ctx.cwd, artifactsDir: options.artifactsDir }),
-						)
-					: undefined;
-			const refusal = magic.kind === "refused" ? magic.message : loaded?.ok === false ? loaded.message : undefined;
-			if (refusal !== undefined) {
-				return await handler.finalize({
-					type: "result",
-					cellId: invocation.cellId,
-					ok: false,
-					error: { message: refusal },
-					durationMs: 0,
-				});
-			}
+					? () => loadCell(magic.target, loadOptions)
+					: magic.kind === "refused"
+						? () => ({ ok: false as const, message: magic.message })
+						: undefined;
 			const environments = invocation.input.language === "py" ? options.pythonEnvironments : undefined;
 			const envRoot = environments === undefined ? undefined : () => environments.activeRoot ?? "";
 			const jsEnvironments = invocation.input.language === "js" ? options.jsEnvironments : undefined;
@@ -280,8 +273,8 @@ async function executeCell(
 			const result = await execution.wait(
 				kernel.run({
 					cellId: invocation.cellId,
-					code: loaded?.ok === true ? loaded.code : invocation.input.code,
-					...(loaded?.ok === true ? { sourceFile: loaded.sourceFile } : {}),
+					code: invocation.input.code,
+					...(resolveAtStart === undefined ? {} : { resolveAtStart }),
 					...(magic.kind === "host" ? { host: magic.executor } : {}),
 					...(envRoot === undefined ? {} : { envRoot }),
 					...(packageRoot === undefined ? {} : { packageRoot }),
