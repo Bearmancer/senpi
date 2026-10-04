@@ -127,6 +127,18 @@ describe.skipIf(!hasPythonWithPip())("Given a Python environment root", () => {
 		expect(siteFilesSnapshot()).toBe(before);
 	});
 
+	it("When a requirements file asks for an editable install, then it is refused before pip runs and nothing is published", async () => {
+		const { root, base } = await workspace();
+		await mkdir(join(root, "pkg"), { recursive: true });
+		await writeFile(join(root, "pkg", "pyproject.toml"), '[project]\nname = "senpi-editable"\nversion = "1.0"\n');
+		await writeFile(join(root, "reqs.txt"), "-e ./pkg\n");
+
+		const install_ = install(base, root, "install --no-index -r reqs.txt");
+
+		await expect(install_).rejects.toThrow(/editable requirements .* are not allowed/);
+		expect(await readActiveRevision(base)).toBeUndefined();
+	});
+
 	it("When pip's environment names a root to install under, then the install still lands only in the revision", async () => {
 		const { root, base, wheels } = await workspace();
 		const elsewhere = join(root, "elsewhere");
