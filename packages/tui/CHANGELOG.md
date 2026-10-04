@@ -10,6 +10,8 @@
 
 ### Fixed
 
+- Accepting an `@` path suggestion with Tab or Enter while the picker still showed a list computed for earlier text no longer splices the stale item into the prompt (`@~/Dev` became `@~/De@go/`); the editor re-queries for the current token and accepts its best match ([#2735](https://github.com/code-yeongyu/senpi/issues/2735)).
+
 ### Removed
 
 ## [2026.10.8] - 2026-10-04
