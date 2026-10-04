@@ -7,6 +7,9 @@ export async function createWorkpool(callTool, agent, name, options = {}) {
 	if (options === null || typeof options !== "object" || Array.isArray(options) || Object.keys(options).some(key => key !== "mode" && key !== "tools")) {
 		throw new TypeError("workpool() options only accept mode and tools");
 	}
+	if (options.tools !== undefined && (!Array.isArray(options.tools) || !options.tools.every(name => typeof name === "string"))) {
+		throw workpoolError("invalid_tools", `workpool() tools takes an array of tool names; got ${Array.isArray(options.tools) ? "an array with a non-string" : typeof options.tools}`);
+	}
 	const call = async args => {
 		try {
 			return await callTool("workpool", args);

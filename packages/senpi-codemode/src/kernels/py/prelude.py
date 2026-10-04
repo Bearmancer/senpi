@@ -1095,6 +1095,10 @@ def workpool(
     if mode is not None:
         args["mode"] = mode
     if tools is not None:
+        if not isinstance(tools, (list, tuple)) or not all(isinstance(name, str) for name in tools):
+            raise PreludeRuntimeError(
+                f"workpool(tools=...) takes a list of tool names; got {type(tools).__name__}", "invalid_tools"
+            )
         args["tools"] = list(tools)
     result = _workpool_call(args)
     details = result.get("details")

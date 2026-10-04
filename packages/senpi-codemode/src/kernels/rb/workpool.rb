@@ -26,7 +26,12 @@ end
 def workpool(agent, name, mode: nil, tools: nil)
   args = { "op" => "create", "agent" => agent, "name" => name }
   args["mode"] = mode unless mode.nil?
-  args["tools"] = tools.to_a unless tools.nil?
+  unless tools.nil?
+    unless tools.is_a?(Array) && tools.all? { |name| name.is_a?(String) }
+      raise SenpiBridgeError.new("workpool(tools: ...) takes an array of tool names; got #{tools.class}", "invalid_tools")
+    end
+    args["tools"] = tools.dup
+  end
   result = __senpi_workpool_call(args)
   details = result["details"]
   if details.is_a?(Hash)
