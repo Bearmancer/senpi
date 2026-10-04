@@ -60,8 +60,8 @@
 
 ### What changed
 
-- `scripts/check-pr-changelog.mjs`: for every `changes.md` tracker the PR changes, `collectPrFacts` counts the base file's non-blank lines that are missing from the head (by content, with multiplicity, so diff alignment around a prepend is not a removal), and a deleted tracker counts all of them. Any removal fails the gate, naming the file and the count. For a `CHANGELOG.md`, a non-heading line of the base `[Unreleased]` section that no longer appears anywhere in the head file fails the gate; release stamping moves those lines into the new released section, so it still passes. Released sections keep their existing check.
-- `scripts/check-pr-changelog.test.mjs`: CLI cases for a tracker rewritten to only its new entry (#2598's shape), a deleted tracker, a replaced `[Unreleased]` bullet, and plain prepends that still pass.
+- `scripts/check-pr-changelog.mjs`: for every `changes.md` tracker the PR changes, `collectPrFacts` counts the base file's non-blank lines that are missing from the head (by content, with multiplicity, so diff alignment around a prepend is not a removal), and a deleted tracker counts all of them. Any removal fails the gate, naming the file and the count. For a `CHANGELOG.md`, the gate fails only on a net loss of `[Unreleased]` bullets: a base bullet that no longer appears anywhere in the head counts as missing, and each new `[Unreleased]` bullet in the head offsets one missing bullet (its edited form). Editing a bullet in place (a credit, a wording fix) and release stamping (which moves the bullets into the new released section) both pass; deleting a bullet fails. Released sections keep their existing check.
+- `scripts/check-pr-changelog.test.mjs`: CLI cases for a tracker rewritten to only its new entry (#2598's shape), a deleted tracker, a deleted `[Unreleased]` bullet, and the cases that must still pass: plain prepends and an `[Unreleased]` bullet credited or reworded in place.
 
 ### Why
 

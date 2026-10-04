@@ -222,7 +222,11 @@ it("fails a PR that removes existing change-log lines through the PR gate CLI", 
 	await t.test("deleted tracker", () => check(tracker, null, 1, /packages\/ai\/src\/changes\.md: removes \d+ existing line/));
 	await t.test("tracker prepend", () => check(tracker, `${entry("New")}\n${trackerOriginal}`, 0));
 	await t.test("deleted Unreleased entry", () =>
-		check(changelog, changelogOriginal.replace("- pending fix\n", "- replacement\n"), 1, /packages\/ai\/CHANGELOG\.md: removes 1 existing \[Unreleased\] line/));
+		check(changelog, changelogOriginal.replace("- pending fix\n", ""), 1, /packages\/ai\/CHANGELOG\.md: removes 1 existing \[Unreleased\] entry/));
+	await t.test("Unreleased entry credited in place", () =>
+		check(changelog, changelogOriginal.replace("- pending fix", "- pending fix. Thanks to @contributor"), 0));
+	await t.test("Unreleased entry reworded in place", () =>
+		check(changelog, changelogOriginal.replace("- pending fix", "- the pending fix, reworded"), 0));
 	await t.test("Unreleased prepend", () => check(changelog, changelogOriginal.replace("- pending fix", "- new fix\n- pending fix"), 0));
 });
 
