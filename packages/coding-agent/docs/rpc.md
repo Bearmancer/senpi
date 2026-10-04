@@ -2191,6 +2191,41 @@ Response:
 {"type": "response", "command": "abort_retry", "success": true}
 ```
 
+#### set_retry_fallback
+
+A single-session `--mode rpc` process has no `open_session`. A caller that spawns one process per session (e.g. a task
+child that runs as its own process) gives it its fallback policy with `set_retry_fallback`:
+
+```json
+{"type": "set_retry_fallback", "retryFallback": {"modelFallback": true, "fallbackChains": {"provider/model": ["provider/spare"]}}}
+```
+
+Response:
+```json
+{"type": "response", "command": "set_retry_fallback", "success": true}
+```
+
+The profile is the same shape, with the same limits, as `open_session.retryFallback`, and it has the same effect. It
+overrides the session's `retry.modelFallback` and `retry.fallbackChains` in memory only, it is never written to a
+settings file, and the process's later sessions (`new_session`, `switch_session`, `fork`) keep it.
+
+It is a launch-time setting:
+- It is accepted only before the session's first turn. It is refused once this connection has asked for a turn
+  (`prompt`, `steer`, `follow_up`, `continue_from_leaf`, `send_custom_message` with `triggerTurn`), even one that has
+  not started yet, while a turn streams (an extension's included), and once the session holds turn history (a resumed
+  session's). So a chain never changes under a provider request or a retry already in flight. Context messages added
+  before the first turn (role `custom`, from an extension on `session_start` or a `send_custom_message` without
+  `triggerTurn`) are not a turn and do not block it.
+- Send it on its own and await its response: a `set_retry_fallback` pipelined while a `new_session`, `switch_session`
+  or `fork` is still being created can answer success while the session being created runs without it.
+- A malformed profile is refused with the `open_session` shape message, and nothing is applied.
+- A multi-session host refuses the command on its session connections; a host session takes its policy from
+  `open_session.retryFallback`.
+
+Probe `retry_fallback_command` in `get_protocol_info` before sending it. Only a single-session process advertises it.
+Unlike an environment variable, the profile reaches this process only, never what its tools spawn. Unlike argv, it has
+no command-line length limit and is not visible in a process listing.
+
 ### Bash
 
 #### bash

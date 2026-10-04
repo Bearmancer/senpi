@@ -21,7 +21,7 @@ import type {
 	SessionControlWakeReason,
 } from "../../core/extensions/types.ts";
 import type { ControlEndpointHost } from "../../core/session-control-actions.ts";
-import { WakeScheduler, watchInbox } from "../interactive/session-control-wake.ts";
+import { type InboxWatch, WakeScheduler, watchInbox } from "../interactive/session-control-wake.ts";
 
 interface ActiveRegistration {
 	readonly scheduler: WakeScheduler;
@@ -57,18 +57,18 @@ export class HostSessionControl implements ControlEndpointHost {
 			if (event.type === "agent_idle") wake("idle");
 		});
 		const unsubscribeEmitted = session.externalAdmission.onEmitted(() => wake("emitted"));
-		let stopInbox: (() => void) | undefined;
+		let inbox: InboxWatch | undefined;
 		const registration: ActiveRegistration = {
 			scheduler,
 			release: () => {
 				unsubscribeIdle();
 				unsubscribeEmitted();
-				stopInbox?.();
+				inbox?.stop();
 				scheduler.dispose();
 			},
 		};
 		try {
-			stopInbox = await watchInbox(
+			inbox = await watchInbox(
 				options.inboxDir,
 				() => wake("inbox"),
 				(error) => this.report(`control inbox watch failed: ${errorText(error)}`),
@@ -84,8 +84,10 @@ export class HostSessionControl implements ControlEndpointHost {
 		}
 		this.releaseActive();
 		this.active = registration;
-		// Anything that reached the inbox before the watch was armed is picked up by this first pass.
+		// Anything that reached the inbox before this point is picked up by this first pass, and anything
+		// written after it but before the watch was armed (no event for it) by the pass once arming settled.
 		wake("inbox");
+		void inbox.armed.then(() => wake("inbox"));
 		return {
 			status: "registered",
 			socket: this.socket,

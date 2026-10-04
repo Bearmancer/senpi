@@ -94,6 +94,13 @@ export const BROWSER_ENGINE_CAPABILITY = "browser_engine";
 export const RETRY_FALLBACK_PROFILE_CAPABILITY = "retry_fallback_profile";
 
 /**
+ * SINGLE-SESSION capability: this `--mode rpc` process accepts `set_retry_fallback` (the
+ * `open_session.retryFallback` shape) before its first turn, so a caller that spawns one process per
+ * session can give it its own fallback chain without a settings file.
+ */
+export const RETRY_FALLBACK_COMMAND_CAPABILITY = "retry_fallback_command";
+
+/**
  * HOST capability: `open_session.promptSurface` also accepts `chat` (a chat bridge: no routing line,
  * no handoff block, no todo cues). A host without it refuses `chat` with `invalid_launch_profile`,
  * so a gateway sends `chat` only after seeing this and otherwise falls back to `app`.

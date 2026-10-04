@@ -56,6 +56,25 @@
 - `scripts/release-test-gate.mjs`: `decideTestGate`'s branch order.
 - `scripts/local-release.mjs`: the `generate-models` block.
 
+## 2026-10-03 - The changelog gate fails a PR that removes existing change-log lines (senpi#2609)
+
+### What changed
+
+- `scripts/check-pr-changelog.mjs`: for every `changes.md` tracker the PR changes, `collectPrFacts` counts the base file's non-blank lines that are missing from the head (by content, with multiplicity, so diff alignment around a prepend is not a removal), and a deleted tracker counts all of them. Any removal fails the gate, naming the file and the count. For a `CHANGELOG.md`, a base `[Unreleased]` bullet that no longer appears anywhere in the head fails the gate unless a new `[Unreleased]` bullet is recognizably its edited form, one for one: it cites every issue/PR the old bullet cited (a credit or a reword keeps those), or it starts with the old bullet's full text (a credit or link appended to a bullet that cited nothing). Release stamping (the bullets move into the new released section) and in-place credits and rewords pass; deleting a bullet fails, including deleting another PR's bullet while adding this PR's own. A bullet that cites nothing can be extended but not reworded. Released sections keep their existing check.
+- `scripts/check-pr-changelog.test.mjs`: CLI cases for a tracker rewritten to only its new entry (#2598's shape), a deleted tracker, a deleted `[Unreleased]` bullet, another PR's bullet deleted while this PR adds its own, and the cases that must still pass: plain prepends, release stamping, a bullet credited or reworded in place, and a bullet that cited nothing gaining a credit.
+
+### Why
+
+- `scripts/check-pr-changelog.mjs`: the gate only read a tracker's added lines, so #2598 passed with `packages/ai/src/changes.md` cut from 5,756 lines to 18 and `packages/coding-agent/changes.md` from 1,516 to 19.
+
+### Why an extension could not handle it
+
+- Repository tooling; no extension surface reaches the PR gate.
+
+### Expected merge conflict zones
+
+- LOW: `scripts/check-pr-changelog.mjs`, `checkPrChangelog`'s violation chain, `collectPrFacts` and `main`'s facts plumbing.
+
 ## 2026-10-03 - Release notes cover every published package (senpi#2585)
 
 ### What changed

@@ -23,6 +23,7 @@ import {
 export { restrictTrackerEntriesToAddedLines, validateGitRevision };
 
 const CHANGELOG_PATTERN = /(^|\/)CHANGELOG\.md$/i;
+const TRACKER_PATTERN = /(^|\/)changes\.md$/;
 const NO_CHANGELOG_LABEL = "no-changelog";
 
 export { isRuntimeSourceChange };
@@ -66,7 +67,54 @@ function releasedChangelogViolation({ path, before, after }) {
 	}
 }
 
-export function checkPrChangelog({ changedFiles, labels, trackerPolicy, changelogChanges = [] }) {
+const UNRELEASED_SECTION = /^## \[Unreleased\][^\n]*\n([\s\S]*?)(?=^## \[|(?![\s\S]))/m;
+
+function unreleasedBullets(text) {
+	const section = UNRELEASED_SECTION.exec(text);
+	if (!section) return [];
+	return section[1]
+		.split("\n")
+		.map((line) => line.trim())
+		.filter((line) => line.startsWith("- ") || line.startsWith("* "));
+}
+
+// Issue and PR numbers a bullet cites, from `#123` and from `/issues/123` or `/pull/123` links.
+function bulletReferences(line) {
+	return new Set([...line.matchAll(/(?:#|\/(?:issues|pull)\/)(\d+)/g)].map((match) => match[1]));
+}
+
+// An [Unreleased] bullet may be edited in place (a credit, a wording fix) or carried into a released section
+// by release stamping. A base bullet still present anywhere in the head is kept. A base bullet that is gone
+// is accepted only as edited, one for one, by a new [Unreleased] bullet that either cites every issue/PR it
+// cited (a credit or a reword keeps those) or starts with its full text (a credit or link appended to a bullet
+// that cited nothing). Anything else is a removal, including deleting another PR's bullet while adding this
+// PR's own; a bullet that cites nothing can be extended but not reworded.
+function unreleasedRemovalViolation({ path, before, after }) {
+	const kept = new Set(after.split("\n").map((line) => line.trim()));
+	const baseBullets = unreleasedBullets(before);
+	const baseSet = new Set(baseBullets);
+	const candidates = unreleasedBullets(after)
+		.filter((line) => !baseSet.has(line))
+		.map((line) => ({ line, references: bulletReferences(line) }));
+	const removed = baseBullets.filter((line) => {
+		if (kept.has(line)) return false;
+		const references = bulletReferences(line);
+		const stem = line.replace(/[\s.]+$/, "");
+		const match = candidates.findIndex(
+			(candidate) =>
+				candidate.line.startsWith(stem) ||
+				(references.size > 0 && [...references].every((reference) => candidate.references.has(reference))),
+		);
+		if (match === -1) return true;
+		candidates.splice(match, 1);
+		return false;
+	});
+	return removed.length > 0
+		? `${path}: removes ${removed.length} existing [Unreleased] entr${removed.length === 1 ? "y" : "ies"}, first: ${removed[0]}`
+		: undefined;
+}
+
+export function checkPrChangelog({ changedFiles, labels, trackerPolicy, changelogChanges = [], trackerRemovals = [] }) {
 	const normalizedLabels = (labels ?? []).map((label) => label.trim()).filter(Boolean);
 	const hasNoChangelogLabel = normalizedLabels.includes(NO_CHANGELOG_LABEL);
 	const changelogFiles = changedFiles.filter(isChangelogChange);
@@ -96,7 +144,13 @@ export function checkPrChangelog({ changedFiles, labels, trackerPolicy, changelo
 	// required package CHANGELOG.md entry.
 	const audit = trackerPolicy == null ? null : auditChangesMdCoverage({ changedFiles, trackerPolicy });
 	const uncovered = audit ? audit.uncovered.map((item) => item.path) : [];
-	const violation = changelogChanges.map(releasedChangelogViolation).find(Boolean);
+	const violation =
+		changelogChanges.map(releasedChangelogViolation).find(Boolean) ??
+		trackerRemovals
+			.filter(({ removed }) => removed > 0)
+			.map(({ path, removed }) => `${path}: removes ${removed} existing line(s); tracker entries may only be added`)
+			.at(0) ??
+		changelogChanges.map(unreleasedRemovalViolation).find(Boolean);
 	let pass;
 	let reason;
 	if (violation) {
@@ -123,6 +177,24 @@ function diffPathsBetween(from, to) {
 		.split("\n")
 		.map((line) => line.trim())
 		.filter(Boolean);
+}
+
+// Counts base lines missing from the head by content (blank lines ignored), so diff alignment around a prepend never reads as a removal.
+function removedLineCount(before, after) {
+	const remaining = new Map();
+	for (const line of after.split("\n")) {
+		const key = line.trim();
+		if (key) remaining.set(key, (remaining.get(key) ?? 0) + 1);
+	}
+	let removed = 0;
+	for (const line of before.split("\n")) {
+		const key = line.trim();
+		if (!key) continue;
+		const count = remaining.get(key) ?? 0;
+		if (count > 0) remaining.set(key, count - 1);
+		else removed += 1;
+	}
+	return removed;
 }
 
 function addedDiffLines(base, path) {
@@ -160,6 +232,12 @@ function collectPrFacts(base) {
 				after: headFiles.has(path) ? runGit(["show", `HEAD:${path}`], `reading HEAD ${path}`) : "",
 			};
 		});
+	const trackerRemovals = changedFiles
+		.filter((path) => TRACKER_PATTERN.test(path) && baseFiles.has(path))
+		.map((path) => {
+			const after = headFiles.has(path) ? runGit(["show", `HEAD:${path}`], `reading HEAD ${path}`) : "";
+			return { path, removed: removedLineCount(runGit(["show", `${mergeBase}:${path}`], `reading base ${path}`), after) };
+		});
 	const pinChanged = changedFiles.includes(UPSTREAM_PIN_PATH);
 	const upstreamTree = filesInCommit(pin.sha);
 	const upstreamRenames = renames.filter((rename) => upstreamTree.has(rename.from));
@@ -183,6 +261,7 @@ function collectPrFacts(base) {
 	return {
 		changedFiles,
 		changelogChanges,
+		trackerRemovals,
 		trackerPolicy: {
 			forkOnly,
 			trackerDiffs,
@@ -249,17 +328,19 @@ export function main(argv) {
 	let changedFiles;
 	let trackerPolicy;
 	let changelogChanges;
+	let trackerRemovals;
 	try {
 		const facts = collectPrFacts(args.base);
 		changedFiles = facts.changedFiles;
 		trackerPolicy = facts.trackerPolicy;
 		changelogChanges = facts.changelogChanges;
+		trackerRemovals = facts.trackerRemovals;
 	} catch (error) {
 		console.error(`changelog-gate: ERROR - ${error.message}`);
 		return 1;
 	}
 
-	const result = checkPrChangelog({ changedFiles, labels: args.labels, trackerPolicy, changelogChanges });
+	const result = checkPrChangelog({ changedFiles, labels: args.labels, trackerPolicy, changelogChanges, trackerRemovals });
 	const verdict = result.pass ? "PASS" : "FAIL";
 	console.log(`changelog-gate: ${verdict} - ${result.reason}`);
 	if (!result.pass) {
@@ -270,7 +351,7 @@ export function main(argv) {
 			console.log(`  missing changes.md coverage: ${path}`);
 		}
 		console.log(
-			"Restore any changed released sections. " +
+			"Restore any changed released sections and any removed change-log entries. " +
 				"Add an entry under ## [Unreleased] in the affected package CHANGELOG.md, " +
 				`apply the '${NO_CHANGELOG_LABEL}' label if this change is not user-facing, ` +
 				"or cover the change in its exact nearest changes.md tracker.",

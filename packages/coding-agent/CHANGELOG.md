@@ -6,9 +6,16 @@
 
 ### Added
 
+- A single-session `--mode rpc` process accepts `set_retry_fallback` before its first turn is asked for (capability `retry_fallback_command`): the `open_session.retryFallback` profile for a caller that spawns one process per session, applied in memory only and kept by the process's later sessions. omo's task children that run as their own process (every Windows child, and `task.process_runner: "child-process"`) can now carry their category's fallback chain past a tool call without touching the user's settings file ([omo#9582](https://github.com/code-yeongyu/oh-my-openagent/issues/9582)).
+
 ### Changed
 
+- A terminal that registers a control endpoint becomes reachable sooner and admits a message sooner after it is reachable. The endpoint binds its socket while the session header is written and looks up the process start time in parallel. It no longer reaps other terminals' dead records or prunes generations before it binds, and it no longer waits for its inbox watch to arm before registration returns. That wait added 200 ms to admission whenever the watch's first sentinel event was missed. A message that reaches the inbox before the watch is armed is still picked up by one more pass once arming settles ([#2756](https://github.com/code-yeongyu/senpi/pull/2756)).
+
 ### Fixed
+
+- Project rule discovery no longer escapes the project root on Windows. A `read`/`edit`/`write` target on a different drive, or one whose drive-letter case differs from the project root, made the rules finder walk the unrelated location and inject any `AGENTS.md`, `CLAUDE.md`, `.claude/rules`, `.cursor/rules`, or `.github/instructions` it found there as *project* rules ([#568](https://github.com/code-yeongyu/senpi/pull/568) by [@MoerAI](https://github.com/MoerAI)). POSIX behavior is unchanged.
+- With a `compaction.model` override on `anthropic-subscription`, senpi no longer rewrites older messages before each turn, so the resident Claude session keeps receiving only the new messages instead of re-sending the whole history every turn ([#2746](https://github.com/code-yeongyu/senpi/issues/2746)). Thanks to @trac3r00 ([#2748](https://github.com/code-yeongyu/senpi/pull/2748)).
 
 ### Removed
 
