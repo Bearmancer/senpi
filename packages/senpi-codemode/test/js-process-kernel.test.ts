@@ -57,10 +57,7 @@ async function waitFor(label: string, condition: () => boolean, timeoutMs = 5_00
 // RED on the base: no implementation means the probe kernel never reaches mode "process", so the
 // test fails there. GREEN once the feature lands: the probe confirms process mode, then fn runs.
 const itProcessMode = (name: string, fn: () => Promise<void>, timeout: number): void => {
-	it(name, { timeout }, async (context) => {
-		if (process.env.SENPI_CODEMODE_JS_ISOLATION !== "process") {
-			context.skip("skipped: SENPI_CODEMODE_JS_ISOLATION is not 'process'");
-		}
+	it(name, { timeout }, async () => {
 		const probe = new JavaScriptKernel({
 			sessionId: `process-probe-${crypto.randomUUID()}`,
 			cwd: process.cwd(),
