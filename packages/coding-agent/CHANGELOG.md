@@ -8,6 +8,8 @@
 
 ### Changed
 
+- A terminal that registers a control endpoint becomes reachable sooner and admits a message sooner after it is reachable. The endpoint binds its socket while the session header is written and looks up the process start time in parallel. It no longer reaps other terminals' dead records or prunes generations before it binds, and it no longer waits for its inbox watch to arm before registration returns. That wait added 200 ms to admission whenever the watch's first sentinel event was missed. A message that reaches the inbox before the watch is armed is still picked up by one more pass once arming settles ([#2756](https://github.com/code-yeongyu/senpi/pull/2756)).
+
 ### Fixed
 
 - With a `compaction.model` override on `anthropic-subscription`, senpi no longer rewrites older messages before each turn, so the resident Claude session keeps receiving only the new messages instead of re-sending the whole history every turn ([#2746](https://github.com/code-yeongyu/senpi/issues/2746)). Thanks to @trac3r00 ([#2748](https://github.com/code-yeongyu/senpi/pull/2748)).
@@ -23,8 +25,6 @@
 - A permission prompt sent to RPC clients now names the tool call it approves (`toolCallId`, plus `parentToolCallId` for a call another tool issued), and so does the feedback `input` after "Deny with feedback". The engine raises the prompts for every call of a message before any of them runs, so a client could not tell which of several calls of the same tool a prompt was for; an app can now show each prompt with its own call's input ([#2710](https://github.com/code-yeongyu/senpi/issues/2710)).
 
 ### Changed
-
-- A terminal that registers a control endpoint becomes reachable sooner and admits a message sooner after it is reachable. The endpoint binds its socket while the session header is written and looks up the process start time in parallel. It no longer reaps other terminals' dead records or prunes generations before it binds, and it no longer waits for its inbox watch to arm before registration returns. That wait added 200 ms to admission whenever the watch's first sentinel event was missed. A message that reaches the inbox before the watch is armed is still picked up by one more pass once arming settles ([#2756](https://github.com/code-yeongyu/senpi/pull/2756)).
 
 ### Fixed
 
