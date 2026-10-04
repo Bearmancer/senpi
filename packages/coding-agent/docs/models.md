@@ -142,6 +142,10 @@ Set `api` at provider level (default for all models) or model level (override pe
 | `authHeader` | Set `true` to add `Authorization: Bearer <apiKey>` automatically |
 | `models` | Array of model configurations |
 | `modelOverrides` | Per-model overrides for built-in or extension-registered models on this provider |
+| `whitelist` | Model ids to keep; every other model of the provider is removed (see [Hiding Providers and Models](#hiding-providers-and-models)) |
+| `blacklist` | Model ids to remove from the provider |
+| `hideFreeModels` | Set `true` to remove every model of the provider whose input and output cost are both `0` |
+| `disabled` | Set `true` to remove the whole provider |
 
 For providers with `models`, non-built-in provider configs need `baseUrl` and an `api` value at either provider or model level. `apiKey` is not required to load the file: models become available when auth is configured through `/login`/`auth.json`, CLI `--api-key`, or provider `apiKey`. If no auth is configured, the models load but stay unavailable in `/model` and `--list-models`.
 
@@ -509,6 +513,36 @@ Merge semantics:
 - Custom models are upserted by `id` within the provider.
 - If a custom model `id` matches a built-in model `id`, the custom model replaces that built-in model.
 - If a custom model `id` is new, it is added alongside built-in models.
+
+## Hiding Providers and Models
+
+Hidden models and providers disappear from the catalog everywhere it is read: `--list-models`, `/model`, Ctrl+P cycling, startup selection, and `enabledModels` / `favoriteModels` resolution.
+
+```json
+{
+  "disabledProviders": ["openrouter"],
+  "providers": {
+    "anthropic": { "whitelist": ["claude-sonnet-4-5"] },
+    "openai": { "blacklist": ["gpt-5.4"] },
+    "opencode": { "hideFreeModels": true }
+  }
+}
+```
+
+| Key | Where | Effect |
+|-----|-------|--------|
+| `disabledProviders` | Top level, array of provider ids | Removes each listed provider and all of its models. `providers.<id>.disabled: true` does the same for one provider. |
+| `whitelist` | Provider block, array of model ids | Keeps only the listed ids. |
+| `blacklist` | Provider block, array of model ids | Removes the listed ids. |
+| `hideFreeModels` | Provider block, boolean | Removes every model of that provider whose `cost.input` and `cost.output` are both `0`. |
+
+Behavior notes:
+- `whitelist` and `blacklist` match whole model ids exactly and case-sensitively; there are no globs. When both are set, a model must be in `whitelist` and not in `blacklist`.
+- All three provider filters run after custom `models` are merged in, and before `modelOverrides`. They also apply to the provider's custom `models` entries.
+- `hideFreeModels` is per provider. Other providers are unaffected, so a local provider whose models cost `0` (Ollama, LM Studio, vLLM) stays listed unless that provider sets the flag itself.
+- `hideFreeModels` also hides a custom `models` entry that omits `cost`, because an omitted `cost` is `0`. Give such a model a nonzero `cost`, or leave the flag off for that provider.
+- `hideFreeModels` reads the catalog `cost` (or the custom model's own `cost`). A `cost` set in `modelOverrides` is not considered.
+- A provider block that sets only `whitelist`, `blacklist`, or `hideFreeModels` is valid; no `baseUrl` or `models` is needed.
 
 ## Per-model Overrides
 
