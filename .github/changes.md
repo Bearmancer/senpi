@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 ## 2026-10-04 - The Windows Python job checks that environment installs stay inside the revision (codemode plan node 14)
 
 ### What changed
@@ -17,8 +16,6 @@
 
 - LOW: the `python-kernel-windows` job's step list.
 
-||||||| d933c3adc
-=======
 ## 2026-10-03 - codemode-gate checks out full history to review baseline changes (senpi#2452)
 
 ### What changed
@@ -37,7 +34,6 @@
 
 - LOW: the `codemode-gate` job's checkout step in `.github/workflows/ci.yml`.
 
->>>>>>> origin/main
 ## 2026-10-03 - The release body includes every published package's notes (senpi#2585)
 
 ### What changed
