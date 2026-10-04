@@ -1,8 +1,19 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { PythonKernel } from "../src/kernels/py/kernel.ts";
 import { FakeChild } from "./py-kernel/fixtures.ts";
 
-afterEach(() => vi.useRealTimers());
+// These tests give fake children pids. A kill path that bypasses the injected group kill must fail here,
+// never send a real signal to whatever process group happens to have that id.
+beforeEach(() => {
+	vi.spyOn(process, "kill").mockImplementation(() => {
+		throw new Error("test reached the real process.kill");
+	});
+});
+
+afterEach(() => {
+	vi.restoreAllMocks();
+	vi.useRealTimers();
+});
 
 describe("Python startup progress", () => {
 	it("waits for ready when bootstrap stages exceed the old total deadline", async () => {
