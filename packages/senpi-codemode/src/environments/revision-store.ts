@@ -1,6 +1,8 @@
+import { randomUUID } from "node:crypto";
 import { cp, mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { withRootLock } from "./install-lock.ts";
+import { type LockWaitNotice, withRootLock } from "./install-lock.ts";
+import { EnvironmentError } from "./py-installer.ts";
 
 const POINTER = "active";
 const REVISION = /^rev-(\d+)$/;
@@ -31,6 +33,7 @@ export async function publishNextRevision(
 	base: string,
 	build: (staging: string, previous: Revision | undefined) => Promise<void>,
 	signal?: AbortSignal,
+	onLockWait?: (notice: LockWaitNotice) => void,
 ): Promise<{ readonly revision: Revision; readonly previous: Revision | undefined }> {
 	await mkdir(base, { recursive: true });
 	return withRootLock(
@@ -38,17 +41,17 @@ export async function publishNextRevision(
 		async () => {
 			const previous = await readActiveRevision(base);
 			const number = Math.max(previous?.number ?? 0, await highestRevision(base)) + 1;
-			const staging = join(base, `.staging-rev-${number}-${process.pid}`);
+			const staging = join(base, `.staging-rev-${number}-${process.pid}-${randomUUID()}`);
 			const dir = join(base, `rev-${number}`);
 			try {
 				if (previous === undefined) await mkdir(staging, { recursive: true });
 				else await cp(previous.dir, staging, { recursive: true, verbatimSymlinks: true });
 				await build(staging, previous);
 				signal?.throwIfAborted();
-				await rename(staging, dir);
-				const pointer = join(base, `.${POINTER}-${process.pid}`);
+				await renameRetrying(staging, dir);
+				const pointer = join(base, `.${POINTER}-${process.pid}-${randomUUID()}`);
 				await writeFile(pointer, `rev-${number}\n`);
-				await rename(pointer, join(base, POINTER));
+				await renameRetrying(pointer, join(base, POINTER));
 			} catch (error) {
 				await rm(staging, { recursive: true, force: true });
 				throw error;
@@ -56,7 +59,30 @@ export async function publishNextRevision(
 			return { revision: { number, dir }, previous };
 		},
 		signal,
+		onLockWait,
 	);
+}
+
+const RENAME_RETRY_DELAYS_MS = [20, 50, 100, 200, 400, 800];
+
+// On Windows a rename fails with EPERM/EBUSY/EACCES while another process (an indexer, antivirus) holds a
+// handle on the source or the replaced file; those holds are brief, so the rename is retried before failing.
+async function renameRetrying(from: string, to: string): Promise<void> {
+	for (let attempt = 0; ; attempt++) {
+		try {
+			await rename(from, to);
+			return;
+		} catch (error) {
+			const code = error instanceof Error && "code" in error ? error.code : undefined;
+			const transient = code === "EPERM" || code === "EBUSY" || code === "EACCES";
+			const delay = RENAME_RETRY_DELAYS_MS[attempt];
+			if (!transient || delay === undefined) {
+				const reason = error instanceof Error ? error.message : String(error);
+				throw new EnvironmentError("environment_install_failed", `could not publish the new revision: ${reason}`);
+			}
+			await new Promise((resolve) => setTimeout(resolve, delay));
+		}
+	}
 }
 
 async function highestRevision(base: string): Promise<number> {

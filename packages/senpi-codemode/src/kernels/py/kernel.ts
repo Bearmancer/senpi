@@ -107,7 +107,7 @@ export class PythonKernel {
 		const active = this.#active;
 		if (active?.hostAbort && active.interruptReason === undefined) {
 			active.interruptReason = reason;
-			this.#settleRun(active, failedPythonResult(active.input.cellId, "Eval interrupted"));
+			void this.#stopHostEntry(active, failedPythonResult(active.input.cellId, "Eval interrupted"));
 			return { stateRetained: Promise.resolve(true) };
 		}
 		const transport = this.#transport;
@@ -233,11 +233,40 @@ export class PythonKernel {
 
 	#timeoutRun(pending: PendingRun, timeoutMs: number): void {
 		if (this.#active !== pending) return;
-		if (this.#transport && !pending.hostAbort) void this.#beginRetirement(this.#transport).catch(() => undefined);
-		this.#settleRun(
-			pending,
-			failedPythonResult(pending.input.cellId, `Python kernel timed out after ${timeoutMs}ms`),
-		);
+		const timedOut = failedPythonResult(pending.input.cellId, `Python kernel timed out after ${timeoutMs}ms`);
+		if (pending.hostAbort) {
+			void this.#stopHostEntry(pending, timedOut);
+			return;
+		}
+		if (this.#transport) void this.#beginRetirement(this.#transport).catch(() => undefined);
+		this.#settleRun(pending, timedOut);
+	}
+
+	/**
+	 * Aborts a running host entry and settles it only once its executor has stopped (or after the same bound the
+	 * interpreter gets before escalation), so the next queue entry never overlaps the aborted host work. An
+	 * executor that finished successfully despite the abort reports that outcome: its work did commit.
+	 */
+	async #stopHostEntry(pending: PendingRun, stopped: ResultMessage): Promise<void> {
+		pending.hostAbort?.abort();
+		const done = pending.hostDone;
+		let bound: ReturnType<typeof setTimeout> | undefined;
+		const outcome =
+			done === undefined
+				? undefined
+				: await Promise.race([
+						done,
+						new Promise<undefined>((resolve) => {
+							bound = setTimeout(() => resolve(undefined), interruptEscalationMs);
+						}),
+					]);
+		if (bound !== undefined) clearTimeout(bound);
+		if (outcome?.ok === true) {
+			pending.interruptReason = undefined;
+			this.#settleRun(pending, outcome);
+			return;
+		}
+		this.#settleRun(pending, stopped);
 	}
 
 	async #ensureStarted(): Promise<void> {

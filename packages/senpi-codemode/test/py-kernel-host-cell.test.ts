@@ -9,6 +9,8 @@ function gatedHost(): { readonly host: HostCellExecutor; readonly gate: Gate } {
 	const finished = Promise.withResolvers<{ ok: true; valueRepr: string }>();
 	const host: HostCellExecutor = ({ signal }) => {
 		started.resolve(signal);
+		// Like a real installer, the executor stops when it is aborted.
+		signal.addEventListener("abort", () => finished.reject(signal.reason ?? new Error("aborted")), { once: true });
 		return finished.promise;
 	};
 	return {
@@ -199,5 +201,127 @@ describe.skipIf(!(await hasPython3()))("Given a live Python interpreter", () => 
 		} finally {
 			await kernel.close();
 		}
+	});
+});
+
+describe("Given an aborted host entry in the Python kernel's queue", () => {
+	it("When an interrupted executor keeps running after the abort, then the next entry waits until it stops", async () => {
+		const child = new FakeChild({ autoRun: false });
+		const kernel = await startFakeKernel(child, "host-no-overlap");
+		const events: string[] = [];
+		const finished = Promise.withResolvers<{ ok: false; error: { message: string } }>();
+		const started = Promise.withResolvers<void>();
+		const host: HostCellExecutor = () => {
+			started.resolve();
+			return finished.promise;
+		};
+		const install = kernel.run({ cellId: "install", code: "%pip install x", timeoutMs: 60_000, host });
+		const next = kernel.run({ cellId: "next", code: "2", timeoutMs: 60_000 });
+		await started.promise;
+
+		await kernel.interrupt("stopped by user", "install");
+		await new Promise((resolve) => setImmediate(resolve));
+		events.push(`run frames while host work runs: ${child.runMessages.length}`);
+		finished.resolve({ ok: false, error: { message: "pip stopped" } });
+		await expect(install).resolves.toMatchObject({
+			ok: false,
+			error: { message: "Eval interrupted: stopped by user" },
+		});
+		await vi.waitFor(() => expect(child.runMessages.map((frame) => frame.cellId)).toEqual(["next"]));
+		child.emitMessage({ type: "result", cellId: "next", ok: true, valueRepr: "2", durationMs: 1 });
+
+		expect(events).toEqual(["run frames while host work runs: 0"]);
+		await expect(next).resolves.toMatchObject({ ok: true });
+		await kernel.close();
+	});
+
+	it("When the executor finishes successfully as the interrupt arrives, then the cell reports that its work committed", async () => {
+		const child = new FakeChild({ autoRun: false });
+		const kernel = await startFakeKernel(child, "host-committed");
+		const finished = Promise.withResolvers<{ ok: true; valueRepr: string }>();
+		const started = Promise.withResolvers<void>();
+		const host: HostCellExecutor = () => {
+			started.resolve();
+			return finished.promise;
+		};
+		const install = kernel.run({ cellId: "install", code: "%pip install x", timeoutMs: 60_000, host });
+		await started.promise;
+
+		finished.resolve({ ok: true, valueRepr: "installed" });
+		await kernel.interrupt("stopped by user", "install");
+
+		await expect(install).resolves.toMatchObject({ ok: true, valueRepr: "installed" });
+		await kernel.close();
+	});
+
+	it("When the executor throws synchronously, then only its cell fails and the next queued cell still runs", async () => {
+		const child = new FakeChild({ autoRun: false });
+		const kernel = await startFakeKernel(child, "host-sync-throw");
+		const host: HostCellExecutor = () => {
+			throw new Error("sync boom");
+		};
+		const install = kernel.run({ cellId: "install", code: "%pip install x", timeoutMs: 60_000, host });
+		const next = kernel.run({ cellId: "next", code: "2", timeoutMs: 60_000 });
+
+		await expect(install).resolves.toMatchObject({ ok: false, error: { message: "sync boom" } });
+		await vi.waitFor(() => expect(child.runMessages.map((frame) => frame.cellId)).toEqual(["next"]));
+		child.emitMessage({ type: "result", cellId: "next", ok: true, valueRepr: "2", durationMs: 1 });
+		await expect(next).resolves.toMatchObject({ ok: true });
+		await kernel.close();
+	});
+
+	it("When an aborted executor still emits output, then that output reaches no cell", async () => {
+		const child = new FakeChild({ autoRun: false });
+		const seen: string[] = [];
+		const kernel = await startFakeKernel(child, "host-fenced-emit");
+		const finished = Promise.withResolvers<{ ok: false; error: { message: string } }>();
+		let emitLate = (): void => undefined;
+		const started = Promise.withResolvers<void>();
+		const host: HostCellExecutor = ({ emit }) => {
+			emitLate = () => emit({ type: "text", stream: "stdout", data: "late output\n" });
+			started.resolve();
+			return finished.promise;
+		};
+		const install = kernel.run({
+			cellId: "install",
+			code: "%pip install x",
+			timeoutMs: 60_000,
+			host,
+			onMessage: (message) => {
+				if (message.type === "text") seen.push(message.data);
+			},
+		});
+		await started.promise;
+
+		await kernel.interrupt("stopped by user", "install");
+		emitLate();
+		finished.resolve({ ok: false, error: { message: "pip stopped" } });
+		await install;
+
+		expect(seen).toEqual([]);
+		await kernel.close();
+	});
+
+	it("When an aborted executor never stops, then the cell still settles after the interpreter's escalation bound", async () => {
+		vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+		const child = new FakeChild({ autoRun: false });
+		const kernel = await startFakeKernel(child, "host-bound");
+		const started = Promise.withResolvers<void>();
+		const host: HostCellExecutor = () => {
+			started.resolve();
+			return new Promise(() => undefined);
+		};
+		const install = kernel.run({ cellId: "install", code: "%pip install x", timeoutMs: 600_000, host });
+		await started.promise;
+
+		await kernel.interrupt("stopped by user", "install");
+		await vi.advanceTimersByTimeAsync(5_000);
+
+		await expect(install).resolves.toMatchObject({
+			ok: false,
+			error: { message: "Eval interrupted: stopped by user" },
+		});
+		vi.useRealTimers();
+		await kernel.close();
 	});
 });
