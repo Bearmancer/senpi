@@ -13,6 +13,8 @@
 
 ### Fixed
 
+- `%pip` parsing follow-ups ([#2689](https://github.com/code-yeongyu/senpi/pull/2689)): a `%pip` or `%environment` line after code now says to put it on its own cell instead of "Unsupported line magic"; a comment line ending in a backslash no longer swallows the `%pip` line after it; inside double quotes a backslash is kept unless it escapes a quote, backslash, `$` or a backtick, as a POSIX shell does.
+
 ### Removed
 
 ## [2026.10.8] - 2026-10-04

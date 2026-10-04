@@ -143,6 +143,14 @@ describe.skipIf(!pythonReady)("Given a Python eval session", () => {
 		expect(textOf(imported)).toContain("'1.0'");
 	}, 180_000);
 
+	it("When %pip comes after code in a cell, then the kernel's error says to put it on its own cell", async () => {
+		const { run } = await session();
+
+		const result = await run("x = 1\n%pip install six");
+
+		expect(textOf(result)).toContain("put %pip on its own cell");
+	}, 180_000);
+
 	it("When a cell mixes %pip with code, then it fails with the own-cell teaching error and installs nothing", async () => {
 		const { wheels, run, artifactsDir } = await session();
 		const wheel = buildWheel(wheels, "senpi_probe", "1.0");
