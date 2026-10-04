@@ -61,7 +61,11 @@ import {
 	getAgentDir,
 	getInstallPackageDir,
 } from "./config.ts";
-import { type CreateAgentSessionRuntimeFactory, createAgentSessionRuntime } from "./core/agent-session-runtime.ts";
+import {
+	applyRetryFallbackProfile,
+	type CreateAgentSessionRuntimeFactory,
+	createAgentSessionRuntime,
+} from "./core/agent-session-runtime.ts";
 import {
 	type AgentSessionRuntimeDiagnostic,
 	createAgentSessionFromServices,
@@ -880,19 +884,7 @@ export function createCliRuntimeFactory(
 				(!hasTrustRequiringResources || trustStore.get(cwd) === true));
 		const runtimeSettingsManager = SettingsManager.create(cwd, agentDir, { projectTrusted });
 		// The opener's per-session fallback policy is an in-memory override: never saved, never shared.
-		if (launchProfile?.retryFallback) {
-			runtimeSettingsManager.applyOverrides({
-				retry: {
-					modelFallback: launchProfile.retryFallback.modelFallback,
-					fallbackChains: Object.fromEntries(
-						Object.entries(launchProfile.retryFallback.fallbackChains).map(([key, entries]) => [
-							key,
-							[...entries],
-						]),
-					),
-				},
-			});
-		}
+		if (launchProfile?.retryFallback) applyRetryFallbackProfile(runtimeSettingsManager, launchProfile.retryFallback);
 		const services = await createAgentSessionServices({
 			cwd,
 			agentDir,

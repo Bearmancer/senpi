@@ -153,3 +153,26 @@ it("advertises retry_fallback_profile, the capability a client waits for before 
 
 	expect(z.array(z.string()).parse(info.capabilities)).toContain("retry_fallback_profile");
 }, 120_000);
+
+it("refuses set_retry_fallback on a host session and never advertises it there: a host session takes its chain from open_session", async () => {
+	// given
+	const faux = fauxWherePrimaryIsAtItsUsageLimit();
+	await using host = await contextHost({ faux, globalSettings: USER_SETTINGS });
+	const settingsBefore = await readFile(join(host.agentDir, "settings.json"));
+	const session = await host.open("conn-a", {});
+
+	// when
+	const info = responseData(await host.send("conn-a", { type: "get_protocol_info" }));
+	const refused = await host.send("conn-a", {
+		type: "set_retry_fallback",
+		sessionId: String(session.sessionId),
+		retryFallback: { modelFallback: true, fallbackChains: { "faux-fallback/primary": ["faux-fallback/spare-a"] } },
+	} as unknown as Parameters<typeof host.send>[1]);
+	await host.prompt("conn-a", String(session.sessionId), "go");
+
+	// then
+	expect(z.array(z.string()).parse(info.capabilities)).not.toContain("retry_fallback_command");
+	expect(refused?.success).toBe(false);
+	expect(lastAssistantText(host, String(session.sessionId))).toContain("session limit");
+	expect(await readFile(join(host.agentDir, "settings.json"))).toEqual(settingsBefore);
+}, 120_000);

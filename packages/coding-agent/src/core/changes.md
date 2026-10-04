@@ -1,3 +1,21 @@
+## 2026-10-05 - A runtime's fallback policy can be set before its first turn (omo#9582)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session-runtime.ts`: new exported `applyRetryFallbackProfile(settingsManager, profile)` overlays a `SessionRetryFallbackProfile` with `applyOverrides`, the session-only layer `save()` never writes. New `AgentSessionRuntime.setRetryFallback(profile)` stores a frozen copy in the runtime's launch profile, so `new_session` / `switch_session` / `fork` keep it, and applies it to the current session's settings.
+
+### Why
+
+- A single-session `--mode rpc` process (an omo task child run as its own process, which is every child on Windows) needs its own fallback chain without a settings file. `set_retry_fallback` (`modes/rpc`) calls this before the first turn.
+
+### Why an extension could not handle it
+
+- The launch profile that later replacement sessions are built from is private to `AgentSessionRuntime`. An extension can change the current session's settings, but not what the runtime hands the next session it creates.
+
+### Expected merge conflict zones
+
+- `agent-session-runtime.ts`: the `SessionRetryFallbackProfile` interface block and the setter block after `setBrowserEngine`.
+
 ## 2026-10-04 - continue_from_leaf acknowledges at turn admission, not turn end (senpi#2708)
 
 ### What changed

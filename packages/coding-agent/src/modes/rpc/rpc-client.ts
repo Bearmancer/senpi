@@ -869,6 +869,14 @@ export class RpcClient {
 	}
 
 	/**
+	 * Give this single-session process its fallback chain before the first turn (`set_retry_fallback`).
+	 * Requires the `retry_fallback_command` capability.
+	 */
+	async setRetryFallback(retryFallback: SessionRetryFallbackProfile): Promise<void> {
+		await this.send({ type: "set_retry_fallback", retryFallback });
+	}
+
+	/**
 	 * Execute a bash command.
 	 */
 	async bash(
