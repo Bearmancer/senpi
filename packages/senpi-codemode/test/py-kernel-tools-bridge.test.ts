@@ -1,0 +1,178 @@
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { type AgentToolResult, kernelToolsStorage } from "@code-yeongyu/senpi";
+import { afterEach, describe, expect, it } from "vitest";
+import { defaultCodemodeSettings } from "../src/config/settings.ts";
+import { createCodemodeSessionManager } from "../src/extension/session-manager.ts";
+import { createInterpreterDetector, getInterpreterAvailability } from "../src/interpreters/detect.ts";
+import { createEvalTool } from "../src/tool/eval-tool.ts";
+import { fakeExtensionContext } from "./eval/fakes.ts";
+
+const settings = { ...defaultCodemodeSettings, languages: { js: false, py: true, rb: false, jl: false } };
+const availability = await getInterpreterAvailability(settings, createInterpreterDetector());
+const cleanups: Array<() => Promise<void>> = [];
+
+afterEach(async () => {
+	for (const cleanup of cleanups.splice(0).reverse()) await cleanup();
+});
+
+function textOf(result: AgentToolResult<unknown>): string {
+	return result.content.map((part) => (part.type === "text" ? part.text : "")).join("\n");
+}
+
+function answer(text: string): AgentToolResult<unknown> {
+	return { content: [{ type: "text", text }], details: undefined };
+}
+
+type DescribedTool = {
+	readonly name: string;
+	readonly language: string;
+	readonly kernel_generation: number;
+	readonly definition_revision: number;
+};
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null;
+}
+
+/** The first descriptor of a describe reply, or undefined when the reply holds no usable one. */
+function describedTool(reply: unknown): DescribedTool | undefined {
+	const first = isRecord(reply) && Array.isArray(reply.results) ? reply.results[0] : undefined;
+	const descriptor = isRecord(first) && first.ok === true && isRecord(first.descriptor) ? first.descriptor : undefined;
+	if (descriptor === undefined) return undefined;
+	const { name, language, kernel_generation, definition_revision } = descriptor;
+	if (typeof name !== "string" || typeof language !== "string") return undefined;
+	if (typeof kernel_generation !== "number" || typeof definition_revision !== "number") return undefined;
+	return { name, language, kernel_generation, definition_revision };
+}
+
+type HostCall = { readonly toolName: string; readonly args: unknown; readonly sawKernelTools: boolean };
+
+/**
+ * A host whose task tool does what omo's does with a grant: read the caller's kernel-tools capability, describe the
+ * requested names, and call them. Here it calls `add(1, 2)` and answers with the result, or says it had no capability.
+ */
+async function session() {
+	const root = await mkdtemp(join(tmpdir(), "senpi-py-kernel-tools-"));
+	const calls: HostCall[] = [];
+	const executeTool = async (toolName: string, args: unknown): Promise<AgentToolResult<unknown>> => {
+		const capability = kernelToolsStorage.getStore();
+		calls.push({ toolName, args, sawKernelTools: capability !== undefined });
+		if (capability === undefined) return answer("no kernel tools for this call");
+		const described = describedTool(await capability.describe(["add"]));
+		if (described === undefined) return answer("describe failed");
+		const value = await capability.invoke({
+			name: described.name,
+			kernel_generation: described.kernel_generation,
+			definition_revision: described.definition_revision,
+			args: { a: 1, b: 2 },
+			call_id: `host-${crypto.randomUUID()}`,
+		});
+		return answer(`${described.language}:add -> ${JSON.stringify(value)}`);
+	};
+	const complete = async () => {
+		throw new Error("no provider calls in this test");
+	};
+	const manager = await createCodemodeSessionManager({
+		sessionId: `py-kernel-tools-${crypto.randomUUID()}`,
+		cwd: root,
+		settings,
+		availability,
+		executeTool,
+		complete,
+	});
+	const tool = createEvalTool({
+		enabledLanguages: settings.languages,
+		kernelManager: manager,
+		executeTool,
+		cellTimeoutSeconds: 120,
+	});
+	cleanups.push(async () => {
+		await manager.dispose();
+		await rm(root, { recursive: true, force: true });
+	});
+	const context = { ...fakeExtensionContext(), cwd: root };
+	const run = async (code: string) =>
+		await tool.execute(
+			`py-kernel-tools-${crypto.randomUUID()}`,
+			{ language: "py", code, summary: "Run a cell" },
+			undefined,
+			undefined,
+			context,
+		);
+	return { run, calls };
+}
+
+const DEFINE_ADD = '@tool\ndef add(a: int, b: int) -> int:\n    """Add two integers."""\n    return a + b\n"defined"';
+
+describe.skipIf(!availability.py.detected.ok)("Given a Python cell that defined @tool add", () => {
+	it("When the cell grants it through a host tool, then the host sees the cell's kernel tools and add runs back in the kernel", async () => {
+		const { run, calls } = await session();
+		await run(DEFINE_ADD);
+
+		const granted = await run("tool.task(prompt='use add', tools=['add'])");
+
+		expect(textOf(granted)).toContain("py:add -> 3");
+		expect(calls.at(-1)?.sawKernelTools).toBe(true);
+	}, 120_000);
+
+	it("When the cell calls agent(..., tools=[...]), then the grant reaches the host task tool with the cell's kernel tools", async () => {
+		const { run, calls } = await session();
+		await run(DEFINE_ADD);
+
+		await run("agent('use add', tools=['add'])");
+
+		const task = calls.at(-1);
+		expect(task?.args).toMatchObject({ prompt: "use add", tools: ["add"] });
+		expect(task?.sawKernelTools).toBe(true);
+	}, 120_000);
+
+	it("When agent(tools=...) is given a single string, then it is refused with a typed error before reaching the host", async () => {
+		const { run, calls } = await session();
+		await run(DEFINE_ADD);
+		const before = calls.length;
+
+		const refused = await run(
+			"try:\n    agent('use add', tools='add')\nexcept Exception as error:\n    print(error.code)",
+		);
+
+		expect(textOf(refused)).toContain("invalid_tools");
+		expect(calls).toHaveLength(before);
+	}, 120_000);
+
+	it("When a host call names a cell that is not running, then it gets no kernel tools", async () => {
+		const { run, calls } = await session();
+		await run(DEFINE_ADD);
+
+		const forged = await run(
+			"import sys\nsys.modules['__main__'].bridge_post('/call', {'callId': 'py-forged', 'cellId': 'not-a-running-cell', 'toolName': 'task', 'args': {'prompt': 'use add', 'tools': ['add']}})",
+		);
+
+		expect(textOf(forged)).toContain("no kernel tools for this call");
+		expect(calls.at(-1)?.sawKernelTools).toBe(false);
+	}, 120_000);
+
+	it("When a thread keeps a finished cell's context and calls the host later, then that call gets no kernel tools", async () => {
+		const { run, calls } = await session();
+		await run(DEFINE_ADD);
+		await run(
+			[
+				"import contextvars, threading",
+				"late_go = threading.Event()",
+				"late_result = {}",
+				"def late_call():",
+				"    late_go.wait(30)",
+				"    late_result['text'] = tool.task(prompt='use add', tools=['add'])['text']",
+				"late_context = contextvars.copy_context()",
+				"late_thread = threading.Thread(target=lambda: late_context.run(late_call))",
+				"late_thread.start()",
+			].join("\n"),
+		);
+
+		const later = await run("late_go.set()\nlate_thread.join(30)\nlate_result['text']");
+
+		expect(textOf(later)).toContain("no kernel tools for this call");
+		expect(calls.at(-1)?.sawKernelTools).toBe(false);
+	}, 120_000);
+});

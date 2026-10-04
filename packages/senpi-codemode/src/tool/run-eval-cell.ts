@@ -206,11 +206,18 @@ async function executeCell(
 		const pending = handler.handle(message);
 		void pending.catch((error: unknown) => execution.cancel(error));
 	};
+	let releaseCellKernelTools: (() => void) | undefined;
 	try {
 		const kernel = await execution.wait(options.kernelManager.getKernel(invocation.input.language, onMessage));
 		// Computed before the handler so its construction-time snapshot captures this cell's capability.
 		// Worker messages later restore that snapshot before calling host tools (#1754, #2512).
 		const kernelTools = kernelToolsFor(kernel);
+		// Subprocess kernels call the host over the bridge, outside this async context: bind the capability to this
+		// cell's id so those calls get it, and only while this cell runs.
+		releaseCellKernelTools =
+			kernelTools === undefined
+				? undefined
+				: options.kernelManager.bindCellKernelTools?.(invocation.cellId, kernelTools);
 		const runBound = async (): Promise<AgentToolResult<EvalToolDetails>> => {
 			const queue = kernel.queueSnapshot();
 			state.queuedBehind = [...(queue.activeCellId === null ? [] : [queue.activeCellId]), ...queue.queuedCellIds];
@@ -300,6 +307,7 @@ async function executeCell(
 		if (handler) await handler.flushOutput();
 		// The cell settled: stop the kernel dispatcher from holding this cell's listener (#2260).
 		options.kernelManager.releaseKernelListener?.(invocation.input.language, onMessage);
+		releaseCellKernelTools?.();
 	}
 }
 

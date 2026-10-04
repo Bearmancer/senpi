@@ -8,6 +8,8 @@ export interface BridgeToolCallRequest {
 	readonly toolName: string;
 	readonly args: unknown;
 	readonly callId: string;
+	/** The calling cell; absent for a call made outside any cell (a plain thread), which gets no kernel tools. */
+	readonly cellId?: string;
 	readonly signal: AbortSignal;
 }
 

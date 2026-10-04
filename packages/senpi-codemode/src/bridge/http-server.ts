@@ -8,6 +8,8 @@ const LOOPBACK_HOST = "127.0.0.1";
 
 export interface BridgeHttpCallRequest {
 	callId: string;
+	/** The cell whose code made the call; the host resolves that cell's kernel-tools capability from it. */
+	cellId?: string;
 	toolName: string;
 	args: unknown;
 	signal: AbortSignal;
@@ -132,7 +134,13 @@ async function dispatchCall(body: unknown, options: BridgeServerOptions, signal:
 	try {
 		return {
 			ok: true,
-			value: await options.onCall({ callId: body.callId, toolName: body.toolName, args: body.args, signal }),
+			value: await options.onCall({
+				callId: body.callId,
+				...(typeof body.cellId === "string" ? { cellId: body.cellId } : {}),
+				toolName: body.toolName,
+				args: body.args,
+				signal,
+			}),
 		};
 	} catch (error) {
 		return { ok: false, error: bridgeError(error) };
