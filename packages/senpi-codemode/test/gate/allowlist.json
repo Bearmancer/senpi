@@ -643,6 +643,27 @@
 				"legacyContracts/test/py-kernel-startup.test.ts/Python startup progress falls back to killing the child itself when its process group is already gone"
 			],
 			"reason": "Python startup counts CPU use and output as progress, with an absolute ceiling (senpi#2718): a shared CPU reader module and four startup behaviour cases."
+		},
+		"12": {
+			"additions": [
+				"legacyContracts/test/workpool-tools.test.ts/js workpool tools forwards tools unchanged to a host that validates with the real create schema",
+				"legacyContracts/test/workpool-tools.test.ts/js workpool tools never forwards an option the host does not know",
+				"legacyContracts/test/workpool-tools.test.ts/py workpool tools forwards tools unchanged to a host that validates with the real create schema",
+				"legacyContracts/test/workpool-tools.test.ts/py workpool tools never forwards an option the host does not know",
+				"legacyContracts/test/workpool-tools.test.ts/rb workpool tools forwards tools unchanged to a host that validates with the real create schema",
+				"legacyContracts/test/workpool-tools.test.ts/rb workpool tools never forwards an option the host does not know",
+				"legacyContracts/test/workpool-tools.test.ts/jl workpool tools forwards tools unchanged to a host that validates with the real create schema",
+				"legacyContracts/test/workpool-tools.test.ts/jl workpool tools never forwards an option the host does not know",
+				"legacyContracts/test/workpool-prelude.test.ts/js workpool prelude refuses tools given as a single string with a typed error, and posts nothing to the host",
+				"legacyContracts/test/workpool-prelude.test.ts/js workpool prelude forwards a list of tool names unchanged",
+				"legacyContracts/test/workpool-prelude.test.ts/py workpool prelude refuses tools given as a single string with a typed error, and posts nothing to the host",
+				"legacyContracts/test/workpool-prelude.test.ts/py workpool prelude forwards a list of tool names unchanged",
+				"legacyContracts/test/workpool-prelude.test.ts/rb workpool prelude refuses tools given as a single string with a typed error, and posts nothing to the host",
+				"legacyContracts/test/workpool-prelude.test.ts/rb workpool prelude forwards a list of tool names unchanged",
+				"legacyContracts/test/workpool-prelude.test.ts/jl workpool prelude refuses tools given as a single string with a typed error, and posts nothing to the host",
+				"legacyContracts/test/workpool-prelude.test.ts/jl workpool prelude forwards a list of tool names unchanged"
+			],
+			"reason": "Node 12: workpool(agent, name, {mode, tools}) forwards tools to the host create in all four languages. The helper names and the prompt are unchanged (the eval description's workpool line is untouched); the tool_schema('eval:helpers') entry gains one line. Only these contracts are new."
 		}
 	}
 }
