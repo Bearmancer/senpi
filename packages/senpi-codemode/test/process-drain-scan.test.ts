@@ -1,5 +1,19 @@
-import { describe, expect, it } from "vitest";
-import { scanDrainText } from "../src/kernels/js/process-drain-scan.js";
+import { join } from "node:path";
+import { pathToFileURL } from "node:url";
+import { beforeAll, describe, expect, it } from "vitest";
+import type { DrainScan } from "../src/kernels/js/process-drain-scan.d.ts";
+
+type ScanDrainText = (carry: string, chunk: string, marker: string) => DrainScan;
+const scanModuleUrl = pathToFileURL(join(process.cwd(), "src", "kernels", "js", "process-drain-scan.js")).href;
+let scanDrainText: ScanDrainText = () => ({ parts: [], carry: "" });
+
+beforeAll(async () => {
+	const loaded: unknown = await import(scanModuleUrl);
+	const scan: unknown =
+		typeof loaded === "object" && loaded !== null ? Reflect.get(loaded, "scanDrainText") : undefined;
+	if (typeof scan !== "function") throw new Error("process-drain-scan.js does not export scanDrainText");
+	scanDrainText = (carry, chunk, marker) => Reflect.apply(scan, undefined, [carry, chunk, marker]);
+});
 
 const MARKER = "\u0000senpi-drain:";
 const STREAM = `before${MARKER}7\u0000after${MARKER}8\u0000tail`;
