@@ -22,7 +22,8 @@ export type SearchProvider =
 	| "ecosia"
 	| "google-html"
 	| "exa-mcp"
-	| "searxng";
+	| "searxng"
+	| "keenable";
 
 /** Why a keyless engine refused a search; each reason puts the engine on a cooldown. */
 export type SearchBlockReason = "challenge" | "rate_limited" | "forbidden" | "network";

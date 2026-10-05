@@ -11,6 +11,7 @@ import { googleProvider } from "./providers/google.ts";
 import { googleCseProvider } from "./providers/google-cse.ts";
 import { googleHtmlProvider } from "./providers/google-html.ts";
 import { kagiProvider } from "./providers/kagi.ts";
+import { keenableProvider } from "./providers/keenable.ts";
 import { kimiProvider } from "./providers/kimi.ts";
 import { mojeekProvider } from "./providers/mojeek.ts";
 import { openAiResponsesProvider } from "./providers/openai-responses.ts";
@@ -58,6 +59,7 @@ const PROVIDER_MODULES: Record<SearchProvider, ProviderModule> = {
 	"google-html": googleHtmlProvider,
 	"exa-mcp": exaMcpProvider,
 	searxng: searxngProvider,
+	keenable: keenableProvider,
 };
 
 function buildContext(config: SearchProviderConfig, request: SearchRequest): BuildContext {
