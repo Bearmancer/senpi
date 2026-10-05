@@ -19,6 +19,7 @@ import { createRequire } from "node:module";
 import { createInterface } from "node:readline";
 import { Readable } from "node:stream";
 import { Worker } from "node:worker_threads";
+import { scanDrainText } from "./process-drain-scan.js";
 
 // Captured before any cell runs, so a cell that later replaces these never sees a frame being built.
 const stringify = JSON.stringify;
@@ -383,6 +384,7 @@ function sendText(data) {
 const decoder = new StringDecoder("utf8");
 const buffer = Buffer.alloc(1 << 16);
 let carry = "";
+${scanDrainText.toString()}
 for (;;) {
 	let read;
 	try {
@@ -391,24 +393,12 @@ for (;;) {
 		break;
 	}
 	if (read === 0) break;
-	let text = carry + decoder.write(buffer.subarray(0, read));
-	carry = "";
-	for (;;) {
-		const at = text.indexOf(marker);
-		if (at === -1) break;
-		const close = text.indexOf("\\u0000", at + marker.length);
-		if (close === -1) break;
-		if (at > 0) sendText(text.slice(0, at));
-		parentPort.postMessage(text.slice(at + marker.length, close));
-		text = text.slice(close + 1);
+	const scanned = scanDrainText(carry, decoder.write(buffer.subarray(0, read)), marker);
+	carry = scanned.carry;
+	for (const part of scanned.parts) {
+		if (part.key !== undefined) parentPort.postMessage(part.key);
+		else sendText(part.text);
 	}
-	// Keep a possible partial marker for the next read.
-	const partial = text.lastIndexOf("\\u0000");
-	if (partial !== -1 && marker.startsWith(text.slice(partial, partial + marker.length))) {
-		carry = text.slice(partial);
-		text = text.slice(0, partial);
-	}
-	if (text.length > 0) sendText(text);
 }`;
 if (textPipe !== null) {
 	const reader = new Worker(DRAINER, {
