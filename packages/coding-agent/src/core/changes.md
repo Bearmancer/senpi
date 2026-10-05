@@ -1,3 +1,21 @@
+## 2026-10-05 - Resume queued work after failed extension feedback (senpi#2778)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `_endExtensionCompactionFeedback` releases queued work through the existing continuation admission path after non-aborted feedback completes without applying a summary. Cancelled and superseded feedback does not schedule work.
+
+### Why
+
+- A hidden goal continuation arriving during summary generation remained queued forever when the summary was stale. Only successful non-auto compaction previously resumed it. Fresh continuation admission still enforces required compaction and preserves queued messages on rejection.
+
+### Why an extension could not handle it
+
+- Queue ownership and the feedback lifecycle are private to `AgentSession`; a builtin cannot safely schedule or release another session operation.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/agent-session.ts`: `_endExtensionCompactionFeedback`.
+
 ## 2026-10-05 - Require explicit gateway fallback selectors (senpi#2774)
 
 ### What changed
