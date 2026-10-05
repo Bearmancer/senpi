@@ -357,6 +357,8 @@ options object and asynchronous helpers are `await`-able.
 | --- | --- |
 | `display(value)` | Emits text, structured JSON, markdown, or image display data. Images reach the model only through `display`: pass a figure, raw image bytes (PNG/JPEG/GIF/WebP/BMP sniffed), a `data:` URL, a `Blob`-like or `Bun.Image` value, a marshalled tool result, or one of its `images[i]` frames. |
 | `print(value, ...)` | Emits text output. |
+| `text(value)` (rb, jl) | Emits `value` as one text item without separators (`print` joins its arguments and calls it). |
+| `display_image(base64, mime_type)` (rb, jl) | Emits an image from base64 data; `mime_type` defaults to `image/png` (Ruby: `mime_type:` keyword). |
 | `read(path, offset?, limit?)` | Reads text with 1-indexed line slicing. `local://` paths resolve under the session artifact root. |
 | `write(path, content)` | Creates parent directories and writes text. `local://` paths persist in the session artifact root. |
 | `env(key?, value?)` | Reads all kernel environment values, one value, or sets one value. Includes the session's `PI_*` values (see [Session environment](#session-environment)). |
@@ -368,7 +370,7 @@ options object and asynchronous helpers are `await`-able.
 | `completion(prompt, model?, system?, schema?)` | Requests a one-shot host completion; `schema` asks the host to parse structured output. |
 | `agent(prompt, ...)` | Delegates to the configured active `taskTools.task` tool. Supports background handles and structured JSON results. |
 | `wait(handles, timeout?, mode?)` | Blocks the cell until the given handles settle (agent handle records, `handle()` views, completion handles, closed workpools, or saved `{kind, id, run_epoch}` references). `mode` is `all` (values in input order; the first failed, cancelled, or lost handle raises), `any` (`{index, ref, value}` of the first success), or `settled` (one outcome per input slot). `timeout` is wall-clock seconds from entry; on expiry `eval_wait_timeout` is raised and nothing is cancelled. Rides the bridge-call path, so the run budget pauses while parked. Agent and workpool handles need the host's `EvalHandleHost` capability (`eval_wait_unavailable` without it); completion handles always work. Julia extends `Base.wait` for handle views (`wait(handle(node))`). Details: `tool_schema("eval:wait")`. |
-| `handle(node \| ref \| {pool_id})` | Returns a rich view: the legacy record's fields plus a non-enumerable `control` (Python: attribute on a `dict` subclass; Ruby: singleton method) with `status()`, `output(format?, offset?, limit?)`, `send(message)` (agent handles only), `cancel()` (idempotent for that run epoch; never touches a successor run), and `wait(timeout?)`. Every control call is fenced by owner, id, and `run_epoch` inside the task owner (`eval_handle_stale`, `eval_handle_forbidden`). `completion(prompt, handle: true)` returns such a view for a host completion. The `agent(..., handle: true)` record itself is unchanged. Details: `tool_schema("eval:helpers")`. |
+| `handle(node \| ref \| {pool_id})` | Returns a rich view: the legacy record's fields plus a non-enumerable `control` (Python: attribute on a `dict` subclass; Ruby: singleton method) with `.status()`, `.output(format?, offset?, limit?)`, `.send(message)` (agent handles only), `.cancel()` (idempotent for that run epoch; never touches a successor run), and `.wait(timeout?)`. Every control call is fenced by owner, id, and `run_epoch` inside the task owner (`eval_handle_stale`, `eval_handle_forbidden`). `completion(prompt, handle: true)` returns such a view for a host completion. The `agent(..., handle: true)` record itself is unchanged. Details: `tool_schema("eval:helpers")`. |
 | `workpool(agent, name, mode?, tools?)` | Creates a thin adapter over the normal host `workpool` tool; exposes `pool_id`, `push(items)`, `close()`, `inspect()`, and `cancel()`. JS awaits creation and operations. `tools` is a list of kernel-tool names this cell defined; the pool's workers may call exactly those, the host refuses any name the caller doesn't hold, and a value that isn't a list of names raises `invalid_tools`. Ruby and Julia define no kernel tools, so they have nothing to grant. |
 | `output(ids, format?, offset?, limit?)` | Delegates transcript retrieval to the configured active `taskTools.output` tool. |
 | `parallel(thunks)` | Runs thunks through the configured bounded pool while preserving input order. |
@@ -560,6 +562,13 @@ original sizes, then a plain-path notice such as
   package.
 - Task transcript formats are limited to full (`raw`) and trailing (`tail`)
   output. Query, JSON, and stripped metadata formats are task-engine concerns.
+- There is no `pool.wait()`: a workpool's aggregate is delivered by the host after
+  `close()`, so a kernel never blocks on another engine's workers.
+- There is no `code_mode_only` mode and no speculative cell execution; both are
+  deferred to a separate design (omo#9232) rather than approximated here.
+- Kernels are never shared across owners: each session (and each in-process child
+  with its own eval tool) owns its kernels, and handles are fenced by owner, id and
+  run epoch.
 
 ## Security and lifecycle
 
