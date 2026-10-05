@@ -4,7 +4,7 @@ import { accessSync, constants } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import type { KernelToHostMessage } from "../../bridge/protocol.ts";
-import { decodeBridgeFrame, isKernelToHostMessage } from "../../bridge/protocol.ts";
+import { isKernelToHostMessage, parseBridgeJsonLine, validateBridgeMessage } from "../../bridge/protocol.ts";
 import type { EvalRuntimeInfo } from "../../tool/types.ts";
 import { type CodemodeRuntimeAssetEnvironment, requireCodemodeRuntimeAsset } from "../shared/runtime-asset.ts";
 import { type SubprocessLike, SubprocessProcess, spawnSubprocess } from "../shared/subprocess-process.ts";
@@ -165,7 +165,7 @@ export function spawnProcessWorker(url: URL, options: JavaScriptProcessWorkerOpt
 				for (const handler of [...messageHandlers]) handler({ type: "text", stream: "stdout", data: line });
 				return;
 			}
-			const parsed = decodeBridgeFrame(line.slice(framePrefix.length));
+			const parsed = decodeProcessFrame(line.slice(framePrefix.length), frameToken);
 			if (!parsed.ok) {
 				reportPendingInvalidFrame();
 				pendingInvalidFrame = new Error(
@@ -176,7 +176,6 @@ export function spawnProcessWorker(url: URL, options: JavaScriptProcessWorkerOpt
 			reportPendingInvalidFrame();
 			const message = parsed.message;
 			if (!isKernelToHostMessage(message)) return;
-			reviveFrameValues(message, frameToken);
 			for (const handler of [...messageHandlers]) handler(message);
 		},
 		// Crash causes are read by the listener below, which stays attached until stderr ends.
@@ -247,6 +246,19 @@ function stderrEnded(stream: NodeJS.ReadableStream, graceMs: number): Promise<vo
 const BIGINT_MARKER = "\u0000senpi:bigint:";
 const UNDEFINED_MARKER = "\u0000senpi:undefined:";
 const BIGINT_DIGITS = /^-?\d+$/;
+
+/**
+ * A frame's `BigInt` and `undefined` values travel as markers (see process-entry.js `replacer`). They are revived
+ * before the frame is checked against the bridge schema: an optional field the child left `undefined` (a cell whose
+ * value is `undefined` has no `valueRepr`) arrives as a marker, and checked as-is it would fail the schema.
+ */
+function decodeProcessFrame(line: string, token: string): ReturnType<typeof validateBridgeMessage> {
+	const parsed = parseBridgeJsonLine(line);
+	if (!parsed.ok) return parsed;
+	const value = parsed.value;
+	if (typeof value === "object" && value !== null) reviveFrameValues(value, token);
+	return validateBridgeMessage(value);
+}
 
 /** The cause the child reported on stderr just before exiting (see process-entry.js `reportCrash`). */
 function crashCauseFrom(stderr: string, token: string): Error | undefined {
