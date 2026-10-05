@@ -75,6 +75,31 @@ describe("ProjectTrustStore", () => {
 		}
 	});
 
+	it("asks for trust when a project codemode file names a Python interpreter, and only then", () => {
+		const originalHome = process.env.HOME;
+		process.env.HOME = tempDir;
+		try {
+			const configDir = join(cwd, CONFIG_DIR_NAME);
+			mkdirSync(configDir, { recursive: true });
+			const codemode = join(configDir, "codemode.json");
+
+			writeFileSync(codemode, JSON.stringify({ languages: { js: true, py: true } }));
+			expect(hasTrustRequiringProjectResources(cwd)).toBe(false);
+
+			writeFileSync(codemode, JSON.stringify({ languages: { py: true, pyInterpreter: "/opt/repo/python" } }));
+			expect(hasTrustRequiringProjectResources(cwd)).toBe(true);
+
+			writeFileSync(codemode, "{ not json");
+			expect(hasTrustRequiringProjectResources(cwd)).toBe(false);
+		} finally {
+			if (originalHome === undefined) {
+				delete process.env.HOME;
+			} else {
+				process.env.HOME = originalHome;
+			}
+		}
+	});
+
 	it("does not honour a legacy entry keyed by a path-collapsing resolution", () => {
 		// Given a workspace reachable only through a symlinked parent whose link target
 		// walks back up, so a path-collapsing resolver and the kernel disagree about

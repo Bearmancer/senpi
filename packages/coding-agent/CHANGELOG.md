@@ -12,6 +12,8 @@
 
 ### Fixed
 
+- A project whose `.senpi/codemode.json` names `languages.pyInterpreter` now asks for project trust before the session starts, like a project `mcp.json`; before, such a project counted as trusted without asking, so the interpreter it named ran at session start.
+
 - The `/btw` side panel renders its answer as Markdown, the same way assistant messages render in the transcript. Headings, bold, inline code, lists, and code blocks used to show as raw `##`, `**`, and backticks.
 
 ### Removed

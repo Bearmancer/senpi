@@ -40,6 +40,24 @@ const TRUST_REQUIRING_PROJECT_CONFIG_RESOURCES = [
 
 const LEGACY_PROJECT_CONFIG_DIR_NAME = ".pi";
 
+/**
+ * A project codemode file that names `languages.pyInterpreter` makes the session run that executable at start, so it
+ * asks for a trust decision like `mcp.json` does. A codemode file without that key stays trust-free.
+ */
+function projectCodemodeNamesInterpreter(configDir: string): boolean {
+	const path = join(configDir, "codemode.json");
+	if (!existsSync(path)) return false;
+	try {
+		const parsed: unknown = JSON.parse(stripBom(readFileSync(path, "utf8")));
+		if (typeof parsed !== "object" || parsed === null || !("languages" in parsed)) return false;
+		const languages: unknown = parsed.languages;
+		return typeof languages === "object" && languages !== null && "pyInterpreter" in languages;
+	} catch (error) {
+		if (error instanceof SyntaxError) return false;
+		throw error;
+	}
+}
+
 function normalizeCwd(cwd: string): string {
 	const resolved = resolvePath(cwd);
 	try {
@@ -209,6 +227,7 @@ export function hasTrustRequiringProjectResources(cwd: string): boolean {
 	) {
 		return true;
 	}
+	if (projectCodemodeNamesInterpreter(join(currentDir, CONFIG_DIR_NAME))) return true;
 
 	while (true) {
 		const agentsSkillsDir = join(currentDir, ".agents", "skills");

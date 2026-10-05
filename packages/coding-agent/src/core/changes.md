@@ -8968,3 +8968,21 @@ Session creation and the launch profile are core lifecycle code that runs before
 ### Expected merge conflict zones
 
 The `promptSurface` plumbing in `agent-session.ts`, `agent-session-services.ts` and `sdk.ts`, which the new field sits next to.
+
+## 2026-10-05 - A project codemode file that names a Python interpreter asks for project trust
+
+### What changed
+
+- `packages/coding-agent/src/core/trust-manager.ts`: `hasTrustRequiringProjectResources` also returns `true` when `<cwd>/.senpi/codemode.json` names `languages.pyInterpreter`, so such a project asks for a trust decision. A codemode file without that key, or one that is not valid JSON, stays trust-free.
+
+### Why
+
+- `languages.pyInterpreter` names an executable that the codemode extension runs at session start (its `--version` probe, then the kernel). Codemode honours a project-scoped value only when the project is trusted, but a project whose only config was `.senpi/codemode.json` counted as having no trust-requiring resources, so it was treated as trusted without asking and a cloned repository could run a binary of its choosing. This mirrors the existing `mcp.json` entry, which is trust-requiring because a project MCP config can launch processes.
+
+### Why an extension could not handle it
+
+- The launch-time trust decision is made in the host before any extension is bound; an extension can only read the decision through `isProjectTrusted()`, which reported "trusted" for a project the host never asked about.
+
+### Expected merge conflict zones
+
+- LOW: the new `projectCodemodeNamesInterpreter` helper next to `LEGACY_PROJECT_CONFIG_DIR_NAME`, and its one-line call after the config-dir check at the top of `hasTrustRequiringProjectResources` in `packages/coding-agent/src/core/trust-manager.ts`.
