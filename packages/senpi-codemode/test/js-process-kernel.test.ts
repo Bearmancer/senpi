@@ -451,7 +451,9 @@ return "done";`,
 			writeFileSync(wrapper, `#!/bin/sh\nexec "${productChild()}" --preload "${preload}" "$@"\n`, { mode: 0o755 });
 			const kernel = processKernel({ processExecPath: wrapper });
 			const stderrOf = (run: Awaited<ReturnType<typeof runJavaScriptCell>>) =>
-				run.messages.flatMap((message) => (message.type === "text" && message.stream === "stderr" ? [message.data] : [])).join("");
+				run.messages
+					.flatMap((message) => (message.type === "text" && message.stream === "stderr" ? [message.data] : []))
+					.join("");
 			const first = await runJavaScriptCell(kernel, "return 6 * 7");
 			expect(first.result).toMatchObject({ ok: true, valueRepr: "42" });
 			expect(stderrOf(first)).toContain("libc could not be loaded (synthetic dlopen failure)");

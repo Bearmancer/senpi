@@ -22,7 +22,8 @@ function normalized(parts: readonly Part[]): Part[] {
 	const merged: Part[] = [];
 	for (const part of parts) {
 		const last = merged.at(-1);
-		if ("text" in part && last !== undefined && "text" in last) merged[merged.length - 1] = { text: last.text + part.text };
+		if ("text" in part && last !== undefined && "text" in last)
+			merged[merged.length - 1] = { text: last.text + part.text };
 		else merged.push(part);
 	}
 	return merged;
