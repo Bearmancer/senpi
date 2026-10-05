@@ -483,7 +483,7 @@ return "done";`,
 			const wrapper = join(dir, "bun");
 			writeFileSync(
 				wrapper,
-				`#!/bin/sh\necho $ >> "${pids}"\nif [ ! -e "${firstStart}" ]; then : > "${firstStart}"; exec sleep 600; fi\nexec "${productChild()}" "$@"\n`,
+				`#!/bin/sh\necho $$ >> "${pids}"\nif [ ! -e "${firstStart}" ]; then : > "${firstStart}"; exec sleep 600; fi\nexec "${productChild()}" "$@"\n`,
 				{ mode: 0o755 },
 			);
 			const kernel = processKernel({ processExecPath: wrapper, processStartupDeadlineMs: 1_000 });
@@ -493,7 +493,12 @@ return "done";`,
 			if (!stuck.result.ok) expect(stuck.result.error.message).toContain("did not become ready within 1s");
 			expect(Date.now() - started).toBeLessThan(10_000);
 			const stuckPid = Number(readFileSync(pids, "utf8").split("\n")[0]);
-			await waitFor("the stuck kernel child to be stopped", () => !pidAlive(stuckPid));
+			expect(Number.isInteger(stuckPid) && stuckPid > 0).toBe(true);
+			try {
+				await waitFor("the stuck kernel child to be stopped", () => !pidAlive(stuckPid));
+			} finally {
+				if (pidAlive(stuckPid)) process.kill(stuckPid, "SIGKILL");
+			}
 			const next = await runJavaScriptCell(kernel, "return 2");
 			expect(next.result).toMatchObject({ ok: true, valueRepr: "2" });
 		},
@@ -528,6 +533,19 @@ return "done";`,
 			expect(kernel.processPid).not.toBe(frozenPid);
 		},
 		30_000,
+	);
+
+	itProcessMode(
+		"settles a cell whose value is undefined, the way worker mode does",
+		async () => {
+			const kernel = processKernel();
+			const cell = await runJavaScriptCell(kernel, "await new Promise((resolve) => setTimeout(resolve, 10))");
+			expect(cell.result.ok ? "ok" : cell.result.error.message).toBe("ok");
+			if (cell.result.ok) expect(cell.result.valueRepr).toBeUndefined();
+			const next = await runJavaScriptCell(kernel, "return 4");
+			expect(next.result).toMatchObject({ ok: true, valueRepr: "4" });
+		},
+		20_000,
 	);
 
 	it("labels the process-mode badge with the isolation", async () => {
