@@ -7,6 +7,7 @@
 ### Added
 
 - An opt-in process-isolated JavaScript kernel (`isolation.js: "process"` or `SENPI_CODEMODE_JS_ISOLATION=process`) runs each JavaScript kernel in its own subprocess instead of a worker thread, so a kernel crash (`SIGSEGV`, out-of-memory, `process.exit`, an uncaught error) can no longer take down the host session; the next cell runs on a replacement child with a restart notice naming the crash. It isolates crashes, not hostile code: a cell is trusted as in worker mode, and hostile code belongs in `isolate: true` sandbox cells ([#2752](https://github.com/code-yeongyu/senpi/issues/2752) tracks hostile-cell isolation). The child runs on the host's own runtime, exits as soon as its host is gone (including `SIGKILL`), carries large output and `BigInt`/`undefined` values as worker mode does, and its frames carry a per-process token so stray output is never taken for a frame. The default stays `"worker"` and worker-mode behaviour is unchanged ([#2452](https://github.com/code-yeongyu/senpi/issues/2452)).
+- `@code-yeongyu/senpi-codemode/executable-settings.json` lists the settings that name an executable run at session start (today `languages.pyInterpreter`). senpi's project-trust check reads it, so a project codemode file that sets one asks for trust, and a test fails if a new free-form string setting is neither on the list nor marked as not naming an executable.
 
 ### Changed
 
