@@ -75,7 +75,7 @@ describe("ProjectTrustStore", () => {
 		}
 	});
 
-	it("asks for trust when a project codemode file names a Python interpreter, and only then", () => {
+	it("asks for trust when a project codemode file sets an executable-naming setting, and only then", () => {
 		const originalHome = process.env.HOME;
 		process.env.HOME = tempDir;
 		try {
@@ -89,8 +89,9 @@ describe("ProjectTrustStore", () => {
 			writeFileSync(codemode, JSON.stringify({ languages: { py: true, pyInterpreter: "/opt/repo/python" } }));
 			expect(hasTrustRequiringProjectResources(cwd)).toBe(true);
 
+			// Unreadable, like a project mcp.json: its presence alone asks.
 			writeFileSync(codemode, "{ not json");
-			expect(hasTrustRequiringProjectResources(cwd)).toBe(false);
+			expect(hasTrustRequiringProjectResources(cwd)).toBe(true);
 		} finally {
 			if (originalHome === undefined) {
 				delete process.env.HOME;

@@ -5,6 +5,7 @@ import lockfile from "proper-lockfile";
 import { CONFIG_DIR_NAME } from "../config.ts";
 import { canonicalizePath, canonicalizePathStrict, resolvePath } from "../utils/paths.ts";
 import { stripBom } from "../utils/text.ts";
+import { bundledBuiltinExtensions } from "./bundled-resources.ts";
 
 export type ProjectTrustDecision = boolean | null;
 
@@ -41,21 +42,48 @@ const TRUST_REQUIRING_PROJECT_CONFIG_RESOURCES = [
 const LEGACY_PROJECT_CONFIG_DIR_NAME = ".pi";
 
 /**
- * A project codemode file that names `languages.pyInterpreter` makes the session run that executable at start, so it
- * asks for a trust decision like `mcp.json` does. A codemode file without that key stays trust-free.
+ * A project codemode file that sets any setting naming an executable (the codemode package's
+ * `executable-settings.json` list, today `languages.pyInterpreter`) makes the session run that executable at start,
+ * so it asks for a trust decision. A file the check cannot read is treated like a project `mcp.json`, whose mere
+ * presence asks; so is any file when the list itself cannot be read.
  */
-function projectCodemodeNamesInterpreter(configDir: string): boolean {
+function projectCodemodeNamesExecutable(configDir: string): boolean {
 	const path = join(configDir, "codemode.json");
 	if (!existsSync(path)) return false;
+	const executableSettings = codemodeExecutableSettings();
+	if (executableSettings === undefined) return true;
+	let parsed: unknown;
 	try {
-		const parsed: unknown = JSON.parse(stripBom(readFileSync(path, "utf8")));
-		if (typeof parsed !== "object" || parsed === null || !("languages" in parsed)) return false;
-		const languages: unknown = parsed.languages;
-		return typeof languages === "object" && languages !== null && "pyInterpreter" in languages;
-	} catch (error) {
-		if (error instanceof SyntaxError) return false;
-		throw error;
+		parsed = JSON.parse(stripBom(readFileSync(path, "utf8")));
+	} catch {
+		return true;
 	}
+	return executableSettings.some((settingPath) => valueAtPath(parsed, settingPath) !== undefined);
+}
+
+function codemodeExecutableSettings(): readonly string[] | undefined {
+	const codemode = bundledBuiltinExtensions.find((extension) => extension.id === "codemode");
+	try {
+		const packageJson = codemode?.resolvePackage();
+		if (packageJson === undefined) return undefined;
+		const list: unknown = JSON.parse(
+			readFileSync(join(dirname(packageJson), "src", "config", "executable-settings.json"), "utf8"),
+		);
+		if (typeof list !== "object" || list === null) return undefined;
+		const paths: unknown = Reflect.get(list, "projectExecutableSettings");
+		return Array.isArray(paths) && paths.every((entry) => typeof entry === "string") ? paths : undefined;
+	} catch {
+		return undefined;
+	}
+}
+
+function valueAtPath(value: unknown, path: string): unknown {
+	let current: unknown = value;
+	for (const key of path.split(".")) {
+		if (typeof current !== "object" || current === null) return undefined;
+		current = Reflect.get(current, key);
+	}
+	return current;
 }
 
 function normalizeCwd(cwd: string): string {
@@ -227,7 +255,7 @@ export function hasTrustRequiringProjectResources(cwd: string): boolean {
 	) {
 		return true;
 	}
-	if (projectCodemodeNamesInterpreter(join(currentDir, CONFIG_DIR_NAME))) return true;
+	if (projectCodemodeNamesExecutable(join(currentDir, CONFIG_DIR_NAME))) return true;
 
 	while (true) {
 		const agentsSkillsDir = join(currentDir, ".agents", "skills");

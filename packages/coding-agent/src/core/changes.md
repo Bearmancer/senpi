@@ -8969,15 +8969,15 @@ Session creation and the launch profile are core lifecycle code that runs before
 
 The `promptSurface` plumbing in `agent-session.ts`, `agent-session-services.ts` and `sdk.ts`, which the new field sits next to.
 
-## 2026-10-05 - A project codemode file that names a Python interpreter asks for project trust
+## 2026-10-05 - A project codemode file that names an executable asks for project trust
 
 ### What changed
 
-- `packages/coding-agent/src/core/trust-manager.ts`: `hasTrustRequiringProjectResources` also returns `true` when `<cwd>/.senpi/codemode.json` names `languages.pyInterpreter`, so such a project asks for a trust decision. A codemode file without that key, or one that is not valid JSON, stays trust-free.
+- `packages/coding-agent/src/core/trust-manager.ts`: `hasTrustRequiringProjectResources` also returns `true` when `<cwd>/.senpi/codemode.json` sets any setting on the codemode package's list of executable-naming settings (`@code-yeongyu/senpi-codemode/executable-settings.json`, today `languages.pyInterpreter`), found through the bundled-extension resolver. A codemode file that sets none of them stays trust-free. A file that is not valid JSON asks, as a project `mcp.json` does by its presence alone; so does any codemode file when the list cannot be read.
 
 ### Why
 
-- `languages.pyInterpreter` names an executable that the codemode extension runs at session start (its `--version` probe, then the kernel). Codemode honours a project-scoped value only when the project is trusted, but a project whose only config was `.senpi/codemode.json` counted as having no trust-requiring resources, so it was treated as trusted without asking and a cloned repository could run a binary of its choosing. This mirrors the existing `mcp.json` entry, which is trust-requiring because a project MCP config can launch processes.
+- An executable-naming setting is run by the codemode extension at session start (its `--version` probe, then the kernel). Codemode honours a project-scoped value only when the project is trusted, but a project whose only config was `.senpi/codemode.json` counted as having no trust-requiring resources, so it was treated as trusted without asking and a cloned repository could run a binary of its choosing. Keeping the list in the codemode package means a new executable setting there is covered here without a core change.
 
 ### Why an extension could not handle it
 
@@ -8985,4 +8985,4 @@ The `promptSurface` plumbing in `agent-session.ts`, `agent-session-services.ts` 
 
 ### Expected merge conflict zones
 
-- LOW: the new `projectCodemodeNamesInterpreter` helper next to `LEGACY_PROJECT_CONFIG_DIR_NAME`, and its one-line call after the config-dir check at the top of `hasTrustRequiringProjectResources` in `packages/coding-agent/src/core/trust-manager.ts`.
+- LOW: the `projectCodemodeNamesExecutable` helpers after `LEGACY_PROJECT_CONFIG_DIR_NAME`, the `bundled-resources.ts` import, and the one-line call after the config-dir check at the top of `hasTrustRequiringProjectResources` in `packages/coding-agent/src/core/trust-manager.ts`.
