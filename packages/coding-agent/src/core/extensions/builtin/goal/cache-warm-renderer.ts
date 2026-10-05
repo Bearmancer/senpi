@@ -17,7 +17,7 @@ export const renderGoalCacheWarmupEntry: EntryRenderer<GoalCacheWarmupEntryData>
 	return {
 		title: titleLine(data),
 		why: whyLine(data),
-		extra: warm === undefined ? [] : [{ text: warm, tone: "dim" }],
+		extra: warm === undefined ? [] : [{ text: warm, tone: "success" }],
 		expandedLine: expandedLine(data),
 	};
 });
