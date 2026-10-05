@@ -543,7 +543,10 @@
 				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation When a node child is SIGKILLed after writing to fd 1, then a 4 MB cat afterwards still delivers every byte",
 				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation When the kernel crashes while a child floods fd 1, then every crashed cell names its crash cause",
 				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation When the host stalls while a child and the cell both write, then every output line arrives whole and the result is ok",
-				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation When a crash's message is longer than the stderr window, then the crashed cell still names it"
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation When a crash's message is longer than the stderr window, then the crashed cell still names it",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation When a Linux kernel child crashes with SIGSEGV, then the crash is reported within 2 s and names the signal",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation When a Linux kernel child starts, then it is not dumpable, and a subprocess of a cell is",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation When SENPI_KERNEL_CORE_DUMPS=1 is set, then the Linux kernel child stays dumpable"
 			],
 			"reason": "Node 17: opt-in process-isolated JavaScript kernel (isolation.js: \"process\", worker default unchanged). The child runs worker-core over the framed subprocess transport (fd 0 in, a private dup of fd 1 out; fd 1 re-pointed at a pipe drained into text frames), with no inline fallback in process mode (a failed start is a capability-gap result naming the runtime). process-entry.js, process-worker.ts and process-memory-host.ts join the scoped census, plus the new contracts. No prompt or eval schema change."
 		},

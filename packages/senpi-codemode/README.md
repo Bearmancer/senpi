@@ -76,6 +76,16 @@ only against accidental corruption of the channel. Hostile code belongs in
 `isolate: true` sandbox cells. Hostile-cell isolation for process mode is tracked
 in [#2752](https://github.com/code-yeongyu/senpi/issues/2752).
 
+**Core dumps (Linux).** The kernel child marks itself non-dumpable at start
+(`prctl(PR_SET_DUMPABLE, 0)`). A Linux system that pipes core dumps to
+`systemd-coredump` or apport otherwise holds a crashed child until its dump is
+read, which froze the cell for about 30 s; without the dump the crash is reported
+at once, still naming its signal. Two side effects: no core file is written for a
+crash of the kernel child itself, and a same-user debugger cannot attach to it
+(`ptrace` needs a dumpable process). A cell's own subprocesses are unaffected,
+because `exec` resets the flag. Set `SENPI_KERNEL_CORE_DUMPS=1` to keep dumps and
+debugger access while debugging the kernel.
+
 How it works:
 
 - **Runtime.** The child runs on the host's own runtime: bun when senpi runs on

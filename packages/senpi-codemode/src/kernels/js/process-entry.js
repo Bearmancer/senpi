@@ -50,6 +50,14 @@ function libcSymbols() {
 		dup2: { args: [ffi.FFIType.i32, ffi.FFIType.i32], returns: ffi.FFIType.i32 },
 		fcntl: { args: [ffi.FFIType.i32, ffi.FFIType.i32, ffi.FFIType.i32], returns: ffi.FFIType.i32 },
 		pipe: { args: [ffi.FFIType.ptr], returns: ffi.FFIType.i32 },
+		...(process.platform === "linux"
+			? {
+					prctl: {
+						args: [ffi.FFIType.i32, ffi.FFIType.u64, ffi.FFIType.u64, ffi.FFIType.u64, ffi.FFIType.u64],
+						returns: ffi.FFIType.i32,
+					},
+				}
+			: {}),
 	}).symbols;
 	if (!(process.platform === "darwin" && process.arch === "arm64")) return symbols;
 	// fcntl is variadic. bun:ffi makes only non-variadic calls, and on Apple arm64 a variadic argument is read from the
@@ -75,6 +83,13 @@ function libcSymbols() {
 }
 
 const libc = libcSymbols();
+
+// On Linux a crash is reported through the kernel's core-dump handler first; where that is a pipe to
+// systemd-coredump or apport, the dying child is held until the dump is consumed, which can freeze its cell for
+// about 30 s. Marking this process non-dumpable skips the dump, so the crash (signal included) is reported at once.
+// exec resets the flag, so a cell's own subprocesses dump as usual. SENPI_KERNEL_CORE_DUMPS=1 keeps dumps.
+const PR_SET_DUMPABLE = 4;
+if (libc?.prctl !== undefined && process.env.SENPI_KERNEL_CORE_DUMPS !== "1") libc.prctl(PR_SET_DUMPABLE, 0, 0, 0, 0);
 
 /** The control channel's fd: a private duplicate of fd 0 where possible, so a cell reading fd 0 reads /dev/null. */
 function privateControlFd() {

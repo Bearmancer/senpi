@@ -233,6 +233,72 @@ describe("JavaScriptKernel process isolation", () => {
 			30_000,
 		);
 
+	const itLinuxProcessMode = process.platform === "linux" ? itProcessMode : it.skip;
+
+	itLinuxProcessMode(
+		"When a Linux kernel child crashes with SIGSEGV, then the crash is reported within 2 s and names the signal",
+		async () => {
+			const kernel = processKernel();
+			await runJavaScriptCell(kernel, "return 1");
+
+			const started = performance.now();
+			const crashed = await runJavaScriptCell(kernel, 'process.kill(process.pid, "SIGSEGV")', 15_000);
+			const elapsed = performance.now() - started;
+
+			expect(crashed.result).toMatchObject({ ok: false });
+			if (!crashed.result.ok) expect(crashed.result.error.message).toMatch(/SIGSEGV|signal 11/);
+			expect(elapsed).toBeLessThan(2_000);
+		},
+		30_000,
+	);
+
+	itLinuxProcessMode(
+		"When a Linux kernel child starts, then it is not dumpable, and a subprocess of a cell is",
+		async () => {
+			const kernel = processKernel();
+			const getDumpable = `const { dlopen, FFIType } = require("bun:ffi"); const libc = dlopen("libc.so.6", { prctl: { args: [FFIType.i32, FFIType.u64, FFIType.u64, FFIType.u64, FFIType.u64], returns: FFIType.i32 } }); console.log(libc.symbols.prctl(3, 0, 0, 0, 0));`;
+
+			const run = await runJavaScriptCell(
+				kernel,
+				[
+					`const { dlopen, FFIType } = await import("bun:ffi");`,
+					`const libc = dlopen("libc.so.6", { prctl: { args: [FFIType.i32, FFIType.u64, FFIType.u64, FFIType.u64, FFIType.u64], returns: FFIType.i32 } });`,
+					`const own = libc.symbols.prctl(3, 0, 0, 0, 0);`,
+					`const child = (await import("node:child_process")).execFileSync(${JSON.stringify(productChild())}, ["-e", ${JSON.stringify(getDumpable)}], { encoding: "utf8" }).trim();`,
+					`return JSON.stringify({ own, child: Number(child) })`,
+				].join("\n"),
+				15_000,
+			);
+			const value = JSON.parse(parseJavaScriptResult(run.result) as string) as { own: number; child: number };
+
+			// PR_GET_DUMPABLE: 0 for the kernel child; exec resets it, so a process the cell starts reads 1.
+			expect(value).toEqual({ own: 0, child: 1 });
+		},
+		30_000,
+	);
+
+	itLinuxProcessMode(
+		"When SENPI_KERNEL_CORE_DUMPS=1 is set, then the Linux kernel child stays dumpable",
+		async () => {
+			// The child inherits the host's environment when it starts.
+			process.env.SENPI_KERNEL_CORE_DUMPS = "1";
+			const kernel = processKernel();
+			const run = await runJavaScriptCell(kernel, "return 1", 10_000).finally(() => {
+				delete process.env.SENPI_KERNEL_CORE_DUMPS;
+			});
+			expect(run.result).toMatchObject({ ok: true });
+
+			const flag = await runJavaScriptCell(
+				kernel,
+				`const { dlopen, FFIType } = await import("bun:ffi"); const libc = dlopen("libc.so.6", { prctl: { args: [FFIType.i32, FFIType.u64, FFIType.u64, FFIType.u64, FFIType.u64], returns: FFIType.i32 } }); return libc.symbols.prctl(3, 0, 0, 0, 0)`,
+				10_000,
+			);
+
+			expect(parseJavaScriptResult(flag.result)).toBe(1);
+		},
+		30_000,
+	);
+
 	itProcessMode(
 		"leaves no child or process-group member behind after the session closes",
 		async () => {
