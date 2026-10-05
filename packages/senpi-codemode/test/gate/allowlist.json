@@ -521,6 +521,8 @@
 				"legacyContracts/test/process-worker-exit-cause.test.ts/Given a process kernel child that reports its crash cause on stderr When its exit is observed before the cause arrives on stderr, then the cell still gets the cause",
 				"legacyContracts/test/process-worker-exit-cause.test.ts/Given a process kernel child that reports its crash cause on stderr When the cause arrived before the exit, then the cell gets the cause as before",
 				"legacyContracts/test/process-worker-exit-cause.test.ts/Given a process kernel child that reports its crash cause on stderr When the child dies without a cause and stderr never ends, then the bare exit is reported after a bounded wait",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation reports a kernel that never becomes ready within its startup deadline, stops it, and starts a fresh one",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation still times out a cell whose kernel process stops being scheduled, replaces the process, and runs the next cell",
 				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation labels the process-mode badge with the isolation",
 				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation reports the child's process footprint in the result memory and registry reading",
 				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation keeps the worker default when no isolation is asked for",

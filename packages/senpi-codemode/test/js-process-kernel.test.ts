@@ -1,5 +1,5 @@
 import { execFileSync, spawn } from "node:child_process";
-import { writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -468,6 +468,64 @@ return "done";`,
 			if (!crashed.result.ok) expect(crashed.result.error.message).toContain("boom-in-fallback");
 			const recovered = await runJavaScriptCell(kernel, "return 5");
 			expect(recovered.result).toMatchObject({ ok: true, valueRepr: "5" });
+		},
+		30_000,
+	);
+
+	itProcessMode(
+		"reports a kernel that never becomes ready within its startup deadline, stops it, and starts a fresh one",
+		async () => {
+			const dir = await trackedTempRoot("senpi-never-ready-");
+			const pids = join(dir, "pids");
+			const firstStart = join(dir, "first-start");
+			// Named bun so the kernel treats it as the runtime it wraps. The first start never reports ready (as a child
+			// a starved host never schedules); every later start is the real runtime.
+			const wrapper = join(dir, "bun");
+			writeFileSync(
+				wrapper,
+				`#!/bin/sh\necho $ >> "${pids}"\nif [ ! -e "${firstStart}" ]; then : > "${firstStart}"; exec sleep 600; fi\nexec "${productChild()}" "$@"\n`,
+				{ mode: 0o755 },
+			);
+			const kernel = processKernel({ processExecPath: wrapper, processStartupDeadlineMs: 1_000 });
+			const started = Date.now();
+			const stuck = await runJavaScriptCell(kernel, "return 1");
+			expect(stuck.result).toMatchObject({ ok: false });
+			if (!stuck.result.ok) expect(stuck.result.error.message).toContain("did not become ready within 1s");
+			expect(Date.now() - started).toBeLessThan(10_000);
+			const stuckPid = Number(readFileSync(pids, "utf8").split("\n")[0]);
+			await waitFor("the stuck kernel child to be stopped", () => !pidAlive(stuckPid));
+			const next = await runJavaScriptCell(kernel, "return 2");
+			expect(next.result).toMatchObject({ ok: true, valueRepr: "2" });
+		},
+		30_000,
+	);
+
+	itProcessMode(
+		"still times out a cell whose kernel process stops being scheduled, replaces the process, and runs the next cell",
+		async () => {
+			const kernel = processKernel();
+			await runJavaScriptCell(kernel, "return 0");
+			const frozenPid = kernel.processPid;
+			if (frozenPid === undefined) throw new Error("process kernel has no pid");
+			const started = Date.now();
+			const run = kernel.run({
+				cellId: `frozen-${crypto.randomUUID()}`,
+				code: "await new Promise(() => {})",
+				timeoutMs: 1_500,
+			});
+			// SIGSTOP: the child can answer nothing, the way a starved process cannot. The host must not wait on it.
+			process.kill(frozenPid, "SIGSTOP");
+			try {
+				const result = await run;
+				expect(result).toMatchObject({ ok: false });
+				expect(Date.now() - started).toBeLessThan(15_000);
+				await waitFor("the frozen kernel process to be replaced", () => !pidAlive(frozenPid));
+			} finally {
+				if (pidAlive(frozenPid)) process.kill(frozenPid, "SIGKILL");
+			}
+			const next = await runJavaScriptCell(kernel, "return 3");
+			expect(next.result).toMatchObject({ ok: true, valueRepr: "3" });
+			expect(kernel.processPid).not.toBe(frozenPid);
 		},
 		30_000,
 	);

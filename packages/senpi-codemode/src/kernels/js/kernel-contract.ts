@@ -36,6 +36,8 @@ export interface JavaScriptKernelOptions {
 	readonly processCommandPath?: string;
 	/** The host's executable, which runs the child when it is bun or node; defaults to `process.execPath`. */
 	readonly processExecPath?: string;
+	/** How long a process-mode child gets to report ready; defaults to `PROCESS_STARTUP_DEADLINE_MS`. */
+	readonly processStartupDeadlineMs?: number;
 	/** Process-mode memory policy: the host reads the child's footprint instead of the in-heap worker reading. */
 	readonly processMemory?: {
 		readonly thresholds: KernelMemoryThresholds;
