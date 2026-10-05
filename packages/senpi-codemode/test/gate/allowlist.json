@@ -560,7 +560,10 @@
 				"legacyContracts/test/settings-reach-user.test.ts/Given a settings file with a problem When a session with a UI starts, then the user gets a warning that names the problem",
 				"legacyContracts/test/settings-reach-user.test.ts/Given a settings file with a problem When a print-mode session starts, then the warning goes to stderr",
 				"legacyContracts/test/settings-reach-user.test.ts/Given a settings file with a problem When languages.pyInterpreter names a missing executable, then the warning names the setting",
-				"legacyContracts/test/settings-reach-user.test.ts/Given a settings file with a problem When the settings file is valid and complete, then the user gets no warning"
+				"legacyContracts/test/settings-reach-user.test.ts/Given a settings file with a problem When the settings file is valid and complete, then the user gets no warning",
+				"legacyContracts/test/settings-take-effect.test.ts/Given kernelTools.enabled When it is false and a Python cell rewrites the environment, then @tool is still refused and the cell never sees the switch",
+				"legacyContracts/test/settings-reach-user.test.ts/Given a project settings file that names languages.pyInterpreter When the project is not trusted, then the interpreter it names is never run and the user is told why",
+				"legacyContracts/test/settings-reach-user.test.ts/Given a project settings file that names languages.pyInterpreter When the project is trusted, then the interpreter it names is used"
 			],
 			"reason": "Plan row 30 (#2763): kernelTools.enabled, languages.pyInterpreter and prompt.advertiseHelpers take the effect their settings describe, and settings warnings reach the user. Test-only additions; the default prompt, schemas, helper census and imports are unchanged. The feature-settings contract that resolved languages to the four flags now also keeps languages.pyInterpreter (same name, corrected expectation)."
 		},

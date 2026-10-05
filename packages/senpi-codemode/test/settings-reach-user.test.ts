@@ -1,4 +1,5 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ExtensionContext, ExtensionToolContext } from "@code-yeongyu/senpi";
@@ -58,11 +59,13 @@ async function projectWithSettings(settings: string): Promise<string> {
 function context(
 	cwd: string,
 	ui: { readonly hasUI: boolean; readonly notify: (message: string, type?: string) => void },
+	projectTrusted = true,
 ) {
 	const base = fakeExtensionContext();
 	const ctx: ExtensionToolContext = {
 		...base,
 		cwd,
+		isProjectTrusted: () => projectTrusted,
 		hasUI: ui.hasUI,
 		mode: ui.hasUI ? "tui" : "print",
 		ui: { ...base.ui, notify: ui.notify },
@@ -147,3 +150,45 @@ describe("Given a settings file with a problem", () => {
 		expect(notices).toEqual([]);
 	});
 });
+
+describe.skipIf(process.platform === "win32")(
+	"Given a project settings file that names languages.pyInterpreter",
+	() => {
+		async function projectNamingInterpreter(): Promise<{ readonly cwd: string; readonly ran: string }> {
+			const cwd = await mkdtemp(join(tmpdir(), "senpi-codemode-untrusted-"));
+			dirs.push(cwd);
+			const ran = join(cwd, "interpreter-ran");
+			const interpreter = join(cwd, "fake-python");
+			await writeFile(interpreter, `#!/bin/sh\ntouch "${ran}"\necho "Python 3.12.0"\n`);
+			await chmod(interpreter, 0o755);
+			await mkdir(join(cwd, ".senpi"));
+			await writeFile(
+				join(cwd, ".senpi", "codemode.json"),
+				JSON.stringify({ languages: { js: true, py: true, rb: false, jl: false, pyInterpreter: interpreter } }),
+			);
+			return { cwd, ran };
+		}
+
+		it("When the project is not trusted, then the interpreter it names is never run and the user is told why", async () => {
+			const project = await projectNamingInterpreter();
+			const notices: string[] = [];
+
+			await startSession(context(project.cwd, { hasUI: true, notify: (message) => notices.push(message) }, false));
+
+			expect(existsSync(project.ran)).toBe(false);
+			expect(notices).toEqual([
+				expect.stringContaining("is ignored because this project is not trusted; it was not run"),
+			]);
+		});
+
+		it("When the project is trusted, then the interpreter it names is used", async () => {
+			const project = await projectNamingInterpreter();
+			const notices: string[] = [];
+
+			await startSession(context(project.cwd, { hasUI: true, notify: (message) => notices.push(message) }, true));
+
+			expect(existsSync(project.ran)).toBe(true);
+			expect(notices).toEqual([]);
+		});
+	},
+);

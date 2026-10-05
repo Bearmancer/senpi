@@ -704,7 +704,8 @@ class _Entry:
 
 
 class Registry:
-    def __init__(self, on_change: Callable[[list[str]], None]) -> None:
+    def __init__(self, on_change: Callable[[list[str]], None], *, disabled: bool = False) -> None:
+        self._disabled = disabled
         self._lock = threading.Lock()
         self._entries: dict[str, _Entry] = {}
         # Revisions outlive undefine: a redefined name never reuses a revision an old descriptor carries.
@@ -713,7 +714,7 @@ class Registry:
         self.generation = 1
 
     def define(self, fn: Any, *, name: Any = None, description: Any = None, schema: Any = None) -> Any:
-        if os.environ.get("SENPI_CODEMODE_KERNEL_TOOLS") == "0":
+        if self._disabled:
             raise KernelToolError("tools_unavailable", "kernel tools are turned off for this project (kernelTools.enabled is false)")
         inferred = infer_tool(fn, name=name, description=description, schema=schema)
         key = tool_key(inferred["name"])
@@ -985,7 +986,12 @@ async def _awaited(awaitable: Any) -> Any:
 
 KERNEL_TOOL_TOKEN = OwnerToken()
 KERNEL_TOOL_STREAMS = (ThreadRoutedStream(stderr=False), ThreadRoutedStream(stderr=True))
-KERNEL_TOOL_REGISTRY = Registry(lambda names: emit({"type": "kernel-tools-defined", "names": names}))
+# kernelTools.enabled is read once, while the prelude loads and before any cell runs, then removed from the
+# environment: rewriting os.environ cannot turn kernel tools back on, and cell subprocesses never see the switch.
+KERNEL_TOOL_REGISTRY = Registry(
+    lambda names: emit({"type": "kernel-tools-defined", "names": names}),
+    disabled=os.environ.pop("SENPI_CODEMODE_KERNEL_TOOLS", None) == "0",
+)
 KERNEL_TOOL_RUNNER = KernelToolRunner(emit, KERNEL_TOOL_TOKEN, KERNEL_TOOL_REGISTRY, KERNEL_TOOL_STREAMS)
 
 

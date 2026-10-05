@@ -86,6 +86,37 @@ describe("Given kernelTools.enabled", () => {
 	);
 
 	it.skipIf(!hasPython3)(
+		"When it is false and a Python cell rewrites the environment, then @tool is still refused and the cell never sees the switch",
+		async () => {
+			const result = await runCell(
+				await session(disabled),
+				"py",
+				[
+					"import os, subprocess, sys",
+					"seen = 'SENPI_CODEMODE_KERNEL_TOOLS' in os.environ",
+					"child = subprocess.run([sys.executable, '-c', \"import os; print('SENPI_CODEMODE_KERNEL_TOOLS' in os.environ)\"], capture_output=True, text=True).stdout.strip()",
+					"os.environ['SENPI_CODEMODE_KERNEL_TOOLS'] = '1'",
+					"try:",
+					"    @tool",
+					"    def add(a: int, b: int) -> int:",
+					"        return a + b",
+					"    outcome = 'defined'",
+					"except Exception as error:",
+					"    outcome = str(error)",
+					"(seen, child, outcome)",
+				].join("\n"),
+			);
+
+			expect(result).toMatchObject({ ok: true });
+			if (result.ok) {
+				expect(result.valueRepr).toContain("(False, 'False', ");
+				expect(result.valueRepr).toContain("kernelTools.enabled is false");
+			}
+		},
+		30_000,
+	);
+
+	it.skipIf(!hasPython3)(
 		"When it is left at its default, then a Python cell defines the @tool",
 		async () => {
 			const result = await runCell(await session(defaultCodemodeSettings), "py", pyDefinition);

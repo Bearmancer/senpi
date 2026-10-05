@@ -2,6 +2,7 @@ import { type ExtensionContext, withBundledBunCommands } from "@code-yeongyu/sen
 import type { AgentExecuteTool } from "../bridges/agent-bridge.ts";
 import type { EvalSchemaToolInfo } from "../bridges/schema-bridge.ts";
 import type { CompletionRequest, CompletionResult } from "../completion/handler.ts";
+import { withoutUntrustedInterpreter } from "../config/project-trust.ts";
 import {
 	type CodemodeSettings,
 	loadCodemodeSettings,
@@ -62,13 +63,18 @@ export async function createRuntime(
 	handles?: HandleRegistry,
 ): Promise<SessionRuntime> {
 	const loaded = await loadCodemodeSettings({ cwd: ctx.cwd });
+	const trusted = withoutUntrustedInterpreter(loaded.settings, loaded.source, ctx.cwd, ctx.isProjectTrusted());
 	const settings: ResolvedCodemodeSettings = {
-		...loaded.settings,
-		languages: resolveEnabledLanguages(loaded.settings),
+		...trusted.settings,
+		languages: resolveEnabledLanguages(trusted.settings),
 	};
 	const availability = await getInterpreterAvailability(settings, createInterpreterDetector());
 	const pyReason = availability.py.detected.ok ? undefined : availability.py.detected.reason;
-	reportSettingsProblems(ctx, pyReason === undefined ? loaded.warnings : [...loaded.warnings, pyReason]);
+	reportSettingsProblems(ctx, [
+		...loaded.warnings,
+		...(trusted.warning === undefined ? [] : [trusted.warning]),
+		...(pyReason === undefined ? [] : [pyReason]),
+	]);
 	const enabledLanguages = enabledLanguagesFrom(settings, availability);
 	const artifacts = resolveSessionArtifactsDir(ctx.sessionManager.getSessionFile());
 	const activeTools = new Set(pi.getActiveTools());
