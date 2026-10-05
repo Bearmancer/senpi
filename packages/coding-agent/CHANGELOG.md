@@ -12,6 +12,7 @@
 
 ### Fixed
 
+- Bare model-family fallback no longer silently selects OpenGateway or Vercel AI Gateway when those providers have credentials. Like OpenRouter, these gateways require an explicit provider-qualified fallback selector ([#2774](https://github.com/code-yeongyu/senpi/issues/2774)).
 - A project whose `.senpi/codemode.json` sets a setting that names an executable (today `languages.pyInterpreter`) now asks for project trust before the session starts, like a project `mcp.json`; before, such a project counted as trusted without asking, so the interpreter it named ran at session start.
 - RPC model lists now reflect credentials added or removed by another session without reopening the session, fixing an empty desktop model picker after connecting a provider ([#2769](https://github.com/code-yeongyu/senpi/issues/2769)).
 - The `/btw` side panel renders its answer as Markdown, the same way assistant messages render in the transcript. Headings, bold, inline code, lists, and code blocks used to show as raw `##`, `**`, and backticks.
