@@ -1,10 +1,14 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { type CodemodeSettings, defaultCodemodeSettings } from "../src/config/settings.ts";
 import { type CodemodeSessionManager, createCodemodeSessionManager } from "../src/extension/session-manager.ts";
-import { createInterpreterDetector, type InterpreterAvailability } from "../src/interpreters/detect.ts";
+import {
+	createInterpreterDetector,
+	getInterpreterAvailability,
+	type InterpreterAvailability,
+} from "../src/interpreters/detect.ts";
 import { hasPython3 } from "./py-kernel/fixtures.ts";
 
 const managers: CodemodeSessionManager[] = [];
@@ -84,4 +88,59 @@ describe("Given kernelTools.enabled", () => {
 		},
 		30_000,
 	);
+});
+
+describe.skipIf(process.platform === "win32" || !hasPython3)("Given languages.pyInterpreter", () => {
+	function wrapperInterpreter(): { readonly path: string; readonly log: string } {
+		const dir = mkdtempSync(join(tmpdir(), "codemode-py interp-"));
+		dirs.push(dir);
+		const bin = join(dir, "with space");
+		mkdirSync(bin);
+		const log = join(dir, "runs.log");
+		const path = join(bin, "python-wrapper");
+		writeFileSync(path, `#!/bin/sh\necho run >> "${log}"\nexec python3 "$@"\n`);
+		chmodSync(path, 0o755);
+		return { path, log };
+	}
+
+	it("When it names an executable, then the Python kernel runs through exactly that executable, even with a space in its path", async () => {
+		const wrapper = wrapperInterpreter();
+		const settings: CodemodeSettings = {
+			...defaultCodemodeSettings,
+			languages: { ...defaultCodemodeSettings.languages, py: true, pyInterpreter: wrapper.path },
+		};
+		const availability = await getInterpreterAvailability(settings, createInterpreterDetector());
+		const manager = await createCodemodeSessionManager({
+			sessionId: `py-interpreter-${crypto.randomUUID()}`,
+			cwd: dirs[0] ?? tmpdir(),
+			settings,
+			availability,
+			executeTool: async () => ({ content: [{ type: "text", text: "" }], details: {} }),
+			complete: async () => {
+				throw new Error("completion is not exercised here");
+			},
+		});
+		managers.push(manager);
+
+		const kernel = await manager.getKernel("py", () => undefined);
+		const result = await kernel.run({ cellId: "via-wrapper", code: "6 * 7", timeoutMs: 20_000 });
+
+		expect(availability.py.detected).toMatchObject({ ok: true, path: wrapper.path });
+		expect(result).toMatchObject({ ok: true, valueRepr: "42" });
+		// The --version probe and the kernel itself both ran through the wrapper.
+		expect(readFileSync(wrapper.log, "utf8").trim().split("\n").length).toBeGreaterThanOrEqual(2);
+	}, 30_000);
+
+	it("When it names a missing executable, then Python is unavailable with a reason naming the setting", async () => {
+		const settings: CodemodeSettings = {
+			...defaultCodemodeSettings,
+			languages: { ...defaultCodemodeSettings.languages, py: true, pyInterpreter: "/nonexistent/senpi/python3" },
+		};
+
+		const availability = await getInterpreterAvailability(settings, createInterpreterDetector());
+
+		expect(availability.py.detected.ok).toBe(false);
+		if (!availability.py.detected.ok)
+			expect(availability.py.detected.reason).toContain('languages.pyInterpreter "/nonexistent/senpi/python3"');
+	});
 });

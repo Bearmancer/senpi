@@ -67,6 +67,8 @@ export async function createRuntime(
 		languages: resolveEnabledLanguages(loaded.settings),
 	};
 	const availability = await getInterpreterAvailability(settings, createInterpreterDetector());
+	const pyReason = availability.py.detected.ok ? undefined : availability.py.detected.reason;
+	reportSettingsProblems(ctx, pyReason === undefined ? loaded.warnings : [...loaded.warnings, pyReason]);
 	const enabledLanguages = enabledLanguagesFrom(settings, availability);
 	const artifacts = resolveSessionArtifactsDir(ctx.sessionManager.getSessionFile());
 	const activeTools = new Set(pi.getActiveTools());
@@ -118,6 +120,14 @@ export async function createRuntime(
 				}
 			: {}),
 	};
+}
+
+/** Settings problems reach the user: a notice with a UI, otherwise stderr (print and RPC runs). */
+function reportSettingsProblems(ctx: ExtensionContext, problems: readonly string[]): void {
+	for (const problem of problems) {
+		if (ctx.hasUI) ctx.ui.notify(`[senpi-codemode] ${problem}`, "warning");
+		else console.error(`[senpi-codemode] ${problem}`);
+	}
 }
 
 export function createExecuteTool(pi: CodemodeRuntimeAPI, activeTools?: ReadonlySet<string>): AgentExecuteTool {
