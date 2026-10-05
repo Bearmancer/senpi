@@ -11,7 +11,8 @@ import {
 	SIDE_QUERY_INSTRUCTION,
 } from "../../src/core/extensions/builtin/btw/side-query.ts";
 import type { ExtensionUIContext } from "../../src/core/extensions/types.ts";
-import type { Theme } from "../../src/modes/interactive/theme/theme.ts";
+import { initTheme, type Theme } from "../../src/modes/interactive/theme/theme.ts";
+import { stripAnsi } from "../../src/utils/ansi.ts";
 import { createHarness, getMessageText, type Harness } from "./harness.ts";
 
 type WidgetFactory = (tui: TUI, theme: Theme) => Component & { dispose?(): void };
@@ -19,6 +20,7 @@ type WidgetFactory = (tui: TUI, theme: Theme) => Component & { dispose?(): void 
 /** Installs a minimal TUI-mode UI context so /btw takes its widget branch instead of notify. */
 function installTuiHarness(harness: Harness) {
 	const widgets: Array<{ key: string; content: unknown }> = [];
+	const components: Component[] = [];
 	const notifications: Array<{ message: string; type: string | undefined }> = [];
 	const inputHandlers = new Set<(data: string) => unknown>();
 	const fakeTui = { requestRender: () => {} } as unknown as TUI;
@@ -32,7 +34,7 @@ function installTuiHarness(harness: Harness) {
 		},
 		setWidget: (key: string, content: unknown) => {
 			widgets.push({ key, content });
-			if (typeof content === "function") (content as WidgetFactory)(fakeTui, fakeTheme);
+			if (typeof content === "function") components.push((content as WidgetFactory)(fakeTui, fakeTheme));
 		},
 		onTerminalInput: (handler: (data: string) => unknown) => {
 			inputHandlers.add(handler);
@@ -44,6 +46,7 @@ function installTuiHarness(harness: Harness) {
 	harness.session.extensionRunner.setUIContext(ui, "tui");
 	return {
 		widgets,
+		components,
 		notifications,
 		feedInput: (data: string) => {
 			for (const handler of [...inputHandlers]) handler(data);
@@ -484,6 +487,25 @@ describe("/btw extension command", () => {
 
 		expect(tui.widgets).toHaveLength(1);
 		expect(tui.inputHandlerCount).toBe(1);
+	});
+
+	it("renders the side answer as Markdown instead of raw syntax", async () => {
+		initTheme("dark");
+		const harness = await setup();
+		const tui = installTuiHarness(harness);
+		harness.setResponses([fauxAssistantMessage("## Steps\n\n- **bold** item with `code`")]);
+
+		await harness.session.prompt("/btw format check");
+
+		const lines =
+			tui.components
+				.at(-1)
+				?.render(80)
+				.map((line) => stripAnsi(line).trim()) ?? [];
+		expect(lines).toContain("btw: format check");
+		expect(lines).toContain("Steps");
+		expect(lines).toContain("- bold item with code");
+		expect(lines).toContain("(/btw or Esc to dismiss; clears on next message)");
 	});
 
 	it("cancels an in-flight side query on Escape while the main turn keeps streaming", async () => {
