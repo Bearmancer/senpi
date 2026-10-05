@@ -563,9 +563,11 @@
 				"legacyContracts/test/settings-reach-user.test.ts/Given a settings file with a problem When the settings file is valid and complete, then the user gets no warning",
 				"legacyContracts/test/settings-take-effect.test.ts/Given kernelTools.enabled When it is false and a Python cell rewrites the environment, then @tool is still refused and the cell never sees the switch",
 				"legacyContracts/test/settings-reach-user.test.ts/Given a project settings file that names languages.pyInterpreter When the project is not trusted, then the interpreter it names is never run and the user is told why",
-				"legacyContracts/test/settings-reach-user.test.ts/Given a project settings file that names languages.pyInterpreter When the project is trusted, then the interpreter it names is used"
+				"legacyContracts/test/settings-reach-user.test.ts/Given a project settings file that names languages.pyInterpreter When the project is trusted, then the interpreter it names is used",
+				"imports/extension/packages/senpi-codemode/src/config/project-trust.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/config/project-trust.ts"
 			],
-			"reason": "Plan row 30 (#2763): kernelTools.enabled, languages.pyInterpreter and prompt.advertiseHelpers take the effect their settings describe, and settings warnings reach the user. Test-only additions; the default prompt, schemas, helper census and imports are unchanged. The feature-settings contract that resolved languages to the four flags now also keeps languages.pyInterpreter (same name, corrected expectation)."
+			"reason": "Plan row 30 (#2763): kernelTools.enabled, languages.pyInterpreter and prompt.advertiseHelpers take the effect their settings describe, and settings warnings reach the user. Test-only additions; the default prompt, schemas, helper census and imports are unchanged. The feature-settings contract that resolved languages to the four flags now also keeps languages.pyInterpreter (same name, corrected expectation). The project-trust gate for a project-scoped languages.pyInterpreter adds config/project-trust.ts (pure, no I/O) to the extension and first-kernel import paths."
 		},
 		"32": {
 			"additions": [
