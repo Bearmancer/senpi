@@ -149,6 +149,12 @@ export function spawnProcessWorker(url: URL, options: JavaScriptProcessWorkerOpt
 		pendingInvalidFrame = undefined;
 		if (error !== undefined) for (const handler of [...errorHandlers]) handler(error);
 	};
+	// Attached directly, not through SubprocessProcess, which stops reading stderr as soon as the exit is observed.
+	child.stderr.on("data", (chunk: string | Buffer) => {
+		stderrTail = `${stderrTail}${String(chunk)}`.slice(-STDERR_TAIL_CHARS);
+		const crash = crashCauseFrom(stderrTail, frameToken);
+		if (crash !== undefined) crashCause = crash;
+	});
 	const subprocess = new SubprocessProcess(child, {
 		onLine: (_process, line) => {
 			// Only a line carrying this process's token is a frame; any other line is output that
@@ -173,16 +179,17 @@ export function spawnProcessWorker(url: URL, options: JavaScriptProcessWorkerOpt
 			reviveFrameValues(message, frameToken);
 			for (const handler of [...messageHandlers]) handler(message);
 		},
-		onStderr: (_process, chunk) => {
-			stderrTail = `${stderrTail}${chunk}`.slice(-STDERR_TAIL_CHARS);
-			const crash = crashCauseFrom(stderrTail, frameToken);
-			if (crash !== undefined) crashCause = crash;
-		},
+		// Crash causes are read by the listener below, which stays attached until stderr ends.
+		onStderr: () => {},
 		onExit: (_process, code, signal) => {
 			pendingInvalidFrame = undefined;
-			// The child's own report of what killed it, as worker mode reports a thread's error; else the exit itself.
-			const error = crashCause ?? new JavaScriptWorkerExitedError(code ?? -1, signal);
-			for (const handler of [...errorHandlers]) handler(error);
+			// A dead child's last stderr bytes can still be in flight when its exit is observed: settle once stderr has
+			// ended (bounded), so the cause it reported is not replaced by the bare exit.
+			void stderrEnded(child.stderr, STDERR_DRAIN_GRACE_MS).then(() => {
+				// The child's own report of what killed it, as worker mode reports a thread's error; else the exit itself.
+				const error = crashCause ?? new JavaScriptWorkerExitedError(code ?? -1, signal);
+				for (const handler of [...errorHandlers]) handler(error);
+			});
 		},
 		onError: (_process, error) => {
 			for (const handler of [...errorHandlers]) handler(error);
@@ -218,6 +225,25 @@ export function spawnProcessWorker(url: URL, options: JavaScriptProcessWorkerOpt
 }
 
 const STDERR_TAIL_CHARS = 16 * 1024;
+const STDERR_DRAIN_GRACE_MS = 1_000;
+
+/** Resolves when the stream has ended or closed, or after the grace period, whichever comes first. */
+function stderrEnded(stream: NodeJS.ReadableStream, graceMs: number): Promise<void> {
+	if (("readableEnded" in stream && stream.readableEnded === true) || ("closed" in stream && stream.closed === true)) {
+		return Promise.resolve();
+	}
+	return new Promise((resolve) => {
+		const done = () => {
+			clearTimeout(timer);
+			stream.removeListener("end", done);
+			stream.removeListener("close", done);
+			resolve();
+		};
+		const timer = setTimeout(done, graceMs);
+		stream.once("end", done);
+		stream.once("close", done);
+	});
+}
 const BIGINT_MARKER = "\u0000senpi:bigint:";
 const UNDEFINED_MARKER = "\u0000senpi:undefined:";
 const BIGINT_DIGITS = /^-?\d+$/;
