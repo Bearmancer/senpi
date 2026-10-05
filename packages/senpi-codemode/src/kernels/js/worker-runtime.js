@@ -47,6 +47,7 @@ export class JsWorkerRuntime {
 			generation: options.kernelGeneration ?? 1,
 			hostToolNames: options.hostToolNames ?? [],
 			foreignLanguageNames: options.foreignLanguageNames ?? [],
+			disabled: options.kernelToolsDisabled === true,
 		});
 		this.#installGlobals();
 	}

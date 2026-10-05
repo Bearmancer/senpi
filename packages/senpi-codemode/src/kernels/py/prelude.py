@@ -713,6 +713,8 @@ class Registry:
         self.generation = 1
 
     def define(self, fn: Any, *, name: Any = None, description: Any = None, schema: Any = None) -> Any:
+        if os.environ.get("SENPI_CODEMODE_KERNEL_TOOLS") == "0":
+            raise KernelToolError("tools_unavailable", "kernel tools are turned off for this project (kernelTools.enabled is false)")
         inferred = infer_tool(fn, name=name, description=description, schema=schema)
         key = tool_key(inferred["name"])
         with self._lock:
