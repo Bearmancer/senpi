@@ -139,6 +139,7 @@ export function createWorkerCore(transport, options) {
 				kernelGeneration: message.kernelGeneration ?? 1,
 				hostToolNames: message.hostToolNames ?? [],
 				foreignLanguageNames: message.foreignLanguageNames ?? [],
+				kernelToolsDisabled: message.kernelToolsDisabled === true,
 				onChildEvent: (event) => emit({ type: "status", event: { op: CHILD_LIFECYCLE_OP, ...event } }),
 				onShellWaitChange: () => {
 					if (activeCell?.interruption) acknowledgeInterrupt();

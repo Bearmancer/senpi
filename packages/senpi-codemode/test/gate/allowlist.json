@@ -547,6 +547,30 @@
 			],
 			"reason": "Node 29 (senpi#2353): RED/GREEN regressions for a Chrome-backed WebView launch whose CDP attach never completes (bounded readiness, retire, one relaunch, sibling views kept). No prompt, schema, helper, or default changes."
 		},
+		"30": {
+			"additions": [
+				"legacyContracts/test/settings-take-effect.test.ts/Given kernelTools.enabled When it is false, then a JavaScript cell that defines a kernel tool is refused with tools_unavailable naming the setting",
+				"legacyContracts/test/settings-take-effect.test.ts/Given kernelTools.enabled When it is left at its default, then a JavaScript cell defines the kernel tool",
+				"legacyContracts/test/settings-take-effect.test.ts/Given kernelTools.enabled When it is false, then a Python cell that defines an @tool is refused with tools_unavailable naming the setting",
+				"legacyContracts/test/settings-take-effect.test.ts/Given kernelTools.enabled When it is left at its default, then a Python cell defines the @tool",
+				"legacyContracts/test/settings-take-effect.test.ts/Given languages.pyInterpreter When it names an executable, then the Python kernel runs through exactly that executable, even with a space in its path",
+				"legacyContracts/test/settings-take-effect.test.ts/Given languages.pyInterpreter When it names a missing executable, then Python is unavailable with a reason naming the setting",
+				"legacyContracts/test/settings-take-effect.test.ts/Given prompt.advertiseHelpers When it is true, then the eval description ends with the one helper pointer line",
+				"legacyContracts/test/settings-take-effect.test.ts/Given prompt.advertiseHelpers When it is left at its default, then the eval description is unchanged and carries no pointer",
+				"legacyContracts/test/settings-reach-user.test.ts/Given a settings file with a problem When a session with a UI starts, then the user gets a warning that names the problem",
+				"legacyContracts/test/settings-reach-user.test.ts/Given a settings file with a problem When a print-mode session starts, then the warning goes to stderr",
+				"legacyContracts/test/settings-reach-user.test.ts/Given a settings file with a problem When languages.pyInterpreter names a missing executable, then the warning names the setting",
+				"legacyContracts/test/settings-reach-user.test.ts/Given a settings file with a problem When the settings file is valid and complete, then the user gets no warning",
+				"legacyContracts/test/settings-reach-user.test.ts/Given a settings file with a problem When the host cannot tell whether the project is trusted, then the session still starts without a warning",
+				"legacyContracts/test/settings-take-effect.test.ts/Given kernelTools.enabled When it is false and a Python cell rewrites the environment, then @tool is still refused and the cell never sees the switch",
+				"legacyContracts/test/settings-reach-user.test.ts/Given a project settings file that names languages.pyInterpreter When the project is not trusted, then the interpreter it names is never run and the user is told why",
+				"legacyContracts/test/settings-reach-user.test.ts/Given a project settings file that names languages.pyInterpreter When the host cannot tell whether the project is trusted, then the interpreter is treated as untrusted and never run",
+				"legacyContracts/test/settings-reach-user.test.ts/Given a project settings file that names languages.pyInterpreter When the project is trusted, then the interpreter it names is used",
+				"imports/extension/packages/senpi-codemode/src/config/project-trust.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/config/project-trust.ts"
+			],
+			"reason": "Plan row 30 (#2763): kernelTools.enabled, languages.pyInterpreter and prompt.advertiseHelpers take the effect their settings describe, and settings warnings reach the user. Test-only additions; the default prompt, schemas, helper census and imports are unchanged. The feature-settings contract that resolved languages to the four flags now also keeps languages.pyInterpreter (same name, corrected expectation). The project-trust gate for a project-scoped languages.pyInterpreter adds config/project-trust.ts (pure, no I/O) to the extension and first-kernel import paths."
+		},
 		"32": {
 			"additions": [
 				"legacyContracts/test/js-kernel-shell-stop-bun.test.ts/Bun shell Stop reports state loss when Stop interrupts a native shell wait",

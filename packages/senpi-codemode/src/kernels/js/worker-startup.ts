@@ -68,6 +68,7 @@ async function initializeWorker(worker: WorkerLike, hooks: WorkerStartupHooks, s
 		foreignLanguageNames: resolveKernelToolNameSource(options.foreignLanguageNames),
 		...(options.sessionEnv === undefined ? {} : { sessionEnv: options.sessionEnv }),
 		...(options.memory === undefined ? {} : { memory: options.memory }),
+		...(options.kernelToolsEnabled === false ? { kernelToolsDisabled: true } : {}),
 	});
 	await ready;
 }

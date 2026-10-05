@@ -2,6 +2,7 @@ import { type ExtensionContext, withBundledBunCommands } from "@code-yeongyu/sen
 import type { AgentExecuteTool } from "../bridges/agent-bridge.ts";
 import type { EvalSchemaToolInfo } from "../bridges/schema-bridge.ts";
 import type { CompletionRequest, CompletionResult } from "../completion/handler.ts";
+import { withoutUntrustedInterpreter } from "../config/project-trust.ts";
 import {
 	type CodemodeSettings,
 	loadCodemodeSettings,
@@ -62,11 +63,23 @@ export async function createRuntime(
 	handles?: HandleRegistry,
 ): Promise<SessionRuntime> {
 	const loaded = await loadCodemodeSettings({ cwd: ctx.cwd });
+	const trusted = withoutUntrustedInterpreter(
+		loaded.settings,
+		loaded.source,
+		ctx.cwd,
+		typeof ctx.isProjectTrusted === "function" ? () => ctx.isProjectTrusted() : undefined,
+	);
 	const settings: ResolvedCodemodeSettings = {
-		...loaded.settings,
-		languages: resolveEnabledLanguages(loaded.settings),
+		...trusted.settings,
+		languages: resolveEnabledLanguages(trusted.settings),
 	};
 	const availability = await getInterpreterAvailability(settings, createInterpreterDetector());
+	const pyReason = availability.py.detected.ok ? undefined : availability.py.detected.reason;
+	reportSettingsProblems(ctx, [
+		...loaded.warnings,
+		...(trusted.warning === undefined ? [] : [trusted.warning]),
+		...(pyReason === undefined ? [] : [pyReason]),
+	]);
 	const enabledLanguages = enabledLanguagesFrom(settings, availability);
 	const artifacts = resolveSessionArtifactsDir(ctx.sessionManager.getSessionFile());
 	const activeTools = new Set(pi.getActiveTools());
@@ -118,6 +131,14 @@ export async function createRuntime(
 				}
 			: {}),
 	};
+}
+
+/** Settings problems reach the user: a notice with a UI, otherwise stderr (print and RPC runs). */
+function reportSettingsProblems(ctx: ExtensionContext, problems: readonly string[]): void {
+	for (const problem of problems) {
+		if (ctx.hasUI) ctx.ui.notify(`[senpi-codemode] ${problem}`, "warning");
+		else console.error(`[senpi-codemode] ${problem}`);
+	}
 }
 
 export function createExecuteTool(pi: CodemodeRuntimeAPI, activeTools?: ReadonlySet<string>): AgentExecuteTool {

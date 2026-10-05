@@ -20,6 +20,8 @@ export function resolveEnabledLanguages(
 	env: Environment = process.env,
 ): CodemodeSettings["languages"] {
 	return {
+		// Keep the non-flag keys (languages.pyInterpreter); only the four enable flags take env overrides.
+		...settings.languages,
 		py: resolveLanguage(settings.languages.py, env[languageEnvironmentFlags.py]),
 		js: resolveLanguage(settings.languages.js, env[languageEnvironmentFlags.js]),
 		rb: resolveLanguage(settings.languages.rb, env[languageEnvironmentFlags.rb]),
