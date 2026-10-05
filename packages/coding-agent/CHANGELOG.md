@@ -7,6 +7,7 @@
 ### Added
 
 - `/mcp` with no arguments opens an interactive server manager in the TUI: compact server rows with state-specific actions (enable/disable, exposure, test, reconnect, sign in/out), plus tool, detail and log views. Only trusted global and project servers can be edited, and edits change just `enabled`/`exposure` in the existing config file. Untrusted project, imported, extension and skill servers are read-only (Details and Logs). Non-TUI clients still get the status text ([#2716](https://github.com/code-yeongyu/senpi/issues/2716)).
+- A provider block in `models.json` accepts `hideFreeModels: true` to drop that provider's zero-cost models (`cost.input` and `cost.output` both `0`) from the catalog. The default is unchanged: free models stay visible ([#2720](https://github.com/code-yeongyu/senpi/issues/2720)).
 
 ### Changed
 
