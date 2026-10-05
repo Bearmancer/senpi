@@ -10,6 +10,8 @@
 
 ### Fixed
 
+- The `/btw` side panel renders its answer as Markdown, the same way assistant messages render in the transcript. Headings, bold, inline code, lists, and code blocks used to show as raw `##`, `**`, and backticks.
+
 ### Removed
 
 ## [2026.10.10] - 2026-10-05

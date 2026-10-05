@@ -1,3 +1,21 @@
+## 2026-10-05 - /btw renders its answer as Markdown
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/btw/panel.ts`: the panel body is split into a header `Text` (the question), a `Markdown` component for the answer using `getMarkdownTheme()` (the theme assistant messages use), and a footer `Text` (status line). The header and footer strings are unchanged apart from dropping the leading newline that used to separate them inside one `Text`.
+
+### Why
+
+- The answer was concatenated into a single `Text`, so headings, bold, inline code, lists, and code fences showed as raw `##`, `**`, and backticks while the same reply in the main transcript renders formatted.
+
+### Why an extension could not handle it
+
+- The widget is private to this builtin command.
+
+### Expected merge conflict zones
+
+- LOW: `panel.ts` constructor children and `repaint()`.
+
 ## 2026-09-28 - /btw uses the credential's own API host (senpi#2309)
 
 ### What changed
