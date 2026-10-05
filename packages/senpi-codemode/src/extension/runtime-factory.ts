@@ -63,7 +63,12 @@ export async function createRuntime(
 	handles?: HandleRegistry,
 ): Promise<SessionRuntime> {
 	const loaded = await loadCodemodeSettings({ cwd: ctx.cwd });
-	const trusted = withoutUntrustedInterpreter(loaded.settings, loaded.source, ctx.cwd, ctx.isProjectTrusted());
+	const trusted = withoutUntrustedInterpreter(
+		loaded.settings,
+		loaded.source,
+		ctx.cwd,
+		typeof ctx.isProjectTrusted === "function" ? () => ctx.isProjectTrusted() : undefined,
+	);
 	const settings: ResolvedCodemodeSettings = {
 		...trusted.settings,
 		languages: resolveEnabledLanguages(trusted.settings),

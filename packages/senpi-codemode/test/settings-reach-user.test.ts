@@ -59,13 +59,12 @@ async function projectWithSettings(settings: string): Promise<string> {
 function context(
 	cwd: string,
 	ui: { readonly hasUI: boolean; readonly notify: (message: string, type?: string) => void },
-	projectTrusted = true,
+	projectTrusted: boolean | "host-cannot-tell" = true,
 ) {
 	const base = fakeExtensionContext();
 	const ctx: ExtensionToolContext = {
 		...base,
 		cwd,
-		isProjectTrusted: () => projectTrusted,
 		hasUI: ui.hasUI,
 		mode: ui.hasUI ? "tui" : "print",
 		ui: { ...base.ui, notify: ui.notify },
@@ -75,6 +74,12 @@ function context(
 			getSessionFile: () => join(cwd, "session.jsonl"),
 		},
 	};
+	if (projectTrusted === "host-cannot-tell") {
+		// A host context that predates the trust query, like the bundled-package probe in coding-agent's suite.
+		Reflect.deleteProperty(ctx, "isProjectTrusted");
+	} else {
+		ctx.isProjectTrusted = () => projectTrusted;
+	}
 	return ctx;
 }
 
@@ -149,6 +154,19 @@ describe("Given a settings file with a problem", () => {
 
 		expect(notices).toEqual([]);
 	});
+
+	it("When the host cannot tell whether the project is trusted, then the session still starts without a warning", async () => {
+		const notices: string[] = [];
+		const ctx = context(
+			await projectWithSettings(JSON.stringify({ languages: { js: true, py: false, rb: false, jl: false } })),
+			{ hasUI: true, notify: (message) => notices.push(message) },
+			"host-cannot-tell",
+		);
+
+		await startSession(ctx);
+
+		expect(notices).toEqual([]);
+	});
 });
 
 describe.skipIf(process.platform === "win32")(
@@ -174,6 +192,20 @@ describe.skipIf(process.platform === "win32")(
 			const notices: string[] = [];
 
 			await startSession(context(project.cwd, { hasUI: true, notify: (message) => notices.push(message) }, false));
+
+			expect(existsSync(project.ran)).toBe(false);
+			expect(notices).toEqual([
+				expect.stringContaining("is ignored because this project is not trusted; it was not run"),
+			]);
+		});
+
+		it("When the host cannot tell whether the project is trusted, then the interpreter is treated as untrusted and never run", async () => {
+			const project = await projectNamingInterpreter();
+			const notices: string[] = [];
+
+			await startSession(
+				context(project.cwd, { hasUI: true, notify: (message) => notices.push(message) }, "host-cannot-tell"),
+			);
 
 			expect(existsSync(project.ran)).toBe(false);
 			expect(notices).toEqual([

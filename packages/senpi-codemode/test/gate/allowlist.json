@@ -561,8 +561,10 @@
 				"legacyContracts/test/settings-reach-user.test.ts/Given a settings file with a problem When a print-mode session starts, then the warning goes to stderr",
 				"legacyContracts/test/settings-reach-user.test.ts/Given a settings file with a problem When languages.pyInterpreter names a missing executable, then the warning names the setting",
 				"legacyContracts/test/settings-reach-user.test.ts/Given a settings file with a problem When the settings file is valid and complete, then the user gets no warning",
+				"legacyContracts/test/settings-reach-user.test.ts/Given a settings file with a problem When the host cannot tell whether the project is trusted, then the session still starts without a warning",
 				"legacyContracts/test/settings-take-effect.test.ts/Given kernelTools.enabled When it is false and a Python cell rewrites the environment, then @tool is still refused and the cell never sees the switch",
 				"legacyContracts/test/settings-reach-user.test.ts/Given a project settings file that names languages.pyInterpreter When the project is not trusted, then the interpreter it names is never run and the user is told why",
+				"legacyContracts/test/settings-reach-user.test.ts/Given a project settings file that names languages.pyInterpreter When the host cannot tell whether the project is trusted, then the interpreter is treated as untrusted and never run",
 				"legacyContracts/test/settings-reach-user.test.ts/Given a project settings file that names languages.pyInterpreter When the project is trusted, then the interpreter it names is used",
 				"imports/extension/packages/senpi-codemode/src/config/project-trust.ts",
 				"imports/firstKernel/packages/senpi-codemode/src/config/project-trust.ts"
