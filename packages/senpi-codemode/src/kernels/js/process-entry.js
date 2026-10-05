@@ -45,6 +45,19 @@ function libcSymbols() {
 	} catch {
 		return null;
 	}
+	try {
+		return loadLibcSymbols(ffi, libcPath);
+	} catch (error) {
+		// dlopen can fail where libc is not where this expects it (a minimal image, an unusual libc). The kernel then
+		// runs as it does on Windows, framing on fd 1 without the raw-output pipe, instead of dying before it can say why.
+		process.stderr.write(
+			`[senpi-codemode] process kernel: libc could not be loaded (${error instanceof Error ? error.message : String(error)}); raw fd 1 output from child processes is not captured\n`,
+		);
+		return null;
+	}
+}
+
+function loadLibcSymbols(ffi, libcPath) {
 	const symbols = ffi.dlopen(libcPath, {
 		dup: { args: [ffi.FFIType.i32], returns: ffi.FFIType.i32 },
 		dup2: { args: [ffi.FFIType.i32, ffi.FFIType.i32], returns: ffi.FFIType.i32 },

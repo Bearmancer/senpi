@@ -416,6 +416,27 @@ return "done";`,
 		30_000,
 	);
 
+	itProcessMode(
+		"still starts and runs cells when libc cannot be loaded, instead of exiting before it can report why",
+		async () => {
+			const dir = await trackedTempRoot("senpi-libc-fault-");
+			const preload = join(dir, "dlopen-fails.cjs");
+			writeFileSync(
+				preload,
+				'require("bun:ffi").dlopen = () => { throw new Error("synthetic dlopen failure"); };\n',
+			);
+			// Named bun so the kernel treats it as the bun runtime it wraps.
+			const wrapper = join(dir, "bun");
+			writeFileSync(wrapper, `#!/bin/sh\nexec "${productChild()}" --preload "${preload}" "$@"\n`, { mode: 0o755 });
+			const kernel = processKernel({ processExecPath: wrapper });
+			const first = await runJavaScriptCell(kernel, "return 6 * 7");
+			expect(first.result).toMatchObject({ ok: true, valueRepr: "42" });
+			const next = await runJavaScriptCell(kernel, "globalThis.kept = 1; return kept + 1");
+			expect(next.result).toMatchObject({ ok: true, valueRepr: "2" });
+		},
+		30_000,
+	);
+
 	it("labels the process-mode badge with the isolation", async () => {
 		const { formatRuntimeBadge } = await import("../src/tool/runtime-label.ts");
 		const badge = formatRuntimeBadge("js", { name: "bun", version: "1.4.2" }, "/home/tester");

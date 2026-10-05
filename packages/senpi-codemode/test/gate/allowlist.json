@@ -512,6 +512,7 @@
 				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation When cell code walks globals, the require cache, env and argv for the frame token, then nothing it finds forges a frame",
 				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation When a cell writes a raw line straight to fd 1, then it arrives as output text and the next cell still runs",
 				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation refuses a kernel-tool definition when kernel tools are turned off, exactly as the worker does",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation still starts and runs cells when libc cannot be loaded, instead of exiting before it can report why",
 				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation labels the process-mode badge with the isolation",
 				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation reports the child's process footprint in the result memory and registry reading",
 				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation keeps the worker default when no isolation is asked for",

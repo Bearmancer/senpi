@@ -109,7 +109,8 @@ How it works:
   arrives before that cell's result. In a bun child, raw fd 1 bytes are not
   interleaved with `console` output in the order they were written. A node
   child cannot move its fds: cell output shares the channel, and fd 0 is the
-  channel.
+  channel. If libc cannot be loaded through `bun:ffi`, a bun child runs
+  the same way, says so once on stderr, and still starts.
 - **Lifetime.** The child exits as soon as its control channel closes. That
   covers every way the host ends, including `SIGKILL`. A watchdog thread also
   compares the parent pid with the one recorded at start, so a child whose cell
