@@ -348,7 +348,7 @@ describe("/mcp command suite", () => {
 
 		await command.handler("status", createCtx(root, ui));
 
-		const message = notification(ui, "MCP status")?.message ?? "";
+		const message = lastNotification(ui)?.message ?? "";
 		expect(message).toContain("bad enabled");
 		expect(message).toContain("FATAL: missing FOO_TOKEN=<redacted:");
 		expect(message).not.toContain("super-secret-token");
