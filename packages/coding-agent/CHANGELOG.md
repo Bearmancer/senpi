@@ -12,6 +12,7 @@
 
 ### Fixed
 
+- RPC model lists now reflect credentials added or removed by another session without reopening the session, fixing an empty desktop model picker after connecting a provider ([#2769](https://github.com/code-yeongyu/senpi/issues/2769)).
 - The `/btw` side panel renders its answer as Markdown, the same way assistant messages render in the transcript. Headings, bold, inline code, lists, and code blocks used to show as raw `##`, `**`, and backticks.
 
 ### Removed

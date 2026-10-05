@@ -1137,7 +1137,7 @@ export function createRpcConnectionHandler(
 			}
 
 			case "get_available_models": {
-				const models = await session.modelRegistry.getAvailable();
+				const models = await session.modelRegistry.modelRuntime.getAvailable();
 				return success(id, "get_available_models", {
 					models: models.map((model) => ({
 						...model,
