@@ -1924,7 +1924,7 @@ The `model` field is a full [Model](#model) object.
 
 #### get_available_models
 
-List all configured models.
+List all configured models, refreshing credential availability on each request so credentials added or removed by another session take effect without reopening this session.
 
 ```json
 {"type": "get_available_models"}
