@@ -13,6 +13,8 @@
 
 ### Fixed
 
+- Settings that were accepted but did nothing now take effect ([#2763](https://github.com/code-yeongyu/senpi/issues/2763)): `kernelTools.enabled: false` makes JavaScript `tool(fn)` and Python `@tool` refuse with `tools_unavailable`; `languages.pyInterpreter` makes the Python kernel run exactly that executable (a path that does not answer makes Python unavailable, with a warning naming the setting); `prompt.advertiseHelpers: true` adds one line pointing at `tool_schema('eval:helpers')` to the eval description. Settings-file warnings (an unknown key, a fallback to defaults) now reach the user as a notice, or on stderr without a UI.
+
 - An isolated (`isolate: true`) cell whose QuickJS runtime is missing now fails with `eval_isolate_unavailable` before any of its code runs, instead of a module-resolution error that named a host path ([#2452](https://github.com/code-yeongyu/senpi/issues/2452)).
 
 - `%bun add` over a package first installed from a local directory now works when the new archive's top directory is not `package/` (a GitHub-style `<repo>-<sha>.tgz`, or a plain `.tar`): its name is read from the archive's own top-level directory, so the old directory's links are removed before bun installs ([#2452](https://github.com/code-yeongyu/senpi/issues/2452)).

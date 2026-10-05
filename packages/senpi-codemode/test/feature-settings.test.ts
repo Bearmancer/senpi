@@ -101,7 +101,14 @@ describe("codemode feature settings", () => {
 		expect(resolveAdvertiseHelpers(loaded.settings)).toBe(true);
 		expect(resolveKernelToolsEnabled(loaded.settings)).toBe(false);
 		expect(loaded.settings.languages.pyInterpreter).toBe("/usr/bin/python3");
-		expect(resolveEnabledLanguages(loaded.settings, {})).toEqual({ py: true, js: true, rb: false, jl: false });
+		// The env overrides apply to the four enable flags only; languages.pyInterpreter survives them (#2763).
+		expect(resolveEnabledLanguages(loaded.settings, {})).toEqual({
+			py: true,
+			js: true,
+			rb: false,
+			jl: false,
+			pyInterpreter: "/usr/bin/python3",
+		});
 	});
 
 	it("Given an isolation value this version does not know when settings load then the file falls back to defaults with a warning and isolation stays worker", async () => {

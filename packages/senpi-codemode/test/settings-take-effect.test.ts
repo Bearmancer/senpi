@@ -1,14 +1,21 @@
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
-import { type CodemodeSettings, defaultCodemodeSettings } from "../src/config/settings.ts";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+	type CodemodeSettings,
+	defaultCodemodeSettings,
+	type ResolvedCodemodeSettings,
+} from "../src/config/settings.ts";
 import { type CodemodeSessionManager, createCodemodeSessionManager } from "../src/extension/session-manager.ts";
 import {
 	createInterpreterDetector,
 	getInterpreterAvailability,
 	type InterpreterAvailability,
 } from "../src/interpreters/detect.ts";
+import { ADVERTISED_HELPERS_LINE } from "../src/prompt/eval-prompt.ts";
+import { createEvalTool } from "../src/tool/eval-tool.ts";
+import { FakeManager } from "./eval/fakes.ts";
 import { hasPython3 } from "./py-kernel/fixtures.ts";
 
 const managers: CodemodeSessionManager[] = [];
@@ -142,5 +149,35 @@ describe.skipIf(process.platform === "win32" || !hasPython3)("Given languages.py
 		expect(availability.py.detected.ok).toBe(false);
 		if (!availability.py.detected.ok)
 			expect(availability.py.detected.reason).toContain('languages.pyInterpreter "/nonexistent/senpi/python3"');
+	});
+});
+
+describe("Given prompt.advertiseHelpers", () => {
+	const enabledLanguages = { py: true, js: true, rb: false, jl: false };
+	const evalTool = (settings: ResolvedCodemodeSettings) =>
+		createEvalTool({
+			enabledLanguages,
+			kernelManager: new FakeManager([]),
+			cellTimeoutSeconds: 30,
+			executeTool: vi.fn(),
+			settings,
+		});
+	const advertisingSettings: ResolvedCodemodeSettings = {
+		...defaultCodemodeSettings,
+		prompt: { advertiseHelpers: true },
+	};
+
+	it("When it is true, then the eval description ends with the one helper pointer line", () => {
+		const tool = evalTool(advertisingSettings);
+
+		expect(tool.description.endsWith(`\n\n${ADVERTISED_HELPERS_LINE}`)).toBe(true);
+	});
+
+	it("When it is left at its default, then the eval description is unchanged and carries no pointer", () => {
+		const plain = evalTool(defaultCodemodeSettings);
+		const advertised = evalTool(advertisingSettings);
+
+		expect(plain.description).not.toContain("tool_schema('eval:helpers')");
+		expect(advertised.description).toBe(`${plain.description}\n\n${ADVERTISED_HELPERS_LINE}`);
 	});
 });
