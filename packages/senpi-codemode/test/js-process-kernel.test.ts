@@ -402,6 +402,20 @@ return "done";`,
 		30_000,
 	);
 
+	itProcessMode(
+		"refuses a kernel-tool definition when kernel tools are turned off, exactly as the worker does",
+		async () => {
+			const define = "tool(function add(a, b) { return a + b }); return 'defined'";
+			const off = await runJavaScriptCell(processKernel({ kernelToolsEnabled: false }), define);
+			expect(off.result).toMatchObject({ ok: false });
+			if (!off.result.ok) expect(off.result.error.message).toContain("kernelTools.enabled is false");
+			const on = await runJavaScriptCell(processKernel(), define);
+			expect(on.result).toMatchObject({ ok: true });
+			if (on.result.ok) expect(on.result.valueRepr).toContain("defined");
+		},
+		30_000,
+	);
+
 	it("labels the process-mode badge with the isolation", async () => {
 		const { formatRuntimeBadge } = await import("../src/tool/runtime-label.ts");
 		const badge = formatRuntimeBadge("js", { name: "bun", version: "1.4.2" }, "/home/tester");
