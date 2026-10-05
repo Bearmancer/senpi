@@ -36,6 +36,9 @@ const BIGINT_MARKER = "\u0000senpi:bigint:";
 const UNDEFINED_MARKER = "\u0000senpi:undefined:";
 const DRAIN_MARKER = "\u0000senpi-drain:";
 
+// Set when libc could not be loaded; shown once, as stderr output of the first cell, so the user sees why.
+let libcUnavailableNotice;
+
 function libcSymbols() {
 	if (process.platform === "win32") return null;
 	const libcPath = { darwin: "/usr/lib/libSystem.B.dylib", linux: "libc.so.6" }[process.platform];
@@ -51,9 +54,7 @@ function libcSymbols() {
 	} catch (error) {
 		// dlopen can fail where libc is not where this expects it (a minimal image, an unusual libc). The kernel then
 		// runs as it does on Windows, framing on fd 1 without the raw-output pipe, instead of dying before it can say why.
-		process.stderr.write(
-			`[senpi-codemode] process kernel: libc could not be loaded (${error instanceof Error ? error.message : String(error)}); raw fd 1 output from child processes is not captured\n`,
-		);
+		libcUnavailableNotice = `[senpi-codemode] process kernel: libc could not be loaded (${error instanceof Error ? error.message : String(error)}); raw fd 1 output from child processes is not captured\n`;
 		return null;
 	}
 }
@@ -314,6 +315,10 @@ let lineHandler;
 const bufferedLines = [];
 function deliver(message) {
 	if (message.type === "run") ensureBlocking();
+	if (message.type === "run" && libcUnavailableNotice !== undefined) {
+		sendFrame({ type: "text", stream: "stderr", data: libcUnavailableNotice });
+		libcUnavailableNotice = undefined;
+	}
 	if (lineHandler === undefined) bufferedLines.push(message);
 	else lineHandler(message);
 }

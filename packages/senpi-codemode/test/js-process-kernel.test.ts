@@ -450,10 +450,22 @@ return "done";`,
 			const wrapper = join(dir, "bun");
 			writeFileSync(wrapper, `#!/bin/sh\nexec "${productChild()}" --preload "${preload}" "$@"\n`, { mode: 0o755 });
 			const kernel = processKernel({ processExecPath: wrapper });
+			const stderrOf = (run: Awaited<ReturnType<typeof runJavaScriptCell>>) =>
+				run.messages.flatMap((message) => (message.type === "text" && message.stream === "stderr" ? [message.data] : [])).join("");
 			const first = await runJavaScriptCell(kernel, "return 6 * 7");
 			expect(first.result).toMatchObject({ ok: true, valueRepr: "42" });
+			expect(stderrOf(first)).toContain("libc could not be loaded (synthetic dlopen failure)");
 			const next = await runJavaScriptCell(kernel, "globalThis.kept = 1; return kept + 1");
 			expect(next.result).toMatchObject({ ok: true, valueRepr: "2" });
+			expect(stderrOf(next)).toBe("");
+			const crashed = await runJavaScriptCell(
+				kernel,
+				"setTimeout(() => { throw new Error('boom-in-fallback') }, 0); await new Promise(() => {})",
+			);
+			expect(crashed.result).toMatchObject({ ok: false });
+			if (!crashed.result.ok) expect(crashed.result.error.message).toContain("boom-in-fallback");
+			const recovered = await runJavaScriptCell(kernel, "return 5");
+			expect(recovered.result).toMatchObject({ ok: true, valueRepr: "5" });
 		},
 		30_000,
 	);
