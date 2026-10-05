@@ -191,30 +191,22 @@ function keepChildProcessesBlocking() {
 	const bun = globalThis.Bun;
 	const spawnSync = bun.spawnSync;
 	const spawn = bun.spawn;
-	try {
-		Object.defineProperty(bun, "spawnSync", {
-			configurable: true,
-			value: (...args) => {
-				ensureBlocking();
-				try {
-					return spawnSync.apply(bun, args);
-				} finally {
-					ensureBlocking();
-				}
-			},
-		});
-		Object.defineProperty(bun, "spawn", {
-			configurable: true,
-			value: (...args) => {
-				ensureBlocking();
-				const child = spawn.apply(bun, args);
-				child.exited.then(ensureBlocking, ensureBlocking);
-				return child;
-			},
-		});
-	} catch {
-		// Bun's spawn functions are not configurable on this runtime; cell starts still restore the flag
-	}
+	// Bun.spawn and Bun.spawnSync are writable but not configurable, so they are replaced by assignment (as the
+	// per-cell shell capture also does); a redefinition would throw.
+	bun.spawnSync = (...args) => {
+		ensureBlocking();
+		try {
+			return spawnSync.apply(bun, args);
+		} finally {
+			ensureBlocking();
+		}
+	};
+	bun.spawn = (...args) => {
+		ensureBlocking();
+		const child = spawn.apply(bun, args);
+		child.exited.then(ensureBlocking, ensureBlocking);
+		return child;
+	};
 }
 const pause = new Int32Array(new SharedArrayBuffer(4));
 // Frames are written by this thread and by the fd 1 reader thread; one lock keeps every frame line whole.

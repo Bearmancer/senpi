@@ -417,6 +417,27 @@ return "done";`,
 	);
 
 	itProcessMode(
+		"delivers all of a Bun.spawnSync child's output after a Bun.spawn child left fd 1 non-blocking",
+		async () => {
+			const kernel = processKernel();
+			const cell = await runJavaScriptCell(
+				kernel,
+				[
+					`await Bun.spawn([${JSON.stringify(productChild())}, "-e", 'process.stdout.write("x")'], { stdout: "inherit" }).exited;`,
+					'const child = Bun.spawnSync(["head", "-c", "4000000", "/dev/zero"], { stdout: "inherit" });',
+					"return child.exitCode",
+				].join("\n"),
+			);
+			expect(cell.result).toMatchObject({ ok: true, valueRepr: "0" });
+			const text = cell.messages.flatMap((message) => (message.type === "text" ? [message.data] : [])).join("");
+			expect(text.split("\0").length - 1).toBe(4_000_000);
+			const next = await runJavaScriptCell(kernel, "return 1 + 1");
+			expect(next.result).toMatchObject({ ok: true, valueRepr: "2" });
+		},
+		60_000,
+	);
+
+	itProcessMode(
 		"still starts and runs cells when libc cannot be loaded, instead of exiting before it can report why",
 		async () => {
 			const dir = await trackedTempRoot("senpi-libc-fault-");
