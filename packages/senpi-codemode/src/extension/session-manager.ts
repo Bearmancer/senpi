@@ -4,11 +4,12 @@ import { readProcessFootprint } from "@code-yeongyu/senpi";
 import { type BridgeServerHandle, startBridgeServer } from "../bridge/http-server.ts";
 import type { KernelToHostMessage } from "../bridge/protocol.ts";
 import type { CompletionRequest, CompletionResult } from "../completion/handler.ts";
-import { resolveJsIsolation } from "../config/feature-settings.ts";
+import { resolveJsIsolation, resolveKernelToolsEnabled } from "../config/feature-settings.ts";
 import { resolveKernelMemoryThresholds } from "../config/memory-settings.ts";
 import { collectOrphanedChildren } from "../host-sdk.ts";
 import { JavaScriptKernel } from "../kernels/js/context-manager.ts";
 import type { KernelToolsCapability, KernelToolsDescribeResult } from "../kernels/js/kernel-tools-types.ts";
+import type { SessionEnvironment } from "../kernels/session-env.ts";
 import type { KernelLifecycle } from "../kernels/shared/kernel-death.ts";
 import type { EvalKernel, EvalLanguage } from "../tool/types.ts";
 import { type BridgeDispatchContext, dispatchBridgeCompletion } from "./bridge-dispatch.ts";
@@ -269,6 +270,7 @@ class DefaultCodemodeSessionManager implements CodemodeSessionManager {
 				...(processIsolation && memoryThresholds !== undefined
 					? { processMemory: { thresholds: memoryThresholds, readFootprint: readProcessFootprint } }
 					: {}),
+				...(resolveKernelToolsEnabled(this.#options.settings) ? {} : { kernelToolsEnabled: false }),
 				...(this.#options.sessionEnv ? { sessionEnv: this.#options.sessionEnv } : {}),
 				...(localRoots ? { localRoots: { ...localRoots } } : {}),
 				...(this.#options.artifactsDir ? { artifactsDir: this.#options.artifactsDir } : {}),
@@ -284,10 +286,14 @@ class DefaultCodemodeSessionManager implements CodemodeSessionManager {
 			...(localRoots ? { localRoots: { ...localRoots } } : {}),
 			...(this.#options.artifactsDir ? { artifactsDir: this.#options.artifactsDir } : {}),
 		};
+		// The Python prelude reads this when a cell defines an @tool; only a disabled setting adds it.
+		const sessionEnv: SessionEnvironment | undefined = resolveKernelToolsEnabled(this.#options.settings)
+			? this.#options.sessionEnv
+			: { ...this.#options.sessionEnv, SENPI_CODEMODE_KERNEL_TOOLS: "0" };
 		const shared = {
 			sessionId: this.#options.sessionId,
 			cwd: this.#options.cwd,
-			...(this.#options.sessionEnv ? { sessionEnv: this.#options.sessionEnv } : {}),
+			...(sessionEnv ? { sessionEnv } : {}),
 			connection,
 			onMessage,
 			...lifecycle,

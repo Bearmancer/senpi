@@ -43,6 +43,8 @@ export interface JavaScriptKernelOptions {
 	};
 	/** Host tool names denied as JS kernel-tool identifiers (init protocol). */
 	readonly hostToolNames?: KernelToolNameSource;
+	/** `kernelTools.enabled`; false makes `tool(fn)` refuse with `tools_unavailable`. Unset keeps them on. */
+	readonly kernelToolsEnabled?: boolean;
 	/** Tool names registered in another kernel language, denied as JS kernel-tool identifiers. */
 	readonly foreignLanguageNames?: KernelToolNameSource;
 	/** Post-cell collection, notice, and ceiling thresholds; absent leaves the worker's memory unmanaged. */

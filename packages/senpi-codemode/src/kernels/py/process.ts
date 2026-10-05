@@ -1,4 +1,6 @@
 import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
+import { isAbsolute } from "node:path";
 import type { Readable, Writable } from "node:stream";
 
 export interface KernelChild {
@@ -53,6 +55,8 @@ export function defaultSpawn(options: KernelSpawnOptions): KernelChild {
 }
 
 export function splitCommand(commandLine: string): { readonly command: string; readonly args: readonly string[] } {
+	// A configured interpreter path is one executable even when it contains spaces.
+	if (isAbsolute(commandLine) && existsSync(commandLine)) return { command: commandLine, args: [] };
 	const [command, ...args] = commandLine.split(" ").filter(Boolean);
 	if (!command) throw new Error("Python interpreter path is empty");
 	return { command, args };

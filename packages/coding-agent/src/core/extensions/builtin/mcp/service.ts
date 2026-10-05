@@ -806,6 +806,11 @@ export class McpService {
 		};
 	}
 
+	/** Live auth status without fetching catalogs or exposing credentials. */
+	getServerAuthStatus(name: string): McpWireAuthStatus {
+		return wireAuthStatus(this.#entryForName(name), this.#config?.servers[name]);
+	}
+
 	getCachedInstructions(name: string): string | undefined {
 		return this.#entryForName(name)?.cachedCatalog?.instructions;
 	}

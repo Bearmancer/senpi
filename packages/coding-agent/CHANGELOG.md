@@ -6,6 +6,22 @@
 
 ### Added
 
+- `/mcp` with no arguments opens an interactive server manager in the TUI: compact server rows with state-specific actions (enable/disable, exposure, test, reconnect, sign in/out), plus tool, detail and log views. Only trusted global and project servers can be edited, and edits change just `enabled`/`exposure` in the existing config file. Untrusted project, imported, extension and skill servers are read-only (Details and Logs). Non-TUI clients still get the status text ([#2716](https://github.com/code-yeongyu/senpi/issues/2716)).
+
+### Changed
+
+### Fixed
+
+- The `/btw` side panel renders its answer as Markdown, the same way assistant messages render in the transcript. Headings, bold, inline code, lists, and code blocks used to show as raw `##`, `**`, and backticks.
+
+### Removed
+
+## [2026.10.10] - 2026-10-05
+
+### Breaking Changes
+
+### Added
+
 - A single-session `--mode rpc` process accepts `set_retry_fallback` before its first turn is asked for (capability `retry_fallback_command`): the `open_session.retryFallback` profile for a caller that spawns one process per session, applied in memory only and kept by the process's later sessions. omo's task children that run as their own process (every Windows child, and `task.process_runner: "child-process"`) can now carry their category's fallback chain past a tool call without touching the user's settings file ([omo#9582](https://github.com/code-yeongyu/oh-my-openagent/issues/9582)).
 
 ### Changed

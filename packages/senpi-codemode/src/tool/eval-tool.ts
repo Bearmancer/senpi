@@ -1,6 +1,6 @@
 import type { AgentToolResult, ToolDefinition } from "@code-yeongyu/senpi";
 import type { TUnsafe } from "typebox";
-import { resolveSandbox } from "../config/feature-settings.ts";
+import { resolveAdvertiseHelpers, resolveSandbox } from "../config/feature-settings.ts";
 import {
 	DEFAULT_FOREGROUND_WINDOW_SECONDS,
 	defaultCodemodeSettings,
@@ -53,6 +53,7 @@ export function createEvalTool(options: CreateEvalToolOptions) {
 	const parameters = createEvalInputSchema(options.enabledLanguages, deadlines, { sandbox });
 	const prompt = buildEvalPrompt(options.enabledLanguages, {
 		spawns: options.spawns ?? false,
+		...(resolveAdvertiseHelpers(options.settings ?? defaultCodemodeSettings) ? { advertiseHelpers: true } : {}),
 		monitor: options.monitor,
 		maxDetachedCells,
 		runBudgetSeconds: deadlines.runBudgetSeconds,
