@@ -1,3 +1,22 @@
+## 2026-10-05 - Attribute shared compaction logs to a session (senpi#2778)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/compaction/log.ts`: logger options accept a session identity reader, evaluated when each event is emitted; `sessionId` is allowlisted.
+- `packages/coding-agent/src/core/extensions/builtin/compaction/index.ts`: the builtin supplies the current session identity.
+
+### Why
+
+- Several sessions share the agent-directory log and can reuse the same generation number. A nearby stale event without session identity cannot be attributed to the affected session.
+
+### Why an extension could not handle it
+
+- The compaction builtin owns the logger and its privacy allowlist.
+
+### Expected merge conflict zones
+
+- `log.ts`: logger options and allowed fields; `index.ts`: lazy logger construction.
+
 ## 2026-10-04 - The resident anthropic-subscription transcript stays append-only
 
 ### What changed
