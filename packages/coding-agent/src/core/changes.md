@@ -1,3 +1,21 @@
+## 2026-10-05 - Require explicit gateway fallback selectors (senpi#2774)
+
+### What changed
+
+- `packages/coding-agent/src/core/retry-fallback/expansion.ts`: exclude OpenGateway and Vercel AI Gateway from bare fallback key and candidate expansion, matching the existing OpenRouter policy. Explicit provider-qualified selectors remain supported.
+
+### Why
+
+- Authenticating a gateway for a selected model also makes its built-in catalog available. Bare model-family defaults must not treat those credentials as permission to route unrelated sessions through that gateway.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/retry-fallback/expansion.ts` owns candidate expansion for every AgentSession consumer, including extension-free SDK and RPC sessions.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/retry-fallback/expansion.ts`: the bare-expansion provider exclusion set.
+
 ## 2026-10-05 - A runtime's fallback policy can be set before its first turn (omo#9582)
 
 ### What changed
