@@ -1153,6 +1153,15 @@
 					"reason": "senpi#2788: the 'late' case swallowed Stop on a host-tool wait and then started a native shell; the released cell now refuses that shell, so the worker keeps its state instead of restarting. Replaced by 'keeps globals and refuses the shell when a cell swallows Stop and then starts a native shell'. Stopping a running Bun.$ wait still restarts (#2453 Decision A; the shell/text/lines cases are unchanged)."
 				}
 			]
+		},
+		"senpi#2831": {
+			"additions": [
+				"legacyContracts/test/eval-render-live-headline.test.ts/live eval rows stay one clean line (senpi#2831) Given a summary carrying escape and control characters when its live row renders then the row is one line with none of them",
+				"legacyContracts/test/eval-render-live-headline.test.ts/live eval rows stay one clean line (senpi#2831) Given a wide-character summary when its live row renders in a narrow terminal then the row fits the width in screen cells",
+				"legacyContracts/test/eval-render-live-headline.test.ts/live eval rows stay one clean line (senpi#2831) Given a peek or stop call still streaming without its cell id when it renders then the title has no undefined"
+			],
+			"changes": [],
+			"reason": "senpi#2831 (follow-ups from #2810's review): pins that a live row's summary is sanitized to one clean line, that the collapsed headline is measured and cut in screen cells so a wide-character summary stays on one line, and that a streaming peek/stop without its cell id renders the action alone instead of 'undefined'."
 		}
 	}
 }
