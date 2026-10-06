@@ -275,7 +275,8 @@ export class WorkerSessionRegistry {
 			entry.profile = frozenProfile({ ...entry.profile, browserEngine });
 			await entry.worker.setBrowserEngine(browserEngine);
 		}
-		if (permissionPreset !== undefined && permissionPreset !== entry.profile.permissionPreset) {
+		// Sent even when the record already names it: only the worker sees its live session (senpi#2842).
+		if (permissionPreset !== undefined) {
 			entry.profile = frozenProfile({ ...entry.profile, permissionPreset });
 			await entry.worker.setPermissionPreset(permissionPreset);
 		}
