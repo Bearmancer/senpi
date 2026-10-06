@@ -9,6 +9,7 @@
 - `visibleWidth` (a string's width in terminal cells) is exported for extensions that lay out their own rows ([#2831](https://github.com/code-yeongyu/senpi/issues/2831)).
 
 - A `show_html_page` tool (builtin `html-render` extension) lets a standalone senpi agent show a self-contained HTML page (chart, table, diagram, mockup): the page is prepared with the theme bootstrap injected, absolute-path local images inlined after a magic-byte check, and size caps enforced, then written to `.senpi/html-pages/` with an open-in-desktop hint. The written page opens as an offline snapshot: a Content-Security-Policy placed ahead of everything the page wrote refuses fetch, XHR, WebSockets and every remote script, style, image, font and frame. In an OmO desktop thread the desktop shows the page inline: the tool hands it over in its result details (never in the text the model reads), capped at 512,000 characters (omo-desktop-app#1724).
+- senpi now owns compaction on `anthropic-subscription` by default: speculative and idle compaction, restoration and the other compaction features run there with the session's own model, Claude Code's native auto-compact is off for the session so only one side compacts, and Claude Code's per-turn total-tokens reminder is turned off so the prompt cache keeps being reused. `anthropicSubscriptionProvider.compactionOwner: "sdk"` (or `SENPI_CLAUDE_SDK_OAUTH_COMPACTION_OWNER=sdk`) hands compaction back to Claude Code. Changing the owner mid-session restarts the resident Claude Code process on the next turn, and a failed senpi compaction ends the turn with its error instead of Claude Code compacting natively ([#2746](https://github.com/code-yeongyu/senpi/issues/2746)).
 
 ### Changed
 
@@ -89,7 +90,6 @@
 ### Added
 
 - A single-session `--mode rpc` process accepts `set_retry_fallback` before its first turn is asked for (capability `retry_fallback_command`): the `open_session.retryFallback` profile for a caller that spawns one process per session, applied in memory only and kept by the process's later sessions. omo's task children that run as their own process (every Windows child, and `task.process_runner: "child-process"`) can now carry their category's fallback chain past a tool call without touching the user's settings file ([omo#9582](https://github.com/code-yeongyu/oh-my-openagent/issues/9582)).
-- senpi now owns compaction on `anthropic-subscription` by default: speculative and idle compaction, restoration and the other compaction features run there with the session's own model, Claude Code's native auto-compact is off for the session so only one side compacts, and Claude Code's per-turn total-tokens reminder is turned off so the prompt cache keeps being reused. `anthropicSubscriptionProvider.compactionOwner: "sdk"` (or `SENPI_CLAUDE_SDK_OAUTH_COMPACTION_OWNER=sdk`) hands compaction back to Claude Code. Changing the owner mid-session restarts the resident Claude Code process on the next turn, and a failed senpi compaction ends the turn with its error instead of Claude Code compacting natively ([#2746](https://github.com/code-yeongyu/senpi/issues/2746)).
 
 ### Changed
 
