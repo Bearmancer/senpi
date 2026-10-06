@@ -6,6 +6,8 @@
 
 ### Added
 
+- A provider block in `models.json` accepts `hideFreeModels: true` to drop that provider's zero-cost models (`cost.input` and `cost.output` both `0`) from the catalog. The default is unchanged: free models stay visible ([#2720](https://github.com/code-yeongyu/senpi/issues/2720)).
+
 ### Changed
 
 ### Fixed

@@ -75,6 +75,29 @@
 
 - `agent-session-runtime.ts`: the `SessionRetryFallbackProfile` interface block and the setter block after `setBrowserEngine`.
 
+## 2026-10-04 - models.json `hideFreeModels` hides a provider's zero-cost models (senpi#2720)
+
+### What changed
+
+- `packages/coding-agent/src/core/provider-composer.ts`: `applyModelsJson()` drops every model of the provider whose `cost.input` and `cost.output` are both `0` when the provider block sets `hideFreeModels: true`, and the "must specify ..." guard counts `hideFreeModels` so a block with only that key is valid.
+- `packages/coding-agent/src/core/model-config-schema.ts` (fork-owned): `ProviderConfigSchema` gains optional boolean `hideFreeModels` next to `whitelist` / `blacklist`.
+
+### Why
+
+- Zen free-tier models (cost 0) are listed and selectable but every request returns 403 `FreeTierError`. `blacklist` takes exact ids and cannot express "cost is zero"; `big-pickle` has no `-free` suffix. One provider-scoped switch hides the class and keeps working when a catalog refresh adds a new free id.
+
+### Why an extension could not handle it
+
+- The `whitelist` / `blacklist` filter runs inside `applyModelsJson()` while the provider catalog is composed, before any extension hook sees the models. Every catalog consumer (`/model`, `--list-models`, startup selection, `enabledModels` / `favoriteModels`) reads that composed list, so the filter has to live there.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/provider-composer.ts`: the guard in `applyModelsJson()` and the final `models.filter(...)` that applies `whitelist` / `blacklist`.
+
+### Must not break
+
+- A provider without `hideFreeModels: true` keeps its zero-cost models, including custom local providers (Ollama, LM Studio, vLLM) whose models default to cost 0.
+
 ## 2026-10-04 - continue_from_leaf acknowledges at turn admission, not turn end (senpi#2708)
 
 ### What changed
