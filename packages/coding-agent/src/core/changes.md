@@ -1,3 +1,24 @@
+## 2026-10-06 - The retry watchdog stops once the retried request streams (senpi#2804)
+
+### What changed
+
+- `packages/coding-agent/src/core/provider-timeout-retry.ts`: `runBoundedRetryContinuation` takes `onStreamStarted` and clears its watchdog at the retried request's first stream event. Before that it bounded the whole continuation.
+- `packages/coding-agent/src/core/agent-session.ts`: `_continueAgentAfterCurrentRun` passes the first assistant `message_start` of the continuation as that event. `providerRetryWatchdogAbortMessage` now reads "The retried request never started streaming after Ns.", with `retry.provider.streamStartTimeoutMs` only as a hint.
+- `packages/coding-agent/test/suite/regressions/provider-idle-recovery.test.ts`: a retry that streams and then works for three times the bound completes (fails on main). A user abort during a streaming retry still ends as the user's abort. The existing no-first-event and budget tests keep the abort at the bound; their message assertions now use the new wording.
+
+### Why
+
+The watchdog (`max(streamRetryTimeoutMs, 1.1 x streamStartTimeoutMs)`, 660 s with the defaults) ran around the entire `agent.continue()`. A retried turn that was visibly working (streaming, running tools) for longer than that was aborted with "Provider retry continuation watchdog timed out after 660000ms".
+
+### Why an extension could not handle it
+
+The watchdog wraps the session's own retry continuation inside `AgentSession`; no extension hook sees or owns that timer.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/agent-session.ts`: the `runBoundedRetryContinuation` call in `_continueAgentAfterCurrentRun` and `providerRetryWatchdogAbortMessage`.
+- `packages/coding-agent/src/core/provider-timeout-retry.ts`: `BoundedRetryContinuation` and `runBoundedRetryContinuation`.
+
 ## 2026-10-05 - A reload requested while session_start is dispatching is deferred (senpi#2719)
 
 ### What changed
