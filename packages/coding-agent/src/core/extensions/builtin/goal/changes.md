@@ -1,5 +1,25 @@
 # goal Extension Changes
 
+## 2026-10-06 - A GPT-6 Astra receiver gets the goal contract without the completion audit (senpi#2796)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/goal/prompt.ts`: `buildContinuationPrompt(goal, { modelId })` renders a shorter prompt when the receiver is `gpt-6-astra` or `gpt-6-astra-fast` (a provider prefix is tolerated; `isGpt6AstraReceiver`): the untrusted objective, the four legal turn endings, and the blocked floor `update_goal` enforces. The completion audit, the no-progress check, and the usage lines are not rendered for that receiver. Every other model id, and an undefined one, renders exactly the previous prompt.
+- `lifecycle-helpers.ts` and `monitor-continuation.ts`: the two continuation call sites pass `ctx.model?.id`.
+- `test/suite/goal-modules.test.ts`: the Astra receiver drops the audit and stays under half the default length while keeping the contract lines; Sol, 6.1 Sol, Luna, Claude, Kimi, a near-miss id, and `undefined` render `toBe` the unpinned prompt.
+
+### Why
+
+- The audit's "uncertainty means not achieved - gather stronger evidence" line is unpassable for a model whose prior is already to verify broadly; on a 12-hour session it was injected 46 times and every wake added a gate to the todo list. Other models were not observed doing this, so they keep the audit.
+
+### Why an extension could not handle it
+
+- The continuation prompt is built inside this builtin's wake path.
+
+### Expected merge conflict zones
+
+- `prompt.ts`: the top of the file and the new function after `buildContinuationPrompt`; the two `buildContinuationPrompt(goal` call sites.
+
 ## 2026-10-05 - Record the actual wake trigger and label cache accounting (senpi#2778)
 
 ### What changed

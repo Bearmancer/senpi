@@ -183,6 +183,42 @@ describe("goal continuation prompt (budget-free)", () => {
 	});
 });
 
+describe("goal continuation prompt per receiving model", () => {
+	const goal = makeGoal({ objective: "Fix <bug> & ship", tokensUsed: 5, timeUsedSeconds: 12 });
+
+	it("drops the completion audit and usage lines for a GPT-6 Astra receiver while keeping the goal contract", () => {
+		for (const modelId of ["gpt-6-astra", "openai/gpt-6-astra-fast", "chatgpt-subscription/gpt-6-astra"]) {
+			const prompt = buildContinuationPrompt(goal, { modelId });
+			expect(prompt).toContain("<untrusted_objective>");
+			expect(prompt).toContain("Fix &lt;bug&gt; &amp; ship");
+			expect(prompt).not.toContain("Completion audit");
+			expect(prompt).not.toContain("No-progress check");
+			expect(prompt).not.toContain("Usage so far:");
+			expect(prompt).not.toContain("uncertainty");
+			expect(prompt).toContain('update_goal with status "complete"');
+			expect(prompt).toContain("three goal turns");
+			expect(prompt).toContain("question tool (request_user_input / ask_user_question)");
+			expect(prompt).toContain("let it wake the goal");
+			expect(prompt.length).toBeLessThan(buildContinuationPrompt(goal).length / 2);
+		}
+	});
+
+	it("renders every other receiver, and an unknown one, exactly as the unpinned prompt", () => {
+		const unpinned = buildContinuationPrompt(goal);
+		for (const modelId of [
+			"gpt-6-sol",
+			"openai/gpt-6.1-sol",
+			"gpt-6-luna",
+			"claude-opus-5-5",
+			"kimi-k3",
+			"gpt-6-astra-preview",
+			undefined,
+		]) {
+			expect(buildContinuationPrompt(goal, { modelId })).toBe(unpinned);
+		}
+	});
+});
+
 describe("goal truncation recovery prompt", () => {
 	it("stays short and re-injects no objective text or audit blocks", () => {
 		const prompt = buildTruncationRecoveryPrompt();
