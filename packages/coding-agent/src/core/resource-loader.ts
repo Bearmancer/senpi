@@ -1,4 +1,13 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
+import {
+	existsSync,
+	mkdirSync,
+	readdirSync,
+	readFileSync,
+	realpathSync,
+	statSync,
+	unlinkSync,
+	writeFileSync,
+} from "node:fs";
 import { basename, dirname, join, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { detectCapabilities, getTerminalColorMode, type TerminalColorMode } from "@earendil-works/pi-tui";
@@ -272,6 +281,13 @@ function getGlobalDefaultExtensionShimPath(agentDir: string, extensionId: Global
 	return join(agentDir, "extensions", `${extensionId}.js`);
 }
 
+function isGlobalDefaultExtensionShimLocation(extensionPath: string, agentDir: string): boolean {
+	const resolvedExtensionPath = resolve(extensionPath);
+	return globalDefaultExtensionIds.some(
+		(extensionId) => resolvedExtensionPath === resolve(getGlobalDefaultExtensionShimPath(agentDir, extensionId)),
+	);
+}
+
 function findGeneratedGlobalDefaultExtensionId(
 	extensionPath: string,
 	agentDir: string,
@@ -289,10 +305,51 @@ function findGeneratedGlobalDefaultExtensionId(
 	return undefined;
 }
 
+/** The module a generated shim re-exports, when it is a generated shim whose target no longer exists. */
+function deadGeneratedShimTarget(content: string): string | undefined {
+	if (!isGeneratedGlobalDefaultExtensionShim(content)) return undefined;
+	const specifier = /export \{ default \} from ("[^"\n]*");/.exec(content)?.[1];
+	if (specifier === undefined) return undefined;
+	let target: string;
+	try {
+		const parsed = JSON.parse(specifier) as string;
+		target = parsed.startsWith("file:") ? fileURLToPath(parsed) : parsed;
+	} catch {
+		return undefined;
+	}
+	return existsSync(target) ? undefined : target;
+}
+
+function removeDeadGeneratedShim(shimPath: string): void {
+	let content: string;
+	try {
+		content = readFileSync(shimPath, "utf-8");
+	} catch {
+		return;
+	}
+	if (deadGeneratedShimTarget(content) === undefined) return;
+	try {
+		unlinkSync(shimPath);
+	} catch {
+		// The loader skips a dead generated shim on its own; a failed removal only retries next start.
+	}
+}
+
+// A generated shim whose target is gone stands for "load the default extension" from an install that no
+// longer exists. Importing it can only fail with "Cannot find module", so it is skipped without an error.
+const skipDeadGeneratedShim: ExtensionFactory = () => {};
+
 function resolveGeneratedGlobalDefaultExtensionFactory(
 	extensionPath: string,
 	agentDir: string,
 ): ExtensionFactory | undefined {
+	if (isGlobalDefaultExtensionShimLocation(extensionPath, agentDir)) {
+		try {
+			if (deadGeneratedShimTarget(readFileSync(extensionPath, "utf-8")) !== undefined) return skipDeadGeneratedShim;
+		} catch {
+			// Unreadable: let the regular load report it.
+		}
+	}
 	const extensionId = findGeneratedGlobalDefaultExtensionId(extensionPath, agentDir);
 	if (!extensionId) {
 		return undefined;
@@ -883,11 +940,14 @@ export class DefaultResourceLoader implements ResourceLoader {
 
 		for (const extensionId of globalDefaultExtensionIds) {
 			const modulePath = getGlobalDefaultExtensionModulePath(extensionId);
+			const targetPath = getGlobalDefaultExtensionShimPath(this.agentDir, extensionId);
 			if (!existsSync(modulePath)) {
+				// This engine has no on-disk builtin to point a shim at (a compiled binary). A shim an
+				// earlier install generated, whose target is gone, can only fail to load: remove it (#2765).
+				removeDeadGeneratedShim(targetPath);
 				continue;
 			}
 
-			const targetPath = getGlobalDefaultExtensionShimPath(this.agentDir, extensionId);
 			const shim = buildGlobalDefaultExtensionShim(modulePath);
 			if (existsSync(targetPath)) {
 				const existing = readFileSync(targetPath, "utf-8");

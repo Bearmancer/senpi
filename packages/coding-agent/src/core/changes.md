@@ -1,3 +1,22 @@
+## 2026-10-06 - Stale generated global-default extension shims no longer fail every start (senpi#2765)
+
+### What changed
+
+- `packages/coding-agent/src/core/resource-loader.ts`: `ensureGlobalDefaultExtensions()` removes a generated shim (any accepted banner) whose re-exported target no longer exists when this engine has no on-disk builtin to point it at, as in a compiled binary. Before, it skipped such an extension entirely, so the dead shim stayed. When a builtin exists, the existing rewrite still runs. The extension factory resolver also maps a banner-marked shim at `<agentDir>/extensions/<id>.js` whose target is missing to a no-op factory, in any agent dir, so the loader never imports it. A file without a generated banner is never read as a shim, rewritten or removed.
+- `packages/coding-agent/test/suite/regressions/2765-stale-generated-extension-shims.test.ts`: covers the rewrite with builtins present, the removal without builtins (no load errors), the silent skip in a non-default agent dir, and a user-authored file left byte-identical.
+
+### Why
+
+The shim records an absolute `file://` path into the install that wrote it. After an install-method change (npm to bun, or to the standalone binary) that path is gone, and every start reported `Extension load errors: Cannot find module` for the four default extensions.
+
+### Why an extension could not handle it
+
+The shims are generated and loaded by the resource loader itself, before any extension runs.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/resource-loader.ts`: `ensureGlobalDefaultExtensions()` and the helpers above `resolveGeneratedGlobalDefaultExtensionFactory()`.
+
 ## 2026-10-06 - The retry watchdog stops once the retried request streams (senpi#2804)
 
 ### What changed
