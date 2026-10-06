@@ -1,3 +1,24 @@
+## 2026-10-06 - `interrupt` on a host session; model data shared with the terminal endpoint (oh-my-openagent#9660)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`:
+  - a new `interrupt { turnId? }` command stops the running turn and answers `{ interrupted, turnId? }` once the turn settled;
+  - `get_available_models` and the session-scope thinking-level refusal use `session-control-actions-data.ts` (new), which the terminal control endpoint uses too.
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: the `interrupt` command and its response.
+
+### Why
+
+- `thread_interrupt` sent `interrupt`, which no endpoint implemented, so it could never report `interrupted` with a turn id. A host and a terminal now answer the same shapes.
+
+### Why an extension could not handle it
+
+- The RPC command switch and its wire types belong to the connection handler.
+
+### Expected merge conflict zones
+
+- LOW: the `get_available_models` case, the turn-scope `set_thinking_level` refusal, and the new `interrupt` case in `connection-handler.ts`; the command and response unions in `rpc-types.ts`.
+
 ## 2026-10-05 - Refresh model availability after another session changes credentials (senpi#2769)
 
 ### What changed
