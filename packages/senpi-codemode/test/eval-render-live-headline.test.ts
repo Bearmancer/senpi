@@ -133,4 +133,11 @@ describe("live eval rows stay one clean line (senpi#2831)", () => {
 		expect(lines[0]).not.toMatch(/[\u001b\r\t]/u);
 		expect(lines[0]).toMatch(/^╶─ . .*await step\(\).*hidden.*more · eval js running/u);
 	});
+
+	it("Given a cell without a summary whose first code line is only escape and control characters when its live row renders then the headline is the next line with content (senpi#2850)", () => {
+		const lines = render(liveResult({ code: "\u001b[0m\r\nreal()\nlater()", output: "" }));
+
+		expect(lines).toHaveLength(1);
+		expect(lines[0]).toMatch(/^╶─ . real\(\) · eval js running/u);
+	});
 });

@@ -21,6 +21,7 @@ beforeAll(async () => {
 });
 
 afterEach(async () => {
+	Reflect.deleteProperty(globalThis, "__senpiCounted");
 	await Promise.all(roots.splice(0).map(async (root) => await rm(root, { recursive: true, force: true })));
 });
 

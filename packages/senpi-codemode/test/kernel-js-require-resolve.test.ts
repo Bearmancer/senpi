@@ -6,8 +6,8 @@ import { afterEach, describe, expect, it } from "vitest";
 import { JavaScriptKernel, type JavaScriptKernelOptions } from "../src/kernels/js/context-manager.ts";
 import { parseJavaScriptResult, runJavaScriptCell } from "./eval/js-kernel-harness.ts";
 
-// The cell-global `require` matches Node's `require`: `resolve`, `resolve.paths` and `cache` exist, and `resolve` uses
-// the same order as the call itself (the project, then the managed package environment, then builtins).
+// The cell-global `require` matches Node's `require`: `resolve`, `resolve.paths` and `cache` exist, and the call and
+// `resolve` share one lookup (builtins natively, then the project, then the managed package environment).
 const kernels = new Set<JavaScriptKernel>();
 const roots: string[] = [];
 
@@ -43,9 +43,12 @@ const modes: [string, (cwd: string) => Partial<JavaScriptKernelOptions> | undefi
 ];
 
 describe.each(modes)("the cell-global require in %s mode (senpi#2832)", (_mode, options) => {
-	async function kernelIn(cwd: string): Promise<JavaScriptKernel | undefined> {
+	// A mode whose runtime is missing (process mode without bun on PATH) is reported as skipped, never as a pass.
+	const unavailable = options("") === undefined;
+	async function kernelIn(cwd: string): Promise<JavaScriptKernel> {
 		const extra = options(cwd);
-		if (extra === undefined) return undefined;
+		// Unreachable while the skip guard holds; a missing runtime must never fall back to worker defaults.
+		if (extra === undefined) throw new Error("this mode's runtime is unavailable; the case should have been skipped");
 		const kernel = new JavaScriptKernel({
 			sessionId: `require-${crypto.randomUUID()}`,
 			cwd,
@@ -56,42 +59,48 @@ describe.each(modes)("the cell-global require in %s mode (senpi#2832)", (_mode, 
 		return kernel;
 	}
 
-	it("Given a project package and a relative file when a cell calls require.resolve then it gets the absolute paths the call itself would load", async () => {
-		const cwd = await project();
-		const kernel = await kernelIn(cwd);
-		if (kernel === undefined) return;
-		const run = await runJavaScriptCell(
-			kernel,
-			'return [require.resolve("cjs-dep"), require.resolve("./local.cjs"), require.resolve("node:path")]',
-		);
-		expect(parseJavaScriptResult(run.result)).toEqual([
-			join(cwd, "node_modules", "cjs-dep", "index.js"),
-			join(cwd, "local.cjs"),
-			"node:path",
-		]);
-	});
+	it.skipIf(unavailable)(
+		"Given a project package and a relative file when a cell calls require.resolve then it gets the absolute paths the call itself would load",
+		async () => {
+			const cwd = await project();
+			const kernel = await kernelIn(cwd);
+			const run = await runJavaScriptCell(
+				kernel,
+				'return [require.resolve("cjs-dep"), require.resolve("./local.cjs"), require.resolve("node:path")]',
+			);
+			expect(parseJavaScriptResult(run.result)).toEqual([
+				join(cwd, "node_modules", "cjs-dep", "index.js"),
+				join(cwd, "local.cjs"),
+				"node:path",
+			]);
+		},
+	);
 
-	it("Given a module that does not exist when a cell calls require.resolve then the runtime's not-found error names it", async () => {
-		const cwd = await project();
-		const kernel = await kernelIn(cwd);
-		if (kernel === undefined) return;
-		const run = await runJavaScriptCell(
-			kernel,
-			'try { require.resolve("no-such-pkg"); return "resolved" } catch (error) { return [error.code, String(error.message).includes("no-such-pkg")] }',
-		);
-		expect(parseJavaScriptResult(run.result)).toEqual(["MODULE_NOT_FOUND", true]);
-	});
+	it.skipIf(unavailable)(
+		"Given a module that does not exist when a cell calls require.resolve then the runtime's not-found error names it",
+		async () => {
+			const cwd = await project();
+			const kernel = await kernelIn(cwd);
+			const run = await runJavaScriptCell(
+				kernel,
+				'try { require.resolve("no-such-pkg"); return "resolved" } catch (error) { return [error.code, String(error.message).includes("no-such-pkg")] }',
+			);
+			expect(parseJavaScriptResult(run.result)).toEqual(["MODULE_NOT_FOUND", true]);
+		},
+	);
 
-	it("Given a cell when it reads require.resolve.paths and require.cache then both exist, and the cache holds a module the cell required", async () => {
-		const cwd = await project();
-		const kernel = await kernelIn(cwd);
-		if (kernel === undefined) return;
-		const run = await runJavaScriptCell(
-			kernel,
-			'require("cjs-dep"); const paths = require.resolve.paths("cjs-dep"); return [Array.isArray(paths) && paths.includes(require("node:path").join(process.cwd(), "node_modules")), typeof require.cache, Object.keys(require.cache).some((key) => key.endsWith("cjs-dep/index.js"))]',
-		);
-		expect(parseJavaScriptResult(run.result)).toEqual([true, "object", true]);
-	});
+	it.skipIf(unavailable)(
+		"Given a cell when it reads require.resolve.paths and require.cache then both exist, and the cache holds a module the cell required",
+		async () => {
+			const cwd = await project();
+			const kernel = await kernelIn(cwd);
+			const run = await runJavaScriptCell(
+				kernel,
+				'require("cjs-dep"); const paths = require.resolve.paths("cjs-dep"); return [Array.isArray(paths) && paths.includes(require("node:path").join(process.cwd(), "node_modules")), typeof require.cache, Object.keys(require.cache).some((key) => key.endsWith("cjs-dep/index.js"))]',
+			);
+			expect(parseJavaScriptResult(run.result)).toEqual([true, "object", true]);
+		},
+	);
 });
 
 describe.skipIf(bun === undefined)("the cell-global require under Bun, the product's runtime (senpi#2832)", () => {

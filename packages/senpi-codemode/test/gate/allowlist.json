@@ -1185,7 +1185,13 @@
 				"legacyContracts/test/kernel-js-require-order.test.ts/the cell's require lookup order (senpi#2832) Given a module a cell required when its cache entry is deleted then the next require loads it again",
 				"legacyContracts/test/kernel-js-require-resolve.test.ts/the cell-global require under Bun, the product's runtime (senpi#2832) Given a Bun builtin when a process-mode cell resolves and requires it then the id is Bun's own and it loads"
 			],
-			"reason": "senpi#2832: the cell-global require carries resolve, resolve.paths and cache like Node's own require; resolve follows the same order as the call (project, then managed package environment, then builtins). The six contracts fail before the fix ('require.resolve is not a function'). Round 2 (review 5434200346): the call loads exactly what require.resolve names, so the two cannot pick different copies; builtins resolve natively (Bun's bun:sqlite too); the order contracts run against createCellRequire with real project and managed roots."
+			"reason": "senpi#2832: the cell-global require carries resolve, resolve.paths and cache like Node's own require; the call and resolve share one lookup (builtins natively, then the project, then the managed package environment). The six contracts fail before the fix ('require.resolve is not a function'). Round 2 (review 5434200346): the call loads exactly what require.resolve names, so the two cannot pick different copies; builtins resolve natively (Bun's bun:sqlite too); the order contracts run against createCellRequire with real project and managed roots."
+		},
+		"senpi#2850": {
+			"additions": [
+				"legacyContracts/test/eval-render-live-headline.test.ts/live eval rows stay one clean line (senpi#2831) Given a cell without a summary whose first code line is only escape and control characters when its live row renders then the headline is the next line with content (senpi#2850)"
+			],
+			"reason": "senpi#2850: a summary-less live row skips a first code line that sanitizes to nothing; the contract fails before the change (the row shows only the ellipsis)."
 		}
 	}
 }
