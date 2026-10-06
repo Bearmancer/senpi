@@ -10,6 +10,8 @@
 
 ### Fixed
 
+- A reload requested while a reload's `session_start` handlers are still running is deferred (`A session is starting.`) instead of retiring the runner mid-dispatch. Later `session_start` handlers no longer fail with `stale extension generation after reload` ([#2719](https://github.com/code-yeongyu/senpi/issues/2719)).
+
 ### Removed
 
 ## [2026.10.10-2] - 2026-10-05

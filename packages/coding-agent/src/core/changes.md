@@ -1,3 +1,26 @@
+## 2026-10-05 - A reload requested while session_start is dispatching is deferred (senpi#2719)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `_rebuildRuntimeForReload()` sets `_sessionStartDispatching` for the whole `session_start` settlement (`beforeSessionStart`, the emit, `extendResourcesFromExtensions`) and clears it in the existing `finally`. `checkReloadVeto()` passes it to `checkSessionReloadVeto()`.
+- `packages/coding-agent/src/core/reload-veto.ts`: `checkSessionReloadVeto()` takes an optional `isSessionStartDispatching` predicate and vetoes with "A session is starting." before and after the `session_before_reload` emit, like the existing prompt-admission veto.
+
+### Why
+
+- config-reload requests a second reload from inside its own `session_start` handler when files changed during the first. The nested reload shut down and invalidated the runner whose later `session_start` handlers (MCP attach, memory reconcile) were still running, so their first `ctx` read threw "stale extension generation after reload". The veto defers the nested request through config-reload's existing `reload_deferred` / `armVetoRecheck` path, which reloads once after dispatch ends.
+
+### Why an extension could not handle it
+
+- The dispatch state is private to `AgentSession`; an extension cannot know that its own handler is running inside a reload's `session_start` dispatch.
+
+### Expected merge conflict zones
+
+- `agent-session.ts`: the `_promptStartPending` field block, the `hasBindings` block of `_rebuildRuntimeForReload()`, and `checkReloadVeto()`.
+
+### Must not break
+
+- A reload requested while no `session_start` dispatch is running (`/reload`, config-reload after dispatch, prompt-admission veto) behaves as before.
+
 ## 2026-10-05 - Resume queued work after failed extension feedback (senpi#2778)
 
 ### What changed
