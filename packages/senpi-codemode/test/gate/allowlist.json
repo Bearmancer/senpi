@@ -1043,6 +1043,31 @@
 					"reason": "senpi#2793 replaces the refusal with a cell-scoped binding: a declaration of a kernel or platform global name now persists for the user's cells while globalThis keeps the original, so the old refusal contract leaves the baseline; its replacement is listed under additions."
 				}
 			]
+		},
+		"senpi#2802": {
+			"additions": [
+				"legacyContracts/test/eval-render-summary.test.ts/eval summary display bounds the summary to the live frame's one-line headline (senpi#2802)",
+				"legacyContracts/test/eval-tool-execution-render.test.ts/eval summary in transcript frames Given a running eval with a summary when the frame renders then the header leads with the summary (senpi#2802)",
+				"legacyContracts/test/eval-render-live-headline.test.ts/live eval rows lead with the cell's summary (senpi#2802) Given a running cell when its row renders collapsed then the header leads with the summary, language and state, and the code is hidden",
+				"legacyContracts/test/eval-render-live-headline.test.ts/live eval rows lead with the cell's summary (senpi#2802) Given a queued and a detached cell when their rows render then both lead with the summary",
+				"legacyContracts/test/eval-render-live-headline.test.ts/live eval rows lead with the cell's summary (senpi#2802) Given a running cell when its row is expanded then the code is shown once and the summary is not repeated",
+				"legacyContracts/test/eval-render-live-headline.test.ts/live eval rows lead with the cell's summary (senpi#2802) Given a running cell without a summary when its row renders then the headline is its first code line, cut to the width",
+				"legacyContracts/test/eval-render-live-headline.test.ts/live eval rows lead with the cell's summary (senpi#2802) Given a running cell with no output yet when its row renders collapsed then it is one line with no empty frame",
+				"legacyContracts/test/eval-render-live-headline.test.ts/live eval rows lead with the cell's summary (senpi#2802) Given a completed cell when its row renders then it keeps the done header, the summary line and the code preview",
+				"legacyContracts/test/eval-render-live-headline.test.ts/live eval rows lead with the cell's summary (senpi#2802) Given a call still streaming with only code when it renders then it shows a headline row instead of failing",
+				"legacyContracts/test/eval-render-live-headline.test.ts/live eval rows lead with the cell's summary (senpi#2802) Given a complete call before its result arrives when it renders then it leads with the summary"
+			],
+			"reason": "senpi#2802: in-progress, queued and detached eval rows lead with the cell's summary (else the first code line), then the language, state and elapsed time, with the code behind expand; a call still streaming its arguments renders that headline instead of throwing into the host's raw key=value fallback. Completed rows are unchanged. The new contracts fail on main.",
+			"changes": [
+				{
+					"key": "legacyContracts/test/eval-render-summary.test.ts/eval summary display bounds the summary inside the live cell frame too",
+					"reason": "senpi#2802: an in-progress eval row now leads with the cell's summary on its header line instead of the summary line plus code below it; the same coverage moves to the renamed contract listed under additions."
+				},
+				{
+					"key": "legacyContracts/test/eval-tool-execution-render.test.ts/eval summary in transcript frames Given a running eval with a summary when the frame renders then the header drops the label segment and the summary sits under it",
+					"reason": "senpi#2802: an in-progress eval row now leads with the cell's summary on its header line instead of the summary line plus code below it; the same coverage moves to the renamed contract listed under additions."
+				}
+			]
 		}
 	}
 }
