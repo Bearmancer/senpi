@@ -1176,7 +1176,8 @@ registrant opens no socket and writes no registry directory.
     - `set_thinking_level { level, scope? }`: the thinking-level selector. `scope: "turn"` sets this session's
       level; otherwise the level is also remembered for the model (the selector's Ctrl+S). A level the active
       model cannot run is refused `Thinking level <level> is not supported by the active model.` and nothing
-      changes (a host clamps it instead for the session scope).
+      changes, for either scope. A host refuses it only for `scope: "turn"`; for the default scope a host clamps it
+      to a level the model runs.
     - `interrupt { turnId? }`: Esc on a running turn - queued input returns to the editor, the turn aborts and
       settles before the answer. Answers `{ interrupted: true, turnId }` with the `turn_epoch` it stopped. An idle
       session answers `{ interrupted: false }`; a `turnId` that is not the running turn answers

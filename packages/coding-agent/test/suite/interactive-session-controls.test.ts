@@ -185,6 +185,25 @@ describe.skipIf(process.platform === "win32")("a terminal session's controls ove
 		expect(harness.session.thinkingLevel).toBe(current);
 	});
 
+	it("remembers a level for the model only without scope turn, as the selector's Ctrl+S does", async () => {
+		const { harness, socket } = await controlledTerminal();
+		const model = harness.session.model;
+		if (model === undefined) throw new Error("no active model");
+		const levels = harness.session.getAvailableThinkingLevels().filter((level) => level !== "off");
+		const [first, second] = levels.filter((level) => level !== harness.session.thinkingLevel);
+		if (first === undefined || second === undefined)
+			throw new Error(`the reasoning model offers too few levels: ${levels}`);
+		const remembered = harness.settingsManager.getModelThinkingLevel(model.provider, model.id);
+
+		await controlData(socket, { type: "set_thinking_level", level: first, scope: "turn" });
+		expect(harness.session.thinkingLevel).toBe(first);
+		expect(harness.settingsManager.getModelThinkingLevel(model.provider, model.id)).toBe(remembered);
+
+		await controlData(socket, { type: "set_thinking_level", level: second });
+		expect(harness.session.thinkingLevel).toBe(second);
+		expect(harness.settingsManager.getModelThinkingLevel(model.provider, model.id)).toBe(second);
+	});
+
 	it("answers interrupted: false on an idle session and keeps it open", async () => {
 		const { harness, socket } = await controlledTerminal();
 		expect(await controlData(socket, { type: "interrupt" })).toEqual({ interrupted: false });
