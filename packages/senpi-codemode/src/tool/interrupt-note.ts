@@ -28,7 +28,7 @@ export async function describeTimeoutState(
 	else if (outcome.retained)
 		error.message = `${error.message} The kernel was not restarted; variables from earlier cells are kept.`;
 	else
-		error.message = `${error.message} The kernel did not respond and was restarted; variables from earlier cells are lost.`;
+		error.message = `${error.message} The kernel was restarted; variables from earlier cells are lost.`;
 	if (outcome?.note !== undefined) error.message = `${error.message} ${outcome.note.trim()}`;
 	return error;
 }
@@ -64,7 +64,7 @@ export function interruptionStateNote(language: EvalLanguage, stateRetained: boo
 	if (stateRetained === undefined) return undefined;
 	const label = LANGUAGE_LABEL[language];
 	if (stateRetained) return `The ${label} was not restarted; variables from earlier cells are kept.`;
-	return `The ${label} did not respond to the interrupt and was restarted; variables from earlier cells are lost.`;
+	return `The ${label} was restarted; variables from earlier cells are lost.`;
 }
 
 export function unknownInterruptionStateNote(language: EvalLanguage): string {
