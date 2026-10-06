@@ -46,9 +46,7 @@ function createEvalListResult(cellManager: EvalDetachedCellManager): AgentToolRe
 			language: snapshot.language,
 			state: snapshot.state,
 			startedAtMs: snapshot.startedAtMs,
-			...(snapshot.queuedBehind === undefined || snapshot.queuedBehind.length === 0
-				? {}
-				: { queuedBehind: [...snapshot.queuedBehind] }),
+			...(snapshot.queuedBehind === undefined ? {} : { queuedBehind: [...snapshot.queuedBehind] }),
 			...(summary ? { summary } : {}),
 		};
 	});
@@ -121,12 +119,6 @@ export function resultForDetachedState(
 ): AgentToolResult<EvalToolDetails> {
 	const details = result.details;
 	const cells = details.cells ?? [];
-	const content = settledFromLiveFrame(result, state)
-		? [
-				{ type: "text" as const, text: cells[0]?.output || "(no output)" },
-				...result.content.filter((part) => part.type === "image"),
-			]
-		: result.content;
 	const nextCells =
 		cells.length === 0
 			? []
@@ -141,7 +133,7 @@ export function resultForDetachedState(
 					};
 				});
 	return {
-		content: content.map((part) => ({ ...part })),
+		content: result.content.map((part) => ({ ...part })),
 		details: {
 			...details,
 			durationMs: terminalDuration(details, state, durationMs),
@@ -176,14 +168,6 @@ function queuedPhrase(queuedBehind: readonly string[], language: string): string
 	return queuedBehind.length === 0
 		? `waiting for the ${language} kernel to be ready`
 		: `queued behind ${queuedBehind.join(", ")}`;
-}
-
-// A cell cancelled or failed before its handler finished still carries the live progress frame ("1/1 cells running");
-// its terminal result shows the buffered output instead, so a stopped cell never reads as still running.
-function settledFromLiveFrame(result: AgentToolResult<EvalToolDetails>, state: EvalDetachedCellState): boolean {
-	if (state !== "cancelled" && state !== "failed") return false;
-	const status = result.details.cells?.[0]?.status;
-	return status === "running" || status === "queued" || status === "pending";
 }
 
 function textContent(result: AgentToolResult<EvalToolDetails>): string {

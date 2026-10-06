@@ -27,8 +27,7 @@ export async function describeTimeoutState(
 	if (outcome === undefined) error.message = fallbackTimeoutMessage(error.message);
 	else if (outcome.retained)
 		error.message = `${error.message} The kernel was not restarted; variables from earlier cells are kept.`;
-	else
-		error.message = `${error.message} The kernel was restarted; variables from earlier cells are lost.`;
+	else error.message = `${error.message} The kernel was restarted; variables from earlier cells are lost.`;
 	if (outcome?.note !== undefined) error.message = `${error.message} ${outcome.note.trim()}`;
 	return error;
 }

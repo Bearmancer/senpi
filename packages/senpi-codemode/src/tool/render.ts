@@ -344,6 +344,8 @@ function cellHeader(cell: EvalCellResult, environment: RenderEnvironment, badges
 	let header = `eval ${cell.language}${runtimeBadge} ${presentation.label} ${presentation.icon}`;
 	if (cell.queuedBehind !== undefined && cell.queuedBehind.length > 0)
 		header += ` · queued behind ${cell.queuedBehind.map(sanitizeTerminalLabel).join(", ")}`;
+	else if (cell.queuedBehind !== undefined && cell.status === "queued")
+		header += ` · waiting for the ${cell.language} kernel to be ready`;
 	const throughputBadge = badges.throughput === undefined ? undefined : formatThroughputBadge(badges.throughput);
 	if (throughputBadge !== undefined) header += ` · ${throughputBadge}`;
 	const elapsedMs = badges.throughput?.wallDurationMs ?? cellElapsedMs(cell, environment);
