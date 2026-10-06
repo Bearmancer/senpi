@@ -600,6 +600,9 @@ return "done";`,
 		}
 	}, 30_000);
 
+	// The same Chrome launch budget as the worker-mode WebView tests (js-kernel-webview.test.ts): a loaded CI runner can
+	// take well over 20 s to start Chrome, and the cell's own timeout is what bounds a launch that never finishes.
+	const WEBVIEW_CELL_TIMEOUT_MS = 60_000;
 	// Bun.WebView exists only when the child runs under bun (the child runs on the host's own runtime); Windows has no
 	// process-mode WebView.
 	if (process.platform !== "win32" && bunChild !== undefined)
@@ -616,12 +619,12 @@ return "done";`,
 						`view.close();`,
 						`return { text, native: view instanceof Bun.WebView };`,
 					].join("\n"),
-					20_000,
+					WEBVIEW_CELL_TIMEOUT_MS,
 				);
 				const value = parseJavaScriptResult(cell.result);
 				expect(value).toEqual({ text: "process mode view", native: true });
 			},
-			60_000,
+			WEBVIEW_CELL_TIMEOUT_MS + 30_000,
 		);
 
 	it.each([["killed with SIGKILL"], ["exits without closing its kernel"], ["killed with SIGKILL while a cell spins"]])(
