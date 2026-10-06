@@ -26,6 +26,7 @@
 - `host-reservations.ts`: attachment publications are ordered per path; release waits for those writes and the real claim-file removal.
 - `session-registry.ts`: teardown and failed-open cleanup await that release before dropping the local reservation.
 - `session-teardown.ts`: close completion waits for reservation release before removing the entry.
+- `session-teardown.ts` `releaseWithinGrace`: that wait is bounded by `closeGraceMs`. A claim removal that rejects is reported; one that never settles (a wedged mount) is reported after the grace window and the close still completes. Failed-open rollback releases through the same bounded path (independent review MEDIUM).
 
 ### Why
 

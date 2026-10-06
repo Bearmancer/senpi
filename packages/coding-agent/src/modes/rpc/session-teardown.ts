@@ -58,6 +58,36 @@ export function beginSessionClose(
 	return entry;
 }
 
+/**
+ * Close waits for the claim file to be gone, but a removal that never settles (a wedged mount)
+ * must not hold the close past the grace window: the close completes and the failure is reported.
+ */
+export async function releaseWithinGrace(
+	host: Pick<SessionTeardownHost, "closeGraceMs" | "releaseReservation">,
+	handle: string,
+	key: string,
+): Promise<void> {
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	const late = new Promise<"late">((resolve) => {
+		timer = setTimeout(() => resolve("late"), host.closeGraceMs);
+	});
+	const removal = host.releaseReservation(key).then(
+		() => "removed" as const,
+		(cause: unknown) => {
+			reportDetachedFailure(handle, cause);
+			return "failed" as const;
+		},
+	);
+	const outcome = await Promise.race([removal, late]);
+	clearTimeout(timer);
+	if (outcome === "late") {
+		reportDetachedFailure(
+			handle,
+			new Error(`session path reservation was not removed within ${host.closeGraceMs} ms; closing anyway`),
+		);
+	}
+}
+
 export function closeSession(host: SessionTeardownHost, handle: string): Promise<void> {
 	const entry = beginSessionClose(host, handle);
 	if (entry.state !== "closing") return Promise.resolve();
@@ -98,7 +128,7 @@ export function closeMarkedSession(host: SessionTeardownHost, handle: string): P
 		if (released) return;
 		released = true;
 		if (releaseTimer) clearTimeout(releaseTimer);
-		if (entry.reservationKey) await host.releaseReservation(entry.reservationKey);
+		if (entry.reservationKey) await releaseWithinGrace(host, handle, entry.reservationKey);
 		entry.state = "closed";
 		host.delete(handle);
 	};
