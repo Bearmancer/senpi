@@ -51,6 +51,39 @@ describe("a delivered message in the terminal", () => {
 		expect(lines).toEqual(["Sent from the command line", "from the shell"]);
 	});
 
+	it("labels an external chat with its platform, and its author when it has one", () => {
+		expect(
+			delivered({ sender: { kind: "external", platform: "slack", author: "Jane" }, display_text: "ship it" }),
+		).toEqual(["Sent from slack · Jane", "ship it"]);
+		expect(delivered({ sender: { kind: "external", platform: "slack" }, display_text: "ship it" })[0]).toBe(
+			"Sent from slack",
+		);
+		expect(
+			delivered({ sender: { kind: "external", platform: "slack", author: "  " }, display_text: "ship it" })[0],
+		).toBe("Sent from slack");
+	});
+
+	it("falls back to the generic heading, never a wrong label, for a sender it cannot read", () => {
+		for (const sender of [
+			{ kind: "agent" },
+			{ kind: "agent", session_id: 7 },
+			{ kind: "external" },
+			{ kind: "automation", session_id: "01a1" },
+			"agent",
+			null,
+		]) {
+			const lines = delivered({ sender, display_text: "review the diff" });
+			expect(lines[0]).toBe("remote message · delivery d-1");
+			expect(lines.join("\n")).toContain("OMO_GATEWAY v=1");
+		}
+	});
+
+	it("falls back to the generic heading when a sender is named but the written text is not", () => {
+		const lines = delivered({ sender: { kind: "agent", session_id: "01a1", name: "planner" } });
+		expect(lines[0]).toBe("remote message · delivery d-1");
+		expect(lines.join("\n")).toContain("OMO_GATEWAY v=1");
+	});
+
 	it("keeps the generic heading and the full text for a delivery from a sender that names no sender", () => {
 		const lines = delivered({});
 		expect(lines[0]).toBe("remote message · delivery d-1");

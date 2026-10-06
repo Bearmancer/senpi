@@ -50,7 +50,7 @@ export function senderLabel(sender: SessionControlSender): string {
 		case "command_line":
 			return "Sent from the command line";
 		case "external":
-			return sender.author === undefined
+			return sender.author === undefined || sender.author.trim() === ""
 				? `Sent from ${sender.platform}`
 				: `Sent from ${sender.platform} · ${sender.author}`;
 	}
