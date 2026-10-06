@@ -1,24 +1,3 @@
-## 2026-10-06 - A forced tool_choice refused inside a 200 stream is retried (senpi#2801)
-
-### What changed
-
-- `packages/ai/src/utils/tool-choice-fallback.ts`: `primeStreamUntilContent` reads a forced request's stream until its first content (text, reasoning, a tool call or a finish), replaying what it read. An error the stream raises before that is marked as a request refusal, and `isForcedToolChoiceUnsupportedError` / `refusalNamesForcedTool` treat it like a 400. The existing rules apply unchanged: the known wordings, the forced-tool naming rule, one retry, and no memory for thinking-blamed refusals.
-- `packages/ai/src/api/openai-completions.ts`: the forced request's `send` primes its stream through `primeStreamUntilContent` (`chatChunkHasContent`). An unforced request's stream is untouched.
-- `packages/ai/test/openai-completions-tool-choice.test.ts`: the fake gateway can now answer 200 and raise in-band. Five new cases, three of which fail on main: an in-band refusal is retried once and the turn completes; a thinking-blamed one is not remembered; a second refusal surfaces once. Two guards: a refusal after content streamed is not retried (nothing is sent twice), and an unforced request is not retried.
-
-### Why
-
-A keepalive gateway serving Kimi K3 with thinking on answered the first-turn forced `todo` request with 200 and then `tool_choice 'specified' is incompatible with thinking enabled` in-band. The retry only wrapped the HTTP response, so the first turn ended in an error until the user typed `continue`.
-
-### Why an extension could not handle it
-
-The refusal has to be caught where the provider request is sent and its stream is opened, which is inside the AI package's provider implementation.
-
-### Expected merge conflict zones
-
-- `packages/ai/src/api/openai-completions.ts`: the `createRequest` call to `sendWithForcedToolChoiceFallback` and the helpers next to `isForcedOpenAICompletionsToolChoice`.
-- `packages/ai/src/utils/tool-choice-fallback.ts`: the status gate at the top of `isForcedToolChoiceUnsupportedError` and `refusalNamesForcedTool`.
-
 ## 2026-10-02 - OpenGateway catalog stays current: shared OpenAI input cap (senpi#2552)
 
 ### What changed
