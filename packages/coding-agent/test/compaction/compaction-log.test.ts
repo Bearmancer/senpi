@@ -127,6 +127,31 @@ describe("compaction logger", () => {
 		);
 	});
 
+	// senpi#2778: two sessions may write identical generations to the same log.
+	it("attributes interleaved events to their session at emission time", async () => {
+		const dir = createTempAgentDir("senpi-compaction-log-sessions-");
+		let firstSession = "session-a";
+		const first = createCompactionLogger(dir, { getSessionId: () => firstSession, mirrorToStderr: false });
+		const second = createCompactionLogger(dir, { getSessionId: () => "session-b", mirrorToStderr: false });
+		first.info("blocking_started", { generation: 34 });
+		second.info("blocking_started", { generation: 34 });
+		first.info("speculative_stale", { generation: 34 });
+		firstSession = "session-c";
+		first.info("blocking_started", { generation: 1 });
+		await flushCompactionLogs();
+
+		const entries = readFileSync(join(dir, "logs", "compaction.log"), "utf8")
+			.trim()
+			.split("\n")
+			.map((line: string) => JSON.parse(line));
+		expect(entries.map(({ event, sessionId }) => [event, sessionId])).toEqual([
+			["blocking_started", "session-a"],
+			["blocking_started", "session-b"],
+			["speculative_stale", "session-a"],
+			["blocking_started", "session-c"],
+		]);
+	});
+
 	it("Given a burst larger than the size cap When it settles Then neither file holds more than one cap of lines and the newest lines are kept", async () => {
 		const dir = createTempAgentDir("senpi-compaction-log-burst-rotate-");
 		const maxBytes = 400;

@@ -6,15 +6,30 @@
 
 ### Added
 
-- `/mcp` with no arguments opens an interactive server manager in the TUI: compact server rows with state-specific actions (enable/disable, exposure, test, reconnect, sign in/out), plus tool, detail and log views. Only trusted global and project servers can be edited, and edits change just `enabled`/`exposure` in the existing config file. Untrusted project, imported, extension and skill servers are read-only (Details and Logs). Non-TUI clients still get the status text ([#2716](https://github.com/code-yeongyu/senpi/issues/2716)).
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.10-2] - 2026-10-05
+
+### Breaking Changes
+
+### Added
+
+- `/mcp` with no arguments opens an interactive server manager in the TUI: compact server rows with state-specific actions (enable/disable, exposure, test, reconnect, sign in/out), plus tool, detail and log views. Only trusted global and project servers can be edited, and edits change just `enabled`/`exposure` in the existing config file. Untrusted project, imported, extension and skill servers are read-only (Details and Logs). Non-TUI clients still get the status text ([#2716](https://github.com/code-yeongyu/senpi/issues/2716), [#2747](https://github.com/code-yeongyu/senpi/pull/2747) by [@wuhaoyujerry](https://github.com/wuhaoyujerry)).
 
 ### Changed
 
 ### Fixed
 
-- A project whose `.senpi/codemode.json` sets a setting that names an executable (today `languages.pyInterpreter`) now asks for project trust before the session starts, like a project `mcp.json`; before, such a project counted as trusted without asking, so the interpreter it named ran at session start.
+- Goal continuations queued during compaction now resume after a stale or failed summary. Cancellation and context-limit checks still apply ([#2778](https://github.com/code-yeongyu/senpi/issues/2778)).
+- Wake notices distinguish timer backstops from finished background work and label cache figures as cumulative estimates. Compaction logs identify the session ([#2778](https://github.com/code-yeongyu/senpi/issues/2778)).
+- Bare model-family fallback no longer silently selects OpenGateway or Vercel AI Gateway when those providers have credentials. Like OpenRouter, these gateways require an explicit provider-qualified fallback selector ([#2774](https://github.com/code-yeongyu/senpi/issues/2774)).
+- A project whose `.senpi/codemode.json` sets a setting that names an executable (today `languages.pyInterpreter`) now asks for project trust before the session starts, like a project `mcp.json`; before, such a project counted as trusted without asking, so the interpreter it named ran at session start ([#2772](https://github.com/code-yeongyu/senpi/pull/2772)).
 - RPC model lists now reflect credentials added or removed by another session without reopening the session, fixing an empty desktop model picker after connecting a provider ([#2769](https://github.com/code-yeongyu/senpi/issues/2769)).
-- The `/btw` side panel renders its answer as Markdown, the same way assistant messages render in the transcript. Headings, bold, inline code, lists, and code blocks used to show as raw `##`, `**`, and backticks.
+- The `/btw` side panel renders its answer as Markdown, the same way assistant messages render in the transcript. Headings, bold, inline code, lists, and code blocks used to show as raw `##`, `**`, and backticks ([#2766](https://github.com/code-yeongyu/senpi/pull/2766) by [@nahwan-kim](https://github.com/nahwan-kim)).
 
 ### Removed
 
