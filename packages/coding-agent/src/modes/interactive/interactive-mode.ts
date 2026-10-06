@@ -4001,8 +4001,8 @@ export class InteractiveMode {
 					return state !== undefined;
 				},
 				notice: (line) => this.showWarning(line),
-				selectModel: (model) => this.applyModelSelection(model),
-				selectThinkingLevel: (level, remember) => this.applyThinkingLevel(level, remember),
+				selectModel: (model) => InteractiveMode.applyModelSelection(this, model),
+				selectThinkingLevel: (level, remember) => InteractiveMode.applyThinkingLevel(this, level, remember),
 				interruptTurn: async () => {
 					await this.abortAndFireQueuedMessages();
 				},
@@ -7884,18 +7884,23 @@ export class InteractiveMode {
 	 */
 	private selectThinkingLevel(level: ThinkingLevel, persist: boolean): void {
 		try {
-			this.applyThinkingLevel(level, persist);
+			InteractiveMode.applyThinkingLevel(this, level, persist);
 		} catch (error) {
 			this.showError(error instanceof Error ? error.message : String(error));
 		}
 	}
 
-	private applyThinkingLevel(level: ThinkingLevel, persist: boolean): void {
-		if (persist) this.session.setThinkingLevel(level);
-		else this.session.setSessionThinkingLevel(level);
-		this.footer.invalidate();
-		this.updateEditorBorderColor();
-		this.showStatus(persist ? `Default thinking level: ${level}` : `Thinking level: ${level}`);
+	/**
+	 * The level switch itself; the control endpoint's `set_thinking_level` runs it too.
+	 * Static and called through the class, so a handler invoked on a partial `this`
+	 * reaches exactly the members the switch uses.
+	 */
+	private static applyThinkingLevel(mode: InteractiveMode, level: ThinkingLevel, persist: boolean): void {
+		if (persist) mode.session.setThinkingLevel(level);
+		else mode.session.setSessionThinkingLevel(level);
+		mode.footer.invalidate();
+		mode.updateEditorBorderColor();
+		mode.showStatus(persist ? `Default thinking level: ${level}` : `Thinking level: ${level}`);
 	}
 
 	private async showThinkingSelector(): Promise<void> {
@@ -7976,27 +7981,33 @@ export class InteractiveMode {
 		done?.();
 		this.ui?.requestRender();
 		try {
-			await this.applyModelSelection(model);
+			await InteractiveMode.applyModelSelection(this, model);
 		} catch (error) {
 			this.showError(error instanceof Error ? error.message : String(error));
 		}
 	}
 
-	/** The `/model` switch itself; the control endpoint's `set_model` runs it too, and reports a throw. */
-	private async applyModelSelection(model: Model<any>): Promise<SystemPromptChangeEvent | undefined> {
-		const systemPromptChange = await this.session.setModel(model);
-		this.footer.invalidate();
+	/**
+	 * The `/model` switch itself; the control endpoint's `set_model` runs it too, and reports a throw.
+	 * Static and called through the class for the same reason as `applyThinkingLevel`.
+	 */
+	private static async applyModelSelection(
+		mode: InteractiveMode,
+		model: Model<any>,
+	): Promise<SystemPromptChangeEvent | undefined> {
+		const systemPromptChange = await mode.session.setModel(model);
+		mode.footer.invalidate();
 		// A model switch ends any external-owner delegation episode.
-		this.externalOwnerCompactionNoticeShown = false;
-		this.footer?.setCompactionDelegated?.(false);
-		this.updateEditorBorderColor();
+		mode.externalOwnerCompactionNoticeShown = false;
+		mode.footer?.setCompactionDelegated?.(false);
+		mode.updateEditorBorderColor();
 		const systemPromptStr = systemPromptChange?.systemPromptName
 			? ` (optimized system prompt applied: ${systemPromptChange.systemPromptName})`
 			: "";
-		this.showStatus(`Model: ${model.id}${systemPromptStr}`);
-		this.showRiskyMainModelWarning(model);
-		void this.maybeWarnAboutAnthropicSubscriptionAuth(model);
-		this.checkDaxnutsEasterEgg(model);
+		mode.showStatus(`Model: ${model.id}${systemPromptStr}`);
+		mode.showRiskyMainModelWarning(model);
+		void mode.maybeWarnAboutAnthropicSubscriptionAuth(model);
+		mode.checkDaxnutsEasterEgg(model);
 		return systemPromptChange;
 	}
 
