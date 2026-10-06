@@ -7272,6 +7272,7 @@ export class AgentSession {
 			errorMessage: aborted ? undefined : (options.errorMessage ?? "Compaction did not apply"),
 		});
 		this._releaseCompactionController(options.signal);
+		if (!aborted) this._resumeQueuedMessagesAfterCompaction();
 	}
 
 	private async _executeCompaction(request: CompactionExecutionRequest): Promise<CompactionExecutionResult> {

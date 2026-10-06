@@ -1,5 +1,24 @@
 # goal Extension Changes
 
+## 2026-10-05 - Record the actual wake trigger and label cache accounting (senpi#2778)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/goal/monitor-continuation.ts` and `cache-warm.ts`: resumed events and entries record `wakeCause` (`timer` or `sources-drained`) and the original planned `dueAtMs`.
+- `packages/coding-agent/src/core/extensions/builtin/goal/cache-warm-renderer.ts`: early source drains and timer backstops have distinct explanations. Old entries without a cause say it was not recorded. Cache figures are labeled cumulative prior-turn accounting, the discount is conditional on reuse, and the next cache hit is explicitly unverified.
+
+### Why
+
+- A source draining before its backstop was labeled a scheduled wake. Aggregated request usage was presented as tokens that had stayed warm, although no provider request had verified reuse.
+
+### Why an extension could not handle it
+
+- This builtin owns the timer/drain distinction, durable wait entries, and their renderer.
+
+### Expected merge conflict zones
+
+- `monitor-continuation.ts`: resumed payload construction; `cache-warm.ts`: durable entry type; `cache-warm-renderer.ts`: wake explanation and cache line.
+
 ## 2026-10-02 - Stale-context detection recognizes a reload retirement (senpi#2549)
 
 ### What changed

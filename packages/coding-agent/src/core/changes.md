@@ -21,6 +21,42 @@
 
 - A reload requested while no `session_start` dispatch is running (`/reload`, config-reload after dispatch, prompt-admission veto) behaves as before.
 
+## 2026-10-05 - Resume queued work after failed extension feedback (senpi#2778)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `_endExtensionCompactionFeedback` releases queued work through the existing continuation admission path after non-aborted feedback completes without applying a summary. Cancelled and superseded feedback does not schedule work.
+
+### Why
+
+- A hidden goal continuation arriving during summary generation remained queued forever when the summary was stale. Only successful non-auto compaction previously resumed it. Fresh continuation admission still enforces required compaction and preserves queued messages on rejection.
+
+### Why an extension could not handle it
+
+- Queue ownership and the feedback lifecycle are private to `AgentSession`; a builtin cannot safely schedule or release another session operation.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/agent-session.ts`: `_endExtensionCompactionFeedback`.
+
+## 2026-10-05 - Require explicit gateway fallback selectors (senpi#2774)
+
+### What changed
+
+- `packages/coding-agent/src/core/retry-fallback/expansion.ts`: exclude OpenGateway and Vercel AI Gateway from bare fallback key and candidate expansion, matching the existing OpenRouter policy. Explicit provider-qualified selectors remain supported.
+
+### Why
+
+- Authenticating a gateway for a selected model also makes its built-in catalog available. Bare model-family defaults must not treat those credentials as permission to route unrelated sessions through that gateway.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/retry-fallback/expansion.ts` owns candidate expansion for every AgentSession consumer, including extension-free SDK and RPC sessions.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/retry-fallback/expansion.ts`: the bare-expansion provider exclusion set.
+
 ## 2026-10-05 - A runtime's fallback policy can be set before its first turn (omo#9582)
 
 ### What changed
@@ -8991,3 +9027,21 @@ Session creation and the launch profile are core lifecycle code that runs before
 ### Expected merge conflict zones
 
 The `promptSurface` plumbing in `agent-session.ts`, `agent-session-services.ts` and `sdk.ts`, which the new field sits next to.
+
+## 2026-10-05 - A project codemode file that names an executable asks for project trust
+
+### What changed
+
+- `packages/coding-agent/src/core/trust-manager.ts`: `hasTrustRequiringProjectResources` also returns `true` when `<cwd>/.senpi/codemode.json` sets any setting on the codemode package's list of executable-naming settings (`@code-yeongyu/senpi-codemode/executable-settings.json`, today `languages.pyInterpreter`), found through the bundled-extension resolver. A codemode file that sets none of them stays trust-free. A file that is not valid JSON asks, as a project `mcp.json` does by its presence alone; so does any codemode file when the list cannot be read.
+
+### Why
+
+- An executable-naming setting is run by the codemode extension at session start (its `--version` probe, then the kernel). Codemode honours a project-scoped value only when the project is trusted, but a project whose only config was `.senpi/codemode.json` counted as having no trust-requiring resources, so it was treated as trusted without asking and a cloned repository could run a binary of its choosing. Keeping the list in the codemode package means a new executable setting there is covered here without a core change.
+
+### Why an extension could not handle it
+
+- The launch-time trust decision is made in the host before any extension is bound; an extension can only read the decision through `isProjectTrusted()`, which reported "trusted" for a project the host never asked about.
+
+### Expected merge conflict zones
+
+- LOW: the `projectCodemodeNamesExecutable` helpers after `LEGACY_PROJECT_CONFIG_DIR_NAME`, the `bundled-resources.ts` import, and the one-line call after the config-dir check at the top of `hasTrustRequiringProjectResources` in `packages/coding-agent/src/core/trust-manager.ts`.

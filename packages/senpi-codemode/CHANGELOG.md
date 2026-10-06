@@ -10,6 +10,20 @@
 
 ### Fixed
 
+### Removed
+
+## [2026.10.10-2] - 2026-10-05
+
+### Breaking Changes
+
+### Added
+
+- `@code-yeongyu/senpi-codemode/executable-settings.json` lists the settings that name an executable run at session start (today `languages.pyInterpreter`). senpi's project-trust check reads it, so a project codemode file that sets one asks for trust, and a test fails if a new free-form string setting is neither on the list nor marked as not naming an executable ([#2772](https://github.com/code-yeongyu/senpi/pull/2772)).
+
+### Changed
+
+### Fixed
+
 - Settings that were accepted but did nothing now take effect ([#2763](https://github.com/code-yeongyu/senpi/issues/2763)): `kernelTools.enabled: false` makes JavaScript `tool(fn)` and Python `@tool` refuse with `tools_unavailable`; `languages.pyInterpreter` makes the Python kernel run exactly that executable (a path that does not answer makes Python unavailable, with a warning naming the setting; one named by a project's own settings file is honored only in a trusted project); `prompt.advertiseHelpers: true` adds one line pointing at `tool_schema('eval:helpers')` to the eval description. Settings-file warnings (an unknown key, a fallback to defaults) now reach the user as a notice, or on stderr without a UI.
 
 ### Removed

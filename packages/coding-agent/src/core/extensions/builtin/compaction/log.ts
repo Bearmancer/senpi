@@ -11,6 +11,7 @@ const ALLOWED_KEYS = new Set([
 	"variant",
 	"generation",
 	"requestId",
+	"sessionId",
 	"tokens",
 	"tokensBefore",
 	"savedTokens",
@@ -76,6 +77,7 @@ export interface CompactionLoggerData {
 	variant?: string;
 	generation?: number;
 	requestId?: string;
+	sessionId?: string;
 	tokens?: number;
 	tokensBefore?: number;
 	savedTokens?: number;
@@ -93,6 +95,7 @@ export interface CompactionLogger {
 }
 
 export interface CompactionLoggerOptions {
+	getSessionId?: () => string;
 	sink?: (line: string) => void;
 	mirrorToStderr?: boolean;
 	maxBytes?: number;
@@ -112,7 +115,7 @@ export function createCompactionLogger(
 	function log(level: "debug" | "info", event: CompactionLoggerEvent, data?: CompactionLoggerData): void {
 		try {
 			if (!EVENTS.has(event)) return;
-			const line = formatLine(level, event, data);
+			const line = formatLine(level, event, { ...data, sessionId: options.getSessionId?.() ?? data?.sessionId });
 			writeLine(filePath, line, maxBytes, options.sink);
 			if (options.mirrorToStderr ?? envValue("COMPACTION_DEBUG") === "1") {
 				console.error(DEBUG_PREFIX, line);
