@@ -50,6 +50,8 @@
 
 ### Fixed
 
+- JavaScript cells can call `require(...)` and `createRequire(...)`: builtins, relative CommonJS and JSON files, and packages from the project or the managed package environment resolve as they do for `import` ([#2792](https://github.com/code-yeongyu/senpi/issues/2792)).
+
 ### Removed
 
 ## [2026.10.10-2] - 2026-10-05
@@ -182,6 +184,8 @@
 
 ### Fixed
 
+- JavaScript cells can call `require(...)` and `createRequire(...)`: builtins, relative CommonJS and JSON files, and packages from the project or the managed package environment resolve as they do for `import` ([#2792](https://github.com/code-yeongyu/senpi/issues/2792)).
+
 ### Removed
 
 ## [2026.10.4] - 2026-10-03
@@ -199,6 +203,8 @@
 
 ### Fixed
 
+- JavaScript cells can call `require(...)` and `createRequire(...)`: builtins, relative CommonJS and JSON files, and packages from the project or the managed package environment resolve as they do for `import` ([#2792](https://github.com/code-yeongyu/senpi/issues/2792)).
+
 ### Removed
 
 ## [2026.10.3] - 2026-10-03
@@ -210,6 +216,8 @@
 ### Changed
 
 ### Fixed
+
+- JavaScript cells can call `require(...)` and `createRequire(...)`: builtins, relative CommonJS and JSON files, and packages from the project or the managed package environment resolve as they do for `import` ([#2792](https://github.com/code-yeongyu/senpi/issues/2792)).
 
 ### Removed
 
@@ -265,6 +273,8 @@
 
 ### Fixed
 
+- JavaScript cells can call `require(...)` and `createRequire(...)`: builtins, relative CommonJS and JSON files, and packages from the project or the managed package environment resolve as they do for `import` ([#2792](https://github.com/code-yeongyu/senpi/issues/2792)).
+
 ### Removed
 
 ## [2026.10.1] - 2026-10-01
@@ -276,6 +286,8 @@
 ### Changed
 
 ### Fixed
+
+- JavaScript cells can call `require(...)` and `createRequire(...)`: builtins, relative CommonJS and JSON files, and packages from the project or the managed package environment resolve as they do for `import` ([#2792](https://github.com/code-yeongyu/senpi/issues/2792)).
 
 ### Removed
 
@@ -303,6 +315,8 @@
 
 ### Fixed
 
+- JavaScript cells can call `require(...)` and `createRequire(...)`: builtins, relative CommonJS and JSON files, and packages from the project or the managed package environment resolve as they do for `import` ([#2792](https://github.com/code-yeongyu/senpi/issues/2792)).
+
 ### Removed
 
 ## [2026.9.29-4] - 2026-09-29
@@ -314,6 +328,8 @@
 ### Changed
 
 ### Fixed
+
+- JavaScript cells can call `require(...)` and `createRequire(...)`: builtins, relative CommonJS and JSON files, and packages from the project or the managed package environment resolve as they do for `import` ([#2792](https://github.com/code-yeongyu/senpi/issues/2792)).
 
 ### Removed
 
@@ -327,6 +343,8 @@
 
 ### Fixed
 
+- JavaScript cells can call `require(...)` and `createRequire(...)`: builtins, relative CommonJS and JSON files, and packages from the project or the managed package environment resolve as they do for `import` ([#2792](https://github.com/code-yeongyu/senpi/issues/2792)).
+
 ### Removed
 
 ## [2026.9.29-2] - 2026-09-29
@@ -338,6 +356,8 @@
 ### Changed
 
 ### Fixed
+
+- JavaScript cells can call `require(...)` and `createRequire(...)`: builtins, relative CommonJS and JSON files, and packages from the project or the managed package environment resolve as they do for `import` ([#2792](https://github.com/code-yeongyu/senpi/issues/2792)).
 
 ### Removed
 
@@ -351,6 +371,8 @@
 
 ### Fixed
 
+- JavaScript cells can call `require(...)` and `createRequire(...)`: builtins, relative CommonJS and JSON files, and packages from the project or the managed package environment resolve as they do for `import` ([#2792](https://github.com/code-yeongyu/senpi/issues/2792)).
+
 ### Removed
 
 ## [2026.9.28-7] - 2026-09-28
@@ -362,6 +384,8 @@
 ### Changed
 
 ### Fixed
+
+- JavaScript cells can call `require(...)` and `createRequire(...)`: builtins, relative CommonJS and JSON files, and packages from the project or the managed package environment resolve as they do for `import` ([#2792](https://github.com/code-yeongyu/senpi/issues/2792)).
 
 ### Removed
 
@@ -375,6 +399,8 @@
 
 ### Fixed
 
+- JavaScript cells can call `require(...)` and `createRequire(...)`: builtins, relative CommonJS and JSON files, and packages from the project or the managed package environment resolve as they do for `import` ([#2792](https://github.com/code-yeongyu/senpi/issues/2792)).
+
 ### Removed
 
 ## [2026.9.28-5] - 2026-09-28
@@ -386,6 +412,8 @@
 ### Changed
 
 ### Fixed
+
+- JavaScript cells can call `require(...)` and `createRequire(...)`: builtins, relative CommonJS and JSON files, and packages from the project or the managed package environment resolve as they do for `import` ([#2792](https://github.com/code-yeongyu/senpi/issues/2792)).
 
 ### Removed
 
@@ -438,6 +466,8 @@
 
 ### Fixed
 
+- JavaScript cells can call `require(...)` and `createRequire(...)`: builtins, relative CommonJS and JSON files, and packages from the project or the managed package environment resolve as they do for `import` ([#2792](https://github.com/code-yeongyu/senpi/issues/2792)).
+
 ### Removed
 
 ## [2026.9.28] - 2026-09-28
@@ -449,6 +479,8 @@
 ### Changed
 
 ### Fixed
+
+- JavaScript cells can call `require(...)` and `createRequire(...)`: builtins, relative CommonJS and JSON files, and packages from the project or the managed package environment resolve as they do for `import` ([#2792](https://github.com/code-yeongyu/senpi/issues/2792)).
 
 ### Removed
 
@@ -462,6 +494,8 @@
 
 ### Fixed
 
+- JavaScript cells can call `require(...)` and `createRequire(...)`: builtins, relative CommonJS and JSON files, and packages from the project or the managed package environment resolve as they do for `import` ([#2792](https://github.com/code-yeongyu/senpi/issues/2792)).
+
 ### Removed
 
 ## [2026.9.27-3] - 2026-09-27
@@ -473,6 +507,8 @@
 ### Changed
 
 ### Fixed
+
+- JavaScript cells can call `require(...)` and `createRequire(...)`: builtins, relative CommonJS and JSON files, and packages from the project or the managed package environment resolve as they do for `import` ([#2792](https://github.com/code-yeongyu/senpi/issues/2792)).
 
 ### Removed
 
@@ -488,6 +524,8 @@
 
 ### Fixed
 
+- JavaScript cells can call `require(...)` and `createRequire(...)`: builtins, relative CommonJS and JSON files, and packages from the project or the managed package environment resolve as they do for `import` ([#2792](https://github.com/code-yeongyu/senpi/issues/2792)).
+
 ### Removed
 
 ## [2026.9.27] - 2026-09-27
@@ -499,6 +537,8 @@
 ### Changed
 
 ### Fixed
+
+- JavaScript cells can call `require(...)` and `createRequire(...)`: builtins, relative CommonJS and JSON files, and packages from the project or the managed package environment resolve as they do for `import` ([#2792](https://github.com/code-yeongyu/senpi/issues/2792)).
 
 ### Removed
 
@@ -512,6 +552,8 @@
 
 ### Fixed
 
+- JavaScript cells can call `require(...)` and `createRequire(...)`: builtins, relative CommonJS and JSON files, and packages from the project or the managed package environment resolve as they do for `import` ([#2792](https://github.com/code-yeongyu/senpi/issues/2792)).
+
 ### Removed
 
 ## [2026.9.25] - 2026-09-25
@@ -524,6 +566,8 @@
 
 ### Fixed
 
+- JavaScript cells can call `require(...)` and `createRequire(...)`: builtins, relative CommonJS and JSON files, and packages from the project or the managed package environment resolve as they do for `import` ([#2792](https://github.com/code-yeongyu/senpi/issues/2792)).
+
 ### Removed
 
 ## [2026.9.24-3] - 2026-09-24
@@ -535,6 +579,8 @@
 ### Changed
 
 ### Fixed
+
+- JavaScript cells can call `require(...)` and `createRequire(...)`: builtins, relative CommonJS and JSON files, and packages from the project or the managed package environment resolve as they do for `import` ([#2792](https://github.com/code-yeongyu/senpi/issues/2792)).
 
 ### Removed
 
@@ -580,6 +626,8 @@
 
 ### Fixed
 
+- JavaScript cells can call `require(...)` and `createRequire(...)`: builtins, relative CommonJS and JSON files, and packages from the project or the managed package environment resolve as they do for `import` ([#2792](https://github.com/code-yeongyu/senpi/issues/2792)).
+
 ### Removed
 
 ## [2026.9.23-4] - 2026-09-23
@@ -593,6 +641,8 @@
 - Eval cards no longer display truncation or full-output artifact footer warnings. Model-facing eval text and grouping are unchanged; content explicitly addressed only to the model is omitted from the text fallback. ([#2041](https://github.com/code-yeongyu/senpi/issues/2041))
 
 ### Fixed
+
+- JavaScript cells can call `require(...)` and `createRequire(...)`: builtins, relative CommonJS and JSON files, and packages from the project or the managed package environment resolve as they do for `import` ([#2792](https://github.com/code-yeongyu/senpi/issues/2792)).
 
 ### Removed
 
@@ -610,6 +660,8 @@
 
 ### Fixed
 
+- JavaScript cells can call `require(...)` and `createRequire(...)`: builtins, relative CommonJS and JSON files, and packages from the project or the managed package environment resolve as they do for `import` ([#2792](https://github.com/code-yeongyu/senpi/issues/2792)).
+
 ### Removed
 
 ## [2026.9.23-2] - 2026-09-23
@@ -621,6 +673,8 @@
 ### Changed
 
 ### Fixed
+
+- JavaScript cells can call `require(...)` and `createRequire(...)`: builtins, relative CommonJS and JSON files, and packages from the project or the managed package environment resolve as they do for `import` ([#2792](https://github.com/code-yeongyu/senpi/issues/2792)).
 
 ### Removed
 
@@ -634,6 +688,8 @@
 
 ### Fixed
 
+- JavaScript cells can call `require(...)` and `createRequire(...)`: builtins, relative CommonJS and JSON files, and packages from the project or the managed package environment resolve as they do for `import` ([#2792](https://github.com/code-yeongyu/senpi/issues/2792)).
+
 ### Removed
 
 ## [2026.9.22-4] - 2026-09-22
@@ -646,6 +702,8 @@
 
 ### Fixed
 
+- JavaScript cells can call `require(...)` and `createRequire(...)`: builtins, relative CommonJS and JSON files, and packages from the project or the managed package environment resolve as they do for `import` ([#2792](https://github.com/code-yeongyu/senpi/issues/2792)).
+
 ### Removed
 
 ## [2026.9.22-3] - 2026-09-22
@@ -657,6 +715,8 @@
 ### Changed
 
 ### Fixed
+
+- JavaScript cells can call `require(...)` and `createRequire(...)`: builtins, relative CommonJS and JSON files, and packages from the project or the managed package environment resolve as they do for `import` ([#2792](https://github.com/code-yeongyu/senpi/issues/2792)).
 
 ### Removed
 
@@ -687,6 +747,8 @@
 
 ### Fixed
 
+- JavaScript cells can call `require(...)` and `createRequire(...)`: builtins, relative CommonJS and JSON files, and packages from the project or the managed package environment resolve as they do for `import` ([#2792](https://github.com/code-yeongyu/senpi/issues/2792)).
+
 ### Removed
 
 ## [2026.9.21-2] - 2026-09-21
@@ -698,6 +760,8 @@
 ### Changed
 
 ### Fixed
+
+- JavaScript cells can call `require(...)` and `createRequire(...)`: builtins, relative CommonJS and JSON files, and packages from the project or the managed package environment resolve as they do for `import` ([#2792](https://github.com/code-yeongyu/senpi/issues/2792)).
 
 ### Removed
 
@@ -727,6 +791,8 @@
 
 ### Fixed
 
+- JavaScript cells can call `require(...)` and `createRequire(...)`: builtins, relative CommonJS and JSON files, and packages from the project or the managed package environment resolve as they do for `import` ([#2792](https://github.com/code-yeongyu/senpi/issues/2792)).
+
 ### Removed
 
 ## [2026.9.19-2] - 2026-09-19
@@ -738,6 +804,8 @@
 ### Changed
 
 ### Fixed
+
+- JavaScript cells can call `require(...)` and `createRequire(...)`: builtins, relative CommonJS and JSON files, and packages from the project or the managed package environment resolve as they do for `import` ([#2792](https://github.com/code-yeongyu/senpi/issues/2792)).
 
 ### Removed
 
@@ -751,6 +819,8 @@
 
 ### Fixed
 
+- JavaScript cells can call `require(...)` and `createRequire(...)`: builtins, relative CommonJS and JSON files, and packages from the project or the managed package environment resolve as they do for `import` ([#2792](https://github.com/code-yeongyu/senpi/issues/2792)).
+
 ### Removed
 
 ## [2026.9.18-6] - 2026-09-18
@@ -762,6 +832,8 @@
 ### Changed
 
 ### Fixed
+
+- JavaScript cells can call `require(...)` and `createRequire(...)`: builtins, relative CommonJS and JSON files, and packages from the project or the managed package environment resolve as they do for `import` ([#2792](https://github.com/code-yeongyu/senpi/issues/2792)).
 
 ### Removed
 
@@ -775,6 +847,8 @@
 
 ### Fixed
 
+- JavaScript cells can call `require(...)` and `createRequire(...)`: builtins, relative CommonJS and JSON files, and packages from the project or the managed package environment resolve as they do for `import` ([#2792](https://github.com/code-yeongyu/senpi/issues/2792)).
+
 ### Removed
 
 ## [2026.9.18-4] - 2026-09-18
@@ -786,6 +860,8 @@
 ### Changed
 
 ### Fixed
+
+- JavaScript cells can call `require(...)` and `createRequire(...)`: builtins, relative CommonJS and JSON files, and packages from the project or the managed package environment resolve as they do for `import` ([#2792](https://github.com/code-yeongyu/senpi/issues/2792)).
 
 ### Removed
 
@@ -799,6 +875,8 @@
 
 ### Fixed
 
+- JavaScript cells can call `require(...)` and `createRequire(...)`: builtins, relative CommonJS and JSON files, and packages from the project or the managed package environment resolve as they do for `import` ([#2792](https://github.com/code-yeongyu/senpi/issues/2792)).
+
 ### Removed
 
 ## [2026.9.18-2] - 2026-09-18
@@ -810,6 +888,8 @@
 ### Changed
 
 ### Fixed
+
+- JavaScript cells can call `require(...)` and `createRequire(...)`: builtins, relative CommonJS and JSON files, and packages from the project or the managed package environment resolve as they do for `import` ([#2792](https://github.com/code-yeongyu/senpi/issues/2792)).
 
 ### Removed
 
@@ -823,6 +903,8 @@
 
 ### Fixed
 
+- JavaScript cells can call `require(...)` and `createRequire(...)`: builtins, relative CommonJS and JSON files, and packages from the project or the managed package environment resolve as they do for `import` ([#2792](https://github.com/code-yeongyu/senpi/issues/2792)).
+
 ### Removed
 
 ## [2026.9.17-4] - 2026-09-17
@@ -835,6 +917,8 @@
 
 ### Fixed
 
+- JavaScript cells can call `require(...)` and `createRequire(...)`: builtins, relative CommonJS and JSON files, and packages from the project or the managed package environment resolve as they do for `import` ([#2792](https://github.com/code-yeongyu/senpi/issues/2792)).
+
 ### Removed
 
 ## [2026.9.17-3] - 2026-09-17
@@ -846,6 +930,8 @@
 ### Changed
 
 ### Fixed
+
+- JavaScript cells can call `require(...)` and `createRequire(...)`: builtins, relative CommonJS and JSON files, and packages from the project or the managed package environment resolve as they do for `import` ([#2792](https://github.com/code-yeongyu/senpi/issues/2792)).
 
 ### Removed
 
@@ -877,6 +963,8 @@
 
 ### Fixed
 
+- JavaScript cells can call `require(...)` and `createRequire(...)`: builtins, relative CommonJS and JSON files, and packages from the project or the managed package environment resolve as they do for `import` ([#2792](https://github.com/code-yeongyu/senpi/issues/2792)).
+
 ### Removed
 
 ## [2026.9.16-3] - 2026-09-16
@@ -888,6 +976,8 @@
 ### Changed
 
 ### Fixed
+
+- JavaScript cells can call `require(...)` and `createRequire(...)`: builtins, relative CommonJS and JSON files, and packages from the project or the managed package environment resolve as they do for `import` ([#2792](https://github.com/code-yeongyu/senpi/issues/2792)).
 
 ### Removed
 
@@ -923,6 +1013,8 @@
 - The eval prompt documents `workpool()` and the `run_epoch` field on background `agent()` handles, and the JS prelude describes `tool(fn, metadata?)` and `workpool()` ([#1646](https://github.com/code-yeongyu/senpi/issues/1646), [#1647](https://github.com/code-yeongyu/senpi/issues/1647)).
 
 ### Fixed
+
+- JavaScript cells can call `require(...)` and `createRequire(...)`: builtins, relative CommonJS and JSON files, and packages from the project or the managed package environment resolve as they do for `import` ([#2792](https://github.com/code-yeongyu/senpi/issues/2792)).
 
 ### Removed
 
@@ -969,6 +1061,8 @@
 
 ### Fixed
 
+- JavaScript cells can call `require(...)` and `createRequire(...)`: builtins, relative CommonJS and JSON files, and packages from the project or the managed package environment resolve as they do for `import` ([#2792](https://github.com/code-yeongyu/senpi/issues/2792)).
+
 ### Removed
 
 ## [2026.9.13] - 2026-09-13
@@ -980,6 +1074,8 @@
 ### Changed
 
 ### Fixed
+
+- JavaScript cells can call `require(...)` and `createRequire(...)`: builtins, relative CommonJS and JSON files, and packages from the project or the managed package environment resolve as they do for `import` ([#2792](https://github.com/code-yeongyu/senpi/issues/2792)).
 
 ### Removed
 
@@ -993,6 +1089,8 @@
 
 ### Fixed
 
+- JavaScript cells can call `require(...)` and `createRequire(...)`: builtins, relative CommonJS and JSON files, and packages from the project or the managed package environment resolve as they do for `import` ([#2792](https://github.com/code-yeongyu/senpi/issues/2792)).
+
 ### Removed
 
 ## [2026.9.12-2] - 2026-09-12
@@ -1005,6 +1103,8 @@
 
 ### Fixed
 
+- JavaScript cells can call `require(...)` and `createRequire(...)`: builtins, relative CommonJS and JSON files, and packages from the project or the managed package environment resolve as they do for `import` ([#2792](https://github.com/code-yeongyu/senpi/issues/2792)).
+
 ### Removed
 
 ## [2026.9.12] - 2026-09-12
@@ -1016,6 +1116,8 @@
 ### Changed
 
 ### Fixed
+
+- JavaScript cells can call `require(...)` and `createRequire(...)`: builtins, relative CommonJS and JSON files, and packages from the project or the managed package environment resolve as they do for `import` ([#2792](https://github.com/code-yeongyu/senpi/issues/2792)).
 
 ### Removed
 
@@ -1045,6 +1147,8 @@
 
 ### Fixed
 
+- JavaScript cells can call `require(...)` and `createRequire(...)`: builtins, relative CommonJS and JSON files, and packages from the project or the managed package environment resolve as they do for `import` ([#2792](https://github.com/code-yeongyu/senpi/issues/2792)).
+
 ### Removed
 
 ## [2026.9.10] - 2026-09-10
@@ -1063,6 +1167,8 @@
 
 ### Fixed
 
+- JavaScript cells can call `require(...)` and `createRequire(...)`: builtins, relative CommonJS and JSON files, and packages from the project or the managed package environment resolve as they do for `import` ([#2792](https://github.com/code-yeongyu/senpi/issues/2792)).
+
 ### Removed
 
 ## [2026.9.9-2] - 2026-09-09
@@ -1075,6 +1181,8 @@
 
 ### Fixed
 
+- JavaScript cells can call `require(...)` and `createRequire(...)`: builtins, relative CommonJS and JSON files, and packages from the project or the managed package environment resolve as they do for `import` ([#2792](https://github.com/code-yeongyu/senpi/issues/2792)).
+
 ### Removed
 
 ## [2026.9.9] - 2026-09-09
@@ -1086,6 +1194,8 @@
 ### Changed
 
 ### Fixed
+
+- JavaScript cells can call `require(...)` and `createRequire(...)`: builtins, relative CommonJS and JSON files, and packages from the project or the managed package environment resolve as they do for `import` ([#2792](https://github.com/code-yeongyu/senpi/issues/2792)).
 
 ### Removed
 
@@ -1100,6 +1210,8 @@
 - The eval tool description teaches cell mechanics only (batch independent calls, real code, failures kept verbatim, truncated output re-read) and drops the "default execution surface / never a chain / distilled facts only" wording; routing lives in the model's prompt preset.
 
 ### Fixed
+
+- JavaScript cells can call `require(...)` and `createRequire(...)`: builtins, relative CommonJS and JSON files, and packages from the project or the managed package environment resolve as they do for `import` ([#2792](https://github.com/code-yeongyu/senpi/issues/2792)).
 
 ### Removed
 
@@ -1129,6 +1241,8 @@
 ### Changed
 
 ### Fixed
+
+- JavaScript cells can call `require(...)` and `createRequire(...)`: builtins, relative CommonJS and JSON files, and packages from the project or the managed package environment resolve as they do for `import` ([#2792](https://github.com/code-yeongyu/senpi/issues/2792)).
 
 ### Removed
 
@@ -1161,6 +1275,8 @@
 
 ### Fixed
 
+- JavaScript cells can call `require(...)` and `createRequire(...)`: builtins, relative CommonJS and JSON files, and packages from the project or the managed package environment resolve as they do for `import` ([#2792](https://github.com/code-yeongyu/senpi/issues/2792)).
+
 ### Removed
 
 ## [2026.9.5-2] - 2026-09-05
@@ -1175,6 +1291,8 @@
 
 ### Fixed
 
+- JavaScript cells can call `require(...)` and `createRequire(...)`: builtins, relative CommonJS and JSON files, and packages from the project or the managed package environment resolve as they do for `import` ([#2792](https://github.com/code-yeongyu/senpi/issues/2792)).
+
 ### Removed
 
 ## [2026.9.5] - 2026-09-05
@@ -1186,6 +1304,8 @@
 ### Changed
 
 ### Fixed
+
+- JavaScript cells can call `require(...)` and `createRequire(...)`: builtins, relative CommonJS and JSON files, and packages from the project or the managed package environment resolve as they do for `import` ([#2792](https://github.com/code-yeongyu/senpi/issues/2792)).
 
 ### Removed
 
@@ -1199,6 +1319,8 @@
 
 - The package `test` script runs `vitest run test/` instead of `npx tsx …/vitest/dist/cli.js`, matching every other workspace package. The old form spawned npm and tsx to reach the vitest CLI that is already a direct dependency.
 ### Fixed
+
+- JavaScript cells can call `require(...)` and `createRequire(...)`: builtins, relative CommonJS and JSON files, and packages from the project or the managed package environment resolve as they do for `import` ([#2792](https://github.com/code-yeongyu/senpi/issues/2792)).
 
 ### Removed
 
@@ -1219,6 +1341,8 @@
 
 ### Fixed
 
+- JavaScript cells can call `require(...)` and `createRequire(...)`: builtins, relative CommonJS and JSON files, and packages from the project or the managed package environment resolve as they do for `import` ([#2792](https://github.com/code-yeongyu/senpi/issues/2792)).
+
 ### Removed
 
 ## [2026.9.4] - 2026-09-04
@@ -1231,6 +1355,8 @@
 
 ### Fixed
 
+- JavaScript cells can call `require(...)` and `createRequire(...)`: builtins, relative CommonJS and JSON files, and packages from the project or the managed package environment resolve as they do for `import` ([#2792](https://github.com/code-yeongyu/senpi/issues/2792)).
+
 ### Removed
 
 ## [2026.9.3-3] - 2026-09-03
@@ -1242,6 +1368,8 @@
 ### Changed
 
 ### Fixed
+
+- JavaScript cells can call `require(...)` and `createRequire(...)`: builtins, relative CommonJS and JSON files, and packages from the project or the managed package environment resolve as they do for `import` ([#2792](https://github.com/code-yeongyu/senpi/issues/2792)).
 
 ### Removed
 
@@ -1269,6 +1397,8 @@
 
 ### Fixed
 
+- JavaScript cells can call `require(...)` and `createRequire(...)`: builtins, relative CommonJS and JSON files, and packages from the project or the managed package environment resolve as they do for `import` ([#2792](https://github.com/code-yeongyu/senpi/issues/2792)).
+
 ### Removed
 
 ## [2026.9.2-4] - 2026-09-02
@@ -1280,6 +1410,8 @@
 ### Changed
 
 ### Fixed
+
+- JavaScript cells can call `require(...)` and `createRequire(...)`: builtins, relative CommonJS and JSON files, and packages from the project or the managed package environment resolve as they do for `import` ([#2792](https://github.com/code-yeongyu/senpi/issues/2792)).
 
 ### Removed
 
@@ -1314,6 +1446,8 @@
 
 ### Fixed
 
+- JavaScript cells can call `require(...)` and `createRequire(...)`: builtins, relative CommonJS and JSON files, and packages from the project or the managed package environment resolve as they do for `import` ([#2792](https://github.com/code-yeongyu/senpi/issues/2792)).
+
 ### Removed
 
 ## [2026.9.2] - 2026-09-02
@@ -1325,6 +1459,8 @@
 ### Changed
 
 ### Fixed
+
+- JavaScript cells can call `require(...)` and `createRequire(...)`: builtins, relative CommonJS and JSON files, and packages from the project or the managed package environment resolve as they do for `import` ([#2792](https://github.com/code-yeongyu/senpi/issues/2792)).
 
 ### Removed
 
@@ -1342,6 +1478,8 @@
 
 ### Fixed
 
+- JavaScript cells can call `require(...)` and `createRequire(...)`: builtins, relative CommonJS and JSON files, and packages from the project or the managed package environment resolve as they do for `import` ([#2792](https://github.com/code-yeongyu/senpi/issues/2792)).
+
 ### Removed
 
 ## [2026.8.30-3] - 2026-08-30
@@ -1354,6 +1492,8 @@
 
 ### Fixed
 
+- JavaScript cells can call `require(...)` and `createRequire(...)`: builtins, relative CommonJS and JSON files, and packages from the project or the managed package environment resolve as they do for `import` ([#2792](https://github.com/code-yeongyu/senpi/issues/2792)).
+
 ### Removed
 
 ## [2026.8.30-2] - 2026-08-30
@@ -1365,6 +1505,8 @@
 ### Changed
 
 ### Fixed
+
+- JavaScript cells can call `require(...)` and `createRequire(...)`: builtins, relative CommonJS and JSON files, and packages from the project or the managed package environment resolve as they do for `import` ([#2792](https://github.com/code-yeongyu/senpi/issues/2792)).
 
 ### Removed
 
@@ -1416,6 +1558,8 @@
 
 ### Fixed
 
+- JavaScript cells can call `require(...)` and `createRequire(...)`: builtins, relative CommonJS and JSON files, and packages from the project or the managed package environment resolve as they do for `import` ([#2792](https://github.com/code-yeongyu/senpi/issues/2792)).
+
 ### Removed
 
 ## [2026.8.28-2] - 2026-08-28
@@ -1427,6 +1571,8 @@
 ### Changed
 
 ### Fixed
+
+- JavaScript cells can call `require(...)` and `createRequire(...)`: builtins, relative CommonJS and JSON files, and packages from the project or the managed package environment resolve as they do for `import` ([#2792](https://github.com/code-yeongyu/senpi/issues/2792)).
 
 ### Removed
 
@@ -1473,6 +1619,8 @@
 
 ### Fixed
 
+- JavaScript cells can call `require(...)` and `createRequire(...)`: builtins, relative CommonJS and JSON files, and packages from the project or the managed package environment resolve as they do for `import` ([#2792](https://github.com/code-yeongyu/senpi/issues/2792)).
+
 ### Removed
 
 ## [2026.8.26] - 2026-08-26
@@ -1485,6 +1633,8 @@
 
 ### Fixed
 
+- JavaScript cells can call `require(...)` and `createRequire(...)`: builtins, relative CommonJS and JSON files, and packages from the project or the managed package environment resolve as they do for `import` ([#2792](https://github.com/code-yeongyu/senpi/issues/2792)).
+
 ### Removed
 
 ## [2026.8.25] - 2026-08-25
@@ -1496,6 +1646,8 @@
 ### Changed
 
 ### Fixed
+
+- JavaScript cells can call `require(...)` and `createRequire(...)`: builtins, relative CommonJS and JSON files, and packages from the project or the managed package environment resolve as they do for `import` ([#2792](https://github.com/code-yeongyu/senpi/issues/2792)).
 
 ### Removed
 
@@ -1569,6 +1721,8 @@
 
 ### Fixed
 
+- JavaScript cells can call `require(...)` and `createRequire(...)`: builtins, relative CommonJS and JSON files, and packages from the project or the managed package environment resolve as they do for `import` ([#2792](https://github.com/code-yeongyu/senpi/issues/2792)).
+
 ### Removed
 
 ## [2026.8.21-2] - 2026-08-21
@@ -1595,6 +1749,8 @@
 
 ### Fixed
 
+- JavaScript cells can call `require(...)` and `createRequire(...)`: builtins, relative CommonJS and JSON files, and packages from the project or the managed package environment resolve as they do for `import` ([#2792](https://github.com/code-yeongyu/senpi/issues/2792)).
+
 ### Removed
 
 ## [2026.8.20-2] - 2026-08-20
@@ -1606,6 +1762,8 @@
 ### Changed
 
 ### Fixed
+
+- JavaScript cells can call `require(...)` and `createRequire(...)`: builtins, relative CommonJS and JSON files, and packages from the project or the managed package environment resolve as they do for `import` ([#2792](https://github.com/code-yeongyu/senpi/issues/2792)).
 
 ### Removed
 
@@ -1619,6 +1777,8 @@
 
 ### Fixed
 
+- JavaScript cells can call `require(...)` and `createRequire(...)`: builtins, relative CommonJS and JSON files, and packages from the project or the managed package environment resolve as they do for `import` ([#2792](https://github.com/code-yeongyu/senpi/issues/2792)).
+
 ### Removed
 
 ## [2026.8.19] - 2026-08-19
@@ -1630,6 +1790,8 @@
 ### Changed
 
 ### Fixed
+
+- JavaScript cells can call `require(...)` and `createRequire(...)`: builtins, relative CommonJS and JSON files, and packages from the project or the managed package environment resolve as they do for `import` ([#2792](https://github.com/code-yeongyu/senpi/issues/2792)).
 
 ### Removed
 
@@ -1659,6 +1821,8 @@
 
 ### Fixed
 
+- JavaScript cells can call `require(...)` and `createRequire(...)`: builtins, relative CommonJS and JSON files, and packages from the project or the managed package environment resolve as they do for `import` ([#2792](https://github.com/code-yeongyu/senpi/issues/2792)).
+
 ### Removed
 
 ## [2026.8.18] - 2026-08-18
@@ -1670,6 +1834,8 @@
 ### Changed
 
 ### Fixed
+
+- JavaScript cells can call `require(...)` and `createRequire(...)`: builtins, relative CommonJS and JSON files, and packages from the project or the managed package environment resolve as they do for `import` ([#2792](https://github.com/code-yeongyu/senpi/issues/2792)).
 
 ### Removed
 
@@ -1685,6 +1851,8 @@
 
 ### Fixed
 
+- JavaScript cells can call `require(...)` and `createRequire(...)`: builtins, relative CommonJS and JSON files, and packages from the project or the managed package environment resolve as they do for `import` ([#2792](https://github.com/code-yeongyu/senpi/issues/2792)).
+
 ### Removed
 
 ## [2026.8.16] - 2026-08-16
@@ -1699,6 +1867,8 @@
 
 ### Fixed
 
+- JavaScript cells can call `require(...)` and `createRequire(...)`: builtins, relative CommonJS and JSON files, and packages from the project or the managed package environment resolve as they do for `import` ([#2792](https://github.com/code-yeongyu/senpi/issues/2792)).
+
 ### Removed
 
 ## [2026.8.14] - 2026-08-14
@@ -1711,6 +1881,8 @@
 
 ### Fixed
 
+- JavaScript cells can call `require(...)` and `createRequire(...)`: builtins, relative CommonJS and JSON files, and packages from the project or the managed package environment resolve as they do for `import` ([#2792](https://github.com/code-yeongyu/senpi/issues/2792)).
+
 ### Removed
 
 ## [2026.8.13-2] - 2026-08-13
@@ -1722,6 +1894,8 @@
 ### Changed
 
 ### Fixed
+
+- JavaScript cells can call `require(...)` and `createRequire(...)`: builtins, relative CommonJS and JSON files, and packages from the project or the managed package environment resolve as they do for `import` ([#2792](https://github.com/code-yeongyu/senpi/issues/2792)).
 
 ### Removed
 
@@ -1737,6 +1911,8 @@
 
 ### Fixed
 
+- JavaScript cells can call `require(...)` and `createRequire(...)`: builtins, relative CommonJS and JSON files, and packages from the project or the managed package environment resolve as they do for `import` ([#2792](https://github.com/code-yeongyu/senpi/issues/2792)).
+
 ### Removed
 
 ## [2026.8.12-4] - 2026-08-12
@@ -1748,6 +1924,8 @@
 ### Changed
 
 ### Fixed
+
+- JavaScript cells can call `require(...)` and `createRequire(...)`: builtins, relative CommonJS and JSON files, and packages from the project or the managed package environment resolve as they do for `import` ([#2792](https://github.com/code-yeongyu/senpi/issues/2792)).
 
 ### Removed
 
@@ -1761,6 +1939,8 @@
 
 ### Fixed
 
+- JavaScript cells can call `require(...)` and `createRequire(...)`: builtins, relative CommonJS and JSON files, and packages from the project or the managed package environment resolve as they do for `import` ([#2792](https://github.com/code-yeongyu/senpi/issues/2792)).
+
 ### Removed
 
 ## [2026.8.12-2] - 2026-08-12
@@ -1772,6 +1952,8 @@
 ### Changed
 
 ### Fixed
+
+- JavaScript cells can call `require(...)` and `createRequire(...)`: builtins, relative CommonJS and JSON files, and packages from the project or the managed package environment resolve as they do for `import` ([#2792](https://github.com/code-yeongyu/senpi/issues/2792)).
 
 ### Removed
 
@@ -1785,6 +1967,8 @@
 
 ### Fixed
 
+- JavaScript cells can call `require(...)` and `createRequire(...)`: builtins, relative CommonJS and JSON files, and packages from the project or the managed package environment resolve as they do for `import` ([#2792](https://github.com/code-yeongyu/senpi/issues/2792)).
+
 ### Removed
 
 ## [2026.8.11-6] - 2026-08-11
@@ -1797,6 +1981,8 @@
 
 ### Fixed
 
+- JavaScript cells can call `require(...)` and `createRequire(...)`: builtins, relative CommonJS and JSON files, and packages from the project or the managed package environment resolve as they do for `import` ([#2792](https://github.com/code-yeongyu/senpi/issues/2792)).
+
 ### Removed
 
 ## [2026.8.11-5] - 2026-08-11
@@ -1808,6 +1994,8 @@
 ### Changed
 
 ### Fixed
+
+- JavaScript cells can call `require(...)` and `createRequire(...)`: builtins, relative CommonJS and JSON files, and packages from the project or the managed package environment resolve as they do for `import` ([#2792](https://github.com/code-yeongyu/senpi/issues/2792)).
 
 ### Removed
 
@@ -1838,6 +2026,8 @@
 
 ### Fixed
 
+- JavaScript cells can call `require(...)` and `createRequire(...)`: builtins, relative CommonJS and JSON files, and packages from the project or the managed package environment resolve as they do for `import` ([#2792](https://github.com/code-yeongyu/senpi/issues/2792)).
+
 ### Removed
 
 ## [2026.8.11-2] - 2026-08-10
@@ -1849,6 +2039,8 @@
 ### Changed
 
 ### Fixed
+
+- JavaScript cells can call `require(...)` and `createRequire(...)`: builtins, relative CommonJS and JSON files, and packages from the project or the managed package environment resolve as they do for `import` ([#2792](https://github.com/code-yeongyu/senpi/issues/2792)).
 
 ### Removed
 
@@ -1862,6 +2054,8 @@
 
 ### Fixed
 
+- JavaScript cells can call `require(...)` and `createRequire(...)`: builtins, relative CommonJS and JSON files, and packages from the project or the managed package environment resolve as they do for `import` ([#2792](https://github.com/code-yeongyu/senpi/issues/2792)).
+
 ### Removed
 
 ## [2026.8.10] - 2026-08-10
@@ -1873,6 +2067,8 @@
 ### Changed
 
 ### Fixed
+
+- JavaScript cells can call `require(...)` and `createRequire(...)`: builtins, relative CommonJS and JSON files, and packages from the project or the managed package environment resolve as they do for `import` ([#2792](https://github.com/code-yeongyu/senpi/issues/2792)).
 
 ### Removed
 
@@ -1887,6 +2083,8 @@
 - Detached eval cells now emit the shared `wake_source_state` event under source `senpi-codemode` when they detach, complete, stop, or are disposed. The optional host event passthrough remains guarded, synchronous cells emit no lifecycle transition, and per-cell snapshot metadata is preserved.
 
 ### Fixed
+
+- JavaScript cells can call `require(...)` and `createRequire(...)`: builtins, relative CommonJS and JSON files, and packages from the project or the managed package environment resolve as they do for `import` ([#2792](https://github.com/code-yeongyu/senpi/issues/2792)).
 
 ### Removed
 
@@ -1906,6 +2104,8 @@
 ### Changed
 
 ### Fixed
+
+- JavaScript cells can call `require(...)` and `createRequire(...)`: builtins, relative CommonJS and JSON files, and packages from the project or the managed package environment resolve as they do for `import` ([#2792](https://github.com/code-yeongyu/senpi/issues/2792)).
 
 ### Removed
 
@@ -1936,6 +2136,8 @@
 
 ### Fixed
 
+- JavaScript cells can call `require(...)` and `createRequire(...)`: builtins, relative CommonJS and JSON files, and packages from the project or the managed package environment resolve as they do for `import` ([#2792](https://github.com/code-yeongyu/senpi/issues/2792)).
+
 ### Removed
 
 ## [2026.8.5-2] - 2026-08-05
@@ -1947,6 +2149,8 @@
 ### Changed
 
 ### Fixed
+
+- JavaScript cells can call `require(...)` and `createRequire(...)`: builtins, relative CommonJS and JSON files, and packages from the project or the managed package environment resolve as they do for `import` ([#2792](https://github.com/code-yeongyu/senpi/issues/2792)).
 
 ### Removed
 
@@ -1960,6 +2164,8 @@
 
 ### Fixed
 
+- JavaScript cells can call `require(...)` and `createRequire(...)`: builtins, relative CommonJS and JSON files, and packages from the project or the managed package environment resolve as they do for `import` ([#2792](https://github.com/code-yeongyu/senpi/issues/2792)).
+
 ### Removed
 
 ## [2026.8.4-2] - 2026-08-04
@@ -1971,6 +2177,8 @@
 ### Changed
 
 ### Fixed
+
+- JavaScript cells can call `require(...)` and `createRequire(...)`: builtins, relative CommonJS and JSON files, and packages from the project or the managed package environment resolve as they do for `import` ([#2792](https://github.com/code-yeongyu/senpi/issues/2792)).
 
 ### Removed
 
@@ -1988,6 +2196,8 @@
 
 ### Fixed
 
+- JavaScript cells can call `require(...)` and `createRequire(...)`: builtins, relative CommonJS and JSON files, and packages from the project or the managed package environment resolve as they do for `import` ([#2792](https://github.com/code-yeongyu/senpi/issues/2792)).
+
 ### Removed
 
 ## [2026.8.3-3] - 2026-08-03
@@ -1999,6 +2209,8 @@
 ### Changed
 
 ### Fixed
+
+- JavaScript cells can call `require(...)` and `createRequire(...)`: builtins, relative CommonJS and JSON files, and packages from the project or the managed package environment resolve as they do for `import` ([#2792](https://github.com/code-yeongyu/senpi/issues/2792)).
 
 ### Removed
 
@@ -2012,6 +2224,8 @@
 
 ### Fixed
 
+- JavaScript cells can call `require(...)` and `createRequire(...)`: builtins, relative CommonJS and JSON files, and packages from the project or the managed package environment resolve as they do for `import` ([#2792](https://github.com/code-yeongyu/senpi/issues/2792)).
+
 ### Removed
 
 ## [2026.8.3] - 2026-08-03
@@ -2023,6 +2237,8 @@
 ### Changed
 
 ### Fixed
+
+- JavaScript cells can call `require(...)` and `createRequire(...)`: builtins, relative CommonJS and JSON files, and packages from the project or the managed package environment resolve as they do for `import` ([#2792](https://github.com/code-yeongyu/senpi/issues/2792)).
 
 ### Removed
 
@@ -2057,6 +2273,8 @@
 
 ### Fixed
 
+- JavaScript cells can call `require(...)` and `createRequire(...)`: builtins, relative CommonJS and JSON files, and packages from the project or the managed package environment resolve as they do for `import` ([#2792](https://github.com/code-yeongyu/senpi/issues/2792)).
+
 ### Removed
 
 ## [2026.7.31] - 2026-07-31
@@ -2068,6 +2286,8 @@
 ### Changed
 
 ### Fixed
+
+- JavaScript cells can call `require(...)` and `createRequire(...)`: builtins, relative CommonJS and JSON files, and packages from the project or the managed package environment resolve as they do for `import` ([#2792](https://github.com/code-yeongyu/senpi/issues/2792)).
 
 ### Removed
 
@@ -2081,6 +2301,8 @@
 
 ### Fixed
 
+- JavaScript cells can call `require(...)` and `createRequire(...)`: builtins, relative CommonJS and JSON files, and packages from the project or the managed package environment resolve as they do for `import` ([#2792](https://github.com/code-yeongyu/senpi/issues/2792)).
+
 ### Removed
 
 ## [2026.7.30] - 2026-07-30
@@ -2092,6 +2314,8 @@
 ### Changed
 
 ### Fixed
+
+- JavaScript cells can call `require(...)` and `createRequire(...)`: builtins, relative CommonJS and JSON files, and packages from the project or the managed package environment resolve as they do for `import` ([#2792](https://github.com/code-yeongyu/senpi/issues/2792)).
 
 ### Removed
 
@@ -2105,6 +2329,8 @@
 
 ### Fixed
 
+- JavaScript cells can call `require(...)` and `createRequire(...)`: builtins, relative CommonJS and JSON files, and packages from the project or the managed package environment resolve as they do for `import` ([#2792](https://github.com/code-yeongyu/senpi/issues/2792)).
+
 ### Removed
 
 ## [2026.7.29-5] - 2026-07-29
@@ -2116,6 +2342,8 @@
 ### Changed
 
 ### Fixed
+
+- JavaScript cells can call `require(...)` and `createRequire(...)`: builtins, relative CommonJS and JSON files, and packages from the project or the managed package environment resolve as they do for `import` ([#2792](https://github.com/code-yeongyu/senpi/issues/2792)).
 
 ### Removed
 
@@ -2129,6 +2357,8 @@
 
 ### Fixed
 
+- JavaScript cells can call `require(...)` and `createRequire(...)`: builtins, relative CommonJS and JSON files, and packages from the project or the managed package environment resolve as they do for `import` ([#2792](https://github.com/code-yeongyu/senpi/issues/2792)).
+
 ### Removed
 
 ## [2026.7.29-3] - 2026-07-29
@@ -2141,6 +2371,8 @@
 
 ### Fixed
 
+- JavaScript cells can call `require(...)` and `createRequire(...)`: builtins, relative CommonJS and JSON files, and packages from the project or the managed package environment resolve as they do for `import` ([#2792](https://github.com/code-yeongyu/senpi/issues/2792)).
+
 ### Removed
 
 ## [2026.7.29-2] - 2026-07-29
@@ -2152,6 +2384,8 @@
 ### Changed
 
 ### Fixed
+
+- JavaScript cells can call `require(...)` and `createRequire(...)`: builtins, relative CommonJS and JSON files, and packages from the project or the managed package environment resolve as they do for `import` ([#2792](https://github.com/code-yeongyu/senpi/issues/2792)).
 
 ### Removed
 
@@ -2183,6 +2417,8 @@
 
 ### Fixed
 
+- JavaScript cells can call `require(...)` and `createRequire(...)`: builtins, relative CommonJS and JSON files, and packages from the project or the managed package environment resolve as they do for `import` ([#2792](https://github.com/code-yeongyu/senpi/issues/2792)).
+
 ### Removed
 
 ## [2026.7.28-2] - 2026-07-28
@@ -2213,6 +2449,8 @@
 - Allow eval cells and extensions to activate named searchable tools lazily on the calling surface without globally widening the active tool set ([#408](https://github.com/code-yeongyu/senpi/pull/408)).
 
 ### Fixed
+
+- JavaScript cells can call `require(...)` and `createRequire(...)`: builtins, relative CommonJS and JSON files, and packages from the project or the managed package environment resolve as they do for `import` ([#2792](https://github.com/code-yeongyu/senpi/issues/2792)).
 
 ### Removed
 
@@ -2249,6 +2487,8 @@
 
 ### Fixed
 
+- JavaScript cells can call `require(...)` and `createRequire(...)`: builtins, relative CommonJS and JSON files, and packages from the project or the managed package environment resolve as they do for `import` ([#2792](https://github.com/code-yeongyu/senpi/issues/2792)).
+
 ### Removed
 
 ## [2026.7.25] - 2026-07-25
@@ -2261,6 +2501,8 @@
 
 ### Fixed
 
+- JavaScript cells can call `require(...)` and `createRequire(...)`: builtins, relative CommonJS and JSON files, and packages from the project or the managed package environment resolve as they do for `import` ([#2792](https://github.com/code-yeongyu/senpi/issues/2792)).
+
 ### Removed
 
 ## [2026.7.24] - 2026-07-24
@@ -2272,6 +2514,8 @@
 ### Changed
 
 ### Fixed
+
+- JavaScript cells can call `require(...)` and `createRequire(...)`: builtins, relative CommonJS and JSON files, and packages from the project or the managed package environment resolve as they do for `import` ([#2792](https://github.com/code-yeongyu/senpi/issues/2792)).
 
 ### Removed
 
@@ -2287,6 +2531,8 @@
 
 ### Fixed
 
+- JavaScript cells can call `require(...)` and `createRequire(...)`: builtins, relative CommonJS and JSON files, and packages from the project or the managed package environment resolve as they do for `import` ([#2792](https://github.com/code-yeongyu/senpi/issues/2792)).
+
 ### Removed
 
 ## [2026.7.22-2] - 2026-07-22
@@ -2298,6 +2544,8 @@
 ### Changed
 
 ### Fixed
+
+- JavaScript cells can call `require(...)` and `createRequire(...)`: builtins, relative CommonJS and JSON files, and packages from the project or the managed package environment resolve as they do for `import` ([#2792](https://github.com/code-yeongyu/senpi/issues/2792)).
 
 ### Removed
 
@@ -2311,6 +2559,8 @@
 
 ### Fixed
 
+- JavaScript cells can call `require(...)` and `createRequire(...)`: builtins, relative CommonJS and JSON files, and packages from the project or the managed package environment resolve as they do for `import` ([#2792](https://github.com/code-yeongyu/senpi/issues/2792)).
+
 ### Removed
 
 ## [2026.7.20-2] - 2026-07-20
@@ -2322,6 +2572,8 @@
 ### Changed
 
 ### Fixed
+
+- JavaScript cells can call `require(...)` and `createRequire(...)`: builtins, relative CommonJS and JSON files, and packages from the project or the managed package environment resolve as they do for `import` ([#2792](https://github.com/code-yeongyu/senpi/issues/2792)).
 
 ### Removed
 
@@ -2350,6 +2602,8 @@
 
 ### Fixed
 
+- JavaScript cells can call `require(...)` and `createRequire(...)`: builtins, relative CommonJS and JSON files, and packages from the project or the managed package environment resolve as they do for `import` ([#2792](https://github.com/code-yeongyu/senpi/issues/2792)).
+
 ### Removed
 
 ## [2026.7.17-4] - 2026-07-17
@@ -2362,6 +2616,8 @@
 
 ### Fixed
 
+- JavaScript cells can call `require(...)` and `createRequire(...)`: builtins, relative CommonJS and JSON files, and packages from the project or the managed package environment resolve as they do for `import` ([#2792](https://github.com/code-yeongyu/senpi/issues/2792)).
+
 ### Removed
 
 ## [2026.7.17-3] - 2026-07-17
@@ -2373,6 +2629,8 @@
 ### Changed
 
 ### Fixed
+
+- JavaScript cells can call `require(...)` and `createRequire(...)`: builtins, relative CommonJS and JSON files, and packages from the project or the managed package environment resolve as they do for `import` ([#2792](https://github.com/code-yeongyu/senpi/issues/2792)).
 
 ### Removed
 
