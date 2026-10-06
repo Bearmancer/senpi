@@ -6,6 +6,7 @@
 
 ### Added
 
+- A terminal session's control endpoint accepts `get_available_models`, `get_available_thinking_levels`, `set_model`, `set_thinking_level` and `interrupt`. It applies each one exactly as the pane's own `/model`, thinking-level selector or Esc would, with the same validation, footer update and persistence, and `get_protocol_info` lists the accepted `commands`. A multi-session host also answers `interrupt { turnId? }` with `{ interrupted, turnId }` once the turn has stopped ([oh-my-openagent#9660](https://github.com/code-yeongyu/oh-my-openagent/issues/9660)).
 - A provider block in `models.json` accepts `hideFreeModels: true` to drop that provider's zero-cost models (`cost.input` and `cost.output` both `0`) from the catalog. The default is unchanged: free models stay visible ([#2720](https://github.com/code-yeongyu/senpi/issues/2720)).
 - `websearch.json` accepts `keenable` as a `web_search` provider: with `apiKey` it uses Keenable's keyed API, without one its shared public tier (identified by an app header, no credential). It is used only when listed explicitly; the no-config default chain is unchanged ([#2775](https://github.com/code-yeongyu/senpi/pull/2775)).
 

@@ -109,7 +109,7 @@ import type {
 	WorkingIndicatorOptions,
 } from "../../core/extensions/index.ts";
 import { buildNoticeBox, type NoticeLine, type NoticeSpec } from "../../core/extensions/notice/index.ts";
-import type { QuestionRequest, QuestionResponse } from "../../core/extensions/types.ts";
+import type { QuestionRequest, QuestionResponse, SystemPromptChangeEvent } from "../../core/extensions/types.ts";
 import { FooterDataProvider, type ReadonlyFooterDataProvider } from "../../core/footer-data-provider.ts";
 import { appendUncaughtCrashLog, appendUnhandledRejectionLog } from "../../core/hidden-stdout-log.ts";
 import { buildHighReasoningWarning } from "../../core/high-reasoning-warning.ts";
@@ -3999,6 +3999,11 @@ export class InteractiveMode {
 					return state !== undefined;
 				},
 				notice: (line) => this.showWarning(line),
+				selectModel: (model) => this.applyModelSelection(model),
+				selectThinkingLevel: (level, remember) => this.applyThinkingLevel(level, remember),
+				interruptTurn: async () => {
+					await this.abortAndFireQueuedMessages();
+				},
 			},
 		};
 	}
@@ -7866,14 +7871,18 @@ export class InteractiveMode {
 	 */
 	private selectThinkingLevel(level: ThinkingLevel, persist: boolean): void {
 		try {
-			if (persist) this.session.setThinkingLevel(level);
-			else this.session.setSessionThinkingLevel(level);
-			this.footer.invalidate();
-			this.updateEditorBorderColor();
-			this.showStatus(persist ? `Default thinking level: ${level}` : `Thinking level: ${level}`);
+			this.applyThinkingLevel(level, persist);
 		} catch (error) {
 			this.showError(error instanceof Error ? error.message : String(error));
 		}
+	}
+
+	private applyThinkingLevel(level: ThinkingLevel, persist: boolean): void {
+		if (persist) this.session.setThinkingLevel(level);
+		else this.session.setSessionThinkingLevel(level);
+		this.footer.invalidate();
+		this.updateEditorBorderColor();
+		this.showStatus(persist ? `Default thinking level: ${level}` : `Thinking level: ${level}`);
 	}
 
 	private async showThinkingSelector(): Promise<void> {
@@ -7954,22 +7963,28 @@ export class InteractiveMode {
 		done?.();
 		this.ui?.requestRender();
 		try {
-			const systemPromptChange = await this.session.setModel(model);
-			this.footer.invalidate();
-			// A model switch ends any external-owner delegation episode.
-			this.externalOwnerCompactionNoticeShown = false;
-			this.footer?.setCompactionDelegated?.(false);
-			this.updateEditorBorderColor();
-			const systemPromptStr = systemPromptChange?.systemPromptName
-				? ` (optimized system prompt applied: ${systemPromptChange.systemPromptName})`
-				: "";
-			this.showStatus(`Model: ${model.id}${systemPromptStr}`);
-			this.showRiskyMainModelWarning(model);
-			void this.maybeWarnAboutAnthropicSubscriptionAuth(model);
-			this.checkDaxnutsEasterEgg(model);
+			await this.applyModelSelection(model);
 		} catch (error) {
 			this.showError(error instanceof Error ? error.message : String(error));
 		}
+	}
+
+	/** The `/model` switch itself; the control endpoint's `set_model` runs it too, and reports a throw. */
+	private async applyModelSelection(model: Model<any>): Promise<SystemPromptChangeEvent | undefined> {
+		const systemPromptChange = await this.session.setModel(model);
+		this.footer.invalidate();
+		// A model switch ends any external-owner delegation episode.
+		this.externalOwnerCompactionNoticeShown = false;
+		this.footer?.setCompactionDelegated?.(false);
+		this.updateEditorBorderColor();
+		const systemPromptStr = systemPromptChange?.systemPromptName
+			? ` (optimized system prompt applied: ${systemPromptChange.systemPromptName})`
+			: "";
+		this.showStatus(`Model: ${model.id}${systemPromptStr}`);
+		this.showRiskyMainModelWarning(model);
+		void this.maybeWarnAboutAnthropicSubscriptionAuth(model);
+		this.checkDaxnutsEasterEgg(model);
+		return systemPromptChange;
 	}
 
 	private async resolveFavoriteModelsForUi(
