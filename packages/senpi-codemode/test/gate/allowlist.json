@@ -1000,10 +1000,9 @@
 		"senpi#2811": {
 			"additions": [
 				"legacyContracts/test/sandbox/isolated-cell.test.ts/Given sandbox cells are turned on Given an isolated cell when it settles then its result names QuickJS as its runtime, with no host path (senpi#2811)",
-				"legacyContracts/test/sandbox/isolated-cell.test.ts/Given sandbox cells are turned on Given a persistent cell in a session with isolated cells when it settles then it keeps the kernel's runtime (senpi#2811)",
-				"imports/firstKernel/packages/senpi-codemode/src/kernels/sandbox/sandbox-runtime.ts"
+				"legacyContracts/test/sandbox/isolated-cell.test.ts/Given sandbox cells are turned on Given a persistent cell in a session with isolated cells when it settles then it keeps the kernel's runtime (senpi#2811)"
 			],
-			"reason": "senpi#2811: an isolated (QuickJS) cell's result reports { name: 'quickjs', version: <pinned quickjs-wasi>, isolation: 'sandbox' } as its runtime instead of the persistent kernel's, from sandbox-runtime.ts (a static package.json read, no host path). The isolated-runtime contract fails on main."
+			"reason": "senpi#2811: an isolated (QuickJS) cell's result reports { name: 'quickjs', version: <pinned quickjs-wasi>, isolation: 'sandbox' } as its runtime instead of the persistent kernel's, read from the installed quickjs-wasi package only when an isolated cell runs (no host path). The isolated-runtime contract fails on main."
 		}
 	}
 }
