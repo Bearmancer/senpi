@@ -6,6 +6,18 @@
 
 ### Added
 
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.10-3] - 2026-10-06
+
+### Breaking Changes
+
+### Added
+
 - A provider block in `models.json` accepts `hideFreeModels: true` to drop that provider's zero-cost models (`cost.input` and `cost.output` both `0`) from the catalog. The default is unchanged: free models stay visible ([#2720](https://github.com/code-yeongyu/senpi/issues/2720), [#2773](https://github.com/code-yeongyu/senpi/pull/2773) by [@Bearmancer](https://github.com/Bearmancer)).
 - `websearch.json` accepts `keenable` as a `web_search` provider: with `apiKey` it uses Keenable's keyed API, without one its shared public tier (identified by an app header, no credential). It is used only when listed explicitly; the no-config default chain is unchanged ([#2775](https://github.com/code-yeongyu/senpi/pull/2775) by [@audreyt](https://github.com/audreyt)).
 

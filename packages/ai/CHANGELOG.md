@@ -10,6 +10,18 @@
 
 ### Fixed
 
+### Removed
+
+## [2026.10.10-3] - 2026-10-06
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
 - A forced `tool_choice` that an OpenAI-compatible gateway refuses inside a 200 stream (a keepalive stream whose first event is the refusal) is now retried once without the forced choice in the same turn, like the same refusal returned as a 400. A session's first turn no longer fails until the user types `continue` ([#2801](https://github.com/code-yeongyu/senpi/issues/2801)).
 
 ### Removed
