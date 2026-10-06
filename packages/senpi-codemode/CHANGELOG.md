@@ -26,6 +26,8 @@
 
 ### Fixed
 
+- An isolated (`isolate: true`) eval cell's result names QuickJS as its runtime (`quickjs <version>, sandbox`) instead of the persistent kernel's Bun or Node runtime ([#2811](https://github.com/code-yeongyu/senpi/issues/2811)).
+
 ### Removed
 
 ## [2026.10.10-2] - 2026-10-05

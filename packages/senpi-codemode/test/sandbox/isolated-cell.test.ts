@@ -7,6 +7,8 @@ import { defaultCodemodeSettings } from "../../src/config/settings.ts";
 import { createCodemodeSessionManager } from "../../src/extension/session-manager.ts";
 import { createInterpreterDetector, getInterpreterAvailability } from "../../src/interpreters/detect.ts";
 import { createEvalTool } from "../../src/tool/eval-tool.ts";
+import { formatRuntimeBadge } from "../../src/tool/runtime-label.ts";
+import type { EvalRuntimeInfo } from "../../src/tool/types.ts";
 import { fakeExtensionContext } from "../eval/fakes.ts";
 
 const baseSettings = { ...defaultCodemodeSettings, languages: { js: true, py: false, rb: false, jl: false } };
@@ -49,6 +51,7 @@ async function session(sandbox: { enabled: boolean; memoryMb?: number; timeoutSe
 		listTools: () => [{ name: "read", description: "read a file" }, { name: "eval" }],
 		cellTimeoutSeconds: 120,
 		settings,
+		runtimes: { js: { name: "bun", version: "1.4.2", path: "/opt/bun/bin/bun" } },
 	});
 	cleanups.push(async () => {
 		await manager.dispose();
@@ -67,6 +70,31 @@ async function session(sandbox: { enabled: boolean; memoryMb?: number; timeoutSe
 }
 
 describe("Given sandbox cells are turned on", () => {
+	it("Given an isolated cell when it settles then its result names QuickJS as its runtime, with no host path (senpi#2811)", async () => {
+		const { run } = await session();
+
+		const isolated = await run("return 1", true);
+
+		expect(isolated.details).toMatchObject({
+			runtime: { name: "quickjs", version: expect.stringMatching(/^\d+\.\d+\.\d+/u), isolation: "sandbox" },
+		});
+		expect(JSON.stringify(isolated.details)).not.toContain("/opt/bun");
+		expect(formatRuntimeBadge("js", (isolated.details as { runtime: EvalRuntimeInfo }).runtime)).toMatch(
+			/^quickjs \d+\.\d+\.\d+, sandbox$/u,
+		);
+	}, 120_000);
+
+	it("Given a persistent cell in a session with isolated cells when it settles then it keeps the kernel's runtime (senpi#2811)", async () => {
+		const { run } = await session();
+
+		await run("return 1", true);
+		const persistent = await run("1 + 1");
+
+		expect(persistent.details).toMatchObject({
+			runtime: { name: "bun", version: "1.4.2", path: "/opt/bun/bin/bun" },
+		});
+	}, 120_000);
+
 	it("isolated-cell-has-no-ambient-host-or-persistence: the isolated cell sees neither the persistent kernel's globals nor process, can call tool.read, and the next isolated cell is fresh", async () => {
 		const { run, reads } = await session();
 		await run("globalThis.sentinel = 'persistent'; 'set'");

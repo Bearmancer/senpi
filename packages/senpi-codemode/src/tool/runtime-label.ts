@@ -11,7 +11,7 @@ const ELLIPSIS = "\u2026";
  */
 export function formatRuntimeBadge(language: EvalLanguage, runtime: EvalRuntimeInfo, home: string = homedir()): string {
 	const base = language === "js" ? `${runtime.name} ${runtime.version}` : runtime.version;
-	const label = runtime.isolation === "process" ? `${base}, process` : base;
+	const label = runtime.isolation === undefined ? base : `${base}, ${runtime.isolation}`;
 	if (runtime.path === undefined || runtime.path.length === 0) return label;
 	return `${label}, ${minifyPath(runtime.path, home)}`;
 }
