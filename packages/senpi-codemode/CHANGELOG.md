@@ -10,6 +10,10 @@
 
 ### Fixed
 
+- A detached eval cell that waits for its kernel to start now says so (`waiting for the js kernel to be ready`) instead of `queued behind  in the js kernel` with an empty predecessor ([#2790](https://github.com/code-yeongyu/senpi/issues/2790)).
+
+- A stopped (or failed) detached cell's result and notification show its buffered output instead of the live `1/1 cells running` frame, so a cancelled cell no longer reads as still running. The kernel-state note now says plainly whether the kernel was restarted: `The JavaScript worker was not restarted; variables from earlier cells are kept.` instead of `... remains running; its existing variables are preserved.`, or `The JavaScript worker was restarted; variables from earlier cells are lost.` instead of `... was unresponsive to interrupt and was restarted ...` (the worker may have answered the interrupt and still needed a restart) ([#2791](https://github.com/code-yeongyu/senpi/issues/2791)).
+
 - An isolated (`isolate: true`) eval cell's result names QuickJS as its runtime (`quickjs <version>, sandbox`) instead of the persistent kernel's Bun or Node runtime ([#2811](https://github.com/code-yeongyu/senpi/issues/2811)).
 
 ### Removed

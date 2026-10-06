@@ -1003,6 +1003,17 @@
 				"legacyContracts/test/sandbox/isolated-cell.test.ts/Given sandbox cells are turned on Given a persistent cell in a session with isolated cells when it settles then it keeps the kernel's runtime (senpi#2811)"
 			],
 			"reason": "senpi#2811: an isolated (QuickJS) cell's result reports { name: 'quickjs', version: <pinned quickjs-wasi>, isolation: 'sandbox' } as its runtime instead of the persistent kernel's, read from the installed quickjs-wasi package only when an isolated cell runs (no host path). The isolated-runtime contract fails on main."
+		},
+		"senpi#2790": {
+			"additions": [
+				"legacyContracts/test/eval-detach-terminal-truth.test.ts/detached cell terminal truth Given a running detached cell when it is stopped then its notification shows the cancelled outcome without a running frame (#2791)",
+				"legacyContracts/test/eval-detach-terminal-truth.test.ts/detached cell terminal truth Given a cell first in line while its kernel is still starting when it detaches then it says it waits for the kernel instead of an empty predecessor (#2790)",
+				"legacyContracts/test/eval-detach-terminal-truth.test.ts/detached cell terminal truth Given a cell queued behind a running cell when it detaches then it still names that predecessor",
+				"legacyContracts/test/eval-detach-terminal-truth.test.ts/detached cell terminal truth Given a detached cell whose run throws when it is peeked and notified then the error text is shown with its output",
+				"legacyContracts/test/eval-detach-terminal-truth.test.ts/detached cell terminal truth Given a stopped predecessor still winding down in its kernel when a new cell detaches then the new cell names it",
+				"legacyContracts/test/eval-detach-terminal-truth.test.ts/detached cell terminal truth Given a queued cell with nothing ahead of it when its result renders then the header says it waits for the kernel"
+			],
+			"reason": "senpi#2790/#2791: a detached cell with nothing ahead of it says it waits for the kernel (detach reply, eval list, TUI header) instead of an empty predecessor list; a stopped or failed detached cell settles with its buffered output or error text, never the live 'running' frame. These contracts fail on main."
 		}
 	}
 }

@@ -13,7 +13,7 @@ import type {
 	EvalDetachedCellSnapshot,
 	EvalDetachedCellStatusEntry,
 } from "./detached-cell-contract.ts";
-import { currentDetachedResult, detachedErrorResult, snapshotDetachedCell } from "./detached-cell-snapshot.ts";
+import { cancelledDetachedResult, detachedErrorResult, snapshotDetachedCell } from "./detached-cell-snapshot.ts";
 import {
 	activeDetachedCellReuseError,
 	allowsDetachedCellTransition,
@@ -260,7 +260,7 @@ export class EvalDetachedCellManager {
 			return;
 		}
 		if (foreground) {
-			if (this.#settle(cell, "cancelled", currentDetachedResult(cell))) cell.onKill?.(expiry.error);
+			if (this.#settle(cell, "cancelled", cancelledDetachedResult(cell))) cell.onKill?.(expiry.error);
 			return;
 		}
 		await this.#cancel(cell, expiry.error.message);
@@ -269,7 +269,7 @@ export class EvalDetachedCellManager {
 	#cancelQueued(cell: ManagedCell, reason: string, error = new Error(reason)): void {
 		const dequeued = cell.kernel?.cancelQueued(cell.cellId, reason) ?? false;
 		cell.stateRetained = true;
-		this.#settle(cell, "cancelled", currentDetachedResult(cell));
+		this.#settle(cell, "cancelled", cancelledDetachedResult(cell));
 		// Acquisition/reset has no queue promise yet; its execution has no interrupt target either.
 		if (!dequeued) cell.onKill?.(error);
 	}
@@ -278,7 +278,7 @@ export class EvalDetachedCellManager {
 		const outcome = Promise.withResolvers<void>();
 		cell.interruptOutcome = outcome;
 		try {
-			if (!this.#settle(cell, "cancelled", currentDetachedResult(cell)) || cell.kernel === undefined) return;
+			if (!this.#settle(cell, "cancelled", cancelledDetachedResult(cell)) || cell.kernel === undefined) return;
 			const handle = await cell.kernel.interrupt(reason, cell.cellId);
 			cell.interruptNote = handle.note;
 			cell.stateRetained = await handle.stateRetained;

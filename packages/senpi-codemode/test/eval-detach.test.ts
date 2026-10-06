@@ -272,7 +272,7 @@ describe("eval detached cells", () => {
 			undefined,
 			interactiveContext(),
 		);
-		expect(textOf(stoppedPython)).toContain("remains running; its existing variables are preserved.");
+		expect(textOf(stoppedPython)).toContain("was not restarted; variables from earlier cells are kept.");
 
 		await detach(tool, js, "js-detached");
 		const stoppedJavaScript = await tool.execute(
