@@ -74,9 +74,9 @@ export class RpcSessionRegistry {
 				this.options.onSizeChange?.(this.entries.size);
 				return deleted;
 			},
-			releaseReservation: (key) => {
+			releaseReservation: async (key) => {
+				await this.options.pathReservations?.release(key);
 				this.reservations.delete(key);
-				this.options.pathReservations?.release(key);
 			},
 			markDetached: (key) => this.options.pathReservations?.setAttached(key, false),
 			now: () => this.now(),
@@ -214,8 +214,8 @@ export class RpcSessionRegistry {
 					this.entries.delete(handle);
 					this.options.onSizeChange?.(this.entries.size);
 					if (sessionPath) {
+						await this.options.pathReservations?.release(sessionPath);
 						this.reservations.delete(sessionPath);
-						this.options.pathReservations?.release(sessionPath);
 					}
 				}
 			}

@@ -5,7 +5,7 @@ export interface SessionTeardownHost {
 	readonly closeGraceMs: number;
 	get(handle: string): RpcSessionEntry | undefined;
 	delete(handle: string): void;
-	releaseReservation(key: string): void;
+	releaseReservation(key: string): Promise<void>;
 	/** Publishes that this path is retained with no client attached, for the cross-generation claim. */
 	markDetached(key: string): void;
 	/** The registry's clock, so the detach stamp shares the sweep's timeline. */
@@ -94,13 +94,13 @@ export function closeMarkedSession(host: SessionTeardownHost, handle: string): P
 		await disposeOnce().catch(() => undefined);
 		await entry.scope.close?.();
 	};
-	const release = (): void => {
+	const release = async (): Promise<void> => {
 		if (released) return;
 		released = true;
 		if (releaseTimer) clearTimeout(releaseTimer);
+		if (entry.reservationKey) await host.releaseReservation(entry.reservationKey);
 		entry.state = "closed";
 		host.delete(handle);
-		if (entry.reservationKey) host.releaseReservation(entry.reservationKey);
 	};
 	const graceful = (async (): Promise<void> => {
 		await previousLifecycle;
@@ -126,22 +126,22 @@ export function closeMarkedSession(host: SessionTeardownHost, handle: string): P
 		}
 	})();
 	let settled = false;
-	const finish = (): void => {
+	const finish = async (): Promise<void> => {
 		if (settled) return;
 		settled = true;
-		release();
+		await release();
 		entry.closeResolve?.();
 	};
 	releaseTimer = setTimeout(() => {
 		void disposeOnce().catch((cause) => reportDetachedFailure(handle, cause));
 		void closeScopeOnce().catch((cause) => reportDetachedFailure(handle, cause));
 		void graceful.catch((cause) => reportDetachedFailure(handle, cause));
-		finish();
+		void finish();
 	}, host.closeGraceMs);
 
 	void graceful.then(finish, (cause) => {
 		reportDetachedFailure(handle, cause);
-		finish();
+		return finish();
 	});
 	return completion;
 }
