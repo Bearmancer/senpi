@@ -1,6 +1,10 @@
 import type { Api, Model } from "@earendil-works/pi-ai/compat";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { EVAL_NOTIFICATION_CUSTOM_TYPE, type EvalNotificationContent, EvalNotifier } from "../src/extension/eval-notifier.ts";
+import {
+	EVAL_NOTIFICATION_CUSTOM_TYPE,
+	type EvalNotificationContent,
+	EvalNotifier,
+} from "../src/extension/eval-notifier.ts";
 import { EvalDetachedCellManager } from "../src/tool/detached-cell-manager.ts";
 import { FakeKernel, fakeExtensionContext } from "./eval/fakes.ts";
 
