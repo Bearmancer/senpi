@@ -14,6 +14,8 @@
 
 ### Fixed
 
+- A detached eval cell's completion notification now carries the same output its result would have shown in the foreground (head, tail, elision marker and full-output notice) instead of a 512-byte tail, and images the cell displayed are delivered with the notification ([#2789](https://github.com/code-yeongyu/senpi/issues/2789)).
+
 ### Removed
 
 ## [2026.10.10-4] - 2026-10-06
