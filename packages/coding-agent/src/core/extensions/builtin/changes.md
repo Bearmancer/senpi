@@ -1,3 +1,21 @@
+## 2026-10-06 - HTML page rendering for standalone senpi (omo-desktop-app#1724)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/html-render/`: new builtin extension registering `show_html_page`. `bootstrap.ts` injects the theme bootstrap (theme variables + base stylesheet) at the start of the document head, mirroring the desktop's `packages/shared/src/htmlRender.ts`; `images.ts` inlines absolute-path local images as data URIs only after a magic-byte/SVG-root check (a renamed secret is refused) and enforces the 10 MiB-per-image / 25 MiB-per-page caps, mirroring the desktop's `HtmlRender.ts`; `tool.ts` writes the prepared page to `.senpi/html-pages/` and returns the path with an open-in-desktop hint. Registered as `html-render` in `builtin/index.ts`. A desktop thread reaches the same capability through the desktop's MCP `html_render` instead; this tool is the standalone (TUI/local) path, where there is no inline frame, so the artifact is the file.
+
+### Why
+
+Q's port of upstream t3code #15968: an agent builds a self-contained HTML page and the reader sees it. The desktop thread shows it inline (PR omo-desktop-app#1733); a standalone senpi agent needs the same page-preparation rules so a TUI-written page is the same shape the desktop would store.
+
+### Why an extension could not handle it
+
+This is a builtin extension by design; the prepare logic (bootstrap injection, image byte check, size caps) must mirror the desktop port exactly.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/builtin/index.ts`: the import block and `builtinExtensions` array.
+
 ## 2026-10-01 - The compaction log no longer writes synchronously (senpi#2508)
 
 ### What changed

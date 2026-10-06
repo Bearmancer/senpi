@@ -6,6 +6,7 @@
 
 ### Added
 
+- A `show_html_page` tool (builtin `html-render` extension) lets a standalone senpi agent show a self-contained HTML page (chart, table, diagram, mockup): the page is prepared with the theme bootstrap injected, absolute-path local images inlined after a magic-byte check, and size caps enforced, then written to `.senpi/html-pages/` with an open-in-desktop hint. A desktop thread reaches the same capability through the desktop's MCP `html_render` (omo-desktop-app#1724).
 ### Changed
 
 ### Fixed
