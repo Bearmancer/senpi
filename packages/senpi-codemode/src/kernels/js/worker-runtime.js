@@ -1,4 +1,6 @@
 // allow: SIZE_OK — private runtime state and installed globals must stay in one worker module.
+import { pathToFileURL } from "node:url";
+import { createCellRequire, createRequire } from "./worker-require.js";
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, normalize, resolve, sep } from "node:path";
 import { inspect } from "node:util";
@@ -158,6 +160,8 @@ export class JsWorkerRuntime {
 			{ defined: () => this.#tools.defined(), undefine: (name) => this.#tools.undefine(name) },
 		);
 		globalThis.tools = globalThis.tool;
+		globalThis.require = createCellRequire(() => globalThis.__senpi_module_context__ ?? { cwdUrl: pathToFileURL(`${process.cwd()}/`).href });
+		globalThis.createRequire = createRequire;
 		const originalLog = console.log.bind(console);
 		const originalError = console.error.bind(console);
 		const originalStdoutWrite = process.stdout.write;

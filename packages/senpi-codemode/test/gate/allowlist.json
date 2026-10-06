@@ -1087,6 +1087,24 @@
 					"reason": "senpi#2789: a detached notification now carries the cell's foreground result text unchanged, so there is no separate notification spill file any more; the crash contract is kept as 'reports a detached kernel crash with the cell's whole result, as the foreground would' under additions."
 				}
 			]
+		},
+		"senpi#2792": {
+			"additions": [
+				"helperCensus/js/createRequire",
+				"helperCensus/js/require",
+				"helperCensus/js-bun/createRequire",
+				"helperCensus/js-bun/require",
+				"helperCensus/js-node/createRequire",
+				"helperCensus/js-node/require",
+				"imports/firstKernel/packages/senpi-codemode/src/kernels/js/worker-require.js",
+				"legacyContracts/test/kernel-js-require.test.ts/require in JavaScript cells Given a cell when it requires a builtin then it gets the runtime's module, with or without the node: prefix",
+				"legacyContracts/test/kernel-js-require.test.ts/require in JavaScript cells Given a project with a CommonJS package when a cell requires it then the package from the project's node_modules loads",
+				"legacyContracts/test/kernel-js-require.test.ts/require in JavaScript cells Given a cell when it requires a relative CommonJS file and a JSON file then both resolve from the session directory",
+				"legacyContracts/test/kernel-js-require.test.ts/require in JavaScript cells Given a cell when it builds its own require with createRequire then that require resolves from the given path",
+				"legacyContracts/test/kernel-js-require.test.ts/require in JavaScript cells Given a cell that builds its own require from createRequire, the common ESM idiom, when it runs then its require works and later cells keep it",
+				"legacyContracts/test/kernel-js-require.test.ts/require in JavaScript cells Given a module that does not exist when a cell requires it then the runtime's not-found error names it and the kernel keeps its state"
+			],
+			"reason": "senpi#2792: JavaScript cells get require and createRequire (resolved like the cell's import: builtins, relative CommonJS and JSON files, the project's packages, then the managed package environment), installed as kernel helpers from worker-require.js. The require contracts fail on main ('require is not defined')."
 		}
 	}
 }
