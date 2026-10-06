@@ -1,3 +1,21 @@
+## 2026-10-06 - An attach moves the live session to the permission preset it names (senpi#2823)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session-runtime.ts`: new `AgentSessionRuntime.setPermissionPreset(preset)`, beside `setPromptSurface` / `setBrowserEngine`. It stores the preset in the runtime's launch profile, so `new_session` / `switch_session` / `fork` keep it, and sets the live extension runner's `permission-preset` flag. The builtin permission-system extension reloads its rules from that flag at the next tool call (`core/extensions/builtin/permission-system/index.ts`).
+
+### Why
+
+`open_session` on a file another client holds open attaches to the live session (`modes/rpc/session-registry-attach.ts`, `worker-session-registry.ts`). The attach moved the session to a named prompt surface and browser engine, but ignored `permissionPreset`, so a thread switched from full access to ask kept running tools unrestricted.
+
+### Why an extension could not handle it
+
+The launch profile that later replacement sessions are built from is private to `AgentSessionRuntime`, and the RPC host reaches a live session only through the runtime. An extension can read its flag, but nothing outside the runtime can change it for the session that is already running.
+
+### Expected merge conflict zones
+
+- `agent-session-runtime.ts`: the setter block after `setBrowserEngine`.
+
 ## 2026-10-06 - Stale generated global-default extension shims no longer fail every start (senpi#2765)
 
 ### What changed

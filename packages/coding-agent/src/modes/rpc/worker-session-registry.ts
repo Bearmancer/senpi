@@ -18,6 +18,7 @@ import {
 	type RpcSessionRow,
 	sessionIdentity,
 } from "./session-registry.ts";
+import { assertAttachPermissionPreset } from "./session-registry-attach.ts";
 import { SessionWorkerClient } from "./session-worker-client.ts";
 import { SESSION_WORKER_LIMITS, type SessionWriteGrant } from "./session-worker-protocol.ts";
 
@@ -262,10 +263,11 @@ export class WorkerSessionRegistry {
 		options?: RpcSessionOpenOptions,
 		requested: RpcSessionLaunchProfile = { cwd: "" },
 	): Promise<OpenRpcSession> {
-		const { promptSurface, browserEngine } = requested;
+		const { promptSurface, browserEngine, permissionPreset } = requested;
 		const entry = this.entries.get(owner);
 		if (entry?.state !== "open" || !entry.worker?.bindingReady || entry.worker.snapshot?.sessionPath !== path)
 			throw new RpcSessionRegistryError("session_path_in_use");
+		assertAttachPermissionPreset(permissionPreset);
 		// Same rule as RpcSessionRegistry: an attach that names a surface moves the live session to it.
 		if (promptSurface !== undefined && promptSurface !== entry.profile.promptSurface) {
 			entry.profile = frozenProfile({ ...entry.profile, promptSurface });
@@ -274,6 +276,10 @@ export class WorkerSessionRegistry {
 		if (browserEngine !== undefined && browserEngine !== entry.profile.browserEngine) {
 			entry.profile = frozenProfile({ ...entry.profile, browserEngine });
 			await entry.worker.setBrowserEngine(browserEngine);
+		}
+		if (permissionPreset !== undefined && permissionPreset !== entry.profile.permissionPreset) {
+			entry.profile = frozenProfile({ ...entry.profile, permissionPreset });
+			await entry.worker.setPermissionPreset(permissionPreset);
 		}
 		const result = this.openResult(owner, entry);
 		entry.attachments++;
