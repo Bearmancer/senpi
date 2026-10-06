@@ -40,6 +40,12 @@ interface TerminalHandle {
 // reuses it, so a long session does not accumulate descriptors.
 let terminal: TerminalHandle | undefined;
 
+// Our `write` wrappers, and the `write` that was in place before the first of them. A release can leave
+// an inactive wrapper installed (the renderer's own guard is removed after it); the next takeover wraps
+// the base write instead, so suspend/resume cycles never stack wrappers.
+const ownWrites = new WeakSet<object>();
+let baseWrite: NodeJS.WriteStream["write"] | undefined;
+
 function terminalHandle(syscalls: StderrFdSyscalls): TerminalHandle | undefined {
 	if (terminal) return terminal;
 	const fd = syscalls.dup(STDOUT_FD);
@@ -69,13 +75,28 @@ export function redirectStdoutFd(
 	const moved = syscalls.dup2(target, STDOUT_FD);
 	closeSync(target);
 	if (moved < 0) return undefined;
+	try {
+		return installTerminalWriter(syscalls, handle, stdout);
+	} catch {
+		// Never leave fd 1 pointed at the log without a way back.
+		syscalls.dup2(handle.fd, STDOUT_FD);
+		return undefined;
+	}
+}
 
+function installTerminalWriter(
+	syscalls: StderrFdSyscalls,
+	handle: TerminalHandle,
+	stdout: StdoutLike,
+): StdoutFdRedirect {
 	let active = true;
-	const originalWrite = stdout.write;
+	if (!ownWrites.has(stdout.write)) baseWrite = stdout.write;
+	const originalWrite = baseWrite ?? stdout.write;
 	const write = function (this: unknown, ...args: unknown[]): boolean {
 		if (!active) return (originalWrite as (...rest: unknown[]) => boolean).apply(stdout, args);
 		return (handle.stream.write as (...rest: unknown[]) => boolean).apply(handle.stream, args);
 	} as typeof stdout.write;
+	ownWrites.add(write);
 	stdout.write = write;
 
 	// fd 1 is a file now, so the stream's own size reads would come back empty: read the terminal's.

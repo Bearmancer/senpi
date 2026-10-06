@@ -145,6 +145,47 @@ describe.skipIf(process.platform === "win32")("#2815 fd-level stdout capture und
 		expect(result.stdout).not.toContain("hidden-before-crash");
 		expect(readFileSync(getDebugLogPath(), "utf8")).toContain("hidden-before-crash");
 	});
+
+	test("/keybindings hands the terminal back before its editor runs, so the editor is visible, not drawn into the log", () => {
+		const agentDir = useTempAgentDir("keybindings");
+		const editorPath = join(agentDir, "fake-editor.sh");
+		writeFileSync(editorPath, "#!/bin/sh\necho editor-visible\nexit 0\n", { mode: 0o755 });
+		const path = fixture(agentDir, "fixture.ts", [
+			`import { prepareInteractiveStderrCapture, restoreInteractiveStderr, takeOverInteractiveStderr } from ${JSON.stringify(guardModule)};`,
+			`import { InteractiveMode } from ${JSON.stringify(modeModule)};`,
+			"await prepareInteractiveStderrCapture();",
+			"takeOverInteractiveStderr();",
+			"const calls = [];",
+			"const context = Object.assign(Object.create(InteractiveMode.prototype), {",
+			"  keybindings: { getEffectiveConfig: () => ({}), reload() {} },",
+			"  showError: (message) => calls.push('error ' + message),",
+			"  showStatus: (message) => calls.push('status ' + message),",
+			"  pauseQuestionMouseCapture() {}, resumeQuestionMouseCapture() {},",
+			"  ui: { stop: () => calls.push('ui-stop'), start: () => calls.push('ui-start'), requestRender() {} },",
+			"});",
+			"await context.handleKeybindingsCommand();",
+			"restoreInteractiveStderr();",
+			"process.stdout.write('CALLS ' + calls.join(',') + '\\n');",
+		]);
+
+		const result = spawnSync(
+			"script",
+			process.platform === "darwin"
+				? ["-q", "/dev/null", "bun", path]
+				: ["-qec", `bun ${JSON.stringify(path)}`, "/dev/null"],
+			{
+				env: { ...process.env, [ENV_AGENT_DIR]: agentDir, VISUAL: editorPath, EDITOR: editorPath },
+				encoding: "utf8",
+				stdio: ["ignore", "pipe", "pipe"],
+				timeout: 60_000,
+			},
+		);
+
+		expect(result.status).toBe(0);
+		expect(result.stdout).toContain("editor-visible");
+		expect(result.stdout).toContain("CALLS ui-stop,ui-start,status Keybindings reloaded");
+		expect(readFileSync(getDebugLogPath(), "utf8")).not.toContain("editor-visible");
+	});
 });
 
 describe("#2815 hidden output stays bounded", () => {

@@ -51,8 +51,9 @@ export function capHiddenOutputLog(logPath: string, maxBytes = HIDDEN_OUTPUT_LOG
 	const keep = Math.min(HIDDEN_OUTPUT_LOG_KEPT_TAIL_BYTES, maxBytes);
 	const tail = Buffer.alloc(keep);
 	const fd = fs.openSync(logPath, "r");
+	let read: number;
 	try {
-		fs.readSync(fd, tail, 0, keep, size - keep);
+		read = fs.readSync(fd, tail, 0, keep, size - keep);
 	} finally {
 		fs.closeSync(fd);
 	}
@@ -61,7 +62,7 @@ export function capHiddenOutputLog(logPath: string, maxBytes = HIDDEN_OUTPUT_LOG
 		logPath,
 		`[${new Date().toISOString()}] debug log cut at ${size} bytes (cap ${maxBytes}); the last ${keep} bytes follow\n`,
 	);
-	fs.appendFileSync(logPath, tail);
+	fs.appendFileSync(logPath, tail.subarray(0, read));
 	return true;
 }
 
