@@ -12,6 +12,7 @@ import {
 	resetAuthLaneBoundary,
 } from "../../src/core/extensions/builtin/anthropic-subscription/auth-lane.ts";
 import type {
+	Options,
 	SDKMessage,
 	SDKUserMessage,
 	SdkQuery,
@@ -44,7 +45,11 @@ export class ScriptedResidentQuery implements SdkQueryHandle, AsyncIterator<SDKM
 	private readonly queued: SDKMessage[] = [];
 	private readonly readers: Array<(value: IteratorResult<SDKMessage>) => void> = [];
 
-	constructor(prompt: AsyncIterable<SDKUserMessage>, script: TurnScript) {
+	/** The query options this resident process was spawned with (settings, env, resume, ...). */
+	readonly options: Options | undefined;
+
+	constructor(prompt: AsyncIterable<SDKUserMessage>, script: TurnScript, options?: Options) {
+		this.options = options;
 		void this.consume(prompt, script);
 	}
 
@@ -84,9 +89,9 @@ export class ScriptedResidentQuery implements SdkQueryHandle, AsyncIterator<SDKM
 
 export function installScriptedSdk(script: TurnScript): ScriptedResidentQuery[] {
 	const queries: ScriptedResidentQuery[] = [];
-	const query: SdkQuery = ({ prompt }) => {
+	const query: SdkQuery = ({ prompt, options }) => {
 		if (typeof prompt === "string") throw new Error("Expected streaming input");
-		const handle = new ScriptedResidentQuery(prompt, script);
+		const handle = new ScriptedResidentQuery(prompt, script, options);
 		queries.push(handle);
 		return handle;
 	};

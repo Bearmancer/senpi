@@ -5,7 +5,7 @@ import {
 	fauxToolCall,
 	registerFauxProvider,
 } from "@earendil-works/pi-ai";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AuthStorage } from "../src/core/auth-storage.ts";
 import { DEFAULT_COMPACTION_SETTINGS } from "../src/core/compaction/index.ts";
 import { decideNativeContinuity } from "../src/core/extensions/builtin/anthropic-subscription/session-continuity.ts";
@@ -209,7 +209,12 @@ function beforeCompactEvent(): SessionBeforeCompactEvent {
 	} as unknown as SessionBeforeCompactEvent;
 }
 
-describe("claude-sdk-oauth lane: senpi compaction stands down", () => {
+// senpi owns the lane by default; these pin the explicit `compactionOwner: "sdk"` opt-out.
+describe("claude-sdk-oauth lane: senpi compaction stands down (compactionOwner: sdk)", () => {
+	beforeEach(() => {
+		vi.stubEnv("SENPI_CLAUDE_SDK_OAUTH_COMPACTION_OWNER", "sdk");
+	});
+
 	it("does not run blocking compaction on before_agent_start when over the hard limit", async () => {
 		const harness = createHarness({ provider: "anthropic-subscription", usageTokens: 99_500 });
 		harness.registration.setResponses([fauxAssistantMessage("must not be used")]);

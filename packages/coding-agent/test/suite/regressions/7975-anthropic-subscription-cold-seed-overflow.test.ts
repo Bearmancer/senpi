@@ -91,9 +91,10 @@ afterEach(() => {
 	resetScriptedSdk();
 });
 
-async function laneSession(replies: Reply[], compactionOwner?: "senpi") {
-	// #7975 is a regression of the default SDK-owned lane; the opt-in senpi-owned lane is covered below.
-	if (compactionOwner) vi.stubEnv("SENPI_CLAUDE_SDK_OAUTH_COMPACTION_OWNER", compactionOwner);
+async function laneSession(replies: Reply[], compactionOwner: "sdk" | "senpi" = "sdk") {
+	// #7975 is a regression of the SDK-owned lane (now the `compactionOwner: "sdk"` opt-out); the
+	// default senpi-owned lane is covered below.
+	vi.stubEnv("SENPI_CLAUDE_SDK_OAUTH_COMPACTION_OWNER", compactionOwner);
 	await installSingleAccountLane();
 	let call = 0;
 	installScriptedSdk((sessionId, userUuid) => {
@@ -203,7 +204,7 @@ describe("oh-my-openagent#7975 cold-seed overflow on the anthropic-subscription 
 	}, 30_000);
 });
 
-// Opt-in contract (`compactionOwner: "senpi"`): senpi owns the resident lane's compaction, so a turn
+// Default contract (`compactionOwner: "senpi"`): senpi owns the resident lane's compaction, so a turn
 // over the threshold is compacted by senpi and the next turn cold-seeds a fresh SDK session
 // from the compacted branch instead of growing the old SDK transcript.
 describe("anthropic-subscription lane: senpi-owned compaction (compactionOwner: senpi)", () => {

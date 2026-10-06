@@ -6,8 +6,15 @@ import type { SettingSource } from "./sdk-boundary.ts";
 export type AnthropicSubscriptionSystemPromptMode = "preset-append" | "full" | "override";
 export type AnthropicSubscriptionResumeMode = "auto" | "off";
 export type AnthropicSubscriptionTokenInjection = "oauth-slots" | "config-dir" | "ambient";
-/** Who compacts a resident lane: the Claude Agent SDK's native auto-compact (default) or senpi's compaction stack. */
+/** Who compacts a resident lane: senpi's compaction stack (default) or the Claude Agent SDK's native auto-compact. */
 export type AnthropicSubscriptionCompactionOwner = "senpi" | "sdk";
+
+/** The one place the default lives: senpi owns compaction unless `compactionOwner: "sdk"` opts out. */
+export function resolveCompactionOwner(
+	settings: Pick<AnthropicSubscriptionProviderSettings, "compactionOwner">,
+): AnthropicSubscriptionCompactionOwner {
+	return settings.compactionOwner ?? "senpi";
+}
 
 export interface AnthropicSubscriptionProviderSettings {
 	/**

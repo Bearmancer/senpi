@@ -20,12 +20,15 @@ import { refusalError } from "./refusal.ts";
 import { getSdkBoundary, loadClaudeAgentSdk, type SdkQueryHandle } from "./sdk-boundary.ts";
 import { type ContinuityObservation, emitContinuityObservation } from "./session-observability.ts";
 import { residentSessionMessages } from "./session-stream.ts";
-import { loadAnthropicSubscriptionProviderSettingsFromDisk } from "./settings.ts";
+import { loadAnthropicSubscriptionProviderSettingsFromDisk, resolveCompactionOwner } from "./settings.ts";
 import { applyStreamEvent } from "./stream-events.ts";
 import { withAuthGuidance } from "./stream-guidance.ts";
 import { emptyOutput, errorMessage, mapStopReason, type StreamBlock, updateUsage } from "./stream-protocol.ts";
 import { toolWatch } from "./tool-watch.ts";
 import { resolveSdkTools } from "./tools.ts";
+
+export const NATIVE_COMPACTION_WHILE_SENPI_OWNS =
+	'Claude Code compacted this session natively although senpi owns compaction on this lane (compactionOwner: "senpi"); the turn was stopped so only one side compacts. Run /compact, or set anthropicSubscriptionProvider.compactionOwner to "sdk" to let Claude Code compact.';
 
 export function streamAnthropicSubscription(
 	model: Model<Api>,
@@ -73,6 +76,7 @@ export function streamAnthropicSubscription(
 			if (sessionKey) toolWatch.reconcileWithContext(sessionKey, context);
 			const toolWatchNote = toolWatch.buildPromptNote(sessionKey, context, resolvedTools.customToolNameToSdk);
 			const providerSettings = loadAnthropicSubscriptionProviderSettingsFromDisk(process.cwd());
+			const senpiOwnsCompaction = resolveCompactionOwner(providerSettings) === "senpi";
 			const toolLessRequest = options?.toolChoice === "none";
 			const mcpServers = toolLessRequest ? undefined : await buildCustomToolServers(resolvedTools.customTools);
 			claudeCodeRun = resolveClaudeCodeRun(defaultExecutableDeps());
@@ -185,6 +189,10 @@ export function streamAnthropicSubscription(
 						message.event,
 					);
 				} else if (message.type === "system" && message.subtype === "compact_boundary") {
+					// The query was started with native auto-compact off: a boundary here means Claude
+					// Code compacted anyway. Fail the turn loudly instead of letting a second owner
+					// rewrite the transcript behind senpi's compaction.
+					if (senpiOwnsCompaction) throw new Error(NATIVE_COMPACTION_WHILE_SENPI_OWNS);
 					// Native compactions must reach the ledger: attach the boundary as a
 					// diagnostic so the lane-policy collector can build a ledger entry
 					// instead of the boundary being discarded in the stream.
