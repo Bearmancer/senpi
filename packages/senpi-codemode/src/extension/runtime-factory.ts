@@ -2,6 +2,7 @@ import { type ExtensionContext, withBundledBunCommands } from "@code-yeongyu/sen
 import type { AgentExecuteTool } from "../bridges/agent-bridge.ts";
 import type { EvalSchemaToolInfo } from "../bridges/schema-bridge.ts";
 import type { CompletionRequest, CompletionResult } from "../completion/handler.ts";
+import { resolveJsIsolation } from "../config/feature-settings.ts";
 import { withoutUntrustedInterpreter } from "../config/project-trust.ts";
 import {
 	type CodemodeSettings,
@@ -17,6 +18,7 @@ import {
 	getInterpreterAvailability,
 	type InterpreterAvailability,
 } from "../interpreters/detect.ts";
+import { processRuntimeInfo } from "../kernels/js/process-worker.ts";
 import { sessionEnvironmentFrom } from "../kernels/session-env.ts";
 import { resolveSessionArtifactsDir } from "../output/streaming-output.ts";
 import type { EnabledEvalLanguages, EvalLanguage, EvalRuntimes } from "../tool/types.ts";
@@ -81,6 +83,7 @@ export async function createRuntime(
 		...(pyReason === undefined ? [] : [pyReason]),
 	]);
 	const enabledLanguages = enabledLanguagesFrom(settings, availability);
+	const jsProcessIsolation = resolveJsIsolation(settings) === "process";
 	const artifacts = resolveSessionArtifactsDir(ctx.sessionManager.getSessionFile());
 	const activeTools = new Set(pi.getActiveTools());
 	const executeTool = createExecuteTool(pi, activeTools);
@@ -108,7 +111,11 @@ export async function createRuntime(
 		parallelPoolWidth,
 		manager,
 		enabledLanguages,
-		runtimes: runtimesFromAvailability(availability, jsRuntimeInfo()),
+		runtimes: runtimesFromAvailability(
+			availability,
+			(jsProcessIsolation ? processRuntimeInfo(undefined) : undefined) ??
+				jsRuntimeInfo(process.versions, process.execPath, jsProcessIsolation),
+		),
 		settings,
 		artifactsDir: artifacts.dir,
 		executeTool,

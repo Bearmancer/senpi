@@ -1,6 +1,7 @@
 import type { EventEmitter } from "node:events";
 import { Worker } from "node:worker_threads";
 import type { KernelToHostMessage } from "../../bridge/protocol.ts";
+import { describeExit } from "../shared/kernel-death.ts";
 import type { WorkerLike } from "./inline-worker.ts";
 import type { JavaScriptKernelMode } from "./kernel-contract.ts";
 
@@ -22,10 +23,16 @@ export class WorkerStartupCancelledError extends Error {
 export class JavaScriptWorkerExitedError extends Error {
 	readonly name = "JavaScriptWorkerExitedError";
 	readonly exitCode: number;
+	readonly exitSignal: string | null;
 
-	constructor(exitCode: number) {
-		super(`JavaScript worker exited with code ${exitCode}`);
+	constructor(exitCode: number, exitSignal: string | null = null) {
+		super(
+			exitSignal === null
+				? `JavaScript worker exited with code ${exitCode}`
+				: `JavaScript worker exited with ${describeExit(null, exitSignal)} (code ${exitCode})`,
+		);
 		this.exitCode = exitCode;
+		this.exitSignal = exitSignal;
 	}
 }
 
