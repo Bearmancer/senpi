@@ -5100,6 +5100,10 @@ export class InteractiveMode {
 		switch (event.type) {
 			case "agent_start":
 				this.agentIdle = false;
+				// Catch up any rows a previous turn left stale, then keep a scrolled-up reader in place for this
+				// one: rows re-laid out above the viewport repaint only the viewport until the next key press (#2836).
+				this.ui.catchUpScrollback();
+				this.ui.setScrollbackReplayHold(true);
 				this.transcriptWriteNoticeShown = false;
 				this.clearPendingTools();
 				this.clearActiveToolExecutionStatus();
@@ -5425,6 +5429,8 @@ export class InteractiveMode {
 				if (this.settingsManager.getShowTerminalProgress() && this.ui.terminal) {
 					this.ui.terminal.setProgress(false);
 				}
+				// Keep holding until the next key press: a replay at turn end would snap a reader who is scrolled up.
+				this.ui.setScrollbackReplayHold("until-input");
 				this.clearActiveToolExecutionStatus();
 				this.clearToolHookStatuses();
 				this.streamingReveal.stop();

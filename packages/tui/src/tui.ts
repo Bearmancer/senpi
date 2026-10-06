@@ -1053,6 +1053,10 @@ export abstract class TuiBase extends Container {
 	private terminalColorSchemeListeners = new Set<(scheme: TerminalColorScheme) => void>();
 	private terminalColorSchemeNotificationsEnabled = false;
 	#lastCursorVisibility: boolean | undefined;
+	#holdScrollbackReplay = false;
+	#releaseHoldOnInput = false;
+	#scrollbackStale = false;
+	#scrollbackCatchUpPending = false;
 	/** Directory for debug/crash logs. The fork keeps a concrete default (`~/.senpi/agent`) so PI_DEBUG_REDRAW and crash dumps stay in the agent directory. */
 	protected readonly logDirectory: string;
 
@@ -1759,6 +1763,26 @@ export abstract class TuiBase extends Container {
 		this.previousViewportTop = 0;
 	}
 
+	/**
+	 * While a reply streams, a frame that changes rows above the viewport would replay the whole scrollback
+	 * (ESC[3J and a full rewrite), which throws a user who scrolled up back to the top (#2836). With the hold
+	 * on, such a frame repaints only the viewport and leaves the off-screen rows stale. The terminal cannot
+	 * report its scroll position in main-screen mode, so the catch-up replay waits for a moment the user is
+	 * surely at the bottom: their next keypress, or `catchUpScrollback()` (the next turn start).
+	 */
+	setScrollbackReplayHold(hold: boolean | "until-input"): void {
+		this.#holdScrollbackReplay = hold !== false;
+		this.#releaseHoldOnInput = hold === "until-input";
+	}
+
+	/** Replays the scrollback once if a held frame left rows above the viewport stale. */
+	catchUpScrollback(): void {
+		if (!this.#scrollbackStale) return;
+		this.#scrollbackStale = false;
+		this.#scrollbackCatchUpPending = true;
+		this.requestRender();
+	}
+
 	renderNow(force = false): void {
 		if (force) this.resetForcedRenderState();
 		this.renderRequested = false;
@@ -1888,6 +1912,14 @@ export abstract class TuiBase extends Container {
 		}
 		if (this.consumeTerminalColorResponse(data)) {
 			return;
+		}
+		// A key press means the user is at the bottom again; mouse reports (wheel scrolling) do not.
+		if (!data.startsWith("\x1b[<") && !data.startsWith("\x1b[M")) {
+			if (this.#releaseHoldOnInput) {
+				this.#releaseHoldOnInput = false;
+				this.#holdScrollbackReplay = false;
+			}
+			this.catchUpScrollback();
 		}
 		if (this.consumeTerminalColorSchemeReport(data)) {
 			return;
@@ -2668,6 +2700,7 @@ export abstract class TuiBase extends Container {
 		prevViewportTop: number,
 		hardwareCursorRow: number,
 	): void {
+		this.#scrollbackStale = false;
 		let buffer = TUI.FRAME_BEGIN;
 		buffer += this.deleteKittyImages(this.previousKittyImageIds);
 		if (!this.shouldPreserveMuxScrollback()) {
@@ -2697,6 +2730,52 @@ export abstract class TuiBase extends Container {
 		this.previousWidth = width;
 		this.previousHeight = height;
 		this.placementEpoch++;
+	}
+
+	/**
+	 * The held frame of `setScrollbackReplayHold` (#2836): rows above the old viewport stay as the terminal
+	 * shows them (possibly stale), and the frame is rewritten from the old viewport top down. Rows the
+	 * document grew by scroll naturally into scrollback in their current form, so nothing is lost there and
+	 * nothing is cleared, and a reader who scrolled up keeps their place. Returns false when an image row is
+	 * involved, so the caller replays as before.
+	 */
+	private renderHeldRepaint(
+		newLines: string[],
+		rawLines: string[],
+		cursorPos: { row: number; col: number } | null,
+		width: number,
+		height: number,
+		prevViewportTop: number,
+		hardwareCursorRow: number,
+	): boolean {
+		const start = Math.min(prevViewportTop, Math.max(0, newLines.length - height));
+		const rowCount = Math.max(height, newLines.length - start);
+		const rows = Array.from({ length: rowCount }, (_, index) => newLines[start + index] ?? "");
+		const previousVisible = this.getViewportRows(this.previousLines, prevViewportTop, height);
+		if (rows.some(isImageLine) || previousVisible.some(isImageLine)) return false;
+
+		let buffer = TUI.FRAME_BEGIN;
+		const currentScreenRow = Math.max(0, Math.min(height - 1, hardwareCursorRow - prevViewportTop));
+		if (currentScreenRow > 0) buffer += `\x1b[${currentScreenRow}A`;
+		for (let row = 0; row < rows.length; row++) {
+			if (row > 0) buffer += "\r\n";
+			buffer += `\r\x1b[2K${TUI.SEGMENT_RESET}`;
+			buffer += rows[row];
+		}
+		const lastRow = start + rows.length - 1;
+		buffer = this.finishFrame(buffer, cursorPos, newLines.length, lastRow);
+		writeBounded(this.terminal, buffer);
+
+		this.#scrollbackStale = true;
+		this.cursorRow = Math.max(0, newLines.length - 1);
+		this.maxLinesRendered = newLines.length;
+		this.previousViewportTop = Math.max(0, lastRow + 1 - height);
+		this.setPreviousLines(newLines, rawLines);
+		this.previousKittyImageIds = this.collectKittyImageIds(newLines);
+		this.previousWidth = width;
+		this.previousHeight = height;
+		this.placementEpoch++;
+		return true;
 	}
 
 	private renderMuxViewportRepaint(
@@ -2888,11 +2967,28 @@ export abstract class TuiBase extends Container {
 		newLines = normalizedLines.lines;
 		const preserveMuxScrollback = this.shouldPreserveMuxScrollback();
 
+		if (this.#scrollbackCatchUpPending) {
+			this.#scrollbackCatchUpPending = false;
+			if (!preserveMuxScrollback && !widthChanged && !heightChanged) {
+				this.renderScrollbackReplay(
+					newLines,
+					rawLines,
+					cursorPos,
+					width,
+					height,
+					prevViewportTop,
+					hardwareCursorRow,
+				);
+				return;
+			}
+		}
+
 		// Helper to clear scrollback and viewport and render all new lines
 		const fullRender = (clear: boolean, clearScrollback = clear): void => {
 			this.fullRedrawCount += 1;
 			let buffer = TUI.FRAME_BEGIN;
 			if (clear) {
+				if (clearScrollback) this.#scrollbackStale = false;
 				buffer += this.deleteKittyImages(this.previousKittyImageIds);
 				buffer += "\x1b[2J\x1b[H";
 				if (clearScrollback && !preserveMuxScrollback && process.platform !== "win32") {
@@ -3115,6 +3211,19 @@ export abstract class TuiBase extends Container {
 						if (!this.renderMuxViewportRepaint(newLines, rawLines, cursorPos, width, height, viewportTop)) {
 							fullRender(true, false);
 						}
+					} else if (
+						this.#holdScrollbackReplay &&
+						this.renderHeldRepaint(
+							newLines,
+							rawLines,
+							cursorPos,
+							width,
+							height,
+							prevViewportTop,
+							hardwareCursorRow,
+						)
+					) {
+						// Held: rows above the old viewport stay stale until the catch-up replay.
 					} else {
 						this.renderScrollbackReplay(
 							newLines,
@@ -3149,6 +3258,19 @@ export abstract class TuiBase extends Container {
 						if (!this.renderMuxViewportRepaint(newLines, rawLines, cursorPos, width, height, viewportTop)) {
 							fullRender(true, false);
 						}
+					} else if (
+						this.#holdScrollbackReplay &&
+						this.renderHeldRepaint(
+							newLines,
+							rawLines,
+							cursorPos,
+							width,
+							height,
+							prevViewportTop,
+							hardwareCursorRow,
+						)
+					) {
+						// Held: rows above the old viewport stay stale until the catch-up replay.
 					} else {
 						this.renderScrollbackReplay(
 							newLines,
