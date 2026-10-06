@@ -279,8 +279,8 @@ export interface EvalRuntimeInfo {
 	readonly name: string;
 	readonly version: string;
 	readonly path?: string;
-	/** JS only: the kernel runs in a child process instead of a worker thread. */
-	readonly isolation?: "process";
+	/** JS only: the kernel runs in a child process (`process`), or the cell ran in an isolated QuickJS VM (`sandbox`). */
+	readonly isolation?: "process" | "sandbox";
 }
 
 export type EvalRuntimes = Readonly<Partial<Record<EvalLanguage, EvalRuntimeInfo>>>;

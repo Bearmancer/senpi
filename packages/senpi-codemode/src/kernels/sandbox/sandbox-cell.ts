@@ -1,6 +1,6 @@
 import type { ResolvedSandbox } from "../../config/feature-settings.ts";
 import { marshalToolResult } from "../../tool/image.ts";
-import type { ExecuteTool, HostCellExecutor } from "../../tool/types.ts";
+import type { EvalRuntimeInfo, ExecuteTool, HostCellExecutor } from "../../tool/types.ts";
 import type { CodemodeSandbox } from "./vendor/pi-codemode/runtime/host.ts";
 import type { CodemodeError, CodemodeOutputFrame, CodemodeTool } from "./vendor/pi-codemode/types.ts";
 
@@ -11,6 +11,31 @@ export interface SandboxCellOptions {
 	readonly describeTool?: (name: string) => string | undefined;
 	/** Where the QuickJS wasm lives; by default the installed `quickjs-wasi` package's file. */
 	readonly wasmPath?: string;
+}
+
+/**
+ * The runtime an isolated cell's result reports: the QuickJS build it runs on, never the persistent kernel's (senpi#2811).
+ * Read from the installed quickjs-wasi package the wasm loads from, only when an isolated cell runs; when that package
+ * cannot be resolved the cell itself fails with eval_isolate_unavailable, and the version says so.
+ */
+export function sandboxRuntimeInfo(): EvalRuntimeInfo {
+	let version = "unavailable";
+	try {
+		// getBuiltinModule, not a static import: node:module would otherwise load with the extension.
+		const manifest: unknown = process.getBuiltinModule("node:module").createRequire(import.meta.url)(
+			"quickjs-wasi/package.json",
+		);
+		if (
+			typeof manifest === "object" &&
+			manifest !== null &&
+			"version" in manifest &&
+			typeof manifest.version === "string"
+		)
+			version = manifest.version;
+	} catch {
+		// Reported as "unavailable": the same missing package makes the cell fail with eval_isolate_unavailable.
+	}
+	return { name: "quickjs", version, isolation: "sandbox" };
 }
 
 // On the script's first line so reported line numbers still match the cell; globals, so a cell's own
