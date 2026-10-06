@@ -55,6 +55,14 @@ export class FakeKernel implements EvalKernel {
 		deferred.result.resolve(next);
 	}
 
+	/** Rejects the deferred run, as a kernel whose run itself throws (not a cell error result). */
+	failDeferredRun(error: Error): void {
+		const deferred = this.deferredRun;
+		if (!deferred) throw new Error("fake kernel has no deferred run");
+		this.deferredRun = undefined;
+		deferred.result.reject(error);
+	}
+
 	emit(message: KernelToHostMessage): void {
 		this.onMessage?.(message);
 	}

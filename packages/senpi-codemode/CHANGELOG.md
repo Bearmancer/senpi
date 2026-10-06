@@ -6,12 +6,88 @@
 
 ### Added
 
+### Changed
+
+- A running, queued or detached eval row now leads with the cell's summary (or its first code line), then the language, state and elapsed time, on one line; the code is shown on expand. A call still streaming its arguments shows that row instead of the raw `eval code="..."` fallback. Completed rows are unchanged ([#2802](https://github.com/code-yeongyu/senpi/issues/2802)).
+
+- A JavaScript cell may declare a name the kernel or platform already defines (`log`, `fetch`, `print`, `URL`, ...): the value persists for your later cells while the kernel and imported libraries keep the original, `delete <name>` restores it, and the cell notes the shadowing ([#2793](https://github.com/code-yeongyu/senpi/issues/2793)).
+
+### Fixed
+
+- A live eval row stays one line in every terminal: its headline is measured and cut in screen cells, so a summary with wide characters (Korean, Chinese, Japanese, emoji) no longer wraps a narrow terminal, and a `peek`/`stop` call still streaming in renders `eval peek` instead of `eval peek undefined` ([#2831](https://github.com/code-yeongyu/senpi/issues/2831)).
+
+- Stopping or timing out a JavaScript cell that awaits something that never settles (a promise, a `fetch` whose server never answers, a polling loop on timers, `Bun.sleep` or `node:timers/promises`, a loop of short `Bun.spawn` children) now keeps the worker and every global instead of restarting it. Stop ends the cell and everything it started: its timers are cleared, pending sleeps and `fetch` requests reject, and the sockets, servers, WebSockets, WebViews, nested workers and child processes it opened are closed; the result arrives once its children are gone. A stopped cell's own `catch`/`finally` can no longer print, call tools, start processes, schedule timers or open connections. An unhandled promise rejection no longer crashes the JavaScript kernel: it is reported on the running or next cell, naming the cell it came from, with bursts folded into one line; an uncaught exception still restarts the worker. A cell stopped during a `Bun.$` command still restarts the worker, as before ([#2788](https://github.com/code-yeongyu/senpi/issues/2788)).
+
+- JavaScript cells can call `require(...)` and `createRequire(...)`: builtins, relative CommonJS and JSON files, and packages from the project or the managed package environment resolve as they do for `import` ([#2792](https://github.com/code-yeongyu/senpi/issues/2792)).
+
+- A detached eval cell's completion notification now carries the same output its result would have shown in the foreground (head, tail, elision marker and full-output notice) instead of a 512-byte tail, and images the cell displayed are delivered with the notification ([#2789](https://github.com/code-yeongyu/senpi/issues/2789)).
+
+### Removed
+
+## [2026.10.10-4] - 2026-10-06
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- A detached eval cell that waits for its kernel to start now says so (`waiting for the js kernel to be ready`) instead of `queued behind  in the js kernel` with an empty predecessor ([#2790](https://github.com/code-yeongyu/senpi/issues/2790)).
+
+- A stopped (or failed) detached cell's result and notification show its buffered output instead of the live `1/1 cells running` frame, so a cancelled cell no longer reads as still running. The kernel-state note now says plainly whether the kernel was restarted: `The JavaScript worker was not restarted; variables from earlier cells are kept.` instead of `... remains running; its existing variables are preserved.`, or `The JavaScript worker was restarted; variables from earlier cells are lost.` instead of `... was unresponsive to interrupt and was restarted ...` (the worker may have answered the interrupt and still needed a restart) ([#2791](https://github.com/code-yeongyu/senpi/issues/2791)).
+
+- An isolated (`isolate: true`) eval cell's result names QuickJS as its runtime (`quickjs <version>, sandbox`) instead of the persistent kernel's Bun or Node runtime ([#2811](https://github.com/code-yeongyu/senpi/issues/2811)).
+
+### Removed
+
+## [2026.10.10-3] - 2026-10-06
+
+### Breaking Changes
+
+### Added
+
+- An opt-in process-isolated JavaScript kernel (`isolation.js: "process"` or `SENPI_CODEMODE_JS_ISOLATION=process`) runs each JavaScript kernel in its own subprocess instead of a worker thread, so a kernel crash (`SIGSEGV`, out-of-memory, `process.exit`, an uncaught error) can no longer take down the host session; the next cell runs on a replacement child with a restart notice naming the crash. It isolates crashes, not hostile code: a cell is trusted as in worker mode, and hostile code belongs in `isolate: true` sandbox cells ([#2752](https://github.com/code-yeongyu/senpi/issues/2752) tracks hostile-cell isolation). The child runs on the host's own runtime, exits as soon as its host is gone (including `SIGKILL`), carries large output and `BigInt`/`undefined` values as worker mode does, and its frames carry a per-process token so stray output is never taken for a frame. The default stays `"worker"` and worker-mode behaviour is unchanged ([#2452](https://github.com/code-yeongyu/senpi/issues/2452)).
+
+### Changed
+
+- The README now documents every eval surface (helpers, magic cells, settings, JavaScript isolation modes and sandbox cells), and CI checks it against the helper census, so a new helper cannot ship undocumented ([#2787](https://github.com/code-yeongyu/senpi/pull/2787)).
+
+### Fixed
+
+### Removed
+
+## [2026.10.10-2] - 2026-10-05
+
+### Breaking Changes
+
+### Added
+
+- `@code-yeongyu/senpi-codemode/executable-settings.json` lists the settings that name an executable run at session start (today `languages.pyInterpreter`). senpi's project-trust check reads it, so a project codemode file that sets one asks for trust, and a test fails if a new free-form string setting is neither on the list nor marked as not naming an executable ([#2772](https://github.com/code-yeongyu/senpi/pull/2772)).
+
+### Changed
+
+### Fixed
+
+- Settings that were accepted but did nothing now take effect ([#2763](https://github.com/code-yeongyu/senpi/issues/2763)): `kernelTools.enabled: false` makes JavaScript `tool(fn)` and Python `@tool` refuse with `tools_unavailable`; `languages.pyInterpreter` makes the Python kernel run exactly that executable (a path that does not answer makes Python unavailable, with a warning naming the setting; one named by a project's own settings file is honored only in a trusted project); `prompt.advertiseHelpers: true` adds one line pointing at `tool_schema('eval:helpers')` to the eval description. Settings-file warnings (an unknown key, a fallback to defaults) now reach the user as a notice, or on stderr without a UI.
+
+### Removed
+
+## [2026.10.10] - 2026-10-05
+
+### Breaking Changes
+
+### Added
+
 - Isolated eval cells: with `sandbox.enabled`, `isolate: true` runs a JavaScript cell in a fresh QuickJS VM with no persistence and no ambient host (only `tools.*`, `print`, `display`), streaming output under a credit window. Off by default; the eval schema is unchanged until the setting is on.
 - A JavaScript cell that is only `%bun add <package ...>` or `%npm add <package ...>` installs packages into a per-session managed environment without restarting the kernel; the next cell imports them by bare name, the project's `package.json` and `node_modules` are untouched, lifecycle scripts never run, and a failed or cancelled install leaves the previous packages active ([#2452](https://github.com/code-yeongyu/senpi/issues/2452)).
 
 ### Changed
 
 ### Fixed
+
+- An isolated (`isolate: true`) cell whose QuickJS runtime is missing now fails with `eval_isolate_unavailable` before any of its code runs, instead of a module-resolution error that named a host path ([#2452](https://github.com/code-yeongyu/senpi/issues/2452)).
 
 - `%bun add` over a package first installed from a local directory now works when the new archive's top directory is not `package/` (a GitHub-style `<repo>-<sha>.tgz`, or a plain `.tar`): its name is read from the archive's own top-level directory, so the old directory's links are removed before bun installs ([#2452](https://github.com/code-yeongyu/senpi/issues/2452)).
 

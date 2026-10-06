@@ -14,7 +14,7 @@ import {
 	type KernelToolsCapability,
 	type KernelToolsDescribeResult,
 } from "../kernels/js/kernel-tools-types.ts";
-import { sandboxCellExecutor } from "../kernels/sandbox/sandbox-cell.ts";
+import { sandboxCellExecutor, sandboxRuntimeInfo } from "../kernels/sandbox/sandbox-cell.ts";
 import { TIMEOUT_PAUSE_OP, TIMEOUT_RESUME_OP } from "../timeouts/bridge-timeout.ts";
 import { abortError, CellExecution, defaultTimeoutFactory } from "./cell-execution.ts";
 import { CellHandler, type CellState } from "./cell-handler.ts";
@@ -44,7 +44,8 @@ export async function runEvalCell(
 	const bridgeAbortController = new AbortController();
 	const cellSignal = AbortSignal.any([invocation.signal, bridgeAbortController.signal]);
 	const bridgeContext: ExtensionContext = { ...invocation.ctx, signal: cellSignal };
-	const runtime = options.runtimes?.[invocation.input.language];
+	const runtime =
+		invocation.input.isolate === true ? sandboxRuntimeInfo() : options.runtimes?.[invocation.input.language];
 	const state: CellState = {
 		input: invocation.input,
 		...(runtime === undefined ? {} : { runtime }),

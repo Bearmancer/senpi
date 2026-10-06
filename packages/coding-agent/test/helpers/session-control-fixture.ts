@@ -50,6 +50,10 @@ export async function startEndpoint(
 		pendingQuestion: options.questions?.pendingQuestion ?? (() => undefined),
 		answerQuestion: options.questions?.answerQuestion ?? (() => false),
 		notice: (line) => notices.push(line),
+		selectModel: (model) => harness.session.setModel(model),
+		selectThinkingLevel: (level, remember) =>
+			remember ? harness.session.setThinkingLevel(level) : harness.session.setSessionThinkingLevel(level),
+		interruptTurn: () => harness.session.abort(),
 	};
 	const drain: SessionControlDrain = async (event) => {
 		wakes.push(event);

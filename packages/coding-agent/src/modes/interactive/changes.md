@@ -1,3 +1,91 @@
+## 2026-10-07 - A notice during a streaming turn goes above the live reply (senpi#2836)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: `showStatus()` (the path for `ctx.ui.notify(..., "info")`, including bare `/todo`) inserts its spacer and text before `streamingComponent` while a turn streams, the way `addCustomEntryToChat()` already does. The "replace the previous notice in place" check now looks at the two children above the live message. When idle it appends as before.
+- `packages/coding-agent/test/interactive-mode-notice-during-stream.test.ts`, a real `TUI` on a counting `VirtualTerminal` (80x20):
+  - a 40-line notice posted mid-stream causes no `ESC[3J` scrollback replay across five more deltas, and the live tail stays in view;
+  - a user scrolled up 8 rows keeps seeing the same top row through the notice and the deltas;
+  - a second notice in the same turn replaces the first above the live message;
+  - an idle notice still lands at the end.
+  The first three fail before this change (on main the scrolled-up view is thrown back to the first line).
+
+### Why
+
+Appended after the live reply, a notice taller than the screen pushed the reply's tail above the viewport. Every streamed delta then changed rows above it while the line count changed, so `TUI.doRender()` took `renderScrollbackReplay()` (`ESC[3J` plus a full rewrite) once per token, which a terminal shows as the view jumping to the top again and again.
+
+### Why an extension could not handle it
+
+Notice placement is the interactive mode's own chat container logic.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: `showStatus()`.
+
+## 2026-10-06 - A terminal session takes model, thinking-level and interrupt controls from its control endpoint (oh-my-openagent#9660)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: two private static methods, called through the class with the mode, are split out of the UI paths (static so that a handler run on a partial `this`, as existing tests do, reaches only the members the switch uses). `applyModelSelection` is the `/model` switch, and `applyThinkingLevel` is the thinking-level selector's apply; each throws instead of showing the error. `selectModelFromUi` and `selectThinkingLevel` call them and show a throw as before. `sessionControlContext` gives the control endpoint `selectModel`, `selectThinkingLevel` and `interruptTurn`, which runs the Esc path `abortAndFireQueuedMessages`.
+- `packages/coding-agent/src/modes/interactive/session-control-commands.ts` and `session-control-session-commands.ts` (new): the endpoint answers `get_available_models`, `get_available_thinking_levels`, `set_model`, `set_thinking_level` and `interrupt` through those surface methods. `get_protocol_info` lists the accepted `commands`.
+- `test/suite/interactive-session-controls.test.ts` (new): a real interactive mode on a virtual terminal, driven over its live control socket. It covers the model switch (session, footer, pane status, remembered default), an unknown model, a supported level and an unsupported one, an interrupt on an idle session, and an interrupt mid-turn that answers only after the turn settled.
+
+### Why
+
+- `thread_set_model`, `thread_set_reasoning` and `thread_interrupt` failed against every terminal session, which is most live sessions. Running the pane's own paths gives a remote change the same validation, footer update and persistence the user gets typing it in the pane.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: the footer, the editor border, the status line and the Esc queue restore are private to the interactive mode. An extension switching the model through `pi` would skip them.
+
+### Expected merge conflict zones
+
+- LOW: `selectModelFromUi` / `selectThinkingLevel` in `interactive-mode.ts` (bodies moved into `applyModelSelection` / `applyThinkingLevel`), and `sessionControlContext`.
+
+## 2026-10-06 - A delivered message says who sent it (oh-my-openagent#9660)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/session-control-types.ts`: `admitExternalMessage` takes optional `sender` (`agent { session_id, name? }`, `command_line { user? }`, `external { platform, author? }`) and `display_text`, the message as its sender wrote it. Both are stored on the delivery's `details` (`core/external-admission.ts`). `sessionControlSenderOf` reads a sender back.
+- `packages/coding-agent/src/modes/interactive/components/remote-delivery-message.ts`: a delivery that names its sender renders one dim label line, `Sent by another agent · <name>`, `Sent from the command line`, or `Sent from <platform> · <author>`, over `display_text`. A delivery without a sender keeps the `remote message` heading over the full text.
+- `test/remote-delivery-message.test.ts` (new): each sender kind renders its label (an agent with and without a name, the command line, an external chat with and without an author). A sender it cannot read, or a sender without `display_text`, falls back to the old heading over the full text, never to a wrong label.
+
+### Why
+
+- The terminal showed the raw provenance header (`[OMO_GATEWAY v=1 source=peer_agent actor=...]`) to its user. The model still reads that header in the message content; the human surface gets a clean label.
+
+### Why an extension could not handle it
+
+- The `session_control_delivery` renderer is built in, and `details` is written by admission; an extension sees neither before the entry is written.
+
+### Expected merge conflict zones
+
+- LOW: `AdmitExternalMessageInput` / `SessionControlDeliveryDetails` in `session-control-types.ts` and `deliveryMessage` in `external-admission.ts`.
+
+## 2026-10-06 - Stray writes to fd 1 can no longer push the input box off-screen (senpi#2815)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/stdout-fd-redirect.ts` (new): while the TUI owns the screen, fd 1 is `dup2`'d to the debug log, and `process.stdout` (the renderer's writer) writes through a duplicate of the terminal descriptor. Its `columns`/`rows` come from that duplicate and are refreshed on `SIGWINCH`, with a `resize` event re-emitted. `restore()` puts fd 1 back and unwinds the patch. One terminal duplicate per process is reused across suspend and editor round-trips.
+- `packages/coding-agent/src/modes/interactive/interactive-stderr-guard.ts`: `takeOverInteractiveStderr()` also redirects fd 1, but only when stdout is a TTY, and starts an unref'd 5 s check that keeps the debug log under 32 MiB (`capHiddenOutputLog`: past the cap, the file is cut to its last 256 KiB behind a marker line). `restoreInteractiveStderr()` stops the check and restores fd 1 before fd 2. Every path that already hands the terminal back (exit, crash, suspend, the external editor) therefore restores fd 1 too.
+- `packages/coding-agent/src/modes/interactive/components/extension-editor.ts`: the extension editor's external-editor path stopped the TUI without handing the descriptors back; it now restores them first and takes them over again afterwards, like the main editor path.
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: `withTerminalHandedOver()` holds the stop -> restore -> run -> take over -> start sequence. The main external editor and `/keybindings` both use it; `/keybindings` used to spawn `$VISUAL`/`$EDITOR` with `stdio: "inherit"` while the TUI owned the terminal, so under the redirect its editor would draw into the log.
+- `stdout-fd-redirect.ts` also never stacks `write` wrappers across suspend/resume cycles (the next takeover wraps the original write), and a takeover that fails after `dup2` puts fd 1 back instead of leaving it redirected.
+- `packages/coding-agent/test/suite/regressions/2815-tui-stdout-never-floods.test.ts`: run under a real terminal (`script`). A raw fd 1 write, a child inheriting stdout and native `console.log` reach the log while the renderer's frame (with the terminal's width) reaches the screen. A piped stdout is untouched. The bash tool still captures its command's output. The crash path hands fd 1 back before exit. The cap cuts an oversized log. `/keybindings` runs its editor with the terminal handed back (fails before `withTerminalHandedOver`).
+
+### Why
+
+A community report: in a long session the input box vanished after "some read message flooded the terminal". A raw write of 120 lines to fd 1 on a 26-row terminal reproduces it: the terminal scrolls behind the renderer, whose cursor math then puts the editor below the screen. fd 2 was already captured this way (#2284).
+
+### Why an extension could not handle it
+
+The redirect has to be installed and released together with the TUI's own terminal ownership, inside interactive mode.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/interactive/interactive-stderr-guard.ts`: `takeOverInteractiveStderr()`, `restoreInteractiveStderr()` and the fd helpers next to `takeOverStderrFd()`.
+- `packages/coding-agent/src/modes/interactive/components/extension-editor.ts`: `handleOpenExternalEditor()`.
+
 ## 2026-10-03 - The first-run provider guidance is shown once (senpi#2677)
 
 ### What changed

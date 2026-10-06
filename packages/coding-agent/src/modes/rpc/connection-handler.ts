@@ -17,7 +17,7 @@
 
 import * as crypto from "node:crypto";
 import { basename, dirname, extname } from "node:path";
-import { type ImageContent, modelSupportsAssistantPrefill } from "@earendil-works/pi-ai";
+import type { ImageContent } from "@earendil-works/pi-ai";
 import type { OAuthProviderId } from "@earendil-works/pi-ai/compat";
 import { VERSION } from "../../config.ts";
 import type { AgentAbortSource } from "../../core/agent-abort-provenance.ts";
@@ -55,7 +55,6 @@ import type {
 	ExtensionWidgetOptions,
 	WorkingIndicatorOptions,
 } from "../../core/extensions/index.ts";
-import { getSupportedThinkingLevels } from "../../core/thinking-levels.ts";
 import { type Theme, theme } from "../interactive/theme/theme.ts";
 import { DURABLE_CLIENT_MESSAGE_ID_CAPABILITY } from "./client-admission-record.ts";
 import { ClientAdmissions } from "./client-admissions.ts";
@@ -102,6 +101,7 @@ import type {
 	RpcSkillInvocationEvent,
 } from "./rpc-types.ts";
 import { RPC_ERROR_MEDIA_NOT_FOUND } from "./rpc-types.ts";
+import { availableModelsData, interruptRunningTurn, unsupportedThinkingLevel } from "./session-control-actions-data.ts";
 import { SessionExtensionUiRequests } from "./session-extension-ui-requests.ts";
 
 export { buildRpcSessionState } from "./rpc-session-state.ts";
@@ -1037,6 +1037,9 @@ export function createRpcConnectionHandler(
 				return success(id, "abort");
 			}
 
+			case "interrupt":
+				return success(id, "interrupt", await interruptRunningTurn(session, command.turnId, () => session.abort()));
+
 			case "abort_compaction": {
 				session.abortCompaction();
 				return success(id, "abort_compaction");
@@ -1136,18 +1139,8 @@ export function createRpcConnectionHandler(
 				return success(id, "cycle_model", result);
 			}
 
-			case "get_available_models": {
-				const models = await session.modelRegistry.getAvailable();
-				return success(id, "get_available_models", {
-					models: models.map((model) => ({
-						...model,
-						supportedThinkingLevels: getSupportedThinkingLevels(model),
-						supportsAssistantPrefill: modelSupportsAssistantPrefill(model, {
-							thinkingEnabled: session.thinkingLevel !== "off",
-						}),
-					})),
-				});
-			}
+			case "get_available_models":
+				return success(id, "get_available_models", await availableModelsData(session));
 
 			// =================================================================
 			// Thinking
@@ -1159,11 +1152,7 @@ export function createRpcConnectionHandler(
 					// neighbour, so applying first would leave a REJECTED request's clamped level in
 					// place. A failed command must not change session state.
 					if (!session.getAvailableThinkingLevels().includes(command.level)) {
-						return error(
-							id,
-							"set_thinking_level",
-							`Thinking level ${command.level} is not supported by the active model.`,
-						);
+						return error(id, "set_thinking_level", unsupportedThinkingLevel(command.level));
 					}
 					session.setSessionThinkingLevel(command.level);
 				} else {

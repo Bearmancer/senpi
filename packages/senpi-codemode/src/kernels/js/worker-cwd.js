@@ -52,8 +52,11 @@ const FS_PATH_ARGS = {
 const CHILD_PROCESS_FILE_ARGS = ["spawn", "spawnSync", "execFile", "execFileSync", "fork"];
 const CHILD_PROCESS_COMMAND_ARGS = ["exec", "execSync"];
 
-export function installSessionCwd(cwd) {
-	if (isMainThread) throw new Error("installSessionCwd must only run inside a kernel worker thread");
+export function installSessionCwd(cwd, options) {
+	// A process-mode kernel child IS the main thread; the worker guard relaxes only for that entry.
+	if (isMainThread && options?.allowMainThread !== true) {
+		throw new Error("installSessionCwd must only run inside a kernel worker thread");
+	}
 	const root = resolve(cwd);
 	const rootBytes = Buffer.from(root.endsWith(sep) ? root : `${root}${sep}`);
 	// fs also takes Buffer/Uint8Array paths; a relative one gets the session root prepended as bytes,

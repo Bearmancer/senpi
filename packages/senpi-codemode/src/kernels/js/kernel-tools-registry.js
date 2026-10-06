@@ -45,6 +45,7 @@ export function createKernelToolRegistry(options = {}) {
 			return generation;
 		},
 		define(fn, metadata) {
+			if (options.disabled === true) throw kernelToolError("tools_unavailable", "kernel tools are turned off for this project (kernelTools.enabled is false)");
 			assertJs();
 			const parsed = parseToolFunction(fn);
 			const resolved = resolveToolMetadata(metadata, parsed.params);

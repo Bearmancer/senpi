@@ -1,3 +1,120 @@
+## 2026-10-06 - An attach moves the live session to the permission preset it names (senpi#2823)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session-runtime.ts`: new `AgentSessionRuntime.setPermissionPreset(preset)`, beside `setPromptSurface` / `setBrowserEngine`. It stores the preset in the runtime's launch profile, so `new_session` / `switch_session` / `fork` keep it, and sets the live extension runner's `permission-preset` flag. The builtin permission-system extension reloads its rules from that flag at the next tool call (`core/extensions/builtin/permission-system/index.ts`).
+
+### Why
+
+`open_session` on a file another client holds open attaches to the live session (`modes/rpc/session-registry-attach.ts`, `worker-session-registry.ts`). The attach moved the session to a named prompt surface and browser engine, but ignored `permissionPreset`, so a thread switched from full access to ask kept running tools unrestricted.
+
+### Why an extension could not handle it
+
+The launch profile that later replacement sessions are built from is private to `AgentSessionRuntime`, and the RPC host reaches a live session only through the runtime. An extension can read its flag, but nothing outside the runtime can change it for the session that is already running.
+
+### Expected merge conflict zones
+
+- `agent-session-runtime.ts`: the setter block after `setBrowserEngine`.
+
+## 2026-10-06 - Stale generated global-default extension shims no longer fail every start (senpi#2765)
+
+### What changed
+
+- `packages/coding-agent/src/core/resource-loader.ts`: `ensureGlobalDefaultExtensions()` removes a generated shim (any accepted banner) whose re-exported target no longer exists when this engine has no on-disk builtin to point it at, as in a compiled binary. Before, it skipped such an extension entirely, so the dead shim stayed. When a builtin exists, the existing rewrite still runs. The extension factory resolver also maps a banner-marked shim at `<agentDir>/extensions/<id>.js` whose target is missing to a no-op factory, in any agent dir, so the loader never imports it. A file counts as a dead shim only when it is exactly an accepted banner followed by the single export line the generator writes; a file a person wrote (no banner, or the banner plus anything else) is never treated as a shim, rewritten or removed. Removal is idempotent across concurrent starts (a lost race's `ENOENT` is ignored).
+- `packages/coding-agent/test/suite/regressions/2765-stale-generated-extension-shims.test.ts`: covers the rewrite with builtins present, the removal without builtins (no load errors), the silent skip in a non-default agent dir, and a user-authored file left byte-identical.
+
+### Why
+
+The shim records an absolute `file://` path into the install that wrote it. After an install-method change (npm to bun, or to the standalone binary) that path is gone, and every start reported `Extension load errors: Cannot find module` for the four default extensions.
+
+### Why an extension could not handle it
+
+The shims are generated and loaded by the resource loader itself, before any extension runs.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/resource-loader.ts`: `ensureGlobalDefaultExtensions()` and the helpers above `resolveGeneratedGlobalDefaultExtensionFactory()`.
+
+## 2026-10-06 - The retry watchdog stops once the retried request streams (senpi#2804)
+
+### What changed
+
+- `packages/coding-agent/src/core/provider-timeout-retry.ts`: `runBoundedRetryContinuation` takes `onStreamStarted` and clears its watchdog at the retried request's first stream event. Before that it bounded the whole continuation.
+- `packages/coding-agent/src/core/agent-session.ts`: `_continueAgentAfterCurrentRun` passes the first assistant `message_start` of the continuation as that event. `providerRetryWatchdogAbortMessage` now reads "The retried request never started streaming after Ns.", with `retry.provider.streamStartTimeoutMs` only as a hint.
+- `packages/coding-agent/test/suite/regressions/provider-idle-recovery.test.ts`: a retry that streams and then works for three times the bound completes (fails on main). A user abort during a streaming retry still ends as the user's abort. The existing no-first-event and budget tests keep the abort at the bound; their message assertions now use the new wording.
+
+### Why
+
+The watchdog (`max(streamRetryTimeoutMs, 1.1 x streamStartTimeoutMs)`, 660 s with the defaults) ran around the entire `agent.continue()`. A retried turn that was visibly working (streaming, running tools) for longer than that was aborted with "Provider retry continuation watchdog timed out after 660000ms".
+
+### Why an extension could not handle it
+
+The watchdog wraps the session's own retry continuation inside `AgentSession`; no extension hook sees or owns that timer.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/agent-session.ts`: the `runBoundedRetryContinuation` call in `_continueAgentAfterCurrentRun` and `providerRetryWatchdogAbortMessage`.
+- `packages/coding-agent/src/core/provider-timeout-retry.ts`: `BoundedRetryContinuation` and `runBoundedRetryContinuation`.
+
+## 2026-10-05 - A reload requested while session_start is dispatching is deferred (senpi#2719)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `_rebuildRuntimeForReload()` sets `_sessionStartDispatching` for the whole `session_start` settlement (`beforeSessionStart`, the emit, `extendResourcesFromExtensions`) and clears it in the existing `finally`. `checkReloadVeto()` passes it to `checkSessionReloadVeto()`.
+- `packages/coding-agent/src/core/reload-veto.ts`: `checkSessionReloadVeto()` takes an optional `isSessionStartDispatching` predicate and vetoes with "A session is starting." before and after the `session_before_reload` emit, like the existing prompt-admission veto.
+
+### Why
+
+- config-reload requests a second reload from inside its own `session_start` handler when files changed during the first. The nested reload shut down and invalidated the runner whose later `session_start` handlers (MCP attach, memory reconcile) were still running, so their first `ctx` read threw "stale extension generation after reload". The veto defers the nested request through config-reload's existing `reload_deferred` / `armVetoRecheck` path, which reloads once after dispatch ends.
+
+### Why an extension could not handle it
+
+- The dispatch state is private to `AgentSession`; an extension cannot know that its own handler is running inside a reload's `session_start` dispatch.
+
+### Expected merge conflict zones
+
+- `agent-session.ts`: the `_promptStartPending` field block, the `hasBindings` block of `_rebuildRuntimeForReload()`, and `checkReloadVeto()`.
+
+### Must not break
+
+- A reload requested while no `session_start` dispatch is running (`/reload`, config-reload after dispatch, prompt-admission veto) behaves as before.
+
+## 2026-10-05 - Resume queued work after failed extension feedback (senpi#2778)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `_endExtensionCompactionFeedback` releases queued work through the existing continuation admission path after non-aborted feedback completes without applying a summary. Cancelled and superseded feedback does not schedule work.
+
+### Why
+
+- A hidden goal continuation arriving during summary generation remained queued forever when the summary was stale. Only successful non-auto compaction previously resumed it. Fresh continuation admission still enforces required compaction and preserves queued messages on rejection.
+
+### Why an extension could not handle it
+
+- Queue ownership and the feedback lifecycle are private to `AgentSession`; a builtin cannot safely schedule or release another session operation.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/agent-session.ts`: `_endExtensionCompactionFeedback`.
+
+## 2026-10-05 - Require explicit gateway fallback selectors (senpi#2774)
+
+### What changed
+
+- `packages/coding-agent/src/core/retry-fallback/expansion.ts`: exclude OpenGateway and Vercel AI Gateway from bare fallback key and candidate expansion, matching the existing OpenRouter policy. Explicit provider-qualified selectors remain supported.
+
+### Why
+
+- Authenticating a gateway for a selected model also makes its built-in catalog available. Bare model-family defaults must not treat those credentials as permission to route unrelated sessions through that gateway.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/retry-fallback/expansion.ts` owns candidate expansion for every AgentSession consumer, including extension-free SDK and RPC sessions.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/retry-fallback/expansion.ts`: the bare-expansion provider exclusion set.
+
 ## 2026-10-05 - A runtime's fallback policy can be set before its first turn (omo#9582)
 
 ### What changed
@@ -15,6 +132,29 @@
 ### Expected merge conflict zones
 
 - `agent-session-runtime.ts`: the `SessionRetryFallbackProfile` interface block and the setter block after `setBrowserEngine`.
+
+## 2026-10-04 - models.json `hideFreeModels` hides a provider's zero-cost models (senpi#2720)
+
+### What changed
+
+- `packages/coding-agent/src/core/provider-composer.ts`: `applyModelsJson()` drops every model of the provider whose `cost.input` and `cost.output` are both `0` when the provider block sets `hideFreeModels: true`, and the "must specify ..." guard counts `hideFreeModels` so a block with only that key is valid.
+- `packages/coding-agent/src/core/model-config-schema.ts` (fork-owned): `ProviderConfigSchema` gains optional boolean `hideFreeModels` next to `whitelist` / `blacklist`.
+
+### Why
+
+- Zen free-tier models (cost 0) are listed and selectable but every request returns 403 `FreeTierError`. `blacklist` takes exact ids and cannot express "cost is zero"; `big-pickle` has no `-free` suffix. One provider-scoped switch hides the class and keeps working when a catalog refresh adds a new free id.
+
+### Why an extension could not handle it
+
+- The `whitelist` / `blacklist` filter runs inside `applyModelsJson()` while the provider catalog is composed, before any extension hook sees the models. Every catalog consumer (`/model`, `--list-models`, startup selection, `enabledModels` / `favoriteModels`) reads that composed list, so the filter has to live there.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/provider-composer.ts`: the guard in `applyModelsJson()` and the final `models.filter(...)` that applies `whitelist` / `blacklist`.
+
+### Must not break
+
+- A provider without `hideFreeModels: true` keeps its zero-cost models, including custom local providers (Ollama, LM Studio, vLLM) whose models default to cost 0.
 
 ## 2026-10-04 - continue_from_leaf acknowledges at turn admission, not turn end (senpi#2708)
 
@@ -8968,3 +9108,21 @@ Session creation and the launch profile are core lifecycle code that runs before
 ### Expected merge conflict zones
 
 The `promptSurface` plumbing in `agent-session.ts`, `agent-session-services.ts` and `sdk.ts`, which the new field sits next to.
+
+## 2026-10-05 - A project codemode file that names an executable asks for project trust
+
+### What changed
+
+- `packages/coding-agent/src/core/trust-manager.ts`: `hasTrustRequiringProjectResources` also returns `true` when `<cwd>/.senpi/codemode.json` sets any setting on the codemode package's list of executable-naming settings (`@code-yeongyu/senpi-codemode/executable-settings.json`, today `languages.pyInterpreter`), found through the bundled-extension resolver. A codemode file that sets none of them stays trust-free. A file that is not valid JSON asks, as a project `mcp.json` does by its presence alone; so does any codemode file when the list cannot be read.
+
+### Why
+
+- An executable-naming setting is run by the codemode extension at session start (its `--version` probe, then the kernel). Codemode honours a project-scoped value only when the project is trusted, but a project whose only config was `.senpi/codemode.json` counted as having no trust-requiring resources, so it was treated as trusted without asking and a cloned repository could run a binary of its choosing. Keeping the list in the codemode package means a new executable setting there is covered here without a core change.
+
+### Why an extension could not handle it
+
+- The launch-time trust decision is made in the host before any extension is bound; an extension can only read the decision through `isProjectTrusted()`, which reported "trusted" for a project the host never asked about.
+
+### Expected merge conflict zones
+
+- LOW: the `projectCodemodeNamesExecutable` helpers after `LEGACY_PROJECT_CONFIG_DIR_NAME`, the `bundled-resources.ts` import, and the one-line call after the config-dir check at the top of `hasTrustRequiringProjectResources` in `packages/coding-agent/src/core/trust-manager.ts`.

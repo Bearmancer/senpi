@@ -51,7 +51,7 @@ describe("TUI session control endpoint", () => {
 
 	it("answers commands outside the allowlist as unsupported data, prompt included", async () => {
 		const fixture = await endpoint();
-		for (const type of ["prompt", "steer", "follow_up", "open_session", "bash", "abort", "set_model", "nope"]) {
+		for (const type of ["prompt", "steer", "follow_up", "open_session", "bash", "abort", "cycle_model", "nope"]) {
 			const reply = await controlRequest(fixture.socket, { type, message: "hi" });
 			expect(reply.kind === "answered" && reply.record).toMatchObject({ success: false, error: "unsupported" });
 		}

@@ -1147,10 +1147,11 @@ registrant opens no socket and writes no registry directory.
   `endpoint_kind: "tui"`, `owner` and `alive`, probing it for at most 1.5 s. `senpi host gc` reaps a dead one on
   the same evidence as a host. `ensure`, `handoff` and `stop` refuse it with `unsupported_endpoint_kind` (exit 3)
   before connecting, because a terminal endpoint is owned by its terminal process.
-- **Commands.** The command set is read-mostly. Anything not listed below is answered `unsupported` as data. No
-  command can prompt, steer, queue a follow-up, open a session, run a command or change a model.
-  - `get_protocol_info`: `mode: "tui"`, `capabilities: ["tui_control"]`, `generation: 0` and the endpoint's
-    `instanceId`.
+- **Commands.** Anything not listed below is answered `unsupported` as data. No command can prompt, steer, queue a
+  follow-up, open a session or run a command.
+  - `get_protocol_info`: `mode: "tui"`, `capabilities: ["tui_control"]`, `generation: 0`, the endpoint's
+    `instanceId`, and `commands`: every command this endpoint accepts. A terminal from before the session
+    controls below lists no `commands`.
   - `list_sessions`: exactly one row, `kind: "interactive"`, `surface: "tui"`, `attachments: 1`.
   - `get_state`: the RPC session state plus `turn_epoch`, `blocking_question`, `compacting`,
     `editor_has_draft` and `state_version`.
@@ -1166,6 +1167,21 @@ registrant opens no socket and writes no registry directory.
     question (a pending question id from the `question` feed); without it, `id` does. The answer settles by
     the host's rule (see `question`) and the reply carries the frame's `id`, as on a host (see "Extension
     UI Responses").
+  - The session controls run the pane's own paths, so validation, the footer and persistence are the ones the
+    user gets doing it in that terminal:
+    - `get_available_models` and `get_available_thinking_levels`: the same answers as a host's.
+    - `set_model { provider, modelId }`: the `/model` switch (the footer, the remembered default model, the
+      pane's status line). An unknown model is refused `Model not found: <provider>/<modelId>`; a switch the
+      session refuses answers its reason. Success answers the model, as on a host.
+    - `set_thinking_level { level, scope? }`: the thinking-level selector. `scope: "turn"` sets this session's
+      level; otherwise the level is also remembered for the model (the selector's Ctrl+S). A level the active
+      model cannot run is refused `Thinking level <level> is not supported by the active model.` and nothing
+      changes, for either scope. A host refuses it only for `scope: "turn"`; for the default scope a host clamps it
+      to a level the model runs.
+    - `interrupt { turnId? }`: Esc on a running turn - queued input returns to the editor, the turn aborts and
+      settles before the answer. Answers `{ interrupted: true, turnId }` with the `turn_epoch` it stopped. An idle
+      session answers `{ interrupted: false }`; a `turnId` that is not the running turn answers
+      `{ interrupted: false, turnId }` with the running one and leaves it alone. The session stays open.
   - `prompt`, `steer` and `follow_up` are `unsupported`.
 - **Admission.** A message from another session enters only through the registrant's drain, which calls
   `pi.session.admitExternalMessage({ delivery_id, text, deliverAs, expected_turn_id? })`. One synchronous call
@@ -1470,6 +1486,12 @@ capability must use `ask`, never `workspace`, for an edit-only approval promise.
 Hosts that support `permissionPreset: "auto"` advertise `permission_preset_auto`;
 clients without it must not send `auto`.
 Explicit permission rules and remembered approvals retain their existing precedence, except under `auto`: there settings and CLI rules can only narrow the preset (the more restrictive decision wins), and an "Always" answer (saved in `.senpi/permissions-approved.jsonl`, from this or an earlier session) still allows its pattern.
+An `open_session` that attaches to a live session with another `permissionPreset` moves that session to it: the next
+tool call is decided under the new preset, in either direction, and `new_session` / `switch_session` / `fork` keep it.
+An attach without the field keeps the current preset. An attach accepts exactly the values `open_session` accepts and
+treats them the same way: an unknown preset name is applied like one given to `open_session`, so the session's next
+tool call is refused with `Permission setup failed: Invalid --permission-preset "<name>". ...` until a later attach
+names a valid preset.
 
 | Command | Params | Success data | Notes |
 | --- | --- | --- | --- |
@@ -1726,6 +1748,24 @@ Response:
 {"type": "response", "command": "abort", "success": true}
 ```
 
+
+#### interrupt
+
+Stop the running turn and only that one, with the terminal control endpoint's contract (see "Interactive sessions
+expose a control endpoint"). `turnId` (the `turn_epoch` of `get_state`) is optional.
+
+```json
+{"type": "interrupt", "turnId": "3"}
+```
+
+Response: `{ interrupted: true, turnId }` once the turn has stopped; `{ interrupted: false }` when the session is
+idle; `{ interrupted: false, turnId }` (the running turn) when `turnId` names another turn. Unlike `abort`, it
+answers after the turn settled.
+
+```json
+{"type": "response", "command": "interrupt", "success": true, "data": {"interrupted": true, "turnId": "3"}}
+```
+
 #### clear_queue
 
 Remove queued steering and follow-up messages and return their text.
@@ -1924,7 +1964,7 @@ The `model` field is a full [Model](#model) object.
 
 #### get_available_models
 
-List all configured models.
+List all configured models, refreshing credential availability on each request so credentials added or removed by another session take effect without reopening this session.
 
 ```json
 {"type": "get_available_models"}

@@ -1,3 +1,65 @@
+## 2026-10-06 - `interrupt` on a host session; model data shared with the terminal endpoint (oh-my-openagent#9660)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`:
+  - a new `interrupt { turnId? }` command stops the running turn and answers `{ interrupted, turnId? }` once the turn settled;
+  - `get_available_models` and the session-scope thinking-level refusal use `session-control-actions-data.ts` (new), which the terminal control endpoint uses too.
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: the `interrupt` command and its response.
+
+### Why
+
+- `thread_interrupt` sent `interrupt`, which no endpoint implemented, so it could never report `interrupted` with a turn id. A host and a terminal now answer the same shapes.
+
+### Why an extension could not handle it
+
+- The RPC command switch and its wire types belong to the connection handler.
+
+### Expected merge conflict zones
+
+- LOW: the `get_available_models` case, the turn-scope `set_thinking_level` refusal, and the new `interrupt` case in `connection-handler.ts`; the command and response unions in `rpc-types.ts`.
+
+## 2026-10-06 - Settle cross-generation reservation removal before close (#2729)
+
+### What changed
+
+- `host-reservations.ts`: attachment publications are ordered per path; release waits for those writes and the real claim-file removal.
+- `session-registry.ts`: teardown and failed-open cleanup await that release before dropping the local reservation.
+- `session-teardown.ts`: close completion waits for reservation release before removing the entry.
+- `session-teardown.ts` `releaseWithinGrace`: that wait is bounded by `closeGraceMs`. A claim removal that rejects is reported; one that never settles (a wedged mount) is reported after the grace window and the close still completes. Failed-open rollback releases through the same bounded path (independent review MEDIUM).
+
+### Why
+
+A successor reopening after close completion could still encounter the predecessor's attached claim, because its deletion was fire-and-forget. An already-started attachment rename could also overwrite the successor's new claim after removal.
+
+### Why an extension could not handle it
+
+Reservation ownership and close completion are RPC host lifecycle responsibilities.
+
+### Expected merge conflict zones
+
+Reservation release, registry rollback and session teardown.
+
+## 2026-10-05 - Refresh model availability after another session changes credentials (senpi#2769)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: `get_available_models` awaits `ModelRuntime.getAvailable()` instead of reading the synchronous compatibility snapshot.
+- `test/suite/rpc-model-availability.test.ts`: file-backed credential additions and removals are reflected by the existing RPC session.
+- `docs/rpc.md`: documents per-request credential availability refresh.
+
+### Why
+
+A session that had already cached availability kept returning its old model list after another session saved or removed credentials. This left the desktop picker empty despite a connected provider.
+
+### Why an extension could not handle it
+
+The RPC handler owns this model-list response; extensions cannot replace the command's availability read.
+
+### Expected merge conflict zones
+
+- The `get_available_models` case in `packages/coding-agent/src/modes/rpc/connection-handler.ts`.
+
 ## 2026-10-05 - `set_retry_fallback` for a single-session rpc process (omo#9582)
 
 ### What changed

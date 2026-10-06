@@ -491,6 +491,78 @@
 			],
 			"reason": "Node 16: %load runs a local file as a Python or JavaScript cell, read at the cell's turn in the kernel queue; load-cell.ts and kernels/shared/cell-source-at-start.ts join the scoped census, plus the %load contracts. No prompt or eval schema change."
 		},
+		"17": {
+			"additions": [
+				"imports/extension/packages/senpi-codemode/src/kernels/js/process-worker.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/kernels/js/process-worker.ts",
+				"imports/extension/packages/senpi-codemode/src/kernels/js/process-memory-host.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/kernels/js/process-memory-host.ts",
+				"imports/extension/packages/senpi-codemode/src/kernels/js/process-entry.js",
+				"imports/firstKernel/packages/senpi-codemode/src/kernels/js/process-entry.js",
+				"imports/extension/packages/senpi-codemode/src/kernels/js/kernel-memory.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/kernels/js/kernel-memory.ts",
+				"imports/extension/packages/senpi-codemode/src/kernels/js/control-frames.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/kernels/js/control-frames.ts",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation initializes, runs cells, round-trips tool calls, interrupts a cell, and closes the child",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation routes a cell's direct fd 1 writes into text frames and keeps the frame channel intact",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation survives a SIGSEGV of its child and runs the next cell on a replacement with the restart notice",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation leaves no child or process-group member behind after the session closes",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation When the host's executable is not bun or node (a compiled binary) and neither is on PATH, then the cell settles with a capability gap naming the runtime",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation When a cell writes frame-shaped lines to every fd it can reach, then each arrives as output text and none is taken as a frame",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation When cell code walks globals, the require cache, env and argv for the frame token, then nothing it finds forges a frame",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation When a cell writes a raw line straight to fd 1, then it arrives as output text and the next cell still runs",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation refuses a kernel-tool definition when kernel tools are turned off, exactly as the worker does",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation still starts and runs cells when libc cannot be loaded, instead of exiting before it can report why",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation delivers all of a Bun.spawnSync child's output after a Bun.spawn child left fd 1 non-blocking",
+				"legacyContracts/test/process-drain-scan.test.ts/Given the fd 1 reader scanning output for result markers When the stream arrives in one read, then the output and both result keys come out in order",
+				"legacyContracts/test/process-drain-scan.test.ts/Given the fd 1 reader scanning output for result markers When a read boundary falls anywhere, including inside a marker, then nothing is lost or reordered",
+				"legacyContracts/test/process-drain-scan.test.ts/Given the fd 1 reader scanning output for result markers When the stream is cut twice, then every pair of boundaries still yields the same output and keys",
+				"legacyContracts/test/process-drain-scan.test.ts/Given the fd 1 reader scanning output for result markers When output contains a NUL that is not a marker, then it is delivered as output",
+				"legacyContracts/test/process-worker-exit-cause.test.ts/Given a process kernel child that reports its crash cause on stderr When its exit is observed before the cause arrives on stderr, then the cell still gets the cause",
+				"legacyContracts/test/process-worker-exit-cause.test.ts/Given a process kernel child that reports its crash cause on stderr When the cause arrived before the exit, then the cell gets the cause as before",
+				"legacyContracts/test/process-worker-exit-cause.test.ts/Given a process kernel child that reports its crash cause on stderr When the child dies without a cause and stderr never ends, then the bare exit is reported after a bounded wait",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation reports a kernel that never becomes ready within its startup deadline, stops it, and starts a fresh one",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation still times out a cell whose kernel process stops being scheduled, replaces the process, and runs the next cell",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation settles a cell whose value is undefined, the way worker mode does",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation labels the process-mode badge with the isolation",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation reports the child's process footprint in the result memory and registry reading",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation keeps the worker default when no isolation is asked for",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation drives a WebView natively on the child's main thread in process mode",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation When a cell prints more than the 10 MiB frame limit, then the output arrives whole and the kernel keeps its globals",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation When a timer from a cell throws, then the crashed cell names the error and the next result says the kernel restarted",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation When a cell writes straight to fd 1 and returns, then the line arrives with that cell's output, before its result",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation When a worker-mode cell crashes, then the next result carries no restart notice, as before process mode existed",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation When the runtime is resolved under native Node ESM (no injected require), then a node on PATH is found",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation When the host is killed with SIGKILL, then its process-mode kernel child is gone too",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation When the host is exits without closing its kernel, then its process-mode kernel child is gone too",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation When a cell in a bun child reads fd 0, then it reads nothing and the host can still interrupt it",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation When a worker-mode cell calls a host tool with a BigInt and an undefined field, then the host receives them as worker mode does",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation When a process-mode cell calls a host tool with a BigInt and an undefined field, then the host receives them as worker mode does",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation When a process-mode kernel starts, then its child runs on bun, the product's runtime",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation When a cell runs a child process that inherits fd 1 and prints 300 KB, then the cell settles with all of it",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation When a cell writes to fd 1 in a loop that ignores failed writes and returns, then the cell settles",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation When a cell returns a value whose UTF-8 form exceeds the frame limit, then the cell fails and the kernel keeps its globals",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation When a cell calls a host tool with arguments larger than the frame limit, then the call fails in the cell at once",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation When a cell sends data shaped like the value markers, then the host receives it unchanged",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation When a cell in a node child crashes while waiting on a host tool, then the cell settles with the crash at once",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation When the host is killed with SIGKILL while a cell spins, then its process-mode kernel child is gone too",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation When a cell runs cat on a 4 MB file with fd 1 inherited, then the command succeeds and every byte arrives",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation When a cell writes 4 MB to fd 1 in one writeSync call, then the call writes it all and every byte arrives",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation When a blocked cell's child process prints 100 MiB through fd 1, then the kernel's memory stays flat and all of it arrives",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation When the host's parent is a subreaper and the host is killed while a cell spins, then the kernel child is gone too",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation When a process-mode kernel starts, then fd 1 carries no non-blocking, append, async or sync flag",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation When a bun child writes to the inherited fd 1, then a 4 MB cat in the next cell still delivers every byte",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation When one cell runs a bun child that writes to fd 1 and then a 4 MB cat, then the cat delivers every byte",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation When a node child is SIGKILLed after writing to fd 1, then a 4 MB cat afterwards still delivers every byte",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation When the kernel crashes while a child floods fd 1, then every crashed cell names its crash cause",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation When the host stalls while a child and the cell both write, then every output line arrives whole and the result is ok",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation When a crash's message is longer than the stderr window, then the crashed cell still names it",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation When a Linux kernel child crashes with SIGSEGV, then the crash is reported within 2 s and names the signal",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation When a Linux kernel child starts, then it is not dumpable, and a subprocess of a cell is",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation When SENPI_KERNEL_CORE_DUMPS=1 is set, then the Linux kernel child stays dumpable"
+			],
+			"reason": "Node 17: opt-in process-isolated JavaScript kernel (isolation.js: \"process\", worker default unchanged). The child runs worker-core over the framed subprocess transport (fd 0 in, a private dup of fd 1 out; fd 1 re-pointed at a pipe drained into text frames), with no inline fallback in process mode (a failed start is a capability-gap result naming the runtime). process-entry.js, process-worker.ts and process-memory-host.ts join the scoped census, plus the new contracts. No prompt or eval schema change."
+		},
 		"18": {
 			"additions": [
 				"schemas/js+sandbox",
@@ -519,7 +591,8 @@
 				"legacyContracts/test/sandbox/isolated-cell.test.ts/Given sandbox cells are turned on When an isolated cell calls tool.read as the prompt teaches, then it reaches the host tool",
 				"legacyContracts/test/sandbox/isolated-cell.test.ts/Given sandbox cells are turned on When an isolated cell is a %load, then it is refused and the file never runs, in the sandbox or the kernel",
 				"legacyContracts/test/sandbox/isolated-cell.test.ts/Given sandbox cells are turned on When text() runs out of memory rendering a value, then the cell still fails with eval_isolate_memory_limit",
-				"legacyContracts/test/eval-tool.test.ts/createEvalTool When sandbox cells are on and a proxy runs cells, then isolate: true is refused and never reaches the proxy"
+				"legacyContracts/test/eval-tool.test.ts/createEvalTool When sandbox cells are on and a proxy runs cells, then isolate: true is refused and never reaches the proxy",
+				"legacyContracts/test/sandbox/isolate-unavailable.test.ts/Given an isolated cell whose QuickJS runtime is missing When the cell runs, then it reports eval_isolate_unavailable without a host path, none of its code runs, and the host log keeps the full error"
 			],
 			"reason": "Node 18 part 2: the setting-gated isolate field. The three '+sandbox' schema cells are measured only with sandbox.enabled; the default schema cells (js, js+py, all) and every prompt cell stay unchanged. sandbox-cell.ts joins the scoped census (the vendored runtime itself loads lazily on the first isolated cell), plus the isolated-cell contracts."
 		},
@@ -545,6 +618,35 @@
 				"legacyContracts/test/js-kernel-webview-readiness.test.ts/a Chrome launch that never becomes ready does not relaunch for a client released while its launch stalls, and leaves no Chrome behind"
 			],
 			"reason": "Node 29 (senpi#2353): RED/GREEN regressions for a Chrome-backed WebView launch whose CDP attach never completes (bounded readiness, retire, one relaunch, sibling views kept). No prompt, schema, helper, or default changes."
+		},
+		"30": {
+			"additions": [
+				"legacyContracts/test/settings-take-effect.test.ts/Given kernelTools.enabled When it is false, then a JavaScript cell that defines a kernel tool is refused with tools_unavailable naming the setting",
+				"legacyContracts/test/settings-take-effect.test.ts/Given kernelTools.enabled When it is left at its default, then a JavaScript cell defines the kernel tool",
+				"legacyContracts/test/settings-take-effect.test.ts/Given kernelTools.enabled When it is false, then a Python cell that defines an @tool is refused with tools_unavailable naming the setting",
+				"legacyContracts/test/settings-take-effect.test.ts/Given kernelTools.enabled When it is left at its default, then a Python cell defines the @tool",
+				"legacyContracts/test/settings-take-effect.test.ts/Given languages.pyInterpreter When it names an executable, then the Python kernel runs through exactly that executable, even with a space in its path",
+				"legacyContracts/test/settings-take-effect.test.ts/Given languages.pyInterpreter When it names a missing executable, then Python is unavailable with a reason naming the setting",
+				"legacyContracts/test/settings-take-effect.test.ts/Given prompt.advertiseHelpers When it is true, then the eval description ends with the one helper pointer line",
+				"legacyContracts/test/settings-take-effect.test.ts/Given prompt.advertiseHelpers When it is left at its default, then the eval description is unchanged and carries no pointer",
+				"legacyContracts/test/executable-settings.test.ts/Given the settings that name an executable run at session start When the settings schema has a string setting, then it is either on the executable list or known not to be one",
+				"legacyContracts/test/executable-settings.test.ts/Given the settings that name an executable run at session start When the executable list names a setting, then the schema has that string setting",
+				"legacyContracts/test/executable-settings.test.ts/Given the settings that name an executable run at session start When pyInterpreter is checked, then it is on the executable list",
+				"legacyContracts/test/settings-reach-user.test.ts/Given a settings file with a problem When a session with a UI starts, then the user gets a warning that names the problem",
+				"legacyContracts/test/settings-reach-user.test.ts/Given a settings file with a problem When a print-mode session starts, then the warning goes to stderr",
+				"legacyContracts/test/settings-reach-user.test.ts/Given a settings file with a problem When languages.pyInterpreter names a missing executable, then the warning names the setting",
+				"legacyContracts/test/settings-reach-user.test.ts/Given a settings file with a problem When the settings file is valid and complete, then the user gets no warning",
+				"legacyContracts/test/settings-reach-user.test.ts/Given a settings file with a problem When the host cannot tell whether the project is trusted, then the session still starts without a warning",
+				"legacyContracts/test/settings-take-effect.test.ts/Given kernelTools.enabled When it is false and a Python cell rewrites the environment, then @tool is still refused and the cell never sees the switch",
+				"legacyContracts/test/settings-reach-user.test.ts/Given a project settings file that names languages.pyInterpreter When the project is not trusted, then the interpreter it names is never run and the user is told why",
+				"legacyContracts/test/settings-reach-user.test.ts/Given a project settings file that names languages.pyInterpreter When the host cannot tell whether the project is trusted, then the interpreter is treated as untrusted and never run",
+				"legacyContracts/test/settings-reach-user.test.ts/Given a project settings file that names languages.pyInterpreter When the project is trusted, then the interpreter it names is used",
+				"imports/extension/packages/senpi-codemode/src/config/executable-settings.json",
+				"imports/extension/packages/senpi-codemode/src/config/project-trust.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/config/executable-settings.json",
+				"imports/firstKernel/packages/senpi-codemode/src/config/project-trust.ts"
+			],
+			"reason": "Plan row 30 (#2763): kernelTools.enabled, languages.pyInterpreter and prompt.advertiseHelpers take the effect their settings describe, and settings warnings reach the user. Test-only additions; the default prompt, schemas, helper census and imports are unchanged. The feature-settings contract that resolved languages to the four flags now also keeps languages.pyInterpreter (same name, corrected expectation). The project-trust gate for a project-scoped languages.pyInterpreter adds config/project-trust.ts (pure, no I/O) to the extension and first-kernel import paths."
 		},
 		"32": {
 			"additions": [
@@ -894,6 +996,172 @@
 					"reason": "senpi#1396 makes an unknown language value fail with a distinct error from an omitted language, so this contract leaves the baseline; its honest rename 'parseEvalRequest language and code enforcement throws a distinct actionable error for an unknown language value' is listed under additions (reviewed by the gate owner on the PR)."
 				}
 			]
+		},
+		"senpi#2811": {
+			"additions": [
+				"legacyContracts/test/sandbox/isolated-cell.test.ts/Given sandbox cells are turned on Given an isolated cell when it settles then its result names QuickJS as its runtime, with no host path (senpi#2811)",
+				"legacyContracts/test/sandbox/isolated-cell.test.ts/Given sandbox cells are turned on Given a persistent cell in a session with isolated cells when it settles then it keeps the kernel's runtime (senpi#2811)"
+			],
+			"reason": "senpi#2811: an isolated (QuickJS) cell's result reports { name: 'quickjs', version: <pinned quickjs-wasi>, isolation: 'sandbox' } as its runtime instead of the persistent kernel's, read from the installed quickjs-wasi package only when an isolated cell runs (no host path). The isolated-runtime contract fails on main."
+		},
+		"senpi#2790": {
+			"additions": [
+				"legacyContracts/test/eval-detach-terminal-truth.test.ts/detached cell terminal truth Given a running detached cell when it is stopped then its notification shows the cancelled outcome without a running frame (#2791)",
+				"legacyContracts/test/eval-detach-terminal-truth.test.ts/detached cell terminal truth Given a cell first in line while its kernel is still starting when it detaches then it says it waits for the kernel instead of an empty predecessor (#2790)",
+				"legacyContracts/test/eval-detach-terminal-truth.test.ts/detached cell terminal truth Given a cell queued behind a running cell when it detaches then it still names that predecessor",
+				"legacyContracts/test/eval-detach-terminal-truth.test.ts/detached cell terminal truth Given a detached cell whose run throws when it is peeked and notified then the error text is shown with its output",
+				"legacyContracts/test/eval-detach-terminal-truth.test.ts/detached cell terminal truth Given a stopped predecessor still winding down in its kernel when a new cell detaches then the new cell names it",
+				"legacyContracts/test/eval-detach-terminal-truth.test.ts/detached cell terminal truth Given a queued cell with nothing ahead of it when its result renders then the header says it waits for the kernel"
+			],
+			"reason": "senpi#2790/#2791: a detached cell with nothing ahead of it says it waits for the kernel (detach reply, eval list, TUI header) instead of an empty predecessor list; a stopped or failed detached cell settles with its buffered output or error text, never the live 'running' frame. These contracts fail on main."
+		},
+		"senpi#2793": {
+			"additions": [
+				"legacyContracts/test/kernel-js-persistence.test.ts/JavaScript kernel declaration persistence Given a cell that declares a platform global name when later cells run then they see the cell's value while the kernel and libraries keep the built-in",
+				"legacyContracts/test/kernel-js-persistence.test.ts/JavaScript kernel declaration persistence Given let, var and destructured declarations of platform global names when later cells run then each persists for the cells",
+				"legacyContracts/test/kernel-js-persistence.test.ts/JavaScript kernel declaration persistence Given a cell that declares a kernel helper name when later cells run then they see the cell's value and the kernel still prints",
+				"legacyContracts/test/kernel-js-persistence.test.ts/JavaScript kernel declaration persistence Given a shadowed name when a cell deletes it then later cells see the original global again",
+				"legacyContracts/test/kernel-js-persistence.test.ts/JavaScript kernel declaration persistence Given a cell that shadows kernel globals when it runs then its output notes each name once and how to restore it",
+				"legacyContracts/test/kernel-js-persistence.test.ts/JavaScript kernel declaration persistence Given a cell that declares globalThis when it runs then it is refused and later cells still persist variables"
+			],
+			"reason": "senpi#2793: a top-level declaration of a kernel or platform global name (log, fetch, print, URL...) persists for the user's cells in a per-kernel user scope while globalThis keeps the original; `delete` restores it and the cell gets a note. These contracts fail on main, which refuses such declarations.",
+			"changes": [
+				{
+					"key": "legacyContracts/test/kernel-js-persistence.test.ts/JavaScript kernel declaration persistence rejects a top-level declaration that would replace a platform global",
+					"reason": "senpi#2793 replaces the refusal with a cell-scoped binding: a declaration of a kernel or platform global name now persists for the user's cells while globalThis keeps the original, so the old refusal contract leaves the baseline; its replacement is listed under additions."
+				},
+				{
+					"key": "legacyContracts/test/kernel-js-persistence.test.ts/JavaScript kernel declaration persistence rejects let and var declarations that would replace a platform global",
+					"reason": "senpi#2793 replaces the refusal with a cell-scoped binding: a declaration of a kernel or platform global name now persists for the user's cells while globalThis keeps the original, so the old refusal contract leaves the baseline; its replacement is listed under additions."
+				},
+				{
+					"key": "legacyContracts/test/kernel-js-persistence.test.ts/JavaScript kernel declaration persistence rejects destructured bindings that would replace a platform global",
+					"reason": "senpi#2793 replaces the refusal with a cell-scoped binding: a declaration of a kernel or platform global name now persists for the user's cells while globalThis keeps the original, so the old refusal contract leaves the baseline; its replacement is listed under additions."
+				},
+				{
+					"key": "legacyContracts/test/kernel-js-persistence.test.ts/JavaScript kernel declaration persistence rejects a declaration that would replace a kernel prelude global",
+					"reason": "senpi#2793 replaces the refusal with a cell-scoped binding: a declaration of a kernel or platform global name now persists for the user's cells while globalThis keeps the original, so the old refusal contract leaves the baseline; its replacement is listed under additions."
+				}
+			]
+		},
+		"senpi#2802": {
+			"additions": [
+				"legacyContracts/test/eval-render-summary.test.ts/eval summary display bounds the summary to the live frame's one-line headline (senpi#2802)",
+				"legacyContracts/test/eval-tool-execution-render.test.ts/eval summary in transcript frames Given a running eval with a summary when the frame renders then the header leads with the summary (senpi#2802)",
+				"legacyContracts/test/eval-render-live-headline.test.ts/live eval rows lead with the cell's summary (senpi#2802) Given a running cell when its row renders collapsed then the header leads with the summary, language and state, and the code is hidden",
+				"legacyContracts/test/eval-render-live-headline.test.ts/live eval rows lead with the cell's summary (senpi#2802) Given a queued and a detached cell when their rows render then both lead with the summary",
+				"legacyContracts/test/eval-render-live-headline.test.ts/live eval rows lead with the cell's summary (senpi#2802) Given a running cell when its row is expanded then the code is shown once and the summary is not repeated",
+				"legacyContracts/test/eval-render-live-headline.test.ts/live eval rows lead with the cell's summary (senpi#2802) Given a running cell without a summary when its row renders then the headline is its first code line, cut to the width",
+				"legacyContracts/test/eval-render-live-headline.test.ts/live eval rows lead with the cell's summary (senpi#2802) Given a running cell with no output yet when its row renders collapsed then it is one line with no empty frame",
+				"legacyContracts/test/eval-render-live-headline.test.ts/live eval rows lead with the cell's summary (senpi#2802) Given a completed cell when its row renders then it keeps the done header, the summary line and the code preview",
+				"legacyContracts/test/eval-render-live-headline.test.ts/live eval rows lead with the cell's summary (senpi#2802) Given a call still streaming with only code when it renders then it shows a headline row instead of failing",
+				"legacyContracts/test/eval-render-live-headline.test.ts/live eval rows lead with the cell's summary (senpi#2802) Given a complete call before its result arrives when it renders then it leads with the summary",
+				"imports/extension/packages/senpi-codemode/src/tool/live-headline.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/tool/live-headline.ts"
+			],
+			"reason": "senpi#2802: in-progress, queued and detached eval rows lead with the cell's summary (else the first code line), then the language, state and elapsed time, with the code behind expand; a call still streaming its arguments renders that headline instead of throwing into the host's raw key=value fallback. Completed rows are unchanged. The new contracts fail on main. live-headline.ts (about 40 lines, no dependencies beyond types.ts) is imported by render.ts, which already loads with the extension.",
+			"changes": [
+				{
+					"key": "legacyContracts/test/eval-render-summary.test.ts/eval summary display bounds the summary inside the live cell frame too",
+					"reason": "senpi#2802: an in-progress eval row now leads with the cell's summary on its header line instead of the summary line plus code below it; the same coverage moves to the renamed contract listed under additions."
+				},
+				{
+					"key": "legacyContracts/test/eval-tool-execution-render.test.ts/eval summary in transcript frames Given a running eval with a summary when the frame renders then the header drops the label segment and the summary sits under it",
+					"reason": "senpi#2802: an in-progress eval row now leads with the cell's summary on its header line instead of the summary line plus code below it; the same coverage moves to the renamed contract listed under additions."
+				}
+			]
+		},
+		"senpi#2789": {
+			"additions": [
+				"legacyContracts/test/detached-cell-notification-budget.test.ts/detached cell notification parity with the foreground result Given a detached cell whose output is a few kilobytes when it completes then the notification carries all of it",
+				"legacyContracts/test/detached-cell-notification-budget.test.ts/detached cell notification parity with the foreground result Given a detached cell that returned one long line of JSON when it completes then the notification carries all of it",
+				"legacyContracts/test/detached-cell-notification-budget.test.ts/detached cell notification parity with the foreground result Given a detached cell whose result the output sink bounded when it completes then the notification shows exactly the foreground text, marker and artifact notice included",
+				"legacyContracts/test/detached-cell-notification-budget.test.ts/detached cell notification parity with the foreground result Given a large notification when it is built then the outcome line and the kernel-state note frame the output",
+				"legacyContracts/test/detached-cell-notification-budget.test.ts/detached cell notification parity with the foreground result Given a detached cell that displayed an image when it completes then the notification delivers the image",
+				"legacyContracts/test/eval-detach.test.ts/eval detached cells reports a detached kernel crash with the cell's whole result, as the foreground would"
+			],
+			"reason": "senpi#2789: a detached cell's completion notification carries the same text its result would show in the foreground (the output sink's configured head, tail, middle marker and artifact notice) instead of a 512-byte tail, framed by the outcome line and kernel-state note, and delivers the cell's images. All five fail on main: it shows a 512-byte tail, appends a cap marker after the state note, and drops images.",
+			"changes": [
+				{
+					"key": "legacyContracts/test/eval-detach.test.ts/eval detached cells reports detached kernel crashes with the buffered tail and spills oversized notifications to an absolute path",
+					"reason": "senpi#2789: a detached notification now carries the cell's foreground result text unchanged, so there is no separate notification spill file any more; the crash contract is kept as 'reports a detached kernel crash with the cell's whole result, as the foreground would' under additions."
+				}
+			]
+		},
+		"senpi#2792": {
+			"additions": [
+				"helperCensus/js/createRequire",
+				"helperCensus/js/require",
+				"helperCensus/js-bun/createRequire",
+				"helperCensus/js-bun/require",
+				"helperCensus/js-node/createRequire",
+				"helperCensus/js-node/require",
+				"imports/firstKernel/packages/senpi-codemode/src/kernels/js/worker-require.js",
+				"legacyContracts/test/kernel-js-require.test.ts/require in JavaScript cells Given a cell when it requires a builtin then it gets the runtime's module, with or without the node: prefix",
+				"legacyContracts/test/kernel-js-require.test.ts/require in JavaScript cells Given a project with a CommonJS package when a cell requires it then the package from the project's node_modules loads",
+				"legacyContracts/test/kernel-js-require.test.ts/require in JavaScript cells Given a cell when it requires a relative CommonJS file and a JSON file then both resolve from the session directory",
+				"legacyContracts/test/kernel-js-require.test.ts/require in JavaScript cells Given a cell when it builds its own require with createRequire then that require resolves from the given path",
+				"legacyContracts/test/kernel-js-require.test.ts/require in JavaScript cells Given a cell that builds its own require from createRequire, the common ESM idiom, when it runs then its require works and later cells keep it",
+				"legacyContracts/test/kernel-js-require.test.ts/require in JavaScript cells Given a module that does not exist when a cell requires it then the runtime's not-found error names it and the kernel keeps its state"
+			],
+			"reason": "senpi#2792: JavaScript cells get require and createRequire (resolved like the cell's import: builtins, relative CommonJS and JSON files, the project's packages, then the managed package environment), installed as kernel helpers from worker-require.js. The require contracts fail on main ('require is not defined')."
+		},
+		"senpi#2788": {
+			"additions": [
+				"imports/firstKernel/packages/senpi-codemode/src/kernels/js/cell-run-context.js",
+				"legacyContracts/test/js-kernel-cooperative-interrupt.test.ts/JavaScriptKernel cooperative interrupt Given a cell parked on a promise nothing settles when interrupted then the worker keeps its state",
+				"legacyContracts/test/js-kernel-stop-keeps-state.test.ts/JavaScriptKernel stop on a free event loop Given a cell awaiting a promise nothing settles when stopped then earlier globals survive on the same worker",
+				"legacyContracts/test/js-kernel-stop-keeps-state.test.ts/JavaScriptKernel stop on a free event loop Given a cell awaiting a fetch whose server never answers when stopped then earlier globals survive on the same worker",
+				"legacyContracts/test/js-kernel-stop-keeps-state.test.ts/JavaScriptKernel stop on a free event loop Given a stopped cell that resumes later when it prints or calls a tool then nothing reaches the next cell",
+				"legacyContracts/test/js-kernel-interrupt-bun.test.ts/JavaScript kernel under Bun interrupts a running cell Given a cell looping over short Bun.spawn children when interrupted then the worker state survives",
+				"legacyContracts/test/js-kernel-shell-stop-bun.test.ts/Bun shell Stop keeps globals and refuses the shell when a cell swallows Stop and then starts a native shell",
+				"legacyContracts/test/js-kernel-stop-keeps-state.test.ts/JavaScriptKernel stop on a free event loop Given a stopped cell that resumes later when it starts a fetch then the request is refused",
+				"legacyContracts/test/js-kernel-interrupt-bun.test.ts/JavaScript kernel under Bun interrupts a running cell Given a cell polling on Bun.sleep when interrupted then the loop stops and the worker state survives",
+				"legacyContracts/test/js-kernel-stop-keeps-state.test.ts/JavaScriptKernel stop on a free event loop Given a stopped cell that left a fetch and a derived chain unawaited then the kernel keeps its state and does not crash",
+				"legacyContracts/test/js-kernel-stop-keeps-state.test.ts/JavaScriptKernel stop on a free event loop Given a stopped cell with an open socket server and client when stopped then both close and earlier globals survive",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation keeps the child and its globals when a stopped cell left a fetch unawaited (#2788)",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation stops a polling loop and keeps the child's globals when a cell is stopped twice (#2788)",
+				"imports/firstKernel/packages/senpi-codemode/src/kernels/js/rejection-reports.js",
+				"legacyContracts/test/js-kernel-stop-keeps-state.test.ts/JavaScriptKernel stop on a free event loop Given a stopped cell whose floating fetch rethrows a new error with a cause then the kernel keeps its state and reports it on the next cell",
+				"legacyContracts/test/js-kernel-stop-keeps-state.test.ts/JavaScriptKernel stop on a free event loop Given a cell that leaves many promises rejecting unhandled when it runs then one report and a count reach its output and the kernel keeps its state",
+				"legacyContracts/test/js-kernel-stop-keeps-state.test.ts/JavaScriptKernel stop on a free event loop Given an uncaught exception in a timer when it fires then the worker still restarts and says variables are lost",
+				"legacyContracts/test/js-kernel-stop-keeps-state.test.ts/JavaScriptKernel stop on a free event loop Given a stopped cell that started a node:worker_threads Worker then the worker is terminated and earlier globals survive",
+				"imports/firstKernel/packages/senpi-codemode/src/kernels/js/cell-ownership.js",
+				"legacyContracts/test/js-kernel-stop-ends-loops.test.ts/JavaScriptKernel stop ends a stopped cell's loop Given a polling loop on global setTimeout when stopped then it stops ticking and earlier globals survive",
+				"legacyContracts/test/js-kernel-stop-ends-loops.test.ts/JavaScriptKernel stop ends a stopped cell's loop Given a polling loop on global setInterval when stopped then it stops ticking and earlier globals survive",
+				"legacyContracts/test/js-kernel-stop-ends-loops.test.ts/JavaScriptKernel stop ends a stopped cell's loop Given a polling loop on node:timers setTimeout when stopped then it stops ticking and earlier globals survive",
+				"legacyContracts/test/js-kernel-stop-ends-loops.test.ts/JavaScriptKernel stop ends a stopped cell's loop Given a polling loop on node:timers setImmediate when stopped then it stops ticking and earlier globals survive",
+				"legacyContracts/test/js-kernel-stop-ends-loops.test.ts/JavaScriptKernel stop ends a stopped cell's loop Given a polling loop on node:timers setInterval when stopped then it stops ticking and earlier globals survive",
+				"legacyContracts/test/js-kernel-stop-ends-loops.test.ts/JavaScriptKernel stop ends a stopped cell's loop Given a polling loop on node:timers/promises when stopped then it stops ticking and earlier globals survive",
+				"legacyContracts/test/js-kernel-stop-ends-loops.test.ts/JavaScriptKernel stop ends a stopped cell's loop Given a polling loop on a short fs/promises read when stopped then it stops ticking and earlier globals survive",
+				"legacyContracts/test/js-kernel-stop-ends-loops.test.ts/JavaScriptKernel stop ends a stopped cell's loop Given a polling loop on an fs callback read when stopped then it stops ticking and earlier globals survive",
+				"legacyContracts/test/js-kernel-stop-ends-loops.test.ts/JavaScriptKernel stop ends a stopped cell's loop Given a polling loop on an fs read stream when stopped then it stops ticking and earlier globals survive",
+				"legacyContracts/test/js-kernel-stop-ends-loops.test.ts/JavaScriptKernel stop ends a stopped cell's loop Given a polling loop on readline over a file stream when stopped then it stops ticking and earlier globals survive",
+				"legacyContracts/test/js-kernel-stop-ends-loops.test.ts/JavaScriptKernel stop ends a stopped cell's loop Given a polling loop on a MessageChannel round trip when stopped then it stops ticking and earlier globals survive",
+				"legacyContracts/test/js-kernel-stop-ends-loops.test.ts/JavaScriptKernel stop ends a stopped cell's loop Given a socket the cell constructed directly when stopped then it is destroyed, and sockets Node creates still pass instanceof",
+				"legacyContracts/test/js-kernel-stop-ends-loops.test.ts/JavaScriptKernel stop ends a stopped cell's loop Given a resource that will not close when its cell is stopped then the failure is reported and the stop still keeps the state",
+				"legacyContracts/test/js-kernel-stop-ends-loops.test.ts/JavaScriptKernel stop ends a stopped cell's loop Given an http server the cell started when stopped then it served while live and is closed after, and Node's own constructors still work"
+			],
+			"reason": "senpi#2788: Stop on a free event loop releases the cell in the worker and keeps the VM. cell-run-context.js (the per-cell async context and the released-cell guards) joins the first-kernel import census; the new contracts are RED before the fix (stateRetained false) and GREEN after. The JavaScript worker reports unhandled rejections through rejection-reports.js instead of crashing (the lead-approved behavior for #2788). Round 3: the node:timers module timers, fs callback operations and streams, readline, and directly constructed net/tls/http/dgram sockets and servers are owned too (cell-ownership.js); a resource that will not close is reported instead of swallowed. The polling-loop contracts moved to js-kernel-stop-ends-loops.test.ts. Round 4: Node's socket and server types are owned on connect/listen/bind instead of by subclassing (http.Server calls net.Server as a function); a cell's http server serves while live and closes on Stop.",
+			"changes": [
+				{
+					"key": "legacyContracts/test/js-kernel-cooperative-interrupt.test.ts/JavaScriptKernel cooperative interrupt Given a cell parked on a promise nothing settles when interrupted then the worker restarts and the note is truthful",
+					"reason": "senpi#2788: a stop the worker acknowledges no longer costs the VM when the cell only awaits something that never settles; the worker releases the cell and keeps its globals. This contract leaves the baseline; its honest rename is 'Given a cell parked on a promise nothing settles when interrupted then the worker keeps its state'."
+				},
+				{
+					"key": "legacyContracts/test/js-kernel-shell-stop-bun.test.ts/Bun shell Stop reports state loss when Stop interrupts a native late wait",
+					"reason": "senpi#2788: the 'late' case swallowed Stop on a host-tool wait and then started a native shell; the released cell now refuses that shell, so the worker keeps its state instead of restarting. Replaced by 'keeps globals and refuses the shell when a cell swallows Stop and then starts a native shell'. Stopping a running Bun.$ wait still restarts (#2453 Decision A; the shell/text/lines cases are unchanged)."
+				}
+			]
+		},
+		"senpi#2831": {
+			"additions": [
+				"legacyContracts/test/eval-render-live-headline.test.ts/live eval rows stay one clean line (senpi#2831) Given a summary carrying escape and control characters when its live row renders then the row is one line with none of them",
+				"legacyContracts/test/eval-render-live-headline.test.ts/live eval rows stay one clean line (senpi#2831) Given a wide-character summary when its live row renders in a narrow terminal then the row fits the width in screen cells",
+				"legacyContracts/test/eval-render-live-headline.test.ts/live eval rows stay one clean line (senpi#2831) Given a peek or stop call still streaming without its cell id when it renders then the title has no undefined"
+			],
+			"changes": [],
+			"reason": "senpi#2831 (follow-ups from #2810's review): pins that a live row's summary is sanitized to one clean line, that the collapsed headline is measured and cut in screen cells so a wide-character summary stays on one line, and that a streaming peek/stop without its cell id renders the action alone instead of 'undefined'."
 		}
 	}
 }

@@ -82,9 +82,9 @@ export interface GoalCacheWarmMetrics {
 	readonly ttlSeconds?: number;
 	/** Set when the provider caches automatically with no expiry contract; no TTL or savings are claimed. */
 	readonly cacheLifetime?: "best-effort";
-	/** Tokens sitting warm in the provider prompt cache after the last turn. */
+	/** Cumulative cache-read/write tokens reported across the prior agent run's requests, not unique context size. */
 	readonly cachedTokens: number;
-	/** Estimated USD saved by re-reading those tokens from cache instead of paying a cold input read. */
+	/** Hypothetical read discount at current model prices if the same token volume is reused from cache. */
 	readonly estimatedSavedUsd?: number;
 }
 
@@ -106,6 +106,8 @@ export interface GoalCacheWarmupEntryData {
 	readonly dueAtMs?: number;
 	/** Actual wait in milliseconds; present on the `resumed` phase only. */
 	readonly waitedMs?: number;
+	/** Actual resumption trigger; absent on legacy entries whose cause was not recorded. */
+	readonly wakeCause?: "timer" | "sources-drained";
 	/** Backward-compatible field containing the total active wake-source count. */
 	readonly activeMonitorCount: number;
 	/** Full source-keyed snapshot; absent on entries written before wake sources were generalized. */

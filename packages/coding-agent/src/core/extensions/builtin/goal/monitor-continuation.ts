@@ -466,6 +466,8 @@ export class MonitorAwareGoalContinuation {
 			this.#scheduledDelayMs ??
 			(kind === "monitor" ? GOAL_MONITOR_CONTINUATION_FALLBACK_DELAY_MS : GOAL_USER_GRACE_DELAY_MS);
 		const waitedMs = this.#scheduledAtMs === undefined ? delayMs : Math.max(0, Date.now() - this.#scheduledAtMs);
+		const dueAtMs = this.#scheduledAtMs === undefined ? undefined : this.#scheduledAtMs + delayMs;
+		const wakeCause = drainFire ? "sources-drained" : "timer";
 		const cache = this.#scheduledCache;
 		const iteration = this.#scheduledCacheWarmIteration;
 		this.#scheduledAtMs = undefined;
@@ -487,7 +489,9 @@ export class MonitorAwareGoalContinuation {
 		this.#pi.events?.emit(GOAL_CONTINUATION_RESUMED_EVENT, {
 			goalId: goal.id,
 			delayMs,
+			dueAtMs,
 			waitedMs,
+			wakeCause,
 			iteration,
 			activeMonitorCount: this.#activeWakeSourceCount(),
 			wakeSources,
@@ -497,7 +501,9 @@ export class MonitorAwareGoalContinuation {
 			phase: "resumed",
 			goalId: goal.id,
 			delayMs,
+			dueAtMs,
 			waitedMs,
+			wakeCause,
 			iteration,
 			activeMonitorCount: this.#activeWakeSourceCount(),
 			wakeSources,
@@ -565,7 +571,10 @@ export class MonitorAwareGoalContinuation {
 	}
 
 	#buildContinuationContent(ctx: ExtensionContext, goal: Goal, verdict: ContinuingGoalContinuationVerdict): string {
-		let content = verdict.prompt === "minimal" ? buildTruncationRecoveryPrompt() : buildContinuationPrompt(goal);
+		let content =
+			verdict.prompt === "minimal"
+				? buildTruncationRecoveryPrompt()
+				: buildContinuationPrompt(goal, { modelId: ctx.model?.id });
 		if (!verdict.stallNotice) return content;
 
 		const liveSources = this.#liveWakeSources();

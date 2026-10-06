@@ -6,6 +6,88 @@
 
 ### Added
 
+- `visibleWidth` (a string's width in terminal cells) is exported for extensions that lay out their own rows ([#2831](https://github.com/code-yeongyu/senpi/issues/2831)).
+
+- A `show_html_page` tool (builtin `html-render` extension) lets a standalone senpi agent show a self-contained HTML page (chart, table, diagram, mockup): the page is prepared with the theme bootstrap injected, absolute-path local images inlined after a magic-byte check, and size caps enforced, then written to `.senpi/html-pages/` with an open-in-desktop hint. The written page opens as an offline snapshot: a Content-Security-Policy placed ahead of everything the page wrote refuses fetch, XHR, WebSockets and every remote script, style, image, font and frame. In an OmO desktop thread the desktop shows the page inline: the tool hands it over in its result details (never in the text the model reads), capped at 512,000 characters (omo-desktop-app#1724).
+
+### Changed
+
+### Fixed
+
+- A notice shown while a reply is streaming (for example the list `/todo` prints) no longer makes the terminal jump to the top of the conversation with every new token. It now appears above the live reply instead of after it, so a notice taller than the screen no longer pushes the reply off-screen and forces a full repaint of the scrollback ([#2836](https://github.com/code-yeongyu/senpi/issues/2836)).
+- An `open_session` that attaches to a session another client already holds open now applies the `permissionPreset` it names: from the next tool call on, the live session enforces that preset, in both directions (a stricter preset starts asking; a looser one stops asking), on the in-process and the worker host runtimes. An attach without a preset keeps the session's preset, and an attach accepts and treats every value exactly as `open_session` does (an unknown name makes the next tool call fail closed with `Permission setup failed: Invalid --permission-preset "<name>"`). Before, the attach kept the session's original preset, so a thread switched from full access to ask kept running tools without approval ([#2823](https://github.com/code-yeongyu/senpi/issues/2823)).
+
+- A session reopened on a new RPC host right after the old host closed it no longer fails with the old host still listed as its owner: closing a session now finishes only after its path claim is removed, and a late attachment update from the old host can no longer overwrite the new host's claim ([#2729](https://github.com/code-yeongyu/senpi/issues/2729)).
+
+### Removed
+
+## [2026.10.10-4] - 2026-10-06
+
+### Breaking Changes
+
+### Added
+
+- A terminal session's control endpoint accepts `get_available_models`, `get_available_thinking_levels`, `set_model`, `set_thinking_level` and `interrupt`. It applies each one exactly as the pane's own `/model`, thinking-level selector or Esc would, with the same validation, footer update and persistence, and `get_protocol_info` lists the accepted `commands`. A multi-session host also answers `interrupt { turnId? }` with `{ interrupted, turnId }` once the turn has stopped ([oh-my-openagent#9660](https://github.com/code-yeongyu/oh-my-openagent/issues/9660)).
+- `pi.session.admitExternalMessage` takes an optional `sender` (another session's id and name, the command line, or an external chat) and `display_text`. The terminal then shows a delivered message under one label line, `Sent by another agent · <name>` or `Sent from the command line`, with the message as it was written, instead of the raw provenance header. The model still reads the header ([oh-my-openagent#9660](https://github.com/code-yeongyu/oh-my-openagent/issues/9660)).
+
+### Changed
+
+### Fixed
+
+- Two processes rebinding the same session at once both end at the moved session. The one that finds the move already done returns the new path instead of failing with `ENOENT` while reading the old file ([#2828](https://github.com/code-yeongyu/senpi/issues/2828)).
+
+- A global default extension shim left behind by an earlier install (for example after switching from npm to bun or to the standalone binary) no longer fails every start with `Cannot find module`. On start, a generated shim whose target is gone is rewritten to the current install's builtin when there is one, and removed when the engine has none; the loader skips any such shim without an error. A file you wrote yourself (no generated banner) is never touched ([#2765](https://github.com/code-yeongyu/senpi/issues/2765)).
+- The input box is no longer pushed off-screen when something writes to the terminal behind the TUI (a child that inherits stdout, a raw fd 1 write, or `console.log` from an extension or a Worker). While the TUI owns the screen, those writes go to the debug log, which is now capped at 32 MiB. Windows keeps the existing JS-level guard ([#2815](https://github.com/code-yeongyu/senpi/issues/2815)).
+
+### Removed
+
+## [2026.10.10-3] - 2026-10-06
+
+### Breaking Changes
+
+### Added
+
+- A provider block in `models.json` accepts `hideFreeModels: true` to drop that provider's zero-cost models (`cost.input` and `cost.output` both `0`) from the catalog. The default is unchanged: free models stay visible ([#2720](https://github.com/code-yeongyu/senpi/issues/2720), [#2773](https://github.com/code-yeongyu/senpi/pull/2773) by [@Bearmancer](https://github.com/Bearmancer)).
+- `websearch.json` accepts `keenable` as a `web_search` provider: with `apiKey` it uses Keenable's keyed API, without one its shared public tier (identified by an app header, no credential). It is used only when listed explicitly; the no-config default chain is unchanged ([#2775](https://github.com/code-yeongyu/senpi/pull/2775) by [@audreyt](https://github.com/audreyt)).
+
+### Changed
+
+- A GPT-6 Astra session receives a goal continuation prompt that carries the goal contract only (objective, legal turn endings, blocked floor); the completion audit, no-progress check and usage lines are no longer sent to that model. Every other model keeps the full prompt ([#2796](https://github.com/code-yeongyu/senpi/issues/2796)).
+
+### Fixed
+
+- A retried request that has started streaming is no longer aborted by the retry watchdog after 660 s of work (a long answer, tool calls, further turns): the watchdog now bounds only the wait for the retry to start streaming, and the provider's own idle and stall guards cover the rest. A retry that never starts still ends, with the message "The retried request never started streaming after Ns." ([#2804](https://github.com/code-yeongyu/senpi/issues/2804)).
+- A reload requested while a reload's `session_start` handlers are still running is deferred (`A session is starting.`) instead of retiring the runner mid-dispatch. Later `session_start` handlers no longer fail with `stale extension generation after reload` ([#2719](https://github.com/code-yeongyu/senpi/issues/2719), [#2771](https://github.com/code-yeongyu/senpi/pull/2771) by [@Bearmancer](https://github.com/Bearmancer)).
+
+### Removed
+
+## [2026.10.10-2] - 2026-10-05
+
+### Breaking Changes
+
+### Added
+
+- `/mcp` with no arguments opens an interactive server manager in the TUI: compact server rows with state-specific actions (enable/disable, exposure, test, reconnect, sign in/out), plus tool, detail and log views. Only trusted global and project servers can be edited, and edits change just `enabled`/`exposure` in the existing config file. Untrusted project, imported, extension and skill servers are read-only (Details and Logs). Non-TUI clients still get the status text ([#2716](https://github.com/code-yeongyu/senpi/issues/2716), [#2747](https://github.com/code-yeongyu/senpi/pull/2747) by [@wuhaoyujerry](https://github.com/wuhaoyujerry)).
+
+### Changed
+
+### Fixed
+
+- Goal continuations queued during compaction now resume after a stale or failed summary. Cancellation and context-limit checks still apply ([#2778](https://github.com/code-yeongyu/senpi/issues/2778)).
+- Wake notices distinguish timer backstops from finished background work and label cache figures as cumulative estimates. Compaction logs identify the session ([#2778](https://github.com/code-yeongyu/senpi/issues/2778)).
+- Bare model-family fallback no longer silently selects OpenGateway or Vercel AI Gateway when those providers have credentials. Like OpenRouter, these gateways require an explicit provider-qualified fallback selector ([#2774](https://github.com/code-yeongyu/senpi/issues/2774)).
+- A project whose `.senpi/codemode.json` sets a setting that names an executable (today `languages.pyInterpreter`) now asks for project trust before the session starts, like a project `mcp.json`; before, such a project counted as trusted without asking, so the interpreter it named ran at session start ([#2772](https://github.com/code-yeongyu/senpi/pull/2772)).
+- RPC model lists now reflect credentials added or removed by another session without reopening the session, fixing an empty desktop model picker after connecting a provider ([#2769](https://github.com/code-yeongyu/senpi/issues/2769)).
+- The `/btw` side panel renders its answer as Markdown, the same way assistant messages render in the transcript. Headings, bold, inline code, lists, and code blocks used to show as raw `##`, `**`, and backticks ([#2766](https://github.com/code-yeongyu/senpi/pull/2766) by [@nahwan-kim](https://github.com/nahwan-kim)).
+
+### Removed
+
+## [2026.10.10] - 2026-10-05
+
+### Breaking Changes
+
+### Added
+
 - A single-session `--mode rpc` process accepts `set_retry_fallback` before its first turn is asked for (capability `retry_fallback_command`): the `open_session.retryFallback` profile for a caller that spawns one process per session, applied in memory only and kept by the process's later sessions. omo's task children that run as their own process (every Windows child, and `task.process_runner: "child-process"`) can now carry their category's fallback chain past a tool call without touching the user's settings file ([omo#9582](https://github.com/code-yeongyu/oh-my-openagent/issues/9582)).
 - `anthropicSubscriptionProvider.compactionOwner: "senpi"` (or `SENPI_CLAUDE_SDK_OAUTH_COMPACTION_OWNER=senpi`) hands compaction on `anthropic-subscription` to senpi: speculative and idle compaction, restoration and the other compaction features run there with the session's own model, and Claude Code's native auto-compact is off for those sessions so only one side compacts. The default is unchanged: Claude Code compacts ([#2746](https://github.com/code-yeongyu/senpi/issues/2746)).
 

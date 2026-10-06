@@ -1,6 +1,5 @@
 import { mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { setTimeout as delay } from "node:timers/promises";
 import { fauxAssistantMessage, fauxToolCall, getCurrentTools } from "@earendil-works/pi-ai";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ENV_AGENT_DIR } from "../../src/config.ts";
@@ -54,7 +53,7 @@ describe("/mcp command suite", () => {
 		expect([...extension.commands.keys()]).toEqual(["mcp"]);
 	});
 
-	it("renders panel and status text from service snapshots", async () => {
+	it("renders non-TUI panel and status text from service snapshots", async () => {
 		const root = makeCommandRoot("render");
 		setConfig(root, {
 			disabled: { ...stdioServer(["--tools", "1"]), enabled: false },
@@ -65,10 +64,11 @@ describe("/mcp command suite", () => {
 		await emitSessionStart(extension, root);
 		await awaitMcpConnected(getMcpService(), "fx");
 
-		await command.handler("", createCtx(root, ui));
+		await command.handler("", createCtx(root, ui, "print"));
+		const panel = lastNotification(ui)?.message;
 		await command.handler("status", createCtx(root, ui));
 
-		expect(normalize(ui.selectCalls[0]?.title, root)).toMatchInlineSnapshot(`
+		expect(normalize(panel, root)).toMatchInlineSnapshot(`
 			"MCP servers
 			disabled disabled state=not_spawned origin=global source=<agentDir>/mcp.json tools=? uptime=n/a calls=0 errors=0 latency=0ms reconnects=0
 			fx enabled state=connected origin=global source=<agentDir>/mcp.json tools=2 uptime=<1s calls=0 errors=0 latency=0ms reconnects=0"
@@ -327,11 +327,28 @@ describe("/mcp command suite", () => {
 		const { command, extension } = await loadCommand();
 		const ui = createUi();
 		await emitSessionStart(extension, root);
-		await delay(1000);
+		// The command awaits the startup attach before observing its connection state.
+		await command.handler("status", createCtx(root, ui));
+		const connection = getMcpService().getConnection("bad");
+		if (!connection) throw new Error("missing bad fixture connection");
+		if (connection.state !== "degraded") {
+			await new Promise<void>((resolve, reject) => {
+				const timeout = setTimeout(() => {
+					unsubscribe();
+					reject(new Error("fatal fixture did not report degraded"));
+				}, 5000);
+				const unsubscribe = connection.onStateChange((event) => {
+					if (event.state !== "degraded") return;
+					clearTimeout(timeout);
+					unsubscribe();
+					resolve();
+				});
+			});
+		}
 
 		await command.handler("status", createCtx(root, ui));
 
-		const message = notification(ui, "MCP status")?.message ?? "";
+		const message = lastNotification(ui)?.message ?? "";
 		expect(message).toContain("bad enabled");
 		expect(message).toContain("FATAL: missing FOO_TOKEN=<redacted:");
 		expect(message).not.toContain("super-secret-token");

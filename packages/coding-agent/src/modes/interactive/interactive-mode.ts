@@ -109,7 +109,7 @@ import type {
 	WorkingIndicatorOptions,
 } from "../../core/extensions/index.ts";
 import { buildNoticeBox, type NoticeLine, type NoticeSpec } from "../../core/extensions/notice/index.ts";
-import type { QuestionRequest, QuestionResponse } from "../../core/extensions/types.ts";
+import type { QuestionRequest, QuestionResponse, SystemPromptChangeEvent } from "../../core/extensions/types.ts";
 import { FooterDataProvider, type ReadonlyFooterDataProvider } from "../../core/footer-data-provider.ts";
 import { appendUncaughtCrashLog, appendUnhandledRejectionLog } from "../../core/hidden-stdout-log.ts";
 import { buildHighReasoningWarning } from "../../core/high-reasoning-warning.ts";
@@ -2146,10 +2146,12 @@ export class InteractiveMode {
 		}
 
 		const seeded = seedKeybindingsFile(configPath, this.keybindings);
-		const edit = await editFileInExternalEditor({
-			command: editorCommand,
-			path: configPath,
-		});
+		const edit = await this.withTerminalHandedOver(() =>
+			editFileInExternalEditor({
+				command: editorCommand,
+				path: configPath,
+			}),
+		);
 		if (edit.status === "launch-failed") {
 			// The editor never ran, so a file we just seeded carries no user content.
 			if (seeded) fs.rmSync(configPath, { force: true });
@@ -3999,6 +4001,11 @@ export class InteractiveMode {
 					return state !== undefined;
 				},
 				notice: (line) => this.showWarning(line),
+				selectModel: (model) => InteractiveMode.applyModelSelection(this, model),
+				selectThinkingLevel: (level, remember) => InteractiveMode.applyThinkingLevel(this, level, remember),
+				interruptTurn: async () => {
+					await this.abortAndFireQueuedMessages();
+				},
 			},
 		};
 	}
@@ -5908,8 +5915,13 @@ export class InteractiveMode {
 	 */
 	private showStatus(message: string): void {
 		const children = this.chatContainer.children;
-		const last = children.length > 0 ? children[children.length - 1] : undefined;
-		const secondLast = children.length > 1 ? children[children.length - 2] : undefined;
+		// While a turn streams, a notice goes above the live message, like a custom entry does. Appended
+		// after it, a notice taller than the screen pushed the live output above the viewport, and every
+		// streamed delta then replayed the whole scrollback: the view kept jumping to the top (#2836).
+		const streamingIndex = this.streamingComponent ? children.indexOf(this.streamingComponent) : -1;
+		const end = streamingIndex >= 0 ? streamingIndex : children.length;
+		const last = end > 0 ? children[end - 1] : undefined;
+		const secondLast = end > 1 ? children[end - 2] : undefined;
 
 		if (last && secondLast && last === this.lastStatusText && secondLast === this.lastStatusSpacer) {
 			this.lastStatusMessage = message;
@@ -5921,8 +5933,12 @@ export class InteractiveMode {
 		const spacer = new Spacer(1);
 		this.lastStatusMessage = message;
 		const text = new ThemedText(() => theme.fg("dim", this.lastStatusMessage), 1, 0);
-		this.chatContainer.addChild(spacer);
-		this.chatContainer.addChild(text);
+		if (streamingIndex >= 0) {
+			children.splice(streamingIndex, 0, spacer, text);
+		} else {
+			this.chatContainer.addChild(spacer);
+			this.chatContainer.addChild(text);
+		}
 		this.lastStatusSpacer = spacer;
 		this.lastStatusText = text;
 		this.ui.requestRender();
@@ -7033,17 +7049,28 @@ export class InteractiveMode {
 	private async handleOpenExternalEditor(): Promise<void> {
 		const editorCmd = this.settingsManager.getExternalEditorCommand();
 		const content = this.getExpandedEditorText();
+		const result = await this.withTerminalHandedOver(() =>
+			editInExternalEditor({
+				command: editorCmd,
+				content,
+			}),
+		);
+		if (result.status === "complete") {
+			this.editor.setText(result.content);
+		}
+	}
+
+	/**
+	 * Runs `work` (an external program that draws on the terminal itself) with the terminal handed
+	 * back: the TUI stops, fd 1 and fd 2 point at the terminal again, and both are taken over again
+	 * afterwards. An editor launched without this would draw into the debug log (#2815).
+	 */
+	private async withTerminalHandedOver<T>(work: () => Promise<T>): Promise<T> {
 		this.pauseQuestionMouseCapture();
 		this.ui.stop();
 		restoreInteractiveStderr();
 		try {
-			const result = await editInExternalEditor({
-				command: editorCmd,
-				content,
-			});
-			if (result.status === "complete") {
-				this.editor.setText(result.content);
-			}
+			return await work();
 		} finally {
 			takeOverInteractiveStderr();
 			this.ui.start();
@@ -7866,14 +7893,23 @@ export class InteractiveMode {
 	 */
 	private selectThinkingLevel(level: ThinkingLevel, persist: boolean): void {
 		try {
-			if (persist) this.session.setThinkingLevel(level);
-			else this.session.setSessionThinkingLevel(level);
-			this.footer.invalidate();
-			this.updateEditorBorderColor();
-			this.showStatus(persist ? `Default thinking level: ${level}` : `Thinking level: ${level}`);
+			InteractiveMode.applyThinkingLevel(this, level, persist);
 		} catch (error) {
 			this.showError(error instanceof Error ? error.message : String(error));
 		}
+	}
+
+	/**
+	 * The level switch itself; the control endpoint's `set_thinking_level` runs it too.
+	 * Static and called through the class, so a handler invoked on a partial `this`
+	 * reaches exactly the members the switch uses.
+	 */
+	private static applyThinkingLevel(mode: InteractiveMode, level: ThinkingLevel, persist: boolean): void {
+		if (persist) mode.session.setThinkingLevel(level);
+		else mode.session.setSessionThinkingLevel(level);
+		mode.footer.invalidate();
+		mode.updateEditorBorderColor();
+		mode.showStatus(persist ? `Default thinking level: ${level}` : `Thinking level: ${level}`);
 	}
 
 	private async showThinkingSelector(): Promise<void> {
@@ -7954,22 +7990,34 @@ export class InteractiveMode {
 		done?.();
 		this.ui?.requestRender();
 		try {
-			const systemPromptChange = await this.session.setModel(model);
-			this.footer.invalidate();
-			// A model switch ends any external-owner delegation episode.
-			this.externalOwnerCompactionNoticeShown = false;
-			this.footer?.setCompactionDelegated?.(false);
-			this.updateEditorBorderColor();
-			const systemPromptStr = systemPromptChange?.systemPromptName
-				? ` (optimized system prompt applied: ${systemPromptChange.systemPromptName})`
-				: "";
-			this.showStatus(`Model: ${model.id}${systemPromptStr}`);
-			this.showRiskyMainModelWarning(model);
-			void this.maybeWarnAboutAnthropicSubscriptionAuth(model);
-			this.checkDaxnutsEasterEgg(model);
+			await InteractiveMode.applyModelSelection(this, model);
 		} catch (error) {
 			this.showError(error instanceof Error ? error.message : String(error));
 		}
+	}
+
+	/**
+	 * The `/model` switch itself; the control endpoint's `set_model` runs it too, and reports a throw.
+	 * Static and called through the class for the same reason as `applyThinkingLevel`.
+	 */
+	private static async applyModelSelection(
+		mode: InteractiveMode,
+		model: Model<any>,
+	): Promise<SystemPromptChangeEvent | undefined> {
+		const systemPromptChange = await mode.session.setModel(model);
+		mode.footer.invalidate();
+		// A model switch ends any external-owner delegation episode.
+		mode.externalOwnerCompactionNoticeShown = false;
+		mode.footer?.setCompactionDelegated?.(false);
+		mode.updateEditorBorderColor();
+		const systemPromptStr = systemPromptChange?.systemPromptName
+			? ` (optimized system prompt applied: ${systemPromptChange.systemPromptName})`
+			: "";
+		mode.showStatus(`Model: ${model.id}${systemPromptStr}`);
+		mode.showRiskyMainModelWarning(model);
+		void mode.maybeWarnAboutAnthropicSubscriptionAuth(model);
+		mode.checkDaxnutsEasterEgg(model);
+		return systemPromptChange;
 	}
 
 	private async resolveFavoriteModelsForUi(

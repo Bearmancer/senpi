@@ -83,6 +83,7 @@ type RpcSessionCommand =
 			enqueueOrder?: number;
 	  } & ClientMessageIdentity)
 	| { id?: string; type: "abort" }
+	| { id?: string; type: "interrupt"; turnId?: string }
 	| { id?: string; type: "abort_compaction" }
 	| { id?: string; type: "reload" }
 	| { id?: string; type: "check_reload_veto" }
@@ -767,6 +768,13 @@ export type RpcResponse =
 			data?: ClientMessageIdentity & { disposition?: QueuedInputDisposition; admission?: ClientMessageAdmission };
 	  }
 	| { id?: string; type: "response"; command: "abort"; success: true }
+	| {
+			id?: string;
+			type: "response";
+			command: "interrupt";
+			success: true;
+			data: { interrupted: boolean; turnId?: string };
+	  }
 	| { id?: string; type: "response"; command: "abort_compaction"; success: true }
 	| { id?: string; type: "response"; command: "reload"; success: true; data: { cancelled: boolean; reason?: string } }
 	| {
