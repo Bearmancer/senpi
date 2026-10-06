@@ -379,7 +379,11 @@ describe("provider idle recovery", () => {
 				queueMicrotask(() => stream.push({ type: "error", reason: "error", error: genericTimeoutError() }));
 			} else {
 				options?.signal?.addEventListener("abort", () =>
-					stream.push({ type: "error", reason: "aborted", error: fauxAssistantMessage("", { stopReason: "aborted" }) }),
+					stream.push({
+						type: "error",
+						reason: "aborted",
+						error: fauxAssistantMessage("", { stopReason: "aborted" }),
+					}),
 				);
 				queueMicrotask(() => {
 					stream.push({ type: "start", partial: fauxAssistantMessage("") });
