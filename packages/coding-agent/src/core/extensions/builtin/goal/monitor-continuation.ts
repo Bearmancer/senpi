@@ -571,7 +571,10 @@ export class MonitorAwareGoalContinuation {
 	}
 
 	#buildContinuationContent(ctx: ExtensionContext, goal: Goal, verdict: ContinuingGoalContinuationVerdict): string {
-		let content = verdict.prompt === "minimal" ? buildTruncationRecoveryPrompt() : buildContinuationPrompt(goal);
+		let content =
+			verdict.prompt === "minimal"
+				? buildTruncationRecoveryPrompt()
+				: buildContinuationPrompt(goal, { modelId: ctx.model?.id });
 		if (!verdict.stallNotice) return content;
 
 		const liveSources = this.#liveWakeSources();

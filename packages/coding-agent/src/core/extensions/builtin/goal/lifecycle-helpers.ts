@@ -121,7 +121,7 @@ export async function queueGoalContinuation(
 				lastAssistantFromEntries(ctx.sessionManager.getBranch()),
 			),
 		},
-		content: () => buildContinuationPrompt(goal),
+		content: () => buildContinuationPrompt(goal, { modelId: ctx.model?.id }),
 		markContinuationPending: options.markContinuationPending,
 	});
 }
