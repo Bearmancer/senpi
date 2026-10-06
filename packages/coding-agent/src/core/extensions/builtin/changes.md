@@ -1,3 +1,12 @@
+## 2026-10-06 — html-render's offline policy no longer skips comments; refresh metas are dropped (#2846)
+
+**What:** `html-render/bootstrap.ts` keeps a doctype ahead of the policy meta only when a BOM and whitespace are all that precede it, and removes every `<meta>` mentioning a refresh before injecting.
+
+**Why:** browsers end comments at `<!-->`, `<!--->` and `--!>`; the old regex let a script run ahead of the policy, which Chromium then ignored in `<body>`.
+
+**Must not break:** never skip markup before the policy; mirrors desktop `packages/shared/src/htmlRenderBootstrap.ts`.
+
+
 ## 2026-10-06 — show_html_page hands the page to the host in its details
 
 **What:** `html-render/tool.ts` caps `html` at 512,000 characters (the desktop html_render input limit) and returns the page as written in `details.html`. The model-visible `content` is unchanged and never carries it. Tests: the page is in details and absent from content; a 512,001-character page fails the schema; inlined images past 25 MiB throw the cap error and write nothing.

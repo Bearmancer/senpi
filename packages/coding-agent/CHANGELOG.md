@@ -14,6 +14,7 @@
 
 ### Fixed
 
+- `show_html_page` now keeps its offline policy first: a page that opens with a comment the browser closes early (`<!-->`, `<!--->`, `--!>`) can no longer run a script ahead of it, and `<meta http-equiv="refresh">` tags are removed so a page cannot load another page over itself ([#2846](https://github.com/code-yeongyu/senpi/issues/2846)).
 - A notice shown while a reply is streaming (for example the list `/todo` prints) no longer makes the terminal jump to the top of the conversation with every new token. It now appears above the live reply instead of after it, so a notice taller than the screen no longer pushes the reply off-screen and forces a full repaint of the scrollback ([#2836](https://github.com/code-yeongyu/senpi/issues/2836)).
 - An `open_session` that attaches to a session another client already holds open now applies the `permissionPreset` it names: from the next tool call on, the live session enforces that preset, in both directions (a stricter preset starts asking; a looser one stops asking), on the in-process and the worker host runtimes. An attach without a preset keeps the session's preset, and an attach accepts and treats every value exactly as `open_session` does (an unknown name makes the next tool call fail closed with `Permission setup failed: Invalid --permission-preset "<name>"`). Before, the attach kept the session's original preset, so a thread switched from full access to ask kept running tools without approval ([#2823](https://github.com/code-yeongyu/senpi/issues/2823)).
 

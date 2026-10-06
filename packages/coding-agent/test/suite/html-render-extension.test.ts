@@ -80,6 +80,30 @@ describe("html-render builtin", () => {
 		expect(written.indexOf(policy)).toBeLessThan(written.indexOf("cdn.example"));
 	});
 
+	it.each(["<!-->", "<!--->", "<!-- note --!>", "<!-- note -->"])(
+		"keeps the policy ahead of a script hidden behind %s before the doctype",
+		(comment) => {
+			const policy = `<meta http-equiv="Content-Security-Policy" content="${HTML_RENDER_CONTENT_SECURITY_POLICY}">`;
+			const injected = injectHtmlRenderBootstrap(
+				`${comment}<script>fetch("http://127.0.0.1:1/")</script>--><!doctype html><html><head></head><body>x</body></html>`,
+			);
+			expect(injected.startsWith(policy)).toBe(true);
+		},
+	);
+
+	it.each([
+		'<meta http-equiv="refresh" content="0;url=https://example.com/">',
+		"<META HTTP-EQUIV=Refresh CONTENT='0; URL=https://example.com/'>",
+		'<meta content="0;url=https://example.com/?a>b" http-equiv="refresh">',
+		'<meta http-equiv="&#114;efresh" content="0;url=https://example.com/">',
+	])("drops a refresh that would load another page over the snapshot: %s", (refresh) => {
+		const injected = injectHtmlRenderBootstrap(
+			`<!doctype html><html><head>${refresh}</head><body><p>chart</p></body></html>`,
+		);
+		expect(injected).not.toMatch(/example\.com/);
+		expect(injected).toContain("<p>chart</p>");
+	});
+
 	it("hands the page to the host in details and never puts it in the content the model reads", async () => {
 		const html = '<!doctype html><div id="marker-7f3a">chart</div>';
 		const result = await showHtmlPageTool.execute(
