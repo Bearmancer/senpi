@@ -5436,7 +5436,6 @@
       "test/eval-detach.test.ts/eval detached cells never detaches in print/json modes: the cell blocks until its run budget kills it": "passed",
       "test/eval-detach.test.ts/eval detached cells settles timeout-vs-completion and stop-vs-completion races once with no stranded busy marker": "passed",
       "test/eval-detach.test.ts/eval detached cells kills detached cells during session disposal and ignores late kernel messages after terminal state": "passed",
-      "test/eval-detach.test.ts/eval detached cells reports detached kernel crashes with the buffered tail and spills oversized notifications to an absolute path": "passed",
       "test/eval-detach.test.ts/eval background capacity foreground window keeps an at-cap cell alive at 30s and returns its normal foreground completion at 45s": "passed",
       "test/eval-detach.test.ts/eval background capacity foreground window cancels only the at-cap running cell at the submission-based 60s window with a typed capacity error": "passed",
       "test/eval-detach.test.ts/eval background capacity foreground window cancels only the at-cap queued cell at the submission-based 60s window with a typed capacity error": "passed",

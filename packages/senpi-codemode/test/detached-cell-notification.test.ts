@@ -46,7 +46,6 @@ describe("detached cell notification state note", () => {
 	it("Given a cancelled js cell whose kernel supplied an interrupt note when the notification is built then the note follows the state", async () => {
 		const notification = await buildDetachedCellNotification(
 			cancelledSnapshot("js", false, "A synchronous call is blocking the old worker.\n"),
-			undefined,
 		);
 
 		expect(notification.content).toContain(
@@ -55,7 +54,7 @@ describe("detached cell notification state note", () => {
 	});
 
 	it("Given a cancelled cell with no interrupt outcome when the notification is built then it says the outcome is unknown", async () => {
-		const notification = await buildDetachedCellNotification(cancelledSnapshot("js"));
+		const notification = await buildDetachedCellNotification(cancelledSnapshot("js", undefined));
 
 		expect(notification.content).toContain(unknownInterruptionStateNote("js"));
 	});
