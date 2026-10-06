@@ -10,6 +10,8 @@
 
 ### Fixed
 
+- The input box is no longer pushed off-screen when something writes to the terminal behind the TUI (a child that inherits stdout, a raw fd 1 write, or `console.log` from an extension or a Worker). While the TUI owns the screen, those writes go to the debug log, which is now capped at 32 MiB. Windows keeps the existing JS-level guard ([#2815](https://github.com/code-yeongyu/senpi/issues/2815)).
+
 ### Removed
 
 ## [2026.10.10-3] - 2026-10-06
