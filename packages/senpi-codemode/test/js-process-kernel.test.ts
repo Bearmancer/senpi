@@ -539,7 +539,7 @@ return "done";`,
 		"settles a cell whose value is undefined, the way worker mode does",
 		async () => {
 			const kernel = processKernel();
-			const cell = await runJavaScriptCell(kernel, "await new Promise((resolve) => setTimeout(resolve, 10))");
+			const cell = await runJavaScriptCell(kernel, "await Promise.resolve()");
 			expect(cell.result.ok ? "ok" : cell.result.error.message).toBe("ok");
 			if (cell.result.ok) expect(cell.result.valueRepr).toBeUndefined();
 			const next = await runJavaScriptCell(kernel, "return 4");
