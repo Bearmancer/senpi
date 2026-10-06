@@ -519,9 +519,17 @@ or terminated. The stop result arrives once those children are gone, and the
 worker and every global from earlier cells survive. If the stopped cell's own
 `catch`/`finally` still runs, it cannot print, call tools, start processes,
 schedule timers or open connections. One boundary remains: code that resumes
-because a later cell resolves a promise the stopped cell was awaiting, or
-because other short I/O (a file read) completes, runs until it reaches one of
-those refused operations. Only a cell stopped during a `Bun.$` command costs
+because a later cell resolves a promise the stopped cell was awaiting runs
+until it reaches an operation a stopped cell may no longer start (output, tool
+calls, processes, timers, network, files, message channels, workers).
+
+An unhandled promise rejection never crashes the JavaScript kernel; its
+variables are kept, as in the Node REPL and Jupyter. The rejection is reported
+on the cell that is running, or on the next cell, naming the cell that started
+the work when it is known ("from cell <id>, after it was stopped"), with the
+error message and the top of its stack. A burst becomes one report plus
+"... and K more unhandled promise rejections". A fatal error (an uncaught
+exception) still restarts the worker, and the result says variables are lost. Only a cell stopped during a `Bun.$` command costs
 the worker VM. A worker blocked in a synchronous call (`Bun.spawnSync`,
 `child_process.spawnSync`) cannot be stopped at all; after a 3 s termination
 deadline a fresh worker replaces it, the cell output gains a stderr line naming

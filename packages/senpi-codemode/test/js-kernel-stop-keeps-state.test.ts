@@ -75,19 +75,28 @@ async function silentServer(): Promise<{
 	};
 }
 
+/** Stops the cell, proves the kernel kept its state on the same worker, and returns the next cell's stderr. */
 async function stopAndExpectStateKept(
 	kernel: JavaScriptKernel,
 	entry: SpawnLoggingWorkerEntry,
 	run: ReturnType<JavaScriptKernel["run"]>,
-): Promise<void> {
+): Promise<string> {
 	const handle = await kernel.interrupt("user-stop");
 	await expect(run).resolves.toMatchObject({ ok: false, error: { message: expect.stringContaining("user-stop") } });
 	await expect(handle.stateRetained).resolves.toBe(true);
-	await expect(kernel.run({ cellId: "after-stop", code: "return keep", timeoutMs: 5_000 })).resolves.toMatchObject({
-		ok: true,
-		valueRepr: "41",
-	});
+	const stderr: string[] = [];
+	await expect(
+		kernel.run({
+			cellId: "after-stop",
+			code: "await new Promise((r) => setTimeout(r, 0)); return keep",
+			timeoutMs: 5_000,
+			onMessage: (message) => {
+				if (message.type === "text" && message.stream === "stderr") stderr.push(message.data);
+			},
+		}),
+	).resolves.toMatchObject({ ok: true, valueRepr: "41" });
 	expect(await spawnCount(entry)).toBe(1);
+	return stderr.join("");
 }
 
 describe("JavaScriptKernel stop on a free event loop", () => {
@@ -179,6 +188,14 @@ describe("JavaScriptKernel stop on a free event loop", () => {
 
 	it.each([
 		...(process.versions.bun === undefined ? [] : [["Bun.sleep", "await Bun.sleep(10)"]]),
+		[
+			"a short file read",
+			'await (await import("node:fs/promises")).readFile(process.execPath, { length: 16 }).catch(() => {})',
+		],
+		[
+			"a MessageChannel round trip",
+			"await new Promise((resolve) => { const { port1, port2 } = new MessageChannel(); port2.onmessage = () => { port1.close(); port2.close(); resolve(); }; port1.postMessage(1); })",
+		],
 		["node:timers/promises", 'await (await import("node:timers/promises")).setTimeout(10)'],
 		[
 			"setInterval",
@@ -254,5 +271,91 @@ describe("JavaScriptKernel stop on a free event loop", () => {
 				timeoutMs: 5_000,
 			}),
 		).resolves.toMatchObject({ ok: true, valueRepr: "[false,true]" });
+	});
+
+	it("Given a stopped cell whose floating fetch rethrows a new error with a cause then the kernel keeps its state and reports it on the next cell", async () => {
+		const { kernel, entry } = await createKernel();
+		const server = await silentServer();
+		const { run } = await startedCell(
+			kernel,
+			"wrapped-fetch",
+			[
+				"globalThis.keep = 41;",
+				`const load = async (n) => { try { return await fetch(${JSON.stringify(server.url)}); } catch (error) { throw new Error("load " + n + " failed", { cause: error }); } };`,
+				"const a = load(1), b = load(2); await a; await b;",
+			].join(" "),
+		);
+		await server.requested;
+
+		const reported = await stopAndExpectStateKept(kernel, entry, run);
+		expect(reported).toMatch(
+			/Unhandled promise rejection from cell wrapped-fetch, after it was stopped: Error: load \d failed/u,
+		);
+		expect(reported.match(/Unhandled promise rejection/gu)).toHaveLength(1);
+		await expect(kernel.run({ cellId: "after", code: "return keep + 1", timeoutMs: 5_000 })).resolves.toMatchObject({
+			ok: true,
+			valueRepr: "42",
+		});
+	});
+
+	it("Given a cell that leaves many promises rejecting unhandled when it runs then one report and a count reach its output and the kernel keeps its state", async () => {
+		const { kernel, entry } = await createKernel();
+		const stderr: string[] = [];
+		const result = await kernel.run({
+			cellId: "burst",
+			code: "globalThis.keep = 41; for (let i = 0; i < 50; i++) Promise.reject(new Error('burst ' + i)); await new Promise((r) => setTimeout(r, 50)); return 'done'",
+			timeoutMs: 5_000,
+			onMessage: (message) => {
+				if (message.type === "text" && message.stream === "stderr") stderr.push(message.data);
+			},
+		});
+		expect(result).toMatchObject({ ok: true });
+		const text = stderr.join("");
+		expect(text.match(/Unhandled promise rejection/gu)).toHaveLength(1);
+		expect(text).toMatch(/Unhandled promise rejection in this cell: Error: burst 0\n\s+at /u);
+		expect(text).toContain("... and 49 more unhandled promise rejections");
+		await expect(kernel.run({ cellId: "after", code: "return keep", timeoutMs: 5_000 })).resolves.toMatchObject({
+			ok: true,
+			valueRepr: "41",
+		});
+		expect(await spawnCount(entry)).toBe(1);
+	});
+
+	it("Given an uncaught exception in a timer when it fires then the worker still restarts and says variables are lost", async () => {
+		const { kernel, entry } = await createKernel();
+		await kernel.run({ cellId: "set", code: "globalThis.keep = 41; return 1", timeoutMs: 5_000 });
+		const crashed = await kernel.run({
+			cellId: "fatal",
+			code: "setTimeout(() => { throw new Error('fatal boom'); }, 0); await new Promise(() => {})",
+			timeoutMs: 10_000,
+		});
+		expect(crashed).toMatchObject({ ok: false });
+		const after = await kernel.run({ cellId: "after", code: "return typeof keep", timeoutMs: 10_000 });
+		expect(after.ok ? after.valueRepr : after.error.message).toMatch(/"undefined"|lost/u);
+		expect(await spawnCount(entry)).toBe(2);
+	});
+
+	it("Given a stopped cell that started a node:worker_threads Worker then the worker is terminated and earlier globals survive", async () => {
+		const { kernel, entry } = await createKernel();
+		const { run } = await startedCell(
+			kernel,
+			"thread",
+			[
+				"globalThis.keep = 41;",
+				'const { Worker } = await import("node:worker_threads");',
+				"globalThis.thread = new Worker('setInterval(() => {}, 1000)', { eval: true });",
+				"await new Promise((resolve) => thread.once('online', resolve));",
+				"await new Promise(() => {});",
+			].join(" "),
+		);
+
+		await stopAndExpectStateKept(kernel, entry, run);
+		await expect(
+			kernel.run({
+				cellId: "after",
+				code: "if (thread.threadId !== -1) await new Promise((resolve) => thread.once('exit', resolve)); return thread.threadId",
+				timeoutMs: 5_000,
+			}),
+		).resolves.toMatchObject({ ok: true, valueRepr: "-1" });
 	});
 });

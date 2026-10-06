@@ -1,4 +1,4 @@
-import { installCellOwnership, isReleasedInterruption, releaseCell, releasedCellError, runInCell } from "./cell-run-context.js";
+import { installCellOwnership, releaseCell, releasedCellError, runInCell } from "./cell-run-context.js";
 import { kernelToolCallContext } from "./kernel-tools-context.js";
 import { kernelToolError } from "./kernel-tools-errors.js";
 import { createKernelToolPump } from "./kernel-tools-pump.js";
@@ -6,6 +6,7 @@ import { hostDeniedError, hostToolRefusal } from "./kernel-tools-scope.js";
 import { installSessionCwd } from "./worker-cwd.js";
 import { installPackageResolver } from "./worker-package-resolve.js";
 import { createHeapProbe } from "./worker-heap.js";
+import { createRejectionReports } from "./rejection-reports.js";
 import { createWorkerMemory } from "./worker-memory.js";
 import { JsWorkerRuntime } from "./worker-runtime.js";
 import { installKernelWebView } from "./worker-webview.js";
@@ -31,14 +32,16 @@ const SESSION_ENVIRONMENT_KEYS = [
 
 export function createWorkerCore(transport, options) {
 	const restoreOwnership = installCellOwnership();
-	const ignoreReleasedRejection = (reason) => {
-		if (!isReleasedInterruption(reason)) throw reason;
-	};
-	process.on("unhandledRejection", ignoreReleasedRejection);
 	let runtime = null;
 	let memory = null;
 	let heapProbe = null;
 	let activeCell = null;
+	const rejections = createRejectionReports({
+		activeCell: () => activeCell,
+		emitText: (data) => emit({ type: "text", stream: "stderr", data }),
+	});
+	const reportRejection = (reason) => rejections.report(reason);
+	process.on("unhandledRejection", reportRejection);
 	const pendingTools = new Map();
 	const pendingWebViewPorts = new Map();
 	const nestedInvokes = new Map();
@@ -61,6 +64,7 @@ export function createWorkerCore(transport, options) {
 		const release = Promise.withResolvers();
 		const cell = { cellId: message.cellId, interruption: null, released: false, release: release.reject };
 		activeCell = cell;
+		rejections.startCell(cell);
 		try {
 			const run = runInCell(cell, () =>
 				runtime.run(message.code, message.cellId, {
@@ -71,8 +75,10 @@ export function createWorkerCore(transport, options) {
 				}),
 			);
 			const value = await Promise.race([run, release.promise]);
+			rejections.finishCell(cell);
 			emit({ type: "result", cellId: message.cellId, ok: true, valueRepr: valueRepr(value), durationMs: durationMs(startedAtMs), ...memoryReport() });
 		} catch (error) {
+			rejections.finishCell(cell);
 			emit({ type: "result", cellId: message.cellId, ok: false, error: bridgeError(error), durationMs: durationMs(startedAtMs), ...memoryReport() });
 		} finally {
 			if (activeCell === cell) activeCell = null;
@@ -209,7 +215,7 @@ export function createWorkerCore(transport, options) {
 		dispose() {
 			unsubscribe();
 			restoreOwnership();
-			process.off("unhandledRejection", ignoreReleasedRejection);
+			process.off("unhandledRejection", reportRejection);
 			globalThis.__senpi_restore_console__?.();
 		},
 	};

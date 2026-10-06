@@ -4,8 +4,23 @@ import { AsyncLocalStorage } from "node:async_hooks";
 // releases it: everything it owns (timers, sleeps, requests, sockets, servers, views, workers) is cleared, rejected or
 // closed, and anything its code tries to start afterwards is refused, while the kernel and its variables stay.
 const cellRuns = new AsyncLocalStorage();
-const releasedInterruptions = new WeakSet();
+const releasedInterruptions = new WeakMap();
+const MAX_CAUSE_DEPTH = 8;
 const RESOURCE_CLOSERS = ["terminate", "destroy", "stop", "close", "end"];
+
+// Some host bindings are read-only (Bun.fetch); those keep their own behaviour and are not owned by cells.
+function replace(owner, name, replacement, patched) {
+	const original = owner[name];
+	try {
+		owner[name] = replacement;
+	} catch {
+		return;
+	}
+	if (owner[name] !== replacement) return;
+	patched.push(() => {
+		owner[name] = original;
+	});
+}
 
 export function runInCell(cell, run) {
 	return cellRuns.run(cell, run);
@@ -34,7 +49,7 @@ function onReleaseOf(cell, close) {
 
 export function releaseCell(cell) {
 	cell.released = true;
-	releasedInterruptions.add(cell.interruption);
+	releasedInterruptions.set(cell.interruption, cell);
 	for (const close of cell.onRelease ?? []) {
 		try {
 			close();
@@ -43,9 +58,18 @@ export function releaseCell(cell) {
 	cell.onRelease?.clear();
 }
 
-// A rejection the release itself caused carries the cell's interruption; it is expected, so nothing has to handle it.
-export function isReleasedInterruption(reason) {
-	return typeof reason === "object" && reason !== null && releasedInterruptions.has(reason);
+/**
+ * The cell an unhandled rejection came from: a released cell whose interruption is the reason or sits in its `cause`
+ * chain, or the cell whose async context the rejection runs in (Node exposes it to the handler; Bun does not).
+ */
+export function cellOfRejection(reason) {
+	let current = reason;
+	for (let depth = 0; depth < MAX_CAUSE_DEPTH && typeof current === "object" && current !== null; depth++) {
+		const cell = releasedInterruptions.get(current);
+		if (cell !== undefined) return cell;
+		current = current.cause;
+	}
+	return cellRuns.getStore();
 }
 
 function bindToCell(cell, promise) {
@@ -88,10 +112,7 @@ function ownResultsOf(owner, name, patched) {
 		return result instanceof Promise ? result.then(register) : register(result);
 	};
 	Object.assign(own, original);
-	owner[name] = own;
-	patched.push(() => {
-		owner[name] = original;
-	});
+	replace(owner, name, own, patched);
 }
 
 function patchTimers(scope, patched) {
@@ -124,10 +145,7 @@ function patchTimers(scope, patched) {
 			return handle;
 		};
 		Object.assign(owned, original);
-		scope[name] = owned;
-		patched.push(() => {
-			scope[name] = original;
-		});
+		replace(scope, name, owned, patched);
 	}
 }
 
@@ -141,10 +159,7 @@ function patchPromiseApi(owner, name, patched) {
 		return bindToCell(cell, original.apply(this, args));
 	};
 	Object.assign(bound, original);
-	owner[name] = bound;
-	patched.push(() => {
-		owner[name] = original;
-	});
+	replace(owner, name, bound, patched);
 }
 
 function patchTimerPromises(patched) {
@@ -154,7 +169,7 @@ function patchTimerPromises(patched) {
 	patchPromiseApi(timers, "setImmediate", patched);
 	const original = timers.setInterval;
 	if (typeof original !== "function") return;
-	timers.setInterval = function (...args) {
+	const owned = function (...args) {
 		const cell = cellRuns.getStore();
 		if (cell?.released) throw cell.interruption;
 		const iterator = original.apply(this, args);
@@ -162,13 +177,11 @@ function patchTimerPromises(patched) {
 		onReleaseOf(cell, () => void iterator.return?.());
 		return iterator;
 	};
-	patched.push(() => {
-		timers.setInterval = original;
-	});
+	replace(timers, "setInterval", owned, patched);
 }
 
-function patchFetch(scope, patched) {
-	const original = scope.fetch;
+function patchFetch(scope, patched, name = "fetch") {
+	const original = scope[name];
 	if (typeof original !== "function") return;
 	const owned = function (input, init) {
 		const cell = cellRuns.getStore();
@@ -181,11 +194,40 @@ function patchFetch(scope, patched) {
 		return original.call(this, input, { ...init, signal }).finally(forget);
 	};
 	Object.assign(owned, original);
-	scope.fetch = owned;
-	patched.push(() => {
-		scope.fetch = original;
-	});
+	replace(scope, name, owned, patched);
 }
+
+// A released cell's code may still be resumed by a short I/O completion; refusing new I/O at that point makes such a
+// loop throw the interruption on its next operation instead of running on in the kept worker.
+function refuseWhenReleased(owner, names, patched) {
+	for (const name of names) {
+		const original = owner?.[name];
+		if (typeof original !== "function") continue;
+		const guarded = function (...args) {
+			const cell = cellRuns.getStore();
+			if (cell?.released) throw cell.interruption;
+			return original.apply(this, args);
+		};
+		Object.assign(guarded, original);
+		replace(owner, name, guarded, patched);
+	}
+}
+
+const FS_PROMISE_OPERATIONS = [
+	"readFile",
+	"writeFile",
+	"appendFile",
+	"readdir",
+	"stat",
+	"lstat",
+	"open",
+	"access",
+	"mkdir",
+	"rm",
+	"unlink",
+	"rename",
+	"copyFile",
+];
 
 function patchClass(scope, name, close, patched) {
 	const Original = scope[name];
@@ -199,10 +241,7 @@ function patchClass(scope, name, close, patched) {
 		}
 	};
 	Object.defineProperty(Owned, "name", { value: Original.name });
-	scope[name] = Owned;
-	patched.push(() => {
-		scope[name] = Original;
-	});
+	replace(scope, name, Owned, patched);
 }
 
 const NODE_RESOURCE_FACTORIES = {
@@ -220,16 +259,33 @@ export function installCellOwnership(scope = globalThis) {
 	patchFetch(scope, patched);
 	patchClass(scope, "WebSocket", (socket) => socket.close(), patched);
 	patchClass(scope, "Worker", (worker) => void worker.terminate(), patched);
+	patchClass(process.getBuiltinModule?.("node:worker_threads") ?? {}, "Worker", (worker) => void worker.terminate(), patched);
+	refuseWhenReleased(process.getBuiltinModule?.("node:fs/promises"), FS_PROMISE_OPERATIONS, patched);
+	patchClass(scope, "MessageChannel", (channel) => {
+		channel.port1.close();
+		channel.port2.close();
+	}, patched);
+	patchClass(scope, "BroadcastChannel", (channel) => channel.close(), patched);
 	const bun = scope.Bun;
 	if (bun !== undefined) {
 		patchPromiseApi(bun, "sleep", patched);
+		if (bun.fetch !== scope.fetch) patchFetch(bun, patched, "fetch");
+		refuseWhenReleased(bun, ["file", "write"], patched);
 		for (const name of ["connect", "listen", "serve", "udpSocket"]) ownResultsOf(bun, name, patched);
 	}
 	for (const [module, factories] of Object.entries(NODE_RESOURCE_FACTORIES)) {
 		const exports = process.getBuiltinModule?.(module);
 		for (const name of factories) ownResultsOf(exports, name, patched);
 	}
+	// Node hands `import("node:…")` its own ESM namespace; without this sync a cell importing the module gets the
+	// unowned originals.
+	syncBuiltinExports();
 	return () => {
 		for (const undo of patched.reverse()) undo();
+		syncBuiltinExports();
 	};
+}
+
+function syncBuiltinExports() {
+	process.getBuiltinModule?.("node:module")?.syncBuiltinESMExports?.();
 }
