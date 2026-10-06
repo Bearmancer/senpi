@@ -197,6 +197,25 @@ function patchFetch(scope, patched, name = "fetch") {
 	replace(scope, name, owned, patched);
 }
 
+// An operation already in flight when its cell is released rejects with the interruption at once, so the stopped
+// cell's continuation never runs again; a non-promise result is returned as it is.
+function settleWithCell(cell, result) {
+	if (result === null || typeof result !== "object" || typeof result.then !== "function") return result;
+	return new Promise((resolve, reject) => {
+		const forget = onReleaseOf(cell, () => reject(cell.interruption));
+		result.then(
+			(value) => {
+				forget();
+				resolve(value);
+			},
+			(error) => {
+				forget();
+				reject(error);
+			},
+		);
+	});
+}
+
 // A released cell's code may still be resumed by a short I/O completion; refusing new I/O at that point makes such a
 // loop throw the interruption on its next operation instead of running on in the kept worker.
 function refuseWhenReleased(owner, names, patched) {
@@ -206,7 +225,8 @@ function refuseWhenReleased(owner, names, patched) {
 		const guarded = function (...args) {
 			const cell = cellRuns.getStore();
 			if (cell?.released) throw cell.interruption;
-			return original.apply(this, args);
+			const result = original.apply(this, args);
+			return cell === undefined ? result : settleWithCell(cell, result);
 		};
 		Object.assign(guarded, original);
 		replace(owner, name, guarded, patched);
