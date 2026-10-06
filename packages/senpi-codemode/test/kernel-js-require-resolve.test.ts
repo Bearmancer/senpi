@@ -1,0 +1,95 @@
+import { execFileSync } from "node:child_process";
+import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, describe, expect, it } from "vitest";
+import { JavaScriptKernel, type JavaScriptKernelOptions } from "../src/kernels/js/context-manager.ts";
+import { parseJavaScriptResult, runJavaScriptCell } from "./eval/js-kernel-harness.ts";
+
+// The cell-global `require` matches Node's `require`: `resolve`, `resolve.paths` and `cache` exist, and `resolve` uses
+// the same order as the call itself (the project, then the managed package environment, then builtins).
+const kernels = new Set<JavaScriptKernel>();
+const roots: string[] = [];
+
+afterEach(async () => {
+	await Promise.all([...kernels].map(async (kernel) => await kernel.close()));
+	kernels.clear();
+	await Promise.all(roots.splice(0).map(async (root) => await rm(root, { recursive: true, force: true })));
+});
+
+function bunPath(): string | undefined {
+	try {
+		return execFileSync("bun", ["-e", "process.stdout.write(process.execPath)"], { encoding: "utf8" });
+	} catch {
+		return undefined;
+	}
+}
+const bun = bunPath();
+
+async function project(): Promise<string> {
+	const root = await realpath(await mkdtemp(join(tmpdir(), "senpi-require-resolve-")));
+	roots.push(root);
+	const dep = join(root, "node_modules", "cjs-dep");
+	await mkdir(dep, { recursive: true });
+	await writeFile(join(dep, "package.json"), JSON.stringify({ name: "cjs-dep", main: "index.js" }));
+	await writeFile(join(dep, "index.js"), "module.exports = 'dep';");
+	await writeFile(join(root, "local.cjs"), "module.exports = 'local';");
+	return root;
+}
+
+const modes: [string, (cwd: string) => Partial<JavaScriptKernelOptions> | undefined][] = [
+	["worker", () => ({})],
+	["process", () => (bun === undefined ? undefined : { isolation: "process", processExecPath: bun })],
+];
+
+describe.each(modes)("the cell-global require in %s mode (senpi#2832)", (_mode, options) => {
+	async function kernelIn(cwd: string): Promise<JavaScriptKernel | undefined> {
+		const extra = options(cwd);
+		if (extra === undefined) return undefined;
+		const kernel = new JavaScriptKernel({
+			sessionId: `require-${crypto.randomUUID()}`,
+			cwd,
+			parallelPoolWidth: 2,
+			...extra,
+		});
+		kernels.add(kernel);
+		return kernel;
+	}
+
+	it("Given a project package and a relative file when a cell calls require.resolve then it gets the absolute paths the call itself would load", async () => {
+		const cwd = await project();
+		const kernel = await kernelIn(cwd);
+		if (kernel === undefined) return;
+		const run = await runJavaScriptCell(
+			kernel,
+			'return [require.resolve("cjs-dep"), require.resolve("./local.cjs"), require.resolve("node:path")]',
+		);
+		expect(parseJavaScriptResult(run.result)).toEqual([
+			join(cwd, "node_modules", "cjs-dep", "index.js"),
+			join(cwd, "local.cjs"),
+			"node:path",
+		]);
+	});
+
+	it("Given a module that does not exist when a cell calls require.resolve then the runtime's not-found error names it", async () => {
+		const cwd = await project();
+		const kernel = await kernelIn(cwd);
+		if (kernel === undefined) return;
+		const run = await runJavaScriptCell(
+			kernel,
+			'try { require.resolve("no-such-pkg"); return "resolved" } catch (error) { return [error.code, String(error.message).includes("no-such-pkg")] }',
+		);
+		expect(parseJavaScriptResult(run.result)).toEqual(["MODULE_NOT_FOUND", true]);
+	});
+
+	it("Given a cell when it reads require.resolve.paths and require.cache then both exist, and the cache holds a module the cell required", async () => {
+		const cwd = await project();
+		const kernel = await kernelIn(cwd);
+		if (kernel === undefined) return;
+		const run = await runJavaScriptCell(
+			kernel,
+			'require("cjs-dep"); const paths = require.resolve.paths("cjs-dep"); return [Array.isArray(paths) && paths.includes(require("node:path").join(process.cwd(), "node_modules")), typeof require.cache, Object.keys(require.cache).some((key) => key.endsWith("cjs-dep/index.js"))]',
+		);
+		expect(parseJavaScriptResult(run.result)).toEqual([true, "object", true]);
+	});
+});
