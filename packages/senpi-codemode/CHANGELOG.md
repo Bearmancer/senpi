@@ -10,6 +10,8 @@
 
 ### Changed
 
+- The README now documents every eval surface (helpers, magic cells, settings, JavaScript isolation modes and sandbox cells), and CI checks it against the helper census, so a new helper cannot ship undocumented ([#2787](https://github.com/code-yeongyu/senpi/pull/2787)).
+
 ### Fixed
 
 ### Removed
