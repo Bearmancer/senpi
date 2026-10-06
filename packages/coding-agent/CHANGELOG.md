@@ -15,6 +15,7 @@
 
 ### Fixed
 
+- A retried request that has started streaming is no longer aborted by the retry watchdog after 660 s of work (a long answer, tool calls, further turns): the watchdog now bounds only the wait for the retry to start streaming, and the provider's own idle and stall guards cover the rest. A retry that never starts still ends, with the message "The retried request never started streaming after Ns." ([#2804](https://github.com/code-yeongyu/senpi/issues/2804)).
 - A reload requested while a reload's `session_start` handlers are still running is deferred (`A session is starting.`) instead of retiring the runner mid-dispatch. Later `session_start` handlers no longer fail with `stale extension generation after reload` ([#2719](https://github.com/code-yeongyu/senpi/issues/2719), [#2771](https://github.com/code-yeongyu/senpi/pull/2771) by [@Bearmancer](https://github.com/Bearmancer)).
 
 ### Removed

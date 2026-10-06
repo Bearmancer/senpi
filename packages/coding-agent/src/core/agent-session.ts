@@ -1012,11 +1012,12 @@ export function providerRetryWatchdogAbortMessage(
 	retryTimeoutMs: number | undefined,
 	streamStartTimeoutMs: number | undefined,
 ): string {
+	const waited = retryTimeoutMs === undefined ? "" : ` after ${Math.round(retryTimeoutMs / 1000)}s`;
 	return (
-		`Provider retry continuation watchdog timed out after ${retryTimeoutMs}ms` +
+		`The retried request never started streaming${waited}.` +
 		(streamStartTimeoutMs === undefined
-			? " (stream-start guard disabled; raise retry.provider.streamStartTimeoutMs, 0 disables)"
-			: ` (stream-start guard: ${streamStartTimeoutMs}ms; raise retry.provider.streamStartTimeoutMs, 0 disables)`)
+			? " (Its stream-start guard is off; to bound or extend this wait, set retry.provider.streamStartTimeoutMs, 0 disables.)"
+			: ` (Stream-start guard: ${Math.round(streamStartTimeoutMs / 1000)}s; to allow longer, raise retry.provider.streamStartTimeoutMs, 0 disables.)`)
 	);
 }
 
@@ -8366,6 +8367,14 @@ export class AgentSession {
 						),
 					),
 				timeoutMs: retryTimeoutMs,
+				onStreamStarted: (listener) => {
+					const unsubscribe = this.agent.subscribe((event) => {
+						if (event.type !== "message_start" || event.message.role !== "assistant") return;
+						unsubscribe();
+						listener();
+					});
+					return unsubscribe;
+				},
 			});
 			return "continued";
 		} catch (error) {
