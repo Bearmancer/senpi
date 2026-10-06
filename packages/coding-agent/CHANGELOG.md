@@ -6,6 +6,8 @@
 
 ### Added
 
+- `pi.session.admitExternalMessage` takes an optional `sender` (another session's id and name, the command line, or an external chat) and `display_text`. The terminal then shows a delivered message under one label line, `Sent by another agent · <name>` or `Sent from the command line`, with the message as it was written, instead of the raw provenance header. The model still reads the header ([oh-my-openagent#9660](https://github.com/code-yeongyu/oh-my-openagent/issues/9660)).
+
 ### Changed
 
 ### Fixed
