@@ -1,5 +1,6 @@
-import type { AgentToolResult, ImageContent } from "@code-yeongyu/senpi";
+import type { AgentToolResult } from "@code-yeongyu/senpi";
 import type { WakeSourceState } from "../extension/wake-source-state.ts";
+import type { EvalImageContent } from "./image-resize.ts";
 import type { EvalLanguage, EvalToolDetails } from "./types.ts";
 
 export type EvalDetachedCellState = "queued" | "running" | "detached" | "completed" | "failed" | "cancelled";
@@ -25,7 +26,7 @@ export interface EvalDetachedCellNotification {
 	readonly cellId: string;
 	readonly content: string;
 	/** Images the cell displayed, delivered with the notification the way a foreground result delivers them. */
-	readonly images?: readonly ImageContent[];
+	readonly images?: readonly EvalImageContent[];
 }
 
 export interface EvalDetachedCellNotifier {

@@ -1,24 +1,9 @@
-import { mkdtemp, readFile, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import type { Api, Model } from "@earendil-works/pi-ai/compat";
-import { afterEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import { EvalNotifier } from "../src/extension/eval-notifier.ts";
 import type { EvalDetachedCellSnapshot } from "../src/tool/detached-cell-manager.ts";
 import { buildDetachedCellNotification } from "../src/tool/detached-cell-notification.ts";
 import { fakeExtensionContext } from "./eval/fakes.ts";
-
-const roots: string[] = [];
-
-afterEach(async () => {
-	await Promise.all(roots.splice(0).map(async (root) => await rm(root, { recursive: true, force: true })));
-});
-
-async function spillPath(): Promise<string> {
-	const root = await mkdtemp(join(tmpdir(), "senpi-notify-budget-"));
-	roots.push(root);
-	return join(root, "local", "detached-eval-cell.log");
-}
 
 function completedSnapshot(
 	text: string,
@@ -60,54 +45,62 @@ function numberedLines(count: number): string {
 	).join("\n");
 }
 
-describe("detached cell notification budget", () => {
-	it("Given a detached cell whose output is a few kilobytes when it completes then the notification carries all of it", async () => {
+describe("detached cell notification parity with the foreground result", () => {
+	it("Given a detached cell whose output is a few kilobytes when it completes then the notification carries all of it", () => {
 		const output = numberedLines(80);
 		expect(Buffer.byteLength(output)).toBeGreaterThan(4_000);
 
-		const notification = await buildDetachedCellNotification(completedSnapshot(output), await spillPath());
+		const notification = buildDetachedCellNotification(completedSnapshot(output));
 
 		expect(notification.content).toContain(output);
 		expect(notification.content).not.toMatch(/capped|elided|overflowed/u);
 	});
 
-	it("Given a detached cell whose output exceeds the budget when it completes then the notification keeps the head and the tail and says how much was elided", async () => {
-		const output = numberedLines(4_000);
-		const path = await spillPath();
+	it("Given a detached cell that returned one long line of JSON when it completes then the notification carries all of it", () => {
+		const output = JSON.stringify({
+			rows: Array.from({ length: 800 }, (_, index) => ({ index, label: `row-${index}` })),
+		});
+		expect(Buffer.byteLength(output)).toBeGreaterThan(20_000);
+		expect(output).not.toContain("\n");
 
-		const notification = await buildDetachedCellNotification(completedSnapshot(output), path);
+		const notification = buildDetachedCellNotification(completedSnapshot(output));
 
-		expect(notification.content).toContain("line 00001 ");
-		expect(notification.content).toContain("line 04000 ");
-		expect(notification.content).toMatch(/\[… \d+ lines \(\d+ bytes\) elided; full output: .+ …\]/u);
-		expect(notification.content).toContain(path);
-		expect(await readFile(path, "utf8")).toContain(output);
+		expect(notification.content).toContain(output);
 	});
 
-	it("Given an over-budget notification when it is built then the outcome line and the kernel-state note survive", async () => {
-		const notification = await buildDetachedCellNotification(
-			completedSnapshot(numberedLines(4_000)),
-			await spillPath(),
-		);
+	it("Given a detached cell whose result the output sink bounded when it completes then the notification shows exactly the foreground text, marker and artifact notice included", () => {
+		const foregroundText = [
+			numberedLines(40),
+			"[…3920ln elided…]",
+			numberedLines(40),
+			"Full output: /tmp/senpi-artifacts/eval-1.log",
+		].join("\n");
+
+		const notification = buildDetachedCellNotification(completedSnapshot(foregroundText));
+
+		expect(notification.content).toContain(foregroundText);
+	});
+
+	it("Given a large notification when it is built then the outcome line and the kernel-state note frame the output", () => {
+		const notification = buildDetachedCellNotification(completedSnapshot(numberedLines(1_000)));
 
 		expect(notification.content.startsWith("<system-reminder>Detached eval cell budget-cell (js) completed.")).toBe(
 			true,
 		);
 		expect(notification.content).toMatch(
-			/Kernel state updated - variables are available to the next eval cell\.<\/system-reminder>/u,
+			/Kernel state updated - variables are available to the next eval cell\.<\/system-reminder>$/u,
 		);
 	});
 
-	it("Given a detached cell that displayed an image when it completes then the notification delivers the image", async () => {
+	it("Given a detached cell that displayed an image when it completes then the notification delivers the image", () => {
 		const sent: unknown[] = [];
 		const notifier = new EvalNotifier({
 			sendMessage: (message) => sent.push(message.content),
 			getContext: () => ({ ...fakeExtensionContext(), mode: "tui" as const, model: fakeModel() }),
 			getMode: () => "wake",
 		});
-		const notification = await buildDetachedCellNotification(
+		const notification = buildDetachedCellNotification(
 			completedSnapshot("drew a chart", [{ data: "iVBORw0KGgo=", mimeType: "image/png" }]),
-			await spillPath(),
 		);
 
 		notifier.notify([notification]);

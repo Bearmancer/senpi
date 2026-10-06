@@ -465,11 +465,10 @@ free; otherwise it settles `cancelled` with `eval_background_capacity_reached`,
 listing the live cells and a stop-or-wait remedy. Cells that complete inside the
 window return normally. Cancelling a queued cell never interrupts its predecessor.
 Do not re-run a detached or queued cell; each detached cell completes as one notification.
-The notification carries the cell's output up to 8 KB, the same budget as a foreground
-result, plus any images the cell displayed. Longer output keeps whole lines from the head
-and the tail around a `[… N lines (M bytes) elided; full output: <absolute path> …]`
-marker, and the full output is written to that path; the outcome line and the
-kernel-state note are always kept.
+The notification carries the same text the cell's result would have shown in the
+foreground (the output sink's configured head, its tail, the middle-elision marker and
+the full-output artifact notice), framed by the outcome line and the kernel-state note,
+plus any images the cell displayed.
 
 Queued steering also detaches an eligible interactive foreground call, including
 one paused in a host tool bridge, without cancelling its computation. If the
