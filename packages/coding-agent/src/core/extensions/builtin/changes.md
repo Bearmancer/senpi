@@ -1,3 +1,11 @@
+## 2026-10-06 — show_html_page points at nothing unshipped
+
+**What:** the `show_html_page` description and guidelines drop the "load the bundled visualize skill" pointer.
+
+**Why:** that skill ships in a later PR; until then the line points the agent at something that does not exist.
+
+**Must not break:** the PR that ships the visualize skill adds the pointer back in the same change.
+
 ## 2026-10-06 — html-render pages are offline snapshots
 
 **What:** `html-render/bootstrap.ts` puts a Content-Security-Policy meta at the start of every page `show_html_page` writes (after a doctype, ahead of everything the page wrote): `default-src 'none'`, inline and data:/blob: scripts, styles, images, fonts and media only, `connect-src`/`frame-src`/`form-action`/`base-uri` `'none'`. Mirrors the desktop's `packages/shared/src/htmlRenderBootstrap.ts` (omo-desktop-app#1724).
