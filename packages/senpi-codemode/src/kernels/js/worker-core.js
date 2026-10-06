@@ -1,4 +1,10 @@
-import { installReleasedCellTimerGuard, releasedCellError, runInCell } from "./cell-run-context.js";
+import {
+	abortCellFetches,
+	installReleasedCellFetchGuard,
+	installReleasedCellTimerGuard,
+	releasedCellError,
+	runInCell,
+} from "./cell-run-context.js";
 import { kernelToolCallContext } from "./kernel-tools-context.js";
 import { kernelToolError } from "./kernel-tools-errors.js";
 import { createKernelToolPump } from "./kernel-tools-pump.js";
@@ -31,6 +37,7 @@ const SESSION_ENVIRONMENT_KEYS = [
 
 export function createWorkerCore(transport, options) {
 	const restoreTimers = installReleasedCellTimerGuard();
+	const restoreFetch = installReleasedCellFetchGuard();
 	let runtime = null;
 	let memory = null;
 	let heapProbe = null;
@@ -116,6 +123,7 @@ export function createWorkerCore(transport, options) {
 		}
 		kernelTools.abortAll(kernelToolError("kernel_tool_stale", interruption.message));
 		runtime.interrupt();
+		abortCellFetches(activeCell);
 		// A free event loop with no Bun.$ wait can let the cell go and keep the VM. A Bun.$ wait keeps the
 		// restart (#2453): the shell cannot be cancelled, so only retiring the worker ends it.
 		if (runtime.shellWaitActive) return;
@@ -204,6 +212,7 @@ export function createWorkerCore(transport, options) {
 		dispose() {
 			unsubscribe();
 			restoreTimers();
+			restoreFetch();
 			globalThis.__senpi_restore_console__?.();
 		},
 	};

@@ -19,6 +19,32 @@ export function assertCellLive() {
 	if (error !== undefined) throw error;
 }
 
+// A cell's fetches carry its abort signal: releasing the cell aborts the ones in flight, and a released cell starts none.
+export function installReleasedCellFetchGuard(scope = globalThis) {
+	const original = scope.fetch;
+	if (typeof original !== "function") return () => {};
+	const guarded = function (input, init) {
+		const cell = cellRuns.getStore();
+		if (cell === undefined) return original.call(this, input, init);
+		if (cell.released) return Promise.reject(cell.interruption);
+		const controller = new AbortController();
+		const own = init?.signal ?? (input instanceof Request ? input.signal : undefined);
+		const signal = own === undefined ? controller.signal : AbortSignal.any([own, controller.signal]);
+		cell.fetches ??= new Set();
+		cell.fetches.add(controller);
+		return original.call(this, input, { ...init, signal }).finally(() => cell.fetches.delete(controller));
+	};
+	Object.assign(guarded, original);
+	scope.fetch = guarded;
+	return () => {
+		scope.fetch = original;
+	};
+}
+
+export function abortCellFetches(cell) {
+	for (const controller of cell.fetches ?? []) controller.abort(cell.interruption);
+}
+
 // A released cell's timer callbacks are dropped, so a polling loop parks on its next tick instead of running on.
 export function installReleasedCellTimerGuard(scope = globalThis) {
 	const originals = { setTimeout: scope.setTimeout, setInterval: scope.setInterval, setImmediate: scope.setImmediate };

@@ -55,12 +55,24 @@ async function startedCell(
 	return { run };
 }
 
-async function silentServer(): Promise<{ readonly url: string; readonly requested: Promise<void> }> {
+async function silentServer(): Promise<{
+	readonly url: string;
+	readonly requested: Promise<void>;
+	readonly aborted: Promise<void>;
+}> {
 	const requested = Promise.withResolvers<void>();
-	const server = createServer(() => requested.resolve());
+	const aborted = Promise.withResolvers<void>();
+	const server = createServer((request) => {
+		request.once("close", () => aborted.resolve());
+		requested.resolve();
+	});
 	servers.add(server);
 	await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
-	return { url: `http://127.0.0.1:${(server.address() as AddressInfo).port}/`, requested: requested.promise };
+	return {
+		url: `http://127.0.0.1:${(server.address() as AddressInfo).port}/`,
+		requested: requested.promise,
+		aborted: aborted.promise,
+	};
 }
 
 async function stopAndExpectStateKept(
@@ -97,6 +109,27 @@ describe("JavaScriptKernel stop on a free event loop", () => {
 		await server.requested;
 
 		await stopAndExpectStateKept(kernel, entry, run);
+		await server.aborted;
+	});
+
+	it("Given a stopped cell that resumes later when it starts a fetch then the request is refused", async () => {
+		const { kernel } = await createKernel();
+		const server = await silentServer();
+		const { run } = await startedCell(
+			kernel,
+			"fetch-after-stop",
+			`globalThis.keep = 41; globalThis.resume = Promise.withResolvers(); await resume.promise; globalThis.lateFetch = fetch(${JSON.stringify(server.url)}).then(() => "sent", (error) => String(error.message));`,
+		);
+		await kernel.interrupt("user-stop");
+		await run;
+
+		await expect(
+			kernel.run({
+				cellId: "after",
+				code: "resume.resolve(); while (globalThis.lateFetch === undefined) await Promise.resolve(); return await lateFetch",
+				timeoutMs: 5_000,
+			}),
+		).resolves.toMatchObject({ ok: true, valueRepr: '"JS cell interrupted: user-stop"' });
 	});
 
 	it("Given a polling loop when stopped then the loop stops running and earlier globals survive", async () => {
