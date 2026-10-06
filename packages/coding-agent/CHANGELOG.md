@@ -7,8 +7,24 @@
 ### Added
 
 - `pi.session.admitExternalMessage` takes an optional `sender` (another session's id and name, the command line, or an external chat) and `display_text`. The terminal then shows a delivered message under one label line, `Sent by another agent · <name>` or `Sent from the command line`, with the message as it was written, instead of the raw provenance header. The model still reads the header ([oh-my-openagent#9660](https://github.com/code-yeongyu/oh-my-openagent/issues/9660)).
-- A provider block in `models.json` accepts `hideFreeModels: true` to drop that provider's zero-cost models (`cost.input` and `cost.output` both `0`) from the catalog. The default is unchanged: free models stay visible ([#2720](https://github.com/code-yeongyu/senpi/issues/2720)).
-- `websearch.json` accepts `keenable` as a `web_search` provider: with `apiKey` it uses Keenable's keyed API, without one its shared public tier (identified by an app header, no credential). It is used only when listed explicitly; the no-config default chain is unchanged ([#2775](https://github.com/code-yeongyu/senpi/pull/2775)).
+
+### Changed
+
+### Fixed
+
+- A global default extension shim left behind by an earlier install (for example after switching from npm to bun or to the standalone binary) no longer fails every start with `Cannot find module`. On start, a generated shim whose target is gone is rewritten to the current install's builtin when there is one, and removed when the engine has none; the loader skips any such shim without an error. A file you wrote yourself (no generated banner) is never touched ([#2765](https://github.com/code-yeongyu/senpi/issues/2765)).
+- The input box is no longer pushed off-screen when something writes to the terminal behind the TUI (a child that inherits stdout, a raw fd 1 write, or `console.log` from an extension or a Worker). While the TUI owns the screen, those writes go to the debug log, which is now capped at 32 MiB. Windows keeps the existing JS-level guard ([#2815](https://github.com/code-yeongyu/senpi/issues/2815)).
+
+### Removed
+
+## [2026.10.10-3] - 2026-10-06
+
+### Breaking Changes
+
+### Added
+
+- A provider block in `models.json` accepts `hideFreeModels: true` to drop that provider's zero-cost models (`cost.input` and `cost.output` both `0`) from the catalog. The default is unchanged: free models stay visible ([#2720](https://github.com/code-yeongyu/senpi/issues/2720), [#2773](https://github.com/code-yeongyu/senpi/pull/2773) by [@Bearmancer](https://github.com/Bearmancer)).
+- `websearch.json` accepts `keenable` as a `web_search` provider: with `apiKey` it uses Keenable's keyed API, without one its shared public tier (identified by an app header, no credential). It is used only when listed explicitly; the no-config default chain is unchanged ([#2775](https://github.com/code-yeongyu/senpi/pull/2775) by [@audreyt](https://github.com/audreyt)).
 
 ### Changed
 
@@ -17,7 +33,7 @@
 ### Fixed
 
 - A retried request that has started streaming is no longer aborted by the retry watchdog after 660 s of work (a long answer, tool calls, further turns): the watchdog now bounds only the wait for the retry to start streaming, and the provider's own idle and stall guards cover the rest. A retry that never starts still ends, with the message "The retried request never started streaming after Ns." ([#2804](https://github.com/code-yeongyu/senpi/issues/2804)).
-- A reload requested while a reload's `session_start` handlers are still running is deferred (`A session is starting.`) instead of retiring the runner mid-dispatch. Later `session_start` handlers no longer fail with `stale extension generation after reload` ([#2719](https://github.com/code-yeongyu/senpi/issues/2719)).
+- A reload requested while a reload's `session_start` handlers are still running is deferred (`A session is starting.`) instead of retiring the runner mid-dispatch. Later `session_start` handlers no longer fail with `stale extension generation after reload` ([#2719](https://github.com/code-yeongyu/senpi/issues/2719), [#2771](https://github.com/code-yeongyu/senpi/pull/2771) by [@Bearmancer](https://github.com/Bearmancer)).
 
 ### Removed
 
