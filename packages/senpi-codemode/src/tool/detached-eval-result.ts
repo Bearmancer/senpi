@@ -60,7 +60,7 @@ function createEvalListResult(cellManager: EvalDetachedCellManager): AgentToolRe
 				" ",
 			);
 			const elapsed = Math.floor(snapshot.result.details.durationMs / 1000);
-			const queued = cell.queuedBehind === undefined ? "" : ` queued behind ${cell.queuedBehind.join(", ")}`;
+			const queued = cell.queuedBehind === undefined ? "" : ` ${queuedPhrase(cell.queuedBehind, cell.language)}`;
 			return `${cell.cellId} ${cell.language} ${cell.state} ${elapsed}s${queued} - ${preview}`;
 		})
 		.join("\n");
@@ -76,11 +76,13 @@ export function resultAfterDetach(
 	otherLiveCells: number,
 ): AgentToolResult<EvalToolDetails> {
 	if (snapshot.state !== "detached" && snapshot.state !== "running") return createDetachedControlResult(snapshot);
-	const predecessors = snapshot.queuedBehind?.join(", ");
+	const queuedBehind = snapshot.queuedBehind;
 	const text =
-		predecessors === undefined
+		queuedBehind === undefined
 			? `Eval cell ${snapshot.cellId} detached and is running in the ${input.language} kernel (${otherLiveCells} other live cells). Completion arrives as a notification; do not re-run it. eval({ action: "peek" | "stop", cell_id }) or eval({ action: "list" }).`
-			: `Eval cell ${snapshot.cellId} is queued behind ${predecessors} in the ${input.language} kernel and detached; it runs after ${predecessors} and completes as one notification. peek/stop/list with eval({ action, cell_id })`;
+			: queuedBehind.length === 0
+				? `Eval cell ${snapshot.cellId} is detached and waiting for the ${input.language} kernel to be ready; it runs first once the kernel is ready and completes as one notification. peek/stop/list with eval({ action, cell_id })`
+				: `Eval cell ${snapshot.cellId} is queued behind ${queuedBehind.join(", ")} in the ${input.language} kernel and detached; it runs after ${queuedBehind.join(", ")} and completes as one notification. peek/stop/list with eval({ action, cell_id })`;
 	return {
 		content: [
 			{
@@ -119,6 +121,12 @@ export function resultForDetachedState(
 ): AgentToolResult<EvalToolDetails> {
 	const details = result.details;
 	const cells = details.cells ?? [];
+	const content = settledFromLiveFrame(result, state)
+		? [
+				{ type: "text" as const, text: cells[0]?.output || "(no output)" },
+				...result.content.filter((part) => part.type === "image"),
+			]
+		: result.content;
 	const nextCells =
 		cells.length === 0
 			? []
@@ -133,7 +141,7 @@ export function resultForDetachedState(
 					};
 				});
 	return {
-		content: result.content.map((part) => ({ ...part })),
+		content: content.map((part) => ({ ...part })),
 		details: {
 			...details,
 			durationMs: terminalDuration(details, state, durationMs),
@@ -162,6 +170,20 @@ export function resultForDetachedState(
 			...(details.jsonOutputs === undefined ? {} : { jsonOutputs: structuredClone(details.jsonOutputs) }),
 		},
 	};
+}
+
+function queuedPhrase(queuedBehind: readonly string[], language: string): string {
+	return queuedBehind.length === 0
+		? `waiting for the ${language} kernel to be ready`
+		: `queued behind ${queuedBehind.join(", ")}`;
+}
+
+// A cell cancelled or failed before its handler finished still carries the live progress frame ("1/1 cells running");
+// its terminal result shows the buffered output instead, so a stopped cell never reads as still running.
+function settledFromLiveFrame(result: AgentToolResult<EvalToolDetails>, state: EvalDetachedCellState): boolean {
+	if (state !== "cancelled" && state !== "failed") return false;
+	const status = result.details.cells?.[0]?.status;
+	return status === "running" || status === "queued" || status === "pending";
 }
 
 function textContent(result: AgentToolResult<EvalToolDetails>): string {

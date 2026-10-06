@@ -219,8 +219,10 @@ export class CellResultBuilder {
 	}
 
 	#liveUpdateText(): string {
-		if (this.#state.status === "queued" && this.#state.queuedBehind?.length) {
-			return `queued behind ${this.#state.queuedBehind.join(", ")} in the ${this.#state.input.language} kernel`;
+		if (this.#state.status === "queued" && this.#state.queuedBehind !== undefined) {
+			return this.#state.queuedBehind.length === 0
+				? `waiting for the ${this.#state.input.language} kernel to be ready`
+				: `queued behind ${this.#state.queuedBehind.join(", ")} in the ${this.#state.input.language} kernel`;
 		}
 		const summary = this.#state.input.summary === undefined ? "" : ` ${this.#state.input.summary}`;
 		const output = this.#liveLines.text();
