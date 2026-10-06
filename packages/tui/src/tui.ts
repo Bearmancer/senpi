@@ -1720,6 +1720,10 @@ export abstract class TuiBase extends Container {
 
 	stop(options: TuiStopOptions = {}): void {
 		this.stopped = true;
+		this.#holdScrollbackReplay = false;
+		this.#releaseHoldOnInput = false;
+		this.#scrollbackStale = false;
+		this.#scrollbackCatchUpPending = false;
 		this.renderRequested = false;
 		this.inputRenderPending = false;
 		this.cancelRenderTimer();
@@ -1845,6 +1849,7 @@ export abstract class TuiBase extends Container {
 
 	/** Drop every cached frame so the next render repaints from a clean slate. */
 	private resetForcedRenderState(): void {
+		this.#scrollbackCatchUpPending = false;
 		this.resetRenderState();
 		this.dropPreviousLines();
 		this.previousWidth = -1; // -1 triggers widthChanged, forcing a full clear
@@ -1913,16 +1918,17 @@ export abstract class TuiBase extends Container {
 		if (this.consumeTerminalColorResponse(data)) {
 			return;
 		}
-		// A key press means the user is at the bottom again; mouse reports (wheel scrolling) do not.
-		if (!data.startsWith("\x1b[<") && !data.startsWith("\x1b[M")) {
+		if (this.consumeTerminalColorSchemeReport(data)) {
+			return;
+		}
+		// A key press means the user is at the bottom again. Terminal reports (mouse/wheel, OSC/DCS replies,
+		// DEC private reports, window and cell-size reports) are not the user and must not trigger it.
+		if (!isTerminalReport(data)) {
 			if (this.#releaseHoldOnInput) {
 				this.#releaseHoldOnInput = false;
 				this.#holdScrollbackReplay = false;
 			}
 			this.catchUpScrollback();
-		}
-		if (this.consumeTerminalColorSchemeReport(data)) {
-			return;
 		}
 
 		if (this.inputListeners.size > 0) {
@@ -2981,6 +2987,9 @@ export abstract class TuiBase extends Container {
 				);
 				return;
 			}
+			// A resize frame takes its own path below; if that path does not rewrite the scrollback, the
+			// rows are still stale and the next key press catches up.
+			if (!preserveMuxScrollback) this.#scrollbackStale = true;
 		}
 
 		// Helper to clear scrollback and viewport and render all new lines
@@ -3569,6 +3578,22 @@ export abstract class TuiBase extends Container {
 }
 
 /** Legacy main-screen renderer export. */
+/**
+ * Input that the terminal sends on its own rather than the user typing: mouse reports, OSC/DCS/APC
+ * replies, DEC private reports (`ESC[?...`) and window/cell-size reports (`ESC[...t`).
+ */
+function isTerminalReport(data: string): boolean {
+	return (
+		data.startsWith("\x1b[<") ||
+		data.startsWith("\x1b[M") ||
+		data.startsWith("\x1b]") ||
+		data.startsWith("\x1bP") ||
+		data.startsWith("\x1b_") ||
+		data.startsWith("\x1b[?") ||
+		/^\x1b\[\d+(;\d+)*t$/.test(data)
+	);
+}
+
 export class TUI extends TuiBase {
 	readonly mode: TuiMode = "regular";
 }

@@ -5100,9 +5100,10 @@ export class InteractiveMode {
 		switch (event.type) {
 			case "agent_start":
 				this.agentIdle = false;
-				// Catch up any rows a previous turn left stale, then keep a scrolled-up reader in place for this
-				// one: rows re-laid out above the viewport repaint only the viewport until the next key press (#2836).
-				this.ui.catchUpScrollback();
+				// Keep a scrolled-up reader in place for this turn: rows re-laid out above the viewport are not
+				// replayed until the next key press (#2836). No catch-up here: a turn nobody typed (auto-retry,
+				// an extension's triggerTurn) can start while the reader is still scrolled up, and a turn the user
+				// started already caught up on their Enter key.
 				this.ui.setScrollbackReplayHold(true);
 				this.transcriptWriteNoticeShown = false;
 				this.clearPendingTools();

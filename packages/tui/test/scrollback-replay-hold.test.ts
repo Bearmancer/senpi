@@ -144,4 +144,51 @@ describe("scrollback replay hold during a streaming reply (#2836)", () => {
 			ui.stop();
 		}
 	});
+
+	it("does not catch up on terminal reports while the reader is still scrolled up (wheel, theme flip, replies)", async () => {
+		const { terminal, ui, stream } = setup();
+		ui.setScrollbackReplayHold(true);
+		for (let rows = 1; rows <= 30; rows++) stream(rows);
+		ui.setScrollbackReplayHold("until-input");
+		await terminal.flush();
+		terminal.scrollUp(6);
+		const watching = terminal.topVisibleRow();
+
+		for (const report of [
+			"\x1b[<65;10;5M", // mouse wheel
+			"\x1b[?997;1n", // OS theme flipped (color-scheme report)
+			"\x1b[6;20;10t", // cell-size reply
+			"\x1b]11;rgb:0000/0000/0000\x07", // late OSC color reply
+		]) {
+			terminal.sendInput(report);
+			ui.renderNow();
+		}
+		await terminal.flush();
+
+		assert.strictEqual(terminal.scrollbackClears, 0);
+		assert.strictEqual(terminal.topVisibleRow(), watching);
+		ui.stop();
+	});
+
+	it("after the turn, the next key releases the hold so later updates render normally again", async () => {
+		const { terminal, ui, stream } = setup();
+		ui.setScrollbackReplayHold(true);
+		for (let rows = 1; rows <= 20; rows++) stream(rows);
+		ui.setScrollbackReplayHold("until-input");
+		stream(21);
+		await terminal.flush();
+		assert.strictEqual(terminal.scrollbackClears, 0, "still held after the turn, before any key");
+
+		terminal.sendInput("a");
+		ui.renderNow();
+		const afterKey = terminal.scrollbackClears;
+		assert.strictEqual(afterKey, 1, "the key catches up once");
+		for (let rows = 22; rows <= 30; rows++) stream(rows);
+		await terminal.flush();
+		assert.ok(
+			terminal.scrollbackClears > afterKey,
+			"released: an idle update that re-lays out rows above replays again",
+		);
+		ui.stop();
+	});
 });
