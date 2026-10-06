@@ -191,4 +191,33 @@ describe("scrollback replay hold during a streaming reply (#2836)", () => {
 		);
 		ui.stop();
 	});
+
+	it("keeps the hold across a stop()/start() handover in the middle of a turn (external editor, suspend)", async () => {
+		const { terminal, ui, stream } = setup();
+		ui.setScrollbackReplayHold(true);
+		for (let rows = 1; rows <= 15; rows++) stream(rows);
+		ui.stop();
+		ui.start();
+		ui.renderNow(true);
+		await terminal.flush();
+		const clearsAfterHandover = terminal.scrollbackClears;
+		for (let rows = 16; rows <= 30; rows++) stream(rows);
+		await terminal.flush();
+		assert.strictEqual(terminal.scrollbackClears, clearsAfterHandover);
+		ui.stop();
+	});
+
+	it("counts a legacy Alt+] or Alt+Shift+P key press as a key, not as a terminal report", async () => {
+		for (const key of ["\x1b]", "\x1bP", "\x1b_"]) {
+			const { terminal, ui, stream } = setup();
+			ui.setScrollbackReplayHold(true);
+			for (let rows = 1; rows <= 30; rows++) stream(rows);
+			ui.setScrollbackReplayHold("until-input");
+			terminal.sendInput(key);
+			ui.renderNow();
+			await terminal.flush();
+			assert.strictEqual(terminal.scrollbackClears, 1, `catch-up on ${JSON.stringify(key)}`);
+			ui.stop();
+		}
+	});
 });

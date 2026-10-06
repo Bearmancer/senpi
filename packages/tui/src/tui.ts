@@ -1720,8 +1720,8 @@ export abstract class TuiBase extends Container {
 
 	stop(options: TuiStopOptions = {}): void {
 		this.stopped = true;
-		this.#holdScrollbackReplay = false;
-		this.#releaseHoldOnInput = false;
+		// The hold itself belongs to the turn (interactive mode sets and releases it); a stop()/start() handover
+		// for an external editor or a suspend in the middle of a turn must not drop it.
 		this.#scrollbackStale = false;
 		this.#scrollbackCatchUpPending = false;
 		this.renderRequested = false;
@@ -3577,23 +3577,22 @@ export abstract class TuiBase extends Container {
 	}
 }
 
-/** Legacy main-screen renderer export. */
 /**
  * Input that the terminal sends on its own rather than the user typing: mouse reports, OSC/DCS/APC
- * replies, DEC private reports (`ESC[?...`) and window/cell-size reports (`ESC[...t`).
+ * replies, DEC private reports (`ESC[?...`) and window/cell-size reports (`ESC[...t`). OSC/DCS/APC need
+ * a body after the introducer, so a legacy Alt+] / Alt+Shift+P / Alt+_ key press is still a key.
  */
 function isTerminalReport(data: string): boolean {
 	return (
 		data.startsWith("\x1b[<") ||
 		data.startsWith("\x1b[M") ||
-		data.startsWith("\x1b]") ||
-		data.startsWith("\x1bP") ||
-		data.startsWith("\x1b_") ||
+		(data.length > 2 && (data.startsWith("\x1b]") || data.startsWith("\x1bP") || data.startsWith("\x1b_"))) ||
 		data.startsWith("\x1b[?") ||
 		/^\x1b\[\d+(;\d+)*t$/.test(data)
 	);
 }
 
+/** Legacy main-screen renderer export. */
 export class TUI extends TuiBase {
 	readonly mode: TuiMode = "regular";
 }
