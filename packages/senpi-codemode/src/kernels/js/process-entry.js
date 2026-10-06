@@ -14,6 +14,7 @@
 // Lifetime: the kernel exits the moment its control channel reaches end-of-file (the host closed it, exited or was
 // killed). A watchdog thread also checks the parent pid and kills this process when the host is gone, so a cell
 // that never yields (a busy loop, a blocking call) cannot keep the kernel alive past its host.
+import { isReleasedInterruption } from "./cell-run-context.js";
 import { closeSync, createReadStream, openSync, writeSync } from "node:fs";
 import { createRequire } from "node:module";
 import { createInterface } from "node:readline";
@@ -441,7 +442,9 @@ function reportCrash(error) {
 	}
 }
 process.on("uncaughtException", reportCrash);
-process.on("unhandledRejection", reportCrash);
+process.on("unhandledRejection", (reason) => {
+	if (!isReleasedInterruption(reason)) reportCrash(reason);
+});
 
 const cwd = process.env.SENPI_CODEMODE_PROCESS_CWD ?? process.cwd();
 const poolWidth = Number.parseInt(process.env.SENPI_CODEMODE_PROCESS_POOL_WIDTH ?? "1", 10) || 1;

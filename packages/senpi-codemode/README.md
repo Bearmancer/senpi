@@ -510,12 +510,19 @@ Use `eval({ action: "peek", cell_id })` for its state and buffered output, or
 `eval({ action: "stop", cell_id })` to cancel it. Stopping a queued cell removes it
 without interrupting the active cell; kernel state is retained. Python running-cell stop interrupts the
 existing kernel and preserves variables. JavaScript stop is cooperative first:
-the worker rejects the cell's pending bridge `tool.*` calls, kills the
-`Bun.spawn` children it started, and releases the cell, so the worker and every
-global survive whatever the cell was awaiting (a never-resolving promise, an
-un-abortable `fetch`, a polling loop). A released cell's later continuations
-cannot print, call tools, start processes, or fire timers. Only a cell stopped
-during a `Bun.$` command costs the worker VM. A worker blocked in a synchronous call (`Bun.spawnSync`,
+Stop ends the cell and everything it started, not the kernel's variables. The
+worker rejects the cell's pending bridge `tool.*` calls and releases the cell:
+its timers are cleared, its pending `Bun.sleep`, `node:timers/promises` waits
+and `fetch` requests reject with the interruption, and the sockets, servers,
+WebSockets, WebViews, nested workers and child processes it opened are closed
+or terminated. The stop result arrives once those children are gone, and the
+worker and every global from earlier cells survive. If the stopped cell's own
+`catch`/`finally` still runs, it cannot print, call tools, start processes,
+schedule timers or open connections. One boundary remains: code that resumes
+because a later cell resolves a promise the stopped cell was awaiting, or
+because other short I/O (a file read) completes, runs until it reaches one of
+those refused operations. Only a cell stopped during a `Bun.$` command costs
+the worker VM. A worker blocked in a synchronous call (`Bun.spawnSync`,
 `child_process.spawnSync`) cannot be stopped at all; after a 3 s termination
 deadline a fresh worker replaces it, the cell output gains a stderr line naming
 the blocked synchronous call, and the blocked call keeps running until it

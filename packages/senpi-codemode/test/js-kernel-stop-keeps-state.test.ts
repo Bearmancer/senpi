@@ -176,4 +176,83 @@ describe("JavaScriptKernel stop on a free event loop", () => {
 		expect(next).toMatchObject({ ok: true, valueRepr: "41" });
 		expect(texts.join("")).not.toContain("LATE");
 	});
+
+	it.each([
+		...(process.versions.bun === undefined ? [] : [["Bun.sleep", "await Bun.sleep(10)"]]),
+		["node:timers/promises", 'await (await import("node:timers/promises")).setTimeout(10)'],
+		[
+			"setInterval",
+			"await new Promise((resolve) => { const id = setInterval(() => { clearInterval(id); resolve(); }, 10); })",
+		],
+	])(
+		"Given a polling loop on %s when stopped then it stops ticking and earlier globals survive",
+		async (_name, wait) => {
+			const { kernel, entry } = await createKernel();
+			const ticked = Promise.withResolvers<void>();
+			const { run } = await startedCell(
+				kernel,
+				"poll",
+				`globalThis.keep = 41; globalThis.ticks = 0; for (;;) { ${wait}; ticks += 1; if (ticks === 3) print("TICKED"); }`,
+				(text) => {
+					if (text.includes("TICKED")) ticked.resolve();
+				},
+			);
+			await ticked.promise;
+
+			await stopAndExpectStateKept(kernel, entry, run);
+			const first = await kernel.run({ cellId: "ticks-a", code: "return ticks", timeoutMs: 5_000 });
+			const second = await kernel.run({
+				cellId: "ticks-b",
+				code: "await new Promise((r) => setTimeout(r, 150)); return ticks",
+				timeoutMs: 5_000,
+			});
+			expect(second).toMatchObject({ ok: true, valueRepr: first.ok ? first.valueRepr : "unreachable" });
+		},
+	);
+
+	it("Given a stopped cell that left a fetch and a derived chain unawaited then the kernel keeps its state and does not crash", async () => {
+		const { kernel, entry } = await createKernel();
+		const server = await silentServer();
+		const { run } = await startedCell(
+			kernel,
+			"floating-fetch",
+			`globalThis.keep = 41; globalThis.p = fetch(${JSON.stringify(server.url)}); globalThis.q = p.then((r) => r.status); await new Promise(() => {});`,
+		);
+		await server.requested;
+
+		await stopAndExpectStateKept(kernel, entry, run);
+		await server.aborted;
+		await expect(
+			kernel.run({
+				cellId: "after",
+				code: "await new Promise((r) => setTimeout(r, 100)); return keep + 1",
+				timeoutMs: 5_000,
+			}),
+		).resolves.toMatchObject({ ok: true, valueRepr: "42" });
+		expect(await spawnCount(entry)).toBe(1);
+	});
+
+	it("Given a stopped cell with an open socket server and client when stopped then both close and earlier globals survive", async () => {
+		const { kernel, entry } = await createKernel();
+		const { run } = await startedCell(
+			kernel,
+			"sockets",
+			[
+				"globalThis.keep = 41;",
+				'const net = await import("node:net");',
+				"globalThis.srv = net.createServer(() => {}); await new Promise((r) => srv.listen(0, '127.0.0.1', r));",
+				"globalThis.sock = net.createConnection(srv.address().port, '127.0.0.1'); await new Promise((r) => sock.once('connect', r));",
+				"await new Promise(() => {});",
+			].join(" "),
+		);
+
+		await stopAndExpectStateKept(kernel, entry, run);
+		await expect(
+			kernel.run({
+				cellId: "after",
+				code: "await new Promise((r) => setTimeout(r, 100)); return [srv.listening, sock.destroyed]",
+				timeoutMs: 5_000,
+			}),
+		).resolves.toMatchObject({ ok: true, valueRepr: "[false,true]" });
+	});
 });

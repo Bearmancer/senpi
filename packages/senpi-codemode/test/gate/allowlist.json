@@ -1116,7 +1116,12 @@
 				"legacyContracts/test/js-kernel-stop-keeps-state.test.ts/JavaScriptKernel stop on a free event loop Given a stopped cell that resumes later when it prints or calls a tool then nothing reaches the next cell",
 				"legacyContracts/test/js-kernel-interrupt-bun.test.ts/JavaScript kernel under Bun interrupts a running cell Given a cell looping over short Bun.spawn children when interrupted then the worker state survives",
 				"legacyContracts/test/js-kernel-shell-stop-bun.test.ts/Bun shell Stop keeps globals and refuses the shell when a cell swallows Stop and then starts a native shell",
-				"legacyContracts/test/js-kernel-stop-keeps-state.test.ts/JavaScriptKernel stop on a free event loop Given a stopped cell that resumes later when it starts a fetch then the request is refused"
+				"legacyContracts/test/js-kernel-stop-keeps-state.test.ts/JavaScriptKernel stop on a free event loop Given a stopped cell that resumes later when it starts a fetch then the request is refused",
+				"legacyContracts/test/js-kernel-interrupt-bun.test.ts/JavaScript kernel under Bun interrupts a running cell Given a cell polling on Bun.sleep when interrupted then the loop stops and the worker state survives",
+				"legacyContracts/test/js-kernel-stop-keeps-state.test.ts/JavaScriptKernel stop on a free event loop Given a polling loop on node:timers/promises when stopped then it stops ticking and earlier globals survive",
+				"legacyContracts/test/js-kernel-stop-keeps-state.test.ts/JavaScriptKernel stop on a free event loop Given a polling loop on setInterval when stopped then it stops ticking and earlier globals survive",
+				"legacyContracts/test/js-kernel-stop-keeps-state.test.ts/JavaScriptKernel stop on a free event loop Given a stopped cell that left a fetch and a derived chain unawaited then the kernel keeps its state and does not crash",
+				"legacyContracts/test/js-kernel-stop-keeps-state.test.ts/JavaScriptKernel stop on a free event loop Given a stopped cell with an open socket server and client when stopped then both close and earlier globals survive"
 			],
 			"reason": "senpi#2788: Stop on a free event loop releases the cell in the worker and keeps the VM. cell-run-context.js (the per-cell async context and the released-cell guards) joins the first-kernel import census; the new contracts are RED before the fix (stateRetained false) and GREEN after.",
 			"changes": [
