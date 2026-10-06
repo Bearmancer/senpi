@@ -1,3 +1,25 @@
+## 2026-10-06 - Stray writes to fd 1 can no longer push the input box off-screen (senpi#2815)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/stdout-fd-redirect.ts` (new): while the TUI owns the screen, fd 1 is `dup2`'d to the debug log, and `process.stdout` (the renderer's writer) writes through a duplicate of the terminal descriptor. Its `columns`/`rows` come from that duplicate and are refreshed on `SIGWINCH`, with a `resize` event re-emitted. `restore()` puts fd 1 back and unwinds the patch. One terminal duplicate per process is reused across suspend and editor round-trips.
+- `packages/coding-agent/src/modes/interactive/interactive-stderr-guard.ts`: `takeOverInteractiveStderr()` also redirects fd 1, but only when stdout is a TTY, and starts an unref'd 5 s check that keeps the debug log under 32 MiB (`capHiddenOutputLog`: past the cap, the file is cut to its last 256 KiB behind a marker line). `restoreInteractiveStderr()` stops the check and restores fd 1 before fd 2. Every path that already hands the terminal back (exit, crash, suspend, the external editor) therefore restores fd 1 too.
+- `packages/coding-agent/src/modes/interactive/components/extension-editor.ts`: the extension editor's external-editor path stopped the TUI without handing the descriptors back; it now restores them first and takes them over again afterwards, like the main editor path.
+- `packages/coding-agent/test/suite/regressions/2815-tui-stdout-never-floods.test.ts`: run under a real terminal (`script`). A raw fd 1 write, a child inheriting stdout and native `console.log` reach the log while the renderer's frame (with the terminal's width) reaches the screen. A piped stdout is untouched. The bash tool still captures its command's output. The crash path hands fd 1 back before exit. The cap cuts an oversized log.
+
+### Why
+
+A community report: in a long session the input box vanished after "some read message flooded the terminal". A raw write of 120 lines to fd 1 on a 26-row terminal reproduces it: the terminal scrolls behind the renderer, whose cursor math then puts the editor below the screen. fd 2 was already captured this way (#2284).
+
+### Why an extension could not handle it
+
+The redirect has to be installed and released together with the TUI's own terminal ownership, inside interactive mode.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/interactive/interactive-stderr-guard.ts`: `takeOverInteractiveStderr()`, `restoreInteractiveStderr()` and the fd helpers next to `takeOverStderrFd()`.
+- `packages/coding-agent/src/modes/interactive/components/extension-editor.ts`: `handleOpenExternalEditor()`.
+
 ## 2026-10-03 - The first-run provider guidance is shown once (senpi#2677)
 
 ### What changed
