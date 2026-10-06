@@ -69,6 +69,43 @@ describe("bridge protocol JSONL framing", () => {
 		expect(decodeBridgeFrame(encodeBridgeFrame(withNames))).toEqual({ ok: true, message: withNames });
 	});
 
+	it("round-trips init memory thresholds and result memory reports", () => {
+		const init: HostToKernelMessage = {
+			type: "init",
+			sessionId: "session-memory",
+			connection: { port: 4317, token: "secret-token" },
+			memory: { gcWatermarkBytes: 268_435_456, noticeBytes: 1_073_741_824, ceilingBytes: 0 },
+		};
+		const result: KernelToHostMessage = {
+			type: "result",
+			cellId: "cell-memory",
+			ok: false,
+			error: { message: "boom" },
+			durationMs: 3,
+			memory: {
+				liveBytes: 2_000_000_000,
+				measure: "heap",
+				gcRan: true,
+				globals: [{ name: "rows", bytes: 1_500_000_000, approximate: true }],
+				overCeiling: true,
+			},
+		};
+		for (const message of [init, result]) {
+			expect(decodeBridgeFrame(encodeBridgeFrame(message))).toEqual({ ok: true, message });
+		}
+	});
+
+	it("rejects a result memory report with a negative live size", () => {
+		const frame = JSON.stringify({
+			type: "result",
+			cellId: "cell-memory",
+			ok: true,
+			durationMs: 1,
+			memory: { liveBytes: -1, measure: "heap" },
+		});
+		expect(decodeBridgeFrame(frame)).toMatchObject({ ok: false, error: { code: "invalid_message" } });
+	});
+
 	it("round-trips live kernel-tool name refresh frames", () => {
 		const refresh: HostToKernelMessage = {
 			type: "kernel-tools-names",

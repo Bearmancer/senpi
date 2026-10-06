@@ -1,14 +1,33 @@
-import type { KernelInterruptHandle } from "../../tool/types.ts";
-import type { KernelToolsInvokeOptions } from "../js/kernel-tools-types.ts";
-import { rejectKernelToolsUnavailable } from "../kernel-tools-unavailable.ts";
+// allow: SIZE_OK — one persistent Python lifecycle state machine owns queue, generation, and retirement.
+import type { KernelInterruptHandle, PendingCell } from "../../tool/types.ts";
+import type {
+	KernelToolsDescribeResult,
+	KernelToolsInvokeOptions,
+	KernelToolsInvokeRequest,
+} from "../js/kernel-tools-types.ts";
+import { inputAtStart } from "../shared/cell-source-at-start.ts";
+import { describeExit } from "../shared/kernel-death.ts";
+import { KernelMemoryHost } from "../shared/kernel-memory-host.ts";
+import { KernelPreludeTracker } from "../shared/kernel-prelude-plan.ts";
+import { runHostCell } from "./host-cell.ts";
 import type { PendingRun, PythonKernelRunOptions, PythonKernelStartOptions, ResultMessage } from "./kernel-contract.ts";
+import { PythonKernelTools } from "./kernel-tools-host.ts";
+import { pythonStartupCeilingMs, pythonStartupHangGuardMs } from "./startup.ts";
 import { failedPythonResult, PythonKernelTransport } from "./transport.ts";
 
 export type { PythonKernelRunOptions, PythonKernelStartOptions } from "./kernel-contract.ts";
 export type { KernelChild, KernelSpawnOptions, KernelSpawnProcess } from "./process.ts";
 
-const startupTimeoutMs = 5_000;
 const interruptEscalationMs = 5_000;
+
+// Every interpreter this process starts gets its own generation, so a kernel tool descriptor taken from one
+// never resolves in another, whether it was replaced by reset, by a lazy restart after a crash, or by a new
+// kernel instance an owner created.
+let lastInterpreterGeneration = 0;
+function nextInterpreterGeneration(): number {
+	lastInterpreterGeneration += 1;
+	return lastInterpreterGeneration;
+}
 
 export class PythonKernel {
 	readonly #options: PythonKernelStartOptions;
@@ -20,11 +39,21 @@ export class PythonKernel {
 	#retirement: Promise<void> | null = null;
 	#closePromise: Promise<void> | null = null;
 	#failure: Error | null = null;
+	readonly #preludes = new KernelPreludeTracker();
+	readonly #memory: KernelMemoryHost | null;
 	#generation = 0;
 	#closed = false;
+	readonly #tools: PythonKernelTools;
+	#dead = false;
 
 	private constructor(options: PythonKernelStartOptions) {
 		this.#options = options;
+		this.#memory = options.memory === undefined ? null : new KernelMemoryHost("py", options.memory);
+		this.#tools = new PythonKernelTools({
+			post: (message) => this.#transport?.post(message),
+			isOpen: () => this.#transport !== null && !this.#closed,
+			...(options.peerKernelToolsDescribe === undefined ? {} : { peerDescribe: options.peerKernelToolsDescribe }),
+		});
 	}
 
 	static async start(options: PythonKernelStartOptions): Promise<PythonKernel> {
@@ -34,20 +63,40 @@ export class PythonKernel {
 	}
 
 	listKernelToolNames(): readonly string[] {
-		return [];
+		return this.#tools.listNames();
 	}
 
-	describeKernelTools(_names: readonly string[]): Promise<never> {
-		return rejectKernelToolsUnavailable();
+	get kernelToolEvents(): EventTarget {
+		return this.#tools.events;
 	}
 
-	invokeKernelTool(_request: unknown, _options?: AbortSignal | KernelToolsInvokeOptions): Promise<never> {
-		return rejectKernelToolsUnavailable();
+	isAlive(): boolean {
+		return !this.#dead;
+	}
+
+	drainPending(): readonly PendingCell[] {
+		return [...this.#queue].map((pending) => {
+			this.#pending.delete(pending.input.cellId);
+			this.#removePending(pending);
+			return { input: pending.input, settle: pending.resolve };
+		});
+	}
+
+	describeKernelTools(names: readonly string[]): Promise<KernelToolsDescribeResult> {
+		return this.#tools.describe(names);
+	}
+
+	invokeKernelTool(
+		request: KernelToolsInvokeRequest,
+		options?: AbortSignal | KernelToolsInvokeOptions,
+	): Promise<unknown> {
+		return this.#tools.invoke(request, options);
 	}
 
 	run(input: PythonKernelRunOptions): Promise<ResultMessage> {
 		if (this.#failure) return Promise.reject(this.#failure);
 		if (this.#closed) return Promise.reject(new Error("Python kernel is closed"));
+		if (this.#dead) return Promise.reject(new Error("Python kernel died"));
 		return new Promise<ResultMessage>((resolve, reject) => {
 			const pending: PendingRun = { input, resolve, reject, startedAt: null, timeoutTimer: null };
 			this.#pending.set(input.cellId, pending);
@@ -83,6 +132,11 @@ export class PythonKernel {
 			}
 		}
 		const active = this.#active;
+		if (active?.hostAbort && active.interruptReason === undefined) {
+			active.interruptReason = reason;
+			void this.#stopHostEntry(active, failedPythonResult(active.input.cellId, "Eval interrupted"));
+			return { stateRetained: Promise.resolve(true) };
+		}
 		const transport = this.#transport;
 		if (!active || !transport || active.interruptReason !== undefined)
 			return { stateRetained: Promise.resolve(true) };
@@ -104,6 +158,7 @@ export class PythonKernel {
 		if (this.#failure) throw this.#failure;
 		if (this.#closed) throw new Error("Python kernel is closed");
 		const generation = ++this.#generation;
+		this.#tools.retire("kernel_tool_stale", "Python kernel was reset; its kernel tools are gone");
 		const prior = this.#starting;
 		const operation = (async () => {
 			await prior?.catch(() => undefined);
@@ -129,6 +184,7 @@ export class PythonKernel {
 		if (this.#closePromise) return await this.#closePromise;
 		this.#closed = true;
 		this.#generation += 1;
+		this.#tools.retire("tools_unavailable", "Python kernel is closed");
 		this.#settleAllPending("Python kernel closed");
 		const starting = this.#starting;
 		this.#closePromise = (async () => {
@@ -150,6 +206,7 @@ export class PythonKernel {
 	#startNext(): void {
 		if (
 			this.#closed ||
+			this.#dead ||
 			this.#failure ||
 			this.#active ||
 			this.#starting ||
@@ -179,8 +236,24 @@ export class PythonKernel {
 		const timeoutMs = pending.input.timeoutMs;
 		if (timeoutMs !== undefined)
 			pending.timeoutTimer = setTimeout(() => this.#timeoutRun(pending, timeoutMs), timeoutMs);
+		const host = pending.input.host;
+		if (host !== undefined) {
+			runHostCell(pending, host, {
+				emit: (message) => (pending.input.onMessage ?? this.#options.onMessage)?.(message),
+				settle: (result) => this.#settleRun(pending, result),
+			});
+			return;
+		}
+		const input = inputAtStart(pending.input);
+		if ("refused" in input) {
+			this.#settleRun(pending, failedPythonResult(pending.input.cellId, input.refused));
+			return;
+		}
 		try {
-			this.#transport?.run(pending.input);
+			this.#transport?.run({
+				...input,
+				preludePlan: this.#preludes.plan(input.kernelPreludes ?? []),
+			});
 		} catch (error) {
 			const failure = error instanceof Error ? error : new Error(String(error));
 			this.#rejectRun(pending, failure);
@@ -194,11 +267,40 @@ export class PythonKernel {
 
 	#timeoutRun(pending: PendingRun, timeoutMs: number): void {
 		if (this.#active !== pending) return;
+		const timedOut = failedPythonResult(pending.input.cellId, `Python kernel timed out after ${timeoutMs}ms`);
+		if (pending.hostAbort) {
+			void this.#stopHostEntry(pending, timedOut);
+			return;
+		}
 		if (this.#transport) void this.#beginRetirement(this.#transport).catch(() => undefined);
-		this.#settleRun(
-			pending,
-			failedPythonResult(pending.input.cellId, `Python kernel timed out after ${timeoutMs}ms`),
-		);
+		this.#settleRun(pending, timedOut);
+	}
+
+	/**
+	 * Aborts a running host entry and settles it only once its executor has stopped (or after the same bound the
+	 * interpreter gets before escalation), so the next queue entry never overlaps the aborted host work. An
+	 * executor that finished successfully despite the abort reports that outcome: its work did commit.
+	 */
+	async #stopHostEntry(pending: PendingRun, stopped: ResultMessage): Promise<void> {
+		pending.hostAbort?.abort();
+		const done = pending.hostDone;
+		let bound: ReturnType<typeof setTimeout> | undefined;
+		const outcome =
+			done === undefined
+				? undefined
+				: await Promise.race([
+						done,
+						new Promise<undefined>((resolve) => {
+							bound = setTimeout(() => resolve(undefined), interruptEscalationMs);
+						}),
+					]);
+		if (bound !== undefined) clearTimeout(bound);
+		if (outcome?.ok === true) {
+			pending.interruptReason = undefined;
+			this.#settleRun(pending, outcome);
+			return;
+		}
+		this.#settleRun(pending, stopped);
 	}
 
 	async #ensureStarted(): Promise<void> {
@@ -210,25 +312,29 @@ export class PythonKernel {
 
 	async #spawn(generation: number): Promise<void> {
 		if (this.#closed || generation !== this.#generation) throw new Error("Python kernel startup was superseded");
+		this.#memory?.processReplaced();
 		this.#transport = await PythonKernelTransport.start({
 			...this.#options,
 			onMessage: (message) => {
 				if (message.type === "result") return;
+				if (generation === this.#generation && this.#tools.consume(message)) return;
 				const callback =
 					message.type === "ready" || message.type === "init-failed" || message.type === "closed"
 						? this.#options.onMessage
 						: (this.#active?.input.onMessage ?? this.#options.onMessage);
 				callback?.(message);
 			},
-			startupTimeoutMs: this.#options.startupTimeoutMs ?? startupTimeoutMs,
+			startupTimeoutMs: this.#options.startupTimeoutMs ?? pythonStartupHangGuardMs,
+			startupCeilingMs: this.#options.startupCeilingMs ?? pythonStartupCeilingMs,
+			kernelGeneration: nextInterpreterGeneration(),
 			isOwned: () => !this.#closed && generation === this.#generation,
 			onRetirementFailure: (transport, error) => {
 				if (!this.#transport) this.#transport = transport;
-				this.#recordFailure(error);
+				this.#recoverWhenGone(transport, this.#recordFailure(error));
 			},
 			onResult: (transport, result) => this.#onResult(transport, result),
 			onError: (transport, error) => this.#onError(transport, error),
-			onExit: (transport, error) => this.#onExit(transport, error),
+			onExit: (transport, error, exit) => this.#onExit(transport, error, describeExit(exit.code, exit.signal)),
 		});
 	}
 
@@ -236,22 +342,54 @@ export class PythonKernel {
 		if (this.#transport !== transport) return;
 		const pending = this.#pending.get(result.cellId);
 		if (pending) {
-			(pending.input.onMessage ?? this.#options.onMessage)?.(result);
-			this.#settleRun(pending, result);
+			const annotated = this.#memory?.annotate(result) ?? result;
+			(pending.input.onMessage ?? this.#options.onMessage)?.(annotated);
+			this.#settleRun(pending, annotated);
 		}
 		// A result frame from the live runner proves the process survived the interrupt.
 		if (pending?.resolveStateRetained) pending.resolveStateRetained(true);
+		this.#recycleOverCeilingWhenIdle();
 	}
 
-	#onExit(transport: PythonKernelTransport, error: Error): void {
+	/** An over-ceiling kernel restarts only once no cell is running or queued on it. */
+	#recycleOverCeilingWhenIdle(): void {
+		if (!this.#memory?.claimRecycle(this.#active === null && this.#queue.length === 0)) return;
+		// A failed restart is recorded in #failure and rejects the next run; a superseded one lost to close/reset.
+		void this.reset().catch(() => undefined);
+	}
+
+	#onExit(transport: PythonKernelTransport, error: Error, reason: string): void {
 		if (this.#transport !== transport) return;
 		this.#transport = null;
+		this.#tools.retire("kernel_tool_stale", "Python kernel died; its kernel tools are gone");
+		// With an owner listening, a death is final for this instance: the cells that never started stay
+		// queued for `drainPending` and the owner replaces it. Without one it respawns lazily, as before.
+		const onDeath = this.#options.onDeath;
+		if (onDeath) this.#dead = true;
 		const active = this.#active;
 		if (active) {
 			if (active.resolveStateRetained) active.resolveStateRetained(false);
-			this.#settleRun(active, failedPythonResult(active.input.cellId, "Python kernel died", error.message));
+			const message = onDeath ? "Python kernel died; every global is lost" : "Python kernel died";
+			this.#settleRun(active, failedPythonResult(active.input.cellId, message, error.message));
 		}
-		this.#startNext();
+		if (onDeath) onDeath(reason);
+		else this.#startNext();
+	}
+
+	/**
+	 * A retirement that timed out is reported, and no second interpreter starts while the first may live.
+	 * Once that process is seen to exit after all, the failure is over: this instance is dead, not broken.
+	 */
+	#recoverWhenGone(transport: PythonKernelTransport, failure: Error): void {
+		const onDeath = this.#options.onDeath;
+		if (!onDeath) return;
+		void transport.whenGone().then(() => {
+			if (this.#closed || this.#failure !== failure) return;
+			this.#failure = null;
+			this.#dead = true;
+			if (this.#transport === transport) this.#transport = null;
+			onDeath("an interpreter that outlived its SIGKILL grace");
+		});
 	}
 
 	#onError(transport: PythonKernelTransport, error: Error): void {
@@ -297,6 +435,7 @@ export class PythonKernel {
 	}
 
 	#removePending(pending: PendingRun): void {
+		pending.hostAbort?.abort();
 		if (pending.timeoutTimer) clearTimeout(pending.timeoutTimer);
 		if (pending.escalationTimer) clearTimeout(pending.escalationTimer);
 		pending.timeoutTimer = null;
@@ -330,8 +469,10 @@ export class PythonKernel {
 			try {
 				await transport.retire();
 			} catch (error) {
-				if (error instanceof Error) throw this.#recordFailure(error);
-				throw error;
+				if (!(error instanceof Error)) throw error;
+				const failure = this.#recordFailure(error);
+				this.#recoverWhenGone(transport, failure);
+				throw failure;
 			}
 			if (this.#transport === transport) this.#transport = null;
 		})();

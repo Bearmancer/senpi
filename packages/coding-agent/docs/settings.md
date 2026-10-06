@@ -27,7 +27,7 @@ Senpi includes a built-in permission system for tool calls. It evaluates a prese
 
 | Setting | Type | Default | Description |
 |---------|------|---------|-------------|
-| `permissionPreset` | string | `"full-access"` | Permission preset: `"full-access"`, `"workspace"`, `"read-only"`, or `"ask"` |
+| `permissionPreset` | string | `"full-access"` | Permission preset: `"full-access"`, `"workspace"`, `"accept-edits"`, `"auto"`, `"read-only"`, or `"ask"` |
 | `permission` | object | - | Explicit permission rules that override the selected preset |
 
 Presets:
@@ -36,6 +36,8 @@ Presets:
 |--------|----------|
 | `full-access` | Allow all permission checks without prompting |
 | `workspace` | Allow `read`, `list`, `grep`, `edit`, and `bash`; ask for `external_directory` |
+| `accept-edits` | Allow project `read`, `list`, `grep`, and `edit`; ask for `bash`, `external_directory`, and other tools |
+| `auto` | Asks for everything except what it can prove stays inside the project, judged on the exact file the tool will open (the tool's own path resolution, symlinks followed): reads, listings and writes of project files through the file tools (`read`, `ls`, `find`, `write`, `edit`), `apply_patch` adding, changing or moving project files (a delete asks), a content search of one or more project files, and a small set of read-only shell commands (`ls cat head tail wc diff stat file cut grep rg echo pwd true which`, read-only git) with plain in-project arguments. Files count only when they land inside the project with no hidden component (except repository and formatter files such as `.gitignore`, `.github/`) and no credential-shaped name. Everything else asks: anything outside the project, `.env` and other dotfiles, `.git/`, `.vscode/`, keys, directory-wide content searches, any shell command with quotes, pipes, redirects, `cd` or a write (`cp`, `mv`, `rm`, `mkdir`), `git show`, text sent to a running process (`bash_input`), test runners, builds, installs and network tools. A session rooted at `/`, your home directory, any directory above it, or inside a hidden directory (such as `~/.config`) asks for everything. Each call is decided as the more restrictive of `auto`'s decision and your own rules' decision (deny over ask over allow), whatever order or layer (settings, CLI, RPC) your rules come from: your rules can narrow `auto`, never widen it. <br>`auto` prevents accidents; it is not a sandbox. Credential detection is by name, so a secret in a plainly named project file (for example `secrets.yml`, `terraform.tfvars`) can be read. A path the judge approved can be swapped for a symlink before the tool runs. An "Always" answer you gave (saved in `.senpi/permissions-approved.jsonl`, from this or an earlier session) still allows its pattern. |
 | `read-only` | Allow `read`, `list`, and `grep`; ask for `edit`, `bash`, and `external_directory` |
 | `ask` | Restore prompt-on-unknown behavior |
 
@@ -88,7 +90,7 @@ Permission rules are a confirmation policy, not a sandbox. Senpi, extensions, pa
 | `modelThinkingLevels` | object | - | Per-model reasoning effort memory (`"provider/id": "level"`) |
 | `modelLastOnThinkingLevels` | object | - | Per-model last non-off reasoning level, used by `/reasoning on` to restore the previous effort |
 | `modelServiceTiers` | object | - | Per-model service tier memory (`"provider/id": "auto" \| "priority"`) |
-| `promptPreset` | string | `"auto"` | Force a system prompt preset: `"auto"`, `"kimi-k2-6"`, `"kimi-k2-7"`, `"kimi-k2-8"`, `"kimi-k3"`, `"glm-5.2"`, `"glm-5.3"`, `"grok-4.5"`, `"grok-4.6"`, `"grok-4.7"`, `"claude-fable-5"`, `"claude-fable-5-1"`, `"claude-opus-5-5"`, `"claude-opus-5"`, `"claude-opus-4-5"`, `"claude-opus-4-6"`, `"claude-opus-4-7"`, `"claude-opus-4-8"`, `"deepseek-v4-flash"`, `"deepseek-v4-flash-0731"`, `"deepseek-v4-1-flash"`, `"deepseek-v4-pro"`, `"gpt-5"`, `"gpt-5.2"`, `"gpt-5.3-codex"`, `"gpt-5.4"`, `"gpt-5.5"`, `"gpt-5.6"`, or `"gpt-6-astra"` |
+| `promptPreset` | string | `"auto"` | Force a system prompt preset: `"auto"`, `"kimi-k2-6"`, `"kimi-k2-7"`, `"kimi-k2-8"`, `"kimi-k3"`, `"glm-5.2"`, `"glm-5.3"`, `"grok-4.5"`, `"grok-4.6"`, `"grok-4.7"`, `"claude-fable-5"`, `"claude-fable-5-1"`, `"claude-opus-5-5"`, `"claude-opus-5"`, `"claude-sonnet-5-5"`, `"claude-opus-4-5"`, `"claude-opus-4-6"`, `"claude-opus-4-7"`, `"claude-opus-4-8"`, `"deepseek-v4-flash"`, `"deepseek-v4-flash-0731"`, `"deepseek-v4-1-flash"`, `"deepseek-v4-pro"`, `"gpt-5"`, `"gpt-5.2"`, `"gpt-5.3-codex"`, `"gpt-5.4"`, `"gpt-5.5"`, `"gpt-5.6"`, or `"gpt-6-astra"` |
 | `hideThinkingBlock` | boolean | `false` | Hide thinking blocks in output |
 | `showCacheMissNotices` | boolean | `false` | Show transcript notices for significant prompt-cache misses, compaction or branch-summary usage, and provider recovery diagnostics such as dropped Anthropic thinking blocks |
 | `thinkingBudgets` | object | - | Custom token budgets per thinking level. Anthropic, Google, and Bedrock use these natively. OpenAI-compatible models use them when `compat.thinkingTokenBudgetField` (or `supportsThinkingTokenBudget`) is set. |
@@ -123,9 +125,9 @@ When this value is anything other than `"auto"`, it overrides any model-level `p
 
 | Setting | Type | Default | Description |
 |---------|------|---------|-------------|
-| `theme` | string | `"dark"` | Theme name (`"dark"`, `"light"`, or custom) |
+| `theme` | string | `"system"` | Theme name (`"system"`, `"dark"`, `"light"`, a `light/dark` pair, or custom). `system` derives colors from the terminal's palette; see [Themes](themes.md#use-your-terminals-colors) |
 | `externalEditor` | string | `$VISUAL`, then `$EDITOR`, then Notepad on Windows or `nano` elsewhere | Command for Ctrl+G external editor; takes precedence over environment variables |
-| `quietStartup` | boolean | `false` | Hide startup header |
+| `quietStartup` | boolean \| `"header"` | `false` | `true` hides the startup header and loaded-resource listing. `"header"` keeps the header (version and key hints) but hides the model scope line and loaded-resource listing |
 | `tips` | boolean | `true` | Show the rotating startup and working-status tip lines |
 | `tipsHistory` | object | - | Internal record of which tips were shown last (managed automatically) |
 | `defaultProjectTrust` | string | `"ask"` | Fallback project trust behavior: `"ask"`, `"always"`, or `"never"`. Global setting only |
@@ -144,6 +146,7 @@ When this value is anything other than `"auto"`, it overrides any model-level `p
 | `fullscreenExitOutput` | string | `"transcript"` | Fullscreen exit output: `"transcript"` prints the final transcript and resume hint, while `"resume-hint"` restores the previous screen and prints only the resume hint. Has no effect in regular TUI mode |
 | `fullscreenScrollbar` | string | `"auto"` | Fullscreen transcript scrollbar: `"auto"` shows it temporarily while scrolling or while the pointer is over its rightmost-column track, `"always"` reserves that column and keeps it visible, and `"hidden"` hides it. Has no effect in regular TUI mode |
 | `fullscreenCopyOnSelect` | boolean | `true` | Automatically copy selected text in fullscreen mode. When disabled, selections stay highlighted and `Ctrl+X` copies the active selection |
+| `fullscreenWheelScrollLines` | `"auto"` or number | `"auto"` | Lines per mouse-wheel event in fullscreen mode, from 1 to 100. `"auto"` moves one line per event in local macOS terminals, which already accelerate wheel and trackpad input; elsewhere, and over SSH, it speeds up fast wheel spins to at most 6 lines per event. Alt+wheel moves five times as far |
 
 For VS Code, include `--wait` so senpi resumes after the editor exits:
 
@@ -254,6 +257,8 @@ See [compaction.md](compaction.md) for trigger and summarization behavior.
 | `retry.fallbackChains` | `Record<string, string[]>` | `{}` | Ordered exact model-selector to fallback-selector chains |
 | `retry.fallbackRevertPolicy` | `"cooldown-expiry"` \| `"never"` | `"cooldown-expiry"` | Automatic primary-model restoration policy |
 | `retry.abortServerSideFallback` | boolean | `true` | Abort a turn when the provider substitutes a different model after a classifier decline |
+| `fallback.circuitCooldownMs` | number | `60000` | First circuit-breaker cooldown for a chain entry that failed out of its chain; doubles on each consecutive failure; `0` disables the breaker |
+| `fallback.circuitMaxCooldownMs` | number | `1800000` | Ceiling for the doubled circuit-breaker cooldown (30 minutes) |
 | `retry.maxAgentDelayMs` | number | `60000` | Hard ceiling on agent-level retry delay (60s), applied after the retry profile and jitter |
 | `retry.provider.timeoutMs` | number | `300000` | Provider/SDK request timeout and stream idle timeout in milliseconds |
 | `retry.provider.streamStartTimeoutMs` | number | `300000` | Maximum wait for the first provider stream event; `0` disables |
@@ -319,6 +324,28 @@ Billing-class failures — Anthropic's 400 *credit balance is too low*, OpenAI's
 
 Anthropic streaming refusals are identified from typed `stopDetails`. A configured candidate receives an immediate **pinned** fallback switch with a user-visible fallback notice: Senpi does not retry the refusing model and a pinned fallback never auto-reverts. Set `retry.fallbackRevertPolicy` to `"cooldown-expiry"` (the default) to return an unpinned fallback to its primary after the primary's cooldown expires, or `"never"` to keep the fallback until you change models.
 
+#### Fallback circuit breaker
+
+When a chain entry fails with a provider-health failure, Senpi opens a circuit for that entry: a transient failure (timeout, overload, 429, 5xx, transport drop) once its retry budget is spent, or a billing, credit, quota, or budget exhaustion at once, including on the last entry of the chain. Authentication (401/403) and request-shape rejections do not open a circuit. The circuit is shared by every session in the process that uses the same agent directory - sessions started with `/new`, `/resume`, or `/fork`, and in-process subagents - so they skip the entry without sending it a request or spending its retry budget:
+
+- A session whose current model has an open circuit moves to the next chain entry with a closed circuit at the turn boundary (shown as a `transient` model fallback). Mid-turn fallbacks skip open entries the same way.
+- The cooldown starts at `fallback.circuitCooldownMs` and doubles on each consecutive failure, up to `fallback.circuitMaxCooldownMs`. A provider `Retry-After` (seconds or HTTP-date, on 429 and 503 responses) keeps the circuit open until that time when it is longer, up to `fallback.circuitMaxCooldownMs`, and a later failure without a hint never shortens it. A hint longer than that ceiling (a weekly window, or a gateway replaying a stale wait) keeps the circuit open only until the ceiling; then one half-open probe checks the entry, and a probe that is rate limited again re-opens the circuit with the fresh hint. An accepted response from the entry closes the circuit and resets the escalation.
+- After the cooldown the circuit is half-open: the first request to use the entry again - a session's turn or a background 429 probe-back - holds its only probe until the probe settles, and every other request keeps skipping it, including the other request lane of the same session. While the circuit tracks an entry, its clock (monotonic, like every cooldown) decides when a fallback returns to it. The probe closes the circuit as soon as the entry streams a response; its first provider-health failure re-opens the circuit with the doubled cooldown and falls back immediately, without same-model retries. A user abort, a request-shaped error, or disposal hands the probe back. A probe that never answers is aborted as a provider failure after the stream-start guard (5 minutes when `retry.provider.streamStartTimeoutMs` is 0).
+- 429 probe-back probes of a demoted primary respect the circuit: none is sent before the circuit's open time (the provider's retry-after, bounded by `fallback.circuitMaxCooldownMs`, or the cooldown) elapses, or while another session holds the probe.
+- The chain never refuses a turn: if every remaining entry is open, the request still goes to the current entry (or the first open candidate) as a probe.
+- Refusals and request-shaped hard errors do not open circuits. Selecting a model yourself closes its circuit.
+
+Circuits are process-local like the rest of the fallback state and are never persisted. Set `fallback.circuitCooldownMs` to `0` to turn the breaker off:
+
+```json
+{
+  "fallback": {
+    "circuitCooldownMs": 60000,
+    "circuitMaxCooldownMs": 1800000
+  }
+}
+```
+
 #### Provider-substituted models
 
 Anthropic's server-side fallback betas can retry a classifier-declined request on a substitute model *inside the same response*, marking the handoff with a `fallback` content block; a gateway may enable this on your behalf. Honoring that response means paying for a model you did not select, and after the first handoff Anthropic routes later turns of the conversation straight to the substitute with no marker at all — reported only as a `fallback_message` entry in `usage.iterations`.
@@ -331,7 +358,7 @@ Set it to `false` to keep the substituted response instead. If a gateway in fron
 
 Fallback decisions are process-local. A `senpi-task` or subagent child process reads its own settings and maintains its own in-memory suppression state; it does not affect its parent process. Disable fallback for one run without changing settings with `--no-model-fallback` or `SENPI_NO_FALLBACK=1`.
 
-For diagnostics, Senpi writes sanitized NDJSON records for candidate skips, cooldowns, switches, reverts, manual clears, and validation warnings to `<agentDir>/logs/fallback.log`. The file is mode `0600` and rotates at 5 MB (`fallback.log.1`).
+For diagnostics, Senpi writes sanitized NDJSON records for candidate skips, cooldowns, circuit opens (`circuit_opened`) and turn-boundary circuit skips (`circuit_open_skip`), switches, reverts, manual clears, and validation warnings to `<agentDir>/logs/fallback.log`. `/session` reports what failed requests cost the session: failed-request counts and share, time spent in failed requests, and retries that succeeded after a failure in the same user turn but read nothing from the prompt cache, with their uncached input tokens. Prompts under 2,048 tokens are never counted as cache misses, because providers do not cache prompts that small; the token counts come from the provider's usage report, while tying the miss to the failure is the report's reading of the turn. The file is mode `0600` and rotates at 5 MB (`fallback.log.1`).
 
 ### Message Delivery
 
@@ -347,7 +374,7 @@ For diagnostics, Senpi writes sanitized NDJSON records for candidate skips, cool
 
 | Setting | Type | Default | Description |
 |---------|------|---------|-------------|
-| `openai.serviceTier` | string | - | Injects OpenAI Responses `service_tier`: `"auto"`, `"flex"`, or `"priority"` |
+| `openai.serviceTier` | string | - | Injects OpenAI Responses `service_tier`: `"auto"`, `"flex"`, `"priority"`, or `"ultrafast"` |
 
 ```json
 {
@@ -476,7 +503,17 @@ On Windows, select `powershell` instead of `bash`, or include both:
 }
 ```
 
-An empty array starts with no built-in tools while preserving extension and SDK custom tools. `--tools` replaces this behavior with a strict allowlist for all tools, `--no-tools` disables all tools, and `--no-builtin-tools` disables the built-in defaults. `--exclude-tools` filters the resulting list. A project `defaultTools` array replaces the global array.
+A list of only `+name` and `-name` entries changes the inherited selection instead of replacing it. This replaces `bash` with `powershell` and enables `grep` on top of the defaults:
+
+```json
+{
+  "defaultTools": ["-bash", "+powershell", "+grep"]
+}
+```
+
+An empty array starts with no built-in tools while preserving extension and SDK custom tools. `--tools` replaces this behavior with a strict allowlist for all tools and does not accept `+name` or `-name`, `--no-tools` disables all tools, and `--no-builtin-tools` disables the built-in defaults. `--exclude-tools` filters the resulting list. A project `defaultTools` array of plain names replaces the global array; a project list of only `+name` and `-name` entries applies on top of the global selection.
+
+`/reload` enables tools newly added to `defaultTools`. It does not disable tools removed from it or re-enable unchanged tools you turned off. `--tools`, `--no-tools`, and `--no-builtin-tools` override `defaultTools`, also on reload.
 
 #### Eval-only tools
 
@@ -517,7 +554,7 @@ While a question is pending, the terminal title shows `? <header>` unless an act
 
 | Setting | Type | Default | Description |
 |---------|------|---------|-------------|
-| `todo.firstTurnPlan` | `"force"` \| `"remind"` \| `"off"` | `"force"` | First prompt of a session that is not a question (`?`/`!` ending): `"remind"` adds a hidden reminder to open the turn with a phased `todo` init; `"force"` also sends a named `tool_choice` for `todo` on that first request where the provider accepts one (Anthropic models whose compat allows forced tool choice with thinking off, OpenAI Responses, OpenAI Chat Completions), otherwise it falls back to the reminder; `"off"` disables both. Print and JSON modes never arm |
+| `todo.firstTurnPlan` | `"force"` \| `"remind"` \| `"off"` | `"force"` | First prompt of a session that is not a question (`?`/`!` ending): `"remind"` adds a hidden reminder to open the turn with a phased `todo` init; `"force"` also sends a named `tool_choice` for `todo` on that first request where the provider accepts one (Anthropic models whose compat allows forced tool choice with thinking off, OpenAI Responses, OpenAI Chat Completions unless `compat.supportsForcedToolChoice` is `false`), otherwise it falls back to the reminder. A provider that refuses the forced choice gets the request once more without it, and that model is not forced again for the rest of the process; `"off"` disables both. Print and JSON modes never arm |
 | `todo.turnEndBackstop` | `boolean` | `true` | When a main-session turn (not print/json, no active goal or continuation) ends text-only while the todo list still has open tasks and the final paragraph does not ask the user a question, queue a hidden `senpi.todo-owed` followUp nudging the next open task. At most two per chain of unattended turns; the third notifies once and stays silent until the next accepted user message |
 
 ### Sessions
@@ -587,10 +624,11 @@ provider/model-id                  # bare pattern
 provider/model-id:high             # pin reasoning to high
 provider/model-id:priority         # pin service tier to priority
 provider/model-id:priority:high    # pin both tier and level
+chatgpt-subscription/gpt-6-astra:xhigh:ultrafast # Astra Ultrafast
 claude-*:xhigh                     # glob with level pin
 ```
 
-Decorators survive favorite toggling. A `:level` pin takes precedence over the per-model memory for reasoning, and a `:priority` pin takes precedence for the service tier. Under a pin, `/fast off` notifies that fast mode is fixed by the active model selection.
+Decorators survive favorite toggling. A `:level` pin takes precedence over the per-model memory for reasoning, and a `:priority` pin takes precedence for the service tier. Under a priority pin, `/fast off` notifies that fast mode is fixed by the active model selection. An `:ultrafast` pin takes precedence over remembered Fast mode; `/fast on` and `/fast off` leave that pin in place.
 
 #### Thinking level precedence
 
@@ -608,15 +646,31 @@ The resolved level is always clamped to what the model actually supports.
 
 The service tier on outgoing requests is resolved as:
 
-1. A scoped/favorite `:priority` pin
-2. The model catalog's `compat.serviceTier`
+1. A scoped/favorite service-tier pin (such as `:priority` or `:ultrafast`)
+2. The model catalog's `serviceTier`
 3. `openai.serviceTier` (the global OpenAI setting)
 
 The per-model `modelServiceTiers` memory is not part of that resolution: it applies to ChatGPT Subscription
 models only, through fast mode. It acts as the session-start default for `/fast` (a remembered
 `"priority"` starts the session fast) and as an explicit `"auto"` opt-out of a catalog-inherited
 priority tier, which keeps `service_tier` off the wire. Under a `:priority` pin the memory has no
-effect, because the pin outranks it.
+effect, because the pin outranks it. `ultrafast` is not a remembered value: a stored `ultrafast` is
+ignored. Select Ultrafast with a decorator, a `models.json` `serviceTier`, or `openai.serviceTier`.
+
+#### GPT-6 Astra Ultrafast
+
+Select Ultrafast independently of reasoning effort on either first-party lane:
+
+```bash
+senpi --model chatgpt-subscription/gpt-6-astra:xhigh:ultrafast
+senpi --model openai/gpt-6-astra:ultrafast:max
+```
+
+Astra supports `low`, `medium`, `high`, `xhigh`, and `max` with Ultrafast. The two decorators can appear in either order and work in `favoriteModels` and `--models` patterns too. A custom model entry can instead set `serviceTier: "ultrafast"` in `models.json`; keep its cost at Standard rates, since the adapter applies the Ultrafast multiplier. Astra Ultrafast costs 6x Standard, including cached input and long-context rates.
+
+This is an explicit request preference; availability is determined by the provider and account. Use it with GPT-6 Astra on OpenAI or ChatGPT Subscription. Senpi sends it only to the `openai` and `chatgpt-subscription` providers: selecting it on any other provider, including a gateway that serves GPT-6 Astra, prints a warning and the request goes out at that provider's default tier. On OpenAI or ChatGPT Subscription, selecting it for a model other than GPT-6 Astra prints a warning and still sends it, because the provider may accept it; other models keep their Standard price. `/fast` remains the Priority toggle. Switching between Ultrafast and another tier starts a fresh WebSocket response chain while retaining the conversation.
+
+See OpenAI's [Ultrafast guide](https://developers.openai.com/api/docs/guides/ultrafast-mode) and [Astra model page](https://developers.openai.com/api/docs/models/gpt-6-astra).
 
 ### Markdown
 
@@ -641,6 +695,7 @@ Paths in `~/.senpi/agent/settings.json` resolve relative to `~/.senpi/agent`. Pa
 | `prompts` | string[] | `[]` | Local prompt template paths or directories |
 | `themes` | string[] | `[]` | Local theme file paths or directories |
 | `enableSkillCommands` | boolean | `true` | Register skills as `/skill:name` commands |
+| `maxSkillExpansionsPerPrompt` | number | `5` | Distinct skills one prompt may expand; later skill commands stay literal. Must be a positive integer, otherwise the default applies. The parser reads at most 64 invocation tokens per prompt |
 
 Arrays support glob patterns and exclusions. Use `!pattern` to exclude. Use `+path` to force-include an exact path and `-path` to force-exclude an exact path.
 

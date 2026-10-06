@@ -45,6 +45,7 @@ export default function btwExtension(pi: ExtensionAPI) {
 	pi.registerCommand("btw", {
 		description: "Ask a side question in parallel without touching the main session",
 		argumentHint: "<question>",
+		requiresArguments: false,
 		handler: async (args, ctx) => {
 			const question = args.trim();
 			if (!question) {
@@ -108,7 +109,9 @@ export default function btwExtension(pi: ExtensionAPI) {
 				});
 				const { replyText } = await runSideQuery(
 					{
-						model,
+						// The credential's own API host (a Copilot Business or Enterprise account) must
+						// survive the explicit key below, as it does for the session's chat requests.
+						model: auth.baseUrl ? { ...model, baseUrl: auth.baseUrl } : model,
 						auth: {
 							apiKey: auth.apiKey,
 							headers: auth.headers,

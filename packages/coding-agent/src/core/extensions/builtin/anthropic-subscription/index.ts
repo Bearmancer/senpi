@@ -5,6 +5,7 @@ import { getModels } from "@earendil-works/pi-ai/compat";
 import { getAgentDir } from "../../../../config.ts";
 import { FileAuthStorageBackend } from "../../../auth-storage.ts";
 import type { ExtensionAPI } from "../../types.ts";
+import { toBuiltinProviderContext } from "../provider-context.ts";
 import { registerClaudeAccountCommand } from "./account-command.ts";
 import { ANTHROPIC_SUBSCRIPTION_PROVIDER_ID } from "./account-management.ts";
 import type { AnthropicSubscriptionCredential } from "./accounts.ts";
@@ -64,7 +65,8 @@ export function registerAnthropicSubscriptionExtension(
 		baseUrl: CLAUDE_SDK_OAUTH_API_ID,
 		api: CLAUDE_SDK_OAUTH_API_ID,
 		models: MODELS,
-		streamSimple: streamAnthropicSubscription,
+		streamSimple: (model, context, options) =>
+			streamAnthropicSubscription(model, toBuiltinProviderContext(context), options),
 		// A verbatim `enabled: false` is the kill switch: the lane cannot serve, so
 		// it must not consume an implicit fallback-expansion slot. An absent flag
 		// stays eligible - an explicit senpi-side login keeps the lane usable.

@@ -90,6 +90,7 @@ export default function gptAccountExtension(pi: ExtensionAPI, deps: GptAccountEx
 	pi.registerCommand("gpt-account", {
 		description: "List and manage ChatGPT Subscription OAuth accounts.",
 		argumentHint: "[add | remove <id> | pin <id> | unpin | rename <id> <display name...> | clear-name <id>]",
+		requiresArguments: false,
 		handler: async (rawArgs, ctx) => {
 			if (await accountDisplayNameCommand(ctx, CHATGPT_SUBSCRIPTION_PROVIDER_ID, rawArgs)) return;
 			const args = parseArgs(rawArgs);

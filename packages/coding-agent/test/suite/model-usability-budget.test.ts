@@ -4,6 +4,7 @@ import {
 	ModelUsabilityBudgetError,
 	projectModelUsabilityBudget,
 } from "../../src/core/extensions/builtin/compaction/model-usability-budget.ts";
+import { fallbackCircuitsFor } from "../../src/core/retry-fallback/circuit.ts";
 import { createAgentSession } from "../../src/core/sdk.ts";
 import { SessionManager } from "../../src/core/session-manager.ts";
 import { createHarness, type Harness } from "./harness.ts";
@@ -92,21 +93,23 @@ describe("model usability budget", () => {
 		// switch wording would promise a compaction remedy with nothing to compact.
 		expect(error.projection.admission).toBe("start");
 		// #1678: the restored default grep, rebuilt on the engine contract, adds 240
-		// schema units. Assert the machine projection rather than pinning the
-		// human-readable error sentence.
+		// schema units. D-15: the adopted structured bash result declares its
+		// `outputSchema` on the tool, which the tool estimate counts (+134 units).
+		// Assert the machine projection rather than pinning the human-readable
+		// error sentence.
 		expect(error.projection).toMatchObject({
 			model: "faux/low-context",
 			contextWindow: 16_000,
 			liveContextTokens: 0,
 			systemPromptTokens: 1,
-			activeToolSchemaTokens: 998,
+			activeToolSchemaTokens: 1_132,
 			outputReserveTokens: 4_000,
 			compactionReserveTokens: 16_384,
 			speculationLeadTokens: 8_192,
 			safetyMarginTokens: 8_192,
 			safetyMarginProfile: "default",
-			requiredTokens: 37_767,
-			shortfallTokens: 21_767,
+			requiredTokens: 37_901,
+			shortfallTokens: 21_901,
 			usable: false,
 		});
 	});
@@ -325,11 +328,11 @@ describe("model usability budget", () => {
 		const harness = await createHarness();
 		harnesses.push(harness);
 		const model = { ...harness.getModel(), contextWindow: 16_000, maxTokens: 4_000 };
+		const agentDir = join(harness.tempDir, "sdk-agent");
+		const breaker = fallbackCircuitsFor(agentDir);
 
 		// when / then
-		await expect(
-			createAgentSession({ cwd: harness.tempDir, agentDir: join(harness.tempDir, "sdk-agent"), model }),
-		).rejects.toMatchObject({
+		await expect(createAgentSession({ cwd: harness.tempDir, agentDir, model })).rejects.toMatchObject({
 			name: "ModelUsabilityBudgetError",
 			projection: {
 				model: `${model.provider}/${model.id}`,
@@ -337,6 +340,9 @@ describe("model usability budget", () => {
 				contextWindow: 16_000,
 			},
 		});
+		// then: the refused session keeps no hold on the agent dir's fallback breaker
+		fallbackCircuitsFor(`${agentDir}-unrelated`);
+		expect(fallbackCircuitsFor(agentDir)).not.toBe(breaker);
 	});
 
 	it("rejects a resumed session whose restored transcript exceeds the startup budget", async () => {

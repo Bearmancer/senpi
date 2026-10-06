@@ -82,7 +82,10 @@ export const COMPLETIONS_COMPAT = {
 	sessionAffinityFormat: "openai",
 	supportsPromptCacheKey: false,
 	supportsMaxOutputTokens: true,
+	supportsForcedToolChoice: true,
 	supportsLongCacheRetention: true,
+	supportsMidConvoSystemMessages: false,
+	supportsMidConvoToolAdditions: false,
 } satisfies Omit<
 	Required<OpenAICompletionsCompat>,
 	| "cacheControlFormat"

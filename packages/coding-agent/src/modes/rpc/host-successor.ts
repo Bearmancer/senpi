@@ -10,23 +10,32 @@
  * left both sockets alone. The predecessor is asked to drain only AFTER that proof and after the
  * successor is registered - whether it may be asked at all was decided in `host-handoff.ts`, which
  * proved the owner and checked that the running host advertises it can survive the signal.
+ *
+ * A REFUSED handoff leaves the endpoint as it found it: the successor is killed and, once it has
+ * exited, its generation record and directory are released, and the boot `settings.json` it
+ * overwrote before spawning is put back byte for byte - so neither `status --all` nor the running
+ * generation's next restart ever sees the successor that did not happen.
  */
-import { spawn } from "node:child_process";
+import { type ChildProcess, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { open } from "node:fs/promises";
-import { ENV_AGENT_DIR } from "../../config.ts";
+import { open, rm, writeFile } from "node:fs/promises";
 import { waitForStartTime } from "../app-server/daemon/process.ts";
-import { RPC_CLIENT_CAPABILITIES_ENV } from "./custom-capability.ts";
-import { HOST_DAEMON_DIR_ENV, type HostDaemonPaths } from "./host-daemon-paths.ts";
-import { writeHostRegistration } from "./host-daemon-registration.ts";
-import { readHostSettings, writeHostSettings } from "./host-daemon-state.ts";
+import { generationPaths, HOST_STATE_FILE_MODE, type HostDaemonPaths } from "./host-daemon-paths.ts";
+import {
+	type HostRegistration,
+	releaseGeneration,
+	writeGenerationRecord,
+	writeHostRegistration,
+} from "./host-daemon-registration.ts";
+import { readFileOrUndefined, readHostSettings, writeHostSettings } from "./host-daemon-state.ts";
 import type { HandoffHostOptions, HandoffRefusal, HandoffResult } from "./host-handoff.ts";
 import { defaultHostLaunch, PINNED_HOST_CLIENT_CAPABILITIES } from "./host-launch.ts";
 import { DEFAULT_HOST_IDLE_EXIT_MS } from "./host-lifecycle.ts";
 import { probeProtocolInfo } from "./host-probe.ts";
 import type { HostProtocolInfo } from "./host-protocol-info.ts";
+import { successorHostEnvironment } from "./host-spawn-environment.ts";
 import { signalGeneration } from "./host-stop.ts";
-import { HOST_GENERATION_ENV, HOST_INSTANCE_ID_ENV, hostLaunchProfile } from "./protocol-identity.ts";
+import { hostLaunchProfile } from "./protocol-identity.ts";
 import {
 	generationBindPath,
 	MAX_SOCKET_PATH_BYTES,
@@ -37,13 +46,22 @@ import {
 /** How long the successor has to answer on the PUBLIC socket before the handoff is abandoned. */
 const DEFAULT_HANDOFF_READINESS_MS = 30_000;
 
+/** How long a refused handoff waits for the successor it killed to exit before releasing its record. */
+const SUCCESSOR_EXIT_WAIT_MS = 5_000;
+
+/** The longest `startSuccessor` runs: its start-time read, the readiness window, one last probe and a refusal's exit wait. */
+export const SUCCESSOR_START_BUDGET_MS = 10_000 + DEFAULT_HANDOFF_READINESS_MS + 2_000 + SUCCESSOR_EXIT_WAIT_MS;
+
 export async function startSuccessor(context: {
 	options: HandoffHostOptions;
 	paths: HostDaemonPaths;
 	host: HostProtocolInfo;
-	owner: { pid: number; processStartTime: string; instanceId: string };
+	/** The predecessor's proven identity; `undefined` when nothing proves it, and then it is never signalled. */
+	owner: { readonly pid: number } | undefined;
+	/** Asked once the successor owns the socket: the drain request is sent only when it answers true. */
+	drainGate?: () => Promise<boolean>;
 }): Promise<HandoffResult> {
-	const { options, paths, host, owner } = context;
+	const { options, paths, host, owner, drainGate } = context;
 	const generation = (host.generation ?? 0) + 1;
 	// The successor's identity, chosen here so its generation directory holds its settings before it
 	// boots and the pointer can name it the instant it answers on the public socket.
@@ -57,6 +75,7 @@ export async function startSuccessor(context: {
 	// A handoff replaces the ENGINE, not the operator's lifecycle policy: the successor inherits
 	// what the running generation was started with unless this caller states its own.
 	const running = await readHostSettings(paths);
+	const bootSettings = await readFileOrUndefined(paths.settingsFile);
 	await writeHostSettings(paths, {
 		socket: options.socket,
 		capabilities: PINNED_HOST_CLIENT_CAPABILITIES,
@@ -65,37 +84,43 @@ export async function startSuccessor(context: {
 		generation,
 		instanceId,
 	});
-	await options._test?.beforeSpawn?.();
-	const argv = [
-		"--socket",
-		options.socket,
-		"--bind",
-		bindSocket,
-		"--replace",
-		`${replaced.dev}:${replaced.ino}`,
-		...(options.hostArgs ?? []),
-	];
-	const launch = options._test?.launch?.(argv) ?? defaultHostLaunch(argv);
-	const stderr = await open(paths.stderrLog, "a", 0o600);
-	const child = spawn(launch.command, [...launch.args], {
-		detached: true,
-		windowsHide: true,
-		env: successorEnv(options, { paths, generation, instanceId }),
-		stdio: ["ignore", "ignore", stderr.fd],
-	});
-	await stderr.close();
-	const exited = new Promise<void>((resolve) => child.once("exit", () => resolve()));
+	// From the overwrite on, every exit is a refusal that puts the boot settings back: a failure BEFORE
+	// the successor existed (the hook, the launch build, the stderr open, the spawn itself) has nothing
+	// to kill or release, but the settings it already overwrote are not the successor's to keep.
+	let child: ChildProcess | undefined;
+	let exited: Promise<void> | undefined;
 	try {
+		await options._test?.beforeSpawn?.();
+		const argv = [
+			"--socket",
+			options.socket,
+			"--bind",
+			bindSocket,
+			"--replace",
+			`${replaced.dev}:${replaced.ino}`,
+			...(options.hostArgs ?? []),
+		];
+		const launch = (options._test?.launch ?? options.launch)?.(argv) ?? defaultHostLaunch(argv);
+		const stderr = await open(paths.stderrLog, "a", 0o600);
+		const spawned = spawn(launch.command, [...launch.args], {
+			detached: true,
+			windowsHide: true,
+			env: successorHostEnvironment({
+				agentDir: options.agentDir,
+				env: options.env,
+				expectedRuntimeBuildId: options.expectedRuntimeBuildId,
+				paths,
+				generation,
+				instanceId,
+			}),
+			stdio: ["ignore", "ignore", stderr.fd],
+		});
+		await stderr.close();
+		child = spawned;
+		exited = new Promise<void>((resolve) => spawned.once("exit", () => resolve()));
 		if (child.pid === undefined) throw new Error("failed to spawn the successor generation");
-		const answer = await awaitSuccessor(options, host, exited);
-		if (!answer) {
-			if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
-			return { action: "refuse", reason: await abortReason(options.socket, replaced), upgradeable: true };
-		}
 		const processStartTime = (await waitForStartTime(child.pid, 10_000).catch(() => undefined)) ?? null;
-		// The pointer moves to the successor only now: until the rename landed, the generation the
-		// clients reach is still the predecessor, and the pointer has to name whoever owns the socket.
-		await writeHostRegistration(paths, {
+		const registration = {
 			record: { pid: child.pid, processStartTime },
 			socket: options.socket,
 			instanceId,
@@ -104,13 +129,29 @@ export async function startSuccessor(context: {
 				["--mode", "rpc", "--multi-session", ...(options.hostArgs ?? [])],
 				process.cwd(),
 			).profile_id,
-		});
+		};
+		// The successor is running from this instant, long before it binds anything: its own record says
+		// so, so `host gc` never judges the endpoint by a predecessor that died meanwhile. The pointer is
+		// NOT moved here - the predecessor still owns the socket until the rename lands.
+		await writeGenerationRecord(paths, registration);
+		await options._test?.afterSpawn?.(child.pid);
+		const answer = await awaitSuccessor(options, host, exited);
+		if (!answer) {
+			const reason = await abortReason(options.socket, replaced);
+			const cleanupFailure = await abandonSuccessor({ child, exited, paths, instanceId, bootSettings });
+			return { action: "refuse", reason, upgradeable: true, ...(cleanupFailure && { detail: cleanupFailure }) };
+		}
+		// The pointer moves to the successor only now: until the rename landed, the generation the
+		// clients reach is still the predecessor, and the pointer has to name whoever owns the socket.
+		await options._test?.beforeRegistration?.();
+		await writeHostRegistration(paths, { ...registration, ...successorBuild(answer) });
 		child.unref();
 		// The successor owns the socket now: the predecessor may drain. SIGUSR1 is sent only here,
 		// to a pid the record proved and a host that advertised it can survive the signal. A
 		// predecessor that exited on its own in the meantime is already drained, and the handoff it
 		// was being asked to make room for has already happened.
-		signalGeneration(owner.pid, "SIGUSR1");
+		if (owner !== undefined && (drainGate === undefined || (await drainGate())))
+			signalGeneration(owner.pid, "SIGUSR1");
 		return {
 			action: "handoff",
 			pid: child.pid,
@@ -119,14 +160,64 @@ export async function startSuccessor(context: {
 			instanceId: answer.instanceId ?? "",
 		};
 	} catch (cause) {
-		if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+		const cleanupFailure = await abandonSuccessor({ child, exited, paths, instanceId, bootSettings });
+		const detail = cause instanceof Error ? cause.message : String(cause);
 		return {
 			action: "refuse",
 			reason: "successor_unavailable",
 			upgradeable: true,
-			detail: cause instanceof Error ? cause.message : String(cause),
+			detail: cleanupFailure ? `${detail}; ${cleanupFailure}` : detail,
 		};
 	}
+}
+
+/**
+ * Undoes what a refused handoff left: kills the successor, releases its generation once it has exited
+ * (a successor that never got a pid never ran, so its directory goes at once; one that outlives the wait
+ * keeps its record until pruning finds it dead), and puts the boot settings back as they were. A
+ * successor that was never spawned leaves only the boot settings to undo. A cleanup that fails is
+ * answered, not thrown: the handoff still refused, and the caller is told why
+ * the endpoint may not be as it was.
+ */
+async function abandonSuccessor(context: {
+	/** Undefined when the successor was never spawned: nothing to kill or release. */
+	child: ChildProcess | undefined;
+	exited: Promise<void> | undefined;
+	paths: HostDaemonPaths;
+	instanceId: string;
+	bootSettings: string | undefined;
+}): Promise<string | undefined> {
+	const { child, exited, paths, instanceId, bootSettings } = context;
+	if (child !== undefined && child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+	try {
+		if (bootSettings === undefined) await rm(paths.settingsFile, { force: true });
+		else await writeFile(paths.settingsFile, bootSettings, { mode: HOST_STATE_FILE_MODE });
+		if (child?.pid === undefined) await rm(generationPaths(paths, instanceId).dir, { recursive: true, force: true });
+		else if (exited !== undefined && (await exitedWithin(exited, SUCCESSOR_EXIT_WAIT_MS))) {
+			await releaseGeneration(paths, { instanceId, pid: child.pid });
+		}
+		return undefined;
+	} catch (cause) {
+		return `successor cleanup failed: ${cause instanceof Error ? cause.message : String(cause)}`;
+	}
+}
+
+async function exitedWithin(exited: Promise<void>, ms: number): Promise<boolean> {
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	const timedOut = new Promise<false>((resolve) => {
+		timer = setTimeout(() => resolve(false), ms);
+	});
+	try {
+		return await Promise.race([exited.then(() => true), timedOut]);
+	} finally {
+		clearTimeout(timer);
+	}
+}
+
+/** The successor's build as the successor itself reported it on the socket; never this process's build. */
+function successorBuild(answer: HostProtocolInfo): Pick<HostRegistration, "build"> {
+	if (answer.engineVersion === undefined || answer.engineOrdinal === undefined) return {};
+	return { build: { text: answer.engineVersion, ordinal: answer.engineOrdinal } };
 }
 
 /**
@@ -163,27 +254,6 @@ async function abortReason(socket: string, replaced: SocketFileIdentity): Promis
 	return current === undefined || current.dev !== replaced.dev || current.ino !== replaced.ino
 		? "socket_replaced"
 		: "successor_unavailable";
-}
-
-function successorEnv(
-	options: HandoffHostOptions,
-	successor: { readonly paths: HostDaemonPaths; readonly generation: number; readonly instanceId: string },
-): NodeJS.ProcessEnv {
-	const env: NodeJS.ProcessEnv = {
-		...process.env,
-		[HOST_GENERATION_ENV]: String(successor.generation),
-		// Always SET, never inherited: a handoff completes exactly when the instance id on the socket
-		// changes, so a successor that inherited the predecessor's id could never be seen to arrive.
-		[HOST_INSTANCE_ID_ENV]: successor.instanceId,
-		[HOST_DAEMON_DIR_ENV]: successor.paths.dir,
-		[RPC_CLIENT_CAPABILITIES_ENV]: PINNED_HOST_CLIENT_CAPABILITIES.join(","),
-		...(options.agentDir ? { [ENV_AGENT_DIR]: options.agentDir } : {}),
-	};
-	for (const [key, value] of Object.entries(options.env ?? {})) {
-		if (value === null) delete env[key];
-		else env[key] = value;
-	}
-	return env;
 }
 
 function delay(ms: number): Promise<void> {

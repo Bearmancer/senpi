@@ -1,4 +1,5 @@
 import type { ExtensionUIContext, QuestionRequest, QuestionResponse } from "../../core/extensions/types.ts";
+import { settledQuestionStatus, unansweredQuestionIds } from "./extension-ui-response.ts";
 import type { RpcExtensionUIProgress, RpcExtensionUIResponse, RpcQuestionUiRequest } from "./rpc-types.ts";
 
 type Options = Parameters<NonNullable<ExtensionUIContext["question"]>>[1];
@@ -45,11 +46,8 @@ export class ConnectionQuestionBridge {
 			let comment: string | undefined;
 			let timer: ReturnType<typeof setTimeout> | undefined;
 			let finished = false;
-			const unanswered = () =>
-				request.questions
-					.filter((q) => !answers[q.id]?.selected.length && !answers[q.id]?.text?.trim())
-					.map((q) => q.id);
-			const finish = (status: QuestionResponse["status"]) => {
+			const unanswered = () => unansweredQuestionIds(request.questions, answers);
+			const finish = (status: QuestionResponse["status"], resolvedBy?: QuestionResponse["resolvedBy"]) => {
 				if (finished) return;
 				finished = true;
 				clearTimeout(timer);
@@ -58,6 +56,7 @@ export class ConnectionQuestionBridge {
 				this.resolved.add(id);
 				const result: QuestionResponse = {
 					status,
+					...(resolvedBy !== undefined ? { resolvedBy } : {}),
 					answers,
 					comment,
 					unanswered: unanswered(),
@@ -69,6 +68,7 @@ export class ConnectionQuestionBridge {
 					requestId: frame.requestId,
 					toolCallId: frame.toolCallId,
 					outcome: status,
+					...(result.resolvedBy !== undefined ? { resolvedBy: result.resolvedBy } : {}),
 					answers,
 					comment,
 					unanswered: result.unanswered,
@@ -113,8 +113,9 @@ export class ConnectionQuestionBridge {
 					if (!("answers" in response)) return false;
 					answers = response.answers;
 					comment = response.comment;
-					if (!comment?.trim() && Object.keys(answers).length === 0) return false;
-					finish(comment?.trim() ? "comment-submitted" : "answered");
+					const status = settledQuestionStatus(answers, comment);
+					if (status === undefined) return false;
+					finish(status, "rpc_connection");
 					return true;
 				},
 			});
@@ -159,6 +160,7 @@ export async function degradeQuestion(
 	const unanswered = request.questions.filter((q) => !answers[q.id]).map((q) => q.id);
 	return {
 		status: comment?.trim() ? "comment-submitted" : unanswered.length ? "cancelled" : "answered",
+		...(comment?.trim() || unanswered.length === 0 ? { resolvedBy: "rpc_connection" as const } : {}),
 		answers,
 		comment,
 		unanswered,

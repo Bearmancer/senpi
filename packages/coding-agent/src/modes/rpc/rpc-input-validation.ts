@@ -1,3 +1,6 @@
+import { isBrowserEngine } from "../../core/browser-engine.ts";
+import { clientMessageIdentitySchema } from "../../core/client-message-identity.ts";
+
 export const MAX_RPC_MESSAGE_CHARACTERS = 1_000_000;
 
 /**
@@ -85,6 +88,19 @@ function validSessionEntry(entry: unknown): boolean {
 export function rpcCommandPayloadError(command: unknown): string | undefined {
 	if (rpcCommandShapeError(command)) return undefined;
 	const value = command as Record<string, unknown>;
+	if (
+		(value.type === "prompt" || value.type === "steer" || value.type === "follow_up") &&
+		!clientMessageIdentitySchema.safeParse(value).success
+	) {
+		return "clientMessageId and clientTurnId must be non-empty strings of at most 256 characters.";
+	}
+	if (
+		(value.type === "steer" || value.type === "follow_up") &&
+		value.enqueueOrder !== undefined &&
+		!(typeof value.enqueueOrder === "number" && Number.isFinite(value.enqueueOrder))
+	) {
+		return "enqueueOrder must be a finite number.";
+	}
 	if (value.type === "append_user_message" && !validContent(value.content)) {
 		return "append_user_message content must be a string or text/image content array.";
 	}
@@ -143,6 +159,60 @@ export function sessionKindError(kind: unknown): string | undefined {
 export function sessionAutoTitleError(value: unknown): string | undefined {
 	if (value === undefined || typeof value === "boolean") return undefined;
 	return "auto_title must be a boolean.";
+}
+
+/**
+ * Detail for an `open_session.promptSurface` the host refuses, or undefined when the value is
+ * absent or a known surface. An unknown value is never read as `terminal`: a client that asked
+ * for the app or chat prompt must not silently get the routing line.
+ */
+export function sessionPromptSurfaceError(value: unknown): string | undefined {
+	if (value === undefined || value === "terminal" || value === "app" || value === "chat") return undefined;
+	return `promptSurface must be "terminal", "app" or "chat".`;
+}
+
+/**
+ * Detail for an `open_session.browserEngine` the host refuses, or undefined when the value is absent
+ * or a known engine. An unknown value is never read as `none`: a client that asked for the user's
+ * own browser must not silently run without one.
+ */
+export function sessionBrowserEngineError(value: unknown): string | undefined {
+	if (value === undefined || isBrowserEngine(value)) return undefined;
+	return `browserEngine must be "connected", "builtin" or "none".`;
+}
+
+const MAX_RETRY_FALLBACK_CHAINS = 32;
+const MAX_RETRY_FALLBACK_ENTRIES = 32;
+const MAX_RETRY_FALLBACK_SELECTOR_LENGTH = 512;
+
+/**
+ * Detail for an `open_session.retryFallback` the host refuses, or undefined when it is absent or well
+ * formed: `{ modelFallback: boolean, fallbackChains: Record<string, string[]> }`, at most 32 chains of at
+ * most 32 non-empty selectors. A malformed profile is refused rather than ignored, so a caller that asked
+ * for a chain never runs without one unknowingly.
+ */
+export function sessionRetryFallbackError(value: unknown): string | undefined {
+	if (value === undefined) return undefined;
+	const shape = "retryFallback must be { modelFallback: boolean, fallbackChains: Record<string, string[]> }.";
+	if (typeof value !== "object" || value === null || Array.isArray(value)) return shape;
+	const record = value as Record<string, unknown>;
+	if (typeof record.modelFallback !== "boolean") return shape;
+	const chains = record.fallbackChains;
+	if (typeof chains !== "object" || chains === null || Array.isArray(chains)) return shape;
+	const entries = Object.entries(chains as Record<string, unknown>);
+	if (entries.length > MAX_RETRY_FALLBACK_CHAINS)
+		return `retryFallback allows at most ${MAX_RETRY_FALLBACK_CHAINS} chains.`;
+	for (const [key, selectors] of entries) {
+		if (!isSelector(key)) return shape;
+		if (!Array.isArray(selectors) || !selectors.every(isSelector)) return shape;
+		if (selectors.length > MAX_RETRY_FALLBACK_ENTRIES)
+			return `retryFallback allows at most ${MAX_RETRY_FALLBACK_ENTRIES} entries per chain.`;
+	}
+	return undefined;
+}
+
+function isSelector(value: unknown): value is string {
+	return typeof value === "string" && value.trim().length > 0 && value.length <= MAX_RETRY_FALLBACK_SELECTOR_LENGTH;
 }
 
 export function rpcCommandShapeError(command: unknown): string | undefined {

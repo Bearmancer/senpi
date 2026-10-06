@@ -50,11 +50,6 @@ export const RESTORE_GRACE_MS = 2_000;
 export const KILLED_SESSION_EXIT_GRACE_MS = 5000;
 
 /**
- * Admission cap on durable (restart-surviving) monitors per session. Ephemeral monitors
- * never count against it: only entries the manifest keeps across a restart do.
- */
-export const MAX_DURABLE_MONITORS = 5;
-/**
  * Absolute lifetime of a durable monitor, measured from its registration. It is a deadline,
  * never a sliding window: neither a restore nor a rearm extends it.
  */

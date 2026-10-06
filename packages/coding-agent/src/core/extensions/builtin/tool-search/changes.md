@@ -1,5 +1,25 @@
 # Tool Search Builtin Changes
 
+## 2026-10-01 - Each session owns its tool-search service (senpi#2509)
+
+### What changed
+
+- `service.ts`: the module-level singleton that sessions shared is gone. Services are registered per extension load, `dispose(sessionId, reason)` makes every later use throw an error naming the session, and `getToolSearchService()` remains only for session-free callers (provider scope, else the only live session, else a standalone service; several live sessions throw).
+- `index.ts`: every load creates its own service (the RPC provider-scope install is unchanged), and a retired generation's lazy activator declines.
+
+### Why
+
+- Outside the RPC host, `toolSearchExtension` fell back to the module-level service from `getToolSearchService(runtime)` and `createToolSearchExtension` rebound it to each loading session's `pi`. When another in-process session (a task child, a replaced session) closed, the live session's `context` and `before_provider_request` hooks threw the stale-ctx error from `getCatalog` and its tool search stopped working.
+
+### Why an extension could not handle it
+
+- The fix is in the builtin itself; the session that binds each extension load adopts and retires its service (`core/changes.md`, same date).
+
+### Expected merge conflict zones
+
+- `service.ts`: the service fields, the disposal guard at each public entry point, and the module-level registry functions at the end of the file.
+- `index.ts`: the lazy activator registration and the default factory.
+
 ## 2026-09-14 - Side-effect-free tool_search with precision gating and hidden-tool hints (senpi #1682)
 
 ### What changed
@@ -178,3 +198,21 @@
 
 - LOW: `engine/document.ts` shared document fields.
 - LOW: `engine/bm25.ts` field weighting, exact-match handling, filtering, and ordering.
+
+## 2026-09-28 - Injected deferred tools carry an object input_schema (senpi#2252)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/tool-search/native-search.ts`: `injectInactiveCatalogTools` passes a tool's parameters through `anthropicInputSchema`, which resolves a root union (`anyOf` with no top-level `type`) into one `type: "object"` schema with `resolveRootObjectSchema` from `@earendil-works/pi-ai/utils/tool-schema-compat`. A plain object schema is still sent unchanged.
+
+### Why
+
+- Anthropic rejects any tool whose `input_schema` lacks `type: "object"` (`tools.N.custom.input_schema.type: Field required`), which failed every request once a deferrable root-union tool (the desktop `computer` tool) was cataloged. Resident tools already get this shape in `convertTools` (#718).
+
+### Why an extension could not handle it
+
+- This is the tool-search extension's own payload transform.
+
+### Expected merge conflict zones
+
+- LOW: the `input_schema` field of `injectInactiveCatalogTools` and the helper beside `maybeDefer`.

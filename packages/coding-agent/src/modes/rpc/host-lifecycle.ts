@@ -50,13 +50,45 @@ import { fileURLToPath } from "node:url";
 import { getAgentDir, isBunBinary, isBundledNode } from "../../config.ts";
 import { processIsLive, readProcessStartTime } from "../app-server/daemon/process.ts";
 import { classifyChildExit, noteChildExit } from "./host-child-exit.ts";
+import { ClientOccupancy } from "./host-client-occupancy.ts";
+import { rpcHostExecArgv } from "./host-exec-argv.ts";
+import {
+	DEFAULT_HANDOFF_GRACE_MS,
+	HANDOFF_GRACE_MS_ENV,
+	type HostActivity,
+	IdleExitDecider,
+	parseIdleExitMs,
+	resolveHostPolicy,
+} from "./host-lifecycle-policy.ts";
 
 // The exit verdict moved to ./host-child-exit.ts with the crash recording it now feeds; it stays
 // exported from here so every existing importer keeps resolving it at its original home.
 export { classifyChildExit } from "./host-child-exit.ts";
 
+// The cold-start/idle-exit policy and its decision core live in ./host-lifecycle-policy.ts; they stay
+// exported from here so every existing importer keeps resolving them at their original home.
+export {
+	DEFAULT_HANDOFF_GRACE_MS,
+	DEFAULT_HOST_IDLE_EXIT_MS,
+	HANDOFF_GRACE_MS_ENV,
+	HOST_COLD_START_ENV,
+	HOST_IDLE_EXIT_MS_ENV,
+	type HostActivity,
+	type HostColdStart,
+	type HostLifecyclePolicy,
+	type HostLifecyclePolicyInput,
+	IdleExitDecider,
+	type IdleExitDecision,
+	parseColdStart,
+	parseIdleExitMs,
+	resolveHostPolicy,
+} from "./host-lifecycle-policy.ts";
+
+import { hostCrashCleanupPaths } from "./host-cleanup-paths.ts";
 import { createHostDaemonPaths, generationPaths, HOST_DAEMON_DIR_ENV } from "./host-daemon-paths.ts";
 import { releaseGeneration } from "./host-daemon-registration.ts";
+import { HOST_INSTANCE_ID_ENV } from "./host-identity-env.ts";
+import { SessionRunActivity } from "./host-run-activity.ts";
 import { watchForSupersession } from "./host-supersession.ts";
 import {
 	HOST_CLEANUP_PATHS_ENV,
@@ -67,7 +99,6 @@ import {
 } from "./host-watchdog.ts";
 import { attachJsonlLineReader, MAX_RPC_LINE_CHARACTERS } from "./jsonl.ts";
 import { activeTurnsForIdleDecision, createObserverLink } from "./observer-link.ts";
-import { HOST_INSTANCE_ID_ENV } from "./protocol-identity.ts";
 import {
 	MAX_SOCKET_PATH_BYTES,
 	PUBLIC_SOCKET_IDENTITY_FILE,
@@ -86,29 +117,6 @@ import {
 	sendSocketHandshake,
 	socketSecretPath,
 } from "./socket-transport.ts";
-
-export type HostColdStart = "transient" | "persistent";
-
-/** Environment override for the cold-start policy: `transient` or `persistent`. */
-export const HOST_COLD_START_ENV = "SENPI_RPC_HOST_COLD_START";
-/** Environment override for the idle-exit window in milliseconds. */
-export const HOST_IDLE_EXIT_MS_ENV = "SENPI_RPC_HOST_IDLE_EXIT_MS";
-/** Default idle-exit window: 15 minutes of continuous no-connection, no-turn idle. */
-export const DEFAULT_HOST_IDLE_EXIT_MS = 15 * 60_000;
-/** Soft handoff deadline: rescan and report, never interrupt turns or in-flight requests. */
-export const HANDOFF_GRACE_MS_ENV = "SENPI_RPC_HANDOFF_GRACE_MS";
-export const DEFAULT_HANDOFF_GRACE_MS = 10 * 60_000;
-
-/** The policy fields ensureHost() records in rpc-host-daemon/settings.json. */
-export interface HostLifecyclePolicyInput {
-	readonly coldStart?: HostColdStart;
-	readonly idleExitMs?: number;
-}
-
-export interface HostLifecyclePolicy {
-	readonly coldStart: HostColdStart;
-	readonly idleExitMs: number;
-}
 
 const CHILD_STOP_TIMEOUT_MS = 5_000;
 /** Win32 named-pipe shutdown can leave supervisor handles live after close starts. */
@@ -156,73 +164,6 @@ export async function createInternalSocketPath(
 		{ mode: 0o600 },
 	);
 	return { socket: join(dir, "host.sock"), dir, secretPath: join(dir, ".secret") };
-}
-
-export function parseColdStart(value: string | undefined): HostColdStart | undefined {
-	return value === "transient" || value === "persistent" ? value : undefined;
-}
-
-export function parseIdleExitMs(value: string | undefined): number | undefined {
-	if (value === undefined || !/^\d+$/.test(value.trim())) return undefined;
-	const parsed = Number(value.trim());
-	return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
-}
-
-/**
- * Resolves the effective host policy. Precedence: environment overrides beat
- * settings.json, which beats the documented defaults (transient, 15 minutes).
- * Invalid values at either source fall through to the next source.
- */
-export function resolveHostPolicy(
-	settings: unknown,
-	env: Readonly<Record<string, string | undefined>>,
-): HostLifecyclePolicy {
-	const record = isRecord(settings) ? settings : {};
-	const coldStart =
-		parseColdStart(env[HOST_COLD_START_ENV]) ?? parseColdStart(asOptionalString(record.coldStart)) ?? "transient";
-	const idleExitMs =
-		parseIdleExitMs(env[HOST_IDLE_EXIT_MS_ENV]) ??
-		parseIdleExitMs(asOptionalString(record.idleExitMs)) ??
-		DEFAULT_HOST_IDLE_EXIT_MS;
-	return { coldStart, idleExitMs };
-}
-
-export interface HostActivity {
-	readonly connections: number;
-	readonly activeTurns: number;
-}
-
-export type IdleExitDecision = "active" | "idle" | "exit";
-
-/**
- * Pure idle-window decision core. `update()` must be called with the CURRENT
- * activity state; the window only counts continuously idle time and any
- * activity resets it, so a busy host can never cross the threshold.
- */
-export class IdleExitDecider {
-	private idleSince: number | undefined;
-	private readonly now: () => number;
-	readonly idleExitMs: number;
-
-	constructor(idleExitMs: number, now: () => number = Date.now) {
-		this.idleExitMs = idleExitMs;
-		this.now = now;
-	}
-
-	update(activity: HostActivity): IdleExitDecision {
-		// Any attachment or active turn both holds the host open and resets the
-		// window, so only CONTINUOUS idle can ever cross the threshold.
-		if (activity.connections > 0 || activity.activeTurns > 0) {
-			this.idleSince = undefined;
-			return "active";
-		}
-		if (this.idleExitMs === Number.POSITIVE_INFINITY) return "idle";
-		if (this.idleSince === undefined) {
-			this.idleSince = this.now();
-			return "idle";
-		}
-		return this.now() - this.idleSince >= this.idleExitMs ? "exit" : "idle";
-	}
 }
 
 export interface SupervisorLaunch {
@@ -335,17 +276,25 @@ function parseSocketIdentity(value: string): SocketFileIdentity | undefined {
 	return match ? { dev: Number(match[1]), ino: Number(match[2]) } : undefined;
 }
 
-/** Resolves the committed CLI entry this supervisor wraps (source tree or built dist). */
-export function resolveCliMainPath(): string {
-	const modulePath = fileURLToPath(import.meta.url);
+/**
+ * Resolves the committed CLI entry this supervisor wraps (source tree or built dist).
+ * Exported for tests, which pass the module path and layout of a bundled install.
+ */
+export function resolveCliMainPath(
+	modulePath: string = fileURLToPath(import.meta.url),
+	bundled: boolean = isBundledNode,
+): string {
+	// Bundled, take the entry from the package's own declared bin: the bundle's cli.js beside
+	// this chunk, so a host started from a runtime snapshot runs the snapshot's copy and claims
+	// it the way a session does (#2409). Counting ".." instead lands on dist/cli-main.js, the
+	// unbundled tree the package also ships, which a snapshot links back to the install that an
+	// upgrade replaces, or on the package root, where no cli-main was ever emitted.
+	const declared = bundled ? resolveDeclaredCliEntry(modulePath) : undefined;
+	if (declared !== undefined) return declared;
 	const extension = modulePath.endsWith(".ts") ? ".ts" : ".js";
 	const unbundled = resolve(dirname(modulePath), "..", "..", `cli-main${extension}`);
 	if (existsSync(unbundled)) return unbundled;
-	// Bundled, ".." twice reaches the PACKAGE ROOT rather than dist/, naming a cli-main that
-	// was never emitted. Take the entry from the package's own declared bin instead of
-	// counting directories: it is the one statement of where the CLI lives that holds in
-	// every layout. Falls back to the old path when nothing is declared, so a caller that
-	// was working keeps working.
+	// Falls back to the old path when nothing is declared, so a caller that was working keeps working.
 	return resolveDeclaredCliEntry(modulePath) ?? unbundled;
 }
 
@@ -397,7 +346,7 @@ export function resolveHostChildLaunch(
 	return {
 		command: process.execPath,
 		args: [
-			...(compiled ? [] : [...process.execArgv, resolveCliMainPath()]),
+			...(compiled ? [] : [...rpcHostExecArgv(), resolveCliMainPath()]),
 			"--mode",
 			"rpc",
 			"--multi-session",
@@ -463,8 +412,8 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 	const internalSocket = internal.socket;
 	const internalSecretPath = internal.secretPath ?? socketSecretPath(internalSocket);
 	const internalSecret = process.platform === "win32" ? await createSocketSecret(internalSecretPath) : undefined;
-	const clientSockets = new Set<Socket>();
-	const busySessions = new Map<string, number>();
+	const clients = new ClientOccupancy(() => decider.update(currentActivity()));
+	const runs = new SessionRunActivity();
 	// Declared before anything that can reach `currentActivity()`. A client accepted during startup
 	// asks for the activity snapshot, and a `const` read before its initializer runs is a
 	// ReferenceError that fails the connection - which is how a successor's first `open_session`
@@ -498,6 +447,8 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 	let stopSupersessionWatch: (() => void) | undefined;
 	let shuttingDown = false;
 	let draining = false;
+	/** Another generation's entry replaced the public socket this one bound: its registration is the replacer's now. */
+	let endpointReplaced = false;
 	let handoffGraceTimer: ReturnType<typeof setTimeout> | undefined;
 	let shutdownPromise: Promise<never> | undefined;
 
@@ -514,18 +465,14 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 			[HOST_WATCH_PPID_ENV]: String(process.pid),
 			...(internal.dir ? { [HOST_SCRATCH_DIR_ENV]: internal.dir } : {}),
 			...(internalSecret ? { [SOCKET_SECRET_FILE_ENV]: internalSecretPath } : {}),
-			[HOST_CLEANUP_PATHS_ENV]: [
-				// A successor writes no registration of its own until the ensure that spawned it does,
-				// and the files under these paths still describe the generation being replaced.
-				...(successor ? [] : [paths.pointerFile, generation.pidFile, paths.settingsFile]),
-				// POSIX public sockets are removed ownership-checked by the host child
-				// (token: the scratch-directory sidecar plus HOST_PUBLIC_SOCKET_ENV),
-				// never by path from a crash-path cleanup: a blind removal here would
-				// unlink a newer host's freshly published entry after a takeover.
-				// Windows named pipes have no filesystem entry to own, so they stay
-				// listed for the crash-path cleanup.
-				...(process.platform === "win32" ? [publicSocket] : []),
-			].join("\n"),
+			[HOST_CLEANUP_PATHS_ENV]: hostCrashCleanupPaths({
+				pointerFile: paths.pointerFile,
+				generationPidFile: generation.pidFile,
+				settingsFile: paths.settingsFile,
+				publicSocket,
+				successor: Boolean(successor),
+				platform: process.platform,
+			}).join("\n"),
 			...(process.platform === "win32" ? {} : { [HOST_PUBLIC_SOCKET_ENV]: publicSocket }),
 		},
 		// Slot 3 is the lifetime pipe: "pipe" gives the child a read end it can
@@ -564,12 +511,12 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 				resolveSocketTransportAddress(internalSocket, process.platform, internalSecret),
 			);
 			if (internalSecret) sendSocketHandshake(internal, internalSecret);
-			clientSockets.add(client);
-			// A readiness exchange can begin and end between ticks. Record the
-			// attachment now, before a later tick can reuse the preceding idle window.
-			decider.update(currentActivity());
+			// A readiness exchange can begin and end between ticks: the client is recorded the
+			// moment its first request line arrives, before a later tick can reuse the preceding
+			// idle window. An observing read (`status`) is never recorded (host-client-occupancy.ts).
+			clients.admit(client);
 			const detach = (): void => {
-				clientSockets.delete(client);
+				clients.release(client);
 				decider.update(currentActivity());
 				internal.destroy();
 				client.destroy();
@@ -597,43 +544,25 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 	);
 	const tickIntervalMs = Math.max(20, Math.min(1_000, policy.idleExitMs / 4));
 	const ticker = setInterval(() => {
-		if (!draining && decider.update(currentActivity()) === "exit") void shutdown("idle", 0);
+		if (!draining && decider.update(currentActivity()) === "exit" && clients.unclassifiedCount === 0)
+			void shutdown("idle", 0);
 	}, tickIntervalMs);
 
 	function currentActivity(): HostActivity {
 		return {
-			connections: clientSockets.size,
+			connections: clients.attachedCount,
 			activeTurns: activeTurnsForIdleDecision({
 				healthy: observerLink.healthy(),
 				unhealthySince: observerLink.unhealthySince(),
 				now: Date.now(),
 				unknownGraceMs: decider.idleExitMs,
-				observedBusy: countBusySessions(),
+				observedBusy: runs.busySessions,
 			}),
 		};
 	}
 
-	function countBusySessions(): number {
-		let busy = 0;
-		for (const count of busySessions.values()) if (count > 0) busy++;
-		return busy;
-	}
-
 	function observeHostEvent(line: string): void {
-		let event: unknown;
-		try {
-			event = JSON.parse(line);
-		} catch {
-			return;
-		}
-		if (typeof event !== "object" || event === null) return;
-		const { type, sessionId } = event as { type?: unknown; sessionId?: unknown };
-		if (typeof sessionId !== "string") return;
-		if (type === "agent_start") busySessions.set(sessionId, (busySessions.get(sessionId) ?? 0) + 1);
-		else if (type === "agent_settled")
-			busySessions.set(sessionId, Math.max(0, (busySessions.get(sessionId) ?? 1) - 1));
-		else return;
-		decider.update(currentActivity());
+		if (runs.observe(line)) decider.update(currentActivity());
 	}
 
 	async function shutdown(reason: string, exitCode: number): Promise<never> {
@@ -657,7 +586,7 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 				: undefined;
 		try {
 			writeStderrLine(`senpi rpc host supervisor: ${reason} shutdown`);
-			for (const client of clientSockets) client.destroy();
+			clients.destroyAll();
 			// libuv unlinks the bound NAME when the listening handle closes - which
 			// would delete a newer host's entry renamed over this path. Shield the
 			// current entry for the close, then let the ownership check decide. A drained
@@ -680,8 +609,9 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 			}
 			// The registration describes a LIVE host only; the stderr log stays for diagnostics.
 			// After a handoff the pointer describes the SUCCESSOR, so this drops only the generation
-			// directory of the process that is leaving, and the pointer only while it still names it.
-			await releaseGeneration(paths, { instanceId, pid: process.pid });
+			// directory of the process that is leaving, and the pointer only while it still names it. A
+			// generation whose socket was taken over leaves the pointer and settings to the replacer (#2536).
+			await releaseGeneration(paths, { instanceId, pid: process.pid, superseded: endpointReplaced });
 		} finally {
 			if (hardExit) clearTimeout(hardExit);
 			// Explicitly terminate after every supervisor shutdown trigger. Windows
@@ -752,6 +682,7 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 		stopSupersessionWatch = watchForSupersession(
 			{ path: publicSocket, identity: publicSocketIdentity, settled: () => shuttingDown || draining },
 			(loss) => {
+				if (loss === "replaced") endpointReplaced = true;
 				supervisorLog(
 					loss === "absent"
 						? "the public socket entry is gone; nothing can reach this generation; draining"
@@ -1017,14 +948,6 @@ function errorMessage(cause: unknown): string {
 
 function isNodeErrorCode(cause: unknown, code: string): boolean {
 	return cause instanceof Error && "code" in cause && cause.code === code;
-}
-
-function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
-	return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function asOptionalString(value: unknown): string | undefined {
-	return typeof value === "string" ? value : typeof value === "number" ? String(value) : undefined;
 }
 
 function isEntryScript(): boolean {

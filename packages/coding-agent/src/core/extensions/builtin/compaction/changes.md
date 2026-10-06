@@ -1,3 +1,158 @@
+## 2026-10-05 - Attribute shared compaction logs to a session (senpi#2778)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/compaction/log.ts`: logger options accept a session identity reader, evaluated when each event is emitted; `sessionId` is allowlisted.
+- `packages/coding-agent/src/core/extensions/builtin/compaction/index.ts`: the builtin supplies the current session identity.
+
+### Why
+
+- Several sessions share the agent-directory log and can reuse the same generation number. A nearby stale event without session identity cannot be attributed to the affected session.
+
+### Why an extension could not handle it
+
+- The compaction builtin owns the logger and its privacy allowlist.
+
+### Expected merge conflict zones
+
+- `log.ts`: logger options and allowed fields; `index.ts`: lazy logger construction.
+
+## 2026-10-04 - The resident anthropic-subscription transcript stays append-only
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/compaction/lane-policy.ts`: new `hasAppendOnlyTranscript` on the lane policy, true on the resident `anthropic-subscription` lane (`resumeMode` not `off`) whoever owns compaction. The per-cwd `resumeMode` read moved into a shared `resolveResumeMode` with the same fail-closed behavior.
+- `packages/coding-agent/src/core/extensions/builtin/compaction/context-pipeline.ts` + `index.ts`: the `context` handler passes it to `buildCompactionContext`, which then skips the no-LLM context reduction on that lane, including the tripped circuit breaker's deterministic fallback (the same per-turn rewrite). Tool-result admission (a fixed per-result cap, so a sent result never changes), the latched hard-limit emergency prune and every compaction route are unchanged.
+- Tests: `test/compaction/lane-policy.test.ts` (the predicate), `test/compaction/external-owner-breaker-isolation.test.ts` (a tripped breaker leaves an append-only transcript untouched), and `test/anthropic-subscription-compaction-alignment.test.ts` (a `compaction.model` override on the lane leaves the context messages untouched while the same load reduces them for other providers, and the turn after usage crosses the reduction gate still continues as a `delta` instead of `sent_stream_diverged`).
+
+### Why
+
+- The resident SDK session only accepts appended messages. With the documented `compaction.model` escape hatch senpi owns compaction on the lane, so the context reduction ran there: past its 50% gate it rewrites older messages, the sent stream diverges from the SDK transcript (`sent_stream_diverged`) and every later turn re-sends the history through a fork or a cold-seed instead of a delta. Measured on the real lane (claude-haiku-4-5, 120k window, senpi-owned): from the first rewrite on, cache reads dropped to the ~20k system prompt with 13-43k cache writes per turn; with the reduction skipped every turn stayed `delta / prefix_matched` and cache reads grew turn by turn.
+
+### Why an extension could not handle it
+
+- The context pipeline and lane policy are this builtin's own policy.
+
+### Expected merge conflict zones
+
+- LOW: `hasAppendOnlyTranscript` / `resolveResumeMode` in `lane-policy.ts`; the reduction gate in `context-pipeline.ts`; the `context` handler arguments in `index.ts`.
+
+## 2026-10-01 - Remote compaction budget scales with the context size, and timeouts are reported (senpi#2434)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/compaction/openai-remote-timeout.ts`: `openAiRemoteCompactionTimeoutMs(model, compactionTokens)` replaces the flat per-lane budget with a per-attempt budget of `min(15 min, max(lane floor, 2 ms x tokens))`. The floors stay 90 s for the subscription lane and 15 s for `openai-responses` lanes, so small compactions keep their short budget. `createRemoteCompactionDeadline` gives every remote attempt of one compaction a shared 15-minute deadline: each attempt gets its own budget clamped to what is left, so a lane that falls through v2, WebSocket and the compact endpoint never waits more than 15 minutes in total before the local summary (which keeps its own budget, as before). `runWithRemoteTimeout` reports the measured wait, and `formatRemoteCompactionTimeoutNotice` words a timeout: the wait, the token count, and the next step.
+- `packages/coding-agent/src/core/extensions/builtin/compaction/openai-remote.ts`: the budget is sized from the request's `tokensBefore`, and each `remote-compaction-timeout` fallback event carries a `timeout` record (`waitedMs`, `tokens`, `next`: `websocket`, `compact-endpoint` or `local-summary`; `local-summary` whenever the shared deadline is spent). A route that would start after the deadline is skipped with a `remote-compaction-budget-exhausted` fallback event.
+- `packages/coding-agent/src/core/extensions/builtin/compaction/openai-remote-responses-v2.ts`: the v2 attempt takes a `describeTimeout` callback and reports its measured wait and next step in the same record.
+- `packages/coding-agent/src/core/extensions/builtin/compaction/extension-wiring.ts` + `index.ts`: `reportRemoteCompactionTimeout` turns that record into a TUI warning and a `compaction_progress` text update on both the core route and the blocking route. Which fallback runs is unchanged.
+- Thanks @rhyme227 for the measurements in the report.
+
+### Why
+
+- The subscription lane's flat 90 s covered about 85k tokens at the measured ~1.06 ms/token, while compaction fires near 280k on a 400k window: a real 383k-token compaction took 257 s, so the remote path timed out exactly when it was needed and every large session paid 90 s before the local summary even started.
+- A timeout was visible only in a debug event; the user saw a slow compaction and a local summary with no reason.
+
+### Why an extension could not handle it
+
+- The remote compaction budget and its user feedback are this builtin's own policy.
+
+### Expected merge conflict zones
+
+- LOW: `openAiRemoteCompactionTimeoutMs` and the notice formatter in `openai-remote-timeout.ts`; the timeout fallback events in `openai-remote.ts` and `openai-remote-responses-v2.ts`; `reportRemoteCompactionTimeout` and its imports in `extension-wiring.ts`; the two remote emit callbacks in `index.ts`.
+
+## 2026-09-30 - Compaction accepts ambient request-time authentication (senpi#2441)
+
+### What changed
+
+- `speculative.ts`: the summary-auth pre-check accepts the model registry's preserved `ambient` marker in addition to API keys and credential headers.
+- `test/suite/regressions/2441-bedrock-ambient-compaction.test.ts`: an Amazon Bedrock model authenticated only by an `AWS_PROFILE` reaches the mocked Bedrock summary request through `runExtensionCompaction`; an unconfigured keyed provider remains rejected before dispatch.
+
+### Why
+
+- Amazon Bedrock and Google Vertex resolve shared cloud credential chains as ambient auth with an empty request-auth object because their SDKs authenticate at request time. Compaction discarded that provider decision and rejected the request before the normal model runtime could apply it.
+
+### Why an extension could not handle it
+
+- The rejection happens inside the builtin compaction summary generator before any provider request is sent.
+
+### Expected merge conflict zones
+
+- LOW: the auth guard near the start of `runExtensionCompaction()` in `packages/coding-agent/src/core/extensions/builtin/compaction/speculative.ts`.
+
+## 2026-09-30 - Recover stalled pre-prompt compaction across unsafe split turns (senpi#1735)
+
+### What changed
+
+- `pre_prompt` compaction now enters deterministic failure recovery only when
+  known usage has reached the effective hard cap. A failed proactive
+  below-cap attempt remains fail-closed and preserves the full context.
+- When every prepared or earlier boundary retains unsafe split-turn content,
+  deterministic recovery now scans forward and selects the earliest suffix that
+  already passes the existing replay-safety, atomic tool-chain, and effective
+  token-budget checks.
+
+### Why
+
+- A resumed session at its hard cap could stall during provider summarization,
+  reject compaction, and then fail admission without attempting the
+  deterministic fallback. Below the cap, provider admission remains possible,
+  so destructive recovery would lose context without a liveness benefit.
+- Long split turns can contain an unsafe historical tool result with no later
+  user boundary. Scanning only prepared, user, and earlier boundaries retains
+  that unsafe result forever even when a later assistant boundary is safe.
+
+### Why an extension could not handle it
+
+- Required-compaction recovery and the retained-suffix candidate order are this
+  builtin's own policy.
+
+### Expected merge conflict zones
+
+- `extension-wiring.ts`: required fallback reason classification.
+- `deterministic-fallback.ts`: retained-suffix candidate ordering.
+
+## 2026-09-29 - ChatGPT subscription remote compaction goes through responses-v2 and replays on its own lane (senpi#2378)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/compaction/openai-remote.ts`: `runOpenAiRemoteCompaction` routes the `chatgpt-subscription` / `openai-codex-responses` lane through responses-v2 and returns after that one attempt, so the lane never calls the retired `/codex/responses/compact` route and never falls through to a second remote request. The v2 checkpoint's replay origin is the same canonical origin later turns present: the request-local `x-codex-beta-features: remote_compaction_v2` header is no longer part of the tenant fingerprint, which made the replay hook refuse every v2 checkpoint (on the `openai` lane too). The remote timeout is chosen per lane.
+- `packages/coding-agent/src/core/extensions/builtin/compaction/openai-remote-responses-v2.ts`: `supportsOpenAiResponsesRemoteCompactionV2` is true for the subscription lane; the v2 run accepts either lane's model, records the lane's own identity (`openAiRemoteCompactionIdentity`) instead of a hard-coded `openai-responses`, and sends the subscription lane's request with `maxRetries: 0` through the provider-turn transport (the model runtime), so it uses the same auth, env and proxy handling as a normal turn.
+- `packages/coding-agent/src/core/extensions/builtin/compaction/openai-remote-timeout.ts`: `openAiRemoteCompactionTimeoutMs(model)` keeps 15 s for `openai-responses` and gives the subscription lane `CHATGPT_SUBSCRIPTION_REMOTE_COMPACTION_TIMEOUT_MS` = 90 s. A live subscription-lane v2 compaction on this branch measured 17,740 ms at 16,735 context tokens; 90 s is about a 5x margin over that, leaving headroom for larger contexts (the lane's window is 400k) and slower links, while a timeout still falls back to the local summary.
+- `packages/coding-agent/src/core/extensions/builtin/compaction/openai-remote-dependencies.ts`: `OpenAiResponsesStreamRunner` accepts either remote-compaction model.
+
+### Why
+
+- The ChatGPT backend no longer serves `/codex/responses/compact` (404), so every compaction on this lane fell back to the local summary after one or two failed requests. The backend serves responses-v2 (`input` plus `{"type":"compaction_trigger"}` with `x-codex-beta-features: remote_compaction_v2`).
+- A real v2 compaction on this lane takes longer than 15 s (17.7 s measured live at 16.7k tokens).
+- A v2 checkpoint stored `api: "openai-responses"` and a fingerprint including the v2 beta header, so the next turn's replay check refused it and the model saw only the placeholder summary.
+- A failed or timed-out attempt stores nothing and the compaction takes the local summary; a later refusal after an account or model switch is tracked in senpi#2382.
+
+### Why an extension could not handle it
+
+- Remote compaction routing, checkpoint provenance and replay are this builtin's own policy.
+
+### Expected merge conflict zones
+
+- LOW: the responses-v2 branch of `runOpenAiRemoteCompaction` in `openai-remote.ts`; `runOpenAiResponsesV2Compaction` options and details in `openai-remote-responses-v2.ts`; the timeout constants in `openai-remote-timeout.ts`.
+
+## 2026-09-29 - senpi owns the overflow of a failed cold-seed on the anthropic-subscription lane (senpi#2329)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/compaction/lane-policy.ts`: `ownsCompaction(context, "overflow")` returns true on the SDK-native lane when the newest assistant on the branch since the latest compaction carries the `claude_sdk_oauth_cold_seed_overflow` marker. `LaneContext` gains an optional `sessionManager` branch reader (the real `ExtensionContext` already provides it). Threshold, pre-prompt and every unmarked overflow stay SDK-owned.
+
+### Why
+
+- A cold-seed re-sends senpi's own, never-compacted history as one message the SDK cannot compact, so only senpi can recover its overflow; rejecting it as `external-owner` killed the session (oh-my-openagent#7975).
+
+### Why an extension could not handle it
+
+- Ownership is this builtin's own policy.
+
+### Expected merge conflict zones
+
+- LOW: `ownsCompaction` and the `LaneContext` interface in `lane-policy.ts`.
+
 ## 2026-09-25 - Todo snapshots carry the captured ask (senpi#2121)
 
 ### What changed

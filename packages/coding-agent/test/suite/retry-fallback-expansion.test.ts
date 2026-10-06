@@ -142,10 +142,11 @@ describe("bare model-id family expansion", () => {
 		]);
 	});
 
-	it("never expands a bare selector onto openrouter", () => {
+	// Issue #2774: gateway credentials do not authorize implicit provider switches.
+	it.each(["openrouter", "opengateway", "vercel-ai-gateway"])("never expands a bare selector onto %s", (provider) => {
 		const models = [
-			model("openrouter", `anthropic/${FABLE}`),
-			model("openrouter", `anthropic/${OPUS5}`),
+			model(provider, `anthropic/${FABLE}`),
+			model(provider, `anthropic/${OPUS5}`),
 			model("anthropic", FABLE),
 			model("anthropic", OPUS5),
 		];
@@ -163,6 +164,22 @@ describe("bare model-id family expansion", () => {
 		);
 
 		expect(chains).toEqual({ [`anthropic/${FABLE}`]: ["openrouter/qwen/qwen3-coder:exacto:max"] });
+	});
+
+	it.each(["opengateway", "vercel-ai-gateway"])("preserves explicit %s keys and entries", (provider) => {
+		const source = `${provider}/anthropic/${FABLE}`;
+		const target = `${provider}/anthropic/${OPUS5}:max`;
+		const models = [
+			model("anthropic", FABLE),
+			model(provider, `anthropic/${FABLE}`),
+			model(provider, `anthropic/${OPUS5}`),
+		];
+		const chains = canonicalizeFallbackChains(
+			{ [source]: [target], [`anthropic/${FABLE}`]: [target] },
+			lookup(models),
+		);
+
+		expect(chains).toEqual({ [source]: [target], [`anthropic/${FABLE}`]: [target] });
 	});
 
 	it("drops a bare key whose family no provider serves", () => {

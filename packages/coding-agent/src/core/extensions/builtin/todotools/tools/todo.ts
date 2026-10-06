@@ -7,6 +7,7 @@ import { Text } from "@earendil-works/pi-tui";
 import { type Static, Type } from "typebox";
 import { partialStrikethrough, strikeRevealCount } from "../../../../../modes/interactive/components/todo-strike.ts";
 import type { Theme } from "../../../../../modes/interactive/theme/theme.ts";
+import { resolvePromptSurface } from "../../../../dynamic-prompt/build.ts";
 import type {
 	AgentToolResult,
 	ExtensionAPI,
@@ -344,8 +345,10 @@ export function registerTodoTool(pi: ExtensionAPI, accessors: TodoAccessors): vo
 			if (ask) details.ask = ask;
 			if (corrections.length > 0) details.corrections = corrections;
 			if (completedTasks.length > 0) details.completedTasks = completedTasks;
+			// A chat surface posts replies to a conversation, which has no handoff block to cue (senpi#2398).
+			const surface = ctx.getSystemPromptOptions?.().surface ?? resolvePromptSurface(process.env);
 			const cue = formatHandoffCue(
-				readOnly ? undefined : handoffMomentOf(previousPhases, applied.phases, createsList),
+				readOnly || surface === "chat" ? undefined : handoffMomentOf(previousPhases, applied.phases, createsList),
 			);
 			const summary = `${formatSummary(applied.phases, [], readOnly, ask)}${cue}`;
 			const text = corrections.length > 0 ? `${corrections.join("\n")}\n\n${summary}` : summary;

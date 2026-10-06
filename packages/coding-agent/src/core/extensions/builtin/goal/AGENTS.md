@@ -42,8 +42,11 @@ clean accepted user turn arms a visible 10-second grace countdown before the Goa
 Mechanically blocked Goals reactivate on accepted input, including admitted steering. A
 `length` stop gets exactly one truncation recovery, then blocks.
 
-Terminal provider errors block only when `AgentEndEvent.willRetry` is false and the abort is
-not system-owned; those blocks are mechanical, so a new user message resumes. A terminal
+A terminal (`willRetry` false, not system-owned) provider error keeps the Goal active and
+queues one guarded `providerRecovery` continuation after `agent_settled`, except a terminal
+401/403 (`terminalProviderAuthFailure`, #2293) or policy rejection (#1520): those block on the
+first hit. The auth block is mechanical (a new user message resumes after the user fixes the
+login); the policy block is not. A terminal
 *system* error preserves the active Goal: schedule the live monitor wait, or queue a guarded
 hidden `systemRecovery` continuation after `agent_settled` (staging preserves late user
 cancellation; canceling releases the single-flight latch for `/goal resume`). Intentional
@@ -64,7 +67,8 @@ a `"user"` mutation. `active`/`complete` never prompt.
   `executePreparedToolCall`). A returned `isError` property is silently ignored.
 - **Persistence**: `GoalFile{version:1, goal}` at `<sessionDir>/extensions/goal/<threadId>.json`,
   falling back to `getAgentDir()/extensions/goal/no-session/<sha256(cwd)[:24]>/` when the
-  session has no file. Writes are atomic, mutations serialize per goal path via promise tails,
+  session has no file. Writes are atomic, mutations serialize per goal path via the in-process promise tail
+  plus a cross-process proper-lockfile lock (`goal-file-lock.ts`, senpi#2499),
   and legacy `pi-goal` stores/status spellings migrate on read. Objectives trim and cap at
   4,000 code points with a truncation marker plus full-text sidecar.
 - **Continuation is opt-in by state**: hidden prompts queue only while the goal is `active`,

@@ -298,9 +298,15 @@ describe("Claude SDK OAuth continuity observations", () => {
 			mainOptions("observability-terminal-error"),
 		).result();
 
-		const terminal = sink.observations.filter((observation) => observation.kind === "flatten");
-		expect(sink.observations.at(-1)).toEqual({ kind: "flatten", reason: "query_failed" });
+		// A failed turn re-sent nothing that succeeded, so it must not read as a flatten (a full re-send).
+		const terminal = sink.observations.filter((observation) => observation.kind === "failed");
+		expect(sink.observations.at(-1)).toEqual({ kind: "failed", reason: "query_failed" });
 		expect(terminal).toHaveLength(1);
+		expect(sink.observations.filter((observation) => observation.kind === "flatten")).toEqual([]);
+		expect(sink.logged.at(-1)).toEqual({
+			event: "claude_sdk_oauth_session_continuity",
+			data: { kind: "failed", reason: "query_failed", sessionId: "observability-terminal-error" },
+		});
 		expect(JSON.stringify(sink.observations)).not.toContain("sk-ant-secret");
 	});
 
@@ -317,7 +323,7 @@ describe("Claude SDK OAuth continuity observations", () => {
 		expect(sink.logged).toEqual([
 			{
 				event: "claude_sdk_oauth_session_continuity",
-				data: { kind: "bootstrap", reason: "registry_miss", count: 1 },
+				data: { kind: "bootstrap", reason: "registry_miss", count: 1, sessionId },
 			},
 		]);
 	});
@@ -331,6 +337,19 @@ describe("Claude SDK OAuth continuity observations", () => {
 		);
 		expect(sanitizeCloseCause("Anthropic Subscription interrupted turn did not terminate")).toBe("abort_timeout");
 		expect(sanitizeCloseCause(new Error("weird failure with token sk-ant-oops"))).toBe("other");
+	});
+
+	it("names the senpi session on the close log line", () => {
+		const sink = observationSink();
+		recordPendingCloseCause("close-log-session", "thinking_level_selected");
+		consumePendingCloseCause("close-log-session");
+
+		expect(sink.logged).toEqual([
+			{
+				event: "claude_sdk_oauth_session_close",
+				data: { reason: "thinking_level_selected", sessionId: "close-log-session" },
+			},
+		]);
 	});
 
 	it("consumes a pending close cause exactly once", () => {

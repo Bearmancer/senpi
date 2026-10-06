@@ -22,13 +22,33 @@
  *
  * win32 has neither a renameable named pipe nor SIGUSR1, so every entry point here refuses
  * with `upgrade_unsupported`; upgrades there apply after a drain-stop or an idle exit.
+ *
+ * A handoff changes who serves the socket, so it runs inside the endpoint's ENSURE lock, like an
+ * ensure and `host gc`: an ensure arriving meanwhile attaches to whichever generation the handoff
+ * left registered, and gc never judges the endpoint halfway through.
  */
 import { createDaemonDirectories, createHostDaemonPaths } from "./host-daemon-paths.ts";
 import { provenOwner, readHostRegistration } from "./host-daemon-registration.ts";
 import { GENERATION_HANDOFF_CAPABILITY } from "./host-decision.ts";
+import { acquireHostEnsureLock } from "./host-ensure-lock.ts";
+import { handoffUnregisteredHost, SESSION_COUNT_TIMEOUT_MS } from "./host-handoff-unregistered.ts";
 import type { HostLifecyclePolicyInput } from "./host-lifecycle.ts";
 import { probeProtocolInfo } from "./host-probe.ts";
-import { startSuccessor } from "./host-successor.ts";
+import { SUCCESSOR_START_BUDGET_MS, startSuccessor } from "./host-successor.ts";
+
+const HANDOFF_PROBE_TIMEOUT_MS = 10_000;
+
+/**
+ * The longest a handoff holds the ensure lock: its probe of the running host, the two session counts
+ * an unregistered host gets (before the swap and the recount after it), then the successor's start.
+ */
+export const HANDOFF_LOCK_HOLD_MS = HANDOFF_PROBE_TIMEOUT_MS + 2 * SESSION_COUNT_TIMEOUT_MS + SUCCESSOR_START_BUDGET_MS;
+
+/**
+ * How long a handoff waits for the lock. The longest holder is an ensure that probes the running host
+ * and then hands it off itself (its upgrade path); 10 s of headroom for a slow runner.
+ */
+const HANDOFF_LOCK_WAIT_MS = HANDOFF_PROBE_TIMEOUT_MS + HANDOFF_LOCK_HOLD_MS + 10_000;
 
 export interface HandoffHostOptions {
 	readonly socket: string;
@@ -37,13 +57,24 @@ export interface HandoffHostOptions {
 	readonly hostArgs?: readonly string[];
 	/** Environment for the successor; a `null` value removes an inherited variable. */
 	readonly env?: Readonly<Record<string, string | null>>;
+	/** The runtimeBuildId the successor must compute; set on its environment, never inherited by later daemons. */
+	readonly expectedRuntimeBuildId?: string;
 	readonly policy?: HostLifecyclePolicyInput;
+	/**
+	 * How the successor is launched from supervisor argv. Defaults to THIS process's runtime; a
+	 * running host performing an idle handover passes the runtime of the CLI that asked for it.
+	 */
+	readonly launch?: (args: readonly string[]) => { command: string; args: readonly string[] };
 	readonly _test?: {
 		readonly readinessTimeoutMs?: number;
 		/** Builds the spawnable command from supervisor argv; tests point it at the source entry. */
 		readonly launch?: (args: readonly string[]) => { command: string; args: readonly string[] };
 		/** Runs after the public socket identity is captured and before the successor is spawned. */
 		readonly beforeSpawn?: () => Promise<void>;
+		/** Runs once the successor is spawned and its generation recorded, before its answer is awaited. */
+		readonly afterSpawn?: (pid: number) => Promise<void>;
+		/** Runs once the successor answered on the public socket, before the pointer is moved onto it. */
+		readonly beforeRegistration?: () => Promise<void>;
 		readonly platform?: NodeJS.Platform;
 	};
 }
@@ -56,8 +87,10 @@ export type HandoffRefusal =
 	| "handoff_unsupported"
 	/** win32: a named pipe can be neither renamed nor drained. */
 	| "upgrade_unsupported"
-	/** The pidfile cannot prove which process serves this socket, so it may not be signalled. */
+	/** No record proves which process serves this socket, and that host holds sessions (or will not say). */
 	| "unknown_owner"
+	/** A host from before layout 2, proven by its flat record, holds sessions; `detail` says how to retire it. */
+	| "legacy_host"
 	/** The public socket stopped being the one this handoff was decided against. */
 	| "socket_replaced"
 	/** `<public>.next-<gen>` would exceed the platform's socket path limit. */
@@ -85,20 +118,34 @@ export type HandoffResult =
  * whether an upgrade is warranted (`decideHostAction`); this performs the one it asked for.
  */
 export async function handoffHost(options: HandoffHostOptions): Promise<HandoffResult> {
-	const platform = options._test?.platform ?? process.platform;
-	if (platform === "win32") return { action: "refuse", reason: "upgrade_unsupported", upgradeable: false };
+	if (handoffUnsupported(options)) return { action: "refuse", reason: "upgrade_unsupported", upgradeable: false };
+	const release = await acquireHostEnsureLock(options.socket, HANDOFF_LOCK_WAIT_MS);
+	try {
+		return await handoffHostLocked(options);
+	} finally {
+		await release();
+	}
+}
+
+/** The handoff itself, for a caller that already holds this socket's ensure lock: an ensure's upgrade. */
+export async function handoffHostLocked(options: HandoffHostOptions): Promise<HandoffResult> {
+	if (handoffUnsupported(options)) return { action: "refuse", reason: "upgrade_unsupported", upgradeable: false };
 	const paths = createHostDaemonPaths({
 		socket: options.socket,
 		...(options.agentDir ? { agentDir: options.agentDir } : {}),
 	});
 	await createDaemonDirectories(paths);
-	const host = await probeProtocolInfo(options.socket, 10_000);
+	const host = await probeProtocolInfo(options.socket, HANDOFF_PROBE_TIMEOUT_MS);
 	if (!host) return { action: "refuse", reason: "no_host", upgradeable: false };
 	if (!host.capabilities.includes(GENERATION_HANDOFF_CAPABILITY)) {
 		return { action: "refuse", reason: "handoff_unsupported", upgradeable: false };
 	}
 	const registered = await readHostRegistration(paths);
 	const owner = await provenOwner(registered, options.socket);
-	if (!owner) return { action: "refuse", reason: "unknown_owner", upgradeable: true };
+	if (!owner) return handoffUnregisteredHost(options, paths, host);
 	return startSuccessor({ options, paths, host, owner });
+}
+
+function handoffUnsupported(options: HandoffHostOptions): boolean {
+	return (options._test?.platform ?? process.platform) === "win32";
 }

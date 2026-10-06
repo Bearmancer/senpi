@@ -2,6 +2,7 @@ import { isAbsolute } from "node:path";
 import { ProviderScope } from "@earendil-works/pi-ai/node/provider-scope";
 import { assertValidSessionId } from "../../core/session-manager.ts";
 import type { CliRuntimeConfiguration } from "../../main.ts";
+import { refreshesSessionActivity } from "./session-command-activity.ts";
 import {
 	type LiveWorkerPaths,
 	RESERVATION_DENIAL_CODES,
@@ -52,12 +53,6 @@ export class WorkerSessionRegistry {
 		return this.entries.size;
 	}
 
-	/**
-	 * Memory admission is the in-process registry's concern: a worker-runtime session runs in
-	 * its own isolate and this registry already bounds occupancy with `too_many_sessions`.
-	 */
-	setWorkerAdmission(): void {}
-
 	async openSession(profile: RpcSessionLaunchProfile, options?: RpcSessionOpenOptions): Promise<OpenRpcSession> {
 		if (!isAbsolute(profile.cwd) || (profile.sessionPath !== undefined && !isAbsolute(profile.sessionPath)))
 			throw new RpcSessionRegistryError("invalid_path");
@@ -85,7 +80,7 @@ export class WorkerSessionRegistry {
 		if (profile.sessionPath) {
 			const key = this.knownReservationKey(profile.sessionPath);
 			const owner = key ? this.reservations.owner(key) : undefined;
-			if (key && owner) return this.attach(owner, key, options);
+			if (key && owner) return this.attach(owner, key, options, profile);
 		}
 		if (this.size >= SESSION_WORKER_LIMITS.workers) throw new Error("too_many_sessions");
 		const handle = `rpc-${++this.serial}`;
@@ -131,7 +126,7 @@ export class WorkerSessionRegistry {
 			const path = await worker.prepare(this.options.configuration, profile);
 			const owner = this.reservations.owner(path);
 			if (owner) {
-				const attached = this.attach(owner, path, options);
+				const attached = await this.attach(owner, path, options, profile);
 				entry.state = "quarantined";
 				worker.quarantine();
 				return attached;
@@ -171,7 +166,9 @@ export class WorkerSessionRegistry {
 		)
 			throw new RpcSessionRegistryError("session_closing");
 		if (entry.state !== "open" && entry.state !== "closing") throw new RpcSessionRegistryError("unknown_session");
-		entry.lastCommandAt = this.now();
+		// Polling a session nobody holds is observation, not work that needs its runtime;
+		// an attached client's polling keeps its session alive exactly as before.
+		if (entry.attachments > 0 || refreshesSessionActivity(command)) entry.lastCommandAt = this.now();
 		return entry;
 	}
 
@@ -259,10 +256,25 @@ export class WorkerSessionRegistry {
 		return undefined;
 	}
 
-	private attach(owner: string, path: string, options?: RpcSessionOpenOptions): OpenRpcSession {
+	private async attach(
+		owner: string,
+		path: string,
+		options?: RpcSessionOpenOptions,
+		requested: RpcSessionLaunchProfile = { cwd: "" },
+	): Promise<OpenRpcSession> {
+		const { promptSurface, browserEngine } = requested;
 		const entry = this.entries.get(owner);
 		if (entry?.state !== "open" || !entry.worker?.bindingReady || entry.worker.snapshot?.sessionPath !== path)
 			throw new RpcSessionRegistryError("session_path_in_use");
+		// Same rule as RpcSessionRegistry: an attach that names a surface moves the live session to it.
+		if (promptSurface !== undefined && promptSurface !== entry.profile.promptSurface) {
+			entry.profile = frozenProfile({ ...entry.profile, promptSurface });
+			await entry.worker.setPromptSurface(promptSurface);
+		}
+		if (browserEngine !== undefined && browserEngine !== entry.profile.browserEngine) {
+			entry.profile = frozenProfile({ ...entry.profile, browserEngine });
+			await entry.worker.setBrowserEngine(browserEngine);
+		}
 		const result = this.openResult(owner, entry);
 		entry.attachments++;
 		// Retention is a property of the live session: any attach may ask for it, and

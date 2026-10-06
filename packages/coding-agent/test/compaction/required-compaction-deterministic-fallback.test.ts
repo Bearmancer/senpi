@@ -1,5 +1,5 @@
 import type { AssistantMessage, Message, Model } from "@earendil-works/pi-ai";
-import { fauxAssistantMessage } from "@earendil-works/pi-ai";
+import { fauxAssistantMessage, normalizeContext } from "@earendil-works/pi-ai";
 import { describe, expect, it } from "vitest";
 import { convertMessages as convertGoogleMessages } from "../../../ai/src/api/google-shared.ts";
 import { transformMessages } from "../../../ai/src/api/transform-messages.ts";
@@ -10,9 +10,10 @@ import {
 	createRequiredCompactionFallback,
 	type DeterministicFallbackDiagnostic,
 } from "../../src/core/extensions/builtin/compaction/deterministic-fallback.ts";
+import { requiresDeterministicCompactionFallback } from "../../src/core/extensions/builtin/compaction/extension-wiring.ts";
 import { resolveCompactionGeometry } from "../../src/core/extensions/builtin/compaction/orchestration.ts";
 import { SummaryRequestError } from "../../src/core/extensions/builtin/compaction/speculative.ts";
-import type { CompactionReason } from "../../src/core/extensions/types.ts";
+import type { CompactionReason, ContextUsage } from "../../src/core/extensions/types.ts";
 import { convertToLlm } from "../../src/core/messages.ts";
 import { createBlockingContext, createCompactionHandlers } from "../helpers/blocking-compaction-harness.ts";
 
@@ -35,6 +36,33 @@ function createGeminiAssistantMessage(
 }
 
 describe("required compaction deterministic fallback", () => {
+	it("gates proactive fallback at the effective hard cap", () => {
+		const harness = createBlockingContext({ usageTokens: 0 });
+		const branchEntries = harness.ctx.sessionManager.getBranch();
+		const preparation = prepareCompaction(branchEntries, harness.ctx.getCompactionSettings(), true);
+		expect(preparation).toBeDefined();
+		const event = {
+			type: "session_before_compact",
+			reason: "pre_prompt",
+			willRetry: false,
+			requestId: "pre-prompt-gate-boundary",
+			preparation: preparation!,
+			branchEntries,
+			signal: new AbortController().signal,
+		} satisfies Parameters<typeof requiresDeterministicCompactionFallback>[0];
+		const usage = (tokens: number | null, contextWindow = 10_000): ContextUsage => ({
+			tokens,
+			contextWindow,
+			percent: tokens === null ? null : (tokens / contextWindow) * 100,
+		});
+
+		expect(requiresDeterministicCompactionFallback(event, usage(9_599))).toBe(false);
+		expect(requiresDeterministicCompactionFallback(event, usage(9_600))).toBe(true);
+		expect(requiresDeterministicCompactionFallback(event, usage(null))).toBe(false);
+		expect(requiresDeterministicCompactionFallback(event, usage(10_000, 0))).toBe(false);
+		expect(requiresDeterministicCompactionFallback({ ...event, reason: "manual" }, usage(0))).toBe(true);
+	});
+
 	it("advances to the latest user boundary when the prepared suffix cannot fit", async () => {
 		const handlers = createCompactionHandlers();
 		const harness = createBlockingContext({ usageTokens: 9_900 });
@@ -180,7 +208,7 @@ describe("required compaction deterministic fallback", () => {
 	});
 
 	it("fails closed for every non-required reason even when typed truncation recovery would fit", async () => {
-		const nonRequiredReasons = ["pre_prompt", "branch", "extension"] satisfies CompactionReason[];
+		const nonRequiredReasons = ["branch", "extension"] satisfies CompactionReason[];
 		for (const reason of nonRequiredReasons) {
 			const handlers = createCompactionHandlers();
 			const harness = createBlockingContext({ usageTokens: 9_900 });
@@ -222,10 +250,121 @@ describe("required compaction deterministic fallback", () => {
 		}
 	});
 
+	it("recovers mandatory pre-prompt compaction after a typed summarizer failure", async () => {
+		const handlers = createCompactionHandlers();
+		const harness = createBlockingContext({ usageTokens: 9_600 });
+		harness.registration.setResponses([
+			fauxAssistantMessage("", {
+				stopReason: "error",
+				errorMessage: "upstream_stream_truncated: Responses stream ended before a terminal event",
+			}),
+		]);
+		const branchEntries = harness.ctx.sessionManager.getBranch();
+		const preparation = {
+			...prepareCompaction(branchEntries, harness.ctx.getCompactionSettings(), true)!,
+			firstKeptEntryId: branchEntries.at(-1)?.id ?? "",
+		};
+
+		const result = await handlers.sessionBeforeCompact(
+			{
+				type: "session_before_compact",
+				reason: "pre_prompt",
+				willRetry: false,
+				requestId: "pre-prompt-required-recovery",
+				preparation,
+				branchEntries,
+				signal: new AbortController().signal,
+			},
+			harness.ctx,
+		);
+
+		expect(result).toMatchObject({
+			compaction: {
+				firstKeptEntryId: preparation.firstKeptEntryId,
+				details: { retainedSuffix: "prepared" },
+			},
+		});
+		expect(result).not.toHaveProperty("cancel");
+		expect(harness.registration.getCallLog()).toHaveLength(1);
+	});
+
+	it("preserves full context when proactive pre-prompt compaction fails below the hard cap", async () => {
+		const handlers = createCompactionHandlers();
+		const harness = createBlockingContext({ usageTokens: 9_599 });
+		harness.registration.setResponses([
+			fauxAssistantMessage("", {
+				stopReason: "error",
+				errorMessage: "upstream_stream_truncated: Responses stream ended before a terminal event",
+			}),
+		]);
+		const branchEntries = harness.ctx.sessionManager.getBranch();
+		const preparation = {
+			...prepareCompaction(branchEntries, harness.ctx.getCompactionSettings(), true)!,
+			firstKeptEntryId: branchEntries.at(-1)?.id ?? "",
+		};
+
+		const result = await handlers.sessionBeforeCompact(
+			{
+				type: "session_before_compact",
+				reason: "pre_prompt",
+				willRetry: false,
+				requestId: "pre-prompt-proactive-fail-closed",
+				preparation,
+				branchEntries,
+				signal: new AbortController().signal,
+			},
+			harness.ctx,
+		);
+
+		expect(result).toMatchObject({ cancel: true });
+		expect(result).not.toHaveProperty("compaction");
+		expect(harness.ctx.sessionManager.getBranch()).toEqual(branchEntries);
+		expect(harness.registration.getCallLog()).toHaveLength(1);
+	});
+
 	it("classifies a duration watchdog without sleeping", () => {
 		expect(classifyRequiredCompactionFallbackFailure(new StreamDurationBudgetError(120_000))).toBe(
 			"summarization-timeout",
 		);
+	});
+
+	it("advances past unsafe split-turn content to the earliest replay-safe suffix", () => {
+		const harness = createBlockingContext({ usageTokens: 9_900 });
+		const preparedBoundaryId = harness.sessionManager.appendMessage({
+			role: "user",
+			content: "Continue the current turn.",
+			timestamp: 4,
+		});
+		harness.sessionManager.appendMessage({
+			...fauxAssistantMessage("", { timestamp: 5, stopReason: "toolUse" }),
+			content: [{ type: "toolCall", id: "unsafe-tool", name: "read", arguments: { path: "image.png" } }],
+		});
+		harness.sessionManager.appendMessage({
+			role: "toolResult",
+			toolCallId: "unsafe-tool",
+			toolName: "read",
+			content: [
+				{ type: "text", text: "Malformed image result" },
+				{ type: "image", mimeType: "image/png" },
+			] as never,
+			isError: false,
+			timestamp: 6,
+		});
+		const safeTailId = harness.sessionManager.appendMessage(
+			fauxAssistantMessage("Work continued safely.", { timestamp: 7 }),
+		);
+		const branchEntries = harness.sessionManager.getBranch();
+		const preparation = {
+			...prepareCompaction(branchEntries, harness.ctx.getCompactionSettings(), true)!,
+			firstKeptEntryId: preparedBoundaryId,
+		};
+
+		const result = createRequiredCompactionFallback(preparation, 100_000, "summarization-timeout", {}, branchEntries);
+
+		expect(result).toMatchObject({
+			firstKeptEntryId: safeTailId,
+			details: { retainedSuffix: "later-safe-boundary" },
+		});
 	});
 
 	it("rejects truncation-looking generic errors and requires structured summary-request provenance", () => {
@@ -971,7 +1110,7 @@ describe("deterministic compaction fallback Gemini signed state and recovery cas
 			(message): message is Message =>
 				message.role === "user" || message.role === "assistant" || message.role === "toolResult",
 		);
-		const contents = convertGoogleMessages(googleModel, { messages: replayMessages });
+		const contents = convertGoogleMessages(googleModel, normalizeContext({ messages: replayMessages }));
 		expect(contents.some((content) => content.parts?.some((part) => "functionCall" in part))).toBe(true);
 		const assistantMsg = messages.find((m) => m.role === "assistant") as AssistantMessage | undefined;
 		expect(assistantMsg).toBeDefined();

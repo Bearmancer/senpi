@@ -1,12 +1,7 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import { describe, expect, it } from "vitest";
 import { parseGoalCommand } from "../../src/core/extensions/builtin/goal/command.ts";
-import {
-	evaluateGoalContinuation,
-	type GoalContinuationInput,
-	shouldQueueGoalContinuationAfterAgentEnd,
-	shouldQueueGoalContinuationWhenIdle,
-} from "../../src/core/extensions/builtin/goal/continuation.ts";
+import { didAgentEndCleanly } from "../../src/core/extensions/builtin/goal/continuation.ts";
 import {
 	formatGoalElapsedSeconds,
 	formatGoalForTool,
@@ -17,7 +12,6 @@ import { isResumeOfStoppedGoal } from "../../src/core/extensions/builtin/goal/li
 import {
 	buildContinuationPrompt,
 	buildGoalStallNotice,
-	buildMonitorStallNotice,
 	buildTruncationRecoveryPrompt,
 } from "../../src/core/extensions/builtin/goal/prompt.ts";
 import type { Goal } from "../../src/core/extensions/builtin/goal/types.ts";
@@ -132,80 +126,15 @@ describe("goal command parsing", () => {
 	});
 });
 
-describe("goal continuation gating", () => {
-	it("queues only for active idle goals with no pending messages", () => {
-		const active = makeGoal({ status: "active" });
-		expect(shouldQueueGoalContinuationWhenIdle(active, true, false)).toBe(true);
-		expect(shouldQueueGoalContinuationWhenIdle(active, false, false)).toBe(false);
-		expect(shouldQueueGoalContinuationWhenIdle(active, true, true)).toBe(false);
-		expect(shouldQueueGoalContinuationWhenIdle(makeGoal({ status: "paused" }), true, false)).toBe(false);
-		expect(
-			shouldQueueGoalContinuationWhenIdle(
-				makeGoal({ status: "blocked", blockedReason: "Waiting", blockedAt: 1 }),
-				true,
-				false,
-			),
-		).toBe(false);
-		expect(shouldQueueGoalContinuationWhenIdle(null, true, false)).toBe(false);
-	});
-
-	it("queues after agent end for active goals with no pending messages", () => {
-		const cleanMessages = [assistantMessageWithStopReason("stop")];
-		expect(shouldQueueGoalContinuationAfterAgentEnd(makeGoal({ status: "active" }), false, cleanMessages)).toBe(true);
-		expect(shouldQueueGoalContinuationAfterAgentEnd(makeGoal({ status: "active" }), true, cleanMessages)).toBe(false);
-		expect(shouldQueueGoalContinuationAfterAgentEnd(makeGoal({ status: "complete" }), false, cleanMessages)).toBe(
-			false,
-		);
-		expect(
-			shouldQueueGoalContinuationAfterAgentEnd(
-				makeGoal({ status: "blocked", blockedReason: "Waiting", blockedAt: 1 }),
-				false,
-				cleanMessages,
-			),
-		).toBe(false);
-		expect(shouldQueueGoalContinuationAfterAgentEnd(makeGoal({ status: "active" }), false, [])).toBe(false);
-		expect(
-			shouldQueueGoalContinuationAfterAgentEnd(makeGoal({ status: "active" }), false, [
-				assistantMessageWithStopReason("aborted"),
-			]),
-		).toBe(false);
-		expect(
-			shouldQueueGoalContinuationAfterAgentEnd(makeGoal({ status: "active" }), false, [
-				assistantMessageWithStopReason("error"),
-			]),
-		).toBe(false);
-		expect(
-			shouldQueueGoalContinuationAfterAgentEnd(makeGoal({ status: "active" }), false, [
-				assistantMessageWithStopReason("toolUse"),
-				abortedToolResultMessage(),
-			]),
-		).toBe(false);
-	});
-
-	it("applies the persisted cap on every continuation path", () => {
-		const input = {
-			goal: makeGoal({ consecutiveContinuations: 8 }),
-			isIdle: true,
-			hasPendingMessages: false,
-			lastStopReason: "stop",
-			lastTurnWasMalformedToolUse: false,
-			consecutiveContinuations: 8,
-			lastContinuationSignature: undefined,
-			currentSignature: undefined,
-			consecutiveLengthRecoveries: 0,
-			lastTurnStuckOnContextOverflow: false,
-			recentNormalizedOutputHashes: [],
-			toollessContinuationStreak: 0,
-			continuationPending: false,
-		} satisfies Omit<GoalContinuationInput, "path">;
-
-		expect(evaluateGoalContinuation({ ...input, path: "immediate" })).toEqual({ kind: "deny", reason: "cap" });
-		expect(evaluateGoalContinuation({ ...input, path: "sessionStart" })).toEqual({ kind: "deny", reason: "cap" });
-		expect(evaluateGoalContinuation({ ...input, path: "userGrace" })).toEqual({ kind: "deny", reason: "cap" });
-		expect(evaluateGoalContinuation({ ...input, path: "monitorDelayed" })).toEqual({
-			kind: "deny",
-			reason: "cap",
-		});
+// Production gates continuations through evaluateGoalContinuation (goal-continuation-verdict.test.ts owns
+// status, pending and idle) and didAgentEndCleanly, whose message-shape rows live here.
+describe("goal continuation clean-end detection", () => {
+	it("treats only a final clean assistant stop as a clean agent end", () => {
+		expect(didAgentEndCleanly([assistantMessageWithStopReason("stop")])).toBe(true);
+		expect(didAgentEndCleanly([])).toBe(false);
+		expect(didAgentEndCleanly([assistantMessageWithStopReason("aborted")])).toBe(false);
+		expect(didAgentEndCleanly([assistantMessageWithStopReason("error")])).toBe(false);
+		expect(didAgentEndCleanly([assistantMessageWithStopReason("toolUse"), abortedToolResultMessage()])).toBe(false);
 	});
 });
 
@@ -286,12 +215,6 @@ describe("goal stall notice", () => {
 		expect(notice).toContain("peek");
 		expect(notice).toContain("stop");
 		expect(notice).toContain("4");
-	});
-
-	it("keeps buildMonitorStallNotice as a legacy wrapper over the generalized notice", () => {
-		const legacy = buildMonitorStallNotice(5);
-		expect(legacy).toContain("<goal_stall_check>");
-		expect(legacy).toBe(buildGoalStallNotice(5, { liveSources: ["terminal-monitors"] }));
 	});
 });
 

@@ -1,3 +1,266 @@
+## 2026-10-04 - Claude Agent SDK 0.3.289
+
+### What changed
+
+- `packages/coding-agent/package.json`: `@anthropic-ai/claude-agent-sdk` 0.3.288 -> 0.3.289; `bun.lock`, the root `package-lock.json` (with the 8 platform packages relocked) and `packages/coding-agent/install-lock` follow.
+
+### Why
+
+The Releasability gate's SDK currency check fails while a newer SDK is published; 0.3.289 bundles Claude Code 2.1.289.
+
+### Why an extension could not handle it
+
+The SDK pin and the advertised Claude Code version are fixed at build time in the package manifest and the provider module.
+
+### Expected merge conflict zones
+
+The SDK pin line and the lockfiles at the next upstream dependency sync.
+
+## 2026-10-03 - `check:provider-defaults` script for the release (senpi#2645)
+
+### What changed
+
+- `packages/coding-agent/package.json`: new script `check:provider-defaults` runs the "default model selection" tests of `test/model-resolver.test.ts`.
+
+### Why
+
+- `packages/coding-agent/package.json`: the release runs it right after regenerating the model catalog (`scripts/release.mjs`, `scripts/local-release.mjs`), so a regeneration that drops a bundled provider's default model stops the release instead of shipping it (v2026.10.4 shipped such an `nvidia` default).
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/package.json`: package scripts are release tooling, not something an extension can add to.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/package.json`: the `scripts` block.
+
+## 2026-10-02 - Per-session heap split and render-cache accounting on the memory surfaces (senpi#1960)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: `RpcHostMemoryPressureEvent` gains optional `main: { heapBytes }` and `kernels: { sessionId, language, liveBytes, measure }[]`; new `RpcHostKernelMemory` names the per-kernel row.
+- `packages/coding-agent/src/modes/interactive/components/tool-execution.ts`: a finished tool card's retained `result` is measured once at finalize (`serializedToolResultBytes` from `tool-execution-cache.ts`) and recorded on its render cache.
+
+### Why
+
+- senpi#1960 asks where a session's memory lives. The pressure event and `list_sessions` now carry the main-thread heap and each session's kernel heaps, so an operator sees the split without an external probe. The render cache is made measurable (exact cached-line bytes per card, finished-card result bytes, and the TUI's frame-line bytes) so a later bound is designed from the measurement rather than guessed.
+
+### Why an extension could not handle it
+
+- The pressure event and the session listing are RPC wire contracts owned by the host; the render cache and the finalize path are tool-card internals. Neither is reachable through the extension API.
+
+### Expected merge conflict zones
+
+- LOW: additive optional fields on the event and the session row; the cache counters and the finalize call are new lines beside existing cache writes.
+
+## 2026-10-03 - claude-agent-sdk 0.3.288 (senpi#2545)
+
+### What changed
+
+- `packages/coding-agent/package.json`: `@anthropic-ai/claude-agent-sdk` 0.3.286 -> 0.3.288 (Claude Code 2.1.286 -> 2.1.288). `bun.lock`, `package-lock.json` and `install-lock/package-lock.json` regenerated with `bun run refresh-lock`; the eight platform packages are relocked with `scripts/generate-claude-agent-sdk-platform-lock.mjs`.
+- The engine's Claude Code fingerprint floor moves with it (`packages/ai/src/changes.md`), which regression #2033 requires.
+
+### Why
+
+- The nightly Releasability gate's `Claude Agent SDK currency` job fails while the pin trails npm latest (0.3.288).
+
+### Why an extension could not handle it
+
+- The pin and its locks are package metadata; no extension hook changes which SDK the package installs.
+
+### Expected merge conflict zones
+
+- LOW: the SDK pin line in `package.json` and the generated lock files (regenerate, never hand-merge).
+
+## 2026-10-01 - claude-agent-sdk 0.3.286 (senpi#2481)
+
+### What changed
+
+- `packages/coding-agent/package.json`: `@anthropic-ai/claude-agent-sdk` 0.3.285 -> 0.3.286 (Claude Code 2.1.285 -> 2.1.286). `bun.lock`, `package-lock.json` and `install-lock/package-lock.json` regenerated with `bun run refresh-lock`; the eight platform packages were relocked with `scripts/generate-claude-agent-sdk-platform-lock.mjs`.
+- The engine's Claude Code fingerprint floor moves with it (`packages/ai/src/changes.md`), which regression #2033 requires.
+
+### Why
+
+- The nightly Releasability gate's `Claude Agent SDK currency` job fails while the pin trails npm latest (0.3.286, published 2026-09-30). The patch is safe for `anthropic-subscription`: senpi explicitly passes `permissionMode: "dontAsk"`, so the new omitted-permission-mode default cannot change approvals; its SDK MCP tool schemas are valid, and the invalid-schema handling now omits only the bad tool instead of hiding every tool; senpi does not call `toggleMcpServer()` or send priority `now` messages; and it does not expose Claude Code's task-tracking tools or foreground subagents. The initialize response only gains optional SDK MCP manifest status/capability fields, while transcript/resume shapes, model ids and CLI flags are unchanged.
+
+### Why an extension could not handle it
+
+- Dependency pin and the bundled executable/fingerprint version.
+
+### Expected merge conflict zones
+
+- LOW: the pin line, Claude Code fingerprint floor and lock files.
+
+## 2026-10-01 - Stage binary manifest after guarded sidecar copying (senpi#2452)
+
+### What changed
+
+- `packages/coding-agent/package.json`: `copy-binary-assets` removes the previous build-owned `dist/package.json` before sidecar staging and copies the manifest afterward.
+
+### Why
+
+- The sidecar copier refuses output roots containing a package manifest to protect real installs. Build outputs need the manifest restored after staging, including repeated builds.
+
+### Why an extension could not handle it
+
+- Build-time asset ordering.
+
+### Expected merge conflict zones
+
+- The `copy-binary-assets` script.
+
+## 2026-09-30 - claude-agent-sdk 0.3.285 (senpi#752)
+
+### What changed
+
+- `packages/coding-agent/package.json`: `@anthropic-ai/claude-agent-sdk` 0.3.284 -> 0.3.285 (Claude Code 2.1.284 -> 2.1.285). `bun.lock`, `package-lock.json` and `install-lock/package-lock.json` regenerated with `bun run refresh-lock`; the platform packages relocked with `scripts/generate-claude-agent-sdk-platform-lock.mjs`.
+- The engine's Claude Code fingerprint floor moves with it (`packages/ai/src/changes.md`), which regression #2033 requires.
+- `test/steering-tool-context.test.ts` and `test/suite/regressions/7084-stored-credential-revision.test.ts`: no bracket string-literal member access (`lint/complexity/useLiteralKeys`). The private `AgentSession` members the steering test drives go through a typed `SteeringInternals` view, as other suite tests reach private members; `state.default` replaces `state["default"]`.
+
+### Why
+
+- The nightly Releasability gate's `Claude Agent SDK currency` job fails while the pin trails npm latest (0.3.285, published 2026-09-29). None of the 0.3.285 changes reaches a surface the subscription lane relies on: senpi passes `tools: []` (the Bash timeout, Artifact and fork-subagent changes are for built-in tools), and it does not call `toggleMcpServer`, `rewind_conversation` or `getSubagentMessages`. `getSessionMessages()` now also returns a user message sent before a process stopped with no reply, which is the orphan tail `verifyRestoredTranscript` already fails closed on (senpi#1973).
+
+### Why an extension could not handle it
+
+- Dependency pin; test-only lint.
+
+### Expected merge conflict zones
+
+- LOW: the pin line and the lock files.
+
+## 2026-09-30 - Keep test/manual-qa out of the default vitest run (senpi#2447)
+
+### What changed
+
+- `packages/coding-agent/vitest.config.ts`: `exclude` adds `test/manual-qa/**` unless `SENPI_MANUAL_QA` is set. The vitest defaults are kept via `configDefaults.exclude`.
+- The two `*.test.ts` drivers in `test/manual-qa/` and `test/AGENTS.md` give the opt-in run command: `SENPI_MANUAL_QA=1 npx vitest run test/manual-qa/<file>`.
+
+### Why
+
+- `test/AGENTS.md` says manual-qa is "not part of default suite", but vitest collected `goal-blocked-resume-restart.test.ts` and `persistent-monitor-restart.test.ts` in every `npm test` and CI run. Both are real-surface QA drivers, and the second spawns real PTYs and file watchers.
+
+### Why an extension could not handle it
+
+- Test runner configuration.
+
+### Expected merge conflict zones
+
+- LOW: the `test` block of `packages/coding-agent/vitest.config.ts`.
+
+## 2026-09-30 - Sync with upstream v0.99.1 (6a4af07d6): retired Kimi deferred-tools example
+
+### What changed
+
+- `packages/coding-agent/examples/extensions/kimi-deferred-tools.ts` stays deleted by upstream transcript tool-change commit `9e05370b29`. The fork's retained `addedToolNames` behavior is covered in `packages/ai/test/chatgpt-subscription-deferred-tools.test.ts` and `packages/ai/test/anthropic-deferred-tools.test.ts` instead of shipping the obsolete example.
+
+### Why
+
+Upstream replaced the example's starting-condition rewrite with transcript-carried tool changes. Restoring the old example would teach the pre-transcript API even though the fork preserves only the provider compatibility behavior.
+
+### Why an extension could not handle it
+
+This records removal of a repository example; no runtime hook can reconcile obsolete sample code.
+
+### Expected merge conflict zones
+
+- LOW: the retired example path if upstream reintroduces it; keep current transcript examples and focused provider tests.
+
+## 2026-09-30 - Sync with upstream v0.99.1 (6a4af07d6): manifests, build and check scripts
+
+### What changed
+
+- `packages/coding-agent/package.json`: Root `package.json`: fork scripts kept (`build-all.mjs` build, the fork `check` chain with conflict-marker/bun-lock/install-lock/claude-sdk-platform-lock gates, `run-workspaces.mjs` launchers, `refresh-lock`, `preinstall`); devDependencies kept (biome 2.5.14, @types/node 26.6.2, typescript 7.0.2, @typescript/typescript6, tsx 4.23.13, vitest + @vitest/coverage-v8 5.0.1). Adopted from upstream: `generate:models` runs generate-models only (the `generate-image-models` chain dropped for the D-3 image-model unification), and `test:scripts` also runs the adopted upstream `scripts/model-catalog-protocol.test.ts`. Not adopted: codemode/mcp/durable build phases, the tsx removal. `packages/coding-agent/package.json`: `@earendil-works/chord` exact 0.99.1 (D-12); no `@earendil-works/pi-codemode` / `pi-mcp` and no `quickjs-wasi` (upstream codemode runtime, D-2); fork build/binary/copy-assets scripts kept (no codemode worker entry).
+
+### Why
+
+- The fork builds through `scripts/build-all.mjs` and runs sources with tsx (D-11); upstream's plain-node source execution and TypeScript-7 script rewrites are mechanism changes the fork already covers.
+- Upstream codemode, MCP, tool-search and durable are excluded (D-2, D-7), so their workspace packages, dependencies, build phases, tsconfig/vitest aliases and smoke checks stay out.
+- The `openai` 6.26.0 hold had no failing check behind it and the adopted upstream OpenAI adapters target 7.19.0 (D-10).
+- chord follows upstream 0.99.1 with exact pins (D-12, check:pinned-deps).
+
+### Why an extension could not handle it
+
+Workspace manifests, tsconfig and build/check scripts are repository build infrastructure, outside any runtime extension.
+
+### Expected merge conflict zones
+
+Every path listed above conflicts again where upstream edits the hunks named in its line; the fork-kept constructs named there are the anchors to preserve.
+
+## 2026-09-29 - Drop unused declarations and published sourcemaps (senpi#2362)
+
+### What changed
+
+- `packages/coding-agent/package.json`: `glob`, `@opentelemetry/api` and `proxy-from-env` are no longer declared (no import anywhere in senpi or its shipped `.js`/`.d.ts`, and no peer requirement); `files` excludes `dist/**/*.map`. Locks regenerated with `bun run refresh-lock`.
+
+### Why
+
+- Smaller install and tarball with no behavior change; see `scripts/changes.md`.
+
+### Why an extension could not handle it
+
+- Package manifest and publish metadata.
+
+### Expected merge conflict zones
+
+- LOW: the `dependencies` block and `files` list in `packages/coding-agent/package.json`.
+
+## 2026-09-29 - Publish the real dependency manifest (senpi#2360)
+
+### What changed
+
+- `packages/coding-agent/package.json`: no `bundleDependencies`/`bundledDependencies`; the `shrinkwrap` script is removed and `prepublishOnly` no longer runs it. Dropped the declarations that only mirrored `senpi-ai`/`senpi-agent-core`/`senpi-tui` dependencies while those were bundled and have no import in senpi's own shipped code: `openai`, `@aws-sdk/client-bedrock-runtime`, `@bufbuild/protobuf`, `@smithy/node-http-handler`, `@smithy/types`, `http-proxy-agent`, `https-proxy-agent`, `partial-json`, `get-east-asian-width`, `web-tree-sitter` (`@anthropic-ai/sdk` stays: shipped `.d.ts` files use its types). `publish-deps.lock.json` is deleted; `bun.lock`, `package-lock.json` and `install-lock/` regenerated with `bun run refresh-lock`.
+
+### Why
+
+- The published package now installs its dependencies from the registry like any other package; see `scripts/changes.md`.
+
+### Why an extension could not handle it
+
+- Package manifest and publish metadata.
+
+### Expected merge conflict zones
+
+- LOW: the `dependencies` block and `scripts` of `packages/coding-agent/package.json`.
+
+## 2026-09-29 - claude-agent-sdk 0.3.284 (senpi#2321)
+
+### What changed
+
+- `packages/coding-agent/package.json`: `@anthropic-ai/claude-agent-sdk` 0.3.280 -> 0.3.284 (Claude Code 2.1.280 -> 2.1.284). `bun.lock`, `package-lock.json`, `install-lock/package-lock.json` and `publish-deps.lock.json` regenerated with `bun run refresh-lock`; the platform packages relocked with `scripts/generate-claude-agent-sdk-platform-lock.mjs`.
+- `packages/coding-agent/docs/environment-variables.md`: `PI_CLAUDE_CODE_VERSION`. `docs/settings.md`: `promptPreset` lists `claude-sonnet-5-5`.
+- `test/suite/regressions/2033-claude-code-version-currency.test.ts`: the currency invariant keeps reading the `claudeCodeVersion` declaration in `packages/ai/src/api/anthropic-messages.ts` (now the floor of the advertised version) and requires it to equal the installed SDK's `claudeCodeVersion`.
+
+### Why
+
+- Claude Code 2.1.284 is the first release whose binary knows `claude-sonnet-5-5`; the subscription lane runs the bundled binary.
+
+### Why an extension could not handle it
+
+- Dependency pin.
+
+### Expected merge conflict zones
+
+- LOW: the pin line and the lock files.
+
+## 2026-09-26 - Run on Bun when installed and tell Node.js users once how to switch (senpi#2157)
+
+### What changed
+
+- `packages/coding-agent/vitest.config.ts`: the test env adds `PI_SKIP_RUNTIME_NOTICE: "1"` next to `PI_OFFLINE`.
+
+### Why
+
+- Vitest runs on Node.js, so every in-process interactive test would otherwise render the new one-time runtime notice and write its state file; notice tests unstub it explicitly.
+
+### Why an extension could not handle it
+
+- Test-runner configuration.
+
+### Expected merge conflict zones
+
+- LOW: the `env` object in `vitest.config.ts`.
+
 # Local fork changes
 
 ## 2026-09-23 - claude-agent-sdk 0.3.280 (senpi#2033)

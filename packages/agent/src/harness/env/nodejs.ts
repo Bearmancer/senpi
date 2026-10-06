@@ -776,12 +776,14 @@ export class NodeExecutionEnv implements ExecutionEnv {
 						settle(err(callbackError));
 						return;
 					}
-					if (timedOut) {
-						settle(err(new ExecutionError("timeout", `timeout:${options?.timeout}`)));
-						return;
-					}
-					if (signal?.aborted) {
-						settle(err(new ExecutionError("aborted", "aborted")));
+					const interrupted = timedOut
+						? new ExecutionError("timeout", `timeout:${options?.timeout}`)
+						: signal?.aborted
+							? new ExecutionError("aborted", "aborted")
+							: undefined;
+					if (interrupted !== undefined) {
+						if (spillPath !== undefined) interrupted.spillPath = spillPath;
+						settle(err(interrupted));
 						return;
 					}
 					if (spillError) {

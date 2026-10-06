@@ -111,10 +111,6 @@ export function buildGoalStallNotice(
 	].join("\n");
 }
 
-export function buildMonitorStallNotice(consecutiveContinuations: number): string {
-	return buildGoalStallNotice(consecutiveContinuations, { liveSources: ["terminal-monitors"] });
-}
-
 function escapeXmlText(value: string): string {
 	return value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
 }

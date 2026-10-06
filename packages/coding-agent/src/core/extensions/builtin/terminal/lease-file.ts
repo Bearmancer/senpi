@@ -38,9 +38,15 @@ export async function readLeaseText(path: string): Promise<string | undefined> {
 	}
 }
 
-async function writeTemp(path: string, content: string): Promise<string> {
+/** Options for publishing a lease file. */
+export interface PublishOptions {
+	/** File mode of the published file (before umask); defaults to 0o666 like `open`. */
+	readonly mode?: number;
+}
+
+async function writeTemp(path: string, content: string, mode: number | undefined): Promise<string> {
 	const temp = `${path}.${process.pid}.${randomUUID().slice(0, 8)}.tmp`;
-	const file = await open(temp, "wx");
+	const file = await open(temp, "wx", mode);
 	try {
 		await file.writeFile(content, "utf8");
 	} finally {
@@ -50,15 +56,15 @@ async function writeTemp(path: string, content: string): Promise<string> {
 }
 
 /** Publish `content` at `path` only if nothing is there; throws EEXIST otherwise. Never half-written. */
-export async function publishExclusive(path: string, content: string): Promise<void> {
-	const temp = await writeTemp(path, content);
+export async function publishExclusive(path: string, content: string, options: PublishOptions = {}): Promise<void> {
+	const temp = await writeTemp(path, content, options.mode);
 	try {
 		await link(temp, path);
 	} catch (error) {
 		const code = errorCode(error);
 		if (code !== "ENOTSUP" && code !== "EOPNOTSUPP" && code !== "EPERM") throw error;
 		// A filesystem without hard links: fall back to an exclusive create (briefly visible empty).
-		const file = await open(path, "wx");
+		const file = await open(path, "wx", options.mode);
 		try {
 			await file.writeFile(content, "utf8");
 		} finally {
@@ -69,8 +75,8 @@ export async function publishExclusive(path: string, content: string): Promise<v
 	}
 }
 
-export async function publishReplace(path: string, content: string): Promise<void> {
-	const temp = await writeTemp(path, content);
+export async function publishReplace(path: string, content: string, options: PublishOptions = {}): Promise<void> {
+	const temp = await writeTemp(path, content, options.mode);
 	try {
 		await rename(temp, path);
 	} catch (error) {

@@ -80,6 +80,7 @@ async function materializeStdio(
 	});
 	trackStdioStart(transport, options.onStart);
 	pipeStderr(transport, options.logger, options.sink);
+	dropNullNextCursor(transport);
 	return {
 		client,
 		close: () => closeClientAndTransport(transport, client),
@@ -94,6 +95,7 @@ async function materializeHttp(spec: McpHttpTransportSpec, client: Client): Prom
 		authProvider: spec.authProvider,
 		requestInit: spec.requestInit,
 	});
+	dropNullNextCursor(transport);
 	return {
 		client,
 		close: () => closeClientAndTransport(transport, client),
@@ -120,6 +122,25 @@ function oauthAccessTokenEnv(authProvider: McpOAuthProvider | undefined): Record
 	const accessToken = authProvider?.tokens()?.access_token;
 	if (accessToken === undefined || accessToken.length === 0) return {};
 	return { OAUTH_ACCESS_TOKEN: accessToken };
+}
+
+// Some servers end pagination with `nextCursor: null`; the SDK's result schemas accept only a string or no
+// cursor, so the null is dropped before the client parses the result.
+function dropNullNextCursor(transport: Transport): void {
+	const originalStart = transport.start.bind(transport);
+	transport.start = async () => {
+		const deliver = transport.onmessage;
+		if (deliver !== undefined) {
+			transport.onmessage = (message, extra) => {
+				if ("result" in message && message.result !== null && typeof message.result === "object") {
+					const result = message.result as Record<string, unknown>;
+					if (result.nextCursor === null) delete result.nextCursor;
+				}
+				deliver(message, extra);
+			};
+		}
+		await originalStart();
+	};
 }
 
 function trackStdioStart(transport: StdioClientTransport, onStart: () => void): void {

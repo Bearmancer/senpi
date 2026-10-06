@@ -1,5 +1,121 @@
 # goal Extension Changes
 
+## 2026-10-05 - Record the actual wake trigger and label cache accounting (senpi#2778)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/goal/monitor-continuation.ts` and `cache-warm.ts`: resumed events and entries record `wakeCause` (`timer` or `sources-drained`) and the original planned `dueAtMs`.
+- `packages/coding-agent/src/core/extensions/builtin/goal/cache-warm-renderer.ts`: early source drains and timer backstops have distinct explanations. Old entries without a cause say it was not recorded. Cache figures are labeled cumulative prior-turn accounting, the discount is conditional on reuse, and the next cache hit is explicitly unverified.
+
+### Why
+
+- A source draining before its backstop was labeled a scheduled wake. Aggregated request usage was presented as tokens that had stayed warm, although no provider request had verified reuse.
+
+### Why an extension could not handle it
+
+- This builtin owns the timer/drain distinction, durable wait entries, and their renderer.
+
+### Expected merge conflict zones
+
+- `monitor-continuation.ts`: resumed payload construction; `cache-warm.ts`: durable entry type; `cache-warm-renderer.ts`: wake explanation and cache line.
+
+## 2026-10-02 - Stale-context detection recognizes a reload retirement (senpi#2549)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/goal/stale-context.ts`: `isStaleExtensionContextError` also matches `STALE_EXTENSION_GENERATION_AFTER_RELOAD_MESSAGE` ("stale extension generation after reload"), the message `AgentSession.reload()` retires the old generation with. The runner keeps the first retirement message, so a context retired by a reload never carries the replacement prefix the check looked for.
+- `packages/coding-agent/src/core/extensions/builtin/goal/elapsed-ticker.ts` and `packages/coding-agent/src/core/extensions/builtin/goal/wait-ticker.ts`: `sync()` returns without arming the interval when its immediate render hit a retired ctx (the tick already cleared `ctx`), instead of leaving an inert interval running until the next `stop()`. The next live `sync()` arms it.
+- Tests (`packages/coding-agent/test/suite/regressions/2549-stale-context-detection.test.ts`): the check recognizes the errors a context retired by a real harness reload and by a real dispose throw, rejects unrelated errors, `GoalElapsedTicker` retires on the reload error, and neither goal ticker arms an interval for a sync whose first render is stale, while the next live sync does.
+
+### Why
+
+- On main the reload error was not recognized, so `GoalElapsedTicker`, `GoalWaitTicker`, the monitor continuation and stop lifecycle (#1028) rethrew it from their timer callbacks, and the monitor footer ticker fixed for senpi#2549 shares this check.
+
+### Why an extension could not handle it
+
+- The check is the goal builtin's own helper, shared by the terminal builtin's ticker.
+
+### Expected merge conflict zones
+
+- `stale-context.ts`. Fork-only surface.
+
+## 2026-10-01 - The no-goal todo reminder names when a goal is worth registering (senpi#2505)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/goal/todo-gate.ts` `staleGoalTodoReminder`: the fix line is "Register one with create_goal only when the work must outlive this turn - it waits on external state or needs more than one verify-and-fix round" (the stale-goal variant adds that a new goal archives the completed one), and the closing line is "Otherwise continue without a goal." The old text ("If this todo list tracks a durable objective (multi-step work that should survive across turns), register it now with create_goal so progress is tracked and audited. ... If the todos are trivial short-lived bookkeeping for the current turn, continue without a goal.") asked the model to classify its own list, and GPT-6 Astra registered a goal for a single-turn status question. `test/suite/goal-todo-stale-reminder.test.ts` is unchanged (it asserts the no-goal and stale-goal lines and `undefined` for live goals).
+
+### Why
+
+- The reminder is a decision rule now, the same one the `create_goal` tool description already states, so a single-turn request stops picking up a goal, a completion audit and an `update_goal` call.
+
+### Why an extension could not handle it
+
+- This is the goal builtin's own reminder text.
+
+### Expected merge conflict zones
+
+- `todo-gate.ts` `staleGoalTodoReminder`.
+
+## 2026-10-01 - Goal mutations are atomic across processes (senpi#2499)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/goal/goal-file-lock.ts` (new): `withGoalFileLock(ref, fn)` runs `fn` inside the existing in-process `serializeByKey` tail and, inside that, holds a proper-lockfile lock for the whole read-modify-write, using the lockfile-policy backoff (100ms..1s) and `isLockError`. `GOAL_LOCK_OPTIONS` (`stale: 10s`, `update: 2s`, `realpath: false`) is shared by every goal-lock contender: a goal RMW takes milliseconds, so a live holder is never seen as stale, while a holder killed mid-mutation is reclaimed within ~10s. `GOAL_LOCK_WAIT_BUDGET_MS` (15s) exceeds the stale window, so waiters ride through a crashed holder; only an exhausted budget throws `GoalStoreBusyError`. `fn` receives `HeldGoalLock`: `write(goal)` and `assertHeld()` throw `GoalStoreLockCompromisedError` right before a write once the lock was reclaimed. The lock directory is `.goal-lock-<sha256(basename)[:40]>` beside the goal file (`goalLockFilePath`), because the default `<file>.lock` overflows NAME_MAX for a goal basename already at 255 bytes. Only the parent directory is created before locking, never a placeholder goal file, so a pending legacy import still runs.
+- `packages/coding-agent/src/core/extensions/builtin/goal/store.ts`: `writeGoal`, `createGoal`, `updateGoal`, `clearGoal`, `accountGoalUsage`, `recordContinuationDelivered`, and `resetContinuationStreak` run under `withGoalFileLock` and write through `held.write`, with `held.assertHeld()` before the history and full-objective side writes. New `migrateLegacyGoal(ref)` runs `migrateLegacyGoalFile` under the same lock.
+- `packages/coding-agent/src/core/extensions/builtin/goal/index.ts`: `session_start` calls `migrateLegacyGoal` instead of `migrateLegacyGoalFile`, so a concurrent mutation in another process cannot overwrite a freshly imported legacy goal.
+
+### Why
+
+- `serializeByKey` is an in-process `Map` of promise tails, so two processes holding the same session (shared session holders, a TUI plus a desktop or daemon host, a `PI_GOAL_STORE_FILE` child) interleaved read-modify-write cycles: two processes x 300 usage updates kept 303 of 600, and a completion in one process was reverted to `active` by the other.
+
+### Why an extension could not handle it
+
+- Goal is a manually ported builtin (`MANUAL_PACKAGES` in `scripts/sync-builtin-extensions.mjs`); its store is maintained here.
+
+### Expected merge conflict zones
+
+- LOW: the import block, each mutation's `withGoalFileLock(ref, async (held) => ...)` opening and `held.write` call in `store.ts`, and the `session_start` migration call in `index.ts`. An upstream pi-goal sync that restores `serializeByKey(goalFilePath(ref), ...)` or direct `writeGoalFile` calls must keep the cross-process lock and the guarded write.
+
+## 2026-09-30 - Drop test-only goal exports (senpi#2447)
+
+### What changed
+
+- `prompt.ts`: removed `buildMonitorStallNotice`, a one-line wrapper over `buildGoalStallNotice(n, { liveSources: ["terminal-monitors"] })` that only a test called. The earlier entry describing it is historical.
+- `continuation.ts`: removed `shouldQueueGoalContinuationWhenIdle` and `shouldQueueGoalContinuationAfterAgentEnd`. Neither had a production caller; production gates through `evaluateGoalContinuation` and `didAgentEndCleanly`, whose message-shape rows the suite now asserts directly.
+
+### Why
+
+- The exports existed only to be tested. The verdict suite (`goal-continuation-verdict.test.ts`) owns the status, pending and idle gating at the production entry.
+
+### Why an extension could not handle it
+
+- Goal is a manually ported builtin (`MANUAL_PACKAGES` in `scripts/sync-builtin-extensions.mjs`), so its source is maintained here.
+
+### Expected merge conflict zones
+
+- LOW: the tail of `prompt.ts` and the predicate block above `didAgentEndCleanly` in `continuation.ts`. An upstream pi-goal sync that re-adds them can drop them again.
+
+## 2026-09-28 - Terminal provider 401/403 blocks the goal on the first hit (senpi#2293)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/goal/terminal-provider-error.ts`: `terminalProviderAuthFailure(event)` returns `{ httpStatus: 401 | 403, provider, model }` when the turn ends with an error, `willRetry: false`, and no system-owned abort. It reads the adapter's `providerDiagnostic` first (`httpStatus` 401/403, or category `auth`); only when the message carries no diagnostic does it fall back to a leading `401`/`403` in `errorMessage`.
+- `packages/coding-agent/src/core/extensions/builtin/goal/continuation-recovery.ts`: `PROVIDER_AUTH_BLOCKED_REASON_PREFIX`, `providerAuthBlockedReason`, and `providerAuthRecoveryHint` (names `provider/model`, `/login <provider>`, the key/token for 401 or the model's plan access for 403 (the Copilot plan for `github-copilot`), and any proxy or gateway). `isMechanicalContinuationBlock` treats reasons with the prefix as mechanical.
+- `packages/coding-agent/src/core/extensions/builtin/goal/agent-end-continuation.ts`: an active goal whose turn ended with a terminal 401/403 is blocked before the system-abort and provider-recovery routing, with one warning notice.
+
+### Why
+
+Since 2026-08-24, terminal provider errors queue a guarded `providerRecovery` continuation. A rejected credential or a model the account cannot use fails identically on every continuation, so the goal burned all 8 continuations and ended with `continuation cap reached. Send any message to resume.`; the next message looped again. Reported on GitHub Copilot with kimi-k3, whose endpoint answered 403 with an empty body.
+
+### Why an extension could not handle it
+
+Agent-end routing, goal blocking, and the mechanical-block set are private to the goal builtin.
+
+### Expected merge conflict zones
+
+- LOW in `agent-end-continuation.ts` (the block after the policy-rejection check), `terminal-provider-error.ts` (new export), `continuation-recovery.ts` (`isMechanicalContinuationBlock`).
+
 ## 2026-09-25 - Turn-end todo-owed backstop for main sessions without an active goal (senpi#2121)
 
 ### What changed

@@ -35,6 +35,12 @@ export interface OpenAIResponsesCompat {
 	/** Whether the provider accepts the `max_output_tokens` parameter. Some Codex-protocol gateways reject it. Default: true. */
 	supportsMaxOutputTokens?: boolean;
 	/**
+	 * Whether the provider accepts a `tool_choice` that forces a tool (`required` or a named function).
+	 * When false the forced choice is dropped before sending. Default: true; a provider that refuses one
+	 * at runtime is remembered for the process after one retry without it.
+	 */
+	supportsForcedToolChoice?: boolean;
+	/**
 	 * Whether the model accepts `tool_choice: { type: "allowed_tools" }`. When set, callers keep every
 	 * declared tool in `tools` and restrict the callable subset through `Context.activeToolNames`, so a
 	 * shrinking tool set does not rewrite the cached prompt prefix. Honored by the `openai-responses`

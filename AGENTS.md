@@ -84,8 +84,8 @@ Runtime flow: `ai` (models/auth -> providers -> api) feeds `agent/src/agent-loop
 
 ## COMMANDS
 
-- Install dependencies: `bun install --ignore-scripts`. After an approved dependency change, `bun run refresh-lock` (lockfile + registry metadata + shrinkwrap + install-lock).
-- Full static validation after code changes: `bun run check` (biome, pinned-deps/ts-imports/shrinkwrap/install-lock checks, `check:claude-sdk-platform-lock`, `tsc --noEmit`, browser-smoke). It runs no tests; CI runs the same commands, so keep them in sync. Broad validation: `bun run test` runs `test:scripts`, then `scripts/run-workspaces.mjs` runs every workspace `test` script sequentially in path order with the package manager you invoked, so `bun run test`, `npm run test`, and `pnpm run test` run the same suites the same way.
+- Install dependencies: `bun install --ignore-scripts`. After an approved dependency change, `bun run refresh-lock` (lockfile + registry metadata + install-lock).
+- Full static validation after code changes: `bun run check` (biome, pinned-deps/ts-imports/install-lock checks, `check:claude-sdk-platform-lock`, `tsc --noEmit`, browser-smoke). It runs no tests; CI runs the same commands, so keep them in sync. Broad validation: `bun run test` runs `test:scripts`, then `scripts/run-workspaces.mjs` runs every workspace `test` script sequentially in path order with the package manager you invoked, so `bun run test`, `npm run test`, and `pnpm run test` run the same suites the same way.
 - Narrow tests run from the package root using that package's test command (`bun run --cwd packages/<pkg> test -- <args>`), or from the repository root through the runner (`bun run test --workspace packages/<pkg> -- <args>`, which runs the scripts tests first). Runners differ: Vitest for `ai`, `coding-agent`, `senpi-codemode`, `server`, `session-backends`, `telemetry`; `node --test --import tsx` for `tui`; `node --test` for `scripts/` (`bun run test:scripts`) and `.agents/skills/senpi-qa/scripts/lib/`.
 - App-server transport QA is its own channel: `bun run qa:app-server` (`packages/coding-agent/scripts/qa-app-server/`), not part of `bun run test`. Model catalog data: `bun run hydrate:model-data`, verified by `check:model-data`, from the repository root.
 - Never run `bun run dev` in this repository.
@@ -123,13 +123,24 @@ Runtime flow: `ai` (models/auth -> providers -> api) feeds `agent/src/agent-loop
 - Documentation-only changes use focused validators and `git diff --check`, not runtime QA — but `packages/coding-agent/docs/` ships in the tarball and is test-asserted, so doc edits there can fail CI.
 - For manual checks of the interactive TUI in a controlled tmux terminal, load and follow `.senpi/skills/interactive-testing.md`.
 
+## TEST AUTHORING GATE
+Before adding or changing a test, answer all four; a missing answer means do not add it yet:
+1. What observable behavior, invariant, or independent contract does it protect?
+2. What credible regression makes it fail?
+3. Why does existing coverage not already catch that failure? Each contract has one primary test owner at the strongest boundary; extend a table case or shared fixture instead of adding a near-duplicate.
+4. Does it need a production seam (export, flag, wrapper, injection hook) no production caller needs? If yes, test at the real boundary instead.
+Junk patterns (reject unless the retention bar below applies): assertion-free probes; self-comparisons and identity copiers; copied fixtures, inventories, manifests or export lists; exact source, import or string greps; private call-shape tests duplicated at a real boundary; duplicate invocations of one contract; replays of a shared helper through a wrapper; tests that exist to keep a test-only export or wrapper alive; production code whose only callers are tests; expected values produced by the code under test; mocks that implement the asserted behavior; fixture-supplied receipts or postconditions the code under test should produce; assertions against a store nothing writes; capability or flag restatements without a delivery proof; negative controls that pass for an unrelated reason; names that promise more than the input exercises.
+Retention bar: keep a pattern match only when it independently guards a public API, protocol, config, migration, storage, security, platform, default, prompt-byte, generated or cross-language, package, release, or architecture contract, and say which one in the test. Static or slow is never a deletion reason. A retained test that fails on the base is a product bug to fix at its owner, never a test to delete.
+A bug regression test must fail on the pre-fix code for the intended reason; an existing owner test that already fails may serve as that proof.
+Method source: openclaw test-audit skill.
+
 ## DEPENDENCIES AND INFRA
 
 - Treat dependency and lockfile diffs as code: pin direct external dependencies exactly, use `--ignore-scripts` for install/lock refreshes. The pre-commit hook allows workspace-metadata-only refreshes; other lockfile changes require explicit `PI_ALLOW_LOCKFILE_CHANGE=1` approval.
 - Keep shared environment surfaces synchronized: dependency, Node, provider/env, QA-channel, build-command, and forwarded-port changes must update `scripts/devenv-setup.mjs`, `.devcontainer/devcontainer.json`, and related references together, keeping root `package.json` workspaces and `pnpm-workspace.yaml` aligned with any workspace-package move or rename.
-- Regenerate `packages/coding-agent/publish-deps.lock.json` with `bun scripts/generate-coding-agent-shrinkwrap.mjs`; never replace it with `npm-shrinkwrap.json`. Regenerate `packages/coding-agent/install-lock/` with `bun run install-lock:coding-agent`.
-- External registry entries in root, publish, and installer locks must preserve both npm tarball `resolved` URLs and `integrity` hashes; incomplete merge results are invalid even when dependency topology still resolves.
-- `@earendil-works/pi-telemetry` is a runtime dependency and must stay in Senpi's owned CalVer alias, publish, and bundle sets. `@earendil-works/pi-storage-sqlite-node` remains private and independently versioned because it is not reachable from the shipped coding-agent runtime.
+- Never publish an `npm-shrinkwrap.json`. Regenerate `packages/coding-agent/install-lock/` with `bun run install-lock:coding-agent`.
+- External registry entries in root and installer locks must preserve both npm tarball `resolved` URLs and `integrity` hashes; incomplete merge results are invalid even when dependency topology still resolves.
+- `@earendil-works/pi-telemetry` is a runtime dependency and must stay in Senpi's owned CalVer alias and publish sets. `@earendil-works/pi-storage-sqlite-node` remains private and independently versioned because it is not reachable from the shipped coding-agent runtime.
 - Dependencies with lifecycle scripts require package/version review and an explicit justified generator allowlist entry; never add one silently to pass the gate.
 
 ## GIT AND DELIVERY

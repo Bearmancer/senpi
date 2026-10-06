@@ -20,6 +20,8 @@ import { isValidThinkingLevel } from "../cli/args.ts";
 import type { ServiceTier } from "./extensions/builtin/service-tier.ts";
 import type { ModelRegistry } from "./model-registry.ts";
 import type { ModelRuntime } from "./model-runtime.ts";
+import { selectProviderDefault } from "./provider-default-selection.ts";
+import { ultrafastSelectionWarning } from "./ultrafast-lanes.ts";
 
 /**
  * Scope resolution only ever reads the available-model list, so a caller that
@@ -40,18 +42,19 @@ export const defaultModelPerProvider: Record<string, string> = {
 	"alibaba-token-plan": "qwen3.7-max",
 	"amazon-bedrock": "us.anthropic.claude-opus-4-6-v1",
 	"ant-ling": "Ring-2.6-1T",
+	"anthropic-subscription": "claude-opus-4-8",
 	anthropic: "claude-opus-4-8",
 	bai: "gpt-5.6-sol",
-	openai: "gpt-6-sol",
+	openai: "gpt-6.1-sol",
 	"azure-openai-responses": "gpt-5.4",
-	"chatgpt-subscription": "gpt-6-sol",
+	"chatgpt-subscription": "gpt-6.1-sol",
 	ollama: "qwen3.5:397b",
 	// Cursor ships no models until its chat protocol is ported; "auto" matches
 	// the Cursor agent's native model auto-selection once models exist.
 	cursor: "auto",
 	// Radius resolves its catalog after discovery; "balanced" is the selectable default.
 	radius: "balanced",
-	nvidia: "nvidia/nemotron-3-super-120b-a12b",
+	nvidia: "nvidia/nemotron-3-ultra-550b-a55b",
 	deepseek: "deepseek-v4-pro",
 	google: "gemini-3.1-pro-preview",
 	"google-vertex": "gemini-3.1-pro-preview",
@@ -70,13 +73,14 @@ export const defaultModelPerProvider: Record<string, string> = {
 	moonshotai: "kimi-k2.6",
 	"moonshotai-cn": "kimi-k2.6",
 	huggingface: "moonshotai/Kimi-K2.6",
-	fireworks: "accounts/fireworks/models/kimi-k2p6",
-	together: "moonshotai/Kimi-K2.6",
+	fireworks: "accounts/fireworks/models/kimi-k3",
+	together: "moonshotai/Kimi-K3",
 	venice: "z-ai-glm-5-3",
 	baseten: "zai-org/GLM-5.2",
 	opencode: "kimi-k2.6",
-	"opencode-go": "kimi-k2.6",
+	"opencode-go": "kimi-k3",
 	"kimi-coding": "kimi-for-coding",
+	meta: "muse-spark-1.3",
 	"cloudflare-workers-ai": "@cf/moonshotai/kimi-k2.6",
 	"cloudflare-ai-gateway": "workers-ai/@cf/moonshotai/kimi-k2.6",
 	"qwen-token-plan": "qwen3.7-max",
@@ -380,10 +384,26 @@ function buildFallbackModel(provider: string, modelId: string, availableModels: 
 	};
 }
 
-const SERVICE_TIER_VALUES: readonly ServiceTier[] = ["auto", "flex", "priority"];
+const SERVICE_TIER_VALUES: readonly ServiceTier[] = ["auto", "flex", "priority", "ultrafast"];
 
 function isServiceTier(value: string): value is ServiceTier {
 	return (SERVICE_TIER_VALUES as readonly string[]).includes(value);
+}
+
+/** Invalid-decorator warnings discard the decorators parsed with them. An Ultrafast advisory does not. */
+function dropsParsedDecorators(warning: string | undefined): boolean {
+	return warning?.startsWith("Invalid thinking level") ?? false;
+}
+
+function pushUltrafastAdvisory(
+	diagnostics: ModelScopeDiagnostic[],
+	pattern: string,
+	model: { provider: string; id: string },
+	serviceTier: ServiceTier | undefined,
+): void {
+	const message = ultrafastSelectionWarning(model, serviceTier);
+	if (!message) return;
+	diagnostics.push({ type: "warning", code: "ultrafast-undocumented", message, pattern });
 }
 
 /**
@@ -438,7 +458,7 @@ export function parseModelPattern(
 	if (isValidThinkingLevel(suffix)) {
 		const result = parseModelPattern(prefix, availableModels, options);
 		if (result.model) {
-			const thinkingLevel = result.warning ? undefined : (result.thinkingLevel ?? suffix);
+			const thinkingLevel = dropsParsedDecorators(result.warning) ? undefined : (result.thinkingLevel ?? suffix);
 			return {
 				model: result.model,
 				thinkingLevel,
@@ -451,12 +471,13 @@ export function parseModelPattern(
 	} else if (isServiceTier(suffix)) {
 		const result = parseModelPattern(prefix, availableModels, options);
 		if (result.model) {
+			const serviceTier = dropsParsedDecorators(result.warning) ? undefined : (result.serviceTier ?? suffix);
 			return {
 				model: result.model,
 				thinkingLevel: result.thinkingLevel,
 				thinkingSelection: result.thinkingSelection,
-				serviceTier: result.warning ? undefined : (result.serviceTier ?? suffix),
-				warning: result.warning,
+				serviceTier,
+				warning: result.warning ?? ultrafastSelectionWarning(result.model, serviceTier),
 			};
 		}
 		return result;
@@ -493,7 +514,7 @@ export function parseModelPattern(
  */
 export interface ModelScopeDiagnostic {
 	type: "warning";
-	code: "no-match" | "invalid-thinking-level";
+	code: "no-match" | "invalid-thinking-level" | "ultrafast-undocumented";
 	message: string;
 	pattern: string;
 }
@@ -561,6 +582,7 @@ export function resolveModelScopeFromModels(
 			if (exactMatch) {
 				const thinkingSelection = thinkingLevel ? { level: thinkingLevel, source: "explicit" as const } : undefined;
 				const owned = addScoped({ model: exactMatch, thinkingLevel, thinkingSelection, serviceTier });
+				pushUltrafastAdvisory(diagnostics, pattern, exactMatch, serviceTier);
 				patternResolutions.push({
 					pattern,
 					ownedIds: owned ? [owned] : [],
@@ -628,6 +650,7 @@ export function resolveModelScopeFromModels(
 					}
 				}
 				const owned = addScoped({ model, thinkingLevel: projectedLevel, thinkingSelection, serviceTier });
+				pushUltrafastAdvisory(diagnostics, pattern, model, serviceTier);
 				if (owned) ownedIds.push(owned);
 			}
 			patternResolutions.push({
@@ -645,7 +668,17 @@ export function resolveModelScopeFromModels(
 			pattern,
 			availableModels,
 		);
-		if (warning) diagnostics.push({ type: "warning", code: "invalid-thinking-level", message: warning, pattern });
+		if (warning) {
+			diagnostics.push({
+				type: "warning",
+				code:
+					model && warning === ultrafastSelectionWarning(model, serviceTier)
+						? "ultrafast-undocumented"
+						: "invalid-thinking-level",
+				message: warning,
+				pattern,
+			});
+		}
 		if (!model) {
 			diagnostics.push({
 				type: "warning",
@@ -1023,27 +1056,13 @@ export async function findInitialModel(options: {
 			: await modelRuntime.getAvailable()),
 	];
 
-	if (availableModels.length > 0) {
-		// Try to find a default model from known providers
-		for (const provider of Object.keys(defaultModelPerProvider) as KnownProvider[]) {
-			const defaultId = defaultModelPerProvider[provider];
-			const match = availableModels.find((m) => m.provider === provider && m.id === defaultId);
-			if (match) {
-				return {
-					model: match,
-					thinkingLevel: undefined,
-					fallbackMessage: undefined,
-					provenance: "provider-default",
-				};
-			}
-		}
-
-		// If no default found, use first available
+	const selected = selectProviderDefault(availableModels, defaultModelPerProvider, modelRuntime);
+	if (selected) {
 		return {
-			model: availableModels[0],
+			model: selected.model,
 			thinkingLevel: undefined,
 			fallbackMessage: undefined,
-			provenance: "first-available",
+			provenance: selected.provenance,
 		};
 	}
 
@@ -1108,23 +1127,8 @@ export async function restoreModelFromSession(
 			: await modelRuntime.getAvailable()),
 	];
 
-	if (availableModels.length > 0) {
-		// Try to find a default model from known providers
-		let fallbackModel: Model<Api> | undefined;
-		for (const provider of Object.keys(defaultModelPerProvider) as KnownProvider[]) {
-			const defaultId = defaultModelPerProvider[provider];
-			const match = availableModels.find((m) => m.provider === provider && m.id === defaultId);
-			if (match) {
-				fallbackModel = match;
-				break;
-			}
-		}
-
-		// If no default found, use first available
-		if (!fallbackModel) {
-			fallbackModel = availableModels[0];
-		}
-
+	const fallbackModel = selectProviderDefault(availableModels, defaultModelPerProvider, modelRuntime)?.model;
+	if (fallbackModel) {
 		if (shouldPrintMessages) {
 			console.log(chalk.dim(`Falling back to: ${fallbackModel.provider}/${fallbackModel.id}`));
 		}

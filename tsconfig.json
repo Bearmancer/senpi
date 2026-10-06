@@ -54,6 +54,9 @@
 			"@earendil-works/pi-agent-core/harness/session/testing": [
 				"./packages/agent/src/harness/session/testing/index.ts"
 			],
+			"@earendil-works/pi-agent-core/experimental/pico3": [
+				"./packages/agent/src/harness/pico3/index.ts"
+			],
 			"@earendil-works/pi-agent-core/*": [
 				"./packages/agent/src/*.ts",
 				"./packages/agent/src/*/index.ts",
@@ -125,21 +128,6 @@
 			"@earendil-works/pi-agent-old/*": [
 				"./packages/agent-old/src/*"
 			],
-			"@code-yeongyu/senpi-desktop-engine": [
-				"./packages/desktop-engine/src/index.ts"
-			],
-			"@code-yeongyu/senpi-desktop-prelude": [
-				"./packages/desktop-prelude/src/index.ts"
-			],
-			"@code-yeongyu/senpi-desktop-protocol": [
-				"./packages/desktop-protocol/src/index.ts"
-			],
-			"@code-yeongyu/senpi-desktop-service": [
-				"./packages/desktop-service/src/index.ts"
-			],
-			"@code-yeongyu/senpi-desktop-tool": [
-				"./packages/desktop-tool/src/index.ts"
-			],
 			"@code-yeongyu/senpi": [
 				"./packages/coding-agent/src/index.ts"
 			],
@@ -152,6 +140,8 @@
 		}
 	},
 	"include": [
+		"scripts/model-catalog-protocol.ts",
+		"scripts/model-catalog-protocol.test.ts",
 		"packages/*/src/**/*",
 		"packages/*/test/**/*",
 		"packages/session-backends/*/src/**/*",

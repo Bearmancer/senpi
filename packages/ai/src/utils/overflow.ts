@@ -31,17 +31,20 @@ import type { AssistantMessage } from "../types.ts";
  * - kiro-lb gateways: "Request payload is 1095225 bytes, over the 1085435 byte limit Kiro accepts." / "Request payload is N tokens, over the M token limit Kiro accepts." (HTTP 400 local payload guard)
  * - Kiro upstream via kiro-lb: "Model context limit reached. Conversation size exceeds model capacity." (CONTENT_LENGTH_EXCEEDS_THRESHOLD token overflow)
  * - Mistral: "Prompt contains X tokens ... too large for model with Y maximum context length"
- * - z.ai: Does NOT error, accepts overflow silently - handled via usage.input > contextWindow
+ * - z.ai: `{"code":"1261","message":"Prompt too long"}`, `{"code":"1261","message":"Prompt exceeds max length"}` (CN endpoint), or silent overflow via usage.input > contextWindow
  * - Xiaomi MiMo: Truncates input to fill contextWindow exactly, then returns finish_reason "length"
  *   with output=0 (no room left to generate). Detected via stopReason "length" + zero output +
  *   input filling the context window.
  * - DashScope/Qwen: "Range of input length should be [1, X]" (HTTP 400 invalid_parameter_error)
  * - Ollama: Some deployments truncate silently, others return errors like "prompt too long; exceeded max context length by X tokens"
  * - pi-ai pre-flight guard (api/context-room.ts): "Context window exhausted: the conversation is estimated at X of Y tokens, ..." - raised before any provider call
+ * - anthropic-subscription cold-seed budget: "The conversation is too long to resend (about X tokens, limit Y). Compacting it and retrying." - raised before the re-send is dispatched
  */
 const OVERFLOW_PATTERNS = [
 	/^Context window exhausted: /, // pi-ai pre-flight guard: no answer room left, provider never called
-	/prompt is too long/i, // Anthropic token overflow
+	/^The conversation is too long to resend \(about \d+ tokens, limit \d+\)/, // anthropic-subscription cold-seed budget: re-send refused before dispatch
+	/prompt (?:is )?too long/i, // Anthropic and z.ai token overflow
+	/prompt exceeds max length/i, // z.ai CN endpoint token overflow
 	/request_too_large/i, // Anthropic request byte-size overflow (HTTP 413)
 	/input is too long for requested model/i, // Amazon Bedrock
 	/exceeds (?:(?:the|this) )?(?:model'?s )?context window/i, // OpenAI (Completions & Responses API)
@@ -52,7 +55,7 @@ const OVERFLOW_PATTERNS = [
 	/maximum context length is \d+ tokens/i, // OpenRouter (most backends)
 	/exceeds (?:the )?maximum allowed input length of [\d,]+ tokens?/i, // OpenRouter/Poolside
 	/input \(\d+ tokens\) is longer than the model'?s context length \(\d+ tokens\)/i, // Together AI
-	/exceeds the limit of \d+/i, // GitHub Copilot
+	/model_max_prompt_tokens_exceeded|exceeds the limit of \d+/i, // GitHub Copilot
 	/exceeds the available context size/i, // llama.cpp server
 	/greater than the context length/i, // LM Studio
 	/context window exceeds limit/i, // MiniMax
@@ -65,11 +68,12 @@ const OVERFLOW_PATTERNS = [
 	/context[_ ]length[_ ]exceeded/i, // Generic fallback
 	/too many tokens/i, // Generic fallback
 	/token limit exceeded/i, // Generic fallback
-	/^4(?:00|13)\s*(?:status code)?\s*\(no body\)/i, // Cerebras: 400/413 with no body
 	/(?:request[ _])?(?:body|entity|payload)[_ ]too[_ ]large/i, // Gateway HTTP 413 byte-size rejections ("Request body too large", "Request Entity Too Large", "body_too_large", "Payload Too Large"). Substring-anchored by design (JSON bodies lack an adjacent status code); a non-context size rejection (e.g. an oversized image) can over-match, which costs one bounded shrink-retry, never a wedge.
 	/Request payload is \d+ (?:bytes, over the \d+ byte|tokens, over the \d+ token) limit Kiro accepts\./, // kiro-lb local byte/token payload guard (HTTP 400; Anthropic uses invalid_request_error, OpenAI uses detail).
 	/Model context limit reached\. Conversation size exceeds model capacity\./, // kiro-lb enhancement of Kiro CONTENT_LENGTH_EXCEEDS_THRESHOLD
 ];
+
+const CEREBRAS_BODYLESS_OVERFLOW_PATTERN = /^4(?:00|13)\s*(?:status code)?\s*\(no body\)/i;
 
 /**
  * Patterns that indicate non-overflow errors (e.g. rate limiting, server errors).
@@ -136,6 +140,7 @@ const RESOURCE_EXHAUSTED_PATTERN = /resource.?exhausted/i;
  * - Kimi For Coding: "exceeded model token limit: X (requested: Y)"
  * - DS4: "Prompt has X tokens, but the configured context size is Y tokens"
  * - DashScope/Qwen: "Range of input length should be [1, X]"
+ * - z.ai: "Prompt too long"
  *
  * **Unreliable detection:**
  * - z.ai: Sometimes accepts overflow silently (detectable via usage.input > contextWindow),
@@ -166,8 +171,13 @@ export function isContextOverflow(message: AssistantMessage, contextWindow?: num
 	if (message.stopReason === "error" && message.errorMessage) {
 		// Skip messages matching known non-overflow patterns (e.g. throttling / rate-limit)
 		const isNonOverflow = NON_OVERFLOW_PATTERNS.some((p) => p.test(message.errorMessage!));
-		if (!isNonOverflow && OVERFLOW_PATTERNS.some((p) => p.test(message.errorMessage!))) {
-			return true;
+		if (!isNonOverflow) {
+			if (OVERFLOW_PATTERNS.some((p) => p.test(message.errorMessage!))) {
+				return true;
+			}
+			if (message.provider === "cerebras" && CEREBRAS_BODYLESS_OVERFLOW_PATTERN.test(message.errorMessage)) {
+				return true;
+			}
 		}
 		const usage = message.usage;
 		const hasTokenEvidence =
@@ -219,6 +229,17 @@ export function getOverflowPatterns(): RegExp[] {
 	return [...OVERFLOW_PATTERNS];
 }
 
+const CURSOR_PROVIDERS: ReadonlySet<string> = new Set(["cursor", "cursor-cli-oauth"]);
+
+/**
+ * The zero-token / quota `resource_exhausted` signatures below describe Cursor's backend only.
+ * Other providers send `resource_exhausted` for their own rate and usage limits (senpi#2660), and
+ * reading those as a Cursor payload overflow or re-mint skips the fallback chain.
+ */
+function isCursorProviderMessage(message: { provider?: string }): boolean {
+	return message.provider === undefined || CURSOR_PROVIDERS.has(message.provider);
+}
+
 function cursorZeroTokenCount(message: {
 	usage?: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number; totalTokens?: number };
 }): number {
@@ -231,12 +252,14 @@ function cursorZeroTokenCount(message: {
 
 export function isCursorPayloadResourceExhausted(
 	message: {
+		provider?: string;
 		stopReason?: string;
 		errorMessage?: string;
 		usage?: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number; totalTokens?: number };
 	},
 	_estimateTokens: number,
 ): boolean {
+	if (!isCursorProviderMessage(message)) return false;
 	if (message.stopReason !== "error" || !/resource.?exhausted/i.test(message.errorMessage || "")) {
 		return false;
 	}
@@ -250,6 +273,7 @@ export function isCursorPayloadResourceExhausted(
  */
 export function isCursorQuotaResourceExhausted(
 	message: {
+		provider?: string;
 		stopReason?: string;
 		errorMessage?: string;
 		usage?: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number; totalTokens?: number };
@@ -258,6 +282,7 @@ export function isCursorQuotaResourceExhausted(
 ): boolean {
 	const tokens = cursorZeroTokenCount(message);
 	return (
+		isCursorProviderMessage(message) &&
 		message.stopReason === "error" &&
 		RESOURCE_EXHAUSTED_PATTERN.test(message.errorMessage || "") &&
 		contextWindow > 0 &&
@@ -267,10 +292,12 @@ export function isCursorQuotaResourceExhausted(
 }
 
 export function isCursorZeroTokenResourceExhausted(message: {
+	provider?: string;
 	stopReason?: string;
 	errorMessage?: string;
 	usage?: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number; totalTokens?: number };
 }): boolean {
+	if (!isCursorProviderMessage(message)) return false;
 	if (message.stopReason !== "error" || !/resource.?exhausted/i.test(message.errorMessage || "")) {
 		return false;
 	}

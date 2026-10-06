@@ -1,5 +1,44 @@
 # changes
 
+## 2026-10-01 - Agent shells get a real `bun` inside a compiled executable (omo#9362)
+
+### What changed
+
+- `packages/coding-agent/src/utils/shell.ts`: `getShellEnv()` returns its environment through `withBundledBunCommands()`. In a `bun build --compile` executable, that appends a directory to `PATH` holding `bun`/`bunx` scripts (`bun.cmd`/`bunx.cmd` on Windows), which run this executable with `BUN_BE_BUN=1`. Outside a compiled executable the environment is unchanged.
+- `packages/coding-agent/src/utils/bundled-bun.ts` (fork-only): detects a compiled executable from `Bun.main` (`/$bunfs/`, `<drive>:\~BUN\`), writes the scripts under `<agentDir>/bundled-bun/<execPath hash>/` with a `tmpdir()` fallback, and appends that directory to `PATH`.
+
+### Why
+
+- Bun Shell runs `bun` as `process.execPath` when `PATH` has no Bun. In a compiled engine that is the engine itself, so an eval cell's `bun test` booted a second agent and returned its reply as exit-0 output, while the bash tool's `/bin/sh` reported `bun: command not found`. The child cannot tell it was meant to be Bun, so the parent has to provide a real `bun`. Appending keeps a user's own Bun first, and `BUN_BE_BUN` is scoped to that one command, so engine self-spawns keep running the engine.
+
+### Why an extension could not handle it
+
+- `getShellEnv()` is the environment the built-in bash tool and terminal spawn with, before any extension can intervene; the eval extension reuses the same helper through the public `withBundledBunCommands` export.
+
+### Expected merge conflict zones
+
+- LOW: the `return` of `getShellEnv()` in `shell.ts` and its new import; upstream has no compiled-executable handling there.
+
+## 2026-09-30 - Sync with upstream v0.99.1 (6a4af07d6): tools and shell utilities
+
+### What changed
+
+- `packages/coding-agent/src/utils/paths.ts`: `utils/paths.ts`: `isLocalPath` treats `builtin:` as non-local. `utils/paths.ts`: `getFileContentRevision`.
+- `packages/coding-agent/src/utils/shell.ts`: `utils/shell.ts`: `sanitizeBinaryOutput` body is upstream's single-regex strip. `utils/shell.ts`: SYNC kill path kept (`killWindowsProcessTree`, `killProcessTree`, `killTrackedDetachedChildren`; landmine L32) plus the existing spawn-error (ENOENT/EACCES) guard; the `hasUnsafeDisplayCharacter` fast path stays in front of the upstream regex.
+- `packages/coding-agent/src/utils/syntax-highlight.ts`: `utils/syntax-highlight.ts`: `json` joins the eager highlight.js languages. `utils/syntax-highlight.ts`: extensionless highlight.js specifiers.
+
+### Why
+
+Upstream v0.99.1 (6a4af07d6) changed these paths while the fork carries its own behavior; tools and shell utils adopt upstream bash/read fixes and keep fork output shapes and hooks (plan D-15).
+
+### Why an extension could not handle it
+
+Built-in tool execution and shell handling are core tool implementations that extensions call, not replace.
+
+### Expected merge conflict zones
+
+Every path listed above conflicts again where upstream edits the hunks named in its line; the fork-kept constructs named there are the anchors to preserve.
+
 ## 2026-09-17 - Detect managed tools by stat, not by spawn (senpi#1781)
 
 ### What changed

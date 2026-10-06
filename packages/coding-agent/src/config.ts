@@ -5,6 +5,7 @@ import { fileURLToPath } from "url";
 import { createBunLauncherRepairCommand } from "./bun-global-launcher.ts";
 import { type BrandProfile, brandProfile, envValue } from "./core/brand.ts";
 import { findNearestParentConfigDir } from "./nearest-parent-config.ts";
+import { resolveInstallPath } from "./runtime-snapshot/marker.ts";
 import { spawnProcessSync } from "./utils/child-process.ts";
 import { normalizePath } from "./utils/paths.ts";
 import { stripBom } from "./utils/text.ts";
@@ -89,7 +90,8 @@ export function detectInstallMethod(): InstallMethod {
 		return "bun-binary";
 	}
 
-	const resolvedPath = `${__dirname}\0${process.execPath || ""}`.toLowerCase().replace(/\\/g, "/");
+	const moduleDir = resolveInstallPath(__dirname, findNodePackageDir(__dirname));
+	const resolvedPath = `${moduleDir}\0${process.execPath || ""}`.toLowerCase().replace(/\\/g, "/");
 
 	if (resolvedPath.includes("/pnpm/") || resolvedPath.includes("/.pnpm/")) {
 		return "pnpm";
@@ -108,7 +110,7 @@ export function detectInstallMethod(): InstallMethod {
 }
 
 function getInferredNpmInstall(): { root: string; prefix: string } | undefined {
-	const packageDir = getPackageDir();
+	const packageDir = getInstallPackageDir();
 	const path = process.platform === "win32" || packageDir.includes("\\") ? win32 : { basename, dirname };
 	const parent = path.dirname(packageDir);
 	let root: string | undefined;
@@ -139,7 +141,7 @@ function getSelfUpdateCommandForMethod(
 		case "pnpm": {
 			const match = readCommandOutput("pnpm", ["root", "-g"])
 				? undefined
-				: /^(.*[\\/]global[\\/][^\\/]+)[\\/]\.pnpm[\\/]/.exec(getPackageDir());
+				: /^(.*[\\/]global[\\/][^\\/]+)[\\/]\.pnpm[\\/]/.exec(getInstallPackageDir());
 			const binDirArgs = match
 				? [`--config.global-bin-dir=${process.env.PNPM_HOME || dirname(dirname(match[1]))}`]
 				: [];
@@ -247,7 +249,7 @@ function getGlobalPackageRoots(method: InstallMethod, _packageName: string, npmC
 		case "pnpm": {
 			const root = readCommandOutput("pnpm", ["root", "-g"]);
 			if (root) return [root, dirname(root)];
-			const match = /^(.*[\\/]global[\\/][^\\/]+)[\\/]\.pnpm[\\/]/.exec(getPackageDir());
+			const match = /^(.*[\\/]global[\\/][^\\/]+)[\\/]\.pnpm[\\/]/.exec(getInstallPackageDir());
 			return match ? [match[1]] : [];
 		}
 		case "yarn": {
@@ -311,7 +313,7 @@ function getEntrypointPackageDir(): string | undefined {
 }
 
 function isSelfUpdatePathWritable(): boolean {
-	const packageDir = getPackageDir();
+	const packageDir = getInstallPackageDir();
 	try {
 		accessSync(packageDir, constants.W_OK);
 		accessSync(dirname(packageDir), constants.W_OK);
@@ -322,7 +324,7 @@ function isSelfUpdatePathWritable(): boolean {
 }
 
 function isManagedByGlobalPackageManager(method: InstallMethod, packageName: string, npmCommand?: string[]): boolean {
-	const packageDirs = [getPackageDir(), getEntrypointPackageDir()].filter((dir): dir is string => !!dir);
+	const packageDirs = [getInstallPackageDir(), getEntrypointPackageDir()].filter((dir): dir is string => !!dir);
 	const packageDirCandidates = packageDirs.flatMap((dir) => getPathComparisonCandidates(dir));
 	return getGlobalPackageRoots(method, packageName, npmCommand).some((root) => {
 		return getPathComparisonCandidates(root).some((normalizedRoot) => {
@@ -412,7 +414,20 @@ export function getPackageDir(): string {
 		// Bun binary: process.execPath points to the compiled executable
 		return dirname(process.execPath);
 	}
-	return findNodePackageDir(__dirname);
+	// The module does not move while the process runs, and renderers ask for this per tool card per frame.
+	nodePackageDir ??= findNodePackageDir(__dirname);
+	return nodePackageDir;
+}
+
+let nodePackageDir: string | undefined;
+
+/**
+ * Where the package manager installed this package. Equals `getPackageDir()` except in a process
+ * running from its runtime snapshot (`runtime-snapshot/`), whose assets live in the snapshot.
+ */
+export function getInstallPackageDir(): string {
+	const packageDir = getPackageDir();
+	return resolveInstallPath(packageDir, packageDir);
 }
 
 /** One asset directory shipped with the package, in both the Bun-binary and Node layouts. */

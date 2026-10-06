@@ -17,12 +17,15 @@ type EventHandler = (event: unknown, ctx: ExtensionContext) => unknown;
 
 const SESSION_ID = "model-switch-session";
 const modelCalls: Array<string | undefined> = [];
+let queryCloses = 0;
 
 function fakeQuery(): SdkQueryHandle {
 	return {
 		async *[Symbol.asyncIterator](): AsyncGenerator<SDKMessage> {},
 		async interrupt() {},
-		close() {},
+		close() {
+			queryCloses++;
+		},
 		setModel: async (model?: string) => {
 			modelCalls.push(model);
 		},
@@ -64,6 +67,7 @@ afterEach(() => {
 	closeSession(SESSION_ID, "test_cleanup");
 	forgetBinding(SESSION_ID);
 	modelCalls.length = 0;
+	queryCloses = 0;
 	resetSessionRegistryBoundary();
 });
 
@@ -113,5 +117,18 @@ describe("claude-sdk-oauth model and thinking switches", () => {
 
 		expect(getSession(SESSION_ID)).toBeUndefined();
 		expect(getBinding(SESSION_ID)).toMatchObject({ sdkSessionId });
+	});
+
+	it("keeps the live query of an in-flight turn when the thinking level changes mid-turn", async () => {
+		overrideSessionRegistryBoundary({ queryFactory: () => fakeQuery() });
+		const { api, handlers } = fakeExtension();
+		registerSessionRegistry(api);
+		const entry = seed();
+		entry.activeTurn = { uuid: "streaming-turn" };
+
+		await emit(handlers, "thinking_level_select", { type: "thinking_level_select", level: "medium" });
+
+		expect(queryCloses).toBe(0);
+		expect(getSession(SESSION_ID)).toBe(entry);
 	});
 });

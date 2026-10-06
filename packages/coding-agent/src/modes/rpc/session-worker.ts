@@ -1,7 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { existsSync, realpathSync } from "node:fs";
-import { basename, dirname, join, resolve } from "node:path";
-import { parentPort } from "node:worker_threads";
+import { join } from "node:path";
+import { parentPort, workerData } from "node:worker_threads";
 import { runWithProviderScope } from "@earendil-works/pi-ai/node/provider-scope";
 import { isBunBinary } from "../../config.ts";
 import { WAKE_SOURCE_STATE_EVENT } from "../../core/extensions/builtin/monitor-state-event.ts";
@@ -9,19 +8,20 @@ import { takeOverStdout } from "../../core/output-guard.ts";
 import { getDefaultSessionDir } from "../../core/session-manager.ts";
 import { liveSessionWritePaths } from "../../core/session-write-reservation.ts";
 import { SettingsManager } from "../../core/settings-manager.ts";
+import { registerWebViewBroker } from "../../core/webview/webview-broker.ts";
 import { createCliRuntimeFactory } from "../../main.ts";
 import { initTheme } from "../interactive/theme/theme.ts";
 import { buildRpcSessionState } from "./connection-handler.ts";
 import { isHandoffBusy } from "./handoff-activity.ts";
 import { createRpcSessionBinding, type RpcSessionBinding } from "./session-binding.ts";
 import { SessionEventWriter } from "./session-event-writer.ts";
+import { canonicalSessionPath } from "./session-path-key.ts";
 import { type RpcSessionEntry, RpcSessionRegistry } from "./session-registry.ts";
 import { createWorkerCredit } from "./session-worker-credit.ts";
 import {
 	type HostToSessionWorker,
 	SESSION_WORKER_LIMITS,
 	type SessionWorkerToHost,
-	type WorkerDisplay,
 	type WorkerSnapshot,
 } from "./session-worker-protocol.ts";
 
@@ -31,6 +31,7 @@ if (isBunBinary) {
 }
 
 takeOverStdout();
+registerWebViewBroker(Reflect.get(Object(workerData), "webviewBroker"));
 const port = parentPort;
 if (!port) throw new Error("Session worker requires a parent port");
 const send = (message: SessionWorkerToHost): void => port.postMessage(message);
@@ -40,13 +41,9 @@ function failWorker(error: string): never {
 	process.exit(1);
 }
 
-function canonicalPath(path: string): string {
-	const absolute = resolve(path);
-	return existsSync(absolute) ? realpathSync(absolute) : join(realpathSync(dirname(absolute)), basename(absolute));
-}
-
 const { exchange, installWriteReservation } = createWorkerCredit(send, failWorker);
-installWriteReservation(canonicalPath);
+// The host's key for the same file, so a deleted directory neither throws here nor misses (senpi#2285).
+installWriteReservation(canonicalSessionPath);
 
 class WorkerEventWriter extends SessionEventWriter {
 	constructor() {
@@ -89,28 +86,9 @@ let prepared: Extract<HostToSessionWorker, { type: "prepare" }> | undefined;
 let registry: RpcSessionRegistry | undefined;
 let entry: RpcSessionEntry | undefined;
 let binding: RpcSessionBinding | undefined;
-let display: WorkerDisplay = { revision: 0, width: 80, rendered: false, capabilities: [] };
 let closing = false;
 let unsubscribe: (() => void) | undefined;
 let unsubscribeWake: (() => void) | undefined;
-
-function applyDisplay(next: WorkerDisplay): boolean {
-	if (next.revision < display.revision) return false;
-	display = next;
-	return true;
-}
-
-function updateDisplay(message: (signal: SharedArrayBuffer) => SessionWorkerToHost): void {
-	const signal = new SharedArrayBuffer(24);
-	exchange(message, "session_worker_display_denied", signal);
-	const values = new Float64Array(signal);
-	applyDisplay({
-		...display,
-		width: values[1],
-		revision: values[2],
-		rendered: Atomics.load(new Int32Array(signal), 1) === 1,
-	});
-}
 
 function publishSnapshot(settled = false): void {
 	const value = snapshot();
@@ -133,10 +111,10 @@ function subscribeSession(): void {
 function snapshot(): WorkerSnapshot {
 	if (!entry?.runtime) throw new Error("Session runtime is not ready");
 	const session = entry.runtime.session;
-	const sessionPath = session.sessionFile ? canonicalPath(session.sessionFile) : undefined;
+	const sessionPath = session.sessionFile ? canonicalSessionPath(session.sessionFile) : undefined;
 	// The host releases every granted path this list omits, so it must name each writer
 	// still alive in this isolate, plus the session the runtime currently writes.
-	const live = new Set(liveSessionWritePaths().map(canonicalPath));
+	const live = new Set(liveSessionWritePaths().map(canonicalSessionPath));
 	if (sessionPath) live.add(sessionPath);
 	return {
 		state: buildRpcSessionState(session),
@@ -158,8 +136,8 @@ async function handle(message: HostToSessionWorker): Promise<void> {
 					getDefaultSessionDir(message.profile.cwd, message.configuration.agentDir),
 					`${new Date().toISOString().replace(/[:.]/g, "-")}_${randomUUID()}.jsonl`,
 				);
-			prepared = { ...message, profile: { ...message.profile, sessionPath: canonicalPath(path) } };
-			send({ type: "prepared", request: message.request, sessionPath: canonicalPath(path) });
+			prepared = { ...message, profile: { ...message.profile, sessionPath: canonicalSessionPath(path) } };
+			send({ type: "prepared", request: message.request, sessionPath: canonicalSessionPath(path) });
 			return;
 		}
 		case "commit": {
@@ -178,23 +156,17 @@ async function handle(message: HostToSessionWorker): Promise<void> {
 		}
 		case "bind": {
 			if (!entry || binding) throw new Error("Invalid session binding");
-			display = message.display;
 			const bindingEntry = entry;
 			const createBinding = () =>
 				createRpcSessionBinding(message.sessionId, bindingEntry, writer, () => send({ type: "request_close" }), {
-					capabilities: display.capabilities,
-					sharedWidth: {
-						getWidth: () => display.width,
-						setWidth: (connection, width) =>
-							updateDisplay((signal) => ({ type: "width", connection, width, signal })),
-						onChange: () => binding?.rerenderComponents?.(),
-						clearWidth: () => {},
+					capabilities: message.capabilities,
+					clientInfo: {
 						connectionId: () => writer.currentConnection(),
-						hasRenderedComponents: () => display.rendered,
-						setCapabilities: (connection, capabilities) => {
-							updateDisplay((signal) => ({ type: "capabilities", connection, capabilities, signal }));
-							binding?.rerenderComponents?.();
-						},
+						setCapabilities: (connection, capabilities) =>
+							exchange(
+								(signal) => ({ type: "capabilities", connection, capabilities, signal }),
+								"session_worker_capabilities_denied",
+							),
 					},
 				});
 			binding = await (message.connection === undefined
@@ -218,7 +190,6 @@ async function handle(message: HostToSessionWorker): Promise<void> {
 					String(message.command.type),
 				);
 			if (!binding || (closing && !privileged)) throw new Error("session_closing");
-			applyDisplay(message.display);
 			const activeBinding = binding;
 			await (message.connection === undefined
 				? activeBinding.handle(message.command)
@@ -227,9 +198,15 @@ async function handle(message: HostToSessionWorker): Promise<void> {
 			send({ type: "result", request: message.request });
 			return;
 		}
-		case "display":
-			if (applyDisplay(message.display)) binding?.rerenderComponents?.();
-			send({ type: "control_done", control: "display" });
+		case "prompt_surface":
+			if (!entry?.runtime) throw new Error("session_closing");
+			entry.runtime.setPromptSurface(message.surface);
+			send({ type: "result", request: message.request });
+			return;
+		case "browser_engine":
+			if (!entry?.runtime) throw new Error("session_closing");
+			entry.runtime.setBrowserEngine(message.engine);
+			send({ type: "result", request: message.request });
 			return;
 		case "cancel_ui":
 			binding?.cancelPendingExtensionUiRequests?.();

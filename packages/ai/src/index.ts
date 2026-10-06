@@ -92,12 +92,14 @@ export {
 	renderCursorCliModelString,
 	resolveCursorSelectionDescriptor,
 } from "./cursor/selection-descriptor.ts";
+export * from "./endpoint-reasoning-efforts.ts";
 export * from "./env-api-keys.ts";
-export * from "./images-models.ts";
 export * from "./legacy-provider-ids.ts";
+export { modelSupportsAssistantPrefill } from "./model.ts";
 export * from "./models.ts";
 export * from "./models-store.ts";
 export { supportsAllowedToolChoice } from "./openai-responses-compat.ts";
+export * from "./provider-diagnostic.ts";
 export * from "./providers/faux.ts";
 export * from "./session-resources.ts";
 export {
@@ -140,8 +142,9 @@ export * from "./utils/provider-failure-description.ts";
 export * from "./utils/retry.ts";
 export * from "./utils/server-fallback-receipt.ts";
 export * from "./utils/stop-details.ts";
-export { contentText } from "./utils/text.ts";
+export { contentText, getSystemMessageText, renderSystemMessageUpdate } from "./utils/text.ts";
 export * from "./utils/tool-pair-repair.ts";
+export * from "./utils/transcript.ts";
 export * from "./utils/typebox-helpers.ts";
 export { uuidv7 } from "./utils/uuid.ts";
 export * from "./utils/validation.ts";

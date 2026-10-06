@@ -24,14 +24,7 @@ const WORKSPACE = {
 	"@earendil-works/pi-agent-core": "packages/agent/src",
 	"@earendil-works/pi-telemetry": "packages/telemetry/src",
 	"@earendil-works/pi-tui": "packages/tui/src",
-	"@code-yeongyu/senpi-desktop-engine": "packages/desktop-engine/src",
-	"@code-yeongyu/senpi-desktop-prelude": "packages/desktop-prelude/src",
-	"@code-yeongyu/senpi-desktop-protocol": "packages/desktop-protocol/src",
-	"@code-yeongyu/senpi-desktop-service": "packages/desktop-service/src",
-	"@code-yeongyu/senpi-desktop-tool": "packages/desktop-tool/src",
 };
-
-const DESKTOP_FORBIDDEN = ["packages/agent/", "packages/ai/", "packages/tui/", "packages/coding-agent/", "packages/senpi-codemode/"];
 
 /**
  * Budgets are deliberate. `.` and `./node` are batteries-included entries and stay unbounded; every
@@ -39,6 +32,11 @@ const DESKTOP_FORBIDDEN = ["packages/agent/", "packages/ai/", "packages/tui/", "
  */
 const BUDGETS = {
 	"packages/ai": {
+		"./models": {
+			// Fork: models.ts also carries credential-pool slots, models-store and catalog max lookup (21 files at the v1.0.0 sync).
+			maxFiles: 21,
+			forbid: ["providers/", "models.generated.ts", "index.ts", "utils/validation.ts", "utils/typebox-helpers.ts"],
+		},
 		"./utils/*": { maxFiles: 3, forbid: ["providers/", "api/", "index.ts"] },
 	},
 	"packages/agent": {
@@ -46,24 +44,6 @@ const BUDGETS = {
 		"./harness/context": { maxFiles: 6, forbid: ["harness/runtime/", "harness/execution/", "packages/ai/"] },
 		"./harness/env/nodejs": { maxFiles: 5, forbid: ["packages/ai/", "harness/runtime/"] },
 		"./harness/session": { maxFiles: 25, forbid: ["harness/runtime/", "harness/execution/", "packages/ai/src/index.ts"] },
-	},
-	// Desktop computer use: every package is a narrow leaf of the agent, so none may reach the agent,
-	// provider, or renderer graphs. Import direction between them is pinned by
-	// desktop-package-boundaries.test.mjs.
-	"packages/desktop-protocol": {
-		".": { maxFiles: 10, forbid: [...DESKTOP_FORBIDDEN, "packages/desktop-engine/", "packages/desktop-service/", "packages/desktop-tool/"] },
-	},
-	"packages/desktop-prelude": {
-		".": { maxFiles: 10, forbid: [...DESKTOP_FORBIDDEN, "packages/desktop-engine/", "packages/desktop-service/", "packages/desktop-tool/"] },
-	},
-	"packages/desktop-engine": {
-		".": { maxFiles: 15, forbid: [...DESKTOP_FORBIDDEN, "packages/desktop-service/", "packages/desktop-tool/"] },
-	},
-	"packages/desktop-service": {
-		".": { maxFiles: 40, forbid: [...DESKTOP_FORBIDDEN, "packages/desktop-tool/"] },
-	},
-	"packages/desktop-tool": {
-		".": { maxFiles: 60, forbid: DESKTOP_FORBIDDEN },
 	},
 };
 

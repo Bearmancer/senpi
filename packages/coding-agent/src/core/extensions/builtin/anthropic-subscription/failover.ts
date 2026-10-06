@@ -1,4 +1,11 @@
 import type { CredentialStore } from "@earendil-works/pi-ai";
+import {
+	activeModelBlockUntil,
+	mergeModelBlocks,
+	modelBlockKey,
+	withModelBlock,
+} from "../../../credential-pool/model-scope.ts";
+import { usageLimitResetMs } from "../../../credential-pool/reset-time.ts";
 import type { AccountSlot, AnthropicSubscriptionCredential } from "./accounts.ts";
 import { clearExpiredBlocks } from "./affinity.ts";
 import type { SdkErrorClassification } from "./errors.ts";
@@ -24,6 +31,8 @@ export type FailoverOptions<TEvent> = {
 	classify: (error: unknown) => SdkErrorClassification;
 	store: CredentialStore;
 	providerId: string;
+	/** The requested model; a limit naming its family blocks only that family on the account. */
+	model?: string;
 	now?: () => number;
 	baseBlockMs?: number;
 	onFailover?: (event: FailoverEvent) => void | Promise<void>;
@@ -86,12 +95,21 @@ function blockedAccount(
 	attempt: number,
 	baseBlockMs: number,
 	error: unknown,
+	model: string | undefined,
 ): AccountSlot {
 	if (classification.kind === "auth_error") {
 		const { blockedUntil: _blockedUntil, ...withoutExpiry } = account;
 		return { ...withoutExpiry, blockReason: "auth_error" };
 	}
 	const fallback = Math.min(MAX_RATE_LIMIT_BLOCK_MS, baseBlockMs * 2 ** attempt);
+	if (classification.modelFamily !== undefined && model !== undefined) {
+		// A model-scoped limit lasts until its own reset, which Claude Code states in
+		// the text ("resets 8pm"); the account itself keeps serving other models.
+		const resetMs = retryAfterMs(error) ?? usageLimitResetMs(errorText(error), now);
+		const duration = Math.min(MAX_RATE_LIMIT_BLOCK_MS, resetMs !== undefined && resetMs > 0 ? resetMs : fallback);
+		const key = modelBlockKey(classification.modelFamily, model);
+		return { ...account, modelBlocks: withModelBlock(account.modelBlocks, key, now + duration, now) };
+	}
 	const duration = Math.min(MAX_RATE_LIMIT_BLOCK_MS, retryAfterMs(error) ?? fallback);
 	return { ...account, blockedUntil: now + duration, blockReason: classification.kind };
 }
@@ -100,7 +118,20 @@ function replaceAccount(accounts: readonly AccountSlot[], replacement: AccountSl
 	return accounts.map((account) => (account.name === replacement.name ? replacement : account));
 }
 
-async function persistBlock(store: CredentialStore, providerId: string, account: AccountSlot): Promise<void> {
+/**
+ * Persists a block onto the stored slot. An `auth_error` is a verdict on the
+ * token that failed, so it is written only while the stored slot still holds
+ * that token. When another writer replaced the material meanwhile (a refresh in
+ * this or another process, or a re-login), nothing is written and the stored
+ * slot is returned: locking it "until re-login" would strand a valid token.
+ */
+async function persistBlock(
+	store: CredentialStore,
+	providerId: string,
+	account: AccountSlot,
+	now: number,
+): Promise<AccountSlot | undefined> {
+	let superseded: AccountSlot | undefined;
 	await store.modify(providerId, async (current) => {
 		if (current?.type !== "oauth") return current;
 		const credential = current as AnthropicSubscriptionCredential;
@@ -109,17 +140,49 @@ async function persistBlock(store: CredentialStore, providerId: string, account:
 				...credential,
 				slotState: {
 					...credential.slotState,
-					[account.name]: { blockedUntil: account.blockedUntil, blockReason: account.blockReason },
+					[account.name]: {
+						blockedUntil: account.blockedUntil,
+						blockReason: account.blockReason,
+						// Union with what a concurrent request stored meanwhile, later expiry winning.
+						modelBlocks: mergeModelBlocks(
+							credential.slotState?.[account.name]?.modelBlocks,
+							account.modelBlocks,
+							now,
+						),
+					},
 				},
 			};
 		}
+		const stored = (credential.accounts ?? []).find((existing) => existing.name === account.name);
+		if (
+			account.blockReason === "auth_error" &&
+			stored !== undefined &&
+			(stored.access !== account.access || stored.refresh !== account.refresh)
+		) {
+			superseded = stored;
+			return current;
+		}
 		const accounts = (credential.accounts ?? []).map((existing) =>
 			existing.name === account.name
-				? { ...existing, blockedUntil: account.blockedUntil, blockReason: account.blockReason }
+				? {
+						...existing,
+						blockedUntil: account.blockedUntil,
+						blockReason: account.blockReason,
+						modelBlocks: mergeModelBlocks(existing.modelBlocks, account.modelBlocks, now),
+					}
 				: existing,
 		);
 		return { ...credential, accounts };
 	});
+	return superseded;
+}
+
+function usable(account: AccountSlot, now: number, model: string | undefined): boolean {
+	return (
+		account.blockReason === undefined &&
+		(account.blockedUntil === undefined || account.blockedUntil <= now) &&
+		activeModelBlockUntil(account.modelBlocks, model, now) === undefined
+	);
 }
 
 /**
@@ -132,9 +195,12 @@ export async function* runFailover<TEvent>(options: FailoverOptions<TEvent>): As
 	const baseBlockMs = options.baseBlockMs ?? DEFAULT_RATE_LIMIT_BLOCK_MS;
 	let accounts = clearExpiredBlocks(options.accounts, now());
 	let lastError: ClassifiedSdkError | undefined;
+	const retriedOnStoredMaterial = new Set<string>();
 
 	for (let attempt = 0; attempt < accounts.length; attempt++) {
-		const account = options.selectFn(accounts);
+		// Each attempt gets its own copy: prepareSlot refreshes the slot in place, and a concurrent
+		// attempt holding the same stored object must still report the token it actually sent.
+		const account = { ...options.selectFn(accounts) };
 		let visibleDeltaEmitted = false;
 		try {
 			const attemptStream = await options.runAttempt(account);
@@ -151,9 +217,22 @@ export async function* runFailover<TEvent>(options: FailoverOptions<TEvent>): As
 			lastError = classified;
 			if (!classification.retryable) throw classified;
 
-			const blocked = blockedAccount(account, classification, now(), attempt, baseBlockMs, error);
+			const blocked = blockedAccount(account, classification, now(), attempt, baseBlockMs, error, options.model);
+			const superseded = await persistBlock(options.store, options.providerId, blocked, now());
+			if (
+				superseded &&
+				!visibleDeltaEmitted &&
+				usable(superseded, now(), options.model) &&
+				!retriedOnStoredMaterial.has(account.name)
+			) {
+				// The rejected token was already replaced in the store: retry this
+				// account once on the stored material instead of failing over.
+				retriedOnStoredMaterial.add(account.name);
+				accounts = replaceAccount(accounts, superseded);
+				attempt--;
+				continue;
+			}
 			accounts = replaceAccount(accounts, blocked);
-			await persistBlock(options.store, options.providerId, blocked);
 			const event: FailoverEvent = {
 				account: blocked,
 				classification,

@@ -10,11 +10,9 @@ import { prepareSenpiBundledWorkspaces } from "./prepare-senpi-bundled-workspace
 export { run } from "./local-release-runner.mjs";
 
 const packages = [
-	// Chord is `private: true` and never published to the registry, but it is a bundled
-	// dependency of @code-yeongyu/senpi: local-release must build it (staging requires its
-	// dist under coding-agent/node_modules) and pack it so the isolated installs can resolve
-	// the registry-absent `@earendil-works/chord` through a file: tarball, like every other
-	// bundled workspace.
+	// Chord is `private: true` here; the published packages depend on upstream's own
+	// `@earendil-works/chord` release. local-release builds and packs the in-tree copy so the
+	// isolated installs resolve it through a file: tarball like every other workspace.
 	{ directory: "packages/chord", name: "@earendil-works/chord" },
 	{ directory: "packages/telemetry", name: "@earendil-works/pi-telemetry" },
 	{ directory: "packages/ai", name: "@earendil-works/pi-ai" },
@@ -24,12 +22,6 @@ const packages = [
 	{ directory: "packages/protocol", name: "@earendil-works/pi-protocol" },
 	{ directory: "packages/client", name: "@earendil-works/pi-client" },
 	{ directory: "packages/senpi-codemode", name: "@code-yeongyu/senpi-codemode" },
-	// The desktop packages are private and bundled like chord, in build order.
-	{ directory: "packages/desktop-protocol", name: "@code-yeongyu/senpi-desktop-protocol" },
-	{ directory: "packages/desktop-prelude", name: "@code-yeongyu/senpi-desktop-prelude" },
-	{ directory: "packages/desktop-engine", name: "@code-yeongyu/senpi-desktop-engine" },
-	{ directory: "packages/desktop-service", name: "@code-yeongyu/senpi-desktop-service" },
-	{ directory: "packages/desktop-tool", name: "@code-yeongyu/senpi-desktop-tool" },
 	{ directory: "packages/coding-agent", name: "@code-yeongyu/senpi" },
 ];
 const packageCliCommand = "senpi";
@@ -214,6 +206,8 @@ function main() {
 
 	if (!options.skipCheck || !options.skipTest) {
 		run("npm", ["--prefix", "packages/ai", "run", "generate-models"], { cwd: repoRoot });
+		// senpi#2645: a regeneration that drops a bundled provider default stops here.
+		run("npm", ["--prefix", "packages/coding-agent", "run", "check:provider-defaults"], { cwd: repoRoot, env: { CI: "1" } });
 	}
 
 	if (!options.skipCheck) {
@@ -256,11 +250,10 @@ function main() {
 				throw new Error("Bun is required for the isolated Bun install. Use --skip-bun-install to skip it.");
 			}
 			mkdirSync(bunInstallDirectory, { recursive: true });
-			// Bun's resolver enters an unbounded allocating loop (RAM explosion) when a
-			// `file:` tarball that BUNDLES other internal deps is ALSO listed in `overrides`
-			// as a `file:` tarball. Install only the root app as a dependency and pin every
-			// other internal package via `overrides` (never the root itself). npm tolerates
-			// the all-in-overrides shape; bun does not.
+			// Install only the root app as a dependency and pin every other internal package
+			// via `overrides` (never the root itself): Bun's resolver has looped without bound
+			// when the root `file:` tarball was also listed in `overrides`. npm tolerates the
+			// all-in-overrides shape.
 			const bunRootName = "@code-yeongyu/senpi";
 			const bunRootTarball = tarballs.get(bunRootName);
 			if (!bunRootTarball) {

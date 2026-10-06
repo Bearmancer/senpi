@@ -2,6 +2,7 @@ import { type Model, modelsAreEqual } from "@earendil-works/pi-ai";
 import { Container, type Focusable, getKeybindings, Input, Spacer, Text, type TUI } from "@earendil-works/pi-tui";
 import { ModelRegistry } from "../../../core/model-registry.ts";
 import type { ModelRuntime } from "../../../core/model-runtime.ts";
+import { createAmbientProviderCheck } from "../../../core/provider-default-selection.ts";
 import type { SettingsManager } from "../../../core/settings-manager.ts";
 import { refreshModelCatalogs } from "../model-catalog-refresh.ts";
 import { rankModelSearchItems } from "../model-search-rank.ts";
@@ -246,7 +247,9 @@ export class ModelSelectorComponent extends Container implements Focusable {
 
 	private sortModels(models: ModelItem[]): ModelItem[] {
 		const sorted = [...models];
-		// Sort: current model first, then favorites, then by provider/model.
+		const isAmbient = createAmbientProviderCheck(this.modelRuntime);
+		// Sort: current model first, then favorites, then configured before ambient-only providers
+		// (senpi#2327), then by provider/model.
 		sorted.sort((a, b) => {
 			const aIsCurrent = modelsAreEqual(this.currentModel, a.model);
 			const bIsCurrent = modelsAreEqual(this.currentModel, b.model);
@@ -256,6 +259,8 @@ export class ModelSelectorComponent extends Container implements Focusable {
 			const bIsFavorite = isFavoriteModel(this.favoriteIdsAtOpen, b.fullId);
 			if (aIsFavorite && !bIsFavorite) return -1;
 			if (!aIsFavorite && bIsFavorite) return 1;
+			const ambientCompare = Number(isAmbient(a.provider)) - Number(isAmbient(b.provider));
+			if (ambientCompare !== 0) return ambientCompare;
 			const providerCompare = a.provider.localeCompare(b.provider);
 			if (providerCompare !== 0) return providerCompare;
 			return a.id.localeCompare(b.id);

@@ -6,6 +6,458 @@
 
 ### Added
 
+- An opt-in process-isolated JavaScript kernel (`isolation.js: "process"` or `SENPI_CODEMODE_JS_ISOLATION=process`) runs each JavaScript kernel in its own subprocess instead of a worker thread, so a kernel crash (`SIGSEGV`, out-of-memory, `process.exit`, an uncaught error) can no longer take down the host session; the next cell runs on a replacement child with a restart notice naming the crash. It isolates crashes, not hostile code: a cell is trusted as in worker mode, and hostile code belongs in `isolate: true` sandbox cells ([#2752](https://github.com/code-yeongyu/senpi/issues/2752) tracks hostile-cell isolation). The child runs on the host's own runtime, exits as soon as its host is gone (including `SIGKILL`), carries large output and `BigInt`/`undefined` values as worker mode does, and its frames carry a per-process token so stray output is never taken for a frame. The default stays `"worker"` and worker-mode behaviour is unchanged ([#2452](https://github.com/code-yeongyu/senpi/issues/2452)).
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.10-2] - 2026-10-05
+
+### Breaking Changes
+
+### Added
+
+- `@code-yeongyu/senpi-codemode/executable-settings.json` lists the settings that name an executable run at session start (today `languages.pyInterpreter`). senpi's project-trust check reads it, so a project codemode file that sets one asks for trust, and a test fails if a new free-form string setting is neither on the list nor marked as not naming an executable ([#2772](https://github.com/code-yeongyu/senpi/pull/2772)).
+
+### Changed
+
+### Fixed
+
+- Settings that were accepted but did nothing now take effect ([#2763](https://github.com/code-yeongyu/senpi/issues/2763)): `kernelTools.enabled: false` makes JavaScript `tool(fn)` and Python `@tool` refuse with `tools_unavailable`; `languages.pyInterpreter` makes the Python kernel run exactly that executable (a path that does not answer makes Python unavailable, with a warning naming the setting; one named by a project's own settings file is honored only in a trusted project); `prompt.advertiseHelpers: true` adds one line pointing at `tool_schema('eval:helpers')` to the eval description. Settings-file warnings (an unknown key, a fallback to defaults) now reach the user as a notice, or on stderr without a UI.
+
+### Removed
+
+## [2026.10.10] - 2026-10-05
+
+### Breaking Changes
+
+### Added
+
+- Isolated eval cells: with `sandbox.enabled`, `isolate: true` runs a JavaScript cell in a fresh QuickJS VM with no persistence and no ambient host (only `tools.*`, `print`, `display`), streaming output under a credit window. Off by default; the eval schema is unchanged until the setting is on.
+- A JavaScript cell that is only `%bun add <package ...>` or `%npm add <package ...>` installs packages into a per-session managed environment without restarting the kernel; the next cell imports them by bare name, the project's `package.json` and `node_modules` are untouched, lifecycle scripts never run, and a failed or cancelled install leaves the previous packages active ([#2452](https://github.com/code-yeongyu/senpi/issues/2452)).
+
+### Changed
+
+### Fixed
+
+- An isolated (`isolate: true`) cell whose QuickJS runtime is missing now fails with `eval_isolate_unavailable` before any of its code runs, instead of a module-resolution error that named a host path ([#2452](https://github.com/code-yeongyu/senpi/issues/2452)).
+
+- `%bun add` over a package first installed from a local directory now works when the new archive's top directory is not `package/` (a GitHub-style `<repo>-<sha>.tgz`, or a plain `.tar`): its name is read from the archive's own top-level directory, so the old directory's links are removed before bun installs ([#2452](https://github.com/code-yeongyu/senpi/issues/2452)).
+
+- A nested tool call that is denied inside an `eval` cell (a permission denial or another hook's block) now reaches the cell as the plain denial, without the `Expected parameters:` schema hint that made it read like an argument error; argument failures still get the hint ([#2700](https://github.com/code-yeongyu/senpi/issues/2700)). Thanks to @MoerAI ([#2755](https://github.com/code-yeongyu/senpi/pull/2755)).
+- An `eval` run with an invalid `language` value (for example `"python"`, `""` or `null`) now gets its own error listing the enabled languages, instead of the "run requires language" message meant for an omitted one; `peek` and `stop` still need no language ([#1395](https://github.com/code-yeongyu/senpi/issues/1395)). Thanks to @MoerAI.
+
+### Removed
+
+## [2026.10.9] - 2026-10-04
+
+### Breaking Changes
+
+### Added
+
+- Python `agent(prompt, tools=[...])` grants the child the cell's `@tool` functions by name, like JavaScript's `agent(prompt, { tools })`; anything other than a list of names is refused with `invalid_tools` ([#2731](https://github.com/code-yeongyu/senpi/issues/2731)).
+- `workpool(agent, name, {mode, tools})` forwards `tools`, a list of kernel-tool names the cell defined, to the host workpool unchanged in all four languages, so pool workers can call them; anything other than a list of names is refused with `invalid_tools` before reaching the host. Which kernels' tools a host accepts is the host's call: JavaScript `tool(fn)` tools work on omo today, while Python `@tool` tools need omo#9529 ([#2452](https://github.com/code-yeongyu/senpi/issues/2452)).
+- A Python or JavaScript cell that is only `%load <path>` runs that local file as the cell: its definitions persist, Python tracebacks name the file and its sibling modules import, and JavaScript resolves the file's relative imports from its directory; remote URLs are refused ([#2452](https://github.com/code-yeongyu/senpi/issues/2452)).
+- A Python cell that is only `%pip install <requirements>` installs packages without restarting the kernel; the next cell imports them. Packages go into the session's own environment (or `<cwd>/.senpi/python-packages` after `%environment project`), never the interpreter's site-packages or the user site, and a failed or cancelled install leaves the previous packages active ([#2452](https://github.com/code-yeongyu/senpi/issues/2452)).
+
+### Changed
+
+### Fixed
+
+- A Python cell can now grant its `@tool` functions to a child ([#2731](https://github.com/code-yeongyu/senpi/issues/2731)). Host calls from Python cells (`tool.task(..., tools=[...])`, `agent(..., tools=[...])`, `workpool(..., tools=[...])`) reached the host with no kernel-tools capability, so every such grant was refused as unavailable. Each call now carries its cell, and the host gives it that cell's capability while the cell runs; a call from another, unknown or finished cell gets none.
+- `%pip` parsing follow-ups ([#2689](https://github.com/code-yeongyu/senpi/pull/2689)): a `%pip` or `%environment` line after code now says to put it on its own cell instead of "Unsupported line magic"; a comment line ending in a backslash no longer swallows the `%pip` line after it; inside double quotes a backslash is kept unless it escapes a quote, backslash, `$` or a backtick, as a POSIX shell does.
+
+### Removed
+
+## [2026.10.8] - 2026-10-04
+
+### Breaking Changes
+
+### Added
+
+- Internal groundwork for installing Python packages from a cell: per-session environment revisions that are published only after a successful install (a failed or interrupted install leaves the previous revision active), a per-root install lock, and a pip installer that always targets the session's own directory. Not exposed to cells yet ([#2452](https://github.com/code-yeongyu/senpi/issues/2452)).
+- Python kernel tools: `@tool` registers a function that in-process children can call, with its schema inferred from type hints; callbacks are served while the kernel is idle or its cell waits on a host call, never during a running computation, and a reset or redefinition makes old descriptors stale. `tool.defined()` / `tool.undefine()` in Python, and `tool_schema("eval:kernel-tools")` ([#2452](https://github.com/code-yeongyu/senpi/issues/2452)).
+- Internal groundwork for isolated sandbox cells: a vendored copy of the pi codemode runtime (QuickJS in a worker) with two opt-in host options, output streaming bounded by a credit window and a store policy that keeps no state. Nothing uses it yet ([#2452](https://github.com/code-yeongyu/senpi/issues/2452)).
+
+### Changed
+
+### Fixed
+
+- A cold Python kernel start on a busy machine no longer fails as a hang: startup keeps waiting while the interpreter is still using CPU or writing output, and fails only when it has gone completely still (naming the stage), or after 120 s without becoming ready ([#2718](https://github.com/code-yeongyu/senpi/issues/2718)).
+
+### Removed
+
+## [2026.10.7] - 2026-10-04
+
+### Breaking Changes
+
+### Added
+
+- JavaScript kernel tools: `tool.defined()` lists the defined kernel tools and `tool.undefine(name)` removes one; `tool(fn, { name })` registers a tool under an explicit name while keeping the function's argument order ([#2452](https://github.com/code-yeongyu/senpi/issues/2452)).
+- In-cell `wait(handles, {timeout, mode})` barrier and `handle(node | ref | {pool_id})` rich views in all four kernels: `wait` returns values in input order (`all`), the first success (`any`) or every outcome (`settled`), times out with `eval_wait_timeout` without cancelling work, and pauses the run budget while parked; `handle(node).control` offers `status()`, `output()`, `send()`, `cancel()` and `wait()` fenced by owner, id and `run_epoch` through the host's `EvalHandleHost` capability (agent and workpool handles fail with `eval_wait_unavailable` on a host without it); `completion(prompt, {handle: true})` returns an opt-in completion handle bounded by its cell's hard deadline; `tool_schema("eval:helpers")` and `tool_schema("eval:wait")` document the surface and the removed-tool hint for `wait` points at them. The legacy `agent(..., {handle: true})` record, the eval description and the eval input schema are unchanged; the Python runner's dispatcher was renamed `_handle_message` so `handle()` is the helper ([#2687](https://github.com/code-yeongyu/senpi/pull/2687)).
+
+### Changed
+
+### Fixed
+
+- The Ruby kernel's memory notice names the largest globals again on Ruby 2.6 (the sizer used a Ruby 2.7 method) ([#2696](https://github.com/code-yeongyu/senpi/issues/2696)).
+- Eval no longer fails with "codemode session manager is disposed" for the rest of a session after a session switch or fork that another extension cancelled: codemode only tears its kernels down when the session actually ends ([#1706](https://github.com/code-yeongyu/senpi/issues/1706)).
+- A session whose codemode runtime failed to start is recovered by the next eval call (once, with one stderr line naming the failed start); if re-creation also fails, the call says "codemode runtime could not be re-created: <reason>" and how to bring eval back ([#1706](https://github.com/code-yeongyu/senpi/issues/1706)).
+
+### Removed
+
+## [2026.10.6] - 2026-10-04
+
+### Breaking Changes
+
+### Added
+
+- An opt-in `memory.idleParkMinutes` setting (off by default) closes a kernel that had no cell running or queued for that many minutes to give its memory back; the next cell starts a fresh kernel and its result says every earlier global is lost ([#2452](https://github.com/code-yeongyu/senpi/issues/2452)).
+- Ruby eval results name their largest globals, and Ruby and Julia kernels now get the same large-memory notice as JavaScript and Python when the interpreter footprint crosses `memory.noticeMb` ([#2452](https://github.com/code-yeongyu/senpi/issues/2452)).
+- Julia eval results name their largest globals in that notice ([#2452](https://github.com/code-yeongyu/senpi/issues/2452)).
+
+### Changed
+- Kernel tool descriptors may name any eval language (`js`, `py`, `rb`, `jl`), not only `js`; today only JavaScript kernels define tools, so nothing a session sees changes ([#2452](https://github.com/code-yeongyu/senpi/issues/2452)).
+
+### Fixed
+- A Ruby or Julia kernel whose start hangs no longer leaves its cells waiting forever: startup fails, naming the stage it stalled in, once the runner has printed nothing, changed no stage and its process group has used no CPU for 30 s, so a slow but busy start (a cold Julia compiling its prelude) is never cut off ([#2452](https://github.com/code-yeongyu/senpi/issues/2452)).
+- A `codemode.json` that names a key this version does not know no longer throws away every other setting: the unknown key gets one warning and the rest still apply (known nested objects stay strict). Optional keys for upcoming features (`environments`, `isolation`, `sandbox`, `prompt.advertiseHelpers`, `kernelTools`, `languages.pyInterpreter`) parse with today's behaviour as their defaults ([#2452](https://github.com/code-yeongyu/senpi/issues/2452)).
+
+- A Python cell's host calls (`tool.*`, `completion`) no longer go through a configured HTTP proxy: the loopback bridge request ignores proxy settings from the environment and, on Windows, the registry, so a proxy can't refuse a `127.0.0.1` call that never needed it ([#2619](https://github.com/code-yeongyu/senpi/issues/2619)).
+- A JavaScript memory report no longer runs user code: array elements are read through their own descriptors (an index accessor is skipped and the estimate marked approximate), and typed arrays, buffers, Blob, Map and Set are sized through the built-in getters, so a subclass that overrides `byteLength` or `size` is never called ([#2452](https://github.com/code-yeongyu/senpi/issues/2452)).
+
+### Removed
+
+## [2026.10.5] - 2026-10-03
+
+### Breaking Changes
+
+### Added
+
+- Eval kernels expose the session's `OMO_BROWSER_ENGINE` and clear a value inherited from the host process for a session that chose no engine ([#2611](https://github.com/code-yeongyu/senpi/issues/2611)).
+- A Python, Ruby, or Julia eval kernel whose interpreter dies is replaced once instead of failing every later cell: Ruby and Julia no longer stay closed after a crash, and a Python kernel whose stuck interpreter finally exits recovers instead of rejecting every cell. Cells queued behind the death keep their order and run on the replacement, whose first result says `[<language> kernel was restarted after <reason>; every global is lost]`; the cell that was running fails once and is never re-run, and a replacement that dies before finishing a cell fails the queued cells with `eval_kernel_unavailable` ([#2452](https://github.com/code-yeongyu/senpi/issues/2452))
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.4] - 2026-10-03
+
+### Breaking Changes
+
+### Added
+
+- Every live eval kernel in a process is listed in a process-wide registry with its session, language, measure, and last-known memory reading; a JavaScript kernel keeps the heap reading from each result and idle collection and answers an on-demand heap query between cells without running one, while Python, Ruby, and Julia kernels report their interpreter's footprint on demand. Thresholds, notices, and the result frame are unchanged ([#2561](https://github.com/code-yeongyu/senpi/issues/2561)).
+
+- An eval regression gate records the full prompt and schema surfaces, helper witnesses across five required runtime legs, codemode-scoped eager imports, measured teardown resources (including global, named-import, promise and AbortSignal timers, named by creation site) and legacy contract results against a frozen baseline. CI provisions every interpreter and publishes the report; unrelated host imports and slow child startup cannot cause a regression failure. ([#2452](https://github.com/code-yeongyu/senpi/issues/2452))
+
+- Added an interleaved eval timing benchmark that judges each runtime, workload and metric on adjacent base/head pairs against its own A/A-calibrated threshold (capped at 5%, or one shared band with `--band-scope global`), with process CPU accounting across interpreter crashes, a per-row minimum detectable effect, and explicit inconclusive results for incomplete, host-contaminated or noise-limited comparisons. ([#2452](https://github.com/code-yeongyu/senpi/issues/2452))
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.3] - 2026-10-03
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.2] - 2026-10-02
+
+### Breaking Changes
+
+### Added
+
+- An eval regression gate records the full prompt and schema surfaces, helper witnesses across five required runtime legs, codemode-scoped eager imports, measured teardown resources (including global, named-import, promise and AbortSignal timers, named by creation site) and legacy contract results against a frozen baseline. CI provisions every interpreter and publishes the report; unrelated host imports and slow child startup cannot cause a regression failure. ([#2452](https://github.com/code-yeongyu/senpi/issues/2452))
+
+### Changed
+
+### Fixed
+
+- Fixed Mistral-hosted GLM 5.3 omitting required `eval` run fields when tool use is forced. ([#2444](https://github.com/code-yeongyu/senpi/pull/2444) by [@urbanbreach](https://github.com/urbanbreach))
+- Anthropic-compatible gateways that reject an `enum` inside a root `anyOf` branch (HTTP 400, code 11133) accept the `eval` schema again. ([#2569](https://github.com/code-yeongyu/senpi/issues/2569), reported and verified by [@DevNewbie1826](https://github.com/DevNewbie1826))
+- Reloading or replacing a session while a detached eval cell is running no longer kills the process from the footer's elapsed-time ticker. The ticker stops when its session's context is retired and starts again with the next session's cells; any other footer error still surfaces ([#2549](https://github.com/code-yeongyu/senpi/issues/2549) by [@rhyme227](https://github.com/rhyme227)).
+
+- JavaScript eval cells run in the session's project directory: a relative path in `Bun.file`, `Bun.write`, `node:fs`, `path.resolve`, `Bun.$`, spawned children, or `Bun.Glob` now resolves inside the project instead of the host process directory, which made `Bun.file("src/todo.ts")` fail with ENOENT in desktop threads and under `--cwd`. A missing or deleted session directory fails the cell with `CodemodeSessionCwdUnavailableError` instead of falling back to another directory. The bash tool's working directory is unchanged ([omo#9371](https://github.com/code-yeongyu/oh-my-openagent/issues/9371)).
+
+- Stop now explicitly reports when a running `Bun.$` wait forces the JavaScript kernel to restart and clears its variables, and recommends `Bun.spawn` or the bash tool for stoppable commands. Native shell semantics remain unchanged. Thanks to [@floweredao](https://github.com/floweredao) for the investigation ([#2475](https://github.com/code-yeongyu/senpi/pull/2475)); native cancellation remains tracked in [#2453](https://github.com/code-yeongyu/senpi/issues/2453).
+
+### Removed
+
+## [2026.10.1-3] - 2026-10-01
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+- The `eval` tool points at the bun-1-4 skill before a cell that installs a package, spawns a server or PTY, or starts a long run, instead of demanding it before the first JavaScript cell ([#2505](https://github.com/code-yeongyu/senpi/issues/2505)).
+
+### Fixed
+
+- Kernel-originated tool approvals now reach the RPC client that submitted the cell, including approvals requested after a cell detaches and its original turn ends. Reusing a kernel no longer sends permission dialogs to its creation context. ([#2512](https://github.com/code-yeongyu/senpi/issues/2512))
+
+- Python eval startup waits for kernel readiness with advancing stage events instead of a five-second total deadline. Cold Windows imports can complete normally; a hung start identifies its stalled stage. ([#2452](https://github.com/code-yeongyu/senpi/issues/2452))
+
+- Fixed the running eval spinner freezing between output updates. ([#2503](https://github.com/code-yeongyu/senpi/issues/2503))
+
+### Removed
+
+## [2026.10.1-2] - 2026-10-01
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.1] - 2026-10-01
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.30] - 2026-09-30
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- An `eval` cell's return value reaches the model whole up to the normal tool-output budget: a long single-line value is no longer cut after 768 bytes with a bare `…`. Any output that is still cut (a printed line past the column cap, or output past the byte or line budget) now tells the model so, with the kept and original sizes and a `[Full output: <path>]` pointer to the saved full output. Reported by @haamsuk-collab. ([#2402](https://github.com/code-yeongyu/senpi/issues/2402))
+
+### Removed
+
+## [2026.9.29-5] - 2026-09-29
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.29-4] - 2026-09-29
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.29-3] - 2026-09-29
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.29-2] - 2026-09-29
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.29] - 2026-09-29
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.28-7] - 2026-09-28
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.28-6] - 2026-09-28
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.28-5] - 2026-09-28
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.28-4] - 2026-09-28
+
+### Breaking Changes
+
+### Added
+
+- JavaScript eval kernels report their memory: a result whose kernel holds at least `memory.noticeMb` (default 1 GiB) live after a collection carries one bracketed notice naming the largest globals and how to drop them, plus `details.memory` (`liveBytes`, `gcRan`, `globals`). A kernel whose live memory reaches `memory.ceilingMb` (default a quarter of physical memory, 2-8 GiB) says so in that result and restarts once no cell is running or queued on it; the next result reports `details.memory.recycled`. Settings `memory.gcWatermarkMb`, `memory.noticeMb`, `memory.ceilingMb` and their `SENPI_CODEMODE_MEMORY_*_MB` overrides; `0` disables each. ([#2261](https://github.com/code-yeongyu/senpi/issues/2261))
+- Python eval kernels follow the same memory contract: after each cell the kernel reads its process footprint (macOS `phys_footprint`, Linux `RssAnon`, Windows `PrivateUsage`), runs `gc.collect()` plus glibc `malloc_trim(0)` when it grew past `memory.gcWatermarkMb`, and a result at `memory.noticeMb` names the largest globals (numpy `nbytes`, pandas `memory_usage(deep=True)`, sampled containers) with `del <name>` advice; at `memory.ceilingMb` the Python kernel restarts once its queue is empty and the next result reports `details.memory.recycled`. Ruby and Julia kernels get the ceiling restart from the interpreter footprint the host reads after each result (no globals list). ([#2261](https://github.com/code-yeongyu/senpi/issues/2261))
+
+### Changed
+
+### Fixed
+
+- Retiring a JavaScript eval worker (timeout, interrupt, reset, crash, or memory-ceiling restart) no longer leaves each child process the cell was still running as a zombie of the host: the host now collects them after killing them. Measured: 30 retirements that each left two children went from 60 zombies to 0. ([#1962](https://github.com/code-yeongyu/senpi/issues/1962))
+- A persistent eval kernel no longer pins its first cell's handler for the whole kernel generation. The kernel dispatcher is now a bound method of the session manager instead of a closure over the `getKernel` call that created the kernel (under Bun/JSC that closure retained the creating cell's `onMessage` — its output buffers and display images — until the kernel was reset), and every cell releases its kernel listener once it settles, so nothing keeps a settled cell's state alive. Interpreter startup stderr still reaches the cell that created the kernel; a message arriving between cells reaches no settled handler. ([#2260](https://github.com/code-yeongyu/senpi/issues/2260))
+- Memory a JavaScript eval cell no longer references returns to the machine without a reset: a finished cell whose heap grew past `memory.gcWatermarkMb` (default 256 MiB) runs a full collection, and on Node and on Bun before 1.4.3 a kernel still holding that much runs an idle collection about a second after its last cell, so `delete globalThis.rows` no longer leaves gigabytes resident until the kernel is reset (Bun 1.4.3 collects idle threads itself). ([#2261](https://github.com/code-yeongyu/senpi/issues/2261))
+
+- Settled eval cells kept for `peek`/`list` no longer pin up to ~800 MB of image data in the session's memory. Their images are written to `<session artifacts>/settled-images/` and read back on `peek`, which still returns the full result. The files are bounded by the new `memory.retainedImagesMb` setting (default 256, env `SENPI_CODEMODE_RETAINED_IMAGES_MB`), deleted with an evicted cell, and removed when the session ends. The in-memory snapshots are bounded by the new `memory.retainedResultsMb` setting (default 32, env `SENPI_CODEMODE_RETAINED_RESULTS_MB`) on top of the 32-cell count cap. ([#2259](https://github.com/code-yeongyu/senpi/issues/2259))
+
+- The JavaScript eval kernel no longer compiles a fresh code-cache entry for its loader prelude on every cell: the prelude is evaluated under one stable source URL (`senpi:kernel-prelude`) instead of a per-cell `` `${cellId}:prelude` `` URL, so identical prelude text reuses the engine's eval code cache: per-cell kernel heap growth over a 1,000-cell series drops from ~2.3 KB to ~1.1 KB (the remainder is the cell body's own per-cell source URL, kept for stack attribution and bounded by the engine's code-cache cap). Stack frames from prelude code now attribute to `senpi:kernel-prelude` for every cell. ([#2263](https://github.com/code-yeongyu/senpi/issues/2263))
+
+### Removed
+
+## [2026.9.28-3] - 2026-09-28
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- Live output updates for eval cells no longer rebuild the retained output tail on every chunk. The streaming preview keeps the last eight lines of the trailing byte window, appends in time proportional to the chunk, and output-driven updates are coalesced to one per 100 ms (the core bash tool's cadence), so a cell printing 30,000 lines sends about 10 updates instead of 30,008 and finishes about 4x faster with a lower memory peak. The final result and the text of each update are unchanged. ([#2262](https://github.com/code-yeongyu/senpi/issues/2262))
+
+- `new Bun.WebView()` in a JavaScript eval cell no longer fails with `Bun.WebView with backend "chrome" is only available on the main thread` (every call on Windows and Linux, `backend: "chrome"` on macOS). Cells see a `Bun` whose `WebView` (also through `import { WebView } from "bun"`) hands Chrome-backed views to the process main thread with the same API: navigation, input, `evaluate`, screenshots, `cdp()` and its events, `console` capture, `url`/`title`/`loading`, `close()` and `await using`. The macOS default (WebKit) stays a native view in the kernel worker. `Bun.WebView.closeAll()` in a cell closes only that kernel's views. ([#2248](https://github.com/code-yeongyu/senpi/issues/2248))
+
+### Removed
+
+## [2026.9.28-2] - 2026-09-28
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.28] - 2026-09-28
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.27-4] - 2026-09-27
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.27-3] - 2026-09-27
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.27-2] - 2026-09-27
+
+### Breaking Changes
+
+### Added
+
+- The eval kernels install each active tool's `kernelPrelude`: its JavaScript or Python statements run before a cell whenever one of the prelude's exports is missing, a deactivated tool's exports are removed before the next cell, and each prelude's documentation line joins the eval prompt's helper list. Exports that would shadow a built-in helper are rejected. ([#2178](https://github.com/code-yeongyu/senpi/pull/2178))
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.27] - 2026-09-27
+
+### Breaking Changes
+
+### Added
+
 ### Changed
 
 ### Fixed

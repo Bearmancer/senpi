@@ -8,7 +8,9 @@
  * that reports nothing open - or behind an explicit `force`, which is the operator saying they know.
  *
  * Both are gated on the same proof: the registration must name the process serving THIS socket
- * (pid plus identity guard). An owner nobody can prove is refused rather than signalled (I1).
+ * (pid plus identity guard). An owner nobody can prove is refused rather than signalled (I1). A host
+ * from before layout 2 is known only through its flat record (`host-legacy.ts`); that record proves
+ * it for a drain, never for a hard stop (#2423).
  *
  * The proof cannot close one race, and `signalGeneration` is where that is handled: a host is free
  * to exit between the moment its identity is proven and the moment the signal is sent - a drained
@@ -20,6 +22,7 @@
 import { createHostDaemonPaths } from "./host-daemon-paths.ts";
 import { provenOwner, readHostRegistration, releaseGeneration } from "./host-daemon-registration.ts";
 import { GENERATION_HANDOFF_CAPABILITY } from "./host-decision.ts";
+import { provenLegacyOwner } from "./host-legacy.ts";
 import { probeProtocolInfo, probeSessionCount } from "./host-probe.ts";
 
 export interface StopHostOptions {
@@ -48,18 +51,21 @@ export async function stopHost(options: StopHostOptions): Promise<StopHostResult
 	});
 	const registered = await readHostRegistration(paths);
 	const owner = await provenOwner(registered, options.socket);
-	if (!owner) return { action: "refuse", reason: "unknown_owner" };
-	const host = await probeProtocolInfo(options.socket, options.timeoutMs ?? 10_000);
 	if (options.drain === true) {
+		const pid = owner?.pid ?? (await provenLegacyOwner(paths, options.socket))?.pid;
+		if (pid === undefined) return { action: "refuse", reason: "unknown_owner" };
+		const host = await probeProtocolInfo(options.socket, options.timeoutMs ?? 10_000);
 		// SIGUSR1 terminates a process that installed no handler for it: a host that does not
 		// advertise the drain is refused rather than killed by the request to shut down gently.
 		if (!host?.capabilities.includes(GENERATION_HANDOFF_CAPABILITY) || process.platform === "win32") {
 			return { action: "refuse", reason: "drain_unsupported" };
 		}
 		// A generation that left on its own between the proof and the signal is already drained.
-		signalGeneration(owner.pid, "SIGUSR1");
-		return { action: "drained", pid: owner.pid };
+		signalGeneration(pid, "SIGUSR1");
+		return { action: "drained", pid };
 	}
+	if (!owner) return { action: "refuse", reason: "unknown_owner" };
+	const host = await probeProtocolInfo(options.socket, options.timeoutMs ?? 10_000);
 	// A hard stop ends whatever the host is doing, including work that belongs to other clients:
 	// it is allowed only against a host that reports nothing open, or by an explicit override.
 	const sessions = await probeSessionCount(options.socket, options.timeoutMs ?? 10_000);

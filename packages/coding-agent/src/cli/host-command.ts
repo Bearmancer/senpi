@@ -1,5 +1,8 @@
 /**
- * `senpi host ensure|status|stop|handoff` - the one command every client calls to get a daemon.
+ * `senpi host ensure|status|stop|handoff|shard-path|gc` - the one command every client calls to get a daemon.
+ * (`gc` removes the state of endpoints whose host is provably gone, never signalling anything.)
+ * (`shard-path` alone contacts no host: it answers the shard naming contract, as a JSON line under
+ * `--json` and as the bare socket path otherwise.)
  *
  * The contract is machine-first, because every caller is a program: EXACTLY ONE JSON line on stdout
  * and nothing else, an exit code that classifies the outcome without parsing that line, and
@@ -18,10 +21,12 @@
  * (`host-daemon-env.ts`), never this process's whole environment.
  */
 import { writeSync } from "node:fs";
-import { resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { APP_NAME, getAgentDir } from "../config.ts";
 import { envValue } from "../core/brand.ts";
+import type { ShardKind } from "../modes/rpc/host-daemon-paths.ts";
 import type { HostDecisionPolicy } from "../modes/rpc/host-decision.ts";
+import type { IdleHandoverTerms } from "../modes/rpc/host-handover-request.ts";
 import {
 	DEFAULT_HOST_LAUNCH_SPEC,
 	HostLaunchSpecError,
@@ -36,19 +41,23 @@ import {
 	runHostRequest,
 } from "../modes/rpc/host-runner.ts";
 
-const SUBCOMMANDS = ["ensure", "status", "stop", "handoff"] as const;
+const SUBCOMMANDS = ["ensure", "status", "stop", "handoff", "shard-path", "gc"] as const;
 type HostSubcommand = (typeof SUBCOMMANDS)[number];
 
 const POLICIES = ["upgrade", "fallback", "never"] as const;
 
-const USAGE = `usage: ${APP_NAME} host <ensure|status|stop|handoff> [options]
+const USAGE = `usage: ${APP_NAME} host <ensure|status|stop|handoff|shard-path|gc> [options]
 
-  ensure   [--launch-spec <file>] [--policy upgrade|fallback|never] [--socket <path>]
-  status   [--include-workers] [--socket <path>]
-  stop     [--drain] [--force] [--socket <path>]
-  handoff  [--launch-spec <file>] [--socket <path>]
+  ensure      [--launch-spec <file>] [--policy upgrade|fallback|never] [--socket <path>]
+  status      [--include-workers] [--all] [--socket <path>]   (--all: every endpoint, ignores --socket)
+  stop        [--drain] [--force] [--socket <path>]
+  handoff     [--launch-spec <file>] [--socket <path>]
+              [--when idle --operation <id> --if-instance <id> --if-generation <n> --target-build <sha256:...>]
+              (--when idle: the running host hands over to THIS runtime at its next safe idle point)
+  shard-path  --kind <p|i> --owner <id> [--root <dir>] [--json]   (no host contact)
+  gc          [--agent-dir <dir>] [--json]   (removes provably dead endpoints only; ignores --socket)
 
-  --json   accepted for symmetry; the answer is always one JSON line on stdout`;
+  --json   the answer is one JSON line on stdout (always, except shard-path's bare path)`;
 
 interface ParsedHostArgs {
 	readonly subcommand: HostSubcommand;
@@ -56,8 +65,15 @@ interface ParsedHostArgs {
 	readonly policy: HostDecisionPolicy;
 	readonly socket?: string;
 	readonly includeWorkers: boolean;
+	readonly all: boolean;
 	readonly drain: boolean;
 	readonly force: boolean;
+	readonly json: boolean;
+	readonly kind?: ShardKind;
+	readonly owner?: string;
+	readonly root?: string;
+	readonly agentDir?: string;
+	readonly handover?: IdleHandoverTerms;
 }
 
 /**
@@ -72,7 +88,8 @@ export async function runHostCommand(args: readonly string[]): Promise<number> {
 	}
 	try {
 		const outcome = await runHostRequest(await hostRequest(parsed));
-		emit(outcome.payload);
+		if (parsed.subcommand === "shard-path" && !parsed.json) writeSync(1, `${String(outcome.payload.socket)}\n`);
+		else emit(outcome.payload);
 		return outcome.exitCode;
 	} catch (error: unknown) {
 		if (error instanceof HostLaunchSpecError) {
@@ -91,11 +108,25 @@ async function hostRequest(parsed: ParsedHostArgs): Promise<HostRequest> {
 		case "ensure":
 			return { action: "ensure", target, spec: await launchSpec(parsed.specPath), policy: parsed.policy };
 		case "status":
-			return { action: "status", target, includeWorkers: parsed.includeWorkers };
+			return { action: "status", target, includeWorkers: parsed.includeWorkers, all: parsed.all };
 		case "stop":
 			return { action: "stop", target, drain: parsed.drain, force: parsed.force };
 		case "handoff":
-			return { action: "handoff", target, spec: await launchSpec(parsed.specPath) };
+			return {
+				action: "handoff",
+				target,
+				spec: await launchSpec(parsed.specPath),
+				...(parsed.handover !== undefined && { handover: parsed.handover }),
+			};
+		case "shard-path":
+			return {
+				action: "shard_path",
+				kind: parsed.kind ?? "p",
+				owner: parsed.owner ?? "",
+				root: resolve(parsed.root ?? join(agentDir, "rpc", "shards")),
+			};
+		case "gc":
+			return { action: "gc", agentDir: resolve(parsed.agentDir ?? agentDir) };
 		default:
 			return assertNever(parsed.subcommand);
 	}
@@ -120,14 +151,39 @@ export function parseHostArgs(args: readonly string[]): ParsedHostArgs | string 
 	let policy: HostDecisionPolicy = "upgrade";
 	let socket: string | undefined;
 	let includeWorkers = false;
+	let all = false;
 	let drain = false;
 	let force = false;
+	let json = false;
+	let kind: ShardKind | undefined;
+	let owner: string | undefined;
+	let root: string | undefined;
+	let agentDir: string | undefined;
+	const handover: Record<string, string> = {};
 	for (let index = 0; index < rest.length; index++) {
 		const flag = rest[index];
 		const value = rest[index + 1];
-		if (flag === "--json") continue;
-		if (flag === "--include-workers") {
+		if (flag === "--json") {
+			json = true;
+		} else if (flag === "--include-workers") {
 			includeWorkers = true;
+		} else if (flag === "--all" && subcommand === "status") {
+			all = true;
+		} else if (flag === "--kind" && subcommand === "shard-path" && (value === "p" || value === "i")) {
+			kind = value;
+			index++;
+		} else if (flag === "--owner" && subcommand === "shard-path" && value !== undefined) {
+			owner = value;
+			index++;
+		} else if (flag === "--root" && subcommand === "shard-path" && value !== undefined) {
+			root = value;
+			index++;
+		} else if (flag === "--agent-dir" && subcommand === "gc" && value !== undefined) {
+			agentDir = value;
+			index++;
+		} else if (subcommand === "handoff" && value !== undefined && HANDOVER_FLAGS.has(flag ?? "")) {
+			handover[flag ?? ""] = value;
+			index++;
 		} else if (flag === "--drain") {
 			drain = true;
 		} else if (flag === "--force") {
@@ -145,15 +201,47 @@ export function parseHostArgs(args: readonly string[]): ParsedHostArgs | string 
 			return `Error: unknown option "${flag}" for "${APP_NAME} host ${subcommand}".`;
 		}
 	}
+	if (subcommand === "shard-path" && (kind === undefined || owner === undefined)) {
+		return `Error: "${APP_NAME} host shard-path" needs --kind <p|i> and --owner <id>.`;
+	}
+	const terms = Object.keys(handover).length === 0 ? undefined : handoverTerms(handover);
+	if (typeof terms === "string") return terms;
 	return {
 		subcommand,
 		...(specPath !== undefined && { specPath }),
 		policy,
 		...(socket !== undefined && { socket }),
 		includeWorkers,
+		all,
 		drain,
 		force,
+		json,
+		...(kind !== undefined && { kind }),
+		...(owner !== undefined && { owner }),
+		...(root !== undefined && { root }),
+		...(agentDir !== undefined && { agentDir }),
+		...(terms !== undefined && { handover: terms }),
 	};
+}
+
+const HANDOVER_FLAGS = new Set(["--when", "--operation", "--if-instance", "--if-generation", "--target-build"]);
+
+/** The conditional handover's terms: all five flags together, or a usage error naming what is wrong. */
+function handoverTerms(flags: Readonly<Record<string, string>>): IdleHandoverTerms | string {
+	const when = flags["--when"];
+	const operationId = flags["--operation"];
+	const ifInstanceId = flags["--if-instance"];
+	const generation = flags["--if-generation"];
+	const targetRuntimeBuildId = flags["--target-build"];
+	if (when !== "idle") return `Error: "${APP_NAME} host handoff" supports only --when idle.`;
+	if (!operationId || !ifInstanceId || !generation || !targetRuntimeBuildId) {
+		return `Error: "${APP_NAME} host handoff --when idle" needs --operation, --if-instance, --if-generation and --target-build.`;
+	}
+	const ifGeneration = Number(generation);
+	if (!/^\d+$/.test(generation) || !Number.isSafeInteger(ifGeneration)) {
+		return `Error: --if-generation must be a non-negative integer.`;
+	}
+	return { operationId, ifInstanceId, ifGeneration, targetRuntimeBuildId };
 }
 
 /** One line, synchronously, so an exit cannot truncate the answer the caller is parsing. */

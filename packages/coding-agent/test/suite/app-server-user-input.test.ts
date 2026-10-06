@@ -81,6 +81,7 @@ describe("app-server user input", () => {
 		expect(bridge.resolveResponse({ id, result: { answers: {} } })).toBe(false);
 		await expect(answer).resolves.toEqual({
 			status: "comment-submitted",
+			resolvedBy: "rpc_connection",
 			answers: { choice: { selected: ["A"] } },
 			comment: "Proceed",
 			unanswered: ["text"],

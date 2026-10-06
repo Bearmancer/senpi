@@ -11,7 +11,7 @@ const EXPECTED_CURRENT_ADAPTIVE_THINKING_MODELS = [
 	"anthropic/claude-sonnet-4-6",
 	"anthropic/claude-sonnet-5",
 	"cloudflare-ai-gateway/claude-fable-5",
-	"fireworks/accounts/fireworks/models/deepseek-v4-flash-0731",
+	"fireworks/accounts/fireworks/models/deepseek-v4p1-flash",
 	"fireworks/accounts/fireworks/models/gpt-oss-120b",
 	"fireworks/accounts/fireworks/models/qwen3p8-max",
 	"github-copilot/claude-opus-4.6",

@@ -1,6 +1,12 @@
 import { closeSync, openSync, readFileSync, truncateSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { AssistantImages, ImagesContext, ImagesModel, ProviderImagesOptions } from "@earendil-works/pi-ai/compat";
+import type {
+	AssistantImages,
+	ImageApi,
+	ImageModel,
+	ImagesContext,
+	ProviderImagesOptions,
+} from "@earendil-works/pi-ai/compat";
 import { registerImagesApiProvider, unregisterImagesApiProviders } from "@earendil-works/pi-ai/compat";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { setImageGenRegistry, setNativeBypass } from "../src/core/extensions/builtin/imagegen/state.ts";
@@ -11,7 +17,7 @@ const PNG_BASE64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8
 const STUB_SOURCE_ID = "imagegen-tool-2-5-test-stub";
 const generate = vi.fn(
 	async (
-		model: ImagesModel<"openai-images">,
+		model: ImageModel<ImageApi>,
 		_context: ImagesContext,
 		_options?: ProviderImagesOptions,
 	): Promise<AssistantImages> => ({
@@ -140,7 +146,7 @@ describe("generate_image GPT Image 2.5", () => {
 			params,
 			undefined,
 			undefined,
-			harness.getExtensionRunner().createContext(),
+			harness.getExtensionRunner().createToolContext("reference-count", undefined),
 		);
 
 		expect(result.details.reason).toBe("invalid_params");

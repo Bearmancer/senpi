@@ -1,3 +1,4 @@
+import { getCurrentSystemPrompt } from "@earendil-works/pi-ai";
 import { fauxAssistantMessage, streamSimple } from "@earendil-works/pi-ai/compat";
 import { afterEach, describe, expect, it } from "vitest";
 import {
@@ -90,7 +91,10 @@ describe("agent session auto title routing", () => {
 		});
 		harnesses.push(harness);
 		harness.session.agent.streamFunction = async (model, context, options) => {
-			await options?.onPayload?.({ systemPrompt: context.systemPrompt, messages: context.messages }, model);
+			await options?.onPayload?.(
+				{ systemPrompt: getCurrentSystemPrompt(context.messages), messages: context.messages },
+				model,
+			);
 			return streamSimple(model, context, options);
 		};
 		harness.setResponses([

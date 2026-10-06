@@ -19,6 +19,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null;
 }
 
+export function isSdkImageMediaType(value: string): boolean {
+	return parseImageMediaType(value) !== undefined;
+}
+
 function parseImageMediaType(value: string): Base64ImageSource["media_type"] | undefined {
 	for (const mediaType of IMAGE_MEDIA_TYPES) {
 		if (mediaType === value) return mediaType;

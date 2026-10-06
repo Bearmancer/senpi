@@ -3,34 +3,29 @@ import { getAgentDir } from "../../../../config.ts";
 import type { ExtensionAPI, ExtensionUIContext, SessionShutdownEvent, SessionStartEvent } from "../../types.ts";
 import {
 	getToolSearchService,
+	getToolSearchServiceForExtension,
 	resetToolSearchServiceForTests,
-	type ToolSearchService,
+	ToolSearchService,
 } from "../tool-search/service.ts";
 import { resolveAuthMode } from "./auth/context.ts";
-import { collectToolCatalog } from "./catalog.ts";
 import { getValidCachedServer, readMcpCatalogCache } from "./catalog-cache.ts";
-import { loadMcpConfig, mergeExtensionMcpServers, resolveSkillMcpServer, visitSpawnableMcpServers } from "./config.ts";
+import { loadMcpConfig, mergeExtensionMcpServers, visitSpawnableMcpServers } from "./config.ts";
 import type { McpServerConfig, ResolvedMcpConfig, ResolvedMcpServer } from "./config-schema.ts";
 import type { ServerConnection } from "./connection.ts";
 import { collectAllPages } from "./expose/pagination.ts";
-import { mapMcpCatalogNames } from "./expose/register.ts";
 import type { McpSessionRegistration } from "./expose/session.ts";
 import type { McpServerExposureStatus } from "./expose/status.ts";
 import { cleanupMcpOutputArtifacts, McpOutputArtifacts } from "./guard/output-guard.ts";
 import { HostMcpRegistry } from "./host-registry.ts";
 import { refreshMcpInstructionsForSession } from "./instructions.ts";
-import {
-	buildMcpTombstoneDefinition,
-	createMcpListChangeCoalescer,
-	diffMcpToolNames,
-	formatMcpListChangedDelta,
-} from "./notifications.ts";
+import { createMcpLogger } from "./log.ts";
 import { reconnectMcpNow } from "./reconnect.ts";
 import type { McpResourceServer } from "./resources.ts";
 import { createMcpSessionConnection, disposeEntryConnection } from "./service-connection.ts";
 import { getMcpServiceExposureStatus } from "./service-exposure.ts";
 import { registerMcpServiceDirectTools } from "./service-register.ts";
 import { buildMcpServerSnapshot } from "./service-snapshot.ts";
+import { refreshMcpToolsOnListChanged, subscribeMcpToolsChanged } from "./service-tools-changed.ts";
 import type {
 	McpConnectionEntry,
 	McpDisposeReason,
@@ -47,7 +42,8 @@ import type {
 	McpWireStatusSnapshot,
 	McpWireTool,
 } from "./service-types.ts";
-import { SharedMcpLease } from "./shared-lease.ts";
+import { resolveSkillMcpServer } from "./skill-server.ts";
+import type { SkillServerRegistration } from "./skills.ts";
 import {
 	MCP_ATTACH_SETTLE_TIMEOUT_MS,
 	McpDeferredAttach,
@@ -56,11 +52,29 @@ import {
 	resolveMcpStartupTimeoutMs,
 	shouldRaceMcpStartup,
 } from "./startup-race.ts";
+import { safeTimer } from "./wrap.ts";
 
 type ListedTool = Awaited<ReturnType<Client["listTools"]>>["tools"][number];
 type ListedResource = Awaited<ReturnType<Client["listResources"]>>["resources"][number];
 type ListedResourceTemplate = Awaited<ReturnType<Client["listResourceTemplates"]>>["resourceTemplates"][number];
 type McpElicitationUi = Pick<ExtensionUIContext, "input" | "select" | "confirm">;
+type McpToolRegistrar = Pick<ExtensionAPI, "getActiveTools" | "setActiveTools" | "registerTool">;
+
+/**
+ * One live session's binding to the service (#2514): the session's own extension API and
+ * tool-search service, resolved per call, and what was registered there. Connections stay
+ * shared across bindings; only the binding is per session.
+ */
+interface McpSessionBinding {
+	readonly pi: McpToolRegistrar;
+	/** Only for a session whose extension load owns no tool-search service (SDK and test hosts). */
+	readonly fallbackToolSearch: ToolSearchService | undefined;
+	/** True when `fallbackToolSearch` is the process-wide fallback rather than a private one. */
+	readonly holdsProcessFallback: boolean;
+	readonly context: McpSessionContext;
+	readonly registeredIdentities: Map<string, string>;
+	registration: McpSessionRegistration | undefined;
+}
 
 export { registerToolsPreservingActiveSet } from "./active-set.ts";
 
@@ -71,7 +85,6 @@ export class McpService {
 	#sessionContext: McpSessionContext | null = null;
 	#sessionStartCount = 0;
 	#lastSessionStartReason: SessionStartEvent["reason"] | null = null;
-	#toolRefreshGeneration = 0;
 	#config: ResolvedMcpConfig | null = null;
 	#authAgentDir: string | undefined;
 	#authEnv: Record<string, string | undefined> | undefined;
@@ -84,10 +97,15 @@ export class McpService {
 	readonly #wireStatusListeners = new Set<(sessionId: string | undefined, snapshot: McpWireStatusSnapshot) => void>();
 	#wireStatusRefreshQueue: Promise<void> = Promise.resolve();
 	#refreshActiveSetWhenNoTools = false;
-	#tierBRegistration: McpSessionRegistration | undefined;
-	#toolSearchService: ToolSearchService | undefined;
+	readonly #bindings = new Map<object, McpSessionBinding>();
+	#pendingAttaches = 0;
+	// Sessions that quit while their own attach was still queued: the attach must not bind them (#2524 review).
+	readonly #releasedSessions = new WeakSet<object>();
+	#deferredDisposeReason: McpDisposeReason | undefined;
+	// Releases waiting for the attaches that deferred their dispose: they settle once the last one does.
+	readonly #deferredDisposeWaiters: Array<() => void> = [];
 	#sessionOptions: McpSessionOptions = {};
-	#pi: Pick<ExtensionAPI, "getActiveTools" | "setActiveTools" | "registerTool"> | undefined;
+	readonly #skillServerWarnings = new Set<string>();
 	#attachQueue: Promise<void> = Promise.resolve();
 	readonly #deferredAttach = new McpDeferredAttach();
 	#latestWireStatus: McpWireStatusSnapshot = { servers: [] };
@@ -98,10 +116,13 @@ export class McpService {
 
 	readonly #registry: HostMcpRegistry;
 	readonly #shareConnections: boolean;
+	readonly #servesManySessions: boolean;
 
-	constructor(options: Pick<McpSessionOptions, "mcpRegistry"> = {}) {
+	/** `servesManySessions` marks the process-wide service every classic session attaches to. */
+	constructor(options: Pick<McpSessionOptions, "mcpRegistry"> & { readonly servesManySessions?: boolean } = {}) {
 		this.#registry = options.mcpRegistry ?? new HostMcpRegistry();
 		this.#shareConnections = options.mcpRegistry !== undefined;
+		this.#servesManySessions = options.servesManySessions === true;
 	}
 
 	async attachSession(
@@ -110,8 +131,15 @@ export class McpService {
 		_pi?: Pick<ExtensionAPI, "getActiveTools" | "setActiveTools" | "registerTool">,
 		options: McpSessionOptions = {},
 	): Promise<void> {
+		// Counted from the moment it queues, so a session's release cannot dispose the service
+		// under an attach that has not bound yet.
+		this.#pendingAttaches += 1;
 		const attach = this.#attachQueue.then(async () => {
+			if (this.#disposed) {
+				throw new Error("The MCP service is disposed; attach the session to a live service instead.");
+			}
 			this.#sessionContext = ctx;
+			this.#skillServerWarnings.clear();
 			this.#sessionStartCount += 1;
 			this.#lastSessionStartReason = event.reason;
 			// Bind the agent dir at attach time: the startup race can background
@@ -128,39 +156,145 @@ export class McpService {
 			});
 			mergeExtensionMcpServers(config, ctx.getRegisteredMcpServers?.() ?? []);
 			this.#config = config;
-			this.#pi = _pi;
-			if (_pi !== undefined) {
-				const activationRuntime = {
-					getActiveTools: () => _pi.getActiveTools(),
-					setActiveTools: (names: readonly string[]) => _pi.setActiveTools([...names]),
-				};
-				try {
-					this.#toolSearchService = getToolSearchService();
-					this.#toolSearchService.bindActivationRuntime(activationRuntime);
-				} catch {
-					this.#toolSearchService = getToolSearchService({ getAllTools: () => [], ...activationRuntime });
-				}
-			}
+			const binding = _pi === undefined || this.#releasedSessions.has(_pi) ? undefined : this.#bind(_pi, ctx);
 			this.#authAgentDir = sessionOptions.agentDir;
 			this.#authEnv = sessionOptions.env;
 			this.#sessionOptions = sessionOptions;
-			const toolRefreshGeneration = this.#toolRefreshGeneration + 1;
-			this.#toolRefreshGeneration = toolRefreshGeneration;
-			await this.#syncFromConfig(config, sessionOptions, event.reason !== "reload", _pi, toolRefreshGeneration);
-			if (_pi !== undefined) await this.#registerDirectTools(_pi);
+			await this.#syncFromConfig(config, sessionOptions, event.reason !== "reload", binding);
+			if (binding !== undefined) await this.#registerDirectTools(binding);
 			// Replay promotion markers from the (possibly resumed) session history
 			// BEFORE the first turn: the request tool snapshot is taken before the
 			// per-turn context event fires, so the context-event replay alone lands
 			// one turn late. Doing it here puts restored tools on the very first
 			// wire payload after a --continue/resume.
-			if (_pi !== undefined) this.#rehydrateFromSessionHistory(ctx);
+			if (binding !== undefined) this.#rehydrateFromSessionHistory(binding);
 			if (shouldCaptureWireStatus(ctx)) await this.refreshWireStatusSnapshot(ctx.sessionManager?.getSessionId?.());
 		});
 		this.#attachQueue = attach.then(
 			() => undefined,
 			() => undefined,
 		);
-		await attach;
+		try {
+			await attach;
+		} finally {
+			this.#pendingAttaches -= 1;
+			await this.#disposeIfDeferredAndIdle();
+		}
+	}
+
+	/** A release that found attaches still pending leaves the dispose to the last of them, once no session is bound. */
+	async #disposeIfDeferredAndIdle(): Promise<void> {
+		const reason = this.#deferredDisposeReason;
+		if (reason === undefined || this.#pendingAttaches > 0) return;
+		this.#deferredDisposeReason = undefined;
+		// A session that attached meanwhile keeps the service; otherwise the deferred dispose runs now.
+		if (this.#liveBindings().length === 0) await this.dispose(reason);
+		for (const settle of this.#deferredDisposeWaiters.splice(0)) settle();
+	}
+
+	#bind(pi: McpToolRegistrar, ctx: McpSessionContext): McpSessionBinding {
+		const activationRuntime = {
+			getActiveTools: () => pi.getActiveTools(),
+			setActiveTools: (names: readonly string[]) => pi.setActiveTools([...names]),
+		};
+		const previous = this.#bindings.get(pi);
+		// A session-owned service serves exactly one session: a new attach takes over its binding.
+		if (!this.#servesManySessions) this.#bindings.clear();
+		let fallbackToolSearch: ToolSearchService | undefined;
+		let holdsProcessFallback = false;
+		const sessionToolSearch = getToolSearchServiceForExtension(pi);
+		if (sessionToolSearch !== undefined) {
+			sessionToolSearch.bindActivationRuntime(activationRuntime);
+		} else if (this.#liveBindings().some((other) => other.pi !== pi && other.holdsProcessFallback)) {
+			// The process-wide fallback already serves another live session; rebinding it would move that
+			// session's activation runtime and catalog hook here, so this session gets its own (#2514).
+			fallbackToolSearch = new ToolSearchService({ getAllTools: () => [], ...activationRuntime });
+		} else {
+			holdsProcessFallback = true;
+			try {
+				fallbackToolSearch = getToolSearchService();
+				fallbackToolSearch.bindActivationRuntime(activationRuntime);
+			} catch {
+				fallbackToolSearch = getToolSearchService({ getAllTools: () => [], ...activationRuntime });
+			}
+		}
+		const binding: McpSessionBinding = {
+			pi,
+			fallbackToolSearch,
+			holdsProcessFallback,
+			context: ctx,
+			registeredIdentities: previous?.registeredIdentities ?? new Map(),
+			registration: previous?.registration,
+		};
+		// Re-inserting keeps the most recent attach last, which is what a caller naming no session gets.
+		this.#bindings.delete(pi);
+		this.#bindings.set(pi, binding);
+		return binding;
+	}
+
+	#toolSearchFor(binding: McpSessionBinding): ToolSearchService | undefined {
+		return getToolSearchServiceForExtension(binding.pi) ?? binding.fallbackToolSearch;
+	}
+
+	#liveBindings(): McpSessionBinding[] {
+		for (const [pi, binding] of this.#bindings) {
+			// A disposed session retires its own tool-search service; its binding goes with it.
+			if (getToolSearchServiceForExtension(binding.pi)?.isDisposed === true) this.#bindings.delete(pi);
+		}
+		return [...this.#bindings.values()];
+	}
+
+	/** The binding of the session that owns `pi`; without one, the most recently attached live session. */
+	#bindingFor(pi: object | undefined): McpSessionBinding | undefined {
+		return pi === undefined ? this.#liveBindings().at(-1) : this.#bindings.get(pi);
+	}
+
+	/**
+	 * Release the binding of the session that owns `pi` (#2514). The shared connections keep
+	 * serving every other live session; once none is left, `disposeReason` disposes the service
+	 * the way that last session's own exit would.
+	 */
+	async releaseSession(pi: object, disposeReason?: McpDisposeReason): Promise<void> {
+		const released = this.#bindings.get(pi);
+		this.#bindings.delete(pi);
+		if (disposeReason !== undefined) this.#releasedSessions.add(pi);
+		const live = this.#liveBindings();
+		const latest = live.at(-1);
+		if (latest !== undefined) {
+			if (released !== undefined && this.#sessionContext === released.context) this.#sessionContext = latest.context;
+			return;
+		}
+		// A session whose attach is still queued has not bound yet but will use this service.
+		if (disposeReason === undefined) return;
+		if (this.#pendingAttaches === 0) {
+			await this.dispose(disposeReason);
+			return;
+		}
+		// The release settles only once the pending attaches have, so a caller that awaits it
+		// (session shutdown, builtin removal) sees the service disposed, not a dispose scheduled later.
+		this.#deferredDisposeReason = disposeReason;
+		const settled = new Promise<"settled">((settle) => this.#deferredDisposeWaiters.push(() => settle("settled")));
+		const deadlineMs = resolveMcpDeferredDisposeTimeoutMs();
+		let timer: NodeJS.Timeout | undefined;
+		const outcome = await Promise.race([
+			settled,
+			new Promise<"timeout">((expire) => {
+				timer = safeTimer("deferred-dispose", deadlineMs, () => expire("timeout"), {
+					logger: createMcpLogger("service"),
+				});
+			}),
+		]);
+		clearTimeout(timer);
+		if (outcome === "settled" || this.#deferredDisposeReason === undefined) return;
+		// A hung attach must not hold a reload or a quit forever: dispose anyway once the
+		// deadline passes, unless a session bound in the meantime, and say so.
+		this.#deferredDisposeReason = undefined;
+		createMcpLogger("service").warn("MCP attach still pending at the dispose deadline; disposing anyway", {
+			timeoutMs: deadlineMs,
+			reason: disposeReason,
+		});
+		if (this.#liveBindings().length === 0) await this.dispose(disposeReason);
+		for (const settle of this.#deferredDisposeWaiters.splice(0)) settle();
 	}
 
 	/**
@@ -168,15 +302,15 @@ export class McpService {
 	 * into search mode with no directTools, so their catalogs register with
 	 * ZERO active tools until activateSkillMcpTools reveals them. A name
 	 * collision with a system-configured server keeps the system config and
-	 * returns a warning (system wins).
+	 * returns a warning (system wins). `${VAR}` expansion follows the declaring
+	 * skill's trust (skill-server.ts); each trust warning is returned once per session.
 	 */
-	async attachSkillMcpServers(
-		declared: ReadonlyMap<string, { raw: Parameters<typeof resolveSkillMcpServer>[1]; sourcePath: string }>,
-	): Promise<string[]> {
+	async attachSkillMcpServers(declared: ReadonlyMap<string, SkillServerRegistration>, pi?: object): Promise<string[]> {
 		const config = this.#config;
-		const pi = this.#pi;
-		if (config === null || pi === undefined) return [];
+		const binding = this.#bindingFor(pi);
+		if (config === null || binding === undefined) return [];
 		const warnings: string[] = [];
+		const projectTrusted = this.#sessionOptions.projectTrusted ?? this.#sessionContext?.isProjectTrusted() ?? false;
 		let added = 0;
 		for (const [name, decl] of declared) {
 			const existing = config.servers[name];
@@ -186,16 +320,23 @@ export class McpService {
 				);
 				continue;
 			}
-			const resolved = resolveSkillMcpServer(name, decl.raw, decl.sourcePath);
+			const { server: resolved, warning } = resolveSkillMcpServer(name, decl.raw, decl.sourcePath, {
+				env: this.#sessionOptions.env,
+				skillName: decl.skillName,
+				trusted: decl.scope === "project" || decl.scope === undefined ? projectTrusted : true,
+			});
+			if (warning !== undefined && !this.#skillServerWarnings.has(warning)) {
+				this.#skillServerWarnings.add(warning);
+				warnings.push(warning);
+			}
+			if (resolved === undefined) continue;
 			if (existing !== undefined && existing.configHash === resolved.configHash) continue;
 			config.servers[name] = resolved;
 			added += 1;
 		}
 		if (added > 0) {
-			const toolRefreshGeneration = this.#toolRefreshGeneration + 1;
-			this.#toolRefreshGeneration = toolRefreshGeneration;
-			await this.#syncFromConfig(config, this.#sessionOptions, false, pi, toolRefreshGeneration);
-			await this.#registerDirectTools(pi);
+			await this.#syncFromConfig(config, this.#sessionOptions, false, binding);
+			await this.#registerDirectTools(binding);
 			if (this.#sessionContext !== null && shouldCaptureWireStatus(this.#sessionContext)) {
 				await this.refreshWireStatusSnapshot(this.#sessionContext.sessionManager?.getSessionId?.());
 			}
@@ -205,18 +346,18 @@ export class McpService {
 
 	/** Registered searchable catalog (mapped name + server-side tool name),
 	 * used by the skills loader to compute activation targets. */
-	getTierBSearchable(): ReadonlyArray<{ name: string; toolName: string; server: string }> {
-		return this.#tierBRegistration?.searchable ?? [];
+	getTierBSearchable(pi?: object): ReadonlyArray<{ name: string; toolName: string; server: string }> {
+		return this.#bindingFor(pi)?.registration?.searchable ?? [];
 	}
 
 	/** Connected servers that list prompts (todo 40), for slash registration. */
-	getMcpPromptServers(): readonly import("./prompts.ts").McpPromptServer[] {
-		return this.#tierBRegistration?.promptServers ?? [];
+	getMcpPromptServers(pi?: object): readonly import("./prompts.ts").McpPromptServer[] {
+		return this.#bindingFor(pi)?.registration?.promptServers ?? [];
 	}
 
 	/** Connected servers that list resources (todo 39), for mention expansion. */
-	getMcpResourceServers(): readonly McpResourceServer[] {
-		return this.#tierBRegistration?.resourceServers ?? [];
+	getMcpResourceServers(pi?: object): readonly McpResourceServer[] {
+		return this.#bindingFor(pi)?.registration?.resourceServers ?? [];
 	}
 
 	/** Subscribe to completed catalog registrations. Consumers must inspect the
@@ -257,14 +398,14 @@ export class McpService {
 
 	/** Reveal skill-owned tools (todo 37): activation is effective the next
 	 * turn, exactly like an tool_search promotion. Unknown names are ignored. */
-	activateSkillMcpTools(names: readonly string[]): void {
-		this.#tierBRegistration?.activate(names);
+	activateSkillMcpTools(names: readonly string[], pi?: object): void {
+		this.#bindingFor(pi)?.registration?.activate(names);
 	}
 
-	#rehydrateFromSessionHistory(ctx: McpSessionContext): void {
-		const entries = ctx.sessionManager?.getEntries() ?? [];
+	#rehydrateFromSessionHistory(binding: McpSessionBinding): void {
+		const entries = binding.context.sessionManager?.getEntries() ?? [];
 		if (entries.length === 0) return;
-		this.rehydrateActiveToolsFromHistory(entries);
+		this.#toolSearchFor(binding)?.maybeRehydrateFromHistory(entries);
 	}
 
 	async handleSessionShutdown(event: SessionShutdownEvent): Promise<void> {
@@ -276,6 +417,7 @@ export class McpService {
 		this.#disposed = true;
 		this.#disposeCount += 1;
 		this.#lastDisposeReason = reason;
+		this.#bindings.clear();
 		this.#sessionContext = null;
 		this.#config = null;
 		this.#elicitationUiProvider = undefined;
@@ -366,8 +508,7 @@ export class McpService {
 		config: ResolvedMcpConfig,
 		options: McpSessionOptions,
 		useCache: boolean,
-		pi: Pick<ExtensionAPI, "getActiveTools" | "setActiveTools" | "registerTool"> | undefined,
-		toolRefreshGeneration: number,
+		binding: McpSessionBinding | undefined,
 	): Promise<void> {
 		const cache = await readMcpCatalogCache(options.agentDir);
 		const hadConnectionsBeforeSync = this.#connections.size > 0;
@@ -421,20 +562,38 @@ export class McpService {
 				connects.push(
 					raceMcpStartupConnect({
 						entry,
-						pi,
-						registerDirectTools: async (targetPi) => {
-							await this.#registerDirectTools(targetPi);
-							// A raced attach ran its history replay before this catalog
-							// existed; replay now so restored tools still land on the
-							// first turn's payload (idempotent: already-active names skip).
-							if (this.#sessionContext !== null) this.#rehydrateFromSessionHistory(this.#sessionContext);
+						pi: binding?.pi,
+						registerDirectTools: async () => {
+							// The catalog is shared, so it lands in every live session, not only the one that
+							// started the connect (#2514). One session's failure must not starve the others:
+							// each registers on its own, and the failures are reported together afterwards.
+							const failures: unknown[] = [];
+							for (const live of this.#liveBindings()) {
+								try {
+									await this.#registerDirectTools(live);
+									// A raced attach ran its history replay before this catalog
+									// existed; replay now so restored tools still land on the
+									// first turn's payload (idempotent: already-active names skip).
+									this.#rehydrateFromSessionHistory(live);
+								} catch (error) {
+									failures.push(error);
+								}
+							}
 							// The session instructions block was likewise captured at attach
 							// time, before this server connected; rebuild it so the first
 							// turn carries this server's instructions after a raced connect.
 							refreshMcpInstructionsForSession(this);
+							if (failures.length > 0) {
+								throw new AggregateError(
+									failures,
+									`MCP ${name} catalog failed to register in ${failures.length} session(s)`,
+								);
+							}
 						},
 						serverConfig: server.config,
-						shouldRefreshTools: () => !this.#disposed && this.#toolRefreshGeneration === toolRefreshGeneration,
+						// A later attach does not supersede this catalog: it registers in every live session. Skip it only
+						// once the service is gone or this connection was replaced (#2524 review).
+						shouldRefreshTools: () => !this.#disposed && this.#entryForName(name) === entry,
 						deadlineMs: resolveMcpStartupTimeoutMs(server.config.startupTimeoutMs),
 						onDeferred: (settled) => this.#deferredAttach.track(settled),
 					}),
@@ -446,12 +605,11 @@ export class McpService {
 
 	#wireListChanged(entry: McpConnectionEntry): void {
 		const sink = { logger: { error: (message: string, data?: unknown) => entry.logger.error(message, data) } };
-		const coalescer = createMcpListChangeCoalescer({
-			onRefresh: () => this.#handleServerToolsChanged(entry),
-			scope: `mcp.list_changed.${entry.name}`,
+		entry.disposeListChanged = subscribeMcpToolsChanged(
+			entry,
+			(connectOnly) => this.#handleServerToolsChanged(entry, connectOnly),
 			sink,
-		});
-		const unsubscribe = entry.connection.onToolsChanged(() => coalescer.notify());
+		);
 		const unsubscribeState = entry.connection.onStateChange(() => {
 			const ctx = this.#sessionContext;
 			if (ctx?.mode !== "rpc") return;
@@ -459,70 +617,56 @@ export class McpService {
 				entry.logger.error("Failed to refresh MCP control inventory", error);
 			});
 		});
-		entry.disposeListChanged = () => {
-			unsubscribe();
-			coalescer.dispose();
-		};
 		entry.disposeWireStatus = unsubscribeState;
 	}
 
-	// Re-list a server on a coalesced list_changed and re-register: added tools
-	// enter INACTIVE (registerToolsPreservingActiveSet keeps the active set), and
-	// removed tools are tombstoned so a stale call fails cleanly.
-	async #handleServerToolsChanged(entry: McpConnectionEntry): Promise<void> {
-		const pi = this.#pi;
+	async #handleServerToolsChanged(entry: McpConnectionEntry, connectOnly: boolean): Promise<void> {
 		const config = this.#config;
-		if (pi === undefined || config === null) return;
-		const server = config.servers[entry.name];
-		if (server?.config === undefined || entry.connection.state !== "connected") return;
-		if (entry.connection instanceof SharedMcpLease) {
-			entry.cachedCatalog = await entry.connection.catalog();
-		}
-		const catalog = await collectToolCatalog(entry.name, entry.connection, server.config, {
-			agentDir: entry.agentDir,
-			outputGuard: config.settings.outputGuard,
-		});
-		const newNames = mapMcpCatalogNames(catalog).map(({ name }) => name);
-		const diff = diffMcpToolNames(entry.knownToolNames ?? newNames, newNames);
-		// Tombstone removed tools BEFORE re-registration so the subsequent
-		// setActiveTools (which excludes them) leaves the tombstones inactive.
-		for (const removed of diff.removed) pi.registerTool(buildMcpTombstoneDefinition(removed, entry.name));
-		await this.#registerDirectTools(pi);
-		entry.knownToolNames = newNames;
-		entry.lastListChangedDelta = formatMcpListChangedDelta(diff);
+		if (config === null || this.#liveBindings().length === 0) return;
+		// Resolved when the refresh registers, not when it starts: a session that attaches while the
+		// refresh is still listing tools must receive the refreshed catalog too.
+		const targets = () =>
+			this.#liveBindings().map((binding) => ({
+				pi: binding.pi,
+				registeredIdentity: () => binding.registeredIdentities.get(entry.key),
+				register: () => this.#registerDirectTools(binding),
+			}));
+		await refreshMcpToolsOnListChanged(entry, targets, config, connectOnly);
 	}
 
-	async #registerDirectTools(
-		pi: Pick<ExtensionAPI, "getActiveTools" | "setActiveTools" | "registerTool">,
-	): Promise<void> {
+	async #registerDirectTools(binding: McpSessionBinding): Promise<void> {
 		const config = this.#config;
 		if (config === null) return;
-		const toolSearchService = this.#toolSearchService;
+		const toolSearchService = this.#toolSearchFor(binding);
 		if (toolSearchService === undefined) return;
-		this.#tierBRegistration = await registerMcpServiceDirectTools(
-			pi,
+		binding.registration = await registerMcpServiceDirectTools(
+			binding.pi,
 			config,
 			this.#connections.values(),
 			toolSearchService,
 			{
 				refreshActiveSetWhenEmpty: this.#refreshActiveSetWhenNoTools,
+				onRegistered: (entry, identity) => binding.registeredIdentities.set(entry.key, identity),
 			},
 		);
-		const ctx = this.#sessionContext;
-		if (ctx?.mode === "rpc") {
+		const ctx = binding.context;
+		if (ctx.mode === "rpc") {
 			await this.refreshWireStatusSnapshot(ctx.sessionManager?.getSessionId?.());
 		}
 		for (const listener of this.#registrationListeners) listener();
 	}
 
 	/** Route compatibility callers through the shared ownership-aware scanner. */
-	rehydrateActiveToolsFromHistory(messages: readonly unknown[]): string[] {
-		return this.#toolSearchService?.maybeRehydrateFromHistory(messages) ?? [];
+	rehydrateActiveToolsFromHistory(messages: readonly unknown[], pi?: object): string[] {
+		return this.maybeRehydrateFromHistory(messages, pi);
 	}
 
 	/** Shared service memoization keeps this scan once-per-catalog-generation. */
-	maybeRehydrateFromHistory(messages: readonly unknown[]): string[] {
-		return this.#toolSearchService?.maybeRehydrateFromHistory(messages) ?? [];
+	maybeRehydrateFromHistory(messages: readonly unknown[], pi?: object): string[] {
+		const binding = this.#bindingFor(pi);
+		return (
+			(binding === undefined ? undefined : this.#toolSearchFor(binding)?.maybeRehydrateFromHistory(messages)) ?? []
+		);
 	}
 
 	#serverSnapshot(name: string): McpServerSnapshot {
@@ -662,6 +806,11 @@ export class McpService {
 		};
 	}
 
+	/** Live auth status without fetching catalogs or exposing credentials. */
+	getServerAuthStatus(name: string): McpWireAuthStatus {
+		return wireAuthStatus(this.#entryForName(name), this.#config?.servers[name]);
+	}
+
 	getCachedInstructions(name: string): string | undefined {
 		return this.#entryForName(name)?.cachedCatalog?.instructions;
 	}
@@ -770,7 +919,7 @@ let service: McpService | null = null;
 
 export function getMcpService(): McpService {
 	if (service === null || service.isDisposed()) {
-		service = new McpService();
+		service = new McpService({ servesManySessions: true });
 	}
 	return service;
 }
@@ -782,4 +931,17 @@ export function shouldDisposeMcpService(reason: SessionShutdownEvent["reason"]):
 export function resetMcpServiceForTests(): void {
 	service = null;
 	resetToolSearchServiceForTests();
+}
+
+export const MCP_DEFERRED_DISPOSE_TIMEOUT_ENV = "SENPI_MCP_DEFERRED_DISPOSE_TIMEOUT_MS";
+const MCP_DEFERRED_DISPOSE_TIMEOUT_MS = 15_000;
+
+/** How long a release waits for pending attaches before it disposes anyway. */
+function resolveMcpDeferredDisposeTimeoutMs(): number {
+	const raw = process.env[MCP_DEFERRED_DISPOSE_TIMEOUT_ENV]?.trim();
+	if (raw !== undefined && raw.length > 0) {
+		const value = Number(raw);
+		if (Number.isFinite(value) && value >= 0) return value;
+	}
+	return MCP_DEFERRED_DISPOSE_TIMEOUT_MS;
 }

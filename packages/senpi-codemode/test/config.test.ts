@@ -2,6 +2,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
+import { resolveRetainedImagesBytes, resolveRetainedResultsBytes } from "../src/config/memory-settings.ts";
 import {
 	defaultCodemodeSettings,
 	loadCodemodeSettings,
@@ -89,6 +90,43 @@ describe("codemode settings", () => {
 		}
 	});
 
+	it("Given a settings file with a key from a newer version when settings load then the other settings still apply and the unknown key gets one warning", async () => {
+		const root = await mkdtemp(join(tmpdir(), "senpi-codemode-future-key-"));
+		try {
+			await mkdir(join(root, ".senpi"), { recursive: true });
+			await writeFile(
+				join(root, ".senpi", "codemode.json"),
+				JSON.stringify({ futureKey: 1, runBudgetSeconds: 120 }),
+			);
+
+			const loaded = await loadCodemodeSettings({ cwd: root, homeDir: root });
+
+			expect(loaded.settings.runBudgetSeconds).toBe(120);
+			expect(loaded.warnings).toHaveLength(1);
+			expect(loaded.warnings[0]).toContain("futureKey");
+		} finally {
+			await rm(root, { recursive: true, force: true });
+		}
+	});
+
+	it("Given an unknown key inside a known setting when settings load then the file still falls back to defaults with a warning", async () => {
+		const root = await mkdtemp(join(tmpdir(), "senpi-codemode-nested-unknown-"));
+		try {
+			await mkdir(join(root, ".senpi"), { recursive: true });
+			await writeFile(
+				join(root, ".senpi", "codemode.json"),
+				JSON.stringify({ runBudgetSeconds: 120, taskTools: { task: "task", futureNested: true } }),
+			);
+
+			const loaded = await loadCodemodeSettings({ cwd: root, homeDir: root });
+
+			expect(loaded.settings.runBudgetSeconds).toBe(defaultCodemodeSettings.runBudgetSeconds);
+			expect(loaded.warnings.some((warning) => warning.includes("Falling back to codemode defaults"))).toBe(true);
+		} finally {
+			await rm(root, { recursive: true, force: true });
+		}
+	});
+
 	it("accepts a positive numeric maxDetachedCells setting", async () => {
 		const root = await mkdtemp(join(tmpdir(), "senpi-codemode-cap-"));
 		try {
@@ -134,6 +172,7 @@ describe("codemode settings", () => {
 				taskTools: { task: "task", output: "task_output" },
 				outputSink: { headBytes: 20480, maxColumns: 768 },
 				statusEvents: true,
+				memory: defaultCodemodeSettings.memory,
 			});
 		} finally {
 			await rm(root, { recursive: true, force: true });
@@ -166,6 +205,7 @@ describe("codemode settings", () => {
 				taskTools: { task: "task", output: "task_output" },
 				outputSink: { headBytes: 20480, maxColumns: 768 },
 				statusEvents: true,
+				memory: defaultCodemodeSettings.memory,
 			});
 		} finally {
 			await rm(root, { recursive: true, force: true });
@@ -220,7 +260,7 @@ describe("codemode settings", () => {
 		}
 	});
 
-	it("rejects unknown settings keys with a warning", async () => {
+	it("ignores an unknown top-level key with a warning and keeps today's defaults", async () => {
 		const root = await mkdtemp(join(tmpdir(), "senpi-codemode-config-"));
 		try {
 			const projectDir = join(root, "project");
@@ -232,7 +272,7 @@ describe("codemode settings", () => {
 
 			expect(loaded.settings).toEqual(defaultCodemodeSettings);
 			expect(loaded.warnings).toHaveLength(1);
-			expect(loaded.warnings[0]).toContain("Invalid codemode settings");
+			expect(loaded.warnings[0]).toContain('Unknown codemode setting "unknown"');
 		} finally {
 			await rm(root, { recursive: true, force: true });
 		}
@@ -404,6 +444,35 @@ describe("codemode settings", () => {
 
 		for (const value of ["0", "-5", "abc", ""]) {
 			expect(resolveForegroundWindowSeconds(settings, { SENPI_CODEMODE_FOREGROUND_SECONDS: value })).toBe(15);
+		}
+	});
+
+	it("resolves the settled-result memory and image-spill budgets from defaults, the file, and the environment", async () => {
+		const root = await mkdtemp(join(tmpdir(), "senpi-codemode-config-"));
+		try {
+			const projectDir = join(root, "project");
+			await mkdir(join(projectDir, ".senpi"), { recursive: true });
+			await writeFile(
+				join(projectDir, ".senpi", "codemode.json"),
+				JSON.stringify({ memory: { retainedResultsMb: 8, retainedImagesMb: 64 } }),
+			);
+			const loaded = await loadCodemodeSettings({ cwd: projectDir, homeDir: join(root, "home") });
+
+			expect(loaded.warnings).toEqual([]);
+			for (const [resolve, flag, fallback, fromFile] of [
+				[resolveRetainedResultsBytes, "SENPI_CODEMODE_RETAINED_RESULTS_MB", 32, 8],
+				[resolveRetainedImagesBytes, "SENPI_CODEMODE_RETAINED_IMAGES_MB", 256, 64],
+			] as const) {
+				expect(resolve(defaultCodemodeSettings, {})).toBe(fallback * 1024 * 1024);
+				expect(resolve(loaded.settings, {})).toBe(fromFile * 1024 * 1024);
+				expect(resolve(loaded.settings, { [flag]: "4" })).toBe(4 * 1024 * 1024);
+				expect(resolve(loaded.settings, { [flag]: "0" })).toBe(0);
+				for (const value of ["-1", "abc", "", "1.5"]) {
+					expect(resolve(loaded.settings, { [flag]: value })).toBe(fromFile * 1024 * 1024);
+				}
+			}
+		} finally {
+			await rm(root, { recursive: true, force: true });
 		}
 	});
 });

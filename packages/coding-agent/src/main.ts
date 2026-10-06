@@ -6,7 +6,8 @@
  * createAgentSession() options. The SDK does the heavy lifting.
  */
 
-import { join, resolve } from "node:path";
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 import { createInterface } from "node:readline";
 import { type ImageContent, modelsAreEqual } from "@earendil-works/pi-ai";
 import { setCapabilityOverrides } from "@earendil-works/pi-tui";
@@ -28,12 +29,15 @@ import {
 	printAuthCommandHelp,
 	validateAuthCommandArgs,
 } from "./cli/auth-command.ts";
+import { movedSessionToContinue } from "./cli/continue-moved.ts";
 import { resolveCredentialForPrint } from "./cli/credential-print.ts";
+import { chooseCrossProjectAction, confirmSameRepositoryRebind } from "./cli/cross-project-session.ts";
 import {
 	dispatchAppServerCommand,
 	dispatchConfigCommand,
 	dispatchHostCommand,
 	dispatchPackageCommand,
+	dispatchScheduleCommand,
 } from "./cli/deferred-commands.ts";
 import { processFileArguments } from "./cli/file-processor.ts";
 import { resolveHelpExtensionFlags } from "./cli/help-extension-flags.ts";
@@ -41,6 +45,7 @@ import { helpFlagsScope, isPlainHelpRequest, resolveHelpProjectTrust } from "./c
 import { writeHelpFlagsCache } from "./cli/help-flags-cache.ts";
 import { buildInitialMessage } from "./cli/initial-message.ts";
 import { listModels } from "./cli/list-models.ts";
+import { isModelsDiscoverCommand, runModelsDiscoverCommand } from "./cli/models-command.ts";
 import { createProjectTrustContext } from "./cli/project-trust.ts";
 import {
 	createStartupLoadingIndicator,
@@ -48,8 +53,19 @@ import {
 	shouldShowStartupLoadingIndicator,
 } from "./cli/startup-loading-indicator.ts";
 import { shouldRunFirstTimeSetup, showFirstTimeSetup, showStartupSelector } from "./cli/startup-ui.ts";
-import { APP_NAME, DISPLAY_VERSION, ENV_SESSION_DIR, expandTildePath, getAgentDir, getPackageDir } from "./config.ts";
-import { type CreateAgentSessionRuntimeFactory, createAgentSessionRuntime } from "./core/agent-session-runtime.ts";
+import {
+	APP_NAME,
+	DISPLAY_VERSION,
+	ENV_SESSION_DIR,
+	expandTildePath,
+	getAgentDir,
+	getInstallPackageDir,
+} from "./config.ts";
+import {
+	applyRetryFallbackProfile,
+	type CreateAgentSessionRuntimeFactory,
+	createAgentSessionRuntime,
+} from "./core/agent-session-runtime.ts";
 import {
 	type AgentSessionRuntimeDiagnostic,
 	createAgentSessionFromServices,
@@ -62,6 +78,7 @@ import { type CredentialAccountSummary, summarizeCredentialAccounts } from "./co
 import { exportFromFile } from "./core/export-html/index.ts";
 import type { InlineExtension } from "./core/extensions/types.ts";
 import { applyHttpProxySettings, configureHttpDispatcher } from "./core/http-dispatcher.ts";
+import { installMemoryReportSignal } from "./core/memory-report/memory-report-write.ts";
 import {
 	getModelNarrowingPatterns,
 	resolveCliModel,
@@ -69,8 +86,11 @@ import {
 	type ScopedModel,
 } from "./core/model-resolver.ts";
 import { ModelRuntime } from "./core/model-runtime.ts";
+import { markMovedSessions, withMovedSessions } from "./core/moved-sessions.ts";
 import { restoreStdout, takeOverStdout } from "./core/output-guard.ts";
+import { recordProcessLifetime } from "./core/process-crash-record.ts";
 import { type AppMode, resolveProjectTrusted } from "./core/project-trust.ts";
+import { resolveResumeTarget } from "./core/resume-target.ts";
 import type { CreateAgentSessionOptions } from "./core/sdk.ts";
 import {
 	formatMissingSessionCwdPrompt,
@@ -78,18 +98,23 @@ import {
 	MissingSessionCwdError,
 	type SessionCwdIssue,
 } from "./core/session-cwd.ts";
+import { sessionExtensionFlagValues } from "./core/session-extension-flags.ts";
 import { assertValidSessionId, SessionManager } from "./core/session-manager.ts";
+import { classifySessionRepository, readSessionCwd, rebindSessionFile } from "./core/session-rebind.ts";
 import { collectSettingsDiagnosticsWithContext } from "./core/settings-diagnostics.ts";
 import { SettingsManager } from "./core/settings-manager.ts";
-import { shouldJoinSharedHost } from "./core/shared-host-policy.ts";
+import { type ClampedThinkingSelection, formatThinkingClampWarning } from "./core/thinking-levels.ts";
 import { printTimings, recordTiming, resetTimings, time } from "./core/timings.ts";
 import { hasTrustRequiringProjectResources, ProjectTrustStore } from "./core/trust-manager.ts";
 import { builtInExtensions } from "./extensions/index.ts";
 import { getFromSourceRealConfigWarning } from "./from-source-config-guard.ts";
+import { legacyPiEditStartupNotice } from "./legacy-pi-edits.ts";
 import { runMigrations, showDeprecationWarnings } from "./migrations.ts";
 import { initTheme, stopThemeWatcher } from "./modes/interactive/theme/theme.ts";
 import { runPrintMode } from "./modes/print-mode.ts";
+import { startHostChildReaper } from "./modes/rpc/child-reaper.ts";
 import { AUTO_TITLE_SESSIONS_CAPABILITY, parseClientCapabilities } from "./modes/rpc/custom-capability.ts";
+import type { PreparableRuntimeFactory, PrepareRuntimeOptions } from "./modes/rpc/host-warm.ts";
 import { dispatchInternalSupervisor } from "./modes/rpc/supervisor-route.ts";
 import { isLocalPath, normalizePath, resolvePath } from "./utils/paths.ts";
 import { cleanupWindowsSelfUpdateQuarantine } from "./utils/windows-self-update.ts";
@@ -367,17 +392,24 @@ async function resolveSessionPath(sessionArg: string, cwd: string, sessionDir?: 
  * Resolves false on stdin EOF (Ctrl+D, closed pipe): without the close handler a
  * readline question never settles once the input stream ends, hanging the process.
  */
-async function promptConfirm(message: string): Promise<boolean> {
+export async function promptConfirm(message: string): Promise<boolean> {
 	return new Promise((resolve) => {
 		const rl = createInterface({
 			input: process.stdin,
 			output: process.stdout,
 		});
+		let settled = false;
+		const settle = (result: boolean): void => {
+			if (settled) return;
+			settled = true;
+			resolve(result);
+		};
 		rl.question(`${message} [y/N] `, (answer) => {
+			const normalized = answer.trim().toLowerCase();
+			settle(normalized === "y" || normalized === "yes");
 			rl.close();
-			resolve(answer.toLowerCase() === "y" || answer.toLowerCase() === "yes");
 		});
-		rl.on("close", () => resolve(false));
+		rl.once("close", () => settle(false));
 	});
 }
 
@@ -393,6 +425,24 @@ function validateForkFlags(parsed: Args): void {
 
 	if (conflictingFlags.length > 0) {
 		console.error(chalk.red(`Error: --fork cannot be combined with ${conflictingFlags.join(", ")}`));
+		process.exit(1);
+	}
+}
+
+function validateRebindFlags(parsed: Args): void {
+	if (!parsed.rebind) return;
+
+	const conflictingFlags = [
+		parsed.session ? "--session" : undefined,
+		parsed.fork ? "--fork" : undefined,
+		parsed.continue ? "--continue" : undefined,
+		parsed.resume ? "--resume" : undefined,
+		parsed.noSession ? "--no-session" : undefined,
+		parsed.sessionId !== undefined ? "--session-id" : undefined,
+	].filter((flag): flag is string => flag !== undefined);
+
+	if (conflictingFlags.length > 0) {
+		console.error(chalk.red(`Error: --rebind cannot be combined with ${conflictingFlags.join(", ")}`));
 		process.exit(1);
 	}
 }
@@ -440,6 +490,26 @@ function forkSessionOrExit(sourcePath: string, cwd: string, sessionDir?: string,
 	}
 }
 
+async function rebindSessionOrExit(sourcePath: string, cwd: string, sessionDir?: string): Promise<SessionManager> {
+	try {
+		const reboundPath = await rebindSessionFile(sourcePath, cwd, sessionDir);
+		console.log(chalk.dim(`Session moved to ${cwd}`));
+		return SessionManager.open(reboundPath, sessionDir);
+	} catch (error: unknown) {
+		const message = error instanceof Error ? error.message : String(error);
+		console.error(chalk.red(`Error: ${message}`));
+		process.exit(1);
+	}
+}
+
+function sessionCwdOrUndefined(sessionFile: string): string | undefined {
+	try {
+		return readSessionCwd(sessionFile);
+	} catch {
+		return undefined;
+	}
+}
+
 export async function createSessionManager(
 	parsed: Args,
 	cwd: string,
@@ -474,6 +544,27 @@ export async function createSessionManager(
 		}
 	}
 
+	if (parsed.rebind) {
+		const resolved = await resolveSessionPath(parsed.rebind, cwd, sessionDir);
+		if (resolved.type === "not_found") {
+			console.error(chalk.red(`No session found matching '${resolved.arg}'`));
+			process.exit(1);
+		}
+		const sessionCwd = resolved.type === "global" ? resolved.cwd : sessionCwdOrUndefined(resolved.path);
+		if (resolved.type === "local" || sessionCwd === undefined || resolvePath(sessionCwd) === resolvePath(cwd)) {
+			return openSessionOrExit(resolved.path, sessionDir);
+		}
+		if ((await classifySessionRepository(resolved.path, sessionCwd, cwd)) === "different") {
+			console.error(
+				chalk.red(
+					`Refusing to rebind: ${cwd} is a different git repository than ${sessionCwd}. Use --fork '${parsed.rebind}' to copy the session into this directory instead.`,
+				),
+			);
+			process.exit(1);
+		}
+		return rebindSessionOrExit(resolved.path, cwd, sessionDir);
+	}
+
 	if (parsed.session) {
 		const resolved = await resolveSessionPath(parsed.session, cwd, sessionDir);
 
@@ -483,27 +574,24 @@ export async function createSessionManager(
 				return openSessionOrExit(resolved.path, sessionDir);
 
 			case "global": {
-				if (appMode !== "interactive") {
-					// The fork confirmation below blocks on readline, which only an
-					// interactive session can answer. Print, JSON, RPC, and app-server runs
-					// reach here with a TTY attached too (`-p` from a terminal), where the
-					// question hangs the process or resolves as "no" on stdin EOF. Fail fast
-					// with an actionable message instead.
-					console.error(chalk.red(`Session found in different project: ${resolved.cwd}`));
-					console.error(
-						chalk.red(
-							`Cannot confirm forking without an interactive session. Use --fork '${parsed.session}' to fork it into the current directory, or re-run interactively from ${resolved.cwd}.`,
-						),
-					);
-					process.exit(1);
-				}
-				console.log(chalk.yellow(`Session found in different project: ${resolved.cwd}`));
-				const shouldFork = await promptConfirm("Fork this session into current directory?");
-				if (!shouldFork) {
-					console.log(chalk.dim("Aborted."));
-					process.exit(0);
-				}
-				return forkSessionOrExit(resolved.path, cwd, sessionDir);
+				// The confirmation blocks on readline, which only an interactive session can
+				// answer. Print, JSON, RPC, and app-server runs reach here with a TTY attached
+				// too (`-p` from a terminal), where the question hangs the process or resolves
+				// as "no" on stdin EOF, so they get the exact commands and a non-zero exit.
+				const action = await chooseCrossProjectAction({
+					sessionArg: parsed.session,
+					sessionCwd: resolved.cwd,
+					cwd,
+					match: await classifySessionRepository(resolved.path, resolved.cwd, cwd),
+					interactive: appMode === "interactive",
+					confirm: promptConfirm,
+					out: (line) => console.log(line),
+					err: (line) => console.error(line),
+				});
+				if (action === "rebind") return rebindSessionOrExit(resolved.path, cwd, sessionDir);
+				if (action === "fork") return forkSessionOrExit(resolved.path, cwd, sessionDir);
+				if (action === "abort") console.log(chalk.dim("Aborted."));
+				return process.exit(action === "abort" ? 0 : 1);
 			}
 
 			case "not_found":
@@ -515,23 +603,53 @@ export async function createSessionManager(
 	if (parsed.resume) {
 		try {
 			const { selectSession } = await import("./cli/session-picker.ts");
+			const movedOptions = sessionDir === undefined ? {} : { sessionDir };
 			const selectedPath = await selectSession(
-				(onProgress) => SessionManager.list(cwd, sessionDir, onProgress),
-				(onProgress) => SessionManager.listAll(sessionDir, onProgress),
+				(onProgress) => withMovedSessions(SessionManager.list(cwd, sessionDir, onProgress), cwd, movedOptions),
+				async (onProgress) => markMovedSessions(await SessionManager.listAll(sessionDir, onProgress), cwd),
 				settingsManager,
 			);
 			if (!selectedPath) {
 				console.log(chalk.dim("No session selected"));
 				process.exit(0);
 			}
-			return SessionManager.open(selectedPath, sessionDir);
+			const target = await resolveResumeTarget({
+				sessionPath: selectedPath,
+				cwd,
+				...movedOptions,
+				confirm: (selectedCwd) => {
+					console.log(chalk.yellow(`Session found in different project: ${selectedCwd}`));
+					return confirmSameRepositoryRebind({
+						sessionArg: selectedPath,
+						cwd,
+						confirm: promptConfirm,
+						out: (line) => console.log(line),
+					});
+				},
+			}).catch((error: unknown) => {
+				console.error(chalk.red(`Error: ${error instanceof Error ? error.message : String(error)}`));
+				return process.exit(1);
+			});
+			if (target.rebound) console.log(chalk.dim(`Session moved to ${cwd}`));
+			return SessionManager.open(target.path, sessionDir);
 		} finally {
 			stopThemeWatcher();
 		}
 	}
 
 	if (parsed.continue) {
-		return SessionManager.continueRecent(cwd, sessionDir);
+		const recent = SessionManager.continueRecent(cwd, sessionDir);
+		const recentFile = recent.getSessionFile();
+		if (recentFile !== undefined && existsSync(recentFile)) return recent;
+		const moved = await movedSessionToContinue({
+			cwd,
+			...(sessionDir === undefined ? {} : { sessionDir }),
+			interactive: appMode === "interactive",
+			confirm: promptConfirm,
+			out: (line) => console.log(line),
+			err: (line) => console.error(line),
+		});
+		return moved === undefined ? recent : rebindSessionOrExit(moved, cwd, sessionDir);
 	}
 
 	if (parsed.sessionId) {
@@ -567,6 +685,12 @@ function buildSessionOptions(
 	// Model from CLI
 	// - supports --provider <name> --model <pattern>
 	// - supports --model <provider>/<pattern>
+	if (parsed.provider && !parsed.model) {
+		diagnostics.push({
+			type: "error",
+			message: `--provider requires --model (for example: --provider ${parsed.provider} --model <pattern>)`,
+		});
+	}
 	if (parsed.model) {
 		const resolved = resolveCliModel({
 			cliProvider: parsed.provider,
@@ -582,6 +706,7 @@ function buildSessionOptions(
 		}
 		if (resolved.model) {
 			options.model = resolved.model;
+			options.serviceTier = resolved.serviceTier;
 			options.initialModelProvenance = "cli";
 			// Allow "--model <pattern>:<thinking>" as a shorthand.
 			// Explicit --thinking still takes precedence (applied later).
@@ -633,6 +758,7 @@ function buildSessionOptions(
 			model: sm.model,
 			thinkingLevel: sm.thinkingLevel,
 			thinkingSelection: sm.thinkingSelection,
+			serviceTier: sm.serviceTier,
 		}));
 	}
 
@@ -715,7 +841,7 @@ export function createCliRuntimeFactory(
 		 */
 		modelRuntime?: ModelRuntime;
 	} = {},
-): CreateAgentSessionRuntimeFactory {
+): PreparableRuntimeFactory {
 	const { parsed, cwd, agentDir, appMode } = configuration;
 	const extensionFactories = local.extensionFactories ?? builtInExtensions;
 	const startupSettingsManager = local.startupSettingsManager ?? SettingsManager.create(cwd, agentDir);
@@ -734,19 +860,18 @@ export function createCliRuntimeFactory(
 	const resolvedSkillPaths = resolveCliPaths(cwd, parsed.skills);
 	const resolvedPromptTemplatePaths = resolveCliPaths(cwd, parsed.promptTemplates);
 	const resolvedThemePaths = resolveCliPaths(cwd, parsed.themes);
-	return async ({
+	// The cwd-bound services one session needs, built alone: the runtime factory below builds them
+	// before its session, and a multi-session host's `warm` builds and drops them (senpi#2314).
+	const createServices = async ({
 		cwd,
 		agentDir,
-		sessionManager,
-		sessionStartEvent,
 		projectTrustContext,
 		launchProfile,
 		mcpRegistry,
+		isInitialRuntime,
+	}: Omit<Parameters<CreateAgentSessionRuntimeFactory>[0], "sessionManager" | "sessionStartEvent"> & {
+		isInitialRuntime: boolean;
 	}) => {
-		const isInitialRuntime = sessionStartEvent === undefined;
-		const markSwitch = (label: string): void => {
-			if (sessionStartEvent?.reason === "resume") time(label, "switch");
-		};
 		const projectTrustDiagnostics: AgentSessionRuntimeDiagnostic[] = [];
 		const cachedProjectTrust = projectTrustByCwd.get(cwd);
 		const hasTrustRequiringResources = hasTrustRequiringProjectResources(cwd);
@@ -758,6 +883,8 @@ export function createCliRuntimeFactory(
 				parsed.projectTrustOverride ??
 				(!hasTrustRequiringResources || trustStore.get(cwd) === true));
 		const runtimeSettingsManager = SettingsManager.create(cwd, agentDir, { projectTrusted });
+		// The opener's per-session fallback policy is an in-memory override: never saved, never shared.
+		if (launchProfile?.retryFallback) applyRetryFallbackProfile(runtimeSettingsManager, launchProfile.retryFallback);
 		const services = await createAgentSessionServices({
 			cwd,
 			agentDir,
@@ -765,7 +892,7 @@ export function createCliRuntimeFactory(
 			...(local.modelRuntime === undefined ? {} : { modelRuntime: local.modelRuntime }),
 			mcpRegistry,
 			modelRuntimeSignal: AbortSignal.timeout(15_000),
-			extensionFlagValues: parsed.unknownFlags,
+			extensionFlagValues: sessionExtensionFlagValues(parsed.unknownFlags, launchProfile),
 			resourceLoaderReloadOptions: shouldResolveProjectTrust
 				? {
 						resolveProjectTrust: async ({ extensionsResult }) => {
@@ -794,10 +921,6 @@ export function createCliRuntimeFactory(
 					}
 				: undefined,
 			resourceLoaderOptions: {
-				sharedHostEnabled: shouldJoinSharedHost(appMode, {
-					enableEnv: isTruthyEnvFlag(envValue("ENABLE_SHARED_HOST")),
-					settingEnabled: runtimeSettingsManager.getExperimentalSharedHost(),
-				}),
 				// Per-session identity reaches the extensions this session loads and stops
 				// there: it is deliberately NOT merged into `parsed`, so it can never move
 				// a model, an auth decision or a CLI flag.
@@ -817,6 +940,29 @@ export function createCliRuntimeFactory(
 				extensionFactories,
 			},
 		});
+		return { services, projectTrustDiagnostics };
+	};
+	const createRuntime: CreateAgentSessionRuntimeFactory = async ({
+		cwd,
+		agentDir,
+		sessionManager,
+		sessionStartEvent,
+		projectTrustContext,
+		launchProfile,
+		mcpRegistry,
+	}) => {
+		const isInitialRuntime = sessionStartEvent === undefined;
+		const markSwitch = (label: string): void => {
+			if (sessionStartEvent?.reason === "resume") time(label, "switch");
+		};
+		const { services, projectTrustDiagnostics } = await createServices({
+			cwd,
+			agentDir,
+			...(projectTrustContext !== undefined ? { projectTrustContext } : {}),
+			...(launchProfile !== undefined ? { launchProfile } : {}),
+			...(mcpRegistry !== undefined ? { mcpRegistry } : {}),
+			isInitialRuntime,
+		});
 		markSwitch("services");
 		const { settingsManager, modelRuntime, resourceLoader } = services;
 		const diagnostics: AgentSessionRuntimeDiagnostic[] = [
@@ -824,6 +970,10 @@ export function createCliRuntimeFactory(
 			...services.diagnostics,
 			...collectSettingsDiagnosticsWithContext(settingsManager, "runtime creation"),
 			...collectExtensionLoadDiagnostics(resourceLoader.getExtensions().errors),
+			...(resourceLoader.getExtensions().warnings ?? []).map(({ path, warning }) => ({
+				type: "warning" as const,
+				message: `Extension package "${path}": ${warning}`,
+			})),
 		];
 
 		const modelPatterns = getModelNarrowingPatterns({
@@ -885,8 +1035,10 @@ export function createCliRuntimeFactory(
 			sessionManager,
 			sessionStartEvent,
 			model: sessionOptions.model,
+			initialModelProvenance: sessionOptions.initialModelProvenance,
 			thinkingLevel: sessionOptions.thinkingLevel,
 			thinkingSelection: sessionOptions.thinkingSelection,
+			serviceTier: sessionOptions.serviceTier,
 			scopedModels: sessionOptions.scopedModels,
 			tools: sessionOptions.tools,
 			excludeTools: sessionOptions.excludeTools,
@@ -899,11 +1051,15 @@ export function createCliRuntimeFactory(
 				parseClientCapabilities(envValue("RPC_CLIENT_CAPABILITIES")),
 				launchProfile?.autoTitle,
 			),
+			promptSurface: launchProfile?.promptSurface,
+			browserEngine: launchProfile?.browserEngine,
 		});
 		markSwitch("createSession");
 		const cliThinkingOverride = runtimeParsed.thinking !== undefined || cliThinkingFromModel;
 		if (created.session.model && cliThinkingOverride) {
-			created.session.setThinkingLevel(created.session.thinkingLevel);
+			// senpi#2395: re-apply the level the CLI asked for, so a clamp keeps its requested level and reason.
+			const selection = created.session.thinkingSelection as ClampedThinkingSelection | undefined;
+			created.session.setThinkingLevel(selection?.requested ?? created.session.thinkingLevel);
 		}
 
 		return {
@@ -912,6 +1068,12 @@ export function createCliRuntimeFactory(
 			diagnostics,
 		};
 	};
+	// A host open creates its session with no start event, so a warm prepares exactly that open.
+	return Object.assign(createRuntime, {
+		prepare: async (options: PrepareRuntimeOptions): Promise<void> => {
+			await createServices({ ...options, isInitialRuntime: true });
+		},
+	});
 }
 
 export async function main(args: string[], options?: MainOptions) {
@@ -930,6 +1092,11 @@ export async function main(args: string[], options?: MainOptions) {
 		return;
 	}
 
+	if (isModelsDiscoverCommand(args)) {
+		process.exitCode = await runModelsDiscoverCommand(args.slice(2));
+		return;
+	}
+
 	// Internal launch surface used by bundled/rebranded runtimes. It is deliberately
 	// not accepted by parseArgs, so existing CLI modes remain unchanged. The route and
 	// the RPC host graph behind it live in ./modes/rpc/supervisor-route.ts.
@@ -938,7 +1105,7 @@ export async function main(args: string[], options?: MainOptions) {
 	}
 
 	if (process.platform === "win32") {
-		cleanupWindowsSelfUpdateQuarantine(getPackageDir());
+		cleanupWindowsSelfUpdateQuarantine(getInstallPackageDir());
 	}
 
 	const cwd = process.cwd();
@@ -977,6 +1144,12 @@ export async function main(args: string[], options?: MainOptions) {
 	const hostExitCode = await dispatchHostCommand(args);
 	if (hostExitCode !== undefined) {
 		process.exit(hostExitCode);
+	}
+
+	// Durable scheduled prompts: fired out of process, so a job scheduled by an exited --print run still runs.
+	const scheduleExitCode = await dispatchScheduleCommand(args);
+	if (scheduleExitCode !== undefined) {
+		process.exit(scheduleExitCode);
 	}
 
 	const parsed = parseArgs(args);
@@ -1030,6 +1203,7 @@ export async function main(args: string[], options?: MainOptions) {
 	}
 
 	validateForkFlags(parsed);
+	validateRebindFlags(parsed);
 	validateSessionIdFlags(parsed);
 
 	// Run migrations (pass cwd for project-local migrations)
@@ -1114,6 +1288,9 @@ export async function main(args: string[], options?: MainOptions) {
 	if (appMode === "interactive" && parsed.useTheme !== undefined) {
 		startupSettingsManager.applyOverrides({ theme: parsed.useTheme });
 	}
+
+	// Installs nothing unless SENPI_MEMORY_REPORT=1; then SIGUSR2 writes a memory report for every live session.
+	installMemoryReportSignal();
 
 	if (appMode === "rpc" && parsed.multiSession) {
 		if (options?.extensionFactories?.length)
@@ -1232,29 +1409,7 @@ export async function main(args: string[], options?: MainOptions) {
 		startupLoadingIndicator.stop();
 	});
 	time("createAgentSessionRuntime");
-	let selectedRuntime = runtime;
-	if (isTruthyEnvFlag(envValue("DISABLE_SHARED_HOST"))) {
-		console.error(
-			chalk.yellow(
-				"DISABLE_SHARED_HOST is obsolete: the shared session host is now off by default. Enable the experimental.sharedHost setting (or set the brand-prefixed ENABLE_SHARED_HOST=1 env flag) to opt in.",
-			),
-		);
-	}
-	if (
-		shouldJoinSharedHost(appMode, {
-			enableEnv: isTruthyEnvFlag(envValue("ENABLE_SHARED_HOST")),
-			settingEnabled: runtime.services.settingsManager.getExperimentalSharedHost(),
-		})
-	) {
-		const socket = envValue("RPC_SOCKET") ?? resolve(agentDir, "rpc", "rpc.sock");
-		const { createInteractiveHostRuntime } = await import("./modes/interactive/interactive-host-runtime.ts");
-		selectedRuntime = await createInteractiveHostRuntime(runtime, {
-			socket,
-			agentDir,
-			onWarning: (warning) => console.error(chalk.yellow(warning.message)),
-		});
-	}
-	const { services, session, modelFallbackMessage } = selectedRuntime;
+	const { services, session, modelFallbackMessage } = runtime;
 	const { settingsManager, modelRuntime, resourceLoader } = services;
 	setCapabilityOverrides(settingsManager.getTerminalCapabilityOverrides());
 	applyHttpProxySettings(settingsManager.getGlobalSettings().httpProxy);
@@ -1285,6 +1440,9 @@ export async function main(args: string[], options?: MainOptions) {
 		}
 	}
 	time("readPipedStdin");
+	// An RPC process always has a parent that watches its exit; every other mode dies unobserved.
+	recordProcessLifetime(agentDir, appMode, { supervised: appMode === "rpc" });
+	time("recordProcessLifetime");
 
 	const { initialMessage, initialImages, initialTitlePrompt } = await prepareInitialMessage(
 		parsed,
@@ -1305,6 +1463,11 @@ export async function main(args: string[], options?: MainOptions) {
 
 	time("resolveModelScope");
 	reportDiagnostics(runtime.diagnostics);
+	// senpi#2395: print/json/RPC runs report a startup thinking clamp on stderr; the TUI shows its own warning.
+	const startupThinkingClamp = runtime.session.startupThinkingClamp;
+	if (appMode !== "interactive" && startupThinkingClamp) {
+		reportDiagnostics([{ type: "warning", message: formatThinkingClampWarning(startupThinkingClamp) }]);
+	}
 	if (appMode !== "interactive") {
 		reportDiagnostics(collectAuthDiagnostics(services.authStorage, "runtime creation"));
 	}
@@ -1337,6 +1500,13 @@ export async function main(args: string[], options?: MainOptions) {
 			.finally(() => clearTimeout(timeout));
 	}
 
+	// Every mode hosts the eval kernel, and a worker thread that is terminated takes its children's exit
+	// watchers with it, so single-session modes arm the same reaper the multi-session host runs (#1962). The
+	// TUI owns stderr, so interactive mode reaps silently.
+	const stopChildReaper = await startHostChildReaper(
+		appMode === "interactive" ? () => {} : (message) => void process.stderr.write(`${message}\n`),
+	);
+
 	if (appMode === "rpc") {
 		const { runRpcMode } = await import("./modes/rpc/rpc-mode.ts");
 		printTimings();
@@ -1345,8 +1515,9 @@ export async function main(args: string[], options?: MainOptions) {
 		// Keep the TUI graph out of headless RPC children. This is intentionally at the
 		// mode seam: interactive startup still loads the same module before first use.
 		const { InteractiveMode } = await import("./modes/interactive/interactive-mode.ts");
-		const interactiveMode = new InteractiveMode(selectedRuntime, {
+		const interactiveMode = new InteractiveMode(runtime, {
 			migratedProviders,
+			legacyPiEditNotice: legacyPiEditStartupNotice(),
 			modelFallbackMessage,
 			autoTrustOnReloadCwd,
 			initialMessage,
@@ -1389,6 +1560,7 @@ export async function main(args: string[], options?: MainOptions) {
 			initialImages,
 		});
 		reportDiagnostics(collectAuthDiagnostics(services.authStorage, "print mode"));
+		stopChildReaper();
 		stopThemeWatcher();
 		restoreStdout();
 		if (exitCode !== 0) {

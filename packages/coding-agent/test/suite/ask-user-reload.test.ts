@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { getPendingQuestions } from "../../src/core/extensions/builtin/ask-user/registry.ts";
 import type { QuestionResponse } from "../../src/core/extensions/builtin/ask-user/schema.ts";
 import { emitSessionShutdownEvent } from "../../src/core/extensions/runner.ts";
-import type { ExtensionContext } from "../../src/core/extensions/types.ts";
+import type { ExtensionContext, ExtensionToolContext } from "../../src/core/extensions/types.ts";
 import { ASYNC_QUESTIONS, type AskUserDelivery, createAskUserDelivery } from "./helpers/ask-user-delivery.ts";
 
 const deliveries: AskUserDelivery[] = [];
@@ -30,7 +30,7 @@ describe("ask-user reload", () => {
 			{ questions: ASYNC_QUESTIONS, waitForAnswer: false },
 			undefined,
 			undefined,
-			context,
+			context as ExtensionToolContext,
 		);
 		const entry = getPendingQuestions(context.sessionManager.getSessionId())[0];
 		if (!entry) throw new Error("missing pending question");
@@ -98,7 +98,7 @@ describe("ask-user reload", () => {
 			{ questions: ASYNC_QUESTIONS, waitForAnswer: false },
 			undefined,
 			undefined,
-			context,
+			context as ExtensionToolContext,
 		);
 		const completion = delivery.settled(context, "close-question");
 		await emitSessionShutdownEvent(runner, {
@@ -141,7 +141,7 @@ describe("ask-user reload", () => {
 			{ questions: ASYNC_QUESTIONS, waitForAnswer: false },
 			undefined,
 			undefined,
-			context,
+			context as ExtensionToolContext,
 		);
 		const completion = delivery.settled(context, "runner-swap");
 		const oldRunner = delivery.harness.getExtensionRunner();
@@ -172,7 +172,7 @@ describe("ask-user reload", () => {
 			{ questions: ASYNC_QUESTIONS, waitForAnswer: false },
 			undefined,
 			undefined,
-			context,
+			context as ExtensionToolContext,
 		);
 		const completion = delivery.settled(context, "disable-reload");
 		const errors: unknown[] = [];
@@ -208,7 +208,7 @@ describe("ask-user reload", () => {
 			{ questions: ASYNC_QUESTIONS, waitForAnswer: false },
 			undefined,
 			undefined,
-			context,
+			context as ExtensionToolContext,
 		);
 		const completion = delivery.settled(context, "detached-timeout");
 		const terminal = vi.fn();

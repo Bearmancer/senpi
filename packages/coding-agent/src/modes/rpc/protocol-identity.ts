@@ -17,20 +17,10 @@ import { createHash, randomUUID } from "node:crypto";
 import { resolve } from "node:path";
 import { parseArgs, resolveSessionRuntime } from "../../cli/args.ts";
 import { engineBuildIdentity } from "../../core/engine-build-identity.ts";
+import { HOST_GENERATION_ENV, HOST_INSTANCE_ID_ENV } from "./host-identity-env.ts";
 import type { RpcLaunchProfile, RpcLaunchProfileCore, RpcProtocolIdentity } from "./rpc-types.ts";
 
-/**
- * Generation of this host within its daemon directory, handed to it by the ensure call
- * that spawned it (the daemon settings travel to the host through its environment).
- * Absent - a bare host nobody ensured - is generation 0.
- */
-export const HOST_GENERATION_ENV = "SENPI_RPC_HOST_GENERATION";
-
-/**
- * Identity of the host being spawned, chosen by the ensure that spawns it so the daemon directory
- * can hold that generation's state before the process exists. A host nobody ensured names itself.
- */
-export const HOST_INSTANCE_ID_ENV = "SENPI_RPC_HOST_INSTANCE_ID";
+export { HOST_GENERATION_ENV, HOST_INSTANCE_ID_ENV };
 
 /** Identity of THIS host process, fixed for its lifetime. */
 const INSTANCE_ID = resolveInstanceId(process.env[HOST_INSTANCE_ID_ENV]);
@@ -66,6 +56,15 @@ export function hostLaunchProfile(argv: readonly string[], cwd: string): RpcLaun
 		session_runtime: core.session_runtime,
 	});
 	return { profile_id: createHash("sha256").update(canonical).digest("hex"), core };
+}
+
+/**
+ * The launch profile a SOCKET host child started with `hostArgs` derives from its own argv. The
+ * child always runs `--mode rpc --multi-session --listen <socket>`, and `--listen` is what makes its
+ * session runtime `in-process`; the socket itself never enters the profile.
+ */
+export function socketHostLaunchProfile(hostArgs: readonly string[], cwd: string): RpcLaunchProfile {
+	return hostLaunchProfile(["--mode", "rpc", "--multi-session", "--listen", "unix://", ...hostArgs], cwd);
 }
 
 /** The identity fields of this host's `get_protocol_info` answer. */

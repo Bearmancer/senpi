@@ -90,9 +90,10 @@ import {
 	getPromptContextWindow,
 	isAbortedAssistantMessage,
 	isMonitorableMessageEvent,
-	isRequiredCompactionFallbackReason,
 	linkAbortSignal,
 	recentCheckpoint,
+	reportRemoteCompactionTimeout,
+	requiresDeterministicCompactionFallback,
 	withAdditionalTokens,
 } from "./extension-wiring.ts";
 import { isIneffectiveCompaction } from "./yield.ts";
@@ -124,7 +125,8 @@ export default function compactionExtension(
 	let speculativeJob: SpeculativeJob | undefined;
 	const pendingMetadata = new Map<string, PendingCompactionMetadata>();
 	let logger: CompactionLogger | undefined;
-	const getLogger = (ctx: ExtensionContext): CompactionLogger => (logger ??= createCompactionLogger(ctx.agentDir));
+	const getLogger = (ctx: ExtensionContext): CompactionLogger =>
+		(logger ??= createCompactionLogger(ctx.agentDir, { getSessionId: () => ctx.sessionManager.getSessionId() }));
 
 	function getSummarizationTools(): Tool[] {
 		if (typeof pi.getAllTools !== "function" || typeof pi.getActiveTools !== "function") return [];
@@ -441,6 +443,7 @@ export default function compactionExtension(
 							if (data?.action === "remote_fallback" && typeof data.reason === "string") {
 								remoteFallbackReason = data.reason;
 							}
+							reportRemoteCompactionTimeout(ctx, "extension", feedbackSignal, data);
 							pi.events.emit(SENPI_COMPACTION_EVENT, data);
 						},
 						remoteCompactionDependencies,
@@ -658,7 +661,10 @@ export default function compactionExtension(
 				remoteCompaction = await runOpenAiRemoteCompaction(
 					ctx,
 					event,
-					(data) => pi.events.emit(SENPI_COMPACTION_EVENT, data),
+					(data) => {
+						reportRemoteCompactionTimeout(ctx, event.reason, event.signal, data);
+						pi.events.emit(SENPI_COMPACTION_EVENT, data);
+					},
 					remoteCompactionDependencies,
 				);
 			} catch (error) {
@@ -692,7 +698,7 @@ export default function compactionExtension(
 				}
 				if (
 					warmFailure !== undefined &&
-					isRequiredCompactionFallbackReason(event.reason) &&
+					requiresDeterministicCompactionFallback(event, ctx.getContextUsage()) &&
 					classifyRequiredCompactionFallbackFailure(warmFailure) !== undefined &&
 					!event.signal.aborted &&
 					speculativeGeneration === claimedGeneration &&
@@ -725,7 +731,7 @@ export default function compactionExtension(
 				const message = error instanceof Error ? error.message : String(error);
 				const failureKind = classifyRequiredCompactionFallbackFailure(error);
 				if (
-					isRequiredCompactionFallbackReason(event.reason) &&
+					requiresDeterministicCompactionFallback(event, ctx.getContextUsage()) &&
 					failureKind !== undefined &&
 					!event.signal.aborted
 				) {
@@ -973,6 +979,7 @@ export default function compactionExtension(
 				toolAdmissionEnabled: settings.toolAdmissionEnabled !== false,
 				breakerFallback,
 				laneOwnsCompaction,
+				appendOnlyTranscript: lanePolicy.hasAppendOnlyTranscript(ctx),
 				emergencyPruneLatch,
 				logEmergencyPrune: (fields) => getLogger(ctx).debug("emergency_prune", fields),
 			}),

@@ -49,6 +49,31 @@ describe("daemon state directory v2", () => {
 		});
 	}, 20_000);
 
+	it("names the endpoint in a durable endpoint.json that outlives the host", async () => {
+		const qa = await sandbox("endpoint");
+		await ensureFixtureHost(qa);
+		const identity = join(qa.daemonDir, "endpoint.json");
+		const written = await readFile(identity, "utf8");
+
+		expect(JSON.parse(written)).toEqual({
+			layout: 2,
+			registry_version: 1,
+			endpoint_kind: "rpc_host",
+			socket: qa.socket,
+			created_at: expect.any(String),
+		});
+		expect(await permissions(identity)).toBe(0o600);
+		const stopped = await stopHost({ socket: qa.socket, agentDir: qa.agentDir, force: true });
+		expect(stopped.action).toBe("stopped");
+		if (stopped.action === "stopped") expect(await waitForPidGone(stopped.pid, 10_000)).toBe(true);
+
+		await expect(stat(join(qa.daemonDir, "host.pid"))).rejects.toMatchObject({ code: "ENOENT" });
+		expect(await readFile(identity, "utf8")).toBe(written);
+		// A later ensure re-asserts the identity without rewriting it.
+		await ensureFixtureHost(qa);
+		expect(await readFile(identity, "utf8")).toBe(written);
+	}, 20_000);
+
 	it("leaves nothing a legacy client can parse in the flat directory", async () => {
 		const qa = await sandbox("flat-dir");
 		await ensureFixtureHost(qa);

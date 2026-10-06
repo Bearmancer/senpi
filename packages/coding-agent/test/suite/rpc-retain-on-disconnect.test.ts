@@ -11,9 +11,11 @@ import { WorkerSessionRegistry } from "../../src/modes/rpc/worker-session-regist
 import { createHarness } from "./harness.ts";
 import { startWorkerHost } from "./rpc-worker-host-support.ts";
 
-vi.mock("node:worker_threads", async () => {
+vi.mock("node:worker_threads", async (importOriginal) => {
+	const actual = await importOriginal<typeof import("node:worker_threads")>();
 	const { EventEmitter } = await import("node:events");
 	return {
+		...actual,
 		Worker: class extends EventEmitter {
 			postMessage(): void {}
 			terminate(): Promise<number> {
@@ -36,6 +38,7 @@ interface OpenFields {
 	cwd?: string;
 	sessionPath?: string;
 	retain_on_disconnect?: boolean;
+	kind?: "interactive" | "worker";
 }
 
 /**
@@ -83,6 +86,8 @@ async function retainHost(options: { idleEvictionMs?: number } = {}) {
 			}
 			case "bind":
 			case "command":
+			case "prompt_surface":
+			case "browser_engine":
 				queueMicrotask(() => this.emit("message", { type: "result", request: message.request }));
 				break;
 			case "close":
@@ -90,7 +95,6 @@ async function retainHost(options: { idleEvictionMs?: number } = {}) {
 				queueMicrotask(() => this.emit("exit", 0));
 				break;
 			case "cancel_ui":
-			case "display":
 				break;
 			default: {
 				const exhaustive: never = message;
@@ -165,7 +169,11 @@ async function retainHost(options: { idleEvictionMs?: number } = {}) {
 			await settle();
 		},
 		async list(): Promise<ListedSession[]> {
-			const response = await router.handle({ type: "list_sessions", id: `list-${++requests}` });
+			const response = await router.handle({
+				type: "list_sessions",
+				id: `list-${++requests}`,
+				include_workers: true,
+			});
 			return (response as { data?: { sessions?: ListedSession[] } } | undefined)?.data?.sessions ?? [];
 		},
 		/** The live worker client of an open session, for producing worker-side traffic. */
@@ -324,3 +332,74 @@ it("parks a retained detached session at the idle window and reopens it by path"
 	expect((reopened?.data as { sessionId?: string; attached?: boolean } | undefined)?.attached).toBeUndefined();
 	expect((reopened?.data as { sessionId?: string } | undefined)?.sessionId).not.toBe(sessionId);
 });
+
+it.each([
+	{ kind: "interactive", retain: true },
+	{ kind: "interactive", retain: false },
+	{ kind: "worker", retain: true },
+	{ kind: "worker", retain: false },
+] as const)(
+	"keeps an attached $kind isolate alive while a client polls get_state (retained: $retain)",
+	async ({ kind, retain }) => {
+		// Given: an attached, idle worker isolate whose only traffic is status polling.
+		await using host = await retainHost({ idleEvictionMs: 1_000 });
+		await host.open("owner", { cwd: host.cwd, kind, retain_on_disconnect: retain });
+		const [row] = await host.list();
+		if (!row) throw new Error("Session did not open");
+		const entry = host.registry.peek(row.sessionId);
+		if (!entry) throw new Error("Session did not open");
+		host.clock.now = 999;
+
+		// When: the client polls it just before the deadline, then the sweep runs.
+		await host.writer.withConnection("owner", () =>
+			host.router.handle({ id: "poll", type: "get_state", sessionId: row.sessionId }),
+		);
+		host.clock.now = 1_000;
+		host.router.sweepIdleSessions();
+		await host.writer.withConnection("owner", () =>
+			host.router.handle({ id: "after", type: "get_state", sessionId: row.sessionId }),
+		);
+
+		// Then: no park/evict event and the isolate still lists open and attached.
+		expect(entry.state).toBe("open");
+		const lifecycle = host.records.filter(
+			(record) =>
+				record.sessionId === row.sessionId &&
+				(record.type === "session_parked" || record.type === "session_closed"),
+		);
+		expect(lifecycle).toEqual([]);
+		expect(await host.list()).toEqual([expect.objectContaining({ sessionId: row.sessionId, attachments: 1 })]);
+		expect(host.posted.filter(({ message }) => message.type === "command")).toHaveLength(2);
+	},
+);
+
+it.each(["get_state", "memory_report"])(
+	"does not renew a detached worker isolate's idle window for %s",
+	async (command) => {
+		// Given: an idle retained worker isolate nobody is attached to, near its eviction deadline.
+		await using host = await retainHost({ idleEvictionMs: 1_000 });
+		await host.open("owner", { cwd: host.cwd, retain_on_disconnect: true });
+		const [row] = await host.list();
+		if (!row) throw new Error("Session did not open");
+		const entry = host.registry.peek(row.sessionId);
+		if (!entry) throw new Error("Session did not open");
+		await host.drop("owner");
+		host.clock.now = 999;
+
+		// When: a detached observation is routed just before the deadline.
+		host.registry.getForCommand(row.sessionId, command);
+		host.clock.now = 1_000;
+		host.router.sweepIdleSessions();
+
+		// Then: the observation has not extended the isolate's lifetime, and the close event names it.
+		expect(entry.state).toBe("closing");
+		await entry.closeCompletion;
+		expect(await host.list()).toEqual([]);
+		const lifecycle = host.records.filter(
+			(record) =>
+				record.sessionId === row.sessionId &&
+				(record.type === "session_parked" || record.type === "session_closed"),
+		);
+		expect(lifecycle.length).toBeGreaterThan(0);
+	},
+);

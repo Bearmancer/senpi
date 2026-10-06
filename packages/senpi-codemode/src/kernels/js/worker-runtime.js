@@ -6,12 +6,18 @@ import { encodeDisplayImage, resolveDisplayOps } from "./display-image.js";
 import { terminateProcessTrees } from "./process-tree.js";
 import { awaitMaybePromise, indirectEval, wrapUserCode } from "./worker-indirect-eval.js";
 import { installShellCapture } from "./worker-shell-capture.js";
+import { bindKernelBun } from "./worker-webview.js";
 import { createWorkpool } from "./workpool.js";
+import { createHandleHelpers } from "./handles.js";
 import { inKernelToolInvoke } from "./kernel-tools-context.js";
 import { kernelToolError } from "./kernel-tools-errors.js";
 import { createKernelToolRegistry, createToolNamespace } from "./kernel-tools-registry.js";
 
 const PREPARED_CELL_PREFIX = "/*senpi:prepared-cell*/";
+// One stable source URL for the loader/contribution prelude: a per-cell URL makes
+// every cell a distinct eval source string, so the code cache gains one entry
+// per cell for text that is identical until contributions change.
+const PRELUDE_SOURCE_URL = "senpi:kernel-prelude";
 // How long a child gets to honour SIGTERM before SIGKILL. Short, because the
 // cell has already produced its value and the caller is waiting on settle.
 const CHILD_TERMINATION_GRACE_MS = 1_000;
@@ -25,19 +31,23 @@ export class JsWorkerRuntime {
 	#hooks = null;
 	#pendingDisplays = [];
 	#children = new Set();
+	#shellWaits = new Set();
 	#onChildEvent;
+	#onShellWaitChange;
 	#tools;
 
 	constructor(options) {
 		this.#cwd = options.cwd;
 		this.#parallelPoolWidth = options.parallelPoolWidth;
 		this.#onChildEvent = typeof options.onChildEvent === "function" ? options.onChildEvent : null;
+		this.#onShellWaitChange = options.onShellWaitChange;
 		this.#localRoots = { ...(options.localRoots ?? {}) };
 		if (options.artifactsDir && !this.#localRoots.local) this.#localRoots.local = join(options.artifactsDir, "local");
 		this.#tools = createKernelToolRegistry({
 			generation: options.kernelGeneration ?? 1,
 			hostToolNames: options.hostToolNames ?? [],
 			foreignLanguageNames: options.foreignLanguageNames ?? [],
+			disabled: options.kernelToolsDisabled === true,
 		});
 		this.#installGlobals();
 	}
@@ -46,18 +56,25 @@ export class JsWorkerRuntime {
 		return this.#tools;
 	}
 
+	get shellWaitActive() {
+		return this.#shellWaits.size > 0;
+	}
+
 	async run(code, cellId, hooks) {
+		this.#shellWaits.clear();
 		this.#hooks = hooks;
 		try {
 			let prelude = "";
 			let cellCode = code;
+			let sourceName = cellId;
 			if (code.startsWith(PREPARED_CELL_PREFIX)) {
 				const prepared = JSON.parse(code.slice(PREPARED_CELL_PREFIX.length));
 				if (!isPlainObject(prepared) || typeof prepared.prelude !== "string" || typeof prepared.code !== "string") throw new Error("Invalid prepared JavaScript cell payload");
 				({ prelude, code: cellCode } = prepared);
+				if (typeof prepared.sourceFile === "string") sourceName = prepared.sourceFile;
 			}
-			if (prelude) indirectEval(prelude, `${cellId}:prelude`);
-			const value = await awaitMaybePromise(indirectEval(wrapUserCode(cellCode), cellId));
+			if (prelude) indirectEval(prelude, PRELUDE_SOURCE_URL);
+			const value = await awaitMaybePromise(indirectEval(bindKernelBun(wrapUserCode(cellCode)), sourceName));
 			await this.#drainPendingDisplays();
 			return value;
 		} finally {
@@ -124,10 +141,18 @@ export class JsWorkerRuntime {
 		globalThis.workpool = (agent, name, options) => createWorkpool((toolName, args) => this.#callTool(toolName, args), agent, name, options);
 		globalThis.parallel = async thunks => await this.#parallel(thunks);
 		globalThis.pipeline = async (items, ...stages) => await this.#pipeline(items, stages);
-		globalThis.completion = async (prompt, opts) => await this.#callTool("completion", { prompt, opts });
+		const handles = createHandleHelpers(async (toolName, args) => await this.#callTool(toolName, args));
+		globalThis.completion = async (prompt, opts) => {
+			const value = await this.#callTool("completion", { prompt, opts });
+			// The host answers a {handle: true} request with a saved reference; the cell gets the control view.
+			return isPlainObject(opts) && opts.handle === true ? handles.handle(value) : value;
+		};
+		globalThis.wait = async (list, options) => await handles.wait(list, options);
+		globalThis.handle = value => handles.handle(value);
 		globalThis.tool = createToolNamespace(
 			(fn, metadata) => this.#tools.define(fn, metadata),
 			async (name, args) => await this.#callTool(name, args),
+			{ defined: () => this.#tools.defined(), undefine: (name) => this.#tools.undefine(name) },
 		);
 		globalThis.tools = globalThis.tool;
 		const originalLog = console.log.bind(console);
@@ -153,6 +178,11 @@ export class JsWorkerRuntime {
 			isActive: () => this.#hooks !== null,
 			emitText: (stream, data) => this.#emitText(stream, data),
 			onChild: (child, spawnOptions) => this.#trackChild(child, spawnOptions),
+			onShellWait: (promise, waiting) => {
+				if (waiting) this.#shellWaits.add(promise);
+				else this.#shellWaits.delete(promise);
+				this.#onShellWaitChange?.();
+			},
 		});
 		globalThis.__senpi_restore_console__ = () => {
 			console.log = originalLog;

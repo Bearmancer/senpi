@@ -99,8 +99,7 @@ export function normalizeAppleTerminalInput(data: string, isAppleTerminal: boole
 	return normalizeNativeShiftEnterInput(data, isAppleTerminal, isShiftPressed);
 }
 
-export function normalizeWarpWslShiftEnterInput(
-	data: string,
+export function isWarpWslSession(
 	env: NodeJS.ProcessEnv = process.env,
 	platform: NodeJS.Platform = process.platform,
 	socketExists: (socketPath: string) => boolean = (socketPath) => {
@@ -110,16 +109,25 @@ export function normalizeWarpWslShiftEnterInput(
 			return false;
 		}
 	},
-): string {
-	if (data !== "\n" || platform !== "linux") return data;
+): boolean {
+	if (platform !== "linux") return false;
 	if (isMultiplexerSession(env) || env.SSH_CONNECTION?.trim() || env.SSH_CLIENT?.trim() || env.SSH_TTY?.trim()) {
-		return data;
+		return false;
 	}
 	const isWarp = Boolean(env.WARP_SESSION_ID?.trim() || env.WARP_TERMINAL_SESSION_UUID?.trim());
 	const interopPath = env.WSL_INTEROP?.trim();
 	const isWsl =
 		isWarp && interopPath !== undefined && /^\/run\/WSL\/\d+_interop$/.test(interopPath) && socketExists(interopPath);
-	return isWarp && isWsl ? NATIVE_SHIFT_ENTER_SEQUENCE : data;
+	return isWarp && isWsl;
+}
+
+export function normalizeWarpWslShiftEnterInput(
+	data: string,
+	env: NodeJS.ProcessEnv = process.env,
+	platform: NodeJS.Platform = process.platform,
+	socketExists?: (socketPath: string) => boolean,
+): string {
+	return data === "\n" && isWarpWslSession(env, platform, socketExists) ? NATIVE_SHIFT_ENTER_SEQUENCE : data;
 }
 
 export function keyboardEnhancementEnabled(): boolean {
@@ -251,6 +259,8 @@ export interface ProcessTerminalOptions {
 
 const DEFAULT_ESCAPE_TIMEOUT_MS = 10;
 const DEFAULT_SSH_ESCAPE_TIMEOUT_MS = 100;
+const DEFAULT_BURST_WINDOW_MS = 20;
+const DEFAULT_SSH_BURST_WINDOW_MS = 100;
 
 /**
  * Resolve how long to wait for the rest of an escape sequence before
@@ -266,6 +276,25 @@ export function resolveEscapeTimeoutMs(env: NodeJS.ProcessEnv = process.env): nu
 		return DEFAULT_SSH_ESCAPE_TIMEOUT_MS;
 	}
 	return DEFAULT_ESCAPE_TIMEOUT_MS;
+}
+
+/**
+ * Resolve how long a line break that ends a read with text is held as a possible paste fragment
+ * when the terminal sends no bracketed-paste markers. Paste chunks over SSH arrive further apart,
+ * so the default window is longer there. `PI_TUI_BURST_WINDOW_MS=0` never holds a line break.
+ */
+export function resolveBurstWindowMs(env: NodeJS.ProcessEnv = process.env): number {
+	const raw = env.PI_TUI_BURST_WINDOW_MS?.trim();
+	if (raw !== undefined && raw.length > 0) {
+		const configured = Number(raw);
+		if (Number.isFinite(configured) && configured >= 0) {
+			return configured;
+		}
+	}
+	if (env.SSH_CONNECTION || env.SSH_TTY) {
+		return DEFAULT_SSH_BURST_WINDOW_MS;
+	}
+	return DEFAULT_BURST_WINDOW_MS;
 }
 
 /**
@@ -296,6 +325,8 @@ export class ProcessTerminal implements Terminal {
 	private _kittyProtocolActive = false;
 	private _modifyOtherKeysActive = false;
 	private keyboardProtocolPushed = false;
+	/** DA1 replies owed to keyboard protocol queries. Later DA1 replies answer other queries and are forwarded. */
+	private pendingKeyboardProtocolDeviceAttributes = 0;
 	private keyboardProtocolNegotiationBuffer = "";
 	private discardingPrivateResponse = false;
 	private keyboardProtocolBufferFlushTimer?: ReturnType<typeof setTimeout>;
@@ -516,7 +547,10 @@ export class ProcessTerminal implements Terminal {
 	 * to handle the case where the response arrives split across multiple events.
 	 */
 	private setupStdinBuffer(): void {
-		this.stdinBuffer = new StdinBuffer({ escapeTimeout: resolveEscapeTimeoutMs() });
+		this.stdinBuffer = new StdinBuffer({
+			escapeTimeout: resolveEscapeTimeoutMs(),
+			burstWindowMs: resolveBurstWindowMs(),
+		});
 
 		// Forward individual sequences to the input handler
 		this.stdinBuffer.on("data", (sequence) => {
@@ -527,16 +561,16 @@ export class ProcessTerminal implements Terminal {
 					return;
 				}
 			}
-			const negotiationSequence = this.readKeyboardProtocolNegotiationSequence(sequence);
-			if (negotiationSequence === "pending") {
+			const negotiation = this.readKeyboardProtocolNegotiationSequence(sequence);
+			if (negotiation === "pending") {
 				this.scheduleKeyboardProtocolNegotiationBufferFlush();
 				return; // Wait briefly for the rest of a split Kitty response.
 			}
-			if (this.handleKeyboardProtocolNegotiationSequence(negotiationSequence)) {
+			if (negotiation && this.handleKeyboardProtocolNegotiationSequence(negotiation.parsed)) {
 				return;
 			}
 
-			this.forwardInputSequence(sequence);
+			this.forwardInputSequence(negotiation?.sequence ?? sequence);
 		});
 
 		// Re-wrap paste content with bracketed paste markers for existing editor handling
@@ -575,14 +609,14 @@ export class ProcessTerminal implements Terminal {
 			this.enableModifyOtherKeys();
 		}
 		this.keyboardProtocolPushed = true;
+		this.pendingKeyboardProtocolDeviceAttributes += 1;
 		this.clearKeyboardProtocolNegotiationBuffer();
 		this.rawWrite(KITTY_KEYBOARD_PROTOCOL_QUERY);
 	}
 
 	private handleKeyboardProtocolNegotiationSequence(
-		negotiationSequence: KeyboardProtocolNegotiationSequence | undefined,
+		negotiationSequence: KeyboardProtocolNegotiationSequence,
 	): boolean {
-		if (!negotiationSequence) return false;
 		this.clearKeyboardProtocolNegotiationBuffer();
 		if (negotiationSequence.type === "cursor-position") {
 			if (this.cursorQuery?.issued && this.cursorQuery.tmuxPane === undefined) {
@@ -590,6 +624,10 @@ export class ProcessTerminal implements Terminal {
 				this.settleCursorQuery(position);
 			}
 			return true;
+		}
+		if (negotiationSequence.type === "device-attributes") {
+			if (this.pendingKeyboardProtocolDeviceAttributes === 0) return false;
+			this.pendingKeyboardProtocolDeviceAttributes -= 1;
 		}
 		this.keyboardNegotiationSettled = true;
 		this.issueCursorQuery();
@@ -612,15 +650,16 @@ export class ProcessTerminal implements Terminal {
 		return true;
 	}
 
+	/** Returns the parsed negotiation reply with its full (possibly reassembled) sequence. */
 	private readKeyboardProtocolNegotiationSequence(
 		sequence: string,
-	): KeyboardProtocolNegotiationSequence | "pending" | undefined {
+	): { parsed: KeyboardProtocolNegotiationSequence; sequence: string } | "pending" | undefined {
 		if (this.keyboardProtocolNegotiationBuffer) {
 			const bufferedSequence = this.keyboardProtocolNegotiationBuffer + sequence;
 			const negotiationSequence = parseKeyboardProtocolNegotiationSequence(bufferedSequence);
 			if (negotiationSequence) {
 				this.clearKeyboardProtocolNegotiationBuffer();
-				return negotiationSequence;
+				return { parsed: negotiationSequence, sequence: bufferedSequence };
 			}
 			if (isKeyboardProtocolNegotiationSequencePrefix(bufferedSequence)) {
 				this.setKeyboardProtocolNegotiationBuffer(bufferedSequence);
@@ -630,7 +669,7 @@ export class ProcessTerminal implements Terminal {
 		}
 
 		const negotiationSequence = parseKeyboardProtocolNegotiationSequence(sequence);
-		if (negotiationSequence) return negotiationSequence;
+		if (negotiationSequence) return { parsed: negotiationSequence, sequence };
 		if (isKeyboardProtocolNegotiationSequencePrefix(sequence)) {
 			this.setKeyboardProtocolNegotiationBuffer(sequence);
 			return "pending";

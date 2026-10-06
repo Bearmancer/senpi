@@ -2,7 +2,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import type { SessionKind } from "../../core/extensions/types.ts";
 import { MEDIA_PLACEHOLDERS_CAPABILITY } from "./custom-capability.ts";
 import { serializeJsonLine } from "./jsonl.ts";
-import { omitInlineMedia } from "./media-placeholders.ts";
+import { type MediaPersister, omitInlineMedia } from "./media-placeholders.ts";
 import type {
 	RpcHostLifecycleEvent,
 	RpcOpenQueuedEvent,
@@ -10,14 +10,11 @@ import type {
 	RpcSessionClosedReason,
 	RpcSessionParkedEvent,
 } from "./rpc-types.ts";
-import {
-	RENDERED_COMPONENT_RECORD,
-	SessionEventFanout,
-	type SessionEventWriterConnection,
-} from "./session-event-fanout.ts";
+import { SessionEventFanout, type SessionEventWriterConnection } from "./session-event-fanout.ts";
+import { SessionOpenTurns } from "./session-open-turns.ts";
 import type { SocketEventSinkActor } from "./socket-event-fanout.ts";
 
-export { RENDERED_COMPONENT_RECORD, type SessionEventWriterConnection } from "./session-event-fanout.ts";
+export type { SessionEventWriterConnection } from "./session-event-fanout.ts";
 
 /** Await every actor's drain; a failed actor is a cut peer, not a writer failure. */
 const settleActors = (actors: readonly SocketEventSinkActor[]): Promise<void> =>
@@ -107,6 +104,9 @@ export class SessionEventWriter {
 	private readonly sealedSessions = new Set<string>();
 	/** Sessions whose lifecycle records stay on their attached connections (`kind: "worker"`). */
 	private readonly workerSessions = new Set<string>();
+	private readonly openTurns = new SessionOpenTurns();
+	/** Per-session image persisters: bytes reach disk before the placeholder that names them is emitted. */
+	private readonly mediaPersisters = new Map<string, MediaPersister>();
 	private readonly writeRaw: RawWriter;
 	private readonly waitForBackpressure?: BackpressureWaiter;
 	private readonly scheduleFlush: FlushScheduler;
@@ -198,16 +198,17 @@ export class SessionEventWriter {
 		return this.fanout.getConnectionCapabilities(id);
 	}
 
-	hasCapableConnection(sessionId: string): boolean {
-		return this.fanout.hasCapableConnection(sessionId);
-	}
-
 	/**
 	 * Records a session's visibility class. A worker session is machine-driven work that
 	 * only its attached connections track, so its lifecycle records are delivered to them
 	 * instead of broadcast; an interactive session keeps the broadcast every client (the
 	 * desktop mirror, the supervisor's idle observer) relies on.
 	 */
+	setSessionMedia(sessionId: string, persister: MediaPersister | undefined): void {
+		if (persister === undefined) this.mediaPersisters.delete(sessionId);
+		else this.mediaPersisters.set(sessionId, persister);
+	}
+
 	setSessionKind(sessionId: string, kind: SessionKind): void {
 		if (kind === "worker") this.workerSessions.add(sessionId);
 		else this.workerSessions.delete(sessionId);
@@ -240,8 +241,7 @@ export class SessionEventWriter {
 			(record.type === "extension_ui_request" &&
 				["select", "confirm", "input", "editor"].includes(String(record.method)));
 		const tagged = { ...value, sessionId } as RpcRecord;
-		const { [RENDERED_COMPONENT_RECORD]: _rendered, ...wireTagged } = tagged;
-		const line = serializeJsonLine(wireTagged);
+		const line = serializeJsonLine(tagged);
 		if (this.fanout.isEmpty() && this.exceedsStdioCapacity(line)) {
 			this.closeSession(
 				sessionId,
@@ -255,21 +255,16 @@ export class SessionEventWriter {
 			);
 			return false;
 		}
-		const targets = this.fanout.targets(
-			sessionId,
-			targetId,
-			isTargeted,
-			record[RENDERED_COMPONENT_RECORD] === true,
-			record.type,
-		);
+		this.openTurns.note(sessionId, record.type);
+		const targets = this.fanout.targets(sessionId, targetId, isTargeted, record.type);
 		// A record is only walked and re-serialized when a target asked for placeholders;
 		// otherwise this is byte-for-byte today's path, with serializeJsonLine called once.
 		const hasPlaceholderTarget = targets.some((target) =>
 			this.fanout.connectionHas(target, MEDIA_PLACEHOLDERS_CAPABILITY),
 		);
-		const redacted = hasPlaceholderTarget ? omitInlineMedia(wireTagged) : wireTagged;
-		const placeholderLine = redacted === wireTagged ? undefined : serializeJsonLine(redacted);
-		if (!isTargeted) this.fanout.rememberSnapshot(sessionId, tagged, line, placeholderLine, wireTagged);
+		const redacted = hasPlaceholderTarget ? omitInlineMedia(tagged, this.mediaPersisters.get(sessionId)) : tagged;
+		const placeholderLine = redacted === tagged ? undefined : serializeJsonLine(redacted);
+		if (!isTargeted) this.fanout.rememberSnapshot(sessionId, tagged, line, placeholderLine, tagged);
 		for (const target of targets) {
 			if (target !== undefined && !this.fanout.get(target)) continue;
 			const registered = target === undefined ? undefined : this.fanout.get(target);
@@ -281,9 +276,9 @@ export class SessionEventWriter {
 					wants ? placeholderLine : line,
 					keyed ? MESSAGE_KEY : undefined,
 					undefined,
-					keyed ? serializeJsonLine(demoteToDeltaOnly(wireTagged)) : undefined,
+					keyed ? serializeJsonLine(demoteToDeltaOnly(tagged)) : undefined,
 				);
-			} else this.appendSessionRecord(sessionId, wants ? (redacted as RpcRecord) : wireTagged, target);
+			} else this.appendSessionRecord(sessionId, wants ? (redacted as RpcRecord) : tagged, target);
 		}
 		this.requestFlush();
 		return true;
@@ -307,7 +302,7 @@ export class SessionEventWriter {
 	/** Registered actors this session's records are delivered to, plus the caller's own. */
 	private sessionActors(sessionId: string): SocketEventSinkActor[] {
 		const targets = new Set([
-			...this.fanout.targets(sessionId, this.currentConnection(), false, false, undefined),
+			...this.fanout.targets(sessionId, this.currentConnection(), false, undefined),
 			this.currentConnection(),
 		]);
 		return [...targets].flatMap((target) => {
@@ -391,7 +386,24 @@ export class SessionEventWriter {
 				};
 				break;
 			case "host_memory_pressure":
-				wire = { type: "host_memory_pressure", rssMb: record.rssMb, sessions: record.sessions };
+				wire = {
+					type: "host_memory_pressure",
+					rssMb: record.rssMb,
+					...(record.footprintMb !== undefined ? { footprintMb: record.footprintMb } : {}),
+					...(record.measure !== undefined ? { measure: record.measure } : {}),
+					sessions: record.sessions,
+					...(record.main !== undefined ? { main: record.main } : {}),
+					...(record.kernels !== undefined ? { kernels: record.kernels } : {}),
+				};
+				break;
+			case "host_trimmed":
+				wire = {
+					type: "host_trimmed",
+					footprintBeforeMb: record.footprintBeforeMb,
+					footprintAfterMb: record.footprintAfterMb,
+					measure: record.measure,
+					collected: record.collected,
+				};
 				break;
 			default: {
 				const exhaustive: never = record;
@@ -411,9 +423,10 @@ export class SessionEventWriter {
 	 * session's final stdout record.
 	 */
 	closeSession(sessionId: string, response: object, reason?: RpcSessionClosedReason, sessionPath?: string): void {
-		if (this.sealedSessions.has(sessionId)) return;
+		if (!this.settleBeforeSeal(sessionId)) return;
 		this.sealedSessions.add(sessionId);
 		this.fanout.forgetSession(sessionId);
+		this.mediaPersisters.delete(sessionId);
 		const targetId = this.connectionContext.getStore();
 		// `reason` tells an attached client WHY the handle ended, so a park it can reopen by path is
 		// not read as a session that is gone. Absent unless the caller names one; clients tolerate that.
@@ -446,10 +459,24 @@ export class SessionEventWriter {
 	 * no close response to answer.
 	 */
 	parkSession(sessionId: string, sessionPath: string): void {
-		if (this.sealedSessions.has(sessionId)) return;
+		this.sealWithLifecycle(sessionId, { type: "session_parked", sessionId, sessionPath });
+	}
+
+	/**
+	 * Seal a session `release_session` handed to a runtime outside this host and publish
+	 * `session_closed { reason: "released", sessionPath }`. Unlike a park the file must NOT be reopened
+	 * here - another process now writes it. Delivered like a park; the releasing caller's own answer is
+	 * the `release_session` response, so there is no close response either.
+	 */
+	releaseSession(sessionId: string, sessionPath: string): void {
+		this.sealWithLifecycle(sessionId, { type: "session_closed", sessionId, reason: "released", sessionPath });
+	}
+
+	private sealWithLifecycle(sessionId: string, lifecycle: RpcSessionParkedEvent | RpcSessionClosedEvent): void {
+		if (!this.settleBeforeSeal(sessionId)) return;
 		this.sealedSessions.add(sessionId);
 		this.fanout.forgetSession(sessionId);
-		const lifecycle: RpcSessionParkedEvent = { type: "session_parked", sessionId, sessionPath };
+		this.mediaPersisters.delete(sessionId);
 		if (this.fanout.isEmpty()) this.appendSessionRecord(sessionId, lifecycle);
 		else if (this.workerSessions.has(sessionId))
 			this.fanout.deliverToSession(sessionId, serializeJsonLine(lifecycle));
@@ -533,6 +560,18 @@ export class SessionEventWriter {
 	}
 
 	/**
+	 * Publishes the settles a seal would strand (session-open-turns.ts) while the session can still write;
+	 * false when the session is sealed already, or became sealed by a settle that overflowed the stdio lane.
+	 */
+	private settleBeforeSeal(sessionId: string): boolean {
+		if (this.sealedSessions.has(sessionId)) return false;
+		for (let owed = this.openTurns.take(sessionId); owed > 0; owed -= 1) {
+			this.enqueue(sessionId, { type: "agent_settled", reason: "session_closed" });
+		}
+		return !this.sealedSessions.has(sessionId);
+	}
+
+	/**
 	 * Drops per-session bookkeeping for a handle whose runtime is fully disposed.
 	 * Routing handles are unique per process epoch, so nothing can legitimately
 	 * emit under this id again; without this every host-closed session would
@@ -540,8 +579,10 @@ export class SessionEventWriter {
 	 */
 	forgetSession(sessionId: string): void {
 		this.sealedSessions.delete(sessionId);
+		this.openTurns.take(sessionId);
 		this.workerSessions.delete(sessionId);
 		this.fanout.forgetSession(sessionId);
+		this.mediaPersisters.delete(sessionId);
 	}
 
 	/** Drain every retained lane and the current in-flight record. */

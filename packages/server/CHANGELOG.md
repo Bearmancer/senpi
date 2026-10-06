@@ -8,6 +8,248 @@
 
 ### Fixed
 
+## [2026.10.10-2] - 2026-10-05
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.10.10] - 2026-10-05
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.10.9] - 2026-10-04
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.10.8] - 2026-10-04
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.10.7] - 2026-10-04
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.10.6] - 2026-10-04
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.10.5] - 2026-10-03
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.10.4] - 2026-10-03
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.10.3] - 2026-10-03
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.10.2] - 2026-10-02
+
+### Breaking Changes
+
+- `SessionMetadata` is now exported by the server package and requires only `id`; the package no longer depends on the agent core package (inherited). The testing `TestServerHost` keeps an in-memory session map instead of a `MemorySessionRepo`, and `TestHarness` exposes `metadata` instead of `session`.
+
+### Changed
+
+### Fixed
+
+## [2026.10.1-3] - 2026-10-01
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.10.1-2] - 2026-10-01
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.10.1] - 2026-10-01
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.9.30] - 2026-09-30
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.9.29-5] - 2026-09-29
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.9.29-4] - 2026-09-29
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.9.29-3] - 2026-09-29
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.9.29-2] - 2026-09-29
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.9.29] - 2026-09-29
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.9.28-7] - 2026-09-28
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.9.28-6] - 2026-09-28
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.9.28-5] - 2026-09-28
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.9.28-4] - 2026-09-28
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.9.28-3] - 2026-09-28
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.9.28-2] - 2026-09-28
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.9.28] - 2026-09-28
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.9.27-4] - 2026-09-27
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.9.27-3] - 2026-09-27
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.9.27-2] - 2026-09-27
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.9.27] - 2026-09-27
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
 ## [2026.9.26] - 2026-09-26
 
 ### Breaking Changes

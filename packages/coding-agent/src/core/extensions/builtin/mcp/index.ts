@@ -78,9 +78,9 @@ export function createMcpExtension(service: McpService, sessionOwned = true): Ex
 		const revealSkill = (skillName: string): void => {
 			if (loadedSkills.has(skillName) || !skillsByName.has(skillName)) return;
 			loadedSkills.add(skillName);
-			const registered = service.getTierBSearchable();
+			const registered = service.getTierBSearchable(pi);
 			const targets = skillActivationTargets(skillDecls, skillName, registered);
-			if (targets.length > 0) service.activateSkillMcpTools(targets);
+			if (targets.length > 0) service.activateSkillMcpTools(targets, pi);
 		};
 		pi.on("input", async (event, ctx) => {
 			const match = /^\s*\/skill:([A-Za-z0-9._-]+)/.exec(event.text);
@@ -89,7 +89,7 @@ export function createMcpExtension(service: McpService, sessionOwned = true): Ex
 			// inlined via the sanctioned input transform; failures pass through
 			// untouched with a one-line notice so submission is never blocked.
 			if (event.text.includes("@mcp:")) {
-				const expansion = await expandMcpResourceMentions(event.text, () => service.getMcpResourceServers());
+				const expansion = await expandMcpResourceMentions(event.text, () => service.getMcpResourceServers(pi));
 				for (const notice of expansion.notices) {
 					createMcpLogger("resources").warn(notice);
 					void ctx.ui?.notify?.(notice, "warning");
@@ -124,8 +124,8 @@ export function createMcpExtension(service: McpService, sessionOwned = true): Ex
 			attachPromise = (async () => {
 				await service.attachSession(event, ctx, pi);
 				refreshMcpInstructionsForSession(service);
-				if (sessionOwned) registerMcpPromptCommands(service, pi, service.getMcpPromptServers());
-				else registerMcpPromptCommands(pi, service.getMcpPromptServers());
+				if (sessionOwned) registerMcpPromptCommands(service, pi, service.getMcpPromptServers(pi));
+				else registerMcpPromptCommands(pi, service.getMcpPromptServers(pi));
 			})();
 			return attachPromise;
 		};
@@ -162,12 +162,9 @@ export function createMcpExtension(service: McpService, sessionOwned = true): Ex
 				if (skills.length > 0) {
 					skillsByName = new Map(skills.map((skill) => [skill.name, skill]));
 					skillDecls = parseSkillMcpDeclarations(skills);
-					const declared = new Map(
-						[...skillDecls.servers].map(([name, decl]) => [name, { raw: decl.raw, sourcePath: decl.sourcePath }]),
-					);
 					const warnings = [
 						...skillDecls.warnings,
-						...(declared.size > 0 ? await service.attachSkillMcpServers(declared) : []),
+						...(skillDecls.servers.size > 0 ? await service.attachSkillMcpServers(skillDecls.servers, pi) : []),
 					];
 					for (const warning of warnings) createMcpLogger("skills").warn(warning);
 				}
@@ -195,9 +192,15 @@ export function createMcpExtension(service: McpService, sessionOwned = true): Ex
 			wrapAsync(
 				"mcp.session_shutdown",
 				async (event) => {
-					if (event.reason === "reload" && !sessionOwned) return;
-					disposeControlInventory();
-					await service.handleSessionShutdown(event);
+					if (sessionOwned) {
+						disposeControlInventory();
+						await service.handleSessionShutdown(event);
+						return;
+					}
+					if (event.reason !== "reload") disposeControlInventory();
+					// The shared service outlives any one session: release only this session's binding,
+					// and dispose only when the last live session quits (#2514).
+					await service.releaseSession(pi, event.reason === "quit" ? "quit" : undefined);
 				},
 				sink,
 			),
@@ -209,7 +212,8 @@ export function createMcpExtension(service: McpService, sessionOwned = true): Ex
 				async (event) => {
 					if (event.removed.some((extension) => extension.path === MCP_BUILTIN_EXTENSION_PATH)) {
 						disposeControlInventory();
-						await service.dispose("reload");
+						if (sessionOwned) await service.dispose("reload");
+						else await service.releaseSession(pi, "reload");
 					}
 				},
 				sink,

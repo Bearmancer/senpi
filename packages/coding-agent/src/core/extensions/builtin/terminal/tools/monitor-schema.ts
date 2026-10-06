@@ -54,7 +54,7 @@ export const monitorSchema = Type.Object({
 	persistent: Type.Optional(
 		Type.Boolean({
 			description:
-				"Standing watch: no deadline, and it survives a session restart (command re-run once, file rescanned and any detached change reported). Expires 7 days after creation; max 5 per session; stop one with kill_bash.",
+				"Standing watch: no deadline, and it survives a session restart (command re-run once, file rescanned and any detached change reported). Expires 7 days after creation; no per-session cap unless the terminal.maxDurableMonitors setting sets one; stop one with kill_bash.",
 		}),
 	),
 	bash_id: Type.Optional(

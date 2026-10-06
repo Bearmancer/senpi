@@ -4,6 +4,7 @@ import type {
 	SDKUserMessage,
 	SdkQueryHandle,
 } from "../../../src/core/extensions/builtin/anthropic-subscription/sdk-boundary.ts";
+import { decideNativeContinuity } from "../../../src/core/extensions/builtin/anthropic-subscription/session-continuity.ts";
 import {
 	forgetBinding,
 	getBinding,
@@ -88,14 +89,29 @@ describe("issue #1958: a rejected assistant UUID is never republished", () => {
 		expect(binding?.assistantUuidByIndex?.some(([, uuid]) => uuid === DEAD_UUID)).toBe(false);
 	});
 
-	// The surviving entry is recorded, not yet consumed: the decision table still flattens on a
-	// null lastAssistantUuid until senpi#1973 lands, so this asserts the recorded state only.
-	it("keeps an earlier mapped boundary recorded in the checkpoint for recovery (#1973)", async () => {
+	it("retries the same turn by forking at the surviving earlier boundary (#1973)", async () => {
 		await runFailingTurn(missingMessageError(DEAD_UUID));
 
 		const binding = getBinding(SESSION_ID);
-		expect(binding).toBeDefined();
 		expect(binding?.assistantUuidByIndex?.some(([, uuid]) => uuid === LIVE_UUID)).toBe(true);
+		expect(
+			decideNativeContinuity({
+				entry: undefined,
+				binding,
+				currentHashes: ["hash-1", "hash-2", "hash-3"],
+				accountName: "account-a",
+				modelId: "claude-test",
+				fingerprint: { systemPromptHash: "prompt", toolsetHash: "toolset" },
+				transcriptAvailable: true,
+				crossAccountResumeSupported: true,
+			}),
+		).toEqual({
+			kind: "fork",
+			sdkSessionId: binding?.sdkSessionId,
+			atUuid: LIVE_UUID,
+			from: 1,
+			reason: "timeout_retry",
+		});
 	});
 
 	it("still republishes the checkpoint unchanged for an unrelated failure", async () => {

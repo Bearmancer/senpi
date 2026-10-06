@@ -23,6 +23,7 @@ import type { Goal } from "../../../src/core/extensions/builtin/goal/types.ts";
 import { WAKE_SOURCE_STATE_EVENT } from "../../../src/core/extensions/builtin/monitor-state-event.ts";
 import type {
 	AgentToolResult,
+	ExtensionToolContext,
 	QuestionRequest,
 	QuestionResponse,
 	ToolDefinition,
@@ -127,13 +128,22 @@ export async function createGoalAskUserWorld(threadId: string, timeoutMinutes = 
 			{ questions: ASYNC_QUESTIONS, waitForAnswer },
 			undefined,
 			undefined,
-			requestTimeoutMinutes === undefined
+			(requestTimeoutMinutes === undefined
 				? askCtx
-				: { ...askCtx, getAskUserSettings: () => ({ enabled: true, timeoutMinutes: requestTimeoutMinutes }) },
+				: {
+						...askCtx,
+						getAskUserSettings: () => ({ enabled: true, timeoutMinutes: requestTimeoutMinutes }),
+					}) as ExtensionToolContext,
 		);
 
 	await runGoalHandlers(goal.handlers, "session_start", { type: "session_start", reason: "reload" }, ctx);
-	await goalTool("create_goal").execute("create-goal", { objective: "Keep moving" }, undefined, undefined, ctx);
+	await goalTool("create_goal").execute(
+		"create-goal",
+		{ objective: "Keep moving" },
+		undefined,
+		undefined,
+		ctx as ExtensionToolContext,
+	);
 
 	return {
 		goal,

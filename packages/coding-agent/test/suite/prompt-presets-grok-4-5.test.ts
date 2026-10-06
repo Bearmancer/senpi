@@ -125,7 +125,7 @@ describe("Grok 4.5 prompt preset", () => {
 });
 
 describe("Devin SWE-2 prompt preset", () => {
-	it.each(["swe-2-high", "swe-2-max", "swe-2-low", "swe-2-high-lite", "devin/swe-2-high"])(
+	it.each(["swe-2-medium", "swe-2-high", "swe-2-max", "devin/swe-2-medium", "devin/swe-2-high"])(
 		"resolves %s to K3",
 		(id) => {
 			const preset = resolvePreset(createModel(id, "devin"), { promptPreset: "auto" });
@@ -133,7 +133,7 @@ describe("Devin SWE-2 prompt preset", () => {
 		},
 	);
 
-	it("does not route the rejected bare swe-2 id", () => {
-		expect(resolvePreset(createModel("swe-2", "devin"), { promptPreset: "auto" })?.name).not.toBe("kimi-k3");
+	it.each(["swe-2", "swe-2-low", "swe-2-high-lite"])("does not route the unserved %s id", (id) => {
+		expect(resolvePreset(createModel(id, "devin"), { promptPreset: "auto" })?.name).not.toBe("kimi-k3");
 	});
 });

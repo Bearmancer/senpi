@@ -13,6 +13,8 @@ export type ContinuityEntrySnapshot = {
 	assistantUuidByIndex: ReadonlyMap<number, string>;
 	pendingForkReason: string | null;
 	taintedReason?: string | null;
+	/** Digest of the access token the resident subprocess was spawned with. */
+	credentialDigest?: string;
 };
 
 export type ContinuityBindingSnapshot = {
@@ -21,6 +23,8 @@ export type ContinuityBindingSnapshot = {
 	sentHashes: readonly string[];
 	sentPrefixHash?: string;
 	lastAssistantUuid: string | null;
+	/** Assistant boundaries as [index, uuid] entries, mirroring the runtime `ContinuityBinding`; a legacy fork anchors inside the hash-proven shared prefix (senpi#1974). */
+	assistantUuidByIndex?: readonly (readonly [number, string])[];
 	accountName: string;
 	modelId: string;
 	systemPromptHash: string;
@@ -44,6 +48,8 @@ export type ContinuityDecisionInput = {
 	idleExpired?: boolean;
 	/** Reason the newest ledger record invalidated this session's binding, when one is pending. */
 	invalidationReason?: string;
+	/** Digest of the access token this turn's attempt authenticates with. */
+	credentialDigest?: string;
 };
 
 export type ContinuityDecision =
@@ -104,6 +110,23 @@ function boundaryBefore(entry: ContinuityEntrySnapshot, count: number): { index:
 	return undefined;
 }
 
+/**
+ * Same boundary search for a detached binding's entry list: the newest index at
+ * or below `cap` (index >= 1 mirrors `boundaryBefore` — an assistant at index 0
+ * would precede every user message, which no valid SDK lineage has). Entry order
+ * is not guaranteed, so this scans every entry instead of walking down.
+ */
+function newestBoundaryWithin(
+	entries: readonly (readonly [number, string])[] | undefined,
+	cap: number,
+): { index: number; uuid: string } | undefined {
+	let boundary: { index: number; uuid: string } | undefined;
+	for (const [index, uuid] of entries ?? []) {
+		if (index >= 1 && index <= cap && (!boundary || index > boundary.index)) boundary = { index, uuid };
+	}
+	return boundary;
+}
+
 function forkOrFlatten(
 	entry: ContinuityEntrySnapshot,
 	divergesAt: number,
@@ -154,12 +177,17 @@ function retryCheckpointDecision(
 			? sentHashPrefixDigest(input.currentHashes, binding.sentCount) === binding.sentPrefixHash
 			: commonPrefixLength(binding.sentHashes, input.currentHashes) === binding.sentCount;
 	if (!prefixMatches) return undefined;
-	if (!binding.lastAssistantUuid) return { kind: "flatten", reason: "timeout_retry" };
+	// The pre-turn boundary may be unmapped (Claude Code rejected it, senpi#1958); any earlier
+	// mapped boundary still lies inside the prefix just proven, so fork there (senpi#1973).
+	const boundary = binding.lastAssistantUuid
+		? { index: binding.sentCount, uuid: binding.lastAssistantUuid }
+		: newestBoundaryWithin(binding.assistantUuidByIndex, binding.sentCount);
+	if (!boundary) return { kind: "flatten", reason: "timeout_retry" };
 	return {
 		kind: "fork",
 		sdkSessionId: binding.sdkSessionId,
-		atUuid: binding.lastAssistantUuid,
-		from: binding.sentCount,
+		atUuid: boundary.uuid,
+		from: boundary.index,
 		reason: "timeout_retry",
 	};
 }
@@ -224,19 +252,31 @@ function decideFromBinding(input: ContinuityDecisionInput, binding: ContinuityBi
 			reason: drift ?? "registry_miss",
 		};
 	}
-	if (!binding.lastAssistantUuid) return { kind: "flatten", reason: "registry_miss" };
+	// Invariant (senpi#1974): a fork's atUuid and from name the SAME mapped
+	// boundary — the newest assistant index inside the hash-proven shared prefix —
+	// so the SDK forks after an assistant the current history still contains and
+	// senpi re-sends exactly that boundary's suffix. lastAssistantUuid maps at
+	// binding.sentCount, which can lie past the divergence; no mapped boundary
+	// inside the prefix means the lineage cannot be trusted, so flatten instead of
+	// pairing an unrelated old-branch assistant with a smaller offset.
+	const reason: ContinuityReason = shared < binding.sentCount ? "history_rolled_back" : "sent_stream_diverged";
+	const boundary = newestBoundaryWithin(binding.assistantUuidByIndex, shared);
+	// A missing lastAssistantUuid no longer flattens by itself: an earlier mapped boundary
+	// inside the shared prefix is just as safe a fork point (senpi#1973).
+	if (!boundary) return { kind: "flatten", reason: binding.lastAssistantUuid ? reason : "registry_miss" };
 	return {
 		kind: "fork",
 		sdkSessionId: binding.sdkSessionId,
-		atUuid: binding.lastAssistantUuid,
-		from: shared,
-		reason: shared < binding.sentCount ? "history_rolled_back" : "sent_stream_diverged",
+		atUuid: boundary.uuid,
+		from: boundary.index,
+		reason,
 	};
 }
 
 /**
- * Resume-first: a live session is never abandoned for a flattened re-send. Only a
- * missing transcript, an unrecoverable boundary, a model identity drift, or account
+ * Resume-first except after senpi compaction, which replaces the SDK transcript
+ * with the compacted context. Only compaction, a missing transcript, an
+ * unrecoverable boundary, a model identity drift, or account
  * drift on the config-dir lane on a persisted binding reaches `flatten`; every other
  * divergence resolves to `fork` (same lineage, new branch) or `reattach` (same
  * session, new query).
@@ -253,6 +293,9 @@ function decideFromState(input: ContinuityDecisionInput): ContinuityDecision {
 	}
 
 	const divergence = entry.pendingForkReason ?? entry.taintedReason;
+	// Forking retains the old SDK prefix: it cannot apply senpi's summary or
+	// remove the messages compaction discarded. Seed a fresh transcript instead.
+	if (divergence === "compaction") return { kind: "flatten", reason: "tainted_compaction" };
 	if (divergence) {
 		return forkOrFlatten(entry, entry.sentCount, PENDING_FORK_REASONS[divergence] ?? "other");
 	}
@@ -272,6 +315,22 @@ function decideFromState(input: ContinuityDecisionInput): ContinuityDecision {
 	const drift = identityDrift(input, entry);
 	if (drift) {
 		return { kind: "reattach", sdkSessionId: entry.sdkSessionId, from: entry.sentCount, reason: drift };
+	}
+
+	// A refresh revokes the access token the resident subprocess was spawned
+	// with; a delta sent to it fails with 401 "token has been revoked". Resume the
+	// same lineage in a subprocess that carries the current token instead.
+	if (
+		input.credentialDigest !== undefined &&
+		entry.credentialDigest !== undefined &&
+		entry.credentialDigest !== input.credentialDigest
+	) {
+		return {
+			kind: "reattach",
+			sdkSessionId: entry.sdkSessionId,
+			from: entry.sentCount,
+			reason: "credential_refreshed",
+		};
 	}
 
 	return { kind: "delta", from: entry.sentCount };

@@ -10,6 +10,7 @@ type McpToolRegistrar = Pick<ExtensionAPI, "getActiveTools" | "setActiveTools" |
 
 export interface McpServiceDirectToolRegistrationOptions {
 	readonly refreshActiveSetWhenEmpty?: boolean;
+	readonly onRegistered?: (entry: McpConnectionEntry, identity: string) => void;
 }
 
 export async function registerMcpServiceDirectTools(
@@ -24,10 +25,14 @@ export async function registerMcpServiceDirectTools(
 		config,
 		[...entries].map((entry) => {
 			const serverConfig = config.servers[entry.name]?.config;
+			const claim = entry.startupCatalogClaim;
+			const startupCatalogPending = claim?.ownsRegistration() === true;
 			return {
 				agentDir: entry.agentDir,
 				artifacts: entry.artifacts,
-				cachedCatalog: entry.cachedCatalog,
+				cachedCatalog: startupCatalogPending ? claim?.cachedCatalog : entry.cachedCatalog,
+				startupCatalogPending,
+				onRegistered: (identity) => options.onRegistered?.(entry, identity),
 				connection: entry.connection,
 				ensureFresh: () => entry.authPlan?.refresh?.ensureFresh().then(() => undefined) ?? Promise.resolve(),
 				ensureCachedToolConnected: () => connectAndRefreshMcpCatalog(entry, serverConfig),
@@ -36,6 +41,6 @@ export async function registerMcpServiceDirectTools(
 			};
 		}),
 		toolSearchService,
-		options,
+		{ refreshActiveSetWhenEmpty: options.refreshActiveSetWhenEmpty },
 	);
 }

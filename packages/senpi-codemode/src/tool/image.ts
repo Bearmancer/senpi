@@ -30,13 +30,35 @@ const MAX_DISPLAY_IMAGES_PER_CELL = 8;
 const MAX_DISPLAY_IMAGE_BYTES_PER_CELL = 24 * 1024 * 1024;
 const MAX_JSON_OUTPUTS_PER_CELL = 64;
 
+// Base64 of the signatures of the formats providers accept inline (PNG, JPEG except JPEG-LS, GIF,
+// "RIFF....WEBP"). Signatures start at byte 0, so their encodings are prefixes.
+const IMAGE_SIGNATURES: ReadonlyArray<readonly [string, RegExp]> = [
+	["image/png", /^iVBORw0KGg/],
+	["image/jpeg", /^[/]9j[/](?!9)/],
+	["image/gif", /^R0lGOD[dl]h/],
+	["image/webp", /^UklG.{8}RUJQ/],
+];
+
+// Providers reject the whole request on a bad image, and a kept image block is resent on every later turn,
+// so invalid data is dropped with a reason instead. The detected type wins over the declared one.
+function validateDisplayImage(dataBase64: string): { data: string; mimeType: string } | { reason: string } {
+	const data = dataBase64.replace(/\s+/g, "");
+	if (data.length === 0 || data.length % 4 !== 0 || !/^[A-Za-z0-9+/]+={0,2}$/.test(data)) {
+		return { reason: "the image data is not valid base64 (truncated or corrupted?)" };
+	}
+	const head = data.slice(0, 16);
+	const signature = IMAGE_SIGNATURES.find(([, pattern]) => pattern.test(head));
+	if (signature === undefined) return { reason: "the image data is not a PNG, JPEG, GIF, or WebP image" };
+	return { data, mimeType: signature[0] };
+}
+
 export interface EvalOutputOptions {
 	readonly artifactPath?: string;
 	readonly headBytes: number;
 	readonly maxColumns: number;
 	readonly model: ExtensionContext["model"];
 	readonly imageResizer?: EvalImageResizer;
-	readonly onChunk: (aggregateText: string, cellText: string) => void;
+	readonly onChunk: (chunk: string) => void;
 }
 
 export interface EvalOutputResult {
@@ -82,7 +104,7 @@ export class EvalOutputCollector {
 			onChunk: (chunk) => {
 				this.#aggregateTail.append(chunk);
 				this.#cellTail.append(chunk);
-				options.onChunk(this.#aggregateTail.text(), this.#cellTail.text());
+				options.onChunk(chunk);
 			},
 		});
 	}
@@ -91,8 +113,18 @@ export class EvalOutputCollector {
 		this.#sink.push(text);
 	}
 
+	/** The cell's return value: exempt from the column clamp, still bound by the byte and line budgets. */
+	pushValue(text: string): void {
+		this.#sink.push(text, { clampColumns: false });
+	}
+
 	display(message: DisplayMessage): void {
 		if (message.mimeType.startsWith("image/")) {
+			const image = validateDisplayImage(message.dataBase64);
+			if ("reason" in image) {
+				this.#sink.push(`[display: image dropped \u2014 ${image.reason}]\n`);
+				return;
+			}
 			if (
 				this.#displayImages.length >= MAX_DISPLAY_IMAGES_PER_CELL ||
 				this.#displayImageBytes + message.dataBase64.length > MAX_DISPLAY_IMAGE_BYTES_PER_CELL
@@ -100,8 +132,8 @@ export class EvalOutputCollector {
 				this.#displayImagesElided++;
 				return;
 			}
-			this.#displayImages.push({ type: "image", mimeType: message.mimeType, data: message.dataBase64 });
-			this.#displayImageBytes += message.dataBase64.length;
+			this.#displayImages.push({ type: "image", mimeType: image.mimeType, data: image.data });
+			this.#displayImageBytes += image.data.length;
 			return;
 		}
 		const text = Buffer.from(message.dataBase64, "base64").toString("utf8");
@@ -127,6 +159,10 @@ export class EvalOutputCollector {
 
 	aggregateText(): string {
 		return this.#aggregateTail.text();
+	}
+
+	cellTailText(): string {
+		return this.#cellTail.text();
 	}
 
 	async finish(): Promise<EvalOutputResult> {

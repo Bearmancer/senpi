@@ -350,13 +350,62 @@ describe("Bedrock Converse TTL", () => {
 });
 
 describe("automatic and unknown cache backends", () => {
-	it("returns five minutes for the actual Claude SDK OAuth model shape", () => {
+	describe("Claude SDK OAuth lane follows the TTL Claude Code picks", () => {
 		const model = createModel("claude-sdk-oauth", {
 			provider: "anthropic-subscription",
 			baseUrl: "claude-sdk-oauth",
 		});
+		const billingEnv = [
+			"ANTHROPIC_API_KEY",
+			"ANTHROPIC_AUTH_TOKEN",
+			"ANTHROPIC_BASE_URL",
+			"CLAUDE_CODE_USE_BEDROCK",
+			"CLAUDE_CODE_USE_VERTEX",
+			"CLAUDE_CODE_USE_FOUNDRY",
+			"CLAUDE_CODE_PROMPT_CACHE_TTL",
+			"FORCE_PROMPT_CACHING_5M",
+			"ENABLE_PROMPT_CACHING_1H",
+		];
+		const saved = new Map<string, string | undefined>();
+		beforeEach(() => {
+			for (const name of billingEnv) {
+				saved.set(name, process.env[name]);
+				delete process.env[name];
+			}
+		});
+		afterEach(() => {
+			for (const [name, value] of saved) {
+				if (value === undefined) delete process.env[name];
+				else process.env[name] = value;
+			}
+		});
 
-		expect(resolvePromptCacheTtlSeconds(model, { PI_CACHE_RETENTION: "long" })).toBe(300);
+		it("returns one hour on a subscription, whatever senpi's own retention setting says", () => {
+			expect(resolvePromptCacheTtlSeconds(model, {})).toBe(3600);
+			expect(resolvePromptCacheTtlSeconds(model, { PI_CACHE_RETENTION: "short" })).toBe(3600);
+		});
+
+		it.each([
+			"ANTHROPIC_API_KEY",
+			"ANTHROPIC_AUTH_TOKEN",
+			"ANTHROPIC_BASE_URL",
+			"CLAUDE_CODE_USE_BEDROCK",
+			"CLAUDE_CODE_USE_VERTEX",
+			"CLAUDE_CODE_USE_FOUNDRY",
+		])("returns five minutes when %s puts Claude Code on API, gateway or cloud billing", (name) => {
+			expect(resolvePromptCacheTtlSeconds(model, { [name]: "1" })).toBe(300);
+		});
+
+		it("honors Claude Code's own TTL overrides", () => {
+			expect(resolvePromptCacheTtlSeconds(model, { CLAUDE_CODE_PROMPT_CACHE_TTL: "5m" })).toBe(300);
+			expect(
+				resolvePromptCacheTtlSeconds(model, { CLAUDE_CODE_PROMPT_CACHE_TTL: "1h", ANTHROPIC_API_KEY: "k" }),
+			).toBe(3600);
+			expect(resolvePromptCacheTtlSeconds(model, { FORCE_PROMPT_CACHING_5M: "1" })).toBe(300);
+			expect(resolvePromptCacheTtlSeconds(model, { ENABLE_PROMPT_CACHING_1H: "1", ANTHROPIC_API_KEY: "k" })).toBe(
+				3600,
+			);
+		});
 	});
 
 	it.each(["openai-responses", "openai-codex-responses", "azure-openai-responses"] as const)(

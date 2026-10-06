@@ -24,6 +24,10 @@ const NON_SOL_MODEL_IDS = [
 	"gpt-6-luna",
 	"gpt-6-luna-fast",
 	"gpt-6-solaris",
+	"gpt-6.1-solaris",
+	"gpt-6.1",
+	"gpt-61",
+	"gpt-611-sol",
 	"gpt-5.6-luna",
 	"gpt-5.6-luna-fast",
 	"gpt-5.6-terra",
@@ -48,6 +52,11 @@ const GPT6_SOL_MODEL_IDS = [
 	"openai/gpt-6-sol",
 	"openai/gpt-6-sol-pro",
 	"global.openai.gpt-6-sol",
+	"gpt-6.1-sol",
+	"gpt-6.1-sol-fast",
+	"openai/gpt-6.1-sol",
+	"openai/gpt-6.1-sol-pro",
+	"openai-gpt-61-sol",
 ];
 
 describe("high-reasoning-warning", () => {
@@ -72,15 +81,17 @@ describe("high-reasoning-warning", () => {
 			expect(shouldWarnHighReasoning(mkModel("openai/gpt-5.6-sol-pro"), "xhigh")).toBe(true);
 		});
 
-		it.each(GPT6_SOL_MODEL_IDS)("warns for GPT-6 Sol at xhigh and max: %s", (id) => {
+		it.each(GPT6_SOL_MODEL_IDS)("warns for GPT-6 Sol and GPT-6.1 Sol at xhigh and max: %s", (id) => {
 			expect(isSensitiveHighReasoningModel(mkModel(id))).toBe(true);
 			expect(shouldWarnHighReasoning(mkModel(id), "xhigh")).toBe(true);
 			expect(shouldWarnHighReasoning(mkModel(id), "max")).toBe(true);
 			expect(shouldWarnHighReasoning(mkModel(id), "medium")).toBe(false);
 		});
 
-		it.each(ASTRA_MODEL_IDS)("warns for GPT-6 Astra only at max: %s", (id) => {
-			expect(shouldWarnHighReasoning(mkModel(id), "xhigh")).toBe(false);
+		it.each(ASTRA_MODEL_IDS)("warns for GPT-6 Astra only above high (xhigh and max): %s", (id) => {
+			expect(shouldWarnHighReasoning(mkModel(id), "high")).toBe(false);
+			expect(shouldWarnHighReasoning(mkModel(id), "medium")).toBe(false);
+			expect(shouldWarnHighReasoning(mkModel(id), "xhigh")).toBe(true);
 			expect(shouldWarnHighReasoning(mkModel(id), "max")).toBe(true);
 		});
 

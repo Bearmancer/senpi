@@ -40,7 +40,6 @@ const DEFERRED_SPECIFIERS = [
 	},
 	{ specifier: "./modes/rpc/multi-session-host.js", branch: "--mode rpc --multi-session" },
 	{ specifier: "./modes/rpc/rpc-mode.js", branch: "--mode rpc" },
-	{ specifier: "./modes/interactive/interactive-host-runtime.js", branch: "the shared-host opt-in" },
 	{ specifier: "./cli/list-tips.js", branch: "--list-tips" },
 	{ specifier: "./cli/session-picker.js", branch: "--resume" },
 ] as const;

@@ -19,11 +19,11 @@ import {
 	supportsMax,
 	supportsXhigh,
 } from "../models.ts";
+import { readProviderDiagnostic } from "../provider-diagnostic.ts";
 import type {
 	AssistantMessage,
 	CacheRetention,
 	ChatTemplateKwargValue,
-	Context,
 	ImageContent,
 	JsonValue,
 	Message,
@@ -45,6 +45,11 @@ import type {
 } from "../types.ts";
 import { formatProviderError, normalizeProviderError } from "../utils/error-body.ts";
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
+import {
+	formatGitHubCopilotToolLimitError,
+	limitGitHubCopilotTools,
+	recordGitHubCopilotToolLimit,
+} from "../utils/github-copilot-tool-limit.ts";
 import { shortHash } from "../utils/hash.ts";
 import { headersToRecord } from "../utils/headers.ts";
 import { parseStreamingJson } from "../utils/json-parse.ts";
@@ -53,14 +58,27 @@ import {
 	getOpenAICompletionsCompat as getCompat,
 	type ResolvedOpenAICompletionsCompat,
 } from "../utils/prompt-cache-ttl.ts";
+import {
+	awaitProviderTransport,
+	iterateProviderTransport,
+	openAICompatibleProviderDiagnosticFromError,
+} from "../utils/provider-diagnostic-sources.ts";
 import { getProviderEnvValue } from "../utils/provider-env.ts";
 import { retryProviderStreamRequest } from "../utils/provider-retry.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
-import { isForcedToolChoiceUnsupportedError, omitToolChoiceParam } from "../utils/tool-choice-fallback.ts";
+import { getSystemMessageText, renderSystemMessageUpdate } from "../utils/text.ts";
+import { sendWithForcedToolChoiceFallback } from "../utils/tool-choice-fallback.ts";
 import {
 	normalizeToolParametersForMoonshot,
 	normalizeToolParametersForOpenAICompat,
 } from "../utils/tool-schema-compat.ts";
+import {
+	getCurrentTools,
+	getDeclaredTools,
+	resolveTranscript,
+	resolveTranscriptTools,
+	type TranscriptContext,
+} from "../utils/transcript.ts";
 import {
 	appendGrammarToolInputJsonDelta,
 	createGrammarToolInputProperties,
@@ -70,6 +88,7 @@ import {
 	resolveGrammarConstrainedSampling,
 	resolveJsonSchemaStrictSampling,
 } from "./constrained-sampling.ts";
+import { withGitHubCopilotFailureNote } from "./github-copilot-errors.ts";
 import { buildCopilotDynamicHeaders, hasCopilotVisionInput } from "./github-copilot-headers.ts";
 import { resolveOpenAIClientAuth } from "./openai-client-auth.ts";
 import { clampOpenAIPromptCacheKey } from "./openai-prompt-cache.ts";
@@ -225,24 +244,25 @@ function hasToolHistory(messages: Message[]): boolean {
 	return false;
 }
 
-function getDeferredToolNames(messages: Message[]): Set<string> {
+/**
+ * Kimi `deferredToolsMode`: a current tool named by any tool result's `addedToolNames` leaves the
+ * top-level `tools` field and is loaded by a Kimi tools system message after that result.
+ */
+function resolveKimiDeferredTools(
+	messages: readonly Message[],
+	compat: ResolvedOpenAICompletionsCompat,
+): ReadonlyMap<string, Tool> {
+	const deferred = new Map<string, Tool>();
+	if (compat.deferredToolsMode !== "kimi") return deferred;
 	const names = new Set<string>();
 	for (const message of messages) {
-		if (message.role === "toolResult") {
-			for (const name of message.addedToolNames ?? []) {
-				names.add(name);
-			}
-		}
+		if (message.role !== "toolResult") continue;
+		for (const name of message.addedToolNames ?? []) names.add(name);
 	}
-	return names;
-}
-
-function getToolsByName(tools: Tool[] | undefined, names: Iterable<string>): Tool[] {
-	if (!tools) return [];
-	const toolsByName = new Map(tools.map((tool) => [tool.name, tool]));
-	return Array.from(names)
-		.map((name) => toolsByName.get(name))
-		.filter((tool): tool is Tool => tool !== undefined);
+	for (const tool of getCurrentTools(messages)) {
+		if (names.has(tool.name)) deferred.set(tool.name, tool);
+	}
+	return deferred;
 }
 
 function isTextContentBlock(block: { type: string }): block is TextContent {
@@ -488,10 +508,11 @@ function resolveCacheRetention(cacheRetention?: CacheRetention, env?: ProviderEn
 
 export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptions> = (
 	model: Model<"openai-completions">,
-	context: Context,
+	context: TranscriptContext,
 	options?: OpenAICompletionsOptions,
 ): AssistantMessageEventStream => {
 	const stream = new AssistantMessageEventStream();
+	const normalizedContext = resolveTranscript(context, getCompat(model).supportsMidConvoSystemMessages);
 
 	(async () => {
 		const output: AssistantMessage = {
@@ -525,26 +546,38 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 			const clientAuth = resolveOpenAIClientAuth(model.provider, options?.apiKey, options?.headers);
 			const compat = getCompat(model);
 			const grammarToolInputProperties = createGrammarToolInputProperties(
-				context.tools,
+				getDeclaredTools(normalizedContext.messages),
 				compat.supportsOpenAIGrammarTools,
 			);
 			const cacheRetention = resolveCacheRetention(options?.cacheRetention ?? model.cacheRetention, options?.env);
 			const cacheSessionId = cacheRetention === "none" ? undefined : options?.sessionId;
 			const client = createClient(
 				model,
-				context,
+				normalizedContext,
 				clientAuth.apiKey,
 				clientAuth.headers,
 				options?.fetch,
 				cacheSessionId,
 				compat,
 			);
-			let params = buildParams(model, context, options, compat, cacheRetention, grammarToolInputProperties);
+			let params = buildParams(
+				model,
+				normalizedContext,
+				options,
+				compat,
+				cacheRetention,
+				grammarToolInputProperties,
+			);
 			const nextParams = await options?.onPayload?.(params, model);
 			if (nextParams !== undefined) {
 				params = nextParams as OpenAICompletionsRequestParams;
 			}
 			params = normalizeRequestToolSchemas(params, compat);
+			const limitedTools = limitGitHubCopilotTools(model.provider, params.tools, params.tool_choice);
+			if (limitedTools.omittedCount > 0) {
+				params = { ...params, tools: limitedTools.tools };
+				recordGitHubCopilotToolLimit(output, limitedTools.omittedCount);
+			}
 			const requestOptions = {
 				...(options?.signal ? { signal: options.signal } : {}),
 				...(options?.timeoutMs !== undefined ? { timeout: options.timeoutMs } : {}),
@@ -554,18 +587,23 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 				body: OpenAICompletionsRequestParams,
 				requestConfig: typeof requestOptions,
 			) => { withResponse(): Promise<{ data: AsyncIterable<ChatCompletionChunk>; response: Response }> };
-			const createStream = (body: OpenAICompletionsRequestParams) =>
-				createChatCompletion(body, requestOptions).withResponse();
+			const createStream = async (body: OpenAICompletionsRequestParams) => {
+				const { data, response } = await awaitProviderTransport(
+					() => createChatCompletion(body, requestOptions).withResponse(),
+					openAICompatibleProviderDiagnosticFromError,
+				);
+				return { data: iterateProviderTransport(data, openAICompatibleProviderDiagnosticFromError), response };
+			};
 			const createRequest = async () => {
-				try {
-					return await createStream(params);
-				} catch (error) {
-					if (isForcedToolChoiceUnsupportedError(error, isForcedOpenAICompletionsToolChoice(params.tool_choice))) {
-						params = omitToolChoiceParam(params);
-						return createStream(params);
-					}
-					throw error;
-				}
+				const sent = await sendWithForcedToolChoiceFallback({
+					target: model,
+					params,
+					acceptsForcedToolChoice: compat.supportsForcedToolChoice !== false,
+					isForced: isForcedOpenAICompletionsToolChoice,
+					send: createStream,
+				});
+				params = sent.params;
+				return sent.result;
 			};
 			const { stream: openaiStream } = await retryProviderStreamRequest(
 				async () => {
@@ -811,6 +849,7 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 			};
 
 			for await (const chunk of openaiStream) {
+				await options?.onProviderStreamEvent?.(chunk, model);
 				if (!chunk || typeof chunk !== "object") continue;
 
 				// OpenAI documents ChatCompletionChunk.id as the unique chat completion identifier,
@@ -987,7 +1026,13 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 				delete (block as { streamIndex?: number }).streamIndex;
 			}
 			output.stopReason = options?.signal?.aborted ? "aborted" : "error";
-			output.errorMessage = formatProviderError(normalizeProviderError(error));
+			const providerDiagnostic = output.stopReason === "error" ? readProviderDiagnostic(error) : undefined;
+			if (providerDiagnostic !== undefined) output.providerDiagnostic = providerDiagnostic;
+			output.errorMessage = withGitHubCopilotFailureNote(
+				formatGitHubCopilotToolLimitError(output, formatProviderError(normalizeProviderError(error))),
+				model.provider,
+				error,
+			);
 			// Some providers via OpenRouter give additional information in this field.
 			// normalizeProviderError already stringifies the parsed body (error.error)
 			// into errorMessage, so only append the raw metadata when it is not already
@@ -1006,7 +1051,7 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 
 export const streamSimple: StreamFunction<"openai-completions", SimpleStreamOptions> = (
 	model: Model<"openai-completions">,
-	context: Context,
+	context: TranscriptContext,
 	options?: SimpleStreamOptions,
 ): AssistantMessageEventStream => {
 	resolveOpenAIClientAuth(model.provider, options?.apiKey, options?.headers);
@@ -1025,8 +1070,11 @@ export const streamSimple: StreamFunction<"openai-completions", SimpleStreamOpti
 		: model.id.includes("gpt-6-astra")
 			? "off"
 			: undefined;
+	// An explicitly mapped off value (for example an endpoint-advertised "none", senpi#2196) is how the
+	// model turns reasoning off, so only a map without one keeps the Astra off -> low fallback.
+	const hasMappedOff = typeof thinkingLevelMap?.off === "string";
 	const normalizedReasoning =
-		clampedReasoning === "off" && model.id.includes("gpt-6-astra") ? "low" : clampedReasoning;
+		clampedReasoning === "off" && model.id.includes("gpt-6-astra") && !hasMappedOff ? "low" : clampedReasoning;
 	const reasoningEffort =
 		normalizedReasoning === "off"
 			? undefined
@@ -1042,7 +1090,7 @@ export const streamSimple: StreamFunction<"openai-completions", SimpleStreamOpti
 
 function createClient(
 	model: Model<"openai-completions">,
-	context: Context,
+	context: TranscriptContext,
 	apiKey: string,
 	optionsHeaders?: ProviderHeaders,
 	fetch?: typeof globalThis.fetch,
@@ -1087,7 +1135,7 @@ function createClient(
 
 function buildParams(
 	model: Model<"openai-completions">,
-	context: Context,
+	context: TranscriptContext,
 	options?: OpenAICompletionsOptions,
 	compat: ResolvedOpenAICompletionsCompat = getCompat(model),
 	cacheRetention: CacheRetention = resolveCacheRetention(
@@ -1095,10 +1143,16 @@ function buildParams(
 		options?.env,
 	),
 	grammarToolInputProperties: ReadonlyMap<string, string> = createGrammarToolInputProperties(
-		context.tools,
+		getDeclaredTools(context.messages),
 		compat.supportsOpenAIGrammarTools,
 	),
 ) {
+	const transcriptTools = resolveTranscriptTools(
+		context.messages,
+		compat.supportsMidConvoSystemMessages === true && compat.supportsMidConvoToolAdditions === true,
+	);
+	const kimiDeferredTools = resolveKimiDeferredTools(context.messages, compat);
+	const requestTools = transcriptTools.requestTools.filter((tool) => !kimiDeferredTools.has(tool.name));
 	const messages = convertMessages(model, context, compat, {
 		preserveThinking: options?.reasoningEffort !== undefined,
 		grammarToolInputProperties,
@@ -1135,6 +1189,7 @@ function buildParams(
 
 	if (options?.maxTokens) {
 		if (compat.maxTokensField === "max_tokens") {
+			// Deprecated by OpenAI, but some OpenAI-compatible providers only accept max_tokens.
 			params.max_tokens = options.maxTokens;
 		} else {
 			params.max_completion_tokens = options.maxTokens;
@@ -1145,11 +1200,8 @@ function buildParams(
 		params.temperature = options.temperature;
 	}
 
-	const deferredToolNames =
-		compat.deferredToolsMode === "kimi" ? getDeferredToolNames(context.messages) : new Set<string>();
-	const activeTools = context.tools?.filter((tool) => !deferredToolNames.has(tool.name));
-	if (activeTools && activeTools.length > 0) {
-		params.tools = convertTools(activeTools, compat);
+	if (requestTools.length > 0) {
+		params.tools = convertTools(requestTools, compat);
 		if (compat.zaiToolStream) {
 			params.tool_stream = true;
 		}
@@ -1328,10 +1380,8 @@ function buildParams(
 
 	applyExtraBody(params, options?.extraBody, OPENAI_COMPLETIONS_RESERVED_BODY_KEYS);
 
-	// Last so custom keys override the named request fields.
-	if (options?.samplingParams) {
-		Object.assign(params, options.samplingParams);
-	}
+	// Last so custom keys override the named request fields. Per-request keys override model defaults.
+	Object.assign(params, model.samplingParams, options?.samplingParams);
 
 	return params;
 }
@@ -1520,12 +1570,31 @@ function addCacheControlToTextContent(
 	return false;
 }
 
+function appendUserMessage(
+	params: ChatCompletionMessageParam[],
+	content: string | ChatCompletionContentPart[],
+	mergeAdjacentUserMessages: boolean,
+): void {
+	const previous = params[params.length - 1];
+	if (!mergeAdjacentUserMessages || previous?.role !== "user") {
+		params.push({ role: "user", content });
+		return;
+	}
+
+	const previousContent: ChatCompletionContentPart[] =
+		typeof previous.content === "string" ? [{ type: "text", text: previous.content }] : previous.content;
+	const currentContent: ChatCompletionContentPart[] =
+		typeof content === "string" ? [{ type: "text", text: content }] : content;
+	previous.content = [...previousContent, ...currentContent];
+}
+
 export function convertMessages(
 	model: Model<"openai-completions">,
-	context: Context,
+	context: TranscriptContext,
 	compat: ResolvedOpenAICompletionsCompat,
 	options: ConvertCompletionsMessagesOptions = {},
 ): ChatCompletionMessageParam[] {
+	const normalizedContext = resolveTranscript(context, compat.supportsMidConvoSystemMessages);
 	const params: ChatCompletionMessageParam[] = [];
 
 	const normalizeToolCallId = (id: string): string => {
@@ -1558,16 +1627,19 @@ export function convertMessages(
 		return `${prefix}_${hash}`;
 	};
 
-	const transformedMessages = transformMessages(context.messages, model, (id) => normalizeToolCallId(id), {
+	const transformedMessages = transformMessages(normalizedContext.messages, model, (id) => normalizeToolCallId(id), {
 		preserveThinking: options.preserveThinking,
 		normalizeSameModelToolCallIds: true,
 	});
-
-	if (context.systemPrompt) {
-		const useDeveloperRole = model.reasoning && compat.supportsDeveloperRole;
-		const role = useDeveloperRole ? "developer" : "system";
-		params.push({ role: role, content: sanitizeSurrogates(context.systemPrompt) });
-	}
+	const mergeAdjacentUserMessages = !model.baseUrl.includes("api.openai.com");
+	const transcriptTools = resolveTranscriptTools(
+		normalizedContext.messages,
+		compat.supportsMidConvoSystemMessages === true && compat.supportsMidConvoToolAdditions === true,
+	);
+	const kimiDeferredTools = resolveKimiDeferredTools(normalizedContext.messages, compat);
+	// One ledger for both in-place loading paths: transcript system messages and `addedToolNames`.
+	const loadedToolNames = new Set<string>();
+	const instructionRole = model.reasoning && compat.supportsDeveloperRole ? "developer" : "system";
 
 	let lastRole: string | null = null;
 
@@ -1582,33 +1654,46 @@ export function convertMessages(
 			});
 		}
 
-		if (msg.role === "user") {
+		if (msg.role === "system") {
+			const addedTools =
+				i > 0 && transcriptTools.anchorsAdditions
+					? (msg.toolsAdded ?? []).filter((tool) => !loadedToolNames.has(tool.name))
+					: [];
+			for (const tool of addedTools) loadedToolNames.add(tool.name);
+			if (addedTools.length > 0) {
+				const kimiToolMessage: KimiToolSystemMessageParam = {
+					role: "system",
+					tools: convertTools(addedTools, compat),
+				};
+				params.push(kimiToolMessage as unknown as ChatCompletionMessageParam);
+			}
+			const text = i === 0 ? getSystemMessageText(msg) : renderSystemMessageUpdate(msg);
+			if (text.length > 0) {
+				params.push({ role: instructionRole, content: sanitizeSurrogates(text) });
+			}
+		} else if (msg.role === "user") {
 			if (typeof msg.content === "string") {
-				params.push({
-					role: "user",
-					content: sanitizeSurrogates(msg.content),
-				});
+				appendUserMessage(params, sanitizeSurrogates(msg.content), mergeAdjacentUserMessages);
 			} else {
-				const content: ChatCompletionContentPart[] = msg.content.map((item): ChatCompletionContentPart => {
-					if (item.type === "text") {
-						return {
-							type: "text",
-							text: sanitizeSurrogates(item.text),
-						} satisfies ChatCompletionContentPartText;
-					} else {
-						return {
-							type: "image_url",
-							image_url: {
-								url: `data:${item.mimeType};base64,${item.data}`,
-							},
-						} satisfies ChatCompletionContentPartImage;
-					}
-				});
+				const content: ChatCompletionContentPart[] = msg.content
+					.filter((item) => item.type !== "text" || item.text.length > 0)
+					.map((item): ChatCompletionContentPart => {
+						if (item.type === "text") {
+							return {
+								type: "text",
+								text: sanitizeSurrogates(item.text),
+							} satisfies ChatCompletionContentPartText;
+						} else {
+							return {
+								type: "image_url",
+								image_url: {
+									url: `data:${item.mimeType};base64,${item.data}`,
+								},
+							} satisfies ChatCompletionContentPartImage;
+						}
+					});
 				if (content.length === 0) continue;
-				params.push({
-					role: "user",
-					content,
-				});
+				appendUserMessage(params, content, mergeAdjacentUserMessages);
 			}
 		} else if (msg.role === "assistant") {
 			// Some providers don't accept null content, use empty string instead
@@ -1731,7 +1816,7 @@ export function convertMessages(
 			params.push(assistantMsg);
 		} else if (msg.role === "toolResult") {
 			const imageBlocks: Array<{ type: "image_url"; image_url: { url: string } }> = [];
-			const deferredToolNames = new Set<string>();
+			const deferredTools: Tool[] = [];
 			let j = i;
 
 			for (; j < transformedMessages.length && transformedMessages[j].role === "toolResult"; j++) {
@@ -1758,10 +1843,11 @@ export function convertMessages(
 				}
 				params.push(toolResultMsg);
 
-				if (compat.deferredToolsMode === "kimi") {
-					for (const name of toolMsg.addedToolNames ?? []) {
-						deferredToolNames.add(name);
-					}
+				for (const name of toolMsg.addedToolNames ?? []) {
+					const tool = kimiDeferredTools.get(name);
+					if (!tool || loadedToolNames.has(name)) continue;
+					loadedToolNames.add(name);
+					deferredTools.push(tool);
 				}
 
 				if (hasImages && model.input.includes("image")) {
@@ -1803,16 +1889,13 @@ export function convertMessages(
 				lastRole = "toolResult";
 			}
 
-			if (deferredToolNames.size > 0) {
-				const deferredTools = getToolsByName(context.tools, deferredToolNames);
-				if (deferredTools.length > 0) {
-					const kimiToolMessage: KimiToolSystemMessageParam = {
-						role: "system",
-						tools: convertTools(deferredTools, compat),
-					};
-					// Kimi accepts a system message with tools but omits the standard content field.
-					params.push(kimiToolMessage as unknown as ChatCompletionMessageParam);
-				}
+			if (deferredTools.length > 0) {
+				const kimiToolMessage: KimiToolSystemMessageParam = {
+					role: "system",
+					tools: convertTools(deferredTools, compat),
+				};
+				// Kimi accepts a system message with tools but omits the standard content field.
+				params.push(kimiToolMessage as unknown as ChatCompletionMessageParam);
 			}
 			continue;
 		}

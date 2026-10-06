@@ -1,13 +1,22 @@
 #!/usr/bin/env node
+var __rewriteRelativeImportExtension = (this && this.__rewriteRelativeImportExtension) || function (path, preserveJsx) {
+    if (typeof path === "string" && /^\.\.?\//.test(path)) {
+        return path.replace(/\.(tsx)$|((?:\.d)?)((?:\.[^./]+?)?)\.([cm]?)ts$/i, function (m, tsx, d, ext, cm) {
+            return tsx ? preserveJsx ? ".jsx" : ".js" : d && (!ext || !cm) ? m : (d + ext + "." + cm.toLowerCase() + "js");
+        });
+    }
+    return path;
+};
 import "./valid-cwd.js";
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync, realpathSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { processBunRuntimeOptions, resolveBunReexec } from "./bun-runtime.js";
 import { enableStartupCompileCache } from "./compile-cache.js";
-import { APP_NAME, DISPLAY_VERSION, getPackageDir, isBundledNode } from "./config.js";
+import { APP_NAME, DISPLAY_VERSION, findNodePackageDir, getAgentDir, getInstallPackageDir, isBundledNode, } from "./config.js";
 import { hasInheritedInspectorOption, releaseInheritedInspectorForChild } from "./inspector-policy.js";
+import { prepareRuntimeSnapshot } from "./runtime-snapshot/enter.js";
 import { handleBootstrapSelfUpdate } from "./self-update-bootstrap.js";
 // Upstream's `cli/setup.ts` helper is deliberately not used here: this launcher only decides the
 // runtime and process structure, and `cli-main.ts` performs the equivalent process/title/env/http
@@ -142,7 +151,7 @@ if (isRootCommand(args) && args.some((arg) => arg === "--help" || arg === "-h"))
         process.exit();
     }
 }
-if (isMissingBundledWorkspaceDependencies(getPackageDir())) {
+if (isMissingBundledWorkspaceDependencies(getInstallPackageDir())) {
     if (await handleBootstrapSelfUpdate(args)) {
         process.exit();
     }
@@ -155,6 +164,17 @@ else {
     // `process.exitCode` and any `process.exit()` of its own, so importing it here IS the run - there
     // is no result to forward. It has to be a dynamic import: a static one would evaluate the whole
     // engine graph before the `--version` and bootstrap-repair paths above, which answer without it.
-    await import("./cli-main.js");
+    // A bundled install hands the run to its runtime snapshot's own copy of this entry instead, so
+    // an upgrade that rewrites the install cannot remove chunks this session imports later (#2358).
+    const entryPath = fileURLToPath(import.meta.url);
+    const snapshot = isBundledNode
+        ? await prepareRuntimeSnapshot(entryPath, findNodePackageDir(dirname(entryPath)), getAgentDir())
+        : undefined;
+    if (snapshot?.kind === "hand-off") {
+        await import(__rewriteRelativeImportExtension(snapshot.entryUrl));
+    }
+    else {
+        await import("./cli-main.js");
+    }
 }
 //# sourceMappingURL=cli.js.map

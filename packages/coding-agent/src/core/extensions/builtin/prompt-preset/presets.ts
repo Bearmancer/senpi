@@ -8,6 +8,7 @@ import { buildClaudeOpus47Prompt } from "./claude-opus-4-7.ts";
 import { buildClaudeOpus48Prompt } from "./claude-opus-4-8.ts";
 import { buildClaudeOpus5Prompt } from "./claude-opus-5.ts";
 import { buildClaudeOpus55Prompt } from "./claude-opus-5-5.ts";
+import { buildClaudeSonnet55Prompt } from "./claude-sonnet-5-5.ts";
 import { buildDeepseekV41FlashPrompt } from "./deepseek-v4-1-flash.ts";
 import { buildDeepseekV4FlashPrompt } from "./deepseek-v4-flash.ts";
 import { buildDeepseekV4Flash0731Prompt } from "./deepseek-v4-flash-0731.ts";
@@ -47,16 +48,19 @@ function normalizeModelId(modelId: string): string {
 	return modelId.toLowerCase().replace(/\s+/g, "-");
 }
 
-// The GPT-6 family (Astra, Sol, Luna) shares one prompting guide
-// (developers.openai.com/api/docs/guides/latest-model, 2026-09-23), so every tier
-// renders the gpt-6-astra preset; the preset keeps that name because settings.json
-// already pins it. Id shapes verified against the OpenAI model pages, codex's
-// models.json, models.dev and Bedrock's catalog: gpt-6-sol, gpt-6-luna-fast, dated
-// snapshots, openai/gpt-6-sol, openai-gpt-6-luna, global.openai.gpt-6-astra, and
-// the display names "GPT-6 Sol" / "GPT-6 Luna". Bare "gpt-6", "gpt-6-mini" and a
-// lone tier word stay out: an unknown sibling deserves its own decision.
+// The GPT-6 family (Astra, 6.1 Sol, Sol, Luna) shares one prompting guide
+// (developers.openai.com/api/docs/guides/latest-model, 2026-09-23; GPT-6.1 Sol added
+// 2026-09-29), so every tier renders the gpt-6-astra preset; the preset keeps that name
+// because settings.json already pins it. Id shapes verified against the OpenAI model
+// pages, codex's models.json, models.dev, OpenRouter, Vercel and Bedrock's catalog:
+// gpt-6-sol, gpt-6.1-sol, gpt-6.1-sol-fast, gpt-6-luna-fast, dated snapshots,
+// openai/gpt-6-sol, openai/gpt-6.1-sol, openai-gpt-6-luna, global.openai.gpt-6-astra, Venice's
+// dotless openai-gpt-61-sol (it spells every point release that way: openai-gpt-56-sol), and
+// the display names "GPT-6 Sol" / "GPT-6.1 Sol" / "GPT-6 Luna". Bare "gpt-6", "gpt-6.1",
+// "gpt-61", "gpt-6-mini" and a lone tier word stay out: an unknown sibling deserves its own
+// decision, and the dotless form is accepted only with a single digit right after the 6.
 function hasGpt6FamilySignal(value: string): boolean {
-	return /(?:^|[/@:._-])gpt[._-]?6[._-](?:astra|sol|luna)(?:$|[/@:._-])/.test(normalizeModelId(value));
+	return /(?:^|[/@:._-])gpt[._-]?6(?:[._-]\d+|\d)?[._-](?:astra|sol|luna)(?:$|[/@:._-])/.test(normalizeModelId(value));
 }
 
 function isGpt6FamilyModel(model: ModelWithPromptPresetMetadata): boolean {
@@ -127,8 +131,9 @@ function isKimiK3Model(model: ModelWithPromptPresetMetadata): boolean {
 	return hasKimiK3Signal(model.id) || (model.name !== undefined && hasKimiK3Signal(model.name));
 }
 
+// Exactly the SWE-2 lanes Devin's Cascade serves; every other swe-2 uid is refused upstream (#2306).
 function hasSWE2Signal(value: string): boolean {
-	return /(?:^|[/@:._-])swe-2-(?:high|max|low|high-lite)(?:$|[/@:._-])/.test(normalizeModelId(value));
+	return /(?:^|[/@:._-])swe-2-(?:medium|high|max)(?:$|[/@:._])/.test(normalizeModelId(value));
 }
 
 function isSWE2Model(model: ModelWithPromptPresetMetadata): boolean {
@@ -269,6 +274,14 @@ function isClaudeOpus5Model(modelId: string): boolean {
 	return normalizeModelId(modelId).includes("opus-5");
 }
 
+// Sonnet 5 keeps the default dynamic prompt; only the 5.5 release has a tuned core.
+const CLAUDE_SONNET_55_MARKERS = ["sonnet-5-5", "sonnet-5.5"] as const;
+
+function isClaudeSonnet55Model(modelId: string): boolean {
+	const normalized = normalizeModelId(modelId);
+	return CLAUDE_SONNET_55_MARKERS.some((marker) => normalized.includes(marker));
+}
+
 type ClaudeOpusVersion = "claude-opus-4-8" | "claude-opus-4-7" | "claude-opus-4-6" | "claude-opus-4-5";
 
 function extractClaudeOpusVersion(modelId: string): ClaudeOpusVersion | undefined {
@@ -333,6 +346,9 @@ export function resolvePresetName(
 	}
 	if (isClaudeOpus5Model(model.id)) {
 		return "claude-opus-5";
+	}
+	if (isClaudeSonnet55Model(model.id)) {
+		return "claude-sonnet-5-5";
 	}
 	const claudeVersion = extractClaudeOpusVersion(model.id);
 	if (claudeVersion) {
@@ -417,6 +433,8 @@ function buildPreset(name: ResolvedPresetName, options: BuildDynamicSystemPrompt
 			return { name, prompt: buildClaudeFable5Prompt(options) };
 		case "claude-opus-5-5":
 			return { name, prompt: buildClaudeOpus55Prompt(options) };
+		case "claude-sonnet-5-5":
+			return { name, prompt: buildClaudeSonnet55Prompt(options) };
 		case "claude-opus-5":
 			return { name, prompt: buildClaudeOpus5Prompt(options) };
 		case "claude-opus-4-8":
@@ -438,6 +456,7 @@ function withDefaults(options: Partial<BuildDynamicSystemPromptOptions> = {}): B
 		promptGuidelines: options.promptGuidelines ?? [],
 		contextFiles: options.contextFiles ?? [],
 		skills: options.skills ?? [],
+		surface: options.surface ?? "terminal",
 	};
 }
 

@@ -1,4 +1,5 @@
-import type { AutocompleteProvider, AutocompleteSuggestions, MentionRange } from "../autocomplete.ts";
+import type { AutocompleteItem, AutocompleteProvider, AutocompleteSuggestions, MentionRange } from "../autocomplete.ts";
+import type { EditorSubmitDetails } from "../editor-component.ts";
 import {
 	type EditorImageState,
 	formatImageMarker,
@@ -18,6 +19,7 @@ import {
 	pasteMarkerId,
 	segmentWithMarkers,
 } from "../paste-markers.ts";
+import { isSlashNamespaceItem } from "../slash-command-autocomplete.ts";
 import { normalizeWarpWslShiftEnterInput } from "../terminal.ts";
 import {
 	type Component,
@@ -29,6 +31,8 @@ import {
 } from "../tui.ts";
 import { UndoStack } from "../undo-stack.ts";
 import {
+	autocompleteBoundaryRegex,
+	autocompleteSeparatorRegex,
 	cjkBreakRegex,
 	getGraphemeSegmenter,
 	getWordSegmenter,
@@ -285,20 +289,37 @@ const SLASH_COMMAND_SELECT_LIST_LAYOUT: SelectListLayoutOptions = {
 	maxPrimaryColumnWidth: 32,
 };
 
+interface AutocompleteRequestOptions {
+	force: boolean;
+	explicitTab: boolean;
+	/** Apply the best match of the fresh suggestions instead of showing them. */
+	acceptSelection?: boolean;
+}
+
 const ATTACHMENT_AUTOCOMPLETE_DEBOUNCE_MS = 20;
 const DEFAULT_AUTOCOMPLETE_TRIGGER_CHARACTERS = ["@", "#", "$"];
+// Unquoted completions end at whitespace or CJK punctuation; quoted paths may contain either.
+const unquotedAutocompleteSuffixRegex = new RegExp(`(?:(?!${autocompleteSeparatorRegex.source}).)*`, "u");
+// Trigger tokens may be wrapped in prose, e.g. "(@src/foo" or "`@src/foo".
+const autocompleteTokenStartSource = `${autocompleteBoundaryRegex.source}[([{<\`]*`;
 
 function escapeCharacterClass(value: string): string {
 	return value.replace(/[\\^$.*+?()[\]{}|-]/g, "\\$&");
 }
 
 function buildTriggerPattern(triggerCharacters: string[]): RegExp {
-	return new RegExp(`(?:^|[\\s])[${triggerCharacters.map(escapeCharacterClass).join("")}][^\\s]*$`);
+	return new RegExp(
+		`${autocompleteTokenStartSource}(?:@"[^"]*|[${triggerCharacters.map(escapeCharacterClass).join("")}]${unquotedAutocompleteSuffixRegex.source})$`,
+		"u",
+	);
 }
 
 function buildDebouncePattern(triggerCharacters: string[]): RegExp {
 	const escapedWithoutAt = triggerCharacters.filter((character) => character !== "@").map(escapeCharacterClass);
-	return new RegExp(`(?:^|[ \\t])(?:@(?:"[^"]*|[^\\s]*)|[${escapedWithoutAt.join("")}][^\\s]*)$`);
+	return new RegExp(
+		`${autocompleteTokenStartSource}(?:@(?:"[^"]*|${unquotedAutocompleteSuffixRegex.source})|[${escapedWithoutAt.join("")}]${unquotedAutocompleteSuffixRegex.source})$`,
+		"u",
+	);
 }
 
 function createScrollBorder(direction: "↑" | "↓", hiddenLineCount: number, width: number): string {
@@ -355,6 +376,10 @@ export class Editor implements Component, Focusable {
 	private autocompleteList?: SelectList;
 	private autocompleteState: "regular" | "force" | null = null;
 	private autocompletePrefix: string = "";
+	// Text and cursor the shown list was computed for; accepting after either changed must re-query.
+	private autocompleteListSnapshot?: { text: string; line: number; col: number };
+	/** The provider items behind `autocompleteList`, which only carries the display fields. */
+	private autocompleteItems: readonly AutocompleteItem[] = [];
 	private autocompleteMaxVisible: number = 5;
 	private autocompleteAbort?: AbortController;
 	private autocompleteDebounceTimer?: ReturnType<typeof setTimeout>;
@@ -398,7 +423,7 @@ export class Editor implements Component, Focusable {
 	private undoStack = new UndoStack<EditorSnapshot>();
 	private wrappedLineCache: CachedWrappedLine[] = [];
 
-	public onSubmit?: (text: string) => void;
+	public onSubmit?: (text: string, details?: EditorSubmitDetails) => void;
 	public onChange?: (text: string) => void;
 	/**
 	 * Fired whenever image markers are added, removed, pruned or renumbered.
@@ -919,8 +944,13 @@ export class Editor implements Component, Focusable {
 			}
 
 			if (kb.matches(data, "tui.input.tab")) {
+				if (this.isAutocompleteListStale()) {
+					this.acceptRefreshedAutocomplete();
+					return;
+				}
 				const selected = this.autocompleteList.getSelectedItem();
 				if (selected && this.autocompleteProvider) {
+					const drillsIntoNamespace = this.isSlashNamespaceSelection(selected.value);
 					this.pushUndoSnapshot();
 					this.lastAction = null;
 					const result = this.autocompleteProvider.applyCompletion(
@@ -935,13 +965,19 @@ export class Editor implements Component, Focusable {
 					this.setCursorCol(result.cursorCol);
 					this.cancelAutocomplete();
 					if (this.onChange) this.onChange(this.getText());
+					if (drillsIntoNamespace) this.tryTriggerAutocomplete();
 				}
 				return;
 			}
 
 			if (kb.matches(data, "tui.select.confirm")) {
+				if (!this.autocompletePrefix.startsWith("/") && this.isAutocompleteListStale()) {
+					this.acceptRefreshedAutocomplete();
+					return;
+				}
 				const selected = this.autocompleteList.getSelectedItem();
 				if (selected && this.autocompleteProvider) {
+					const drillsIntoNamespace = this.isSlashNamespaceSelection(selected.value);
 					this.pushUndoSnapshot();
 					this.lastAction = null;
 					const result = this.autocompleteProvider.applyCompletion(
@@ -955,8 +991,23 @@ export class Editor implements Component, Focusable {
 					this.state.cursorLine = result.cursorLine;
 					this.setCursorCol(result.cursorCol);
 
-					if (this.autocompletePrefix.startsWith("/")) {
+					if (drillsIntoNamespace) {
+						// A namespace (`skill:`) is not a command: list its commands instead of submitting.
 						this.cancelAutocomplete();
+						if (this.onChange) this.onChange(this.getText());
+						this.tryTriggerAutocomplete();
+						return;
+					}
+					if (this.autocompletePrefix.startsWith("/")) {
+						const awaitsArguments = this.autocompleteItems.some(
+							(item) => item === selected && item.awaitsArguments === true,
+						);
+						this.cancelAutocomplete();
+						if (awaitsArguments) {
+							// The command takes arguments: leave `/name ` in the editor for them.
+							if (this.onChange) this.onChange(this.getText());
+							return;
+						}
 						// Fall through to submit
 					} else {
 						this.cancelAutocomplete();
@@ -1498,13 +1549,12 @@ export class Editor implements Component, Focusable {
 			else if (this.autocompleteTriggerCharacters.includes(char)) {
 				const currentLine = this.state.lines[this.state.cursorLine] || "";
 				const textBeforeCursor = currentLine.slice(0, this.state.cursorCol);
-				const charBeforeSymbol = textBeforeCursor[textBeforeCursor.length - 2];
-				if (textBeforeCursor.length === 1 || charBeforeSymbol === " " || charBeforeSymbol === "\t") {
+				if (this.autocompleteTriggerPattern.test(textBeforeCursor)) {
 					this.tryTriggerAutocomplete();
 				}
 			}
 			// Also auto-trigger when typing letters in a slash command or symbol completion context
-			else if (/[a-zA-Z0-9.\-_]/.test(char)) {
+			else if (/[a-zA-Z0-9.\-_]/.test(char) || cjkBreakRegex.test(char)) {
 				const currentLine = this.state.lines[this.state.cursorLine] || "";
 				const textBeforeCursor = currentLine.slice(0, this.state.cursorCol);
 				// Check if we're in a slash command (with or without space for arguments)
@@ -1618,7 +1668,8 @@ export class Editor implements Component, Focusable {
 
 	private submitValue(): void {
 		this.cancelAutocomplete();
-		const result = this.pasteMarkers.expand(this.state.lines.join("\n")).trim();
+		const rawText = this.pasteMarkers.expand(this.state.lines.join("\n"));
+		const result = rawText.trim();
 
 		this.state = { lines: [""], cursorLine: 0, cursorCol: 0 };
 		this.pasteMarkers.clear();
@@ -1630,7 +1681,7 @@ export class Editor implements Component, Focusable {
 		this.lastAction = null;
 
 		if (this.onChange) this.onChange("");
-		if (this.onSubmit) this.onSubmit(result);
+		if (this.onSubmit) this.onSubmit(result, { rawText });
 	}
 
 	private handleBackspace(): void {
@@ -2511,6 +2562,15 @@ export class Editor implements Component, Focusable {
 		this.requestAutocomplete({ force: false, explicitTab });
 	}
 
+	/** Ask the provider for suggestions at the cursor, as typing would (e.g. after a programmatic setText). */
+	public openAutocomplete(): void {
+		this.tryTriggerAutocomplete();
+	}
+
+	private isSlashNamespaceSelection(value: string): boolean {
+		return this.autocompletePrefix.startsWith("/") && isSlashNamespaceItem(value);
+	}
+
 	private handleTabCompletion(): void {
 		if (!this.autocompleteProvider) return;
 
@@ -2532,7 +2592,7 @@ export class Editor implements Component, Focusable {
 		this.requestAutocomplete({ force: true, explicitTab });
 	}
 
-	private requestAutocomplete(options: { force: boolean; explicitTab: boolean }): void {
+	private requestAutocomplete(options: AutocompleteRequestOptions): void {
 		if (!this.autocompleteProvider) return;
 
 		if (options.force) {
@@ -2563,10 +2623,7 @@ export class Editor implements Component, Focusable {
 		void this.startAutocompleteRequest(startToken, options);
 	}
 
-	private async startAutocompleteRequest(
-		startToken: number,
-		options: { force: boolean; explicitTab: boolean },
-	): Promise<void> {
+	private async startAutocompleteRequest(startToken: number, options: AutocompleteRequestOptions): Promise<void> {
 		const previousTask = this.autocompleteRequestTask;
 		this.autocompleteRequestTask = (async () => {
 			await previousTask;
@@ -2615,7 +2672,7 @@ export class Editor implements Component, Focusable {
 		snapshotText: string,
 		snapshotLine: number,
 		snapshotCol: number,
-		options: { force: boolean; explicitTab: boolean },
+		options: AutocompleteRequestOptions,
 	): Promise<void> {
 		if (!this.autocompleteProvider) return;
 
@@ -2634,6 +2691,29 @@ export class Editor implements Component, Focusable {
 
 		if (!suggestions || !Array.isArray(suggestions.items) || suggestions.items.length === 0) {
 			this.cancelAutocomplete();
+			this.tui.requestRender();
+			return;
+		}
+
+		if (options.acceptSelection) {
+			const bestMatchIndex = this.getBestAutocompleteMatchIndex(suggestions.items, suggestions.prefix);
+			const item = suggestions.items[Math.max(bestMatchIndex, 0)]!;
+			const drillsIntoNamespace = suggestions.prefix.startsWith("/") && isSlashNamespaceItem(item.value);
+			this.pushUndoSnapshot();
+			this.lastAction = null;
+			const result = this.autocompleteProvider.applyCompletion(
+				this.state.lines,
+				this.state.cursorLine,
+				this.state.cursorCol,
+				item,
+				suggestions.prefix,
+			);
+			this.state.lines = result.lines;
+			this.state.cursorLine = result.cursorLine;
+			this.setCursorCol(result.cursorCol);
+			this.clearAutocompleteUi();
+			if (this.onChange) this.onChange(this.getText());
+			if (drillsIntoNamespace) this.tryTriggerAutocomplete();
 			this.tui.requestRender();
 			return;
 		}
@@ -2679,6 +2759,12 @@ export class Editor implements Component, Focusable {
 
 	private applyAutocompleteSuggestions(suggestions: AutocompleteSuggestions, state: "regular" | "force"): void {
 		this.autocompletePrefix = suggestions.prefix;
+		this.autocompleteListSnapshot = {
+			text: this.getText(),
+			line: this.state.cursorLine,
+			col: this.state.cursorCol,
+		};
+		this.autocompleteItems = suggestions.items;
 		this.autocompleteList = this.createAutocompleteList(suggestions.prefix, suggestions.items);
 
 		const bestMatchIndex = this.getBestAutocompleteMatchIndex(suggestions.items, suggestions.prefix);
@@ -2702,7 +2788,28 @@ export class Editor implements Component, Focusable {
 	private clearAutocompleteUi(): void {
 		this.autocompleteState = null;
 		this.autocompleteList = undefined;
+		this.autocompleteItems = [];
 		this.autocompletePrefix = "";
+		this.autocompleteListSnapshot = undefined;
+	}
+
+	private isAutocompleteListStale(): boolean {
+		const snapshot = this.autocompleteListSnapshot;
+		return (
+			snapshot !== undefined &&
+			(snapshot.text !== this.getText() ||
+				snapshot.line !== this.state.cursorLine ||
+				snapshot.col !== this.state.cursorCol)
+		);
+	}
+
+	/** Accept on a list that predates the text: re-query for the current token, then accept its best match. */
+	private acceptRefreshedAutocomplete(): void {
+		this.requestAutocomplete({
+			force: this.autocompleteState === "force",
+			explicitTab: true,
+			acceptSelection: true,
+		});
 	}
 
 	private cancelAutocomplete(): void {

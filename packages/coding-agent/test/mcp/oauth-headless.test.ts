@@ -22,6 +22,7 @@ import { registerMcpServiceDirectTools } from "../../src/core/extensions/builtin
 import type { McpConnectionEntry } from "../../src/core/extensions/builtin/mcp/service-types.ts";
 import { connectAndRefreshMcpCatalog } from "../../src/core/extensions/builtin/mcp/startup-race.ts";
 import { ToolSearchService } from "../../src/core/extensions/builtin/tool-search/service.ts";
+import type { ExtensionToolContext } from "../../src/core/extensions/types.ts";
 import { capturingPi, registeredTool, testContext, textContent } from "./fixtures/register-call.ts";
 import { waitForCondition } from "./fixtures/service-lifecycle.ts";
 import { type IdpFixture, spawnOAuthIdp } from "./fixtures/spawn-idp.ts";
@@ -231,9 +232,9 @@ describe("headless oauth flows", () => {
 		const [tool] = buildMcpToolDefinitions([entry]);
 		if (tool === undefined) throw new Error("expected MCP tool definition");
 
-		await expect(tool.execute("tc-auth", {}, undefined, undefined, testContext())).rejects.toThrow(
-			/\/mcp auth-start fix/,
-		);
+		await expect(
+			tool.execute("tc-auth", {}, undefined, undefined, testContext() as ExtensionToolContext),
+		).rejects.toThrow(/\/mcp auth-start fix/);
 	});
 
 	it("reports the headless auth-start flow when degraded renew hits OAuth needs_auth", async () => {
@@ -259,9 +260,9 @@ describe("headless oauth flows", () => {
 		const [tool] = buildMcpToolDefinitions([entry]);
 		if (tool === undefined) throw new Error("expected MCP tool definition");
 
-		await expect(tool.execute("tc-renew-auth", {}, undefined, undefined, testContext())).rejects.toThrow(
-			/\/mcp auth-start fix/,
-		);
+		await expect(
+			tool.execute("tc-renew-auth", {}, undefined, undefined, testContext() as ExtensionToolContext),
+		).rejects.toThrow(/\/mcp auth-start fix/);
 	});
 
 	it("refreshes near-expiry OAuth tokens through the real catalog and tool runtime path", async () => {
@@ -328,8 +329,8 @@ describe("headless oauth flows", () => {
 		const beforeCalls = (await fixture.getLog()).tokenHits;
 
 		const [first, second] = await Promise.all([
-			tool.execute("tc-runtime-1", { value: "one" }, undefined, undefined, testContext()),
-			tool.execute("tc-runtime-2", { value: "two" }, undefined, undefined, testContext()),
+			tool.execute("tc-runtime-1", { value: "one" }, undefined, undefined, testContext() as ExtensionToolContext),
+			tool.execute("tc-runtime-2", { value: "two" }, undefined, undefined, testContext() as ExtensionToolContext),
 		]);
 
 		const afterCalls = await fixture.getLog();

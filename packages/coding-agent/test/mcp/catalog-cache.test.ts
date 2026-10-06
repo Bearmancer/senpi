@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { loadMcpConfig } from "../../src/core/extensions/builtin/mcp/config.ts";
 import { getMcpService, McpService, resetMcpServiceForTests } from "../../src/core/extensions/builtin/mcp/service.ts";
+import type { ExtensionToolContext } from "../../src/core/extensions/types.ts";
 import {
 	attach,
 	awaitMcpToolRegistration,
@@ -52,7 +53,13 @@ describe("MCP disk metadata cache", () => {
 		await expect(readCounter(counterFile)).rejects.toMatchObject({ code: "ENOENT" });
 
 		const tool = registeredTool(pi, "mcp_fx_tool_1");
-		const result = await tool.execute("tc-cache", { value: "warm" }, undefined, undefined, testContext());
+		const result = await tool.execute(
+			"tc-cache",
+			{ value: "warm" },
+			undefined,
+			undefined,
+			testContext() as ExtensionToolContext,
+		);
 
 		expect(textContent(result)).toBe("fixture tool_1 value=warm mode=alpha");
 		expect(await readCounter(counterFile)).toBe(1);

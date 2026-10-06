@@ -26,6 +26,7 @@ export function turnStartParams(request: RpcRequest): TurnStartParams {
 		threadId: requiredStringParam(params.threadId, "threadId"),
 		clientUserMessageId: optionalNullableStringParam(params.clientUserMessageId, "clientUserMessageId"),
 		input: userInputArrayParam(params.input),
+		...(params.unknownCommandAsText === true ? { unknownCommandAsText: true } : {}),
 	};
 }
 
@@ -250,10 +251,10 @@ class ModeTurnSession implements TurnEngineSession {
 		return this.session.prompt(text, options);
 	}
 
-	steer(text: string, options?: { readonly source?: "rpc" }): Promise<void> {
+	async steer(text: string, options?: { readonly source?: "rpc" }): Promise<void> {
 		// App-server steering is client-driven input, exactly like its prompts:
 		// tag it "rpc" so extension `input` handlers see the real source.
-		return this.session.steer(text, undefined, { source: options?.source ?? "rpc" });
+		await this.session.steer(text, undefined, { source: options?.source ?? "rpc" });
 	}
 
 	abort(): Promise<void> {

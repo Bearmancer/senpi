@@ -30,6 +30,7 @@ export interface Args {
 	session?: string;
 	sessionId?: string;
 	fork?: string;
+	rebind?: string;
 	sessionDir?: string;
 	models?: string[];
 	tools?: string[];
@@ -131,11 +132,21 @@ export function parseArgs(args: string[], options: { grokNeoEnabled?: boolean } 
 			result.help = true;
 		} else if (arg === "--version" || arg === "-v") {
 			result.version = true;
-		} else if (arg === "--mode" && i + 1 < args.length) {
-			const mode = args[++i];
-			if (mode === "text" || mode === "json" || mode === "rpc") {
-				result.mode = mode;
+		} else if (arg === "--mode") {
+			const mode = args[i + 1];
+			if (mode === undefined || mode.startsWith("-")) {
+				result.diagnostics.push({ type: "error", message: "--mode requires text, json, or rpc" });
+				continue;
 			}
+			i++;
+			if (mode !== "text" && mode !== "json" && mode !== "rpc") {
+				result.diagnostics.push({
+					type: "error",
+					message: `Invalid mode "${mode}". Valid values: text, json, rpc`,
+				});
+				continue;
+			}
+			result.mode = mode;
 		} else if (arg === "--continue" || arg === "-c") {
 			result.continue = true;
 		} else if (arg === "--resume" || arg === "-r") {
@@ -171,6 +182,8 @@ export function parseArgs(args: string[], options: { grokNeoEnabled?: boolean } 
 			result.sessionId = args[++i];
 		} else if (arg === "--fork" && i + 1 < args.length) {
 			result.fork = args[++i];
+		} else if (arg === "--rebind" && i + 1 < args.length) {
+			result.rebind = args[++i];
 		} else if (arg === "--session-dir" && i + 1 < args.length) {
 			result.sessionDir = args[++i];
 		} else if (arg === "--models" && i + 1 < args.length) {
@@ -343,17 +356,21 @@ ${chalk.bold("Commands:")}
                                  List installed extensions from settings
   ${APP_NAME} config [--no-approve]
                                  Open TUI to enable/disable package resources (Tab switches scope)
-  ${APP_NAME} app-server [--listen <url>]
+  ${APP_NAME} models discover <provider>
+                                 Add an OpenAI-compatible provider's /models listing to models.json
+  ${APP_NAME} app-server [--listen <url>] [--extension <path>]...
                                  Serve agent sessions over the Codex app-server protocol
-  ${APP_NAME} app-server daemon <start|stop|status|restart> [--listen <url>]
+  ${APP_NAME} app-server daemon <start|stop|status|restart> [--listen <url>] [--extension <path>]...
                                  Manage the app-server daemon
-  ${APP_NAME} host <ensure|status|stop|handoff> [--launch-spec <file>]
+  ${APP_NAME} host <ensure|status|stop|handoff|shard-path|gc> [--launch-spec <file>]
                                  Get, inspect or end the shared RPC daemon (one JSON line per call)
+  ${APP_NAME} schedule <list|cancel|run> [--watch] [--exec <command>]
+                                 List, cancel or fire durable scheduled prompts
   ${APP_NAME} auth <command>            Print credentials or check provider readiness
   ${APP_NAME} <command> --help          Show help for install/remove/uninstall/update/list/config/auth
 
 ${chalk.bold("Options:")}
-  --provider <name>              Provider name (default: google)
+  --provider <name>              Provider to search for --model (requires --model)
   --model <pattern>              Model pattern or ID (supports "provider/id" and optional ":<thinking>")
   --api-key <key>                API key (defaults to env vars)
   --system-prompt <text>         System prompt (default: coding assistant prompt)
@@ -365,6 +382,7 @@ ${chalk.bold("Options:")}
   --session <path|id>            Use specific session file or partial UUID
   --session-id <id>              Use exact project session ID, creating it if missing
   --fork <path|id>               Fork specific session file or partial UUID into a new session
+  --rebind <path|id>             Move a session from a moved or re-cloned repository into this directory and continue it
   --session-dir <dir>            Directory for session storage and lookup
   --no-session                   Don't save session (ephemeral)
   --name, -n <name>              Set session display name
@@ -377,8 +395,8 @@ ${chalk.bold("Options:")}
   --exclude-tools, -xt <tools>   Comma-separated denylist of tool names to disable
                                  Applies to built-in, extension, and custom tools
   --thinking <level>             Set thinking level: off, minimal, low, medium, high, xhigh, max
-  --extension, -e <path>         Load an extension file (can be used multiple times)
-  --no-extensions, -ne           Disable extension discovery (explicit -e paths still work)
+  --extension, -e <path>         Load an extension file or builtin:<name> (can be used multiple times)
+  --no-extensions, -ne           Disable extension discovery and built-in extensions (explicit -e paths still work)
   --skill <path>                 Load a skill file or directory (can be used multiple times)
   --no-skills, -ns               Disable skills discovery and loading
   --prompt-template <path>       Load a prompt template file or directory (can be used multiple times)
@@ -502,6 +520,7 @@ ${chalk.bold("Environment Variables:")}
   MOONSHOT_API_KEY                 - Moonshot AI API key
   OPENCODE_API_KEY                 - OpenCode Zen/OpenCode Go API key
   KIMI_API_KEY                     - Kimi For Coding API key
+  META_API_KEY                     - Meta Model API key
   CLOUDFLARE_API_KEY               - Cloudflare API token (Workers AI and AI Gateway)
   CLOUDFLARE_ACCOUNT_ID            - Cloudflare account id (required for both)
   CLOUDFLARE_GATEWAY_ID            - Cloudflare AI Gateway slug (required for AI Gateway)

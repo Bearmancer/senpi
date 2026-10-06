@@ -1,5 +1,244 @@
 # changes — senpi-monorepo root
 
+## 2026-10-04 - Biome skips the vendored pi codemode runtime (codemode plan node 18, part 1)
+
+### What changed
+
+- `biome.json`: `packages/senpi-codemode/src/kernels/sandbox/vendor/**` and `packages/senpi-codemode/test/sandbox/vendor/**` are excluded from formatting and lint.
+
+### Why
+
+- Those files are upstream's source and test, kept byte-identical (apart from an attribution header) so their provenance stays checkable against the release and a future sync re-applies only the marked local blocks. Formatting them would rewrite every line.
+
+### Why an extension could not handle it
+
+- This is repository tooling configuration.
+
+### Expected merge conflict zones
+
+- LOW: the `files.includes` list in `biome.json`.
+
+## 2026-09-30 - Sync with upstream v0.99.1 (6a4af07d6): paths divergent from the new pin
+
+### What changed
+
+- `packages/pty/tsconfig.build.json`: the fork's own build config for `packages/pty` (present since before the previous pin, not in the pinned upstream tree). Git rename detection pairs it with upstream's `packages/codemode/tsconfig.build.json`, which this sync does not add (Exclusion list), because the two files are byte-identical.
+
+### Why
+
+`packages/pty` is a fork-only package; its build config matches the generic package template upstream also uses. The rename pairing is a content match, not an upstream ownership.
+
+### Why an extension could not handle it
+
+Workspace build configuration is read by `scripts/build-all.mjs` before any runtime or extension loads.
+
+### Expected merge conflict zones
+
+- NONE for this path; a future upstream change to `packages/codemode/tsconfig.build.json` stays excluded by `.github/agent/upstream-exclusions.txt`.
+
+## 2026-09-30 - Sync with upstream v0.99.1 (6a4af07d6): manifests, build and check scripts
+
+### What changed
+
+- `biome.json`: `biome.json`: adopted the model-catalog-protocol includes and the `scripts/biome/model-type-comparison.grit` plugin; `packages/agent/examples/**` include not added.
+- `package.json`: Root `package.json`: fork scripts kept (`build-all.mjs` build, the fork `check` chain with conflict-marker/bun-lock/install-lock/claude-sdk-platform-lock gates, `run-workspaces.mjs` launchers, `refresh-lock`, `preinstall`); devDependencies kept (biome 2.5.14, @types/node 26.6.2, typescript 7.0.2, @typescript/typescript6, tsx 4.23.13, vitest + @vitest/coverage-v8 5.0.1). Adopted from upstream: `generate:models` runs generate-models only (the `generate-image-models` chain dropped for the D-3 image-model unification), and `test:scripts` also runs the adopted upstream `scripts/model-catalog-protocol.test.ts`. Not adopted: codemode/mcp/durable build phases, the tsx removal. `packages/ai/package.json`: `openai` 6.26.0 -> 7.19.0 (hold lifted, D-10); `generate-image-models` script and its `prepublishOnly` step removed (D-3 ADOPT form; task 28 restores both from OURS if the D-3 fallback is taken). Version, internal ranges, fork scripts and deps unchanged. `packages/agent/package.json`: `@earendil-works/chord` exact 0.85.1 -> 0.99.1 (D-12, chord moves to upstream 0.99.1); adopted upstream `./experimental/pico3` export and `build: tsc`; bench scripts keep tsx. `packages/coding-agent/package.json`: `@earendil-works/chord` exact 0.99.1 (D-12); no `@earendil-works/pi-codemode` / `pi-mcp` and no `quickjs-wasi` (upstream codemode runtime, D-2); fork build/binary/copy-assets scripts kept (no codemode worker entry). `packages/tui/package.json`: version OURS; adopted `build: tsc`.
+- `pi-test.ps1`: `pi-test.sh`, `pi-test.ps1`: fork tsx launcher kept (D-11).
+- `pi-test.sh`: `pi-test.sh`, `pi-test.ps1`: fork tsx launcher kept (D-11).
+- `tsconfig.base.json`: `tsconfig.base.json`: OURS (no `verbatimModuleSyntax`, decorator options kept).
+- `tsconfig.json`: `tsconfig.json`: fork paths kept, no codemode/mcp/durable paths; adopted the `@earendil-works/pi-agent-core/experimental/pico3` path and `scripts/model-catalog-protocol{,.test}.ts` in `include`. `packages/agent/examples/**` not added (its only content is the excluded mcp-codemode example).
+- `vitest.base.ts`: `vitest.base.ts`: adopted the `@earendil-works/pi-ai/api/*` alias; codemode/mcp aliases not added.
+
+### Why
+
+- The fork builds through `scripts/build-all.mjs` and runs sources with tsx (D-11); upstream's plain-node source execution and TypeScript-7 script rewrites are mechanism changes the fork already covers.
+- Upstream codemode, MCP, tool-search and durable are excluded (D-2, D-7), so their workspace packages, dependencies, build phases, tsconfig/vitest aliases and smoke checks stay out.
+- The `openai` 6.26.0 hold had no failing check behind it and the adopted upstream OpenAI adapters target 7.19.0 (D-10).
+- chord follows upstream 0.99.1 with exact pins (D-12, check:pinned-deps).
+
+### Why an extension could not handle it
+
+Workspace manifests, tsconfig and build/check scripts are repository build infrastructure, outside any runtime extension.
+
+### Expected merge conflict zones
+
+Every path listed above conflicts again where upstream edits the hunks named in its line; the fork-kept constructs named there are the anchors to preserve.
+
+## 2026-09-30 - Sync with upstream v0.99.1 (6a4af07d6): upstream features excluded on record
+
+### What changed
+
+Upstream paths below are not added (or stay deleted) in this sync; `.github/agent/upstream-exclusions.txt` lists them for mechanical re-exclusion after every upstream merge.
+
+- `packages/coding-agent/examples/sdk/14-codemode-mcp.ts` (not added / kept deleted)
+- `packages/codemode/package.json` (not added / kept deleted)
+- `packages/codemode/src/declarations.ts` (not added / kept deleted)
+- `packages/codemode/src/identifier.ts` (not added / kept deleted)
+- `packages/codemode/src/index.ts` (not added / kept deleted)
+- `packages/codemode/src/runtime/host.ts` (not added / kept deleted)
+- `packages/codemode/src/runtime/prelude-source.ts` (not added / kept deleted)
+- `packages/codemode/src/runtime/protocol.ts` (not added / kept deleted)
+- `packages/codemode/src/runtime/worker.ts` (not added / kept deleted)
+- `packages/codemode/src/source.ts` (not added / kept deleted)
+- `packages/codemode/src/types.ts` (not added / kept deleted)
+- `packages/codemode/src/wasm.ts` (not added / kept deleted)
+- `packages/codemode/tsconfig.build.json` (not added / kept deleted)
+- `packages/codemode/vitest.config.ts` (not added / kept deleted)
+- `packages/durable/package.json` (not added / kept deleted)
+- `packages/durable/src/documents.ts` (not added / kept deleted)
+- `packages/durable/src/entries.ts` (not added / kept deleted)
+- `packages/durable/src/env/index.ts` (not added / kept deleted)
+- `packages/durable/src/env/node.ts` (not added / kept deleted)
+- `packages/durable/src/env/utils/adaptive-publisher.ts` (not added / kept deleted)
+- `packages/durable/src/env/utils/output-capture.ts` (not added / kept deleted)
+- `packages/durable/src/env/utils/truncate.ts` (not added / kept deleted)
+- `packages/durable/src/errors.ts` (not added / kept deleted)
+- `packages/durable/src/harness/config.ts` (not added / kept deleted)
+- `packages/durable/src/harness/context.ts` (not added / kept deleted)
+- `packages/durable/src/harness/generation.ts` (not added / kept deleted)
+- `packages/durable/src/harness/harness.ts` (not added / kept deleted)
+- `packages/durable/src/harness/live.ts` (not added / kept deleted)
+- `packages/durable/src/harness/prompt.ts` (not added / kept deleted)
+- `packages/durable/src/harness/registry.ts` (not added / kept deleted)
+- `packages/durable/src/harness/scheduler.ts` (not added / kept deleted)
+- `packages/durable/src/harness/submissions.ts` (not added / kept deleted)
+- `packages/durable/src/harness/types.ts` (not added / kept deleted)
+- `packages/durable/src/harness/util.ts` (not added / kept deleted)
+- `packages/durable/src/ids.ts` (not added / kept deleted)
+- `packages/durable/src/index.ts` (not added / kept deleted)
+- `packages/durable/src/session/forks.ts` (not added / kept deleted)
+- `packages/durable/src/session/observation.ts` (not added / kept deleted)
+- `packages/durable/src/session/session.ts` (not added / kept deleted)
+- `packages/durable/src/session/transaction.ts` (not added / kept deleted)
+- `packages/durable/src/storage/jsonl/index.ts` (not added / kept deleted)
+- `packages/durable/src/storage/jsonl/node.ts` (not added / kept deleted)
+- `packages/durable/src/storage/jsonl/storage.ts` (not added / kept deleted)
+- `packages/durable/src/storage/memory.ts` (not added / kept deleted)
+- `packages/durable/src/storage/sqlite/database.ts` (not added / kept deleted)
+- `packages/durable/src/storage/sqlite/index.ts` (not added / kept deleted)
+- `packages/durable/src/storage/sqlite/migrations.ts` (not added / kept deleted)
+- `packages/durable/src/storage/sqlite/node.ts` (not added / kept deleted)
+- `packages/durable/src/storage/sqlite/storage.ts` (not added / kept deleted)
+- `packages/durable/src/tasks.ts` (not added / kept deleted)
+- `packages/durable/src/testing/assertions.ts` (not added / kept deleted)
+- `packages/durable/src/testing/index.ts` (not added / kept deleted)
+- `packages/durable/src/testing/runner.ts` (not added / kept deleted)
+- `packages/durable/src/testing/storage-benchmark.ts` (not added / kept deleted)
+- `packages/durable/src/testing/storage-conformance.ts` (not added / kept deleted)
+- `packages/durable/src/testing/types.ts` (not added / kept deleted)
+- `packages/durable/src/types.ts` (not added / kept deleted)
+- `packages/durable/tsconfig.build.json` (not added / kept deleted)
+- `packages/durable/vitest.benchmark.config.ts` (not added / kept deleted)
+- `packages/durable/vitest.config.ts` (not added / kept deleted)
+- `packages/mcp/LICENSES/modelcontextprotocol-typescript-sdk.txt` (not added / kept deleted)
+- `packages/mcp/package.json` (not added / kept deleted)
+- `packages/mcp/src/auth-provider.ts` (not added / kept deleted)
+- `packages/mcp/src/client.ts` (not added / kept deleted)
+- `packages/mcp/src/index.ts` (not added / kept deleted)
+- `packages/mcp/src/oauth/callback.ts` (not added / kept deleted)
+- `packages/mcp/src/oauth/discovery.ts` (not added / kept deleted)
+- `packages/mcp/src/oauth/errors.ts` (not added / kept deleted)
+- `packages/mcp/src/oauth/flow.ts` (not added / kept deleted)
+- `packages/mcp/src/oauth/index.ts` (not added / kept deleted)
+- `packages/mcp/src/oauth/provider.ts` (not added / kept deleted)
+- `packages/mcp/src/oauth/types.ts` (not added / kept deleted)
+- `packages/mcp/src/protocol/content.ts` (not added / kept deleted)
+- `packages/mcp/src/protocol/jsonrpc.ts` (not added / kept deleted)
+- `packages/mcp/src/protocol/types.ts` (not added / kept deleted)
+- `packages/mcp/src/testing/index.ts` (not added / kept deleted)
+- `packages/mcp/src/transports/in-memory.ts` (not added / kept deleted)
+- `packages/mcp/src/transports/stdio.ts` (not added / kept deleted)
+- `packages/mcp/src/transports/streamable-http.ts` (not added / kept deleted)
+- `packages/mcp/src/transports/transport.ts` (not added / kept deleted)
+- `packages/mcp/tsconfig.build.json` (not added / kept deleted)
+- `packages/mcp/vitest.config.ts` (not added / kept deleted)
+
+### Why
+
+The fork keeps one implementation per capability: its own builtin mcp, tool-search and senpi-codemode instead of upstream's codemode/MCP/tool-search built-ins and packages (plan D-2, owner default Q1); builtin cache-keepalive instead of upstream cache warming, whose default spends paid refreshes (D-5, Q3); report-bug skills instead of `/bug` uploads to Radius (D-6, Q4); no `packages/durable`, which nothing in the fork imports (D-7). Paths the fork had already deleted (core/index.ts, core/radius.ts, session-share.ts, tui latex.ts, providers/openai-codex.ts, npm-shrinkwrap.json) stay deleted.
+
+### Why an extension could not handle it
+
+Exclusion is a repository-level decision about which upstream files exist at all; an extension can add behavior but cannot remove files an upstream merge adds.
+
+### Expected merge conflict zones
+
+Every upstream release that touches these paths re-adds or modifies them: re-run `git rm -rqf --ignore-unmatch $(cat .github/agent/upstream-exclusions.txt)` after the merge and extend the list (with a dated block here) when upstream adds a new file to an excluded feature.
+
+## Publish the real @code-yeongyu/senpi manifest, senpi#2360 (2026-09-29)
+
+### What changed
+
+- `package.json`: `check` no longer runs `check:shrinkwrap`; the `check:shrinkwrap` and `shrinkwrap:coding-agent` scripts are removed and `refresh-lock` no longer regenerates `publish-deps.lock.json`.
+
+### Why
+
+- The published senpi package declares its real dependencies now, so the publish-staging manifest that the shrinkwrap generator produced has no consumer (see `scripts/changes.md`).
+
+### Why an extension could not handle it
+
+- Repository scripts.
+
+### Expected merge conflict zones
+
+- LOW: the `check` chain and `refresh-lock` in the root `package.json` `scripts` block.
+
+## bun.lock workspace ranges follow the manifests after a release, senpi#2352 (2026-09-29)
+
+### What changed
+
+- `package.json`: `check` runs the new `check:bun-lock` (`node scripts/regenerate-bun-lock-isolated.mjs --check`), and `version:patch`, `version:minor` and `version:major` refresh bun.lock through `scripts/regenerate-bun-lock-isolated.mjs` instead of an in-place `bun install --lockfile-only`.
+- `bun.lock`: regenerated once; twenty stale workspace dependency ranges (`^2026.9.28-7`, and `^2026.9.28-3` in the leaf `evals`, `server` and `sqlite-node` workspaces) now match their manifests.
+
+### Why
+
+- Bun 1.4.2 does not reach a fixed point in one seeded `--lockfile-only` pass after a version bump: it rewrites each workspace `version` but keeps the old ranges the workspaces declare on each other. Release v2026.9.29 shipped that lock and a fresh `bun install` rewrote it. Nothing in `check` or CI ran the existing `--check` mode, so the drift was invisible.
+
+### Why an extension could not handle it
+
+- Repository lockfile maintenance and validation scripts.
+
+### Expected merge conflict zones
+
+- LOW: the `check` chain and the `version:*` lines in the root `package.json` `scripts` block.
+
+## Remove the desktop computer-use stack, now owned by omo (2026-09-28)
+
+### What changed
+
+- `Cargo.toml`: the workspace keeps `crates/senpi-pty` and `crates/senpi-grep`; the ten `crates/senpi-desktop-*` members and the desktop-only dependency pins are gone, and `Cargo.lock` loses only the packages they alone pulled in.
+- `tsconfig.json`: the `@code-yeongyu/senpi-desktop-{engine,prelude,protocol,service,tool}` path mappings are removed with the packages.
+- `bun.lock`, `package-lock.json`: the five `packages/desktop-*` workspaces drop out.
+
+### Why
+
+- Computer use ships from omo (code-yeongyu/oh-my-openagent#8893). senpi keeps only the generic hooks (tool kernel preludes, tool-owned permission parsers, the `tool_search` activation event; #2178). Wave 0 (#2129) had left the engine crates, packages and CI here (senpi#2128).
+
+### Why an extension could not handle it
+
+- Workspace layout and toolchain configuration.
+
+### Expected merge conflict zones
+
+- LOW: the `members` list and `[workspace.dependencies]` in `Cargo.toml`; the `paths` block in `tsconfig.json`.
+
+## Reject committed merge-conflict markers (2026-09-27)
+
+### What changed
+
+- `package.json`: `check` runs the new `check:conflict-markers` (`scripts/check-conflict-markers.mjs`), which fails on any tracked text line that opens (`<<<<<<< `), bases (`||||||| `) or closes (`>>>>>>> `) a conflict.
+
+### Why
+
+- Merge resolutions kept committing diff3 leftovers into trackers and changelogs (#963, #1189, and #2087's leftover in `core/changes.md`, senpi#2173).
+
+### Why an extension could not handle it
+
+- Repository validation gate.
+
+### Expected merge conflict zones
+
+- LOW: the `check` script chain in the root `package.json`.
+
 ## Resolve the desktop packages from source in the root type check (2026-09-24)
 
 ### What changed
@@ -657,3 +896,42 @@ Every remaining audited production path with no nearer tracker than the root:
 - HIGH: root `package.json` `scripts`, `devDependencies`, `overrides` and `engines` whenever upstream bumps tooling or adds a `check:*` step.
 - MEDIUM: `tsconfig.json` `paths` when upstream adds a workspace or subpath export; `vitest.base.ts` alias list for the same reason.
 - LOW: `packages/chord/package.json` and `packages/telemetry/package.json` version lines on every upstream release; `packages/chord/src/types.ts` re-wraps whenever upstream edits those conditional types.
+
+## 2026-10-02 - Upstream durable package not taken (upstream v1.0.0 sync)
+
+### What changed
+
+- `packages/durable/src/harness/agent.ts`
+- `packages/durable/src/harness/compaction.ts`
+- `packages/durable/src/harness/define.ts`
+- `packages/durable/src/harness/events.ts`
+- `packages/durable/src/harness/inbox.ts`
+- `packages/durable/src/harness/json.ts`
+- `packages/durable/src/harness/output.ts`
+- `packages/durable/src/harness/task-graph.ts`
+- `packages/durable/src/harness/tool.ts`
+- `packages/durable/src/harness/usage.ts`
+- `packages/durable/src/harness/view.ts`
+- `packages/durable/src/tools/bash.ts`
+- `packages/durable/src/tools/edit.ts`
+- `packages/durable/src/tools/env.ts`
+- `packages/durable/src/tools/file-mutation-queue.ts`
+- `packages/durable/src/tools/image.ts`
+- `packages/durable/src/tools/index.ts`
+- `packages/durable/src/tools/read.ts`
+- `packages/durable/src/tools/write.ts`
+- `packages/durable/src/truncate.ts`
+
+None of these upstream paths exist in the fork. Upstream moved the agent harness out of `packages/agent` into a new `packages/durable` package (7fd478a2e); git records these files as rename destinations of the harness the fork keeps. The fork keeps its harness in `packages/agent/src/harness/**` byte-identical to the previous fork state, and `packages/durable` stays on `.github/agent/upstream-exclusions.txt`.
+
+### Why
+
+The fork's session runtime, compaction, task and eval surfaces are built on its own harness; adopting the durable package would rewrite those surfaces and remove fork behaviour. Real fixes upstream makes in these files are ported into the kept harness instead (see the fork-owned trees rule in `.github/agent/merge-driver.md`).
+
+### Why an extension could not handle it
+
+This is a package-level choice about which source tree ships; extensions cannot replace the agent harness.
+
+### Expected merge conflict zones
+
+Every upstream change under `packages/durable/src/**` appears as a deleted-by-us path; resolve by keeping it absent and porting real fixes into `packages/agent/src/harness/**`.

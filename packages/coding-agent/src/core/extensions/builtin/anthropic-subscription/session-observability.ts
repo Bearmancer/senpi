@@ -8,9 +8,10 @@ import { createSessionLogger, type SessionLogger } from "../../../session-log.ts
  * point and EMITTED only when the auth-lane retain/discard wrapper retains that
  * attempt (auth-attempt.ts). A discarded attempt emits nothing, so every
  * completed turn yields exactly one observation; a turn where every attempt
- * fails yields one terminal error observation instead.
+ * fails yields one terminal `failed` observation instead. `failed` is not a
+ * re-send: the next attempt still resumes from the retry checkpoint.
  */
-export type ContinuityKind = "bootstrap" | "delta" | "reattach" | "fork" | "flatten" | "disabled";
+export type ContinuityKind = "bootstrap" | "delta" | "reattach" | "fork" | "flatten" | "disabled" | "failed";
 
 /** Fixed vocabulary — arbitrary error text never reaches an observation. */
 export type ContinuityReason =
@@ -22,6 +23,7 @@ export type ContinuityReason =
 	| "thinking_level_selected"
 	| "bound_account_token_expiring"
 	| "account_changed"
+	| "credential_refreshed"
 	| "model_changed"
 	| "toolset_changed"
 	| "system_prompt_changed"
@@ -73,6 +75,7 @@ const SANITIZED_REASONS = new Set<string>([
 	"thinking_level_selected",
 	"bound_account_token_expiring",
 	"account_changed",
+	"credential_refreshed",
 	"model_changed",
 	"toolset_changed",
 	"system_prompt_changed",
@@ -185,7 +188,7 @@ export function recordPendingCloseCause(senpiSessionId: string, reason: unknown)
 		if (oldest !== undefined) pendingCloseCauses.delete(oldest);
 	}
 	pendingCloseCauses.set(senpiSessionId, cause);
-	activeBoundary.log("claude_sdk_oauth_session_close", { reason: cause });
+	activeBoundary.log("claude_sdk_oauth_session_close", { reason: cause, sessionId: senpiSessionId });
 }
 
 /** Read the pending close cause WITHOUT consuming it (consumed at emit time). */
@@ -246,6 +249,7 @@ export type StagedContinuityDecision = {
 /** Stages an attempt's decision; `emit` fires only when the attempt is retained. */
 export function stageContinuityDecision(
 	observation: ContinuityObservation,
+	sessionId: string,
 	onDecision?: (observation: ContinuityObservation) => void,
 	beforeEmit?: () => void,
 ): StagedContinuityDecision {
@@ -256,13 +260,14 @@ export function stageContinuityDecision(
 			if (emitted) return;
 			emitted = true;
 			beforeEmit?.();
-			emitContinuityObservation(observation, onDecision);
+			emitContinuityObservation(observation, sessionId, onDecision);
 		},
 	};
 }
 
 export function emitContinuityObservation(
 	observation: ContinuityObservation,
+	sessionId: string | undefined,
 	onDecision?: (observation: ContinuityObservation) => void,
 ): void {
 	onDecision?.(observation);
@@ -271,5 +276,6 @@ export function emitContinuityObservation(
 		kind: observation.kind,
 		reason: observation.reason,
 		...(observation.deltaMessages === undefined ? {} : { count: observation.deltaMessages }),
+		...(sessionId === undefined ? {} : { sessionId }),
 	});
 }

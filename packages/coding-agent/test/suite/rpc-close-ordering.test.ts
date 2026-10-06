@@ -10,9 +10,11 @@ import type { HostToSessionWorker } from "../../src/modes/rpc/session-worker-pro
 import { WorkerSessionRegistry } from "../../src/modes/rpc/worker-session-registry.ts";
 import { createHarness } from "./harness.ts";
 
-vi.mock("node:worker_threads", async () => {
+vi.mock("node:worker_threads", async (importOriginal) => {
+	const actual = await importOriginal<typeof import("node:worker_threads")>();
 	const { EventEmitter } = await import("node:events");
 	return {
+		...actual,
 		Worker: class extends EventEmitter {
 			postMessage(): void {}
 			terminate(): Promise<number> {
@@ -50,11 +52,12 @@ async function closeFixture() {
 				break;
 			case "bind":
 			case "command":
+			case "prompt_surface":
+			case "browser_engine":
 				queueMicrotask(() => this.emit("message", { type: "result", request: message.request }));
 				break;
 			case "close":
 			case "cancel_ui":
-			case "display":
 				break;
 			default: {
 				const exhaustive: never = message;

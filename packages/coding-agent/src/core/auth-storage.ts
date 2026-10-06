@@ -98,11 +98,20 @@ type AuthFileReload = {
 
 type AuthFileReadState = {
 	data: AuthStorageData;
+	/** Set once a read succeeds; until then `data` is an empty placeholder, not the store. */
+	loaded?: boolean;
 	revision?: string;
 	reload?: AuthFileReload;
 };
 
 let sharedAuthFileReadState: { authPath: string; readState: AuthFileReadState } | undefined;
+
+/**
+ * Outcome of a synchronous store read. `busy` means the lock stayed held past the sync
+ * budget, so the in-memory credentials are a fallback rather than the store's contents;
+ * `failed` is any other read error (the last valid snapshot is kept, as before).
+ */
+export type AuthReloadResult = "loaded" | "busy" | "failed";
 
 export interface AuthStorageBackend {
 	withLock<T>(fn: (current: string | undefined) => LockResult<T>): T;
@@ -426,6 +435,9 @@ export class AuthStorage implements CredentialStore {
 	private storage: AuthStorageBackend;
 	private authPath: string | undefined;
 	private readState: AuthFileReadState;
+	private busyReads = 0;
+	private dataLoaded = false;
+	private dataFromBusyRead = false;
 
 	private constructor(storage: AuthStorageBackend, authPath?: string) {
 		this.storage = storage;
@@ -435,7 +447,12 @@ export class AuthStorage implements CredentialStore {
 		if (authPath && !sharedAuthFileReadState) {
 			sharedAuthFileReadState = { authPath, readState: this.readState };
 		}
-		if (authPath) {
+		if (authPath && this.readState.loaded) {
+			// Another instance already loaded this store: start from its credentials, not an
+			// empty snapshot, so a busy read below keeps them. A repaired or migrated load
+			// leaves the revision unset, so only an exact revision match skips the re-read.
+			this.data = this.readState.data;
+			this.dataLoaded = true;
 			const revision = getFileContentRevision(authPath);
 			if (revision !== undefined && revision === this.readState.revision) return;
 		}
@@ -512,14 +529,17 @@ export class AuthStorage implements CredentialStore {
 
 	private updateReadState(data: AuthStorageData, revision?: string): void {
 		this.data = data;
+		this.dataLoaded = true;
+		this.dataFromBusyRead = false;
 		this.readState.data = data;
+		this.readState.loaded = true;
 		this.readState.revision = revision;
 	}
 
 	/**
 	 * Reload credentials from storage.
 	 */
-	reload(): void {
+	reload(): AuthReloadResult {
 		let data: AuthStorageData = {};
 		let revision: string | undefined;
 		try {
@@ -537,10 +557,39 @@ export class AuthStorage implements CredentialStore {
 					: { result: undefined };
 			});
 			this.updateReadState(data, revision);
+			return "loaded";
 		} catch (error) {
 			// Preserve the last valid in-memory snapshot.
 			this.recordError(error instanceof Error ? error : new Error(String(error)));
+			if (!(error instanceof CredentialStoreBusyError)) return "failed";
+			if (!this.dataLoaded) {
+				this.busyReads++;
+				this.dataFromBusyRead = true;
+			}
+			return "busy";
 		}
+	}
+
+	/**
+	 * True while the store has never loaded because every read found it locked, so the
+	 * in-memory credentials are an empty placeholder; `reload()` retries. A readable empty
+	 * store, or a busy read after a successful load, is not busy.
+	 */
+	isCredentialStoreBusy(): boolean {
+		return this.dataFromBusyRead;
+	}
+
+	/**
+	 * Monotonic count of reads (sync or async) that found the store locked before it ever
+	 * loaded and answered with the empty placeholder. A change across an operation means
+	 * its credentials do not reflect the store.
+	 */
+	getBusyReadCount(): number {
+		return this.busyReads;
+	}
+
+	private noteBusyFallback(error: unknown): void {
+		if (error instanceof CredentialStoreBusyError && !this.readState.loaded) this.busyReads++;
 	}
 
 	/** Set a non-persistent API key used ahead of stored credentials. */
@@ -653,6 +702,7 @@ export class AuthStorage implements CredentialStore {
 			} catch (error) {
 				options?.signal?.throwIfAborted();
 				this.recordError(error);
+				this.noteBusyFallback(error);
 				return this.readState.data;
 			}
 		}
@@ -682,8 +732,9 @@ export class AuthStorage implements CredentialStore {
 		try {
 			try {
 				return await raceWithAbortSignal(reload.promise, options?.signal);
-			} catch {
+			} catch (error) {
 				options?.signal?.throwIfAborted();
+				this.noteBusyFallback(error);
 				return this.readState.data;
 			}
 		} finally {

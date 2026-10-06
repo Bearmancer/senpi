@@ -4,6 +4,12 @@ import { format } from "node:util";
 import { getDebugLogPath } from "../../config.ts";
 import { restoreStderr, takeOverStderr } from "../../core/output-guard.ts";
 import { redactSensitiveOutput } from "../../core/sensitive-output.ts";
+import {
+	loadStderrFdSyscalls,
+	redirectStderrFd,
+	type StderrFdRedirect,
+	type StderrFdSyscalls,
+} from "./stderr-fd-redirect.ts";
 
 const consoleLevels = ["error", "info", "warn"] as const;
 
@@ -17,6 +23,8 @@ interface InteractiveConsoleState {
 }
 
 let interactiveConsoleState: InteractiveConsoleState | undefined;
+let stderrFdSyscalls: StderrFdSyscalls | undefined;
+let stderrFdRedirect: StderrFdRedirect | undefined;
 
 function appendHiddenInteractiveStderr(text: string): void {
 	if (text.length === 0) {
@@ -66,12 +74,34 @@ function restoreInteractiveConsole(): void {
 	interactiveConsoleState = undefined;
 }
 
+/** Load the fd-level capture once, before the first takeover; a no-op where it is unsupported. */
+export async function prepareInteractiveStderrCapture(): Promise<void> {
+	stderrFdSyscalls ??= await loadStderrFdSyscalls().catch(() => undefined);
+}
+
+function takeOverStderrFd(): void {
+	if (!stderrFdSyscalls || stderrFdRedirect) return;
+	try {
+		appendHiddenInteractiveStderr("native stderr (fd 2) captured below until the TUI releases the terminal");
+		stderrFdRedirect = redirectStderrFd(stderrFdSyscalls, getDebugLogPath());
+	} catch {
+		stderrFdRedirect = undefined;
+	}
+}
+
+function restoreStderrFd(): void {
+	stderrFdRedirect?.restore();
+	stderrFdRedirect = undefined;
+}
+
 export function takeOverInteractiveStderr(): void {
 	takeOverStderr(appendHiddenInteractiveStderr, redactSensitiveOutput);
 	takeOverInteractiveConsole();
+	takeOverStderrFd();
 }
 
 export function restoreInteractiveStderr(): void {
+	restoreStderrFd();
 	restoreInteractiveConsole();
 	restoreStderr();
 }

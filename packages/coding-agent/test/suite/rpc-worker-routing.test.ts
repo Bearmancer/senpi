@@ -102,42 +102,6 @@ it("reserves a switch target before its append-side normalization and keeps both
 	}
 }, 60_000);
 
-it("publishes the shared minimum width before acknowledging it and rerenders when a peer leaves", async () => {
-	const host = await startWorkerHost(
-		`export default function(pi) {
-		pi.on('session_start', (_event,ctx)=>ctx.ui.setWidget('width',()=>({render:width=>[String(width)]})));
-	}`,
-		{ socket: true },
-	);
-	try {
-		const a = await host.connect();
-		const b = await host.connect();
-		const opened = await a.request({ type: "open_session", cwd: host.cwd });
-		const sessionId = opened.data?.sessionId;
-		expect(opened.success).toBe(true);
-		expect(
-			(await b.request({ type: "open_session", cwd: host.cwd, sessionPath: opened.data?.state?.sessionFile })).data
-				?.attached,
-		).toBe(true);
-		await a.request({ type: "set_client_info", sessionId, width: 120, capabilities: ["rendered_components"] });
-		const minimum = a.wait(
-			(record) => record.widgetKey === "width" && JSON.stringify(record.widgetLines) === '["60"]',
-		);
-		await b.request({ type: "set_client_info", sessionId, width: 60, capabilities: ["rendered_components"] });
-		await minimum;
-		expect(
-			b.records.some((record) => record.widgetKey === "width" && JSON.stringify(record.widgetLines) === '["60"]'),
-		).toBe(true);
-		const widened = a.wait(
-			(record) => record.widgetKey === "width" && JSON.stringify(record.widgetLines) === '["120"]',
-		);
-		await b.request({ type: "close_session", sessionId });
-		await widened;
-	} finally {
-		await host.dispose();
-	}
-}, 60_000);
-
 it("starts real session workers under Node as well as Bun", async () => {
 	const host = await startWorkerHost(undefined, { node: true });
 	try {

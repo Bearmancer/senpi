@@ -1,5 +1,62 @@
 # core/tools changes
 
+## 2026-09-30 - Sync with upstream v0.99.1 (6a4af07d6): extension loader, runner and wrappers
+
+### What changed
+
+- `packages/coding-agent/src/core/tools/tool-definition-wrapper.ts`: What changed: forwards both fork `freeform` and upstream `outputSchema` in `wrapToolDefinition()` and `createToolDefinitionFromAgentTool()`; context factory is upstream `ToolContextFactory(toolCallId, signal) => ExtensionToolContext`. Why: structured tool output and freeform tools coexist. Why an extension could not handle it: core tool wrapper. Expected merge conflict zones: the property lists after `parameters`.
+
+### Why
+
+Upstream v0.99.1 (6a4af07d6) changed these paths while the fork carries its own behavior; the extension loader/runner/wrapper adopt upstream contracts additively and keep the fork builtins, signatures and loader alias table (plan D-2).
+
+### Why an extension could not handle it
+
+This is the extension host itself; extensions cannot redefine how they are loaded, wrapped or dispatched.
+
+### Expected merge conflict zones
+
+Every path listed above conflicts again where upstream edits the hunks named in its line; the fork-kept constructs named there are the anchors to preserve.
+
+## 2026-09-30 - Sync with upstream v0.99.1 (6a4af07d6): tools and shell utilities
+
+### What changed
+
+- `packages/coding-agent/src/core/tools/bash.ts`: `core/tools/bash.ts`: structured bash result (`outputSchema` = `bashOutputSchema`; `structuredContent` = { output, truncated, full_output_path?, exit_code, wall_time_seconds }) for programmatic callers, capped at 1 MiB (`STRUCTURED_OUTPUT_MAX_BYTES`); empty output is `""` there while the model text stays `(no output)`. `core/tools/bash.ts`: a non-zero exit is now an `isError: true` result carrying `structuredContent` instead of a thrown error; the error text is unchanged (`<output>\n\nCommand exited with code N`). `core/tools/bash.ts`: signal-terminated shells report 128 + signal number (`child.signalCode` via `os.constants.signals`, 1 when unknown); a null exit code from custom `BashOperations` throws `Command terminated without an exit code`. `bash.ts`: eval-only marker `exposure: "eval"` on `createBashToolDefinition`; timeout validation; stream-callback error propagation; spill cleanup and `AggregateError` finalization; detached-group tracking (`noteDetachedChildExited`/`pruneTrackedDetachedChildren`, senpi#1697); PI_SESSION_CWD/PI_GOAL_STORE_FILE env; successful results keep the fork model-only truncation notice (`modelOnlyText`) as a separate content part.
+- `packages/coding-agent/src/core/tools/output-accumulator.ts`: `core/tools/output-accumulator.ts`: `readFullOutput(maxBytes)` + `FullOutput` (head/tail around an omission marker, UTF-8 boundary safe). `output-accumulator.ts`: fork `TailWindow`, `appendText()` string chunks (now encoded for `readFullOutput`), spill-error handling and `removeTempFile()`.
+- `packages/coding-agent/src/core/tools/read.ts`: `core/tools/read.ts`: `ReadToolOptions.resizeOptions` fallback and model `inputLimits.images.resize` passed to `processImage`. `read.ts`: structural folder options, local:// guard, filesystem policy checker, model-only continuation notices.
+- `packages/coding-agent/src/core/tools/render-utils.ts`: `core/tools/render-utils.ts` (silent merge, reviewed): `formatToolCallWithArgs` generic header helper added beside the fork model-only `getTextOutput` filter.
+
+### Why
+
+Upstream v0.99.1 (6a4af07d6) changed these paths while the fork carries its own behavior; tools and shell utils adopt upstream bash/read fixes and keep fork output shapes and hooks (plan D-15).
+
+### Why an extension could not handle it
+
+Built-in tool execution and shell handling are core tool implementations that extensions call, not replace.
+
+### Expected merge conflict zones
+
+Every path listed above conflicts again where upstream edits the hunks named in its line; the fork-kept constructs named there are the anchors to preserve.
+
+## Read paths wrapped in quotes resolve to the file (2026-09-27)
+
+### What changed
+
+- `packages/coding-agent/src/core/tools/path-utils.ts`: `resolveReadPath()` and `resolveReadPathAsync()` fall back to the path without one pair of surrounding `"` or `'` quotes (optionally after `@`) when the literal path does not exist.
+
+### Why
+
+Windows Explorer's "Copy as path" produces `"C:\Users\<user>\Pictures\Screenshots\aaa.png"`. A real `windows-latest` run for [#2170](https://github.com/code-yeongyu/senpi/issues/2170) showed that the read tool resolved it relative to the working directory (`<cwd>\"C:\...`) and failed with ENOENT. A file whose name really contains the quotes still wins, because the fallback only runs when the literal path is missing.
+
+### Why an extension could not handle it
+
+Path resolution happens inside the builtin read tool before any extension hook sees the file.
+
+### Expected merge conflict zones
+
+- LOW: the first fallback in `resolveReadPath()` / `resolveReadPathAsync()`, next to the macOS screenshot variants.
+
 ## Default reads consult the frozen fold engine for their language (2026-09-16)
 
 ### What changed
@@ -708,3 +765,39 @@ An extension cannot change the built-in return contract or reliably distinguish 
 Built-in tool output assembly, grep formatting, and getTextOutput.
 
 - Covered production paths: `packages/coding-agent/src/core/tools/model-only-text.ts`, `packages/coding-agent/src/core/tools/read.ts`, `packages/coding-agent/src/core/tools/bash.ts`, `packages/coding-agent/src/core/tools/find.ts`, `packages/coding-agent/src/core/tools/ls.ts`, `packages/coding-agent/src/core/tools/grep/format.ts`, `packages/coding-agent/src/core/tools/grep/index.ts`, `packages/coding-agent/src/core/tools/render-utils.ts`.
+
+## Core bash exports the session's browser engine (2026-10-03)
+
+### What changed
+
+- `packages/coding-agent/src/core/tools/bash.ts`: `resolveSpawnContext` removes any inherited `OMO_BROWSER_ENGINE` and, when session exposure is on, sets it from `ctx.browserEngine`.
+
+### Why
+
+A shell child of a session that chose `connected`, `builtin` or `none` must see that choice, and a session that chose nothing must not inherit the host process's value (senpi#2611).
+
+### Why an extension could not handle it
+
+The bash tool's spawn environment is assembled in this function.
+
+### Expected merge conflict zones
+
+The `delete env.PI_*` block and the session-exposure block in `resolveSpawnContext`.
+
+## 2026-10-03 - Edit card header shows the aggregate change count (senpi#2653)
+
+### What changed
+
+`packages/coding-agent/src/core/tools/diff-render.ts`: adds `countDiffChanges`, which returns net added/removed line counts for a unified diff (skipping `+++`/`---` headers and context). see `renderers/changes.md` for the edit-card header change.
+
+### Why
+
+The edit card showed the path but no aggregate change size at a glance.
+
+### Why an extension could not handle it
+
+The edit card header is produced inside the built-in edit renderer, below the extension API.
+
+### Expected merge conflict zones
+
+Upstream edits to `renderToolDiff`/`renderers/edit.ts` at the next sync.

@@ -1,5 +1,5 @@
 import { fileURLToPath } from "node:url";
-import { defineConfig } from "vitest/config";
+import { configDefaults, defineConfig } from "vitest/config";
 
 const telemetrySrcIndex = fileURLToPath(new URL("../telemetry/src/index.ts", import.meta.url));
 const aiSrcIndex = fileURLToPath(new URL("../ai/src/index.ts", import.meta.url));
@@ -13,6 +13,8 @@ export default defineConfig({
 		testTimeout: 30000, // 30 seconds for API calls
 		reporters: process.env.GITHUB_ACTIONS ? ["dot", "github-actions"] : ["dot"],
 		silent: "passed-only",
+		// docs/ holds the historical mobile-handoff prototype; production delta lives in packages/chord.
+		exclude: [...configDefaults.exclude, "docs/**"],
 	},
 	resolve: {
 		conditions: ["source"],

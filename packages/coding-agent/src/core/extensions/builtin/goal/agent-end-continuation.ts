@@ -1,9 +1,14 @@
 import type { AgentEndEvent, ExtensionContext } from "../../types.ts";
 import { isMalformedToolUseTurn } from "./continuation.ts";
+import { providerAuthBlockedReason, providerAuthRecoveryHint } from "./continuation-recovery.ts";
 import type { MonitorAwareGoalContinuation } from "./monitor-continuation.ts";
 import { updateGoal } from "./store.ts";
 import { goalStoreRef } from "./store-ref.ts";
-import { didTerminalPolicyRejectionEndTurn, didTerminalProviderErrorEndTurn } from "./terminal-provider-error.ts";
+import {
+	didTerminalPolicyRejectionEndTurn,
+	didTerminalProviderErrorEndTurn,
+	terminalProviderAuthFailure,
+} from "./terminal-provider-error.ts";
 import type { Goal } from "./types.ts";
 
 interface GoalAgentEndOptions {
@@ -24,6 +29,16 @@ export async function continueGoalAfterAgentEnd(
 		// Cancel armed timers and staged recoveries; only an explicit goal resume
 		// may restart a policy-blocked goal, not an infrastructure recovery path.
 		monitor.syncGoal(blocked);
+		return blocked;
+	}
+	const authFailure = options.goal?.status === "active" ? terminalProviderAuthFailure(options.event) : undefined;
+	if (authFailure !== undefined) {
+		const blocked = await updateGoal(goalStoreRef(options.ctx.sessionManager, options.ctx.cwd), {
+			status: "blocked",
+			reason: providerAuthBlockedReason(authFailure),
+		});
+		monitor.syncGoal(blocked);
+		if (options.ctx.hasUI) options.ctx.ui.notify(providerAuthRecoveryHint(authFailure), "warning");
 		return blocked;
 	}
 	if (options.event.aborted === true && options.event.abortSource === "system") {

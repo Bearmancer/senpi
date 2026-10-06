@@ -41,7 +41,7 @@ function capturedShell(originalShell, options) {
 	const shell = (strings, ...expressions) => {
 		if (!options.isActive()) return originalShell(strings, ...expressions);
 		const promise = originalShell(isolateStdin(strings), ...expressions);
-		return captureShellPromise(promise, options.emitText);
+		return captureShellPromise(promise, options);
 	};
 	for (const key of Object.keys(originalShell)) shell[key] = originalShell[key];
 	for (const method of SHELL_CONFIG_METHODS) {
@@ -65,13 +65,20 @@ function isolateStdin(strings) {
 	return Object.freeze(Object.assign(cooked, { raw: Object.freeze(raw) }));
 }
 
-function captureShellPromise(promise, emitText) {
+function captureShellPromise(promise, options) {
 	const prototype = Object.getPrototypeOf(promise);
+	let waiting = false;
+	let settled = false;
+	const finish = () => {
+		settled = true;
+		if (waiting) options.onShellWait?.(promise, false);
+		waiting = false;
+	};
 	let echo = true;
 	const echoOnce = (output) => {
 		if (!echo) return;
 		echo = false;
-		emitShellOutput(output, emitText);
+		emitShellOutput(output, options.emitText);
 	};
 	prototype.quiet.call(promise);
 	promise.quiet = function quiet() {
@@ -86,13 +93,19 @@ function captureShellPromise(promise, emitText) {
 		};
 	}
 	promise.then = function then(onFulfilled, onRejected) {
+		if (!waiting && !settled) {
+			waiting = true;
+			options.onShellWait?.(promise, true);
+		}
 		return prototype.then.call(
 			this,
 			(output) => {
+				finish();
 				echoOnce(output);
 				return onFulfilled ? onFulfilled(output) : output;
 			},
 			(error) => {
+				finish();
 				echoOnce(error);
 				if (onRejected) return onRejected(error);
 				throw error;

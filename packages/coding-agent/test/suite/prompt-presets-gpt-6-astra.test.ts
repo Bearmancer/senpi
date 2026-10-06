@@ -85,7 +85,6 @@ const EXPECTED_CONCERN: Record<Gpt6AstraRuleId, Gpt6AstraConcern> = {
 	"instruction-precedence": "instruction-precedence",
 	"pause-transparency": "instruction-precedence",
 	"eval-first-routing": "tool-orchestration",
-	"evidence-comparison": "tool-orchestration",
 	"perceived-state-loop": "tool-orchestration",
 	"bun-runtime": "tool-orchestration",
 	"stay-direct-exceptions": "tool-orchestration",
@@ -105,6 +104,7 @@ const EXPECTED_CONCERN: Record<Gpt6AstraRuleId, Gpt6AstraConcern> = {
 	"plain-prose": "writing-style",
 	"slop-ban": "writing-style",
 	"direct-statements": "writing-style",
+	"no-reflexive-apology": "writing-style",
 	"handoff-report": "reporting",
 	"final-message-shape": "reporting",
 };
@@ -121,7 +121,6 @@ const EXPECTED_SECTION: Record<Gpt6AstraRuleId, string> = {
 	"instruction-precedence": "Instructions From Files",
 	"pause-transparency": "Instructions From Files",
 	"eval-first-routing": "Working the Task",
-	"evidence-comparison": "Working the Task",
 	"perceived-state-loop": "Working the Task",
 	"bun-runtime": "Working the Task",
 	"stay-direct-exceptions": "Working the Task",
@@ -141,6 +140,7 @@ const EXPECTED_SECTION: Record<Gpt6AstraRuleId, string> = {
 	"plain-prose": "Writing",
 	"slop-ban": "Writing",
 	"direct-statements": "Writing",
+	"no-reflexive-apology": "Writing",
 	"handoff-report": "Reporting",
 	"final-message-shape": "Reporting",
 };

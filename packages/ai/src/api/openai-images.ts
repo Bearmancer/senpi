@@ -2,10 +2,11 @@ import OpenAI from "openai";
 import type { ImageEditParamsNonStreaming, ImageGenerateParamsNonStreaming } from "openai/resources/images.js";
 import type {
 	AssistantImages,
+	ImageApi,
 	ImageContent,
+	ImageModel,
 	ImagesContext,
 	ImagesFunction,
-	ImagesModel,
 	ProviderHeaders,
 	TextContent,
 } from "../types.ts";
@@ -30,8 +31,8 @@ export {
 
 const ENDPOINT_SUFFIXES = ["/chat/completions", "/responses", "/models"] as const;
 
-export const generateImages: ImagesFunction<"openai-images", OpenAIImagesOptions> = async (
-	model: ImagesModel<"openai-images">,
+export const generateImages: ImagesFunction<OpenAIImagesOptions> = async (
+	model: ImageModel<ImageApi>,
 	context: ImagesContext,
 	options?: OpenAIImagesOptions,
 ) => {
@@ -141,7 +142,7 @@ interface RawImageUsage {
 }
 
 /** Image input tokens carry their own rate; without a breakdown every input token is text. */
-function parseUsage(rawUsage: RawImageUsage, model: ImagesModel<"openai-images">) {
+function parseUsage(rawUsage: RawImageUsage, model: ImageModel<ImageApi>) {
 	const input = rawUsage.input_tokens ?? 0;
 	const output = rawUsage.output_tokens ?? 0;
 	const imageTokens = rawUsage.input_tokens_details?.image_tokens ?? 0;

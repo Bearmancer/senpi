@@ -3,6 +3,8 @@ import { basename, join, parse, resolve } from "node:path";
 import { resolvePath } from "../utils/paths.ts";
 import type { AgentSession } from "./agent-session.ts";
 import type { AgentSessionRuntimeDiagnostic, AgentSessionServices } from "./agent-session-services.ts";
+import type { BrowserEngine } from "./browser-engine.ts";
+import type { PromptSurface } from "./dynamic-prompt/types.ts";
 import type { HostMcpRegistry } from "./extensions/builtin/mcp/host-registry.ts";
 import type {
 	ProjectTrustContext,
@@ -15,8 +17,10 @@ import type {
 import { type ExtensionRunner, emitSessionShutdownEvent } from "./extensions/runner.ts";
 import type { CreateAgentSessionResult } from "./sdk.ts";
 import { assertSessionCwdExists } from "./session-cwd.ts";
+import { holdSessionFile, type SessionHold } from "./session-holders.ts";
 import { SessionManager } from "./session-manager.ts";
 import { reserveSessionWrite, unregisterSessionWriter } from "./session-write-reservation.ts";
+import type { SettingsManager } from "./settings-manager.ts";
 import { resetTimings, time } from "./timings.ts";
 
 /**
@@ -49,6 +53,38 @@ export interface AgentSessionLaunchProfile {
 	 * ignores the host-wide `--auto-title-sessions` / appMode default.
 	 */
 	autoTitle?: boolean;
+	/** Per-session prompt surface (`open_session.promptSurface`); absent means `SENPI_PROMPT_SURFACE`. */
+	promptSurface?: PromptSurface;
+	/** Per-session browser engine (`open_session.browserEngine`); absent means none was chosen. */
+	browserEngine?: BrowserEngine;
+	/**
+	 * Per-session retry fallback (`open_session.retryFallback`): applied to THIS session's settings as an
+	 * in-memory override that is never written to a settings file, so one session's chain never reaches
+	 * another session on the host or the user's settings. Absent means the host's settings decide.
+	 */
+	retryFallback?: SessionRetryFallbackProfile;
+}
+
+/** The fallback policy one session runs with, chosen by its opener (e.g. a task child's own chain). */
+export interface SessionRetryFallbackProfile {
+	readonly modelFallback: boolean;
+	/** Chain key (selector, optionally `:thinking`) to its ordered fallback selectors. */
+	readonly fallbackChains: Readonly<Record<string, readonly string[]>>;
+}
+
+/** Overlays a session's fallback policy on its settings in memory: never saved, never shared. */
+export function applyRetryFallbackProfile(
+	settingsManager: SettingsManager,
+	profile: SessionRetryFallbackProfile,
+): void {
+	settingsManager.applyOverrides({
+		retry: {
+			modelFallback: profile.modelFallback,
+			fallbackChains: Object.fromEntries(
+				Object.entries(profile.fallbackChains).map(([key, entries]) => [key, [...entries]]),
+			),
+		},
+	});
 }
 
 /**
@@ -107,7 +143,9 @@ export class AgentSessionRuntime {
 	private readonly createRuntime: CreateAgentSessionRuntimeFactory;
 	private _diagnostics: AgentSessionRuntimeDiagnostic[];
 	private _modelFallbackMessage?: string;
-	private readonly _launchProfile?: Readonly<AgentSessionLaunchProfile>;
+	private _launchProfile?: Readonly<AgentSessionLaunchProfile>;
+	// Advertises the open session file to other processes so none moves it out from under this one.
+	private _sessionHold?: SessionHold;
 	private _removedOnReplacement?: {
 		oldRunner: ExtensionRunner;
 		oldIdentities: Array<{ path: string; resolvedPath: string }>;
@@ -128,6 +166,13 @@ export class AgentSessionRuntime {
 		this._diagnostics = _diagnostics;
 		this._modelFallbackMessage = _modelFallbackMessage;
 		this._launchProfile = launchProfile;
+		this._sessionHold = holdActiveSession(_session.sessionManager, wasFlushed(_session.sessionManager));
+	}
+
+	/** Stops advertising the open session to other processes; a runtime that replaces this one holds its own. */
+	releaseSessionHold(): void {
+		this._sessionHold?.release();
+		this._sessionHold = undefined;
 	}
 
 	get services(): AgentSessionServices {
@@ -152,6 +197,36 @@ export class AgentSessionRuntime {
 
 	get launchProfile(): Readonly<AgentSessionLaunchProfile> | undefined {
 		return this._launchProfile;
+	}
+
+	/** Moves this session to another prompt surface; later replacements (switch, new, fork) keep it. */
+	setPromptSurface(surface: PromptSurface): void {
+		this._launchProfile = Object.freeze({ ...(this._launchProfile ?? { cwd: this.cwd }), promptSurface: surface });
+		this._session.setPromptSurface(surface);
+	}
+
+	/** Moves this session to another browser engine; later replacements (switch, new, fork) keep it. */
+	setBrowserEngine(engine: BrowserEngine): void {
+		this._launchProfile = Object.freeze({ ...(this._launchProfile ?? { cwd: this.cwd }), browserEngine: engine });
+		this._session.setBrowserEngine(engine);
+	}
+
+	/**
+	 * Gives this process's sessions their fallback policy (`set_retry_fallback`); later replacements
+	 * (switch, new, fork) keep it. Callers set it before the first turn: a chain never changes under a
+	 * retry already in flight.
+	 */
+	setRetryFallback(profile: SessionRetryFallbackProfile): void {
+		const retryFallback = Object.freeze({
+			modelFallback: profile.modelFallback,
+			fallbackChains: Object.freeze(
+				Object.fromEntries(
+					Object.entries(profile.fallbackChains).map(([key, entries]) => [key, Object.freeze([...entries])]),
+				),
+			),
+		});
+		this._launchProfile = Object.freeze({ ...(this._launchProfile ?? { cwd: this.cwd }), retryFallback });
+		applyRetryFallbackProfile(this._session.settingsManager, retryFallback);
 	}
 
 	setRebindSession(rebindSession?: (session: AgentSession) => Promise<void>): void {
@@ -240,6 +315,7 @@ export class AgentSessionRuntime {
 		// Nothing writes to the replaced manager once its session is disposed, so the
 		// shared host may hand its session file to another worker.
 		unregisterSessionWriter(replaced);
+		this.releaseSessionHold();
 		mark("dispose");
 	}
 
@@ -255,7 +331,8 @@ export class AgentSessionRuntime {
 		await pending.oldRunner.emit({ type: "session_extensions_removed", reason: pending.reason, removed });
 	}
 
-	private async apply(result: CreateAgentSessionRuntimeResult): Promise<void> {
+	private async apply(result: CreateAgentSessionRuntimeResult, hold?: SessionHold): Promise<void> {
+		this._sessionHold = hold ?? holdActiveSession(result.session.sessionManager, false);
 		this._session = result.session;
 		this._services = result.services;
 		this._diagnostics = result.diagnostics;
@@ -290,18 +367,26 @@ export class AgentSessionRuntime {
 		const previousSessionFile = this.session.sessionFile;
 		const sessionManager = SessionManager.open(sessionPath, undefined, options?.cwdOverride);
 		assertSessionCwdExists(sessionManager, this.cwd);
+		// Held before the current session is torn down: a session being moved fails the switch here.
+		const hold = holdActiveSession(sessionManager, wasFlushed(sessionManager));
 		time("open", "switch");
-		await this.teardownCurrent("resume", sessionManager.getSessionFile());
-		await this.apply(
-			await this.createRuntime({
-				cwd: sessionManager.getCwd(),
-				agentDir: this.services.agentDir,
-				sessionManager,
-				sessionStartEvent: { type: "session_start", reason: "resume", previousSessionFile },
-				projectTrustContext: options?.projectTrustContextFactory?.(sessionManager.getCwd()),
-				launchProfile: this._launchProfile,
-			}),
-		);
+		try {
+			await this.teardownCurrent("resume", sessionManager.getSessionFile());
+			await this.apply(
+				await this.createRuntime({
+					cwd: sessionManager.getCwd(),
+					agentDir: this.services.agentDir,
+					sessionManager,
+					sessionStartEvent: { type: "session_start", reason: "resume", previousSessionFile },
+					projectTrustContext: options?.projectTrustContextFactory?.(sessionManager.getCwd()),
+					launchProfile: this._launchProfile,
+				}),
+				hold,
+			);
+		} catch (error) {
+			if (this._sessionHold !== hold) hold?.release();
+			throw error;
+		}
 		time("apply", "switch");
 		await this.finishSessionReplacement(options?.withSession);
 		time("rebind", "switch");
@@ -339,7 +424,7 @@ export class AgentSessionRuntime {
 		);
 		if (options?.setup) {
 			await options.setup(this.session.sessionManager);
-			this.session.agent.state.messages = this.session.sessionManager.buildSessionContext().messages;
+			this.session.refreshContext();
 		}
 		await this.finishSessionReplacement(options?.withSession);
 		return { cancelled: false };
@@ -397,9 +482,7 @@ export class AgentSessionRuntime {
 			}
 
 			if (!existsSync(currentSessionFile)) {
-				throw new Error(
-					"This session has not been saved yet. Wait for the first assistant response before cloning or forking it.",
-				);
+				throw new Error("This session has not been saved yet. Send a message before cloning or forking it.");
 			}
 			const sessionManager = SessionManager.open(currentSessionFile, sessionDir);
 			const forkedSessionPath = sessionManager.createBranchedSession(targetLeafId);
@@ -501,7 +584,23 @@ export class AgentSessionRuntime {
 		});
 		this.beforeSessionInvalidate?.();
 		this.session.dispose();
+		this.releaseSessionHold();
 	}
+}
+
+// A persisted session is written to disk with its first assistant message, so one that has an
+// assistant message and no file was moved away after it was read.
+function wasFlushed(sessionManager: SessionManager): boolean {
+	return sessionManager.getEntries().some((entry) => entry.type === "message" && entry.message.role === "assistant");
+}
+
+function holdActiveSession(sessionManager: SessionManager, expectExisting: boolean): SessionHold | undefined {
+	const sessionFile = sessionManager.getSessionFile();
+	if (!sessionManager.isPersisted() || sessionFile === undefined) return undefined;
+	return holdSessionFile(sessionFile, sessionManager.getSessionId(), {
+		cwd: sessionManager.getCwd(),
+		expectExisting,
+	});
 }
 
 /**

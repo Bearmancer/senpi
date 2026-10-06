@@ -10,35 +10,51 @@
  *     4  no host is better than this one     an unreachable socket, or a stop that would end
  *        one (fallback policy)               somebody else's work
  *
- * The refusals are the point. One machine-wide daemon holds every client's sessions, so a client
+ * The refusals are the point. One daemon holds every client's sessions on its endpoint, so a client
  * that cannot get what it wants must SAY so and leave the running host alone (I1) - never stop it,
  * never bind a second host over its socket. `decideHostAction`, `ensureHost`, `stopHost` and
  * `handoffHost` already enforce that; this module only gives their outcomes a machine-readable shape.
+ *
+ * A terminal control endpoint (`endpoint_kind: "tui"`) is owned by its terminal process and is never
+ * ensured, handed off, drained or stopped by a host operator: `ensure`, `handoff` and `stop` against
+ * one refuse with `unsupported_endpoint_kind` (exit 3) from disk alone, before any connection.
  */
-import { engineBuildIdentity } from "../../core/engine-build-identity.ts";
 import { daemonEnvKeys, daemonEnvOverrides, writeDaemonEnvKeys } from "./host-daemon-env.ts";
-import { createHostDaemonPaths } from "./host-daemon-paths.ts";
+import { createHostDaemonPaths, type ShardKind, shardKey, shardSocketPathForKey } from "./host-daemon-paths.ts";
 import {
 	decideHostAction,
-	HOST_PROTOCOL_VERSION,
-	type HostDecisionClient,
 	type HostDecisionPolicy,
 	HostEnsureRefusedError,
 	type HostProtocolInfo,
-	REQUIRED_HOST_CAPABILITIES,
 } from "./host-decision.ts";
+import { endpointKindOfSocket } from "./host-endpoints.ts";
 import { type EnsuredHost, ensureHost } from "./host-ensure.ts";
+import { gcHostEndpoints } from "./host-gc.ts";
 import { type HandoffRefusal, handoffHost } from "./host-handoff.ts";
+import { type IdleHandoverTerms, idleHandoverOutcome } from "./host-handover-request.ts";
 import type { ResolvedHostLaunchSpec } from "./host-launch-spec.ts";
+import {
+	clientRuntimeBuildId,
+	decisionClient,
+	HOST_EXIT_OK,
+	HOST_EXIT_REFUSED,
+	type HostOutcome,
+	identityPayload,
+	refusal,
+} from "./host-outcome.ts";
 import { probeProtocolInfo } from "./host-probe.ts";
-import { hostSummary, readHostStatus, readSessionCounts } from "./host-status.ts";
+import { readHostStatus, readSessionCounts } from "./host-status.ts";
+import { readAllHostStatus } from "./host-status-all.ts";
 import { stopHost } from "./host-stop.ts";
 
-export const HOST_EXIT_OK = 0;
-export const HOST_EXIT_ERROR = 1;
-export const HOST_EXIT_USAGE = 2;
-export const HOST_EXIT_REFUSED = 3;
-export const HOST_EXIT_FALLBACK = 4;
+export {
+	HOST_EXIT_ERROR,
+	HOST_EXIT_FALLBACK,
+	HOST_EXIT_OK,
+	HOST_EXIT_REFUSED,
+	HOST_EXIT_USAGE,
+	type HostOutcome,
+} from "./host-outcome.ts";
 
 const PROBE_TIMEOUT_MS = 10_000;
 
@@ -55,26 +71,49 @@ export type HostRequest =
 			readonly spec: ResolvedHostLaunchSpec;
 			readonly policy: HostDecisionPolicy;
 	  }
-	| { readonly action: "status"; readonly target: HostTarget; readonly includeWorkers: boolean }
+	| {
+			readonly action: "status";
+			readonly target: HostTarget;
+			readonly includeWorkers: boolean;
+			/** Every endpoint under `target.agentDir` (its socket is ignored), read without pruning. */
+			readonly all?: boolean;
+	  }
 	| { readonly action: "stop"; readonly target: HostTarget; readonly drain: boolean; readonly force: boolean }
-	| { readonly action: "handoff"; readonly target: HostTarget; readonly spec: ResolvedHostLaunchSpec };
-
-/** One JSON line and the exit code it means. */
-export interface HostOutcome {
-	readonly exitCode: number;
-	readonly payload: Record<string, unknown>;
-}
+	| {
+			readonly action: "handoff";
+			readonly target: HostTarget;
+			readonly spec: ResolvedHostLaunchSpec;
+			/** The conditional form (`--when idle`): the running host hands over at its next safe idle point. */
+			readonly handover?: IdleHandoverTerms;
+	  }
+	/** Removes endpoint state under `agentDir` only on the three-part evidence (`host-gc.ts`). */
+	| { readonly action: "gc"; readonly agentDir: string }
+	| { readonly action: "shard_path"; readonly kind: ShardKind; readonly owner: string; readonly root: string };
 
 export async function runHostRequest(request: HostRequest): Promise<HostOutcome> {
+	if (request.action === "ensure" || request.action === "handoff" || request.action === "stop") {
+		const { socket, agentDir } = request.target;
+		if ((await endpointKindOfSocket(socket, agentDir)) === "tui") {
+			return refusal("refuse", undefined, { reason: "unsupported_endpoint_kind", socket, endpoint_kind: "tui" });
+		}
+	}
 	switch (request.action) {
 		case "ensure":
 			return ensureOutcome(request.target, request.spec, request.policy);
 		case "status":
-			return statusOutcome(request.target, request.includeWorkers);
+			return request.all === true
+				? statusAllOutcome(request.target, request.includeWorkers)
+				: statusOutcome(request.target, request.includeWorkers);
 		case "stop":
 			return stopOutcome(request.target, request.drain, request.force);
 		case "handoff":
-			return handoffOutcome(request.target, request.spec);
+			return request.handover === undefined
+				? handoffOutcome(request.target, request.spec)
+				: idleHandoverOutcome(request.target, request.spec, request.handover);
+		case "shard_path":
+			return shardPathOutcome(request.kind, request.owner, request.root);
+		case "gc":
+			return { exitCode: HOST_EXIT_OK, payload: { ...(await gcHostEndpoints(request.agentDir)) } };
 		default:
 			return assertNever(request);
 	}
@@ -106,9 +145,13 @@ async function ensureOutcome(
 		});
 	} catch (error: unknown) {
 		if (!(error instanceof HostEnsureRefusedError)) throw error;
-		return refusal("refuse", before, { reason: error.reason, socket: target.socket });
+		return refusal("refuse", before, {
+			reason: error.reason,
+			socket: target.socket,
+			...(error.detail !== undefined && { detail: error.detail }),
+		});
 	}
-	const host = await probeProtocolInfo(target.socket, PROBE_TIMEOUT_MS);
+	const host = await probeProtocolInfo(target.socket, PROBE_TIMEOUT_MS).finally(ensured.release);
 	// Only a spawn grants an environment; a reuse inherited whatever the client that started it did.
 	if (!ensured.reused) await recordEnvScope(target, spec);
 	return {
@@ -116,6 +159,7 @@ async function ensureOutcome(
 		payload: {
 			action: ensureAction(ensured.reused, before, host),
 			...identityPayload(target.socket, ensured.pid, host),
+			clientRuntimeBuildId: await clientRuntimeBuildId(spec),
 			reused: ensured.reused,
 		},
 	};
@@ -137,6 +181,19 @@ function ensureAction(
 async function statusOutcome(target: HostTarget, includeWorkers: boolean): Promise<HostOutcome> {
 	const status = await readHostStatus({ socket: target.socket, agentDir: target.agentDir, includeWorkers });
 	return { exitCode: status.reachable ? HOST_EXIT_OK : HOST_EXIT_REFUSED, payload: { ...status } };
+}
+
+/** Same exit vocabulary as one socket: 0 while anything answers, 3 when nothing does (or nothing is there). */
+async function statusAllOutcome(target: HostTarget, includeWorkers: boolean): Promise<HostOutcome> {
+	const endpoints = await readAllHostStatus({ agentDir: target.agentDir, includeWorkers });
+	const reachable = endpoints.some((endpoint) => endpoint.reachable);
+	return { exitCode: reachable ? HOST_EXIT_OK : HOST_EXIT_REFUSED, payload: { endpoints } };
+}
+
+/** The naming contract answered without contacting any host, for a client that mirrors it locally. */
+function shardPathOutcome(kind: ShardKind, owner: string, root: string): HostOutcome {
+	const key = shardKey(kind, owner);
+	return { exitCode: HOST_EXIT_OK, payload: { kind, key, socket: shardSocketPathForKey(root, kind, key) } };
 }
 
 /**
@@ -174,7 +231,7 @@ async function handoffOutcome(target: HostTarget, spec: ResolvedHostLaunchSpec):
 		return refusal("refuse", before, {
 			reason: upgradeRefusal(result.reason),
 			socket: target.socket,
-			detail: result.reason,
+			detail: result.detail ?? result.reason,
 			upgradeable: result.upgradeable,
 		});
 	}
@@ -182,7 +239,12 @@ async function handoffOutcome(target: HostTarget, spec: ResolvedHostLaunchSpec):
 	const host = await probeProtocolInfo(target.socket, PROBE_TIMEOUT_MS);
 	return {
 		exitCode: HOST_EXIT_OK,
-		payload: { action: "handoff", ...identityPayload(target.socket, result.pid, host), reused: false },
+		payload: {
+			action: "handoff",
+			...identityPayload(target.socket, result.pid, host),
+			clientRuntimeBuildId: await clientRuntimeBuildId(spec),
+			reused: false,
+		},
 	};
 }
 
@@ -194,53 +256,9 @@ function upgradeRefusal(reason: HandoffRefusal): string {
 	return reason === "handoff_unsupported" ? "upgrade_unsupported" : reason;
 }
 
-function identityPayload(socket: string, pid: number, host: HostProtocolInfo | undefined): Record<string, unknown> {
-	return {
-		socket,
-		pid,
-		instanceId: host?.instanceId ?? null,
-		generation: host?.generation ?? null,
-		engineVersion: host?.engineVersion ?? null,
-		engineOrdinal: host?.engineOrdinal ?? null,
-		capabilities: host?.capabilities ?? [],
-		launchProfileId: host?.launch_profile?.profile_id ?? null,
-		upgradeable: decideHostAction(decisionClient(), host, "upgrade").upgradeable,
-	};
-}
-
-/**
- * The two ways a request ends without acting, and the exit codes they mean: a `refuse` leaves a
- * running host alone (3), a `fallback` says no host is better than this one (4).
- */
-function refusal(
-	kind: "refuse" | "fallback",
-	host: HostProtocolInfo | undefined,
-	body: { readonly reason: string } & Record<string, unknown>,
-): HostOutcome {
-	return {
-		exitCode: kind === "refuse" ? HOST_EXIT_REFUSED : HOST_EXIT_FALLBACK,
-		payload: { action: kind, ...body, host: hostSummary(host) },
-	};
-}
-
 async function recordEnvScope(target: HostTarget, spec: ResolvedHostLaunchSpec): Promise<void> {
 	const paths = createHostDaemonPaths({ socket: target.socket, agentDir: target.agentDir });
 	await writeDaemonEnvKeys(paths, daemonEnvKeys(process.env, spec.env));
-}
-
-/**
- * This build as a client, WITHOUT a launch profile: the request's own `ensureHost` decides whether a
- * handoff may happen, from the profile it would launch. What is asked here is only what any client
- * can answer without one - is the running host usable, and could it be handed off from at all.
- */
-function decisionClient(): HostDecisionClient {
-	return {
-		protocolVersion: HOST_PROTOCOL_VERSION,
-		requiredCapabilities: REQUIRED_HOST_CAPABILITIES,
-		identity: engineBuildIdentity(),
-		startedByUs: false,
-		platform: process.platform,
-	};
 }
 
 function assertNever(value: never): never {

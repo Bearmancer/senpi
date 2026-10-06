@@ -1,7 +1,9 @@
-import type { CredentialStore } from "@earendil-works/pi-ai";
+import { createHash } from "node:crypto";
+import type { Credential, CredentialStore } from "@earendil-works/pi-ai";
 import { loadAnthropicOAuth } from "@earendil-works/pi-ai/oauth";
 import { getAgentDir } from "../../../../config.ts";
 import { AuthStorage } from "../../../auth-storage.ts";
+import { CredentialStoreBusyError } from "../../../lockfile-policy.ts";
 import { emitProviderAccountFailover, emitProviderAccountsChanged } from "./account-events.ts";
 import { ANTHROPIC_SUBSCRIPTION_PROVIDER_ID } from "./account-management.ts";
 import {
@@ -26,6 +28,8 @@ import type { AnthropicSubscriptionProviderSettings, AnthropicSubscriptionTokenI
 export { ANTHROPIC_SUBSCRIPTION_PROVIDER_ID } from "./account-management.ts";
 
 export const EXPIRING_WITHIN_MS = 5 * 60_000;
+
+const TRANSIENT_REFRESH_FAILURE = /\bstatus=5\d\d\b|\bTimeoutError\b/;
 
 /** A managed lane with an empty pool must refuse rather than spawn the SDK against ambient host credentials. */
 const NO_MANAGED_ACCOUNTS_ERROR =
@@ -74,6 +78,8 @@ export type AuthenticatedQueryInput = {
 	env?: Record<string, string>;
 	signal?: AbortSignal;
 	sessionId?: string;
+	/** The requested model id: a usage limit on one model family blocks only that family (senpi#2555). */
+	model?: string;
 	/** Request-scoped CLI pin; takes precedence over persistent settings and account pins. */
 	pinnedAccount?: string;
 	onQuery?: (query: ReturnType<SdkQuery>) => void;
@@ -124,11 +130,45 @@ async function managedPool(
 	return { accounts, environment, lane, pinnedAccount: settings.pinnedAccount ?? stored?.pinned, store };
 }
 
+function storedSlot(credential: Credential | undefined, pool: ManagedPool, name: string): AccountSlot | undefined {
+	const stored = credential?.type === "oauth" ? (credential as AnthropicSubscriptionCredential) : undefined;
+	return listAccounts(stored ?? emptyCredential(), (key) => pool.environment[key]).find(
+		(candidate) => candidate.name === name,
+	);
+}
+
+/**
+ * Another writer holds auth.json for longer than the lock budget, almost always
+ * a sibling session redeeming this same slot. Contention says nothing about the
+ * credential: adopt the sibling's rotated token, or keep the stored one while it
+ * is still inside its lifetime (the refresh window opens before expiry).
+ */
+async function continueWhileStoreBusy(pool: ManagedPool, slot: AccountSlot, busy: Error): Promise<void> {
+	const latest = storedSlot(await pool.store.read(ANTHROPIC_SUBSCRIPTION_PROVIDER_ID), pool, slot.name);
+	if (latest && latest.refresh !== slot.refresh) {
+		Object.assign(slot, latest);
+		return;
+	}
+	if (activeBoundary.now() < slot.expires) return;
+	throw busy;
+}
+
+/** Throttling, server errors and timeouts on the token endpoint are not a verdict on the grant. */
+function refreshFailure(error: unknown): Error {
+	const detail = error instanceof Error ? error.message : String(error);
+	const classification = classifySdkError(detail);
+	if (classification.kind === "rate_limit" || classification.kind === "overloaded") return new Error(detail);
+	if ((classification.kind === "other" && classification.retryable) || TRANSIENT_REFRESH_FAILURE.test(detail)) {
+		return new Error(`server_error: ${detail}`);
+	}
+	return new Error(`authentication_failed: ${detail}`);
+}
+
 async function prepareSlot(
 	pool: ManagedPool,
 	selected: AccountSlot,
 	signal: AbortSignal,
-): Promise<Record<string, string | undefined>> {
+): Promise<{ env: Record<string, string | undefined>; credentialDigest: string }> {
 	const environment = pool.environment;
 	const slot = selected;
 	if (slot.source !== "env" && activeBoundary.now() >= slot.expires - EXPIRING_WITHIN_MS) {
@@ -141,28 +181,26 @@ async function prepareSlot(
 				signal,
 				(expires) => activeBoundary.now() >= expires - EXPIRING_WITHIN_MS,
 			);
-			const credential = refreshed?.type === "oauth" ? (refreshed as AnthropicSubscriptionCredential) : undefined;
-			const updated = listAccounts(credential ?? emptyCredential(), (name) => environment[name]).find(
-				(candidate) => candidate.name === slot.name,
-			);
+			const updated = storedSlot(refreshed, pool, slot.name);
 			if (!updated) throw new Error("selected account disappeared during refresh");
 			Object.assign(slot, updated);
 		} catch (error) {
-			const detail = error instanceof Error ? error.message : String(error);
-			const classification = classifySdkError(detail);
-			throw new Error(
-				classification.kind === "other" && classification.retryable
-					? `server_error: ${detail}`
-					: `authentication_failed: ${detail}`,
-			);
+			// A cancelled turn is not an authentication verdict: an aborted refresh
+			// must not surface as authentication_failed and auth-block the account.
+			signal.throwIfAborted();
+			if (!(error instanceof CredentialStoreBusyError)) throw refreshFailure(error);
+			await continueWhileStoreBusy(pool, slot, error);
 		}
 	}
 	const access = slot.source === "env" ? envSlotToken((name) => environment[name], slot.name) : slot.access;
 	if (!access) throw new Error("authentication_failed: selected OAuth token is unavailable");
 	const childEnvironment = stripManagedAuthEnvironment(environment);
-	if (pool.lane === "oauth-slots") return { ...childEnvironment, CLAUDE_CODE_OAUTH_TOKEN: access };
+	const credentialDigest = createHash("sha256").update(access).digest("hex");
+	if (pool.lane === "oauth-slots") {
+		return { env: { ...childEnvironment, CLAUDE_CODE_OAUTH_TOKEN: access }, credentialDigest };
+	}
 	const directory = writeConfigDirCredential(activeBoundary.getAgentDir(), slot, access);
-	return { ...childEnvironment, CLAUDE_CONFIG_DIR: directory };
+	return { env: { ...childEnvironment, CLAUDE_CONFIG_DIR: directory }, credentialDigest };
 }
 
 function sdkFailure(message: SDKMessage): unknown | undefined {
@@ -205,21 +243,25 @@ export async function* queryWithAuthLane(input: AuthenticatedQueryInput): AsyncG
 				sessionId: input.sessionId,
 				pinnedAccount: input.pinnedAccount ?? pool.pinnedAccount,
 				now: activeBoundary.now(),
+				...(input.model === undefined ? {} : { model: input.model }),
 			}),
 		runAttempt: async (slot) => {
 			const options = input.buildOptions(pool.lane);
 			const accounts = pool.accounts.map((account) => ({ ...account }));
-			options.env = await prepareSlot(pool, slot, signal);
+			const prepared = await prepareSlot(pool, slot, signal);
+			options.env = prepared.env;
 			return createAttemptMessages(input, {
 				accountName: slot.name,
 				accounts,
 				authLane: pool.lane,
 				options,
+				credentialDigest: prepared.credentialDigest,
 			});
 		},
 		classify: classifySdkError,
 		store: pool.store,
 		providerId: ANTHROPIC_SUBSCRIPTION_PROVIDER_ID,
+		...(input.model === undefined ? {} : { model: input.model }),
 		now: activeBoundary.now,
 		errorFromEvent: sdkFailure,
 		isVisibleDelta: visibleSdkMessage,

@@ -8,6 +8,7 @@ import {
 	ASK_USER_SETTLEMENT_ENTRY,
 	type AskUserAskedEvent,
 	type AskUserQuestionEntry,
+	emitAskUserClosed,
 	emitAskUserNotification,
 } from "./notify.ts";
 import { createPendingQuestion } from "./pending.ts";
@@ -52,7 +53,7 @@ function result(
  * triggers a turn, which is what wakes the model after a timeout. A cancelled
  * question stays silent: it was dismissed, superseded, or aborted.
  */
-function deliverAnswer(
+export function deliverAnswer(
 	pi: Pick<ExtensionAPI, "sendUserMessage" | "events">,
 	ctx: ExtensionContext,
 	request: QuestionRequest,
@@ -113,6 +114,7 @@ export function startQuestion(
 		ownerCtx: ExtensionContext,
 		response: QuestionResponse,
 	) => {
+		emitAskUserClosed(ownerPi, request.requestId, response);
 		if (!request.waitForAnswer)
 			ownerPi.appendEntry(ASK_USER_SETTLEMENT_ENTRY, {
 				requestId: request.requestId,
@@ -222,7 +224,7 @@ export function startQuestion(
 		}
 		if (response.status === "answered" || response.status === "comment-submitted") {
 			// The UI owns partial submission validation; retain its response verbatim.
-			pending.submit(response.answers, response.comment);
+			pending.submit(response.answers, response.comment, response.resolvedBy);
 			if (pending.state === "pending") pending.cancel();
 		} else pending.cancel(response.status);
 		finish(response);
@@ -303,6 +305,7 @@ export function createAskUserTool(variant: AskUserVariant, pi: ExtensionAPI, sta
 				});
 			} catch (error: unknown) {
 				if (!(error instanceof AskUserSchemaError)) throw error;
+				emitAskUserClosed(pi, toolCallId, { status: "unavailable" });
 				return { content: [{ type: "text", text: error.message }], details: { status: "unavailable" } };
 			}
 			const unavailable: QuestionResponse = {
@@ -310,7 +313,10 @@ export function createAskUserTool(variant: AskUserVariant, pi: ExtensionAPI, sta
 				answers: {},
 				unanswered: request.questions.map((q) => q.id),
 			};
-			if (state.timedOut) return result(variant, unavailable, request, REASK);
+			if (state.timedOut) {
+				emitAskUserClosed(pi, request.requestId, unavailable);
+				return result(variant, unavailable, request, REASK);
+			}
 			if (
 				state.unavailable ||
 				ctx.getAskUserSettings?.().enabled === false ||
@@ -321,6 +327,7 @@ export function createAskUserTool(variant: AskUserVariant, pi: ExtensionAPI, sta
 			) {
 				state.unavailable = true;
 				pi.setActiveTools(pi.getActiveTools().filter((name) => !Object.values(TOOL_NAMES).includes(name)));
+				emitAskUserClosed(pi, request.requestId, unavailable);
 				return result(variant, unavailable, request);
 			}
 			const completion = startQuestion(pi, ctx, request, signal, state, variant);

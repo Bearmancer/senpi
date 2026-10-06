@@ -7,12 +7,14 @@ import {
 	kernelToolsStorage,
 } from "@code-yeongyu/senpi";
 import type { KernelToHostMessage } from "../bridge/protocol.ts";
+import { resolveSandbox } from "../config/feature-settings.ts";
 import { DEFAULT_FOREGROUND_WINDOW_SECONDS, defaultCodemodeSettings } from "../config/settings.ts";
 import {
 	KERNEL_TOOLS_CAPABILITIES,
 	type KernelToolsCapability,
 	type KernelToolsDescribeResult,
 } from "../kernels/js/kernel-tools-types.ts";
+import { sandboxCellExecutor } from "../kernels/sandbox/sandbox-cell.ts";
 import { TIMEOUT_PAUSE_OP, TIMEOUT_RESUME_OP } from "../timeouts/bridge-timeout.ts";
 import { abortError, CellExecution, defaultTimeoutFactory } from "./cell-execution.ts";
 import { CellHandler, type CellState } from "./cell-handler.ts";
@@ -23,6 +25,8 @@ import { EvalKernelResetRefusedError } from "./eval-kernel-reset-refused-error.t
 import { evalTimeoutBehavior } from "./eval-request.ts";
 import type { CreateEvalToolOptions, EvalCellInvocation } from "./eval-tool-options.ts";
 import { describeTimeoutState } from "./interrupt-note.ts";
+import { loadCell } from "./load-cell.ts";
+import { planMagicCell } from "./magic-cell-host.ts";
 import type { EvalKernel, EvalToolDetails } from "./types.ts";
 
 export async function runEvalCell(
@@ -188,28 +192,38 @@ async function executeCell(
 	onReady: () => void,
 ): Promise<AgentToolResult<EvalToolDetails>> {
 	let handler: CellHandler | undefined;
-	try {
-		const onMessage = (message: KernelToHostMessage): void => {
-			if (!state.active || handler === undefined) return;
-			if (message.type === "status") {
-				if (message.event.op === TIMEOUT_PAUSE_OP) {
-					execution.pause();
-					cellManager.pause(cell);
-					return;
-				}
-				if (message.event.op === TIMEOUT_RESUME_OP) {
-					execution.resume();
-					cellManager.resume(cell);
-					return;
-				}
+	const onMessage = (message: KernelToHostMessage): void => {
+		if (!state.active || handler === undefined) return;
+		if (message.type === "status") {
+			if (message.event.op === TIMEOUT_PAUSE_OP) {
+				execution.pause();
+				cellManager.pause(cell);
+				return;
 			}
-			const pending = handler.handle(message);
-			void pending.catch((error: unknown) => execution.cancel(error));
-		};
+			if (message.event.op === TIMEOUT_RESUME_OP) {
+				execution.resume();
+				cellManager.resume(cell);
+				return;
+			}
+		}
+		const pending = handler.handle(message);
+		void pending.catch((error: unknown) => execution.cancel(error));
+	};
+	let releaseCellKernelTools: (() => void) | undefined;
+	try {
 		const kernel = await execution.wait(options.kernelManager.getKernel(invocation.input.language, onMessage));
-		// Computed before the handler so the cell's capability can be entered per host tool call from the
-		// worker's message loop, which runs outside the `kernelToolsStorage.run` context below (#1754).
-		const kernelTools = jsKernelTools(kernel, invocation.input.language);
+		// Computed before the handler so its construction-time snapshot captures this cell's capability.
+		// Worker messages later restore that snapshot before calling host tools (#1754, #2512).
+		const kernelTools = kernelToolsFor(kernel);
+		// Subprocess kernels call the host over the bridge, outside this async context. Their calls carry a fresh secret
+		// minted for this run and sent only to this cell's kernel, never the model-visible cell id, so code in another
+		// kernel cannot name this cell into its tools. JS calls already run inside this cell's scope (#1754).
+		const bridgeCellToken =
+			kernelTools === undefined || invocation.input.language === "js" ? undefined : randomUUID();
+		releaseCellKernelTools =
+			kernelTools === undefined || bridgeCellToken === undefined
+				? undefined
+				: options.kernelManager.bindCellKernelTools?.(bridgeCellToken, kernelTools);
 		const runBound = async (): Promise<AgentToolResult<EvalToolDetails>> => {
 			const queue = kernel.queueSnapshot();
 			state.queuedBehind = [...(queue.activeCellId === null ? [] : [queue.activeCellId]), ...queue.queuedCellIds];
@@ -224,6 +238,8 @@ async function executeCell(
 					: { artifactPath: join(options.artifactsDir, `eval-${randomUUID()}.log`) }),
 				...(options.imageResizer === undefined ? {} : { imageResizer: options.imageResizer }),
 				...(kernelTools === undefined ? {} : { kernelTools }),
+				...(options.handles === undefined ? {} : { handles: options.handles }),
+				hardDeadlineMs: cell.startedAtMs + cell.hardLimitSeconds * 1_000,
 			});
 			handler = activeHandler;
 			cellManager.bindKernel(
@@ -247,10 +263,52 @@ async function executeCell(
 			}
 			if (invocation.input.reset) await execution.wait(kernel.reset());
 			execution.setKernel(kernel);
+			const magic = planMagicCell(
+				invocation.input.language,
+				invocation.input.code,
+				options.pythonEnvironments,
+				options.jsEnvironments,
+			);
+			// Resolved when the cell's turn comes in the kernel's queue: a %load reads the file the cells ahead of it
+			// wrote, and a refusal settles in queue order like any cell.
+			const loadOptions = { cwd: invocation.ctx.cwd, artifactsDir: options.artifactsDir };
+			// An isolated cell never runs a file outside its sandbox: %load there is refused.
+			const isolatedLoad = invocation.input.isolate === true && magic.kind === "load";
+			const resolveAtStart = isolatedLoad
+				? () => ({
+						ok: false as const,
+						message:
+							"isolate: true cannot run a %load cell: an isolated cell sees no host files, and loading one would break that isolation. Run %load in a normal cell, or paste the code into the isolated cell.",
+					})
+				: magic.kind === "load"
+					? () => loadCell(magic.target, loadOptions)
+					: magic.kind === "refused"
+						? () => ({ ok: false as const, message: magic.message })
+						: undefined;
+			const isolated =
+				invocation.input.isolate === true && resolveAtStart === undefined
+					? sandboxCellExecutor(invocation.input.code, {
+							sandbox: resolveSandbox(options.settings ?? {}),
+							executeTool: options.executeTool,
+							toolNames: () => (options.listTools?.() ?? []).map((tool) => tool.name),
+							describeTool: (name) => options.listTools?.().find((tool) => tool.name === name)?.description,
+						})
+					: undefined;
+			const environments = invocation.input.language === "py" ? options.pythonEnvironments : undefined;
+			const envRoot = environments === undefined ? undefined : () => environments.activeRoot ?? "";
+			const jsEnvironments = invocation.input.language === "js" ? options.jsEnvironments : undefined;
+			const packageRoot = jsEnvironments === undefined ? undefined : () => jsEnvironments.packageRoot;
 			const result = await execution.wait(
 				kernel.run({
 					cellId: invocation.cellId,
 					code: invocation.input.code,
+					...(resolveAtStart === undefined ? {} : { resolveAtStart }),
+					...(magic.kind === "host" ? { host: magic.executor } : {}),
+					...(isolated === undefined ? {} : { host: isolated }),
+					...(envRoot === undefined ? {} : { envRoot }),
+					...(packageRoot === undefined ? {} : { packageRoot }),
+					...(bridgeCellToken === undefined ? {} : { bridgeCellToken }),
+					kernelPreludes: options.kernelPreludes?.(),
 					onMessage,
 					onStarted: () => {
 						cellManager.markRunning(cell);
@@ -282,23 +340,26 @@ async function executeCell(
 		if (error instanceof Error && error.name === "TimeoutError") throw await describeTimeoutState(error, execution);
 		throw error;
 	} finally {
+		// First, so nothing below can skip it: from here on a host call carrying this run's secret gets no kernel tools.
+		releaseCellKernelTools?.();
 		state.active = false;
 		bridgeAbortController.abort();
 		execution.finish();
 		if (handler) await handler.flushOutput();
+		// The cell settled: stop the kernel dispatcher from holding this cell's listener (#2260).
+		options.kernelManager.releaseKernelListener?.(invocation.input.language, onMessage);
 	}
 }
 
-function jsKernelTools(kernel: EvalKernel, language: string): KernelToolsCapability | undefined {
-	if (language !== "js") return undefined;
+function kernelToolsFor(kernel: EvalKernel): KernelToolsCapability | undefined {
 	if (!("describeKernelTools" in kernel) || typeof kernel.describeKernelTools !== "function") return undefined;
-	const js = kernel as EvalKernel & {
+	const withTools = kernel as EvalKernel & {
 		describeKernelTools: (names: readonly string[]) => Promise<KernelToolsDescribeResult>;
 		invokeKernelTool: ExtensionKernelTools["invoke"];
 	};
 	return {
 		capabilities: KERNEL_TOOLS_CAPABILITIES,
-		describe: (names) => js.describeKernelTools(names),
-		invoke: (request, options) => js.invokeKernelTool(request, options),
+		describe: (names) => withTools.describeKernelTools(names),
+		invoke: (request, options) => withTools.invokeKernelTool(request, options),
 	} satisfies ExtensionKernelTools;
 }

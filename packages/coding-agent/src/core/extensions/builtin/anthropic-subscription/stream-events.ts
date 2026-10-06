@@ -1,4 +1,4 @@
-import type { Api, AssistantMessage, AssistantMessageEventStream, Model } from "@earendil-works/pi-ai";
+import type { Api, AssistantMessage, AssistantMessageEventStream, Model, ToolCall } from "@earendil-works/pi-ai";
 import { parseStreamingJson } from "@earendil-works/pi-ai";
 import type { SDKMessage } from "./sdk-boundary.ts";
 import {
@@ -86,7 +86,7 @@ function closeContentBlock(context: StreamEventContext, event: Extract<StreamEve
 	} else if (block?.type === "toolCall") {
 		block.arguments = mapToolArguments(block.name, parseStreamingJson<Record<string, unknown>>(block.partialJson));
 		delete block.partialJson;
-		stream.push({ type: "toolcall_end", contentIndex, toolCall: block, partial: output });
+		stream.push({ type: "toolcall_end", contentIndex, toolCall: block as ToolCall, partial: output });
 	}
 	if (block) delete block.index;
 }

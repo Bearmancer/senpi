@@ -1,3 +1,4 @@
+import type { KernelPreludeContribution } from "@code-yeongyu/senpi";
 import { DEFAULT_MAX_DETACHED_CELLS, DEFAULT_RUN_BUDGET_SECONDS } from "../config/settings.ts";
 import type { EvalRuntimeInfo } from "../tool/types.ts";
 import { EVAL_PROMPT_TEMPLATE } from "./eval-prompt-template.ts";
@@ -17,6 +18,8 @@ export interface EvalPromptParts {
 
 export interface EvalPromptOptions {
 	readonly spawns: boolean;
+	/** `prompt.advertiseHelpers`: true appends one pointer line to the helper documentation entry. */
+	readonly advertiseHelpers?: boolean;
 	/** Whether the session registry exposes the monitor tool through eval. */
 	readonly monitor?: boolean;
 	readonly spawnDefaultAgent?: string;
@@ -32,6 +35,8 @@ export interface EvalPromptOptions {
 	readonly runBudgetSeconds?: number;
 	/** Global background capacity advertised to the model. */
 	readonly maxDetachedCells?: number;
+	/** Active tools' kernel globals; each documentation line joins the prelude helper list. */
+	readonly kernelPreludes?: readonly KernelPreludeContribution[];
 }
 
 /** Prompt dialect for the eval-first batching emphasis. */
@@ -71,6 +76,10 @@ export function evalEmphasisStyle(modelId: string | undefined): EvalEmphasisStyl
 type ContextValue = string | boolean;
 type Context = Readonly<Record<string, ContextValue>>;
 
+/** The single line `prompt.advertiseHelpers: true` adds; off by default, so the default description is unchanged. */
+export const ADVERTISED_HELPERS_LINE =
+	"Advanced cell helpers (handle controls, wait(), kernel tools in workpools) are documented on demand: tool_schema('eval:helpers').";
+
 export function buildEvalPrompt(
 	enabled: EnabledLanguages,
 	options: EvalPromptOptions = { spawns: false },
@@ -99,16 +108,18 @@ export function buildEvalPrompt(
 		bunSkillPath: options.bunSkillPath ?? "",
 		runBudgetSeconds: String(options.runBudgetSeconds ?? DEFAULT_RUN_BUDGET_SECONDS),
 		maxDetachedCells: String(options.maxDetachedCells ?? DEFAULT_MAX_DETACHED_CELLS),
+		kernelPreludeDocs: (options.kernelPreludes ?? []).map((prelude) => prelude.documentation).join("\n"),
 	};
-	const description = renderTemplate(EVAL_PROMPT_TEMPLATE, context)
+	const rendered = renderTemplate(EVAL_PROMPT_TEMPLATE, context)
 		.replace(/\n{3,}/g, "\n\n")
 		.trim();
+	const description = options.advertiseHelpers === true ? `${rendered}\n\n${ADVERTISED_HELPERS_LINE}` : rendered;
 	return {
 		description,
 		promptSnippet: "Run one incremental code cell in a persistent language kernel.",
 		promptGuidelines: [
 			style === "gpt" && context.monitor === true ? GPT_MONITOR_BATCHING_GUIDELINE : BATCHING_GUIDELINES[style],
-			"Use eval reset only when a language kernel must be wiped; reset is scoped to the selected language.",
+			"Use eval reset only when a language kernel must be wiped; reset is scoped to the selected language. A bracketed kernel memory notice in a result names the globals holding the most memory; drop the ones you no longer need.",
 		],
 	};
 }

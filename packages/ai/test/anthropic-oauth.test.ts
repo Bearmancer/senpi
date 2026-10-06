@@ -5,6 +5,7 @@ import type { AuthEvent, AuthPrompt } from "../src/auth/types.ts";
 
 const neverAbortedSignal = new AbortController().signal;
 const PREFERRED_CALLBACK_PORT = 53692;
+const nativeFetch = globalThis.fetch;
 
 function jsonResponse(body: unknown, status: number = 200): Response {
 	return new Response(JSON.stringify(body), {
@@ -79,6 +80,7 @@ describe("Anthropic OAuth", () => {
 				signal: neverAbortedSignal,
 				notify: (event) => events.push(event),
 				prompt: async (prompt) => {
+					if (prompt.type === "select") return "browser";
 					if (prompt.type !== "manual_code") throw new Error(`Unexpected prompt: ${prompt.type}`);
 					const authUrl = events.find((event) => event.type === "auth_url");
 					if (authUrl?.type !== "auth_url") throw new Error("Missing auth URL");
@@ -112,11 +114,15 @@ describe("Anthropic OAuth", () => {
 			signal: controller.signal,
 			notify: vi.fn(),
 			prompt: (prompt) =>
-				new Promise<string>((_resolve, reject) => {
-					promptSignal = prompt.signal;
-					prompt.signal?.addEventListener("abort", () => reject(new Error("prompt aborted")), { once: true });
-					promptOpened();
-				}),
+				prompt.type === "select"
+					? Promise.resolve("browser")
+					: new Promise<string>((_resolve, reject) => {
+							promptSignal = prompt.signal;
+							prompt.signal?.addEventListener("abort", () => reject(new Error("prompt aborted")), {
+								once: true,
+							});
+							promptOpened();
+						}),
 		});
 		const settled = login.then(
 			() => "resolved",
@@ -134,7 +140,7 @@ describe("Anthropic OAuth", () => {
 			anthropicOAuth.login({
 				signal: neverAbortedSignal,
 				notify: vi.fn(),
-				prompt: vi.fn(),
+				prompt: vi.fn(async (prompt: AuthPrompt) => (prompt.type === "select" ? "browser" : "")),
 			}),
 		).rejects.toThrow(/127\.0\.0\.1:53692/);
 	});
@@ -162,6 +168,7 @@ describe("Anthropic OAuth", () => {
 				if (event.type === "auth_url") authUrl = event.url;
 			},
 			prompt: async (prompt) => {
+				if (prompt.type === "select") return "browser";
 				if (prompt.type !== "manual_code") throw new Error(`Unexpected prompt: ${prompt.type}`);
 				const url = new URL(authUrl);
 				const state = url.searchParams.get("state");
@@ -174,6 +181,70 @@ describe("Anthropic OAuth", () => {
 		expect(credentials.access).toBe("access-token");
 		expect(credentials.refresh).toBe("refresh-token");
 		expect(fetchMock).toHaveBeenCalledOnce();
+	});
+
+	it("offers browser login first and uses the selected Anthropic copy code flow", async () => {
+		const selectPrompts: Array<{
+			message: string;
+			options: readonly { id: string; label: string }[];
+		}> = [];
+		let authUrl = "";
+		const fetchMock = vi.fn(async (input: unknown, init?: RequestInit): Promise<Response> => {
+			expect(getUrl(input)).toBe("https://platform.claude.com/v1/oauth/token");
+			const body = getJsonBody(init);
+			expect(body.grant_type).toBe("authorization_code");
+			expect(body.code).toBe("copied-code");
+			expect(body.state).toBe(new URL(authUrl).searchParams.get("state"));
+			expect(body.redirect_uri).toBe("https://platform.claude.com/oauth/code/callback");
+			return jsonResponse({
+				access_token: "access-token",
+				refresh_token: "refresh-token",
+				expires_in: 3600,
+			});
+		});
+		vi.stubGlobal("fetch", fetchMock);
+
+		const credentials = await anthropicOAuth.login({
+			signal: neverAbortedSignal,
+			notify: (event) => {
+				if (event.type === "auth_url") authUrl = event.url;
+			},
+			prompt: async (prompt) => {
+				if (prompt.type === "select") {
+					selectPrompts.push(prompt);
+					return "copy_code";
+				}
+				if (prompt.type !== "manual_code") throw new Error(`Unexpected prompt: ${prompt.type}`);
+				return `copied-code#${new URL(authUrl).searchParams.get("state")}`;
+			},
+		});
+
+		expect(credentials.access).toBe("access-token");
+		expect(credentials.refresh).toBe("refresh-token");
+		expect(new URL(authUrl).searchParams.get("redirect_uri")).toBe("https://platform.claude.com/oauth/code/callback");
+		expect(fetchMock).toHaveBeenCalledOnce();
+		expect(selectPrompts).toEqual([
+			{
+				type: "select",
+				message: "Select Anthropic login method:",
+				options: [
+					{ id: "browser", label: "Browser login (default)" },
+					{ id: "copy_code", label: "Copy code login (headless)" },
+				],
+			},
+		]);
+	});
+
+	it("cancels when Anthropic login method selection is cancelled", async () => {
+		await expect(
+			anthropicOAuth.login({
+				signal: neverAbortedSignal,
+				prompt: async () => {
+					throw new Error("Login cancelled");
+				},
+				notify: () => {},
+			}),
+		).rejects.toThrow("Login cancelled");
 	});
 
 	it("omits scope from refresh token requests", async () => {
@@ -227,6 +298,7 @@ describe("Anthropic OAuth", () => {
 			notify: (event) => events.push(event),
 			prompt: async (prompt) => {
 				prompts.push(prompt);
+				if (prompt.type === "select") return "browser";
 				if (prompt.type === "manual_code") {
 					manualSignal = prompt.signal;
 					return "the-code";
@@ -241,6 +313,46 @@ describe("Anthropic OAuth", () => {
 		expect(prompts.some((p) => p.type === "manual_code")).toBe(true);
 		// the prompt's signal is aborted once login settles, so UIs can dismiss it
 		expect(manualSignal?.aborted).toBe(true);
+	});
+
+	it("completes login through the browser callback and shows the sign-in page", async () => {
+		let exchangedCode: string | undefined;
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async (input: unknown, init?: RequestInit): Promise<Response> => {
+				if (getUrl(input) !== "https://platform.claude.com/v1/oauth/token")
+					return nativeFetch(input as string, init);
+				exchangedCode = getJsonBody(init).code;
+				return jsonResponse({ access_token: "access", refresh_token: "refresh", expires_in: 3600 });
+			}),
+		);
+
+		let callbackPage: Promise<Response> | undefined;
+		const credential = await anthropicOAuth.login({
+			signal: neverAbortedSignal,
+			notify: (event) => {
+				if (event.type !== "auth_url") return;
+				const authUrl = new URL(event.url);
+				const state = authUrl.searchParams.get("state") ?? "";
+				// The fork listener binds 53692 or an ephemeral port and advertises it in redirect_uri.
+				const redirectUri = new URL(authUrl.searchParams.get("redirect_uri") ?? "");
+				callbackPage = nativeFetch(
+					`http://127.0.0.1:${redirectUri.port}${redirectUri.pathname}?code=browser-code&state=${state}`,
+				);
+			},
+			prompt: (prompt) =>
+				prompt.type === "select"
+					? Promise.resolve("browser")
+					: new Promise((_, reject) => {
+							prompt.signal?.addEventListener("abort", () => reject(new Error("aborted")), { once: true });
+						}),
+		});
+
+		expect(credential.access).toBe("access");
+		expect(exchangedCode).toBe("browser-code");
+		const response = await callbackPage;
+		expect(response?.status).toBe(200);
+		expect(await response?.text()).toContain("Anthropic authentication completed.");
 	});
 });
 
@@ -273,6 +385,7 @@ function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
 
 /** A manual-code prompt that stays open until the login aborts it. */
 function pendingPrompt(prompt: AuthPrompt): Promise<string> {
+	if (prompt.type === "select") return Promise.resolve("browser");
 	return new Promise<string>((_resolve, reject) => {
 		prompt.signal?.addEventListener("abort", () => reject(new Error("prompt aborted")), { once: true });
 	});

@@ -1,3 +1,153 @@
+## 2026-10-02 - `host handoff --when idle` flags (desktop #1364)
+
+### What changed
+
+- `packages/coding-agent/src/cli/host-command.ts`: `host handoff` parses `--when idle --operation <id> --if-instance <id> --if-generation <n> --target-build <id>` (all five together, else a usage error) into the conditional idle handover terms of `HostRequest`.
+
+### Why
+
+The desktop asks the engine to replace a host on another runtime at its next idle point (see `src/modes/rpc/changes.md`, same date).
+
+### Why an extension could not handle it
+
+`senpi host` is the core host lifecycle command.
+
+### Expected merge conflict zones
+
+- Fork-only file. The handoff case of `hostRequest` and the flag loop of `parseHostArgs`.
+
+## 2026-09-30 - Sync with upstream v0.99.1 (6a4af07d6): settings, entrypoints and resource loading
+
+### What changed
+
+- `packages/coding-agent/src/cli/args.ts`: `packages/coding-agent/src/cli/args.ts`: upstream `--mode` validation diagnostics (#9045), `builtin:<name>` help text, `META_API_KEY` (D-8) adopted; upstream `mcp <command>` help lines removed (no fork `mcp` subcommand).
+- `packages/coding-agent/src/cli/startup-ui.ts`: Silent rows read and accepted as merged: `cli/startup-ui.ts` (system theme startup, D-14), `core/keybindings.ts` (descriptions), `core/prompt-templates.ts` (diagnostics result), `core/trust-manager.ts` (adds `mcp.json`; the fork MCP reads project `.senpi/mcp.json`; the `.pi` legacy-trust fix is untouched), `experimental/process.ts` (`--import` URL), `package-manager-cli.ts` (builtin names into config), tests `args`, `package-manager`, `stdout-cleanliness`, `5943-session-start-notify`.
+
+### Why
+
+Upstream v0.99.1 settings/resource-loading features are adopted where they carry no excluded subsystem; D-2/D-5/D-6 exclusions remove codemode, MCP, tool-search, cache-warming and /bug surfaces; fork runtime contracts (tool defaults, loader ordering, global-default shims, session profiles) win on conflict.
+
+### Why an extension could not handle it
+
+Settings layering, resource/extension resolution, the package barrel and CLI entrypoints are core loader/bootstrap code that runs before any extension loads.
+
+### Expected merge conflict zones
+
+`settings-manager.ts` Settings interface + deepMergeSettings + getDefaultTools; `resource-loader.ts` constructor, loadCurrentExtensionSet, loadExtensionPaths, loadFinalExtensionSet; `index.ts` extension type export block; `main.ts` createCliRuntimeFactory diagnostics; upstream re-adding cacheWarming/codemode/mcp settings or exports.
+
+## 2026-09-29 - Help-flag extension loading drops `sharedHostEnabled` (senpi#2328)
+
+### What changed
+
+- `packages/coding-agent/src/cli/help-extension-flags.ts`: `resolveHelpExtensionFlags` no longer passes `sharedHostEnabled: false` to `DefaultResourceLoader`; the option is removed (`src/core/changes.md`, same date).
+
+### Why
+
+- `pi.sharedHostEnabled` is removed from the extension API with the interactive shared-host join (senpi#2328).
+
+### Why an extension could not handle it
+
+- The help path constructs the resource loader before any extension loads.
+
+### Expected merge conflict zones
+
+- LOW: the `DefaultResourceLoader` options literal in `help-extension-flags.ts`.
+
+## 2026-09-28 - `app-server --extension` in the help text (omo#9117)
+
+### What changed
+
+- `packages/coding-agent/src/cli/args.ts`: the `app-server` and `app-server daemon` lines of `printHelp` list `[--extension <path>]...`.
+
+### Why
+
+- `app-server` now loads `--extension` sources into every thread (`src/modes/app-server/changes.md`, same date); the command list should show the flag.
+
+### Why an extension could not handle it
+
+- The command list is printed by the CLI parser before any extension loads.
+
+### Expected merge conflict zones
+
+- LOW: the two `app-server` help lines in `args.ts`.
+
+## 2026-09-27 - `senpi schedule` command for durable scheduled prompts
+
+### What changed
+
+- `packages/coding-agent/src/cli/schedule-command.ts` (new): `senpi schedule list [--json]`, `cancel <id>`, and `run [--watch] [--exec <command>] [--poll-seconds <n>] [--timeout-seconds <n>] [--concurrency <n>]` over the job files of the builtin `schedule` extension (`core/extensions/builtin/schedule/`). Every runner holds a lease with a 30s heartbeat (`schedule/runners/<pid>.json`); `--watch` is woken by new jobs through a `pending/` watch and stops cleanly on SIGTERM/SIGINT. `run` prints one JSON line per event; usage errors exit 2; a failed one-shot delivery exits 1.
+- `packages/coding-agent/src/cli/schedule-watch.ts` (new): the runner process - lease, heartbeat (a failing refresh prints one `lease_error`), `pending/` watch, signal handling, event lines.
+- `packages/coding-agent/src/cli/schedule-delivery.ts` (new): the `--exec` hook and `senpi -p --session` deliveries (on POSIX each waits on an fd-3 gate until its pid is recorded in the session lock and leads its own process group; a timeout kills the group, or the tree via `taskkill /T` on Windows, and is reported only after the process exits) and the open-session deferral.
+- `packages/coding-agent/src/cli/schedule-runner.ts` (new): one runner pass - each job is delivered under its session's cross-process delivery lock - - recover occurrences whose runner died (to `failed/`, never retried), then claim and deliver due jobs concurrently across sessions and one at a time within a session, re-arming recurring jobs before delivery. Deliveries: `--exec` hook (event JSON on stdin) or `senpi -p --session` resume, which defers while `liveSessionHolders` reports another process on the session file.
+- `packages/coding-agent/src/cli/deferred-commands.ts`: `SCHEDULE_COMMAND_ARGV` plus `dispatchScheduleCommand(args)`, an exit-code dispatch shaped like `dispatchHostCommand`.
+- `packages/coding-agent/src/cli/args.ts`: one `Commands:` line in `printHelp` for `schedule`, beside `host`.
+
+### Why
+
+- `/loop` keeps its timers in the session process and refuses `--print`, so a headless run (a chat bridge that runs one `senpi -p` per message) could not schedule anything. Scheduled prompts are now files, and this command is the out-of-process runner that fires them.
+
+### Why an extension could not handle it
+
+- The runner has to outlive every session process, and CLI commands are routed before extensions load.
+
+### Expected merge conflict zones
+
+- LOW: one help line in `args.ts`; the tail of `deferred-commands.ts`.
+
+## 2026-09-28 - `host shard-path|gc` in the help text (senpi#2245)
+
+### What changed
+
+- `packages/coding-agent/src/cli/args.ts`: the `host` line in the Commands section lists `<ensure|status|stop|handoff|shard-path|gc>`, matching the subcommands `senpi host` accepts.
+
+### Why
+
+- `shard-path` and `gc` are commands clients are told to call, so `--help` has to name them like the `host` usage text does.
+
+### Why an extension could not handle it
+
+- The help text is built by the CLI before any extension is loaded.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/cli/args.ts`: the `host` line of the Commands help block, beside `app-server daemon`.
+
+## 2026-09-27 - `models discover` in the help text (senpi#2196)
+
+### What changed
+
+- `packages/coding-agent/src/cli/args.ts`: the Commands section lists `senpi models discover <provider>` after `config`.
+
+### Why
+
+- The new subcommand has to be discoverable from `--help`.
+
+### Why an extension could not handle it
+
+- The help text is built by the CLI before any extension is loaded.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/cli/args.ts`: the Commands help block after the `config` line.
+
+## 2026-09-27 - --rebind <path|id> (senpi#2181)
+
+### What changed
+
+- `packages/coding-agent/src/cli/args.ts`: parses `--rebind <path|id>` into `Args.rebind` and lists it in the help text beside `--fork`.
+
+### Why
+
+- Scripts need a non-interactive way to move a session of a moved or re-cloned repository into the current directory; the interactive prompt alone cannot serve them.
+
+### Why an extension could not handle it
+
+- CLI argument parsing and session resolution run before any extension is loaded.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/cli/args.ts`: `Args` (after `fork`), the `--fork` parse branch, and the `--fork` help line.
+
 ## 2026-09-22 - --provider rejects a typed legacy provider id (senpi#1989)
 
 ### What changed
@@ -534,3 +684,21 @@ The divergence lives in core wiring, package identity, or build plumbing that ex
 ### Expected merge conflict zones
 
 - LOW: the `new TUI(...)`/`new ProcessTerminal(...)` construction in `showConfigSelector`.
+
+## Adopted upstream v1.0.0 CLI argument handling (2026-10-02)
+
+### What changed
+
+- `packages/coding-agent/src/cli/args.ts` — upstream argument parsing with the fork's rule that `--provider` requires `--model` (D-7).
+
+### Why
+
+The `--provider`/`--model` pairing is a fork behaviour; upstream's parser changes are adopted underneath it.
+
+### Why an extension could not handle it
+
+CLI argument semantics live in the executable entry, below any extension hook.
+
+### Expected merge conflict zones
+
+Upstream edits to cli/args.ts at the next sync.

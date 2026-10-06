@@ -1,3 +1,39 @@
+## 2026-10-05 - /btw renders its answer as Markdown
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/btw/panel.ts`: the panel body is split into a header `Text` (the question), a `Markdown` component for the answer using `getMarkdownTheme()` (the theme assistant messages use), and a footer `Text` (status line). The header and footer strings are unchanged apart from dropping the leading newline that used to separate them inside one `Text`.
+
+### Why
+
+- The answer was concatenated into a single `Text`, so headings, bold, inline code, lists, and code fences showed as raw `##`, `**`, and backticks while the same reply in the main transcript renders formatted.
+
+### Why an extension could not handle it
+
+- The widget is private to this builtin command.
+
+### Expected merge conflict zones
+
+- LOW: `panel.ts` constructor children and `repaint()`.
+
+## 2026-09-28 - /btw uses the credential's own API host (senpi#2309)
+
+### What changed
+
+- `btw/index.ts`: the side query's model carries `auth.baseUrl` from `getApiKeyAndHeaders` when the credential names one, since the explicit key passed to `runSideQuery` otherwise skips the runtime's per-credential host.
+
+### Why
+
+- A GitHub Copilot Business or Enterprise account is served from its own API host; the individual catalog host refuses its requests with `421 Misdirected Request` (omo#8662). The session's chat requests already honoured the credential's host, this path did not.
+
+### Why an extension could not handle it
+
+- The fix is inside this builtin's own request construction.
+
+### Expected merge conflict zones
+
+- LOW: the `runSideQuery` call in `btw/index.ts`.
+
 # changes — btw
 
 ## 2026-09-13 - Explicit off switch: bare /btw and kitty-safe Escape

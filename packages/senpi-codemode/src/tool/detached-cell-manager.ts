@@ -1,4 +1,6 @@
+import { join } from "node:path";
 import type { AgentToolResult } from "@code-yeongyu/senpi";
+import { DEFAULT_RETAINED_IMAGES_MB, DEFAULT_RETAINED_RESULTS_MB } from "../config/memory-settings.ts";
 import {
 	DEFAULT_HARD_LIMIT_SECONDS,
 	DEFAULT_MAX_DETACHED_CELLS,
@@ -20,6 +22,7 @@ import {
 import { detachedStatusEntries, detachedWakeSourceState } from "./detached-cell-status.ts";
 import { DetachedNotificationQueue } from "./detached-notification-queue.ts";
 import { createManagedCell, type LiveResultProvider, type ManagedCell } from "./managed-cell.ts";
+import { SettledImageSpill } from "./settled-image-spill.ts";
 import { TerminalSnapshotStore } from "./terminal-snapshot-store.ts";
 import type { EvalKernel, EvalLanguage, EvalToolDetails, EvalToolInput } from "./types.ts";
 
@@ -38,7 +41,7 @@ export class EvalDetachedCellManager {
 	readonly #onWakeSourceState: ((state: WakeSourceState) => void) | undefined;
 	readonly #cells = new Map<string, ManagedCell>();
 	readonly #detached = new Map<string, ManagedCell>();
-	readonly #terminalSnapshots = new TerminalSnapshotStore();
+	readonly #terminalSnapshots: TerminalSnapshotStore;
 	readonly #notificationQueue: DetachedNotificationQueue;
 	readonly #now: () => number;
 	readonly #hardLimitSeconds: number;
@@ -54,6 +57,18 @@ export class EvalDetachedCellManager {
 		this.#hardLimitSeconds = options.hardLimitSeconds ?? DEFAULT_HARD_LIMIT_SECONDS;
 		this.#runBudgetSeconds = options.runBudgetSeconds ?? DEFAULT_RUN_BUDGET_SECONDS;
 		this.#maxDetachedCells = options.maxDetachedCells ?? DEFAULT_MAX_DETACHED_CELLS;
+		const artifactsDir = options.artifactsDir;
+		this.#terminalSnapshots = new TerminalSnapshotStore({
+			byteBudget: options.retainedResultsBytes ?? DEFAULT_RETAINED_RESULTS_MB * 1024 * 1024,
+			...(artifactsDir === undefined
+				? {}
+				: {
+						spill: new SettledImageSpill({
+							dir: join(artifactsDir, "settled-images"),
+							byteBudget: options.retainedImagesBytes ?? DEFAULT_RETAINED_IMAGES_MB * 1024 * 1024,
+						}),
+					}),
+		});
 	}
 
 	get maxDetachedCells(): number {

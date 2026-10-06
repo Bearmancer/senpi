@@ -4,8 +4,8 @@ import type { Credential } from "@earendil-works/pi-ai";
 import { rendezvousOrder } from "@earendil-works/pi-ai/auth/pool/select";
 import { accountLabel, listSlots } from "@earendil-works/pi-ai/auth/pool/slots";
 import { type Component, stripTerminalSequences, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import type { AgentSession } from "../../../core/agent-session.ts";
 import type { ReadonlyFooterDataProvider } from "../../../core/footer-data-provider.ts";
-import type { InteractiveSession } from "../interactive-host-runtime.ts";
 import { theme } from "../theme/theme.ts";
 import { type FooterSegment, planFooterLayout } from "./footer-layout.ts";
 
@@ -123,17 +123,17 @@ function colorRightSide(runs: readonly RightSideRun[], plain: string): string {
  * Computes token/context stats from session, gets git branch and extension statuses from provider.
  */
 export class FooterComponent implements Component {
-	private session: InteractiveSession;
+	private session: AgentSession;
 	private footerData: ReadonlyFooterDataProvider;
 	private autoCompactEnabled = true;
 	private compactionDelegated = false;
 
-	constructor(session: InteractiveSession, footerData: ReadonlyFooterDataProvider) {
+	constructor(session: AgentSession, footerData: ReadonlyFooterDataProvider) {
 		this.session = session;
 		this.footerData = footerData;
 	}
 
-	setSession(session: InteractiveSession): void {
+	setSession(session: AgentSession): void {
 		this.session = session;
 	}
 
@@ -257,6 +257,15 @@ export class FooterComponent implements Component {
 			{ text: modelName, color: "accent" as const },
 			...(thinkingSuffix ? [{ text: thinkingSuffix, color: "dim" as const }] : []),
 		];
+		// A virtual model routes each request; show where the latest response went.
+		const routed = this.session.routedModel;
+		if (routed) {
+			const routedSuffix = ` → ${routed.model.id}`;
+			const routedLevel = routed.thinkingLevel ? `:${routed.thinkingLevel}` : "";
+			minimalRight += `${routedSuffix}${routedLevel}`;
+			modelRuns.push({ text: routedSuffix, color: "accent" });
+			if (routedLevel) modelRuns.push({ text: routedLevel, color: "dim" });
+		}
 		const minimal: FooterSegment = { plain: minimalRight, colored: colorRightSide(modelRuns, minimalRight) };
 		let accountSuffix = "";
 		if (state.model) {

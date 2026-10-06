@@ -1,3 +1,4 @@
+import { normalizeContext } from "@earendil-works/pi-ai";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 beforeEach(() => vi.resetModules());
@@ -31,7 +32,10 @@ describe("Bun runtime module registration", () => {
 		compat.setDevinAgentProviderModule(devin);
 		// When
 		registerBunRuntimeModules();
-		await compat.bedrockConverseStreamApi().streamSimple(bedrock.getModel(), { messages: [] }).result();
+		await compat
+			.bedrockConverseStreamApi()
+			.streamSimple(bedrock.getModel(), normalizeContext({ messages: [] }))
+			.result();
 		// Then
 		expect(bedrock.getCallLog()).toHaveLength(1);
 		expect(await compat.loadCursorAgentModule()).toBe(cursor);
