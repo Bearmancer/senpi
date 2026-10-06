@@ -1,4 +1,4 @@
-import { visibleWidth } from "@code-yeongyu/senpi";
+import { sanitizeTerminalLabel, visibleWidth } from "@code-yeongyu/senpi";
 import { type EvalCellResult, type EvalLanguage, evalLanguageOrder } from "./types.ts";
 
 const HEADLINED_STATUSES: ReadonlySet<EvalCellResult["status"]> = new Set(["pending", "queued", "running", "detached"]);
@@ -16,14 +16,16 @@ export function leadsWithHeadline(status: EvalCellResult["status"]): boolean {
 /**
  * What an in-progress cell is doing, in one line: its summary, or else the first non-blank line of its code (the
  * oh-my-pi fallback), or an ellipsis while the arguments are still streaming in. Collapsed rows cut it to
- * `maxCells` screen cells (a wide character takes two), so the headline stays one line.
+ * `maxCells` screen cells (a wide character takes two), so the headline stays one line. Whichever is chosen is
+ * sanitized before it is measured, so escape and control characters never reach the row (senpi#2831, senpi#2839).
  */
 export function liveHeadline(
 	summary: string | undefined,
 	code: string | undefined,
 	maxCells: number | undefined,
 ): string {
-	const text = summary?.trim() || firstCodeLine(code) || "…";
+	const clean = (value: string | undefined) => (value === undefined ? "" : sanitizeTerminalLabel(value));
+	const text = clean(summary) || clean(firstCodeLine(code)) || "…";
 	const limit = maxCells === undefined ? undefined : Math.max(MIN_HEADLINE_CELLS, maxCells);
 	if (limit === undefined || visibleWidth(text) <= limit) return text;
 	return `${cellPrefix(text, limit - 1)}…`;

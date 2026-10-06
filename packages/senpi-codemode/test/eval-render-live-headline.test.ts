@@ -125,4 +125,12 @@ describe("live eval rows stay one clean line (senpi#2831)", () => {
 		expect(renderCall({ action: "stop" } as never)).toEqual(["eval stop"]);
 		expect(renderCall({ action: "peek", cell_id: "toolu_A" } as never)).toEqual(["eval peek toolu_A"]);
 	});
+
+	it("Given a cell without a summary whose first code line carries escape and control characters when its live row renders then the row is one clean line (senpi#2839)", () => {
+		const lines = render(liveResult({ code: "\u001b[31mawait step()\u001b[0m\rhidden\tmore\nsecond()", output: "" }));
+
+		expect(lines).toHaveLength(1);
+		expect(lines[0]).not.toMatch(/[\u001b\r\t]/u);
+		expect(lines[0]).toMatch(/^╶─ . .*await step\(\).*hidden.*more · eval js running/u);
+	});
 });

@@ -1162,6 +1162,12 @@
 			],
 			"changes": [],
 			"reason": "senpi#2831 (follow-ups from #2810's review): pins that a live row's summary is sanitized to one clean line, that the collapsed headline is measured and cut in screen cells so a wide-character summary stays on one line, and that a streaming peek/stop without its cell id renders the action alone instead of 'undefined'."
+		},
+		"senpi#2839": {
+			"additions": [
+				"legacyContracts/test/eval-render-live-headline.test.ts/live eval rows stay one clean line (senpi#2831) Given a cell without a summary whose first code line carries escape and control characters when its live row renders then the row is one clean line (senpi#2839)"
+			],
+			"reason": "senpi#2839: a live eval row sanitizes its code-line headline (the summary-less fallback) before measuring it; the contract fails before the change."
 		}
 	}
 }
