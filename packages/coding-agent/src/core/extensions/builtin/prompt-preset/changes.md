@@ -1,23 +1,5 @@
 # prompt-preset Extension Changes
 
-## 2026-10-06 - VERIFICATION_ONCE names the interactive-wait case (senpi#2796)
-
-### What changed
-
-- `packages/coding-agent/src/core/extensions/builtin/prompt-preset/gpt-6-astra.ts`: `VERIFICATION_ONCE` gains one sentence: without an active goal the user is waiting in the conversation, so the narrow checks run now and the broad ones wait for finalize or an explicit ask. Nothing else in the preset changes.
-
-### Why
-
-- The rule said what to run once but not when. In an interactive session Astra ran the broad checks before replying to a request that only needed a result; the Codex template carries the same calibration ("hold off on running tests until the user is ready for you to finalize").
-
-### Why an extension could not handle it
-
-- The sentence is part of the preset core.
-
-### Expected merge conflict zones
-
-- `gpt-6-astra.ts`: the `VERIFICATION_ONCE` constant.
-
 ## 2026-10-04 - Routing and handoff format examples are no longer markdown quote lines (senpi#2714)
 
 ### What changed

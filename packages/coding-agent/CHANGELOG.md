@@ -8,7 +8,7 @@
 
 ### Changed
 
-- A GPT-6 Astra session receives a goal continuation prompt that carries the goal contract only (objective, legal turn endings, blocked floor); the completion audit, no-progress check and usage lines are no longer sent to that model. Every other model keeps the full prompt. The GPT-6 Astra preset's verification rule names the interactive case: without an active goal, narrow checks run now and broad ones wait for finalize or an explicit ask ([#2796](https://github.com/code-yeongyu/senpi/issues/2796)).
+- A GPT-6 Astra session receives a goal continuation prompt that carries the goal contract only (objective, legal turn endings, blocked floor); the completion audit, no-progress check and usage lines are no longer sent to that model. Every other model keeps the full prompt ([#2796](https://github.com/code-yeongyu/senpi/issues/2796)).
 
 ### Fixed
 
