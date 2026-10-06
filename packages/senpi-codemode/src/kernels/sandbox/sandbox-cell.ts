@@ -1,4 +1,3 @@
-import { createRequire } from "node:module";
 import type { ResolvedSandbox } from "../../config/feature-settings.ts";
 import { marshalToolResult } from "../../tool/image.ts";
 import type { EvalRuntimeInfo, ExecuteTool, HostCellExecutor } from "../../tool/types.ts";
@@ -22,7 +21,10 @@ export interface SandboxCellOptions {
 export function sandboxRuntimeInfo(): EvalRuntimeInfo {
 	let version = "unavailable";
 	try {
-		const manifest: unknown = createRequire(import.meta.url)("quickjs-wasi/package.json");
+		// getBuiltinModule, not a static import: node:module would otherwise load with the extension.
+		const manifest: unknown = process.getBuiltinModule("node:module").createRequire(import.meta.url)(
+			"quickjs-wasi/package.json",
+		);
 		if (
 			typeof manifest === "object" &&
 			manifest !== null &&
