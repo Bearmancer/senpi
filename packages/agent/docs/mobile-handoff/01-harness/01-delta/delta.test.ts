@@ -244,8 +244,11 @@ describe("dead-op elimination", () => {
 	it("is linear in the number of ops", () => {
 		// The naive formulation compares every op against every dominator, which
 		// is quadratic and degrades on exactly the wide flush this pass cleans up.
-		// #2026: count dominator-map lookups rather than wall-clock time, which
-		// varies with machine load even when the implementation is linear.
+		// #2026: count dominator-map lookups and iteration steps rather than
+		// wall-clock time, which varies with machine load even when the
+		// implementation is linear. Iteration steps catch a pass that scans the
+		// whole dominator map instead of looking up each prefix.
+		const mapIterator = Object.getPrototypeOf(new Map().entries()) as { next(): unknown };
 		const wide = (n: number) => {
 			const root: Record<string, number> = {};
 			for (let i = 0; i < n; i++) root[`f${i}`] = i;
@@ -254,14 +257,16 @@ describe("dead-op elimination", () => {
 			for (let i = 0; i < n; i++) t.state[`f${i}`] = i + 1;
 			const get = vi.spyOn(Map.prototype, "get");
 			const has = vi.spyOn(Map.prototype, "has");
+			const step = vi.spyOn(mapIterator, "next");
 			let ops: Op[];
 			let lookups: number;
 			try {
 				ops = t.flush();
-				lookups = get.mock.calls.length + has.mock.calls.length;
+				lookups = get.mock.calls.length + has.mock.calls.length + step.mock.calls.length;
 			} finally {
 				get.mockRestore();
 				has.mockRestore();
+				step.mockRestore();
 			}
 			expect(ops).toHaveLength(n);
 			expect(ops[0]).toEqual(["s", ["f0"], 1]);
