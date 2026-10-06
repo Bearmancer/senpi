@@ -1,9 +1,9 @@
 import { createRequire, isBuiltin } from "node:module";
 
-// `require` in a cell resolves the way `import` does there: relative paths from the cell's directory, bare packages
-// from the session's project first and then its managed package environment (%bun add / %npm add), builtins natively.
-// It uses the runtime's own CommonJS loader, so JSON files and the `require` export conditions behave as in Node.
-// Like Node's own `require`, it carries `resolve`, `resolve.paths` and `cache`, all following that same order.
+// `require` in a cell resolves the way `import` does there: builtins natively, relative paths from the cell's
+// directory, bare packages from the session's project first and then its managed package environment
+// (%bun add / %npm add). It uses the runtime's own CommonJS loader, so JSON files and the `require` export conditions
+// behave as in Node. Like Node's own `require`, it carries `resolve`, `resolve.paths` and `cache`.
 export function createCellRequire(context) {
 	const requirers = () => {
 		const { cwdUrl, packageRootUrl } = context();
@@ -12,38 +12,36 @@ export function createCellRequire(context) {
 		return { fromCwd, fromPackages };
 	};
 	const isPathLike = (name) => name.startsWith(".") || name.startsWith("/") || /^[A-Za-z]:[\\/]/.test(name);
-	// The project first; a bare name it does not have falls back to the managed environment, and a miss there reports
-	// the project's own not-found error, which names the module and where it looked first.
-	const firstFound = (name, use) => {
+	// The one lookup both the call and `resolve` use, so they can never pick different copies of a package. Builtins
+	// (`fs`, `node:fs`, Bun's `bun:sqlite`) and paths resolve natively; a bare name the project does not have falls
+	// back to the managed environment, and a miss there reports the project's own not-found error.
+	const resolve = function resolve(specifier, options) {
+		const name = String(specifier);
 		const { fromCwd, fromPackages } = requirers();
-		if (isPathLike(name) || fromPackages === undefined) return use(fromCwd);
+		if (isBuiltin(name) || isPathLike(name) || fromPackages === undefined || options?.paths !== undefined) {
+			return fromCwd.resolve(name, options);
+		}
 		try {
-			return use(fromCwd);
+			return fromCwd.resolve(name, options);
 		} catch (error) {
 			if (error?.code !== "MODULE_NOT_FOUND") throw error;
 			try {
-				return use(fromPackages);
+				return fromPackages.resolve(name, options);
 			} catch (fallback) {
 				throw fallback?.code === "MODULE_NOT_FOUND" ? error : fallback;
 			}
 		}
 	};
-	const require = function require(specifier) {
-		const name = String(specifier);
-		if (name.startsWith("node:") || isBuiltin(name)) return process.getBuiltinModule(name);
-		return firstFound(name, (load) => load(name));
-	};
-	const resolve = function resolve(specifier, options) {
-		const name = String(specifier);
-		if (name.startsWith("node:") || isBuiltin(name)) return name.startsWith("node:") ? name : `node:${name}`;
-		return firstFound(name, (load) => load.resolve(name, options));
-	};
 	resolve.paths = (specifier) => {
 		const name = String(specifier);
-		if (name.startsWith("node:") || isBuiltin(name)) return null;
 		const { fromCwd, fromPackages } = requirers();
-		const paths = fromCwd.resolve.paths(name) ?? [];
-		return fromPackages === undefined || isPathLike(name) ? paths : [...paths, ...(fromPackages.resolve.paths(name) ?? [])];
+		const own = fromCwd.resolve.paths(name);
+		if (own === null || fromPackages === undefined || isPathLike(name)) return own;
+		return [...new Set([...own, ...(fromPackages.resolve.paths(name) ?? [])])];
+	};
+	// The call loads exactly what `resolve` names: a builtin id or an absolute file, through the runtime's loader.
+	const require = function require(specifier) {
+		return requirers().fromCwd(resolve(specifier));
 	};
 	require.resolve = resolve;
 	// One CommonJS cache per runtime: the cell's view is the loader's own, so deleting an entry forces a reload.

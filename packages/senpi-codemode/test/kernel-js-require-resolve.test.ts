@@ -93,3 +93,22 @@ describe.each(modes)("the cell-global require in %s mode (senpi#2832)", (_mode, 
 		expect(parseJavaScriptResult(run.result)).toEqual([true, "object", true]);
 	});
 });
+
+describe.skipIf(bun === undefined)("the cell-global require under Bun, the product's runtime (senpi#2832)", () => {
+	it("Given a Bun builtin when a process-mode cell resolves and requires it then the id is Bun's own and it loads", async () => {
+		const cwd = await project();
+		const kernel = new JavaScriptKernel({
+			sessionId: `require-${crypto.randomUUID()}`,
+			cwd,
+			parallelPoolWidth: 2,
+			isolation: "process",
+			processExecPath: bun ?? "bun",
+		});
+		kernels.add(kernel);
+		const run = await runJavaScriptCell(
+			kernel,
+			'return [require.resolve("bun:sqlite"), typeof require(require.resolve("bun:sqlite")).Database]',
+		);
+		expect(parseJavaScriptResult(run.result)).toEqual(["bun:sqlite", "function"]);
+	});
+});
