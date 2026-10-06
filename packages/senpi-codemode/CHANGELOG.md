@@ -48,6 +48,8 @@
 
 ### Fixed
 
+- A detached eval cell's completion notification now carries up to 8 KB of its output instead of a 512-byte tail. Longer output keeps the head and the tail around a marker that says how many lines and bytes were elided and where the full output was written, and images the cell displayed are delivered with the notification ([#2789](https://github.com/code-yeongyu/senpi/issues/2789)).
+
 ### Removed
 
 ## [2026.10.10-2] - 2026-10-05

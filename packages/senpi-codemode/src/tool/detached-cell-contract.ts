@@ -1,4 +1,4 @@
-import type { AgentToolResult } from "@code-yeongyu/senpi";
+import type { AgentToolResult, ImageContent } from "@code-yeongyu/senpi";
 import type { WakeSourceState } from "../extension/wake-source-state.ts";
 import type { EvalLanguage, EvalToolDetails } from "./types.ts";
 
@@ -24,6 +24,8 @@ export interface EvalDetachedCellSnapshot {
 export interface EvalDetachedCellNotification {
 	readonly cellId: string;
 	readonly content: string;
+	/** Images the cell displayed, delivered with the notification the way a foreground result delivers them. */
+	readonly images?: readonly ImageContent[];
 }
 
 export interface EvalDetachedCellNotifier {

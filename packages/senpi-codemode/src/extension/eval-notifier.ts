@@ -1,4 +1,4 @@
-import type { ExtensionContext } from "@code-yeongyu/senpi";
+import type { ExtensionContext, ImageContent, TextContent } from "@code-yeongyu/senpi";
 import type { EvalDetachedCellNotification, EvalDetachedCellNotifier } from "../tool/detached-cell-manager.ts";
 
 const NON_INTERACTIVE_MODES = new Set(["print", "json"]);
@@ -11,7 +11,7 @@ export type EvalNotifyMode = "wake" | "next-turn" | "off";
 export interface EvalNotifierDeps {
 	/** Deliver a model-visible notification without rendering synthetic user input. */
 	readonly sendMessage: (
-		message: { customType: string; content: string; display: boolean },
+		message: { customType: string; content: string | (TextContent | ImageContent)[]; display: boolean },
 		options: { triggerTurn: boolean; deliverAs: "steer" | "followUp" },
 	) => void;
 	readonly getContext: () => ExtensionContext | undefined;
@@ -43,10 +43,16 @@ export class EvalNotifier implements EvalDetachedCellNotifier {
 		this.#deps.sendMessage(
 			{
 				customType: EVAL_NOTIFICATION_CUSTOM_TYPE,
-				content: pending.map((cell) => cell.content).join("\n\n"),
+				content: notificationContent(pending),
 				display: false,
 			},
 			{ triggerTurn: true, deliverAs: mode === "wake" ? "steer" : "followUp" },
 		);
 	}
+}
+
+function notificationContent(cells: readonly EvalDetachedCellNotification[]): string | (TextContent | ImageContent)[] {
+	const text = cells.map((cell) => cell.content).join("\n\n");
+	const images = cells.flatMap((cell) => cell.images ?? []);
+	return images.length === 0 ? text : [{ type: "text", text }, ...images];
 }

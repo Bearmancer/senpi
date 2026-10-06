@@ -1070,6 +1070,15 @@
 					"reason": "senpi#2802: an in-progress eval row now leads with the cell's summary on its header line instead of the summary line plus code below it; the same coverage moves to the renamed contract listed under additions."
 				}
 			]
+		},
+		"senpi#2789": {
+			"additions": [
+				"legacyContracts/test/detached-cell-notification-budget.test.ts/detached cell notification budget Given a detached cell whose output is a few kilobytes when it completes then the notification carries all of it",
+				"legacyContracts/test/detached-cell-notification-budget.test.ts/detached cell notification budget Given a detached cell whose output exceeds the budget when it completes then the notification keeps the head and the tail and says how much was elided",
+				"legacyContracts/test/detached-cell-notification-budget.test.ts/detached cell notification budget Given an over-budget notification when it is built then the outcome line and the kernel-state note survive",
+				"legacyContracts/test/detached-cell-notification-budget.test.ts/detached cell notification budget Given a detached cell that displayed an image when it completes then the notification delivers the image"
+			],
+			"reason": "senpi#2789: a detached cell's completion notification carries up to 8 KB of output (the foreground budget; oh-my-pi keeps 8 KB), keeps the head and the tail with an exact elision marker and the spill path when it is larger, keeps the outcome line and kernel-state note, and delivers the cell's images. The new contracts fail on main (512-byte tail only, no images) and pass here."
 		}
 	}
 }

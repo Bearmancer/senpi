@@ -380,7 +380,13 @@ describe("eval detached cells", () => {
 		directories.push(artifactsDir);
 		const recorder = new NotificationRecorder();
 		const manager = new EvalDetachedCellManager({ artifactsDir, notifier: recorder });
-		const kernel = new FakeKernel([{ type: "text", stream: "stdout", data: `${"x".repeat(3_000)}\nlast tail\n` }]);
+		const kernel = new FakeKernel([
+			{
+				type: "text",
+				stream: "stdout",
+				data: `${Array.from({ length: 400 }, (_, i) => `row ${i} ${"x".repeat(40)}`).join("\n")}\nlast tail\n`,
+			},
+		]);
 		const tool = createTool(manager, [["js", kernel]]);
 
 		await detach(tool, kernel, "crashed-detached");
