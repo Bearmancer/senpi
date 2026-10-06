@@ -1121,7 +1121,9 @@
 				"legacyContracts/test/js-kernel-stop-keeps-state.test.ts/JavaScriptKernel stop on a free event loop Given a polling loop on node:timers/promises when stopped then it stops ticking and earlier globals survive",
 				"legacyContracts/test/js-kernel-stop-keeps-state.test.ts/JavaScriptKernel stop on a free event loop Given a polling loop on setInterval when stopped then it stops ticking and earlier globals survive",
 				"legacyContracts/test/js-kernel-stop-keeps-state.test.ts/JavaScriptKernel stop on a free event loop Given a stopped cell that left a fetch and a derived chain unawaited then the kernel keeps its state and does not crash",
-				"legacyContracts/test/js-kernel-stop-keeps-state.test.ts/JavaScriptKernel stop on a free event loop Given a stopped cell with an open socket server and client when stopped then both close and earlier globals survive"
+				"legacyContracts/test/js-kernel-stop-keeps-state.test.ts/JavaScriptKernel stop on a free event loop Given a stopped cell with an open socket server and client when stopped then both close and earlier globals survive",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation keeps the child and its globals when a stopped cell left a fetch unawaited (#2788)",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation stops a polling loop and keeps the child's globals when a cell is stopped twice (#2788)"
 			],
 			"reason": "senpi#2788: Stop on a free event loop releases the cell in the worker and keeps the VM. cell-run-context.js (the per-cell async context and the released-cell guards) joins the first-kernel import census; the new contracts are RED before the fix (stateRetained false) and GREEN after.",
 			"changes": [
