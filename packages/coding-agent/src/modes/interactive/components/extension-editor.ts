@@ -15,6 +15,7 @@ import {
 } from "@earendil-works/pi-tui";
 import type { KeybindingsManager } from "../../../core/keybindings.ts";
 import { editInExternalEditor } from "../external-editor.ts";
+import { restoreInteractiveStderr, takeOverInteractiveStderr } from "../interactive-stderr-guard.ts";
 import { getEditorTheme, theme } from "../theme/theme.ts";
 import { DynamicBorder } from "./dynamic-border.ts";
 import { keyHint } from "./keybinding-hints.ts";
@@ -125,6 +126,8 @@ export class ExtensionEditorComponent extends Container implements Focusable {
 	private async handleOpenExternalEditor(): Promise<void> {
 		const content = this.editor.getText();
 		this.tui.stop();
+		// The editor draws on the real terminal: hand fd 1 and fd 2 back first, as the main editor path does.
+		restoreInteractiveStderr();
 		try {
 			const result = await editInExternalEditor({
 				command: this.externalEditorCommand,
@@ -134,6 +137,7 @@ export class ExtensionEditorComponent extends Container implements Focusable {
 				this.editor.setText(result.content);
 			}
 		} finally {
+			takeOverInteractiveStderr();
 			this.tui.start();
 			this.tui.requestRender(true);
 		}

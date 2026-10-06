@@ -2146,10 +2146,12 @@ export class InteractiveMode {
 		}
 
 		const seeded = seedKeybindingsFile(configPath, this.keybindings);
-		const edit = await editFileInExternalEditor({
-			command: editorCommand,
-			path: configPath,
-		});
+		const edit = await this.withTerminalHandedOver(() =>
+			editFileInExternalEditor({
+				command: editorCommand,
+				path: configPath,
+			}),
+		);
 		if (edit.status === "launch-failed") {
 			// The editor never ran, so a file we just seeded carries no user content.
 			if (seeded) fs.rmSync(configPath, { force: true });
@@ -7038,17 +7040,28 @@ export class InteractiveMode {
 	private async handleOpenExternalEditor(): Promise<void> {
 		const editorCmd = this.settingsManager.getExternalEditorCommand();
 		const content = this.getExpandedEditorText();
+		const result = await this.withTerminalHandedOver(() =>
+			editInExternalEditor({
+				command: editorCmd,
+				content,
+			}),
+		);
+		if (result.status === "complete") {
+			this.editor.setText(result.content);
+		}
+	}
+
+	/**
+	 * Runs `work` (an external program that draws on the terminal itself) with the terminal handed
+	 * back: the TUI stops, fd 1 and fd 2 point at the terminal again, and both are taken over again
+	 * afterwards. An editor launched without this would draw into the debug log (#2815).
+	 */
+	private async withTerminalHandedOver<T>(work: () => Promise<T>): Promise<T> {
 		this.pauseQuestionMouseCapture();
 		this.ui.stop();
 		restoreInteractiveStderr();
 		try {
-			const result = await editInExternalEditor({
-				command: editorCmd,
-				content,
-			});
-			if (result.status === "complete") {
-				this.editor.setText(result.content);
-			}
+			return await work();
 		} finally {
 			takeOverInteractiveStderr();
 			this.ui.start();
