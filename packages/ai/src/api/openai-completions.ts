@@ -67,7 +67,7 @@ import { getProviderEnvValue } from "../utils/provider-env.ts";
 import { retryProviderStreamRequest } from "../utils/provider-retry.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
 import { getSystemMessageText, renderSystemMessageUpdate } from "../utils/text.ts";
-import { sendWithForcedToolChoiceFallback } from "../utils/tool-choice-fallback.ts";
+import { primeStreamUntilContent, sendWithForcedToolChoiceFallback } from "../utils/tool-choice-fallback.ts";
 import {
 	normalizeToolParametersForMoonshot,
 	normalizeToolParametersForOpenAICompat,
@@ -295,6 +295,21 @@ function isForcedOpenAICompletionsToolChoice(
 	toolChoice: OpenAICompletionsRequestParams["tool_choice"] | undefined,
 ): boolean {
 	return toolChoice !== undefined && toolChoice !== "auto" && toolChoice !== "none";
+}
+
+/** A chunk that carries model output or a finish: text, reasoning, a tool call, or a finish_reason. */
+function chatChunkHasContent(chunk: unknown): boolean {
+	if (!isRecord(chunk) || !Array.isArray(chunk.choices)) return false;
+	return chunk.choices.some((choice: unknown) => {
+		if (!isRecord(choice)) return false;
+		if (typeof choice.finish_reason === "string" && choice.finish_reason.length > 0) return true;
+		const delta = choice.delta;
+		if (!isRecord(delta)) return false;
+		if (Array.isArray(delta.tool_calls) && delta.tool_calls.length > 0) return true;
+		return ["content", "reasoning_content", "reasoning", "reasoning_text"].some(
+			(field) => typeof delta[field] === "string" && (delta[field] as string).length > 0,
+		);
+	});
 }
 
 function isReasoningDetailObject(detail: unknown): detail is Record<string, unknown> {
@@ -600,7 +615,13 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 					params,
 					acceptsForcedToolChoice: compat.supportsForcedToolChoice !== false,
 					isForced: isForcedOpenAICompletionsToolChoice,
-					send: createStream,
+					// A keepalive gateway answers 200 and refuses a forced choice in-band (senpi#2801): a forced
+					// request is read up to its first content so that refusal can still be retried.
+					send: async (sentParams) => {
+						const created = await createStream(sentParams);
+						if (!isForcedOpenAICompletionsToolChoice(sentParams.tool_choice)) return created;
+						return { ...created, data: await primeStreamUntilContent(created.data, chatChunkHasContent) };
+					},
 				});
 				params = sent.params;
 				return sent.result;

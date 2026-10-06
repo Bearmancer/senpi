@@ -16,11 +16,16 @@ type MockChunk = null | {
 	};
 };
 
+/** A stream event the fake gateway sends, or an error it raises in-band after answering 200. */
+type MockStreamStep = MockChunk | { readonly inBandError: string };
+
 interface OpenAIMockState {
 	lastParams: unknown | undefined;
 	calls: unknown[];
 	createErrors: Error[];
 	chunks: MockChunk[] | undefined;
+	/** One script per create call, consumed in order; falls back to `chunks`. */
+	streamScripts: MockStreamStep[][];
 }
 
 const mockState = vi.hoisted<OpenAIMockState>(() => ({
@@ -28,6 +33,7 @@ const mockState = vi.hoisted<OpenAIMockState>(() => ({
 	calls: [],
 	createErrors: [],
 	chunks: undefined,
+	streamScripts: [],
 }));
 
 vi.mock("openai", () => {
@@ -38,8 +44,16 @@ vi.mock("openai", () => {
 					mockState.lastParams = params;
 					mockState.calls.push(params);
 					const createError = mockState.createErrors.shift();
+					const script = mockState.streamScripts.shift();
 					const stream = {
 						async *[Symbol.asyncIterator]() {
+							if (script !== undefined) {
+								for (const step of script) {
+									if (step !== null && "inBandError" in step) throw new Error(step.inBandError);
+									yield step;
+								}
+								return;
+							}
 							const chunks = mockState.chunks ?? [
 								{
 									choices: [{ delta: {}, finish_reason: "stop" }],
@@ -2321,5 +2335,91 @@ describe("openai-completions tool_choice", () => {
 		).result();
 
 		expect((payload ?? mockState.lastParams) as { reasoning?: unknown }).not.toHaveProperty("reasoning");
+	});
+});
+
+describe("openai-completions forced tool_choice refused inside a 200 stream (senpi#2801)", () => {
+	const gateway: Model<"openai-completions"> = { ...localOpenAICompletionsModel, id: "kimi-k3", name: "Kimi K3" };
+	const THINKING_REFUSAL = "tool_choice 'specified' is incompatible with thinking enabled";
+	const keepalive: MockStreamStep = { id: "chatcmpl-gateway-keepalive", choices: [] };
+	const answer = (text: string): MockStreamStep[] => [
+		{ id: "chatcmpl-1", choices: [{ delta: { content: text }, finish_reason: null }] },
+		{
+			id: "chatcmpl-1",
+			choices: [{ delta: {}, finish_reason: "stop" }],
+			usage: {
+				prompt_tokens: 1,
+				completion_tokens: 1,
+				prompt_tokens_details: { cached_tokens: 0 },
+				completion_tokens_details: { reasoning_tokens: 0 },
+			},
+		},
+	];
+	const toolChoices = () => mockState.calls.map((_, index) => recordAt(mockState.calls, index).tool_choice);
+	const text = (message: AssistantMessage) =>
+		message.content.flatMap((block) => (block.type === "text" ? [block.text] : [])).join("");
+
+	beforeEach(() => {
+		clearForcedToolChoiceRefusals();
+		mockState.calls.length = 0;
+		mockState.createErrors.length = 0;
+		mockState.chunks = undefined;
+		mockState.streamScripts.length = 0;
+	});
+
+	it("#given a gateway that answers 200 and then refuses the forced choice in-band #when the forced request streams #then it is retried once without tool_choice and the turn completes", async () => {
+		mockState.streamScripts.push([keepalive, { inBandError: THINKING_REFUSAL }], answer("planned"));
+
+		const result = await streamForcedTodo(gateway);
+
+		expect(result.stopReason).toBe("stop");
+		expect(text(result)).toBe("planned");
+		expect(toolChoices()).toEqual([FORCED_TODO, undefined]);
+	});
+
+	it("#given a thinking-blamed in-band refusal that was retried #when the next forced request goes out #then it still forces, since the refusal depends on thinking", async () => {
+		mockState.streamScripts.push([{ inBandError: THINKING_REFUSAL }], answer("planned"), answer("again"));
+
+		await streamForcedTodo(gateway);
+		const next = await streamForcedTodo(gateway);
+
+		expect(next.stopReason).toBe("stop");
+		expect(toolChoices()).toEqual([FORCED_TODO, undefined, FORCED_TODO]);
+	});
+
+	it("#given the refusal arrives after content has streamed #when the forced request streams #then it is not retried and nothing is sent twice", async () => {
+		mockState.streamScripts.push(
+			[{ id: "chatcmpl-1", choices: [{ delta: { content: "partial" }, finish_reason: null }] }, { inBandError: THINKING_REFUSAL }],
+			answer("must not be used"),
+		);
+
+		const result = await streamForcedTodo(gateway);
+
+		expect(result.stopReason).toBe("error");
+		expect(result.errorMessage).toContain("incompatible with thinking enabled");
+		expect(toolChoices()).toEqual([FORCED_TODO]);
+	});
+
+	it("#given the retry is refused in-band too #when the forced request streams #then the error surfaces once after exactly one retry", async () => {
+		mockState.streamScripts.push([{ inBandError: THINKING_REFUSAL }], [{ inBandError: THINKING_REFUSAL }], answer("unused"));
+
+		const result = await streamForcedTodo(gateway);
+
+		expect(result.stopReason).toBe("error");
+		expect(result.errorMessage?.match(/incompatible with thinking enabled/g)).toHaveLength(1);
+		expect(toolChoices()).toEqual([FORCED_TODO, undefined]);
+	});
+
+	it("#given a request that forced no tool #when the gateway refuses in-band #then it fails as before with no retry", async () => {
+		mockState.streamScripts.push([{ inBandError: THINKING_REFUSAL }], answer("unused"));
+
+		const result = await stream(
+			gateway,
+			{ messages: [{ role: "user", content: "Hi", timestamp: Date.now() }] },
+			{ apiKey: "test" },
+		).result();
+
+		expect(result.stopReason).toBe("error");
+		expect(mockState.calls).toHaveLength(1);
 	});
 });
