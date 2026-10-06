@@ -10,6 +10,8 @@
 
 ### Fixed
 
+- An `open_session` that attaches to a session another client already holds open now applies the `permissionPreset` it names: from the next tool call on, the live session enforces that preset, in both directions (a stricter preset starts asking; a looser one stops asking), on the in-process and the worker host runtimes. An attach without a preset keeps the session's preset, and an attach accepts and treats every value exactly as `open_session` does (an unknown name makes the next tool call fail closed with `Permission setup failed: Invalid --permission-preset "<name>"`). Before, the attach kept the session's original preset, so a thread switched from full access to ask kept running tools without approval ([#2823](https://github.com/code-yeongyu/senpi/issues/2823)).
+
 ### Removed
 
 ## [2026.10.10-4] - 2026-10-06

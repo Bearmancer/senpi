@@ -1486,6 +1486,12 @@ capability must use `ask`, never `workspace`, for an edit-only approval promise.
 Hosts that support `permissionPreset: "auto"` advertise `permission_preset_auto`;
 clients without it must not send `auto`.
 Explicit permission rules and remembered approvals retain their existing precedence, except under `auto`: there settings and CLI rules can only narrow the preset (the more restrictive decision wins), and an "Always" answer (saved in `.senpi/permissions-approved.jsonl`, from this or an earlier session) still allows its pattern.
+An `open_session` that attaches to a live session with another `permissionPreset` moves that session to it: the next
+tool call is decided under the new preset, in either direction, and `new_session` / `switch_session` / `fork` keep it.
+An attach without the field keeps the current preset. An attach accepts exactly the values `open_session` accepts and
+treats them the same way: an unknown preset name is applied like one given to `open_session`, so the session's next
+tool call is refused with `Permission setup failed: Invalid --permission-preset "<name>". ...` until a later attach
+names a valid preset.
 
 | Command | Params | Success data | Notes |
 | --- | --- | --- | --- |

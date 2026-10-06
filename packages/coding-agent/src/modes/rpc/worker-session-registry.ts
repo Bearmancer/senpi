@@ -262,7 +262,7 @@ export class WorkerSessionRegistry {
 		options?: RpcSessionOpenOptions,
 		requested: RpcSessionLaunchProfile = { cwd: "" },
 	): Promise<OpenRpcSession> {
-		const { promptSurface, browserEngine } = requested;
+		const { promptSurface, browserEngine, permissionPreset } = requested;
 		const entry = this.entries.get(owner);
 		if (entry?.state !== "open" || !entry.worker?.bindingReady || entry.worker.snapshot?.sessionPath !== path)
 			throw new RpcSessionRegistryError("session_path_in_use");
@@ -274,6 +274,10 @@ export class WorkerSessionRegistry {
 		if (browserEngine !== undefined && browserEngine !== entry.profile.browserEngine) {
 			entry.profile = frozenProfile({ ...entry.profile, browserEngine });
 			await entry.worker.setBrowserEngine(browserEngine);
+		}
+		if (permissionPreset !== undefined && permissionPreset !== entry.profile.permissionPreset) {
+			entry.profile = frozenProfile({ ...entry.profile, permissionPreset });
+			await entry.worker.setPermissionPreset(permissionPreset);
 		}
 		const result = this.openResult(owner, entry);
 		entry.attachments++;
