@@ -19,6 +19,26 @@
 
 - LOW: the `get_available_models` case, the turn-scope `set_thinking_level` refusal, and the new `interrupt` case in `connection-handler.ts`; the command and response unions in `rpc-types.ts`.
 
+## 2026-10-06 - Settle cross-generation reservation removal before close (#2729)
+
+### What changed
+
+- `host-reservations.ts`: attachment publications are ordered per path; release waits for those writes and the real claim-file removal.
+- `session-registry.ts`: teardown and failed-open cleanup await that release before dropping the local reservation.
+- `session-teardown.ts`: close completion waits for reservation release before removing the entry.
+
+### Why
+
+A successor reopening after close completion could still encounter the predecessor's attached claim, because its deletion was fire-and-forget. An already-started attachment rename could also overwrite the successor's new claim after removal.
+
+### Why an extension could not handle it
+
+Reservation ownership and close completion are RPC host lifecycle responsibilities.
+
+### Expected merge conflict zones
+
+Reservation release, registry rollback and session teardown.
+
 ## 2026-10-05 - Refresh model availability after another session changes credentials (senpi#2769)
 
 ### What changed
