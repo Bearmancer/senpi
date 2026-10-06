@@ -34,14 +34,15 @@ export const showHtmlPageTool = defineTool<typeof Params, ShowHtmlPageDetails>({
 	description:
 		"Show a finished self-contained HTML page (chart, table, diagram, mockup) to the reader. " +
 		"Load the bundled visualize skill first for the design system and the data pipeline. " +
-		"The page is one self-contained document with inline <style> and <script> (the viewer sandbox blocks " +
-		"network access, so no CDN libraries or remote assets). Local images written as absolute file paths " +
+		"No network: inline every script, style and image (data: URIs). A <script src>, stylesheet link, font, image " +
+		"or fetch that points at a URL (a CDN included) is refused, and the page comes out blank or broken. " +
+		"Local images written as absolute file paths " +
 		"are inlined automatically after a byte check. In the desktop thread this renders inline above your " +
-		"reply; elsewhere it is written to a file you can open in the desktop. Preview with preview_html_page first.",
+		"reply; elsewhere it is written to a file you can open in the desktop.",
 	promptSnippet: "show_html_page: show a self-contained HTML page (chart/table/diagram) to the reader",
 	promptGuidelines: [
 		"Load the bundled visualize skill before building an HTML page; it carries the design system and routes data through the data-scientist skill.",
-		"Write one self-contained document with inline CSS and JS; the sandbox blocks network access.",
+		"No network: inline every script, style and image (data: URIs); a CDN <script src> or remote font is refused and leaves the page blank.",
 		"Absolute-path local images are inlined after a magic-byte check; a renamed non-image is refused.",
 	],
 	parameters: Params,

@@ -6,6 +6,8 @@
 
 **Must not break:** the policy stays the document's first element; a page's own policy can only narrow it.
 
+The `show_html_page` description and guideline now say it plainly ("No network: inline every script, style and image (data: URIs)"), so an agent does not ship a CDN `<script src>` that leaves the page blank, and no longer point at a `preview_html_page` tool that senpi does not register.
+
 ## 2026-10-06 - HTML page rendering for standalone senpi (omo-desktop-app#1724)
 
 ### What changed
