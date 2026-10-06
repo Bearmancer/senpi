@@ -1,4 +1,5 @@
-import { installCellOwnership, releaseCell, releasedCellError, runInCell } from "./cell-run-context.js";
+import { installCellOwnership } from "./cell-ownership.js";
+import { releaseCell, releasedCellError, runInCell } from "./cell-run-context.js";
 import { kernelToolCallContext } from "./kernel-tools-context.js";
 import { kernelToolError } from "./kernel-tools-errors.js";
 import { createKernelToolPump } from "./kernel-tools-pump.js";
@@ -53,6 +54,11 @@ export function createWorkerCore(transport, options) {
 
 	function emit(message) {
 		transport.send(message);
+	}
+
+	function stopProblem(cell, what, error) {
+		const detail = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+		emit({ type: "text", stream: "stderr", data: `Stopping cell ${cell.cellId}: ${what}: ${detail}\n` });
 	}
 
 	async function runCell(message) {
@@ -130,9 +136,13 @@ export function createWorkerCore(transport, options) {
 		// restart (#2453): the shell cannot be cancelled, so only retiring the worker ends it.
 		if (runtime.shellWaitActive) return;
 		const cell = activeCell;
-		releaseCell(cell);
-		// The result settles after the cell's children are gone, so the next cell never overlaps them.
-		void runtime.release().finally(() => cell.release(interruption));
+		for (const error of releaseCell(cell)) stopProblem(cell, "a resource it opened would not close", error);
+		// The result settles after the cell's children are gone, so the next cell never overlaps them. A failed release
+		// is reported as such, never left to surface as an unhandled rejection blamed on the stopped cell.
+		void runtime
+			.release()
+			.catch((error) => stopProblem(cell, "releasing its work failed", error))
+			.finally(() => cell.release(interruption));
 	}
 
 	function acknowledgeInterrupt() {

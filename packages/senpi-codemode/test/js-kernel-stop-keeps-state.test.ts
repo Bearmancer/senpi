@@ -1,103 +1,14 @@
-import { createServer, type Server } from "node:http";
-import type { AddressInfo } from "node:net";
-import { afterEach, describe, expect, it } from "vitest";
-import { JavaScriptKernel } from "../src/kernels/js/context-manager.ts";
+import { describe, expect, it } from "vitest";
 import {
-	createSpawnLoggingWorkerEntry,
-	removeWorkerEntry,
-	type SpawnLoggingWorkerEntry,
+	createKernel,
+	registerStopHarnessCleanup,
+	silentServer,
 	spawnCount,
-} from "./eval/js-worker-spawn-log.ts";
+	startedCell,
+	stopAndExpectStateKept,
+} from "./eval/js-stop-harness.ts";
 
-const kernels = new Set<JavaScriptKernel>();
-const entries = new Set<SpawnLoggingWorkerEntry>();
-const servers = new Set<Server>();
-
-afterEach(async () => {
-	await Promise.all([...kernels].map(async (kernel) => await kernel.close()));
-	await Promise.all([...entries].map(async (entry) => await removeWorkerEntry(entry)));
-	for (const server of servers) server.closeAllConnections();
-	await Promise.all([...servers].map((server) => new Promise((resolve) => server.close(resolve))));
-	kernels.clear();
-	entries.clear();
-	servers.clear();
-});
-
-async function createKernel(): Promise<{ readonly kernel: JavaScriptKernel; readonly entry: SpawnLoggingWorkerEntry }> {
-	const entry = await createSpawnLoggingWorkerEntry();
-	entries.add(entry);
-	const kernel = new JavaScriptKernel({
-		sessionId: `stop-keeps-state-${crypto.randomUUID()}`,
-		cwd: process.cwd(),
-		parallelPoolWidth: 2,
-		workerEntryUrl: entry.url,
-	});
-	kernels.add(kernel);
-	return { kernel, entry };
-}
-
-async function startedCell(
-	kernel: JavaScriptKernel,
-	cellId: string,
-	code: string,
-	onText: (text: string) => void = () => {},
-) {
-	const run = kernel.run({
-		cellId,
-		code: `await tool.started({});\n${code}`,
-		timeoutMs: 60_000,
-		onMessage: (message) => {
-			if (message.type === "text") onText(message.data);
-		},
-	});
-	const call = await kernel.nextToolCall();
-	kernel.deliverToolReply({ type: "tool-reply", callId: call.callId, ok: true, value: null });
-	return { run };
-}
-
-async function silentServer(): Promise<{
-	readonly url: string;
-	readonly requested: Promise<void>;
-	readonly aborted: Promise<void>;
-}> {
-	const requested = Promise.withResolvers<void>();
-	const aborted = Promise.withResolvers<void>();
-	const server = createServer((request) => {
-		request.once("close", () => aborted.resolve());
-		requested.resolve();
-	});
-	servers.add(server);
-	await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
-	return {
-		url: `http://127.0.0.1:${(server.address() as AddressInfo).port}/`,
-		requested: requested.promise,
-		aborted: aborted.promise,
-	};
-}
-
-/** Stops the cell, proves the kernel kept its state on the same worker, and returns the next cell's stderr. */
-async function stopAndExpectStateKept(
-	kernel: JavaScriptKernel,
-	entry: SpawnLoggingWorkerEntry,
-	run: ReturnType<JavaScriptKernel["run"]>,
-): Promise<string> {
-	const handle = await kernel.interrupt("user-stop");
-	await expect(run).resolves.toMatchObject({ ok: false, error: { message: expect.stringContaining("user-stop") } });
-	await expect(handle.stateRetained).resolves.toBe(true);
-	const stderr: string[] = [];
-	await expect(
-		kernel.run({
-			cellId: "after-stop",
-			code: "await new Promise((r) => setTimeout(r, 0)); return keep",
-			timeoutMs: 5_000,
-			onMessage: (message) => {
-				if (message.type === "text" && message.stream === "stderr") stderr.push(message.data);
-			},
-		}),
-	).resolves.toMatchObject({ ok: true, valueRepr: "41" });
-	expect(await spawnCount(entry)).toBe(1);
-	return stderr.join("");
-}
+registerStopHarnessCleanup();
 
 describe("JavaScriptKernel stop on a free event loop", () => {
 	it("Given a cell awaiting a promise nothing settles when stopped then earlier globals survive on the same worker", async () => {
@@ -141,29 +52,6 @@ describe("JavaScriptKernel stop on a free event loop", () => {
 		).resolves.toMatchObject({ ok: true, valueRepr: '"JS cell interrupted: user-stop"' });
 	});
 
-	it("Given a polling loop when stopped then the loop stops running and earlier globals survive", async () => {
-		const { kernel, entry } = await createKernel();
-		const ticked = Promise.withResolvers<void>();
-		const { run } = await startedCell(
-			kernel,
-			"poll-loop",
-			"globalThis.keep = 41; globalThis.ticks = 0; for (;;) { await new Promise((resolve) => setTimeout(resolve, 10)); globalThis.ticks += 1; if (ticks === 3) print('TICKED'); }",
-			(text) => {
-				if (text.includes("TICKED")) ticked.resolve();
-			},
-		);
-		await ticked.promise;
-
-		await stopAndExpectStateKept(kernel, entry, run);
-		const first = await kernel.run({ cellId: "ticks-a", code: "return ticks", timeoutMs: 5_000 });
-		const second = await kernel.run({
-			cellId: "ticks-b",
-			code: "await new Promise((resolve) => setTimeout(resolve, 100)); return ticks",
-			timeoutMs: 5_000,
-		});
-		expect(second).toMatchObject({ ok: true, valueRepr: first.ok ? first.valueRepr : "unreachable" });
-	});
-
 	it("Given a stopped cell that resumes later when it prints or calls a tool then nothing reaches the next cell", async () => {
 		const { kernel } = await createKernel();
 		const { run } = await startedCell(
@@ -185,47 +73,6 @@ describe("JavaScriptKernel stop on a free event loop", () => {
 		expect(next).toMatchObject({ ok: true, valueRepr: "41" });
 		expect(texts.join("")).not.toContain("LATE");
 	});
-
-	it.each([
-		...(process.versions.bun === undefined ? [] : [["Bun.sleep", "await Bun.sleep(10)"]]),
-		[
-			"a short file read",
-			'await (await import("node:fs/promises")).readFile(process.execPath, { length: 16 }).catch(() => {})',
-		],
-		[
-			"a MessageChannel round trip",
-			"await new Promise((resolve) => { const { port1, port2 } = new MessageChannel(); port2.onmessage = () => { port1.close(); port2.close(); resolve(); }; port1.postMessage(1); })",
-		],
-		["node:timers/promises", 'await (await import("node:timers/promises")).setTimeout(10)'],
-		[
-			"setInterval",
-			"await new Promise((resolve) => { const id = setInterval(() => { clearInterval(id); resolve(); }, 10); })",
-		],
-	])(
-		"Given a polling loop on %s when stopped then it stops ticking and earlier globals survive",
-		async (_name, wait) => {
-			const { kernel, entry } = await createKernel();
-			const ticked = Promise.withResolvers<void>();
-			const { run } = await startedCell(
-				kernel,
-				"poll",
-				`globalThis.keep = 41; globalThis.ticks = 0; for (;;) { ${wait}; ticks += 1; if (ticks === 3) print("TICKED"); }`,
-				(text) => {
-					if (text.includes("TICKED")) ticked.resolve();
-				},
-			);
-			await ticked.promise;
-
-			await stopAndExpectStateKept(kernel, entry, run);
-			const first = await kernel.run({ cellId: "ticks-a", code: "return ticks", timeoutMs: 5_000 });
-			const second = await kernel.run({
-				cellId: "ticks-b",
-				code: "await new Promise((r) => setTimeout(r, 150)); return ticks",
-				timeoutMs: 5_000,
-			});
-			expect(second).toMatchObject({ ok: true, valueRepr: first.ok ? first.valueRepr : "unreachable" });
-		},
-	);
 
 	it("Given a stopped cell that left a fetch and a derived chain unawaited then the kernel keeps its state and does not crash", async () => {
 		const { kernel, entry } = await createKernel();

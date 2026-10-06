@@ -512,10 +512,12 @@ without interrupting the active cell; kernel state is retained. Python running-c
 existing kernel and preserves variables. JavaScript stop is cooperative first:
 Stop ends the cell and everything it started, not the kernel's variables. The
 worker rejects the cell's pending bridge `tool.*` calls and releases the cell:
-its timers are cleared, its pending `Bun.sleep`, `node:timers/promises` waits
-and `fetch` requests reject with the interruption, and the sockets, servers,
-WebSockets, WebViews, nested workers and child processes it opened are closed
-or terminated. The stop result arrives once those children are gone, and the
+its timers are cleared (the globals and the `node:timers` module alike), its
+pending `Bun.sleep`, `node:timers/promises` waits, `fetch` requests and file
+reads reject with the interruption, and the sockets, servers, file streams,
+`readline` interfaces, WebSockets, WebViews, nested workers and child processes
+it opened are closed or terminated, whether made with a factory or a
+constructor. A resource that will not close is reported on the cell output. The stop result arrives once those children are gone, and the
 worker and every global from earlier cells survive. If the stopped cell's own
 `catch`/`finally` still runs, it cannot print, call tools, start processes,
 schedule timers or open connections. One boundary remains: code that resumes
