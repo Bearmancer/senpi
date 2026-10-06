@@ -5,8 +5,17 @@ import { defineTool, type ExtensionToolContext } from "../../types.ts";
 import { injectHtmlRenderBootstrap } from "./bootstrap.ts";
 import { inlineLocalImages } from "./images.ts";
 
+// The same input limit as the desktop's html_render. Images belong as absolute
+// file paths, which are inlined after the check, so the document itself stays
+// small: it travels in the tool call and again in the result details.
+const MAX_HTML_CHARACTERS = 512_000;
+
 const Params = Type.Object({
-	html: Type.String({ description: "A complete, self-contained HTML document.", minLength: 1 }),
+	html: Type.String({
+		description: "A complete, self-contained HTML document.",
+		minLength: 1,
+		maxLength: MAX_HTML_CHARACTERS,
+	}),
 	title: Type.String({ description: "Short name for the page.", minLength: 1, maxLength: 200 }),
 	height: Type.Optional(
 		Type.Integer({
@@ -23,6 +32,11 @@ export interface ShowHtmlPageDetails {
 	height: number | undefined;
 	prepared: boolean;
 	missingImages?: string[];
+	/**
+	 * The page as the agent wrote it, for a host that publishes it itself (the
+	 * desktop renders it in the thread). Never part of the model-visible content.
+	 */
+	html: string;
 }
 
 const clampHeight = (height: number | undefined) =>
@@ -70,7 +84,14 @@ export const showHtmlPageTool = defineTool<typeof Params, ShowHtmlPageDetails>({
 							: `Some local images could not be read and were left as written: ${missing.join(", ")}.`),
 				},
 			],
-			details: { path, title: params.title, height, prepared: true, ...(missing ? { missingImages: missing } : {}) },
+			details: {
+				path,
+				title: params.title,
+				height,
+				prepared: true,
+				...(missing ? { missingImages: missing } : {}),
+				html: params.html,
+			},
 		};
 	},
 });

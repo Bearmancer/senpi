@@ -1,6 +1,7 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { Check } from "typebox/value";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
 	HTML_RENDER_CONTENT_SECURITY_POLICY,
@@ -77,6 +78,38 @@ describe("html-render builtin", () => {
 		const policy = `<meta http-equiv="Content-Security-Policy" content="${HTML_RENDER_CONTENT_SECURITY_POLICY}">`;
 		expect(written.startsWith(`<!doctype html>${policy}`)).toBe(true);
 		expect(written.indexOf(policy)).toBeLessThan(written.indexOf("cdn.example"));
+	});
+
+	it("hands the page to the host in details and never puts it in the content the model reads", async () => {
+		const html = '<!doctype html><div id="marker-7f3a">chart</div>';
+		const result = await showHtmlPageTool.execute(
+			"call-4",
+			{ html, title: "Hidden", height: 300 },
+			undefined,
+			undefined,
+			ctxFor(tempDir),
+		);
+		expect((result.details as { html: string }).html).toBe(html);
+		expect(JSON.stringify(result.content)).not.toContain("marker-7f3a");
+	});
+
+	it("refuses a page over the input limit before preparing anything", () => {
+		expect(Check(showHtmlPageTool.parameters, { html: "x".repeat(512_000), title: "Max" })).toBe(true);
+		expect(Check(showHtmlPageTool.parameters, { html: "x".repeat(512_001), title: "Big" })).toBe(false);
+	});
+
+	it("returns an error the agent can act on when inlined images push the page past 25 MiB, and writes nothing", async () => {
+		const head = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+		const paths = [0, 1, 2].map((index) => {
+			const path = join(tempDir, `big-${index}.png`);
+			writeFileSync(path, Buffer.concat([head, Buffer.alloc(9 * 1024 * 1024, index + 1)]));
+			return path;
+		});
+		const html = paths.map((path) => `<img src="${path}">`).join("");
+		await expect(
+			showHtmlPageTool.execute("call-5", { html, title: "Huge" }, undefined, undefined, ctxFor(tempDir)),
+		).rejects.toThrow(/limit is 25 MiB/);
+		expect(existsSync(join(tempDir, ".senpi/html-pages"))).toBe(false);
 	});
 
 	it("clamps the frame height to the 80-2000 range", async () => {

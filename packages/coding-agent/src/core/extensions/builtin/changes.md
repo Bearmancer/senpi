@@ -1,3 +1,11 @@
+## 2026-10-06 — show_html_page hands the page to the host in its details
+
+**What:** `html-render/tool.ts` caps `html` at 512,000 characters (the desktop html_render input limit) and returns the page as written in `details.html`. The model-visible `content` is unchanged and never carries it. Tests: the page is in details and absent from content; a 512,001-character page fails the schema; inlined images past 25 MiB throw the cap error and write nothing.
+
+**Why:** the desktop publishes a completed `show_html_page` call into the thread itself (omo-desktop-app#1724). OmO sessions do not get the desktop's MCP `html_render`, so this is the OmO path to an inline page.
+
+**Must not break:** `details.html` stays out of `content`; the desktop re-applies its own caps and snapshot policy before publishing.
+
 ## 2026-10-06 — show_html_page points at nothing unshipped
 
 **What:** the `show_html_page` description and guidelines drop the "load the bundled visualize skill" pointer.
