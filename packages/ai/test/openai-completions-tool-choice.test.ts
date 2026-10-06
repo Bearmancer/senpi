@@ -2389,7 +2389,10 @@ describe("openai-completions forced tool_choice refused inside a 200 stream (sen
 
 	it("#given the refusal arrives after content has streamed #when the forced request streams #then it is not retried and nothing is sent twice", async () => {
 		mockState.streamScripts.push(
-			[{ id: "chatcmpl-1", choices: [{ delta: { content: "partial" }, finish_reason: null }] }, { inBandError: THINKING_REFUSAL }],
+			[
+				{ id: "chatcmpl-1", choices: [{ delta: { content: "partial" }, finish_reason: null }] },
+				{ inBandError: THINKING_REFUSAL },
+			],
 			answer("must not be used"),
 		);
 
@@ -2401,7 +2404,11 @@ describe("openai-completions forced tool_choice refused inside a 200 stream (sen
 	});
 
 	it("#given the retry is refused in-band too #when the forced request streams #then the error surfaces once after exactly one retry", async () => {
-		mockState.streamScripts.push([{ inBandError: THINKING_REFUSAL }], [{ inBandError: THINKING_REFUSAL }], answer("unused"));
+		mockState.streamScripts.push(
+			[{ inBandError: THINKING_REFUSAL }],
+			[{ inBandError: THINKING_REFUSAL }],
+			answer("unused"),
+		);
 
 		const result = await streamForcedTodo(gateway);
 
