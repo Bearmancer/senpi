@@ -6,6 +6,7 @@
 
 ### Added
 
+- `pi.session.admitExternalMessage` takes an optional `sender` (another session's id and name, the command line, or an external chat) and `display_text`. The terminal then shows a delivered message under one label line, `Sent by another agent · <name>` or `Sent from the command line`, with the message as it was written, instead of the raw provenance header. The model still reads the header ([oh-my-openagent#9660](https://github.com/code-yeongyu/oh-my-openagent/issues/9660)).
 - A provider block in `models.json` accepts `hideFreeModels: true` to drop that provider's zero-cost models (`cost.input` and `cost.output` both `0`) from the catalog. The default is unchanged: free models stay visible ([#2720](https://github.com/code-yeongyu/senpi/issues/2720)).
 - `websearch.json` accepts `keenable` as a `web_search` provider: with `apiKey` it uses Keenable's keyed API, without one its shared public tier (identified by an app header, no credential). It is used only when listed explicitly; the no-config default chain is unchanged ([#2775](https://github.com/code-yeongyu/senpi/pull/2775)).
 

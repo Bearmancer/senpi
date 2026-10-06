@@ -1,3 +1,23 @@
+## 2026-10-06 - A delivered message says who sent it (oh-my-openagent#9660)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/session-control-types.ts`: `admitExternalMessage` takes optional `sender` (`agent { session_id, name? }`, `command_line { user? }`, `external { platform, author? }`) and `display_text`, the message as its sender wrote it. Both are stored on the delivery's `details` (`core/external-admission.ts`). `sessionControlSenderOf` reads a sender back.
+- `packages/coding-agent/src/modes/interactive/components/remote-delivery-message.ts`: a delivery that names its sender renders one dim label line, `Sent by another agent · <name>`, `Sent from the command line`, or `Sent from <platform> · <author>`, over `display_text`. A delivery without a sender keeps the `remote message` heading over the full text.
+- `test/remote-delivery-message.test.ts` (new): each label renders, and the fallback keeps the old heading.
+
+### Why
+
+- The terminal showed the raw provenance header (`[OMO_GATEWAY v=1 source=peer_agent actor=...]`) to its user. The model still reads that header in the message content; the human surface gets a clean label.
+
+### Why an extension could not handle it
+
+- The `session_control_delivery` renderer is built in, and `details` is written by admission; an extension sees neither before the entry is written.
+
+### Expected merge conflict zones
+
+- LOW: `AdmitExternalMessageInput` / `SessionControlDeliveryDetails` in `session-control-types.ts` and `deliveryMessage` in `external-admission.ts`.
+
 ## 2026-10-03 - The first-run provider guidance is shown once (senpi#2677)
 
 ### What changed

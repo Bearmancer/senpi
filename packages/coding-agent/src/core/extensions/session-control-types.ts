@@ -36,9 +36,23 @@ export interface SessionControlWakeEvent {
 
 export type ExternalDeliverAs = "steer" | "followUp";
 
+/**
+ * Who sent a delivery, for the surfaces a human reads: another session (by id, with the name it had
+ * when it sent), the command line, or an external chat. The model reads `text`; this is not shown
+ * to it.
+ */
+export type SessionControlSender =
+	| { readonly kind: "agent"; readonly session_id: string; readonly name?: string }
+	| { readonly kind: "command_line"; readonly user?: string }
+	| { readonly kind: "external"; readonly platform: string; readonly author?: string };
+
 export interface AdmitExternalMessageInput {
 	readonly delivery_id: string;
 	readonly text: string;
+	/** Who sent it; a delivery without one renders as a generic remote message. */
+	readonly sender?: SessionControlSender;
+	/** The message as its sender wrote it, for human surfaces; `text` keeps the provenance the model reads. */
+	readonly display_text?: string;
 	readonly deliverAs: ExternalDeliverAs;
 	/** The `turn_epoch` the sender observed; a steer is admitted only while it is still current. */
 	readonly expected_turn_id?: number;
@@ -143,6 +157,24 @@ export interface SessionControlDeliveryDetails {
 	readonly delivery_id: string;
 	readonly source: "session_control";
 	readonly deliverAs: ExternalDeliverAs;
+	readonly sender?: SessionControlSender;
+	readonly display_text?: string;
+}
+
+/** The sender a delivery's `details` names, when it names a well-formed one. */
+export function sessionControlSenderOf(details: unknown): SessionControlSender | undefined {
+	if (!isSessionControlDeliveryDetails(details) || typeof details.sender !== "object" || details.sender === null)
+		return undefined;
+	const sender: Record<string, unknown> = { ...details.sender };
+	const optional = (key: string) => (typeof sender[key] === "string" ? { [key]: sender[key] as string } : {});
+	if (sender.kind === "agent" && typeof sender.session_id === "string") {
+		return { kind: "agent", session_id: sender.session_id, ...optional("name") };
+	}
+	if (sender.kind === "command_line") return { kind: "command_line", ...optional("user") };
+	if (sender.kind === "external" && typeof sender.platform === "string") {
+		return { kind: "external", platform: sender.platform, ...optional("author") };
+	}
+	return undefined;
 }
 
 /** Whether a custom-message `details` value proves it came through session-control admission. */
