@@ -1,3 +1,25 @@
+## 2026-10-07 - Streaming turns hold the scrollback replay (senpi#2836)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`:
+  - `agent_start` calls `ui.setScrollbackReplayHold(true)` and deliberately does not catch up. A turn nobody typed (auto-retry, an extension's `triggerTurn`) can start while the reader is still scrolled up, and a turn the user started already caught up on their Enter key.
+  - `agent_end` sets `ui.setScrollbackReplayHold("until-input")`, so finishing a reply never replays under a reader who scrolled up. Their next key press corrects the stale rows once.
+- `packages/coding-agent/test/interactive-mode-scrollback-hold.test.ts`: a real `TUI`. A turn leaves stale rows, the reader scrolls up, then an untyped turn's `agent_start` arrives. There is no `ESC[3J` and the view is unchanged. With a catch-up at `agent_start` it fails (1 replay).
+- Four tests with hand-built `ui` doubles (`interactive-mode-transcript-write-failed`, `tool-execution-update-wiring`, `tui-vertical-jitter`, `tui-vertical-jitter-lifecycle`) gain the two methods.
+
+### Why
+
+See `packages/tui/src/changes.md` (same date): a streamed table widening its columns re-laid out rows above the viewport, and every frame then replayed the scrollback, snapping a scrolled-up view to the top.
+
+### Why an extension could not handle it
+
+The turn lifecycle and the TUI instance belong to the interactive mode, not to an extension.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: the `agent_start` and `agent_end` cases.
+
 ## 2026-10-07 - A notice during a streaming turn goes above the live reply (senpi#2836)
 
 ### What changed
