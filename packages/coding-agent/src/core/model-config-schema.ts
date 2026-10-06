@@ -275,6 +275,7 @@ const ProviderConfigSchema = Type.Object({
 	authHeader: Type.Optional(Type.Boolean()),
 	whitelist: Type.Optional(Type.Array(Type.String({ minLength: 1 }))),
 	blacklist: Type.Optional(Type.Array(Type.String({ minLength: 1 }))),
+	hideFreeModels: Type.Optional(Type.Boolean()),
 	models: Type.Optional(Type.Array(ModelDefinitionSchema)),
 	modelOverrides: Type.Optional(Type.Record(Type.String(), ModelOverrideSchema)),
 	credentials: Type.Optional(CredentialPolicySchema),
