@@ -53,6 +53,14 @@ const SPAWN_TREE_CELL = [
 	'await child.exited; return "exited"',
 ].join(" ");
 
+// #2788: a loop that keeps spawning short children never settles on its own: each killed child lets the loop
+// spawn the next one. A stop must still keep the worker, and the released loop must not spawn again.
+const SPAWN_LOOP_CELL = [
+	"globalThis.childMarker = 1;",
+	'print("MARK=0");',
+	'for (;;) { await Bun.spawn(["sleep", "0.2"]).exited; }',
+].join(" ");
+
 function driverSource(cell: string, bounds: JavaScriptInterruptBounds): string {
 	return [
 		'import { writeFile } from "node:fs/promises";',
@@ -151,6 +159,18 @@ describe.skipIf(!bunAvailable)("JavaScript kernel under Bun interrupts a running
 			expect(report.childAlive).toBe(false);
 			expect(report.next).toMatchObject({ ok: true });
 			expect(report.next).not.toHaveProperty("valueRepr");
+		},
+		TEST_TIMEOUT_MS,
+	);
+
+	it(
+		"Given a cell looping over short Bun.spawn children when interrupted then the worker state survives",
+		async () => {
+			const report = await runInterruptDriver(SPAWN_LOOP_CELL, COOPERATIVE_BOUNDS);
+
+			expect(report.result).toMatchObject({ ok: false, error: { message: expect.stringContaining("kill-child") } });
+			expect(report.stateRetained).toBe(true);
+			expect(report.next).toMatchObject({ ok: true, valueRepr: "1" });
 		},
 		TEST_TIMEOUT_MS,
 	);

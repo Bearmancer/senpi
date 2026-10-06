@@ -1105,6 +1105,29 @@
 				"legacyContracts/test/kernel-js-require.test.ts/require in JavaScript cells Given a module that does not exist when a cell requires it then the runtime's not-found error names it and the kernel keeps its state"
 			],
 			"reason": "senpi#2792: JavaScript cells get require and createRequire (resolved like the cell's import: builtins, relative CommonJS and JSON files, the project's packages, then the managed package environment), installed as kernel helpers from worker-require.js. The require contracts fail on main ('require is not defined')."
+		},
+		"senpi#2788": {
+			"additions": [
+				"imports/firstKernel/packages/senpi-codemode/src/kernels/js/cell-run-context.js",
+				"legacyContracts/test/js-kernel-cooperative-interrupt.test.ts/JavaScriptKernel cooperative interrupt Given a cell parked on a promise nothing settles when interrupted then the worker keeps its state",
+				"legacyContracts/test/js-kernel-stop-keeps-state.test.ts/JavaScriptKernel stop on a free event loop Given a cell awaiting a promise nothing settles when stopped then earlier globals survive on the same worker",
+				"legacyContracts/test/js-kernel-stop-keeps-state.test.ts/JavaScriptKernel stop on a free event loop Given a cell awaiting a fetch whose server never answers when stopped then earlier globals survive on the same worker",
+				"legacyContracts/test/js-kernel-stop-keeps-state.test.ts/JavaScriptKernel stop on a free event loop Given a polling loop when stopped then the loop stops running and earlier globals survive",
+				"legacyContracts/test/js-kernel-stop-keeps-state.test.ts/JavaScriptKernel stop on a free event loop Given a stopped cell that resumes later when it prints or calls a tool then nothing reaches the next cell",
+				"legacyContracts/test/js-kernel-interrupt-bun.test.ts/JavaScript kernel under Bun interrupts a running cell Given a cell looping over short Bun.spawn children when interrupted then the worker state survives",
+				"legacyContracts/test/js-kernel-shell-stop-bun.test.ts/Bun shell Stop keeps globals and refuses the shell when a cell swallows Stop and then starts a native shell"
+			],
+			"reason": "senpi#2788: Stop on a free event loop releases the cell in the worker and keeps the VM. cell-run-context.js (the per-cell async context and the released-cell guards) joins the first-kernel import census; the new contracts are RED before the fix (stateRetained false) and GREEN after.",
+			"changes": [
+				{
+					"key": "legacyContracts/test/js-kernel-cooperative-interrupt.test.ts/JavaScriptKernel cooperative interrupt Given a cell parked on a promise nothing settles when interrupted then the worker restarts and the note is truthful",
+					"reason": "senpi#2788: a stop the worker acknowledges no longer costs the VM when the cell only awaits something that never settles; the worker releases the cell and keeps its globals. This contract leaves the baseline; its honest rename is 'Given a cell parked on a promise nothing settles when interrupted then the worker keeps its state'."
+				},
+				{
+					"key": "legacyContracts/test/js-kernel-shell-stop-bun.test.ts/Bun shell Stop reports state loss when Stop interrupts a native late wait",
+					"reason": "senpi#2788: the 'late' case swallowed Stop on a host-tool wait and then started a native shell; the released cell now refuses that shell, so the worker keeps its state instead of restarting. Replaced by 'keeps globals and refuses the shell when a cell swallows Stop and then starts a native shell'. Stopping a running Bun.$ wait still restarts (#2453 Decision A; the shell/text/lines cases are unchanged)."
+				}
+			]
 		}
 	}
 }

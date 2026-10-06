@@ -510,11 +510,12 @@ Use `eval({ action: "peek", cell_id })` for its state and buffered output, or
 `eval({ action: "stop", cell_id })` to cancel it. Stopping a queued cell removes it
 without interrupting the active cell; kernel state is retained. Python running-cell stop interrupts the
 existing kernel and preserves variables. JavaScript stop is cooperative first:
-the worker rejects the cell's pending bridge `tool.*` calls and kills the
-`Bun.spawn` children it started, and a cell that settles within the 2 s grace
-keeps the worker and every global. Only a cell that stays unsettled (a
-never-resolving promise, an un-abortable `fetch`, a `Bun.$` command) costs the
-worker VM. A worker blocked in a synchronous call (`Bun.spawnSync`,
+the worker rejects the cell's pending bridge `tool.*` calls, kills the
+`Bun.spawn` children it started, and releases the cell, so the worker and every
+global survive whatever the cell was awaiting (a never-resolving promise, an
+un-abortable `fetch`, a polling loop). A released cell's later continuations
+cannot print, call tools, start processes, or fire timers. Only a cell stopped
+during a `Bun.$` command costs the worker VM. A worker blocked in a synchronous call (`Bun.spawnSync`,
 `child_process.spawnSync`) cannot be stopped at all; after a 3 s termination
 deadline a fresh worker replaces it, the cell output gains a stderr line naming
 the blocked synchronous call, and the blocked call keeps running until it

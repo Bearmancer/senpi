@@ -52,6 +52,8 @@
 
 ### Fixed
 
+- Stopping or timing out a JavaScript cell that awaits something that never settles (a promise, a `fetch` whose server never answers, a polling loop, a loop of short `Bun.spawn` children) now keeps the worker and every global instead of restarting it; the stopped cell's later continuations can no longer print, call tools, start processes, or fire timers. A cell stopped during a `Bun.$` command still restarts the worker, as before ([#2788](https://github.com/code-yeongyu/senpi/issues/2788)).
+
 ### Removed
 
 ## [2026.10.10-2] - 2026-10-05

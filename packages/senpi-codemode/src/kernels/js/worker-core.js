@@ -1,3 +1,4 @@
+import { installReleasedCellTimerGuard, releasedCellError, runInCell } from "./cell-run-context.js";
 import { kernelToolCallContext } from "./kernel-tools-context.js";
 import { kernelToolError } from "./kernel-tools-errors.js";
 import { createKernelToolPump } from "./kernel-tools-pump.js";
@@ -29,6 +30,7 @@ const SESSION_ENVIRONMENT_KEYS = [
 ];
 
 export function createWorkerCore(transport, options) {
+	const restoreTimers = installReleasedCellTimerGuard();
 	let runtime = null;
 	let memory = null;
 	let heapProbe = null;
@@ -52,17 +54,24 @@ export function createWorkerCore(transport, options) {
 			return;
 		}
 		const startedAtMs = performance.now();
-		activeCell = { cellId: message.cellId, interruption: null };
+		const release = Promise.withResolvers();
+		const cell = { cellId: message.cellId, interruption: null, released: false, release: release.reject };
+		activeCell = cell;
 		try {
-			const value = await runtime.run(message.code, message.cellId, {
-				emit,
-				callTool: async (toolName, args) => await callTool(toolName, args),
-			});
+			const run = runInCell(cell, () =>
+				runtime.run(message.code, message.cellId, {
+					emit: (event) => {
+						if (releasedCellError() === undefined) emit(event);
+					},
+					callTool: async (toolName, args) => await callTool(toolName, args),
+				}),
+			);
+			const value = await Promise.race([run, release.promise]);
 			emit({ type: "result", cellId: message.cellId, ok: true, valueRepr: valueRepr(value), durationMs: durationMs(startedAtMs), ...memoryReport() });
 		} catch (error) {
 			emit({ type: "result", cellId: message.cellId, ok: false, error: bridgeError(error), durationMs: durationMs(startedAtMs), ...memoryReport() });
 		} finally {
-			activeCell = null;
+			if (activeCell === cell) activeCell = null;
 		}
 	}
 
@@ -71,6 +80,8 @@ export function createWorkerCore(transport, options) {
 	}
 
 	async function callTool(toolName, args) {
+		const released = releasedCellError();
+		if (released !== undefined) throw released;
 		const nested = kernelToolCallContext.getStore();
 		if (!nested && activeCell?.interruption) throw activeCell.interruption;
 		if (nested?.signal.aborted) throw nested.signal.reason;
@@ -105,6 +116,12 @@ export function createWorkerCore(transport, options) {
 		}
 		kernelTools.abortAll(kernelToolError("kernel_tool_stale", interruption.message));
 		runtime.interrupt();
+		// A free event loop with no Bun.$ wait can let the cell go and keep the VM. A Bun.$ wait keeps the
+		// restart (#2453): the shell cannot be cancelled, so only retiring the worker ends it.
+		if (runtime.shellWaitActive) return;
+		activeCell.released = true;
+		runtime.release();
+		activeCell.release(interruption);
 	}
 
 	function acknowledgeInterrupt() {
@@ -186,6 +203,7 @@ export function createWorkerCore(transport, options) {
 	return {
 		dispose() {
 			unsubscribe();
+			restoreTimers();
 			globalThis.__senpi_restore_console__?.();
 		},
 	};
