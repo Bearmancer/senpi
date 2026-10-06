@@ -1,3 +1,11 @@
+## 2026-10-06 — html-render pages are offline snapshots
+
+**What:** `html-render/bootstrap.ts` puts a Content-Security-Policy meta at the start of every page `show_html_page` writes (after a doctype, ahead of everything the page wrote): `default-src 'none'`, inline and data:/blob: scripts, styles, images, fonts and media only, `connect-src`/`frame-src`/`form-action`/`base-uri` `'none'`. Mirrors the desktop's `packages/shared/src/htmlRenderBootstrap.ts` (omo-desktop-app#1724).
+
+**Why:** the tool tells the agent the viewer blocks network access; this makes it true wherever the written file is opened, so a page cannot reach the reader's local network or call home.
+
+**Must not break:** the policy stays the document's first element; a page's own policy can only narrow it.
+
 ## 2026-10-06 - HTML page rendering for standalone senpi (omo-desktop-app#1724)
 
 ### What changed

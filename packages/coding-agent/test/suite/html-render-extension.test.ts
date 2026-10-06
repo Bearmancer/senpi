@@ -2,7 +2,10 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { injectHtmlRenderBootstrap } from "../../src/core/extensions/builtin/html-render/bootstrap.ts";
+import {
+	HTML_RENDER_CONTENT_SECURITY_POLICY,
+	injectHtmlRenderBootstrap,
+} from "../../src/core/extensions/builtin/html-render/bootstrap.ts";
 import { inlineLocalImages } from "../../src/core/extensions/builtin/html-render/images.ts";
 import htmlRenderExtension from "../../src/core/extensions/builtin/html-render/index.ts";
 import { showHtmlPageTool } from "../../src/core/extensions/builtin/html-render/tool.ts";
@@ -57,6 +60,23 @@ describe("html-render builtin", () => {
 		expect(written.indexOf('id="t3-theme"')).toBeLessThan(written.indexOf("<title>"));
 		expect((result.details as { prepared: boolean }).prepared).toBe(true);
 		expect(path).toContain(".senpi/html-pages");
+	});
+
+	it("opens the written page with the offline snapshot policy ahead of anything the page wrote", async () => {
+		const result = await showHtmlPageTool.execute(
+			"call-3",
+			{
+				html: '<!doctype html><script src="https://cdn.example/lib.js"></script><img src="http://127.0.0.1:1/x.png">',
+				title: "Offline",
+			},
+			undefined,
+			undefined,
+			ctxFor(tempDir),
+		);
+		const written = readFileSync((result.details as { path: string }).path, "utf8");
+		const policy = `<meta http-equiv="Content-Security-Policy" content="${HTML_RENDER_CONTENT_SECURITY_POLICY}">`;
+		expect(written.startsWith(`<!doctype html>${policy}`)).toBe(true);
+		expect(written.indexOf(policy)).toBeLessThan(written.indexOf("cdn.example"));
 	});
 
 	it("clamps the frame height to the 80-2000 range", async () => {

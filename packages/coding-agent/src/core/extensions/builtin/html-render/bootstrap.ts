@@ -72,8 +72,44 @@ const blankNonMarkup = (html: string) => {
 	return parts.join("");
 };
 
-/** Inserts the theme bootstrap at the start of the document head. */
+/**
+ * A page is a static snapshot: everything it shows is in the document (inline,
+ * data: or blob:), and it reaches no network. Its scripts run whenever it
+ * opens, but fetch, XHR, WebSocket, EventSource, remote scripts, styles,
+ * images and fonts, frames, form posts and <base> are refused. The policy is
+ * the document's first element, so nothing the page writes loads before it.
+ * Mirrors the desktop's packages/shared/src/htmlRenderBootstrap.ts.
+ */
+export const HTML_RENDER_CONTENT_SECURITY_POLICY = [
+	"default-src 'none'",
+	"script-src 'unsafe-inline' 'unsafe-eval' data: blob:",
+	"style-src 'unsafe-inline' data:",
+	"img-src data: blob:",
+	"font-src data:",
+	"media-src data: blob:",
+	"worker-src blob:",
+	"connect-src 'none'",
+	"frame-src 'none'",
+	"form-action 'none'",
+	"base-uri 'none'",
+].join("; ");
+
+const POLICY_META = `<meta http-equiv="Content-Security-Policy" content="${HTML_RENDER_CONTENT_SECURITY_POLICY}">`;
+// A doctype must stay first, or the page drops into quirks mode.
+const LEADING_DOCTYPE = /^(?:\s|<!--[\s\S]*?-->)*<!doctype[^>]*>/i;
+
+/**
+ * Inserts the theme bootstrap at the start of the document head, and the
+ * snapshot policy ahead of everything the page wrote.
+ */
 export function injectHtmlRenderBootstrap(html: string): string {
+	const themed = injectThemeBootstrap(html);
+	const doctype = LEADING_DOCTYPE.exec(themed);
+	const at = doctype ? doctype[0].length : 0;
+	return themed.slice(0, at) + POLICY_META + themed.slice(at);
+}
+
+function injectThemeBootstrap(html: string): string {
 	const scan = blankNonMarkup(html);
 	const markup = bootstrapMarkup(scan);
 	const headOpen = /<head(?:\s[^>]*)?>/i.exec(scan);
