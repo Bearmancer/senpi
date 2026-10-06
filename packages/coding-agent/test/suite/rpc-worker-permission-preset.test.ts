@@ -44,7 +44,7 @@ async function runBash(wire: Wire, sessionId: string): Promise<{ asked: number; 
 	}
 }
 
-it("moves a live worker session to the permission preset a later attach names, keeps it when the attach names none, and refuses an unknown one", async () => {
+it("moves a live worker session to the permission preset a later attach names, keeps it when the attach names none, and treats an unknown one as open does", async () => {
 	vi.stubEnv("SENPI_RPC_TEST_BUN", process.execPath);
 	const host = await startWorkerHost(BASH_PROBE, { socket: true });
 	try {
@@ -70,10 +70,13 @@ it("moves a live worker session to the permission preset a later attach names, k
 		expect((await attach()).data).toMatchObject({ sessionId, attached: true });
 		expect((await runBash(first, sessionId)).asked).toBe(1);
 
-		const refused = await attach("full-acess");
-		expect(refused.success).toBe(false);
-		expect(String(refused.error)).toContain('Invalid --permission-preset "full-acess"');
-		expect((await runBash(first, sessionId)).asked).toBe(1);
+		// An unknown preset: the same outcome as a session opened with it.
+		const misspelled = await first.request({ type: "open_session", cwd: host.cwd, permissionPreset: "full-acess" });
+		const openOutcome = await runBash(first, String(misspelled.data?.sessionId));
+		expect(openOutcome.asked).toBe(0);
+		expect(openOutcome.output).toContain('Permission setup failed: Invalid --permission-preset "full-acess"');
+		expect((await attach("full-acess")).data).toMatchObject({ sessionId, attached: true });
+		expect(await runBash(first, sessionId)).toEqual(openOutcome);
 
 		expect((await attach("full-access")).data).toMatchObject({ sessionId, attached: true });
 		expect(await runBash(first, sessionId)).toEqual({ asked: 0, output: "bash:permission-proof" });

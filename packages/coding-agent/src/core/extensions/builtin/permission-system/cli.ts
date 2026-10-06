@@ -38,8 +38,3 @@ export const PERMISSION_PRESET_NAMES: readonly PermissionPresetName[] = [
 export function parsePermissionPresetName(value: string): PermissionPresetName | undefined {
 	return PERMISSION_PRESET_NAMES.find((name) => name === value);
 }
-
-/** The refusal for a preset name the engine does not know, wherever it was given. */
-export function invalidPermissionPresetMessage(value: string): string {
-	return `Invalid --permission-preset "${value}". Expected one of: ${PERMISSION_PRESET_NAMES.join(", ")}.`;
-}

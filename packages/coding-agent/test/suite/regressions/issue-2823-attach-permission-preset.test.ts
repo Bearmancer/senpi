@@ -1,7 +1,7 @@
 /**
  * #2823: an `open_session` that attaches to a live session moves it to the `permissionPreset` it
  * names, from the next tool call on, in both directions; an attach without one keeps the live
- * preset, and an unknown one is refused without changing anything.
+ * preset, and an unknown one is treated exactly as `open_session` treats it.
  *
  * Runs the real in-process host core (registry, router, writer) over the real
  * `createCliRuntimeFactory`, so the builtin permission extension loads as in a host session. Only
@@ -86,11 +86,11 @@ async function attachHost() {
 		await router.dispose();
 		await rm(scratch, { recursive: true, force: true });
 	});
-	const sessionPath = join(scratch, "thread.jsonl");
+	const threadPath = join(scratch, "thread.jsonl");
 	return {
-		registry,
-		/** Opens (or attaches to) the shared thread file from `connection`; `preset` absent sends none. */
-		async open(connection: string, preset?: string): Promise<WireRecord | undefined> {
+		otherPath: join(scratch, "other.jsonl"),
+		/** Opens (or attaches to) the thread file from `connection`; `preset` absent sends none. */
+		async open(connection: string, preset?: string, sessionPath = threadPath): Promise<WireRecord | undefined> {
 			return send(connection, {
 				type: "open_session",
 				cwd,
@@ -99,8 +99,8 @@ async function attachHost() {
 				...(preset === undefined ? {} : { permissionPreset: preset }),
 			});
 		},
-		/** One turn whose model calls `bash`; returns the permission asks it raised and whether the command ran. */
-		async runBash(sessionId: string): Promise<{ asked: number; ran: boolean }> {
+		/** One turn whose model calls `bash`: the permission asks it raised, whether the command ran, and its result. */
+		async runBash(sessionId: string): Promise<{ asked: number; ran: boolean; result: string }> {
 			const start = records.length;
 			faux.setResponses([
 				fauxAssistantMessage([fauxToolCall("bash", { command: "printf permission-proof" }, { id: "call-1" })], {
@@ -138,6 +138,7 @@ async function attachHost() {
 			return {
 				asked: turn.filter(isPermissionAsk).length,
 				ran: ranText(end),
+				result: JSON.stringify(end?.result ?? null),
 			};
 		},
 	};
@@ -159,34 +160,37 @@ describe("an attach moves the live session to the permission preset it names (#2
 	it("enforces ask from the next tool call after a full-access session is attached with ask, and full-access again after the reverse", async () => {
 		const host = await attachHost();
 		const sessionId = sessionIdOf(await host.open("first", "full-access"));
-		expect(await host.runBash(sessionId)).toEqual({ asked: 0, ran: true });
+		expect(await host.runBash(sessionId)).toMatchObject({ asked: 0, ran: true });
 
 		const attached = await host.open("second", "ask");
 		expect(attached?.data).toMatchObject({ sessionId, attached: true });
-		expect(await host.runBash(sessionId)).toEqual({ asked: 1, ran: false });
+		expect(await host.runBash(sessionId)).toMatchObject({ asked: 1, ran: false });
 
 		await host.open("second", "full-access");
-		expect(await host.runBash(sessionId)).toEqual({ asked: 0, ran: true });
+		expect(await host.runBash(sessionId)).toMatchObject({ asked: 0, ran: true });
 	}, 120_000);
 
 	it("keeps the live preset when an attach names none", async () => {
 		const host = await attachHost();
 		const sessionId = sessionIdOf(await host.open("first", "ask"));
-		expect(await host.runBash(sessionId)).toEqual({ asked: 1, ran: false });
+		expect(await host.runBash(sessionId)).toMatchObject({ asked: 1, ran: false });
 
 		expect((await host.open("second"))?.data).toMatchObject({ sessionId, attached: true });
-		expect(await host.runBash(sessionId)).toEqual({ asked: 1, ran: false });
+		expect(await host.runBash(sessionId)).toMatchObject({ asked: 1, ran: false });
 	}, 120_000);
 
-	it("refuses an attach naming an unknown preset and leaves the session on its preset and attachments", async () => {
+	it("treats an unknown preset on attach exactly as open does, and a later valid preset takes over", async () => {
 		const host = await attachHost();
-		const sessionId = sessionIdOf(await host.open("first", "ask"));
-		const attachments = host.registry.peek(sessionId)?.attachments;
+		const opened = sessionIdOf(await host.open("first", "full-acess", host.otherPath));
+		const openOutcome = await host.runBash(opened);
+		expect(openOutcome).toMatchObject({ asked: 0, ran: false });
+		expect(openOutcome.result).toContain('Permission setup failed: Invalid --permission-preset \\"full-acess\\"');
 
-		const refused = await host.open("second", "full-acess");
-		expect(refused?.success).toBe(false);
-		expect(String(refused?.error)).toContain('Invalid --permission-preset "full-acess"');
-		expect(host.registry.peek(sessionId)?.attachments).toBe(attachments);
-		expect(await host.runBash(sessionId)).toEqual({ asked: 1, ran: false });
+		const sessionId = sessionIdOf(await host.open("first", "ask"));
+		expect((await host.open("second", "full-acess"))?.data).toMatchObject({ sessionId, attached: true });
+		expect(await host.runBash(sessionId)).toEqual(openOutcome);
+
+		await host.open("second", "full-access");
+		expect(await host.runBash(sessionId)).toMatchObject({ asked: 0, ran: true });
 	}, 120_000);
 });

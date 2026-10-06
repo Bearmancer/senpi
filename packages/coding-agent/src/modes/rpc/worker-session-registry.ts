@@ -18,7 +18,6 @@ import {
 	type RpcSessionRow,
 	sessionIdentity,
 } from "./session-registry.ts";
-import { assertAttachPermissionPreset } from "./session-registry-attach.ts";
 import { SessionWorkerClient } from "./session-worker-client.ts";
 import { SESSION_WORKER_LIMITS, type SessionWriteGrant } from "./session-worker-protocol.ts";
 
@@ -267,7 +266,6 @@ export class WorkerSessionRegistry {
 		const entry = this.entries.get(owner);
 		if (entry?.state !== "open" || !entry.worker?.bindingReady || entry.worker.snapshot?.sessionPath !== path)
 			throw new RpcSessionRegistryError("session_path_in_use");
-		assertAttachPermissionPreset(permissionPreset);
 		// Same rule as RpcSessionRegistry: an attach that names a surface moves the live session to it.
 		if (promptSurface !== undefined && promptSurface !== entry.profile.promptSurface) {
 			entry.profile = frozenProfile({ ...entry.profile, promptSurface });

@@ -3,10 +3,6 @@
  * surface) for an already-hosted path joins the existing runtime instead of failing. An entry still
  * opening keeps the exclusive reservation and rejects as before.
  */
-import {
-	invalidPermissionPresetMessage,
-	parsePermissionPresetFlag,
-} from "../../core/extensions/builtin/permission-system/cli.ts";
 import type { SessionPathReservations } from "./host-reservations.ts";
 import {
 	frozenProfile,
@@ -16,15 +12,6 @@ import {
 	type RpcSessionOpenOptions,
 	RpcSessionRegistryError,
 } from "./session-registry-types.ts";
-
-/**
- * An attach that names a permission preset the engine does not know is refused before it changes
- * anything, so the live session keeps the preset it enforces.
- */
-export function assertAttachPermissionPreset(preset: string | undefined): void {
-	if (preset !== undefined && parsePermissionPresetFlag(preset) === undefined)
-		throw new RpcSessionRegistryError("open_failed", invalidPermissionPresetMessage(preset));
-}
 
 export async function attachToOpenSession(
 	entries: ReadonlyMap<string, RpcSessionEntry>,
@@ -37,7 +24,6 @@ export async function attachToOpenSession(
 	const existing = [...entries].find(([, entry]) => entry.reservationKey === sessionPath && entry.state === "open");
 	if (!existing) throw new RpcSessionRegistryError("session_path_in_use");
 	const [handle, entry] = existing;
-	assertAttachPermissionPreset(profile.permissionPreset);
 	const wasParked = entry.retainOnDisconnect === true && entry.attachments === 0;
 	entry.attachments += 1;
 	entry.detachedAt = undefined;

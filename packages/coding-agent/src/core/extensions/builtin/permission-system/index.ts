@@ -2,12 +2,7 @@ import { SettingsManager } from "../../../settings-manager.ts";
 import type { ExtensionAPI } from "../../types.ts";
 import { extractPatchedPaths } from "../gpt-apply-patch/index.ts";
 import { decideAuto } from "./auto-policy.ts";
-import {
-	invalidPermissionPresetMessage,
-	PERMISSION_PRESET_NAMES,
-	parsePermissionFlag,
-	parsePermissionPresetFlag,
-} from "./cli.ts";
+import { PERMISSION_PRESET_NAMES, parsePermissionFlag, parsePermissionPresetFlag } from "./cli.ts";
 import { disabled } from "./config.ts";
 import { createEventEmitter } from "./events.ts";
 import { INTERNAL_PERMISSION_TOOLS } from "./internal-tools.ts";
@@ -114,7 +109,9 @@ export default function permissionSystemExtension(pi: ExtensionAPI): void {
 			typeof permissionPresetFlag === "string" ? parsePermissionPresetFlag(permissionPresetFlag) : undefined;
 
 		if (typeof permissionPresetFlag === "string" && !cliPreset) {
-			throw new Error(invalidPermissionPresetMessage(permissionPresetFlag));
+			throw new Error(
+				`Invalid --permission-preset "${permissionPresetFlag}". Expected one of: ${PERMISSION_PRESET_NAMES.join(", ")}.`,
+			);
 		}
 
 		const loadedSettings = loadPermissionSettings(settingsManager, cliRuleset, cwd, cliPreset);
