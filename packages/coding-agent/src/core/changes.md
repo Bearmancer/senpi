@@ -1,3 +1,62 @@
+## 2026-10-05 - A reload requested while session_start is dispatching is deferred (senpi#2719)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `_rebuildRuntimeForReload()` sets `_sessionStartDispatching` for the whole `session_start` settlement (`beforeSessionStart`, the emit, `extendResourcesFromExtensions`) and clears it in the existing `finally`. `checkReloadVeto()` passes it to `checkSessionReloadVeto()`.
+- `packages/coding-agent/src/core/reload-veto.ts`: `checkSessionReloadVeto()` takes an optional `isSessionStartDispatching` predicate and vetoes with "A session is starting." before and after the `session_before_reload` emit, like the existing prompt-admission veto.
+
+### Why
+
+- config-reload requests a second reload from inside its own `session_start` handler when files changed during the first. The nested reload shut down and invalidated the runner whose later `session_start` handlers (MCP attach, memory reconcile) were still running, so their first `ctx` read threw "stale extension generation after reload". The veto defers the nested request through config-reload's existing `reload_deferred` / `armVetoRecheck` path, which reloads once after dispatch ends.
+
+### Why an extension could not handle it
+
+- The dispatch state is private to `AgentSession`; an extension cannot know that its own handler is running inside a reload's `session_start` dispatch.
+
+### Expected merge conflict zones
+
+- `agent-session.ts`: the `_promptStartPending` field block, the `hasBindings` block of `_rebuildRuntimeForReload()`, and `checkReloadVeto()`.
+
+### Must not break
+
+- A reload requested while no `session_start` dispatch is running (`/reload`, config-reload after dispatch, prompt-admission veto) behaves as before.
+
+## 2026-10-05 - Resume queued work after failed extension feedback (senpi#2778)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `_endExtensionCompactionFeedback` releases queued work through the existing continuation admission path after non-aborted feedback completes without applying a summary. Cancelled and superseded feedback does not schedule work.
+
+### Why
+
+- A hidden goal continuation arriving during summary generation remained queued forever when the summary was stale. Only successful non-auto compaction previously resumed it. Fresh continuation admission still enforces required compaction and preserves queued messages on rejection.
+
+### Why an extension could not handle it
+
+- Queue ownership and the feedback lifecycle are private to `AgentSession`; a builtin cannot safely schedule or release another session operation.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/agent-session.ts`: `_endExtensionCompactionFeedback`.
+
+## 2026-10-05 - Require explicit gateway fallback selectors (senpi#2774)
+
+### What changed
+
+- `packages/coding-agent/src/core/retry-fallback/expansion.ts`: exclude OpenGateway and Vercel AI Gateway from bare fallback key and candidate expansion, matching the existing OpenRouter policy. Explicit provider-qualified selectors remain supported.
+
+### Why
+
+- Authenticating a gateway for a selected model also makes its built-in catalog available. Bare model-family defaults must not treat those credentials as permission to route unrelated sessions through that gateway.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/retry-fallback/expansion.ts` owns candidate expansion for every AgentSession consumer, including extension-free SDK and RPC sessions.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/retry-fallback/expansion.ts`: the bare-expansion provider exclusion set.
+
 ## 2026-10-05 - A runtime's fallback policy can be set before its first turn (omo#9582)
 
 ### What changed

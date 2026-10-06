@@ -7,6 +7,7 @@
 import * as net from "node:net";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import * as hostGc from "../../src/modes/rpc/host-gc.ts";
 import { DEFAULT_HOST_LAUNCH_SPEC } from "../../src/modes/rpc/host-launch-spec.ts";
 import { HOST_EXIT_OK, HOST_EXIT_REFUSED, type HostRequest, runHostRequest } from "../../src/modes/rpc/host-runner.ts";
 import { tuiSocketName } from "../../src/modes/rpc/tui-socket.ts";
@@ -21,6 +22,24 @@ vi.mock("node:net", async (importOriginal) => {
 });
 
 const fixtures: EndpointFixture[] = [];
+
+async function startSettledEndpoint(agentDir: string): Promise<EndpointFixture> {
+	const finished = Promise.withResolvers<void>();
+	const collect = hostGc.gcHostEndpoints;
+	const observer = vi.spyOn(hostGc, "gcHostEndpoints").mockImplementation((...args) => {
+		const pass = collect(...args);
+		if (args[0] === agentDir) void pass.then(() => finished.resolve(), finished.reject);
+		return pass;
+	});
+	try {
+		const fixture = await startEndpoint({ agentDir });
+		fixtures.push(fixture);
+		await finished.promise;
+		return fixture;
+	} finally {
+		observer.mockRestore();
+	}
+}
 
 afterEach(async () => {
 	for (const fixture of fixtures.splice(0)) {
@@ -53,8 +72,7 @@ async function expectRefusedWithoutConnecting(socket: string, agentDir: string):
 describe.skipIf(process.platform === "win32")("host lifecycle commands against tui endpoints", () => {
 	it("refuses ensure, handoff and stop on a running terminal endpoint without connecting", async () => {
 		const qa = endpointScratch("tui-refuse");
-		const fixture = await startEndpoint({ agentDir: qa.agentDir });
-		fixtures.push(fixture);
+		const fixture = await startSettledEndpoint(qa.agentDir);
 		await expectRefusedWithoutConnecting(fixture.socket, qa.agentDir);
 	});
 
@@ -75,8 +93,7 @@ describe.skipIf(process.platform === "win32")("host lifecycle commands against t
 		// Given: a real supervised host and a running terminal endpoint in one agent directory.
 		const qa = endpointScratch("tui-host");
 		await realHost(qa, qa.legacy);
-		const fixture = await startEndpoint({ agentDir: qa.agentDir });
-		fixtures.push(fixture);
+		const fixture = await startSettledEndpoint(qa.agentDir);
 
 		// When: every endpoint is read.
 		const before = await statusAll(qa);

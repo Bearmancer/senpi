@@ -1047,6 +1047,8 @@ export class AgentSession {
 	private _toolExecutionDepth = 0;
 	private readonly _toolContextDisposers = new Set<() => void>();
 	private _promptStartPending = false;
+	/** True while a reload's `session_start` handlers run; a nested reload would retire the runner they run on. */
+	private _sessionStartDispatching = false;
 	/** User-abort generation at the start of an idle trigger turn's awaited admission hooks. */
 	private _triggerTurnAdmissionAbortGeneration: number | undefined;
 	private _nextInputId = 0;
@@ -7270,6 +7272,7 @@ export class AgentSession {
 			errorMessage: aborted ? undefined : (options.errorMessage ?? "Compaction did not apply"),
 		});
 		this._releaseCompactionController(options.signal);
+		if (!aborted) this._resumeQueuedMessagesAfterCompaction();
 	}
 
 	private async _executeCompaction(request: CompactionExecutionRequest): Promise<CompactionExecutionResult> {
@@ -9448,6 +9451,7 @@ export class AgentSession {
 			this._extensionErrorListener;
 		if (hasBindings) {
 			const settleSessionStart = this._beginSessionStartSettlement();
+			this._sessionStartDispatching = true;
 			try {
 				await options?.beforeSessionStart?.();
 				this.syncPromptCacheSafeWaitEnv();
@@ -9457,6 +9461,7 @@ export class AgentSession {
 				});
 				await this.extendResourcesFromExtensions("reload");
 			} finally {
+				this._sessionStartDispatching = false;
 				settleSessionStart();
 			}
 		}
@@ -9472,7 +9477,11 @@ export class AgentSession {
 	 * without starting their reload UI.
 	 */
 	async checkReloadVeto(): Promise<{ cancelled: boolean; reason?: string }> {
-		return checkSessionReloadVeto(this._extensionRunner, () => this._promptStartPending);
+		return checkSessionReloadVeto(
+			this._extensionRunner,
+			() => this._promptStartPending,
+			() => this._sessionStartDispatching,
+		);
 	}
 
 	// =========================================================================

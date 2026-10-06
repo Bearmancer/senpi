@@ -1,7 +1,7 @@
 /**
  * The budgeted gc pass on its own (no host): its rate limit, its fair rotation past an uncollectable
- * head, and its skip backoff. Passes are separated by moving the marker's `completedAt` back past the
- * 5 min interval, so the real clock keeps driving the time budget and each skip's `skipUntil`.
+ * head, and its skip backoff. The injected clock separates elapsed-time behavior from filesystem speed.
+ * Passes are separated by moving the marker's `completedAt` back past the 5 min interval.
  */
 import { existsSync, mkdtempSync } from "node:fs";
 import { rm } from "node:fs/promises";
@@ -9,7 +9,7 @@ import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { acquireHostEnsureLock } from "../src/modes/rpc/host-ensure-lock.ts";
-import { gcHostEndpointsOpportunistically } from "../src/modes/rpc/host-gc-pass.ts";
+import { gcHostEndpointsOpportunistically, OPPORTUNISTIC_GC_BUDGET } from "../src/modes/rpc/host-gc-pass.ts";
 import {
 	GC_SKIP_INITIAL_BACKOFF_MS,
 	type HostGcPassMarker,
@@ -50,30 +50,35 @@ async function expireInterval(agentDir: string): Promise<HostGcPassMarker> {
 describe.skipIf(process.platform === "win32")("budgeted host gc pass", () => {
 	it("runs at most once per 5 min interval: a second pass inside it does no work", async () => {
 		const agentDir = scratchAgentDir();
+		const instant = Date.now();
+		const now = () => instant;
 		const target = join(agentDir, "t.sock");
 		const [first, second] = await deadEndpoints(agentDir, 2);
 		if (first === undefined || second === undefined) throw new Error("fixture endpoints missing");
 
-		const ran = await gcHostEndpointsOpportunistically({ agentDir, exclude: target });
+		const ran = await gcHostEndpointsOpportunistically({ agentDir, exclude: target, now });
 		expect(ran.ran && ran.marker.removed).toBe(2);
 		await deadEndpoint(first.socket, agentDir);
 
-		expect(await gcHostEndpointsOpportunistically({ agentDir, exclude: target })).toEqual({ ran: false });
+		expect(await gcHostEndpointsOpportunistically({ agentDir, exclude: target, now })).toEqual({ ran: false });
 		expect(existsSync(first.dir)).toBe(true);
 	}, 60_000);
 
 	it("never judges the target endpoint, even when it is dead", async () => {
 		const agentDir = scratchAgentDir();
+		const instant = Date.now();
 		const [target] = await deadEndpoints(agentDir, 1);
 		if (target === undefined) throw new Error("fixture endpoint missing");
 
-		const ran = await gcHostEndpointsOpportunistically({ agentDir, exclude: target.socket });
+		const ran = await gcHostEndpointsOpportunistically({ agentDir, exclude: target.socket, now: () => instant });
 		expect(ran.ran && ran.marker.examined).toBe(0);
 		expect(existsSync(target.endpointFile)).toBe(true);
 	}, 60_000);
 
-	it("rotates past an uncollectable head: all 40 dead endpoints go in three passes, the head is examined once", async () => {
+	it("rotates past an uncollectable head within the endpoint-count budget without examining it again", async () => {
 		const agentDir = scratchAgentDir();
+		const instant = Date.now();
+		const now = () => instant;
 		const target = join(agentDir, "t.sock");
 		const endpoints = await deadEndpoints(agentDir, 41);
 		const [head, ...dead] = endpoints;
@@ -83,14 +88,14 @@ describe.skipIf(process.platform === "win32")("budgeted host gc pass", () => {
 		const server = await listeningSocket(head.socket);
 		releases.push(() => new Promise<void>((resolveClose) => server.close(() => resolveClose())));
 
-		const first = await gcHostEndpointsOpportunistically({ agentDir, exclude: target });
+		const first = await gcHostEndpointsOpportunistically({ agentDir, exclude: target, now, maxEndpoints: 1 });
 		expect(first.ran && first.marker).toMatchObject({ cursor: basename(head.dir), examined: 1, removed: 0 });
 		expect(first.ran && first.marker.skip[basename(head.dir)]?.backoffMs).toBe(GC_SKIP_INITIAL_BACKOFF_MS);
 
 		const passes: HostGcPassMarker[] = [];
 		for (let pass = 0; pass < 2; pass += 1) {
 			await expireInterval(agentDir);
-			const next = await gcHostEndpointsOpportunistically({ agentDir, exclude: target });
+			const next = await gcHostEndpointsOpportunistically({ agentDir, exclude: target, now });
 			if (!next.ran) throw new Error("an expired interval did not allow a pass");
 			passes.push(next.marker);
 		}
@@ -102,4 +107,28 @@ describe.skipIf(process.platform === "win32")("budgeted host gc pass", () => {
 		expect((await readGcMarker(agentDir)).skip[basename(head.dir)]?.backoffMs).toBe(GC_SKIP_INITIAL_BACKOFF_MS);
 		expect(existsSync(head.endpointFile)).toBe(true);
 	}, 120_000);
+
+	it("leaves endpoints for a later pass when scanning consumes the time budget", async () => {
+		const agentDir = scratchAgentDir();
+		const endpoints = await deadEndpoints(agentDir, 2);
+		const target = join(agentDir, "t.sock");
+		const startedAt = Date.now();
+		let clock = startedAt;
+		const spent = await gcHostEndpointsOpportunistically({
+			agentDir,
+			exclude: target,
+			now: () => {
+				const value = clock;
+				clock = startedAt + OPPORTUNISTIC_GC_BUDGET.budgetMs;
+				return value;
+			},
+		});
+		expect(spent.ran && spent.marker).toMatchObject({ examined: 0, removed: 0, stoppedBy: "time" });
+		expect(endpoints.every((endpoint) => existsSync(endpoint.dir))).toBe(true);
+
+		await expireInterval(agentDir);
+		const next = await gcHostEndpointsOpportunistically({ agentDir, exclude: target, now: () => clock });
+		expect(next.ran && next.marker.removed).toBe(2);
+		expect(endpoints.some((endpoint) => existsSync(endpoint.dir))).toBe(false);
+	});
 });

@@ -1,9 +1,10 @@
 import { join } from "node:path";
 import type { ExtensionContext } from "@code-yeongyu/senpi";
+import { readProcessFootprint } from "@code-yeongyu/senpi";
 import { type BridgeServerHandle, startBridgeServer } from "../bridge/http-server.ts";
 import type { KernelToHostMessage } from "../bridge/protocol.ts";
 import type { CompletionRequest, CompletionResult } from "../completion/handler.ts";
-import { resolveKernelToolsEnabled } from "../config/feature-settings.ts";
+import { resolveJsIsolation, resolveKernelToolsEnabled } from "../config/feature-settings.ts";
 import { resolveKernelMemoryThresholds } from "../config/memory-settings.ts";
 import { collectOrphanedChildren } from "../host-sdk.ts";
 import { JavaScriptKernel } from "../kernels/js/context-manager.ts";
@@ -254,6 +255,8 @@ class DefaultCodemodeSessionManager implements CodemodeSessionManager {
 			this.#options.localRoots ??
 			(this.#options.artifactsDir ? { local: join(this.#options.artifactsDir, "local") } : undefined);
 		if (language === "js") {
+			const memoryThresholds = resolveKernelMemoryThresholds(this.#options.settings.memory);
+			const processIsolation = resolveJsIsolation(this.#options.settings) === "process";
 			const kernel = new JavaScriptKernel({
 				sessionId: this.#options.sessionId,
 				cwd: this.#options.cwd,
@@ -261,8 +264,12 @@ class DefaultCodemodeSessionManager implements CodemodeSessionManager {
 				onMessage,
 				hostToolNames: () => this.#options.listTools?.().map((tool) => tool.name) ?? [],
 				foreignLanguageNames: () => this.#foreignKernelToolNames(),
-				memory: resolveKernelMemoryThresholds(this.#options.settings.memory),
+				memory: memoryThresholds,
 				collectOrphanedChildren,
+				...(processIsolation ? { isolation: "process" as const } : {}),
+				...(processIsolation && memoryThresholds !== undefined
+					? { processMemory: { thresholds: memoryThresholds, readFootprint: readProcessFootprint } }
+					: {}),
 				...(resolveKernelToolsEnabled(this.#options.settings) ? {} : { kernelToolsEnabled: false }),
 				...(this.#options.sessionEnv ? { sessionEnv: this.#options.sessionEnv } : {}),
 				...(localRoots ? { localRoots: { ...localRoots } } : {}),

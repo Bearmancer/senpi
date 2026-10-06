@@ -63,11 +63,16 @@ export class SessionKernelRegistrations {
 }
 
 export function javaScriptKernelMemory(kernel: JavaScriptKernel): RegisteredKernelSource {
+	const measure = kernel.mode === "process" ? "footprint" : "heap";
 	return {
-		measure: "heap",
+		measure,
 		lastLiveBytes: () => kernel.lastLiveBytes,
 		busy: () => kernel.queueSnapshot().activeCellId !== null,
-		queryMemory: () => kernel.queryMemory(),
+		queryMemory: async () => {
+			const reading = await kernel.queryMemory();
+			return reading === undefined ? undefined : { liveBytes: reading.liveBytes, measure: reading.measure };
+		},
+		...(measure === "footprint" ? { pid: () => kernel.processPid } : {}),
 	};
 }
 

@@ -237,10 +237,15 @@ export function parseBridgeJsonLine(line: string, options: BridgeFrameOptions = 
 export function decodeBridgeFrame(line: string, options: BridgeFrameOptions = {}): BridgeMessageDecodeResult {
 	const parsed = parseBridgeJsonLine(line, options);
 	if (!parsed.ok) return parsed;
-	if (Value.Check(bridgeMessageSchema, parsed.value)) {
-		return { ok: true, message: parsed.value };
+	return validateBridgeMessage(parsed.value);
+}
+
+/** Checks an already-parsed frame against the bridge schema (for transports that transform values before checking). */
+export function validateBridgeMessage(value: unknown): BridgeMessageDecodeResult {
+	if (Value.Check(bridgeMessageSchema, value)) {
+		return { ok: true, message: value };
 	}
-	const firstError = Value.Errors(bridgeMessageSchema, parsed.value)[0];
+	const firstError = Value.Errors(bridgeMessageSchema, value)[0];
 	const message = firstError ? `Invalid bridge message: ${firstError.message}` : "Invalid bridge message";
 	return { ok: false, error: { code: "invalid_message", message } };
 }

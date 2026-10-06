@@ -1,5 +1,6 @@
 import type { EvalStatusEvent, KernelToHostMessage } from "../../bridge/protocol.ts";
 import type { JavaScriptRunInput } from "./kernel-contract.ts";
+import { crashedResult } from "./worker-host.ts";
 
 type ResultMessage = Extract<KernelToHostMessage, { type: "result" }>;
 
@@ -81,6 +82,12 @@ export class JavaScriptRunQueue {
 	durationMs(run: PendingJavaScriptRun, finishedAtMs: number): number {
 		if (run.startedAtMs === null) return 0;
 		return Math.max(0, Math.round(finishedAtMs - run.startedAtMs));
+	}
+
+	/** Settles `run` as crashed with `error`: the worker died under it. */
+	settleCrashed(run: PendingJavaScriptRun, error: Error): void {
+		this.releaseActive(run);
+		this.settle(run, crashedResult(run.input.cellId, error, this.durationMs(run, performance.now())));
 	}
 
 	releaseActive(run: PendingJavaScriptRun): boolean {
