@@ -183,20 +183,30 @@ const dataDirectory = fileURLToPath(new URL("../src/providers/data/", import.met
 
 type CatalogEntry = { id?: unknown; contextWindow?: unknown };
 type FamilyEntry = { file: string; api: string; id: string; contextWindow: unknown };
+type Catalog = Record<string, Record<string, CatalogEntry>>;
 
-function collectFamilyEntries(marker: FamilyId): FamilyEntry[] {
+/**
+ * Whether a catalog key names OpenAI's own model of this tier, under any route's naming: the bare id
+ * (`gpt-6-luna`, `gpt-6-luna-fast`), the OpenAI-owned path (`openai/gpt-6-luna:batch`), Bedrock's dotted
+ * form with an optional region (`global.openai.gpt-6-luna`), or a flat vendor prefix (`openai-gpt-6-luna`).
+ * A third party's model whose id merely CONTAINS the name is not OpenAI's - a router alias such as
+ * `typesafe-system-one/classifier:openai/gpt-6-luna-decisions` is somebody else's product with its own
+ * window - and the release regenerates catalogs from live provider lists, so such aliases appear.
+ */
+function isOpenAIFamilyModel(key: string, marker: FamilyId): boolean {
+	// A leading mode tag (`chat:`) is not part of the model id; a path segment never precedes it.
+	const id = key.replace(/^[a-z-]+:/u, "");
+	const escaped = marker.replaceAll(".", "\\.");
+	return new RegExp(`^(?:[a-z]{2,6}\\.)?(?:openai[./-])?${escaped}(?:$|[-:.])`, "u").test(id);
+}
+
+function collectFamilyEntriesFrom(catalogs: ReadonlyMap<string, Catalog>, marker: FamilyId): FamilyEntry[] {
 	const entries: FamilyEntry[] = [];
-	for (const file of readdirSync(dataDirectory)
-		.filter((name) => name.endsWith(".json"))
-		.sort()) {
-		const parsed = JSON.parse(readFileSync(`${dataDirectory}${file}`, "utf8")) as Record<
-			string,
-			Record<string, CatalogEntry>
-		>;
+	for (const [file, parsed] of catalogs) {
 		for (const [api, models] of Object.entries(parsed)) {
 			if (!models || typeof models !== "object") continue;
 			for (const [id, model] of Object.entries(models)) {
-				if (!id.includes(marker)) continue;
+				if (!isOpenAIFamilyModel(id, marker)) continue;
 				entries.push({ file, api, id, contextWindow: model?.contextWindow });
 			}
 		}
@@ -204,16 +214,72 @@ function collectFamilyEntries(marker: FamilyId): FamilyEntry[] {
 	return entries;
 }
 
+function shippedCatalogs(): Map<string, Catalog> {
+	const catalogs = new Map<string, Catalog>();
+	for (const file of readdirSync(dataDirectory)
+		.filter((name) => name.endsWith(".json"))
+		.sort()) {
+		catalogs.set(file, JSON.parse(readFileSync(`${dataDirectory}${file}`, "utf8")) as Catalog);
+	}
+	return catalogs;
+}
+
+function collectFamilyEntries(marker: FamilyId): FamilyEntry[] {
+	return collectFamilyEntriesFrom(shippedCatalogs(), marker);
+}
+
+function offendersOf(entries: readonly FamilyEntry[], id: FamilyId): string[] {
+	return entries
+		.filter((entry) => entry.contextWindow !== EXPECTED[id].contextWindow)
+		.map((entry) => `${entry.file}:${entry.api}/${entry.id}=${String(entry.contextWindow)}`)
+		.sort();
+}
+
+describe("which catalog entries carry a GPT-6 tier's window", () => {
+	const synthetic = (models: Record<string, number>): Map<string, Catalog> =>
+		new Map([
+			[
+				"router.json",
+				{
+					"openai-completions": Object.fromEntries(
+						Object.entries(models).map(([id, contextWindow]) => [id, { id, contextWindow }]),
+					),
+				},
+			],
+		]);
+
+	it("Given a third-party router alias whose id contains the tier name when the catalogs are checked then it is not held to OpenAI's window", () => {
+		const entries = collectFamilyEntriesFrom(
+			synthetic({
+				"chat:openai/gpt-6-luna": LUNA_CONTEXT_WINDOW,
+				"chat:typesafe-system-one/classifier:openai/gpt-6-luna-decisions": 1_050_000,
+			}),
+			"gpt-6-luna",
+		);
+		expect(entries.map((entry) => entry.id)).toEqual(["chat:openai/gpt-6-luna"]);
+		expect(offendersOf(entries, "gpt-6-luna")).toEqual([]);
+	});
+
+	it("Given an OpenAI tier model under any route's naming that misses the tier window when the catalogs are checked then it is reported", () => {
+		const entries = collectFamilyEntriesFrom(
+			synthetic({
+				"chat:gpt-6-luna-fast": 1_050_000,
+				"chat:openai/gpt-6-luna:batch": 1_050_000,
+				"chat:global.openai.gpt-6-luna": 1_050_000,
+				"chat:openai-gpt-6-luna": 1_050_000,
+			}),
+			"gpt-6-luna",
+		);
+		expect(offendersOf(entries, "gpt-6-luna")).toHaveLength(4);
+	});
+});
+
 describe("GPT-6 Sol/6.1 Sol/Luna series catalog context window", () => {
 	for (const id of FAMILY_IDS) {
 		it(`declares ${EXPECTED[id].contextWindow} for every ${id} entry in every provider catalog`, () => {
 			const entries = collectFamilyEntries(id);
 			expect(entries.length, `generated catalogs should ship ${id} entries`).toBeGreaterThan(0);
-			const offenders = entries
-				.filter((entry) => entry.contextWindow !== EXPECTED[id].contextWindow)
-				.map((entry) => `${entry.file}:${entry.api}/${entry.id}=${String(entry.contextWindow)}`)
-				.sort();
-			expect(offenders, `${id} entries must all declare the tier context window`).toEqual([]);
+			expect(offendersOf(entries, id), `${id} entries must all declare the tier context window`).toEqual([]);
 		});
 
 		it(`ships ${id} in the first-party OpenAI catalogs`, () => {
