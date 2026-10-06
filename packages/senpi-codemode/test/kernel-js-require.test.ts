@@ -16,7 +16,7 @@ async function project(): Promise<string> {
 	const dep = join(root, "node_modules", "cjs-dep");
 	await mkdir(dep, { recursive: true });
 	await writeFile(join(dep, "package.json"), JSON.stringify({ name: "cjs-dep", main: "index.js" }));
-	await writeFile(join(dep, "index.js"), "module.exports = { greet: (name) => `hi ${name}` };");
+	await writeFile(join(dep, "index.js"), "module.exports = { greet: (name) => 'hi ' + name };");
 	await writeFile(join(root, "data.json"), JSON.stringify({ answer: 42 }));
 	await writeFile(join(root, "local.cjs"), "module.exports = 'local module';");
 	return root;
@@ -67,6 +67,22 @@ describe("require in JavaScript cells", () => {
 					`return createRequire(${JSON.stringify(join(cwd, "package.json"))})("cjs-dep").greet("own")`,
 				);
 				expect(parseJavaScriptResult(run.result)).toBe("hi own");
+			},
+			{ cwd },
+		);
+	});
+
+	it("Given a cell that builds its own require from createRequire, the common ESM idiom, when it runs then its require works and later cells keep it", async () => {
+		const cwd = await project();
+		await withJavaScriptKernel(
+			async (kernel) => {
+				const declared = await runJavaScriptCell(
+					kernel,
+					`const require = createRequire(${JSON.stringify(join(cwd, "package.json"))});\nreturn require("cjs-dep").greet("idiom")`,
+				);
+				expect(parseJavaScriptResult(declared.result)).toBe("hi idiom");
+				const later = await runJavaScriptCell(kernel, 'return require("./data.json").answer');
+				expect(parseJavaScriptResult(later.result)).toBe(42);
 			},
 			{ cwd },
 		);
