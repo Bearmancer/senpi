@@ -1,3 +1,4 @@
+import { createServer, type Socket } from "node:net";
 import { expect, it, vi } from "vitest";
 import type { WorkerHostRecord } from "./rpc-host-endpoint.ts";
 import { startWorkerHost } from "./rpc-worker-host-support.ts";
@@ -6,8 +7,27 @@ import { startWorkerHost } from "./rpc-worker-host-support.ts";
 // session runs in a worker isolate, and its extension runs a real shell command through the
 // session's bash tool, which passes the permission system like any tool call (#2823). "/hold-reload"
 // parks the next reload inside its session_shutdown on a dialog the test answers, so an attach can
-// land while the worker rebuilds the session (#2842).
-const BASH_PROBE = `export default function (pi) {
+// land while the worker rebuilds the session (#2842). "/hold-next-load <port>" parks the next load of
+// this extension, inside the runtime a replacement builds after it read its launch profile, until
+// the test's server on <port> answers.
+const BASH_PROBE = `import { connect } from "node:net";
+export default async function (pi) {
+	const loadHoldPort = globalThis.__permissionPresetTestLoadHold;
+	if (loadHoldPort !== undefined) {
+		globalThis.__permissionPresetTestLoadHold = undefined;
+		await new Promise((resolve, reject) => {
+			const socket = connect(loadHoldPort, "127.0.0.1");
+			socket.once("data", () => resolve(socket.destroy()));
+			socket.once("error", reject);
+		});
+	}
+	pi.registerCommand("hold-next-load", {
+		description: "park the next load of this extension until the test's server answers",
+		handler: async (args, ctx) => {
+			globalThis.__permissionPresetTestLoadHold = Number(args);
+			ctx.ui.notify("load-hold:armed");
+		},
+	});
 	let holdReload = false;
 	pi.registerCommand("hold-reload", {
 		description: "park the next reload until the reload-hold dialog is answered",
@@ -37,6 +57,30 @@ const BASH_PROBE = `export default function (pi) {
 const WAIT_MS = 30_000;
 
 type Wire = Awaited<ReturnType<Awaited<ReturnType<typeof startWorkerHost>>["connect"]>>;
+
+/** The server "/hold-next-load" parks on: `reached` yields the held load's socket; writing to it releases the load. */
+async function loadHoldServer() {
+	const server = createServer();
+	let deadline: ReturnType<typeof setTimeout> | undefined;
+	const reached = new Promise<Socket>((resolve, reject) => {
+		deadline = setTimeout(
+			() => reject(new Error(`waited ${WAIT_MS}ms for the replacement's extension load; it was never reached`)),
+			WAIT_MS,
+		);
+		server.once("connection", (socket) => {
+			clearTimeout(deadline);
+			resolve(socket);
+		});
+	});
+	await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+	const address = server.address();
+	if (address === null || typeof address === "string") throw new Error("load-hold server has no TCP port");
+	const close = () => {
+		clearTimeout(deadline);
+		server.close();
+	};
+	return { port: address.port, reached, close };
+}
 
 /** Runs the command once, denying every permission ask; returns how many asks it raised and what bash printed. */
 async function runBash(wire: Wire, sessionId: string): Promise<{ asked: number; output: string }> {
@@ -138,6 +182,46 @@ it("enforces the preset an attach names while a reload rebuilds the worker sessi
 		expect(strict.asked).toBe(1);
 		expect(strict.output).not.toContain("permission-proof");
 	} finally {
+		await host.dispose();
+	}
+}, 120_000);
+
+it("enforces the preset an attach names while a new_session replacement is built in the worker (#2842)", async () => {
+	vi.stubEnv("SENPI_RPC_TEST_BUN", process.execPath);
+	const host = await startWorkerHost(BASH_PROBE, { socket: true });
+	const loadHold = await loadHoldServer();
+	try {
+		const first = await host.connect();
+		const opened = await first.request({ type: "open_session", cwd: host.cwd, permissionPreset: "full-access" });
+		const sessionId = String(opened.data?.sessionId);
+		const sessionPath = opened.data?.state?.sessionFile;
+		expect(await runBash(first, sessionId)).toEqual({ asked: 0, output: "bash:permission-proof" });
+
+		const armed = first.wait(
+			(record) => record.type === "extension_ui_request" && record.message === "load-hold:armed",
+			WAIT_MS,
+		);
+		const arming = await first.request({ type: "prompt", sessionId, message: `/hold-next-load ${loadHold.port}` });
+		expect(arming.success).toBe(true);
+		await armed;
+		const replacing = first.request({ type: "new_session", sessionId });
+		const held = await loadHold.reached;
+		const second = await host.connect();
+		const attach = await second.request({
+			type: "open_session",
+			cwd: host.cwd,
+			sessionPath,
+			permissionPreset: "ask",
+		});
+		held.end("release");
+		expect(attach.data).toMatchObject({ sessionId, attached: true });
+		expect(await replacing).toMatchObject({ success: true, data: { cancelled: false } });
+
+		const strict = await runBash(first, sessionId);
+		expect(strict.asked).toBe(1);
+		expect(strict.output).not.toContain("permission-proof");
+	} finally {
+		loadHold.close();
 		await host.dispose();
 	}
 }, 120_000);

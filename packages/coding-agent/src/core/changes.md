@@ -2,12 +2,12 @@
 
 ### What changed
 
-- `packages/coding-agent/src/core/agent-session.ts`: `_rebuildRuntimeForReload()` reads the retiring runner's flag values at the runner swap (`_buildRuntime({ flagValues: oldExtensionRunner.getFlagValues() })`) instead of snapshotting them before its awaits, so a flag set on the live runner while the reload ran carries over to the rebuilt one.
-- `packages/coding-agent/src/core/agent-session-runtime.ts`: `apply()` sets the replacement session's `permission-preset` flag from the runtime's current launch profile as it installs it, so new / switch / fork / import end on the preset the last attach named.
+- `packages/coding-agent/src/core/agent-session.ts`: `_rebuildRuntimeForReload()` reads the flag values of the runner that is live at the runner swap (`_buildRuntime({ flagValues: this._extensionRunner.getFlagValues() })`) instead of snapshotting them before its awaits, so a flag set on the live runner while the reload ran carries over to the rebuilt one. It reads the current runner, not the one the reload started with, because an overlapping reload may have installed another runner in the meantime, and an attach then writes that one.
+- `packages/coding-agent/src/core/agent-session-runtime.ts`: `apply()` sets the replacement session's `permission-preset` flag, prompt surface and browser engine from the runtime's current launch profile as it installs it, so new / switch / fork / import end on the values the last attach named.
 
 ### Why
 
-An attach moves a live session's preset through `AgentSessionRuntime.setPermissionPreset`, which writes the runtime's launch profile and the live runner's flag. An attach that landed during a reload was overwritten by the reload's pre-await flag snapshot. One that landed while a replacement's runtime was being created reached only the retired session, because the replacement was built from the profile read before the await. Either way the rebuilt session enforced the looser preset while the host reported the stricter one.
+An attach moves a live session's preset through `AgentSessionRuntime.setPermissionPreset`, which writes the runtime's launch profile and the live runner's flag. An attach that landed during a reload was overwritten by the reload's pre-await flag snapshot. One that landed while a replacement's runtime was being created reached only the retired session, because the replacement was built from the profile read before the await. Either way the rebuilt session enforced the looser preset while the host reported the stricter one. Two overlapping reloads lost it too: the reload that finished last installed a runner from the flags of the runner it started with, not of the runner the other reload had installed and the attach had written. The prompt surface and browser engine an attach named during a replacement were lost the same way, because the replacement was created from the same stale launch profile.
 
 ### Why an extension could not handle it
 

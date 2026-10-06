@@ -8,7 +8,8 @@
  * Two hold points pause a rebuild at an await the production code already makes, so a test can
  * land an attach inside it: `reloadHold` inside the `session_shutdown` a reload emits, and
  * `replacementHold` inside the runtime factory a replacement (new, switch, fork, import) awaits,
- * after the replacement's launch profile was read.
+ * after the replacement's launch profile was read. `lastTurnSettings` reports the prompt surface and
+ * browser engine the last turn ran with.
  */
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -100,6 +101,8 @@ export async function attachHost() {
 	]);
 	const reloadPoint = holdPoint();
 	const replacementPoint = holdPoint();
+	// What the session's last turn ran with: the surface its prompt was built for and its browser engine.
+	let lastTurn: { promptSurface?: string; browserEngine?: string } | undefined;
 	const realFactory = createCliRuntimeFactory(
 		{ parsed, cwd, agentDir, appMode: "rpc" },
 		{
@@ -108,6 +111,9 @@ export async function attachHost() {
 					pi.registerProvider(faux.provider);
 					pi.on("session_shutdown", async (event) => {
 						if (event.reason === "reload") await reloadPoint.pass();
+					});
+					pi.on("before_agent_start", (event, ctx) => {
+						lastTurn = { promptSurface: event.systemPromptOptions.surface, browserEngine: ctx.browserEngine };
 					});
 				},
 			],
@@ -148,6 +154,8 @@ export async function attachHost() {
 		cwd,
 		threadPath,
 		otherPath: join(scratch, "other.jsonl"),
+		/** The prompt surface and browser engine the last turn of any session ran with. */
+		lastTurnSettings: () => lastTurn,
 		/** Arms a pause inside the next reload's `session_shutdown`. */
 		holdNextReload: (): Hold => reloadPoint.arm("the reload's session_shutdown"),
 		/** Arms a pause inside the next runtime the factory builds, after its launch profile was read. */

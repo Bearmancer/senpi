@@ -16,12 +16,18 @@ afterEach(disposeAttachHosts);
 
 type Host = Awaited<ReturnType<typeof attachHost>>;
 
-/** Starts `rebuild`, attaches with `ask` from the second client while it is parked, then lets it finish. */
-async function attachAskDuring(host: Host, sessionId: string, hold: Hold, rebuild: Record<string, unknown>) {
+/** Starts `rebuild`, attaches from the second client (with `ask` by default) while it is parked, then lets it finish. */
+async function attachDuring(
+	host: Host,
+	sessionId: string,
+	hold: Hold,
+	rebuild: Record<string, unknown>,
+	attach = () => host.open("second", "ask"),
+) {
 	const rebuilding = host.send("first", { ...rebuild, sessionId });
 	try {
 		await hold.reached;
-		expect((await host.open("second", "ask"))?.data).toMatchObject({ sessionId, attached: true });
+		expect((await attach())?.data).toMatchObject({ sessionId, attached: true });
 	} finally {
 		hold.release();
 	}
@@ -34,7 +40,30 @@ describe("an attach that lands during a rebuild of its session is enforced after
 		const sessionId = sessionIdOf(await host.open("first", "full-access"));
 		expect(await host.runBash(sessionId)).toMatchObject({ asked: 0, ran: true });
 
-		await attachAskDuring(host, sessionId, host.holdNextReload(), { type: "reload" });
+		await attachDuring(host, sessionId, host.holdNextReload(), { type: "reload" });
+		expect(await host.runBash(sessionId)).toMatchObject({ asked: 1, ran: false });
+	}, 120_000);
+
+	it("two overlapping reloads, with the attach landing after the second one swapped its runner", async () => {
+		const host = await attachHost();
+		const sessionId = sessionIdOf(await host.open("first", "full-access"));
+		expect(await host.runBash(sessionId)).toMatchObject({ asked: 0, ran: true });
+
+		// The first reload parks in its session_shutdown; a second one runs to completion and installs a
+		// new runner; the attach writes that runner; then the first reload swaps in its own runner.
+		const hold = host.holdNextReload();
+		const firstReload = host.send("first", { type: "reload", sessionId });
+		try {
+			await hold.reached;
+			expect(await host.send("first", { type: "reload", sessionId })).toMatchObject({
+				success: true,
+				data: { cancelled: false },
+			});
+			expect((await host.open("second", "ask"))?.data).toMatchObject({ sessionId, attached: true });
+		} finally {
+			hold.release();
+		}
+		expect(await firstReload).toMatchObject({ success: true, data: { cancelled: false } });
 		expect(await host.runBash(sessionId)).toMatchObject({ asked: 1, ran: false });
 	}, 120_000);
 
@@ -60,7 +89,7 @@ describe("an attach that lands during a rebuild of its session is enforced after
 			const sessionId = sessionIdOf(await host.open("first", "full-access"));
 			expect(await host.runBash(sessionId)).toMatchObject({ asked: 0, ran: true });
 
-			await attachAskDuring(host, sessionId, host.holdNextReplacement(), await rebuild(host));
+			await attachDuring(host, sessionId, host.holdNextReplacement(), await rebuild(host));
 			expect(await host.runBash(sessionId)).toMatchObject({ asked: 1, ran: false });
 		},
 		120_000,
@@ -78,4 +107,26 @@ it("a resent attach repairs a live session that drifted from its recorded preset
 
 	expect((await host.open("second", "ask"))?.data).toMatchObject({ sessionId, attached: true });
 	expect(await host.runBash(sessionId)).toMatchObject({ asked: 1, ran: false });
+}, 120_000);
+
+it("an attach that moves the prompt surface and browser engine during a replacement is kept by the replacement (#2842)", async () => {
+	const host = await attachHost();
+	const open = (connection: string, settings: Record<string, unknown>) =>
+		host.send(connection, {
+			type: "open_session",
+			cwd: host.cwd,
+			sessionPath: host.threadPath,
+			retain_on_disconnect: true,
+			permissionPreset: "full-access",
+			...settings,
+		});
+	const sessionId = sessionIdOf(await open("first", { promptSurface: "terminal", browserEngine: "none" }));
+	await host.runBash(sessionId);
+	expect(host.lastTurnSettings()).toEqual({ promptSurface: "terminal", browserEngine: "none" });
+
+	await attachDuring(host, sessionId, host.holdNextReplacement(), { type: "new_session" }, () =>
+		open("second", { promptSurface: "app", browserEngine: "builtin" }),
+	);
+	await host.runBash(sessionId);
+	expect(host.lastTurnSettings()).toEqual({ promptSurface: "app", browserEngine: "builtin" });
 }, 120_000);

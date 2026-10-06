@@ -9423,9 +9423,11 @@ export class AgentSession {
 		try {
 			this._buildRuntime({
 				activeToolNames: requestedActiveToolNamesBeforeRebuild,
-				// Read at the swap, not before the awaits above: a flag set on the live runner while this
-				// reload ran (an attach moving the session's permission preset) carries over (senpi#2842).
-				flagValues: oldExtensionRunner.getFlagValues(),
+				// Read from the CURRENT runner at the swap, not before the awaits above and not from the
+				// runner this reload started with: a flag set while this reload ran (an attach moving the
+				// session's permission preset) carries over, also when an overlapping reload installed
+				// another runner in the meantime and the attach wrote that one (senpi#2842).
+				flagValues: this._extensionRunner.getFlagValues(),
 				includeAllExtensionTools: true,
 				previousActiveToolRegistrationIds,
 				addedToolNames: addedDefaultTools,
