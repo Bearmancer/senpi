@@ -95,34 +95,22 @@ export const HTML_RENDER_CONTENT_SECURITY_POLICY = [
 ].join("; ");
 
 const POLICY_META = `<meta http-equiv="Content-Security-Policy" content="${HTML_RENDER_CONTENT_SECURITY_POLICY}">`;
-// A doctype must stay first, or the page drops into quirks mode. Only one with
-// nothing but whitespace before it is skipped: browsers end a comment at `<!-->`,
-// `<!--->` and `--!>` too, so skipping comments here would let a page put a
-// script ahead of the policy.
-const LEADING_DOCTYPE = /^\uFEFF?[\t\n\f\r ]*<!doctype[^>]*>/i;
-
-// A refresh would load another page over the snapshot, so every meta tag that
-// mentions one is dropped, wherever it sits. A browser decodes character
-// references in attribute values, so the check does too, and a `>` inside a
-// quoted value does not end the tag.
-const META_TAG = /<meta(?=[\t\n\f\r />])(?:[^>"']|"[^"]*"|'[^']*')*>?/gi;
-const decodeNumericReferences = (text: string) =>
-	text.replace(/&#(?:x([0-9a-f]+)|(\d+));?/gi, (_, hex: string | undefined, decimal: string) => {
-		const codePoint = hex === undefined ? Number(decimal) : Number.parseInt(hex, 16);
-		return codePoint > 0 && codePoint <= 0x10ffff ? String.fromCodePoint(codePoint) : "\uFFFD";
-	});
-const stripRefreshMeta = (html: string) =>
-	html.replace(META_TAG, (tag) => (/refresh/i.test(decodeNumericReferences(tag)) ? "" : tag));
+// Every written page starts with a UTF-8 byte order mark, a standards-mode
+// doctype and the policy, in that order and in plain ASCII. The mark makes the
+// browser decode the file as UTF-8 whatever charset the page declares, so no
+// declared encoding can turn the policy into text, and nothing the page wrote
+// comes before it. A leading doctype of the page's own is dropped only when it is
+// printable ASCII; anything else stays where it is, after the policy, where the
+// parser ignores a doctype.
+const PREAMBLE = `\uFEFF<!doctype html>${POLICY_META}`;
+const LEADING_ASCII_DOCTYPE = /^\uFEFF?[\t\n\f\r ]*<!doctype[ -=?-~]*>/i;
 
 /**
  * Inserts the theme bootstrap at the start of the document head, and the
  * snapshot policy ahead of everything the page wrote.
  */
 export function injectHtmlRenderBootstrap(html: string): string {
-	const themed = injectThemeBootstrap(stripRefreshMeta(html));
-	const doctype = LEADING_DOCTYPE.exec(themed);
-	const at = doctype ? doctype[0].length : 0;
-	return themed.slice(0, at) + POLICY_META + themed.slice(at);
+	return PREAMBLE + injectThemeBootstrap(html).replace(LEADING_ASCII_DOCTYPE, "");
 }
 
 function injectThemeBootstrap(html: string): string {
