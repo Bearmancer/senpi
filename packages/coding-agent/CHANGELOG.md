@@ -6,6 +6,8 @@
 
 ### Added
 
+- `websearch.json` accepts `keenable` as a `web_search` provider: with `apiKey` it uses Keenable's keyed API, without one its shared public tier (identified by an app header, no credential). It is used only when listed explicitly; the no-config default chain is unchanged ([#2775](https://github.com/code-yeongyu/senpi/pull/2775)).
+
 ### Changed
 
 ### Fixed
