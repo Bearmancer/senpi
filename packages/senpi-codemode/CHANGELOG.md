@@ -10,6 +10,8 @@
 
 ### Fixed
 
+- An isolated (`isolate: true`) eval cell's result names QuickJS as its runtime (`quickjs <version>, sandbox`) instead of the persistent kernel's Bun or Node runtime ([#2811](https://github.com/code-yeongyu/senpi/issues/2811)).
+
 ### Removed
 
 ## [2026.10.10-3] - 2026-10-06
@@ -25,8 +27,6 @@
 - The README now documents every eval surface (helpers, magic cells, settings, JavaScript isolation modes and sandbox cells), and CI checks it against the helper census, so a new helper cannot ship undocumented ([#2787](https://github.com/code-yeongyu/senpi/pull/2787)).
 
 ### Fixed
-
-- An isolated (`isolate: true`) eval cell's result names QuickJS as its runtime (`quickjs <version>, sandbox`) instead of the persistent kernel's Bun or Node runtime ([#2811](https://github.com/code-yeongyu/senpi/issues/2811)).
 
 ### Removed
 
