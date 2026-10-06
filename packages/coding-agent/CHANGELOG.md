@@ -10,6 +10,8 @@
 
 ### Fixed
 
+- A reload requested while a reload's `session_start` handlers are still running is deferred (`A session is starting.`) instead of retiring the runner mid-dispatch. Later `session_start` handlers no longer fail with `stale extension generation after reload` ([#2719](https://github.com/code-yeongyu/senpi/issues/2719)).
+
 ### Removed
 
 ## [2026.10.10-2] - 2026-10-05
@@ -30,7 +32,6 @@
 - A project whose `.senpi/codemode.json` sets a setting that names an executable (today `languages.pyInterpreter`) now asks for project trust before the session starts, like a project `mcp.json`; before, such a project counted as trusted without asking, so the interpreter it named ran at session start ([#2772](https://github.com/code-yeongyu/senpi/pull/2772)).
 - RPC model lists now reflect credentials added or removed by another session without reopening the session, fixing an empty desktop model picker after connecting a provider ([#2769](https://github.com/code-yeongyu/senpi/issues/2769)).
 - The `/btw` side panel renders its answer as Markdown, the same way assistant messages render in the transcript. Headings, bold, inline code, lists, and code blocks used to show as raw `##`, `**`, and backticks ([#2766](https://github.com/code-yeongyu/senpi/pull/2766) by [@nahwan-kim](https://github.com/nahwan-kim)).
-- A reload requested while a reload's `session_start` handlers are still running is deferred (`A session is starting.`) instead of retiring the runner mid-dispatch. Later `session_start` handlers no longer fail with `stale extension generation after reload` ([#2719](https://github.com/code-yeongyu/senpi/issues/2719)).
 
 ### Removed
 
