@@ -16,6 +16,8 @@ runner/prelude assets).
 | Julia kernel | `jl/kernel.ts` + `jl/prelude.jl`, `jl/runner.jl` |
 | Shared subprocess layer | `shared/subprocess-kernel.ts`, `subprocess-{contract,process,queue,run}.ts`, `runtime-asset.ts` |
 | Session environment | `session-env.ts` (PI_* contract shared by all kernels; mirrors the core bash tool) |
+| JS process isolation | `js/process-worker.ts` (host side), `js/process-entry.js` (child entry), `js/kernel-memory.ts`, `js/control-frames.ts` |
+| Sandbox cells | `sandbox/sandbox-cell.ts` (host executor); `sandbox/vendor/pi-codemode/**` (vendored runtime, see its `VENDORED.md`) |
 
 ## CONVENTIONS
 
