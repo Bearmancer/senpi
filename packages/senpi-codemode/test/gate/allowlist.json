@@ -1055,9 +1055,11 @@
 				"legacyContracts/test/eval-render-live-headline.test.ts/live eval rows lead with the cell's summary (senpi#2802) Given a running cell with no output yet when its row renders collapsed then it is one line with no empty frame",
 				"legacyContracts/test/eval-render-live-headline.test.ts/live eval rows lead with the cell's summary (senpi#2802) Given a completed cell when its row renders then it keeps the done header, the summary line and the code preview",
 				"legacyContracts/test/eval-render-live-headline.test.ts/live eval rows lead with the cell's summary (senpi#2802) Given a call still streaming with only code when it renders then it shows a headline row instead of failing",
-				"legacyContracts/test/eval-render-live-headline.test.ts/live eval rows lead with the cell's summary (senpi#2802) Given a complete call before its result arrives when it renders then it leads with the summary"
+				"legacyContracts/test/eval-render-live-headline.test.ts/live eval rows lead with the cell's summary (senpi#2802) Given a complete call before its result arrives when it renders then it leads with the summary",
+				"imports/extension/packages/senpi-codemode/src/tool/live-headline.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/tool/live-headline.ts"
 			],
-			"reason": "senpi#2802: in-progress, queued and detached eval rows lead with the cell's summary (else the first code line), then the language, state and elapsed time, with the code behind expand; a call still streaming its arguments renders that headline instead of throwing into the host's raw key=value fallback. Completed rows are unchanged. The new contracts fail on main.",
+			"reason": "senpi#2802: in-progress, queued and detached eval rows lead with the cell's summary (else the first code line), then the language, state and elapsed time, with the code behind expand; a call still streaming its arguments renders that headline instead of throwing into the host's raw key=value fallback. Completed rows are unchanged. The new contracts fail on main. live-headline.ts (about 40 lines, no dependencies beyond types.ts) is imported by render.ts, which already loads with the extension.",
 			"changes": [
 				{
 					"key": "legacyContracts/test/eval-render-summary.test.ts/eval summary display bounds the summary inside the live cell frame too",
