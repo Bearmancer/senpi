@@ -14,6 +14,8 @@
 
 ### Fixed
 
+- The `require` in a JavaScript cell carries `require.resolve`, `require.resolve.paths` and `require.cache` like Node's own `require`, and the call and `resolve` share one lookup, so they always name the same copy: builtins natively (including Bun's, such as `bun:sqlite`), then the project, then the managed package environment ([#2832](https://github.com/code-yeongyu/senpi/issues/2832)).
+
 - A live eval row whose cell has no summary sanitizes its first code line before measuring it, so escape and control characters in that line never reach the one-line row ([#2839](https://github.com/code-yeongyu/senpi/issues/2839)).
 
 - A live eval row stays one line in every terminal: its headline is measured and cut in screen cells, so a summary with wide characters (Korean, Chinese, Japanese, emoji) no longer wraps a narrow terminal, and a `peek`/`stop` call still streaming in renders `eval peek` instead of `eval peek undefined` ([#2831](https://github.com/code-yeongyu/senpi/issues/2831)).
