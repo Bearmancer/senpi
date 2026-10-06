@@ -14,6 +14,8 @@
 
 ### Fixed
 
+- Stopping or timing out a JavaScript cell that awaits something that never settles (a promise, a `fetch` whose server never answers, a polling loop on timers, `Bun.sleep` or `node:timers/promises`, a loop of short `Bun.spawn` children) now keeps the worker and every global instead of restarting it. Stop ends the cell and everything it started: its timers are cleared, pending sleeps and `fetch` requests reject, and the sockets, servers, WebSockets, WebViews, nested workers and child processes it opened are closed; the result arrives once its children are gone. A stopped cell's own `catch`/`finally` can no longer print, call tools, start processes, schedule timers or open connections. An unhandled promise rejection no longer crashes the JavaScript kernel: it is reported on the running or next cell, naming the cell it came from, with bursts folded into one line; an uncaught exception still restarts the worker. A cell stopped during a `Bun.$` command still restarts the worker, as before ([#2788](https://github.com/code-yeongyu/senpi/issues/2788)).
+
 - JavaScript cells can call `require(...)` and `createRequire(...)`: builtins, relative CommonJS and JSON files, and packages from the project or the managed package environment resolve as they do for `import` ([#2792](https://github.com/code-yeongyu/senpi/issues/2792)).
 
 - A detached eval cell's completion notification now carries the same output its result would have shown in the foreground (head, tail, elision marker and full-output notice) instead of a 512-byte tail, and images the cell displayed are delivered with the notification ([#2789](https://github.com/code-yeongyu/senpi/issues/2789)).
@@ -29,8 +31,6 @@
 ### Changed
 
 ### Fixed
-
-- Stopping or timing out a JavaScript cell that awaits something that never settles (a promise, a `fetch` whose server never answers, a polling loop on timers, `Bun.sleep` or `node:timers/promises`, a loop of short `Bun.spawn` children) now keeps the worker and every global instead of restarting it. Stop ends the cell and everything it started: its timers are cleared, pending sleeps and `fetch` requests reject, and the sockets, servers, WebSockets, WebViews, nested workers and child processes it opened are closed; the result arrives once its children are gone. A stopped cell's own `catch`/`finally` can no longer print, call tools, start processes, schedule timers or open connections. An unhandled promise rejection no longer crashes the JavaScript kernel: it is reported on the running or next cell, naming the cell it came from, with bursts folded into one line; an uncaught exception still restarts the worker. A cell stopped during a `Bun.$` command still restarts the worker, as before ([#2788](https://github.com/code-yeongyu/senpi/issues/2788)).
 
 - A detached eval cell that waits for its kernel to start now says so (`waiting for the js kernel to be ready`) instead of `queued behind  in the js kernel` with an empty predecessor ([#2790](https://github.com/code-yeongyu/senpi/issues/2790)).
 
