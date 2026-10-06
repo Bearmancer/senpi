@@ -169,7 +169,8 @@ function neverStartWhenReleased(owner, names, patched) {
 
 const FS_OPERATIONS = ["readFile", "writeFile", "appendFile", "readdir", "stat", "lstat", "open", "access", "mkdir", "rm", "unlink", "rename", "copyFile"];
 
-// `instanceof` keeps accepting instances the runtime creates internally from the original class.
+// For ES classes only (Worker, WebSocket, MessageChannel): `instanceof` keeps accepting instances the runtime creates
+// internally from the original class. Node's function-style constructors are owned on activation instead.
 function patchClass(scope, name, close, patched) {
 	const Original = scope?.[name];
 	if (typeof Original !== "function") return;
@@ -199,14 +200,32 @@ const NODE_RESOURCE_FACTORIES = {
 	"node:readline/promises": ["createInterface"],
 };
 
-const NODE_RESOURCE_CLASSES = {
-	"node:net": { Socket: closeResource, Server: closeResource },
-	"node:tls": { TLSSocket: closeResource, Server: closeResource },
-	"node:http": { Server: closeResource },
-	"node:https": { Server: closeResource },
-	"node:dgram": { Socket: closeResource },
-	"node:worker_threads": { Worker: (worker) => void worker.terminate() },
+// Node's socket and server types are function-style constructors that Node's own subclasses call with `.call(this)`
+// (http.Server calls net.Server), so they cannot be swapped for a class. A socket or server only does anything once it
+// connects, listens or binds, so that call is where a cell takes ownership of it; http, https and tls inherit these.
+const NODE_ACTIVATIONS = {
+	"node:net": { Socket: ["connect"], Server: ["listen"] },
+	"node:dgram": { Socket: ["bind"] },
 };
+
+function ownOnActivation(proto, names, patched) {
+	for (const name of names) {
+		const original = proto?.[name];
+		if (typeof original !== "function") continue;
+		const owned = new WeakSet();
+		const activate = function (...args) {
+			const cell = currentCell();
+			if (cell === undefined) return original.apply(this, args);
+			if (cell.released) throw cell.interruption;
+			if (!owned.has(this)) {
+				owned.add(this);
+				onReleaseOf(cell, () => closeResource(this));
+			}
+			return original.apply(this, args);
+		};
+		replace(proto, name, activate, patched);
+	}
+}
 
 export function installCellOwnership(scope = globalThis) {
 	const patched = [];
@@ -231,8 +250,9 @@ export function installCellOwnership(scope = globalThis) {
 		ownResultsOf(bun, ["connect", "listen", "serve", "udpSocket"], patched);
 	}
 	for (const [module, factories] of Object.entries(NODE_RESOURCE_FACTORIES)) ownResultsOf(builtin(module), factories, patched);
-	for (const [module, classes] of Object.entries(NODE_RESOURCE_CLASSES)) {
-		for (const [name, close] of Object.entries(classes)) patchClass(builtin(module), name, close, patched);
+	patchClass(builtin("node:worker_threads"), "Worker", (worker) => void worker.terminate(), patched);
+	for (const [module, types] of Object.entries(NODE_ACTIVATIONS)) {
+		for (const [name, methods] of Object.entries(types)) ownOnActivation(builtin(module)?.[name]?.prototype, methods, patched);
 	}
 	// Node hands `import("node:…")` its own ESM namespace; without this sync a cell importing the module gets the
 	// unowned originals.

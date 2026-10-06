@@ -98,6 +98,39 @@ describe("JavaScriptKernel stop ends a stopped cell's loop", () => {
 		).resolves.toMatchObject({ ok: true, valueRepr: "[true,true,true]" });
 	});
 
+	it("Given an http server the cell started when stopped then it served while live and is closed after, and Node's own constructors still work", async () => {
+		const { kernel, entry } = await createKernel();
+		const served = Promise.withResolvers<void>();
+		const { run } = await startedCell(
+			kernel,
+			"http-server",
+			[
+				"globalThis.keep = 41;",
+				'const http = await import("node:http");',
+				"globalThis.server = http.createServer((_req, res) => res.end('served'));",
+				"await new Promise((r) => server.listen(0, '127.0.0.1', r));",
+				"const { port } = server.address();",
+				"globalThis.answer = await (await fetch('http://127.0.0.1:' + port + '/')).text();",
+				"globalThis.subclassed = (() => { class Mine extends http.Server {} return new Mine() instanceof http.Server; })();",
+				'print("SERVED");',
+				"await new Promise(() => {});",
+			].join(" "),
+			(text) => {
+				if (text.includes("SERVED")) served.resolve();
+			},
+		);
+		await served.promise;
+
+		await stopAndExpectStateKept(kernel, entry, run);
+		await expect(
+			kernel.run({
+				cellId: "after",
+				code: "await new Promise((r) => setTimeout(r, 100)); return [answer, subclassed, server.listening]",
+				timeoutMs: 5_000,
+			}),
+		).resolves.toMatchObject({ ok: true, valueRepr: '["served",true,false]' });
+	});
+
 	it("Given a resource that will not close when its cell is stopped then the failure is reported and the stop still keeps the state", async () => {
 		const { kernel, entry } = await createKernel();
 		const texts: string[] = [];
