@@ -306,9 +306,18 @@ function findGeneratedGlobalDefaultExtensionId(
 }
 
 /** The module a generated shim re-exports, when it is a generated shim whose target no longer exists. */
+// Exactly what `buildGlobalDefaultExtensionShim` writes: one export line after the banner, nothing else.
+const GENERATED_SHIM_EXPORT_LINE = /^export \{ default \} from ("[^"\n]*");\n?$/;
+
+/**
+ * The module a generated shim re-exports, when the file is exactly a generated shim (an accepted banner
+ * followed by the single export line and nothing else) and that module no longer exists. A file that
+ * carries the banner but also anything a person wrote is never treated as a shim.
+ */
 function deadGeneratedShimTarget(content: string): string | undefined {
-	if (!isGeneratedGlobalDefaultExtensionShim(content)) return undefined;
-	const specifier = /export \{ default \} from ("[^"\n]*");/.exec(content)?.[1];
+	const banner = LEGACY_GENERATED_GLOBAL_EXTENSION_BANNERS.find((candidate) => content.startsWith(candidate));
+	if (banner === undefined) return undefined;
+	const specifier = GENERATED_SHIM_EXPORT_LINE.exec(content.slice(banner.length))?.[1];
 	if (specifier === undefined) return undefined;
 	let target: string;
 	try {

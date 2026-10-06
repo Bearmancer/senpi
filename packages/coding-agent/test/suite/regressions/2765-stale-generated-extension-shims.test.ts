@@ -119,6 +119,19 @@ describe("#2765 stale generated global-default extension shims", () => {
 		expect(readFileSync(shimPath, "utf-8")).toBe(deadShim("tps"));
 	});
 
+	it("#given files that only look like a dead generated shim #when resources load without on-disk builtins #then none of them is removed", async () => {
+		withoutOnDiskBuiltins();
+		const edited = `${deadShim("diff")}export const mine = 1;\n`;
+		const bannerLater = `// my notes\n${deadShim("files")}`;
+		writeFileSync(join(extensionsDir, "diff.js"), edited);
+		writeFileSync(join(extensionsDir, "files.js"), bannerLater);
+
+		await loader().reload();
+
+		expect(readFileSync(join(extensionsDir, "diff.js"), "utf-8")).toBe(edited);
+		expect(readFileSync(join(extensionsDir, "files.js"), "utf-8")).toBe(bannerLater);
+	});
+
 	it("#given a user-authored file at a shim path #when resources load without on-disk builtins #then it is left byte-identical", async () => {
 		withoutOnDiskBuiltins();
 		const userPath = join(extensionsDir, "diff.js");
