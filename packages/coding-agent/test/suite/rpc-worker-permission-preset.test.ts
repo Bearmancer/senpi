@@ -4,8 +4,23 @@ import { startWorkerHost } from "./rpc-worker-host-support.ts";
 
 // `open_session.permissionPreset` on an attach, on the production shape of a worker host: the
 // session runs in a worker isolate, and its extension runs a real shell command through the
-// session's bash tool, which passes the permission system like any tool call (#2823).
+// session's bash tool, which passes the permission system like any tool call (#2823). "/hold-reload"
+// parks the next reload inside its session_shutdown on a dialog the test answers, so an attach can
+// land while the worker rebuilds the session (#2842).
 const BASH_PROBE = `export default function (pi) {
+	let holdReload = false;
+	pi.registerCommand("hold-reload", {
+		description: "park the next reload until the reload-hold dialog is answered",
+		handler: async (_args, ctx) => {
+			holdReload = true;
+			ctx.ui.notify("reload-hold:armed");
+		},
+	});
+	pi.on("session_shutdown", async (event, ctx) => {
+		if (event.reason !== "reload" || !holdReload) return;
+		holdReload = false;
+		await ctx.ui.select("reload-hold", ["release"]);
+	});
 	pi.registerCommand("run-bash", {
 		description: "run one shell command through the bash tool",
 		handler: async (_args, ctx) => {
@@ -80,6 +95,48 @@ it("moves a live worker session to the permission preset a later attach names, k
 
 		expect((await attach("full-access")).data).toMatchObject({ sessionId, attached: true });
 		expect(await runBash(first, sessionId)).toEqual({ asked: 0, output: "bash:permission-proof" });
+	} finally {
+		await host.dispose();
+	}
+}, 120_000);
+
+it("enforces the preset an attach names while a reload rebuilds the worker session (#2842)", async () => {
+	vi.stubEnv("SENPI_RPC_TEST_BUN", process.execPath);
+	const host = await startWorkerHost(BASH_PROBE, { socket: true });
+	try {
+		const first = await host.connect();
+		const opened = await first.request({ type: "open_session", cwd: host.cwd, permissionPreset: "full-access" });
+		const sessionId = String(opened.data?.sessionId);
+		const sessionPath = opened.data?.state?.sessionFile;
+		expect(await runBash(first, sessionId)).toEqual({ asked: 0, output: "bash:permission-proof" });
+
+		const armed = first.wait(
+			(record) => record.type === "extension_ui_request" && record.message === "reload-hold:armed",
+			WAIT_MS,
+		);
+		expect((await first.request({ type: "prompt", sessionId, message: "/hold-reload" })).success).toBe(true);
+		await armed;
+		const held = first.wait(
+			(record) =>
+				record.type === "extension_ui_request" && record.method === "select" && record.title === "reload-hold",
+			WAIT_MS,
+		);
+		const reloading = first.request({ type: "reload", sessionId });
+		const hold = await held;
+		const second = await host.connect();
+		const attach = await second.request({
+			type: "open_session",
+			cwd: host.cwd,
+			sessionPath,
+			permissionPreset: "ask",
+		});
+		first.send({ type: "extension_ui_response", sessionId, id: hold.id, value: "release" });
+		expect(attach.data).toMatchObject({ sessionId, attached: true });
+		expect(await reloading).toMatchObject({ success: true, data: { cancelled: false } });
+
+		const strict = await runBash(first, sessionId);
+		expect(strict.asked).toBe(1);
+		expect(strict.output).not.toContain("permission-proof");
 	} finally {
 		await host.dispose();
 	}

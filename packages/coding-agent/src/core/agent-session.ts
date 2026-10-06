@@ -9361,7 +9361,6 @@ export class AgentSession {
 		resetTimings("reload");
 		const oldExtensionRunner = this._extensionRunner;
 		const oldExtensionIdentities = oldExtensionRunner.getExtensionIdentities();
-		const previousFlagValues = oldExtensionRunner.getFlagValues();
 		const previousActiveToolRegistrationIds = new Map<string, string>();
 		// Cover withheld eval-only tools too: the rebuild drops any seeded name missing from this
 		// map, which would strand eval-only tools when the policy disarms during this reload.
@@ -9424,7 +9423,9 @@ export class AgentSession {
 		try {
 			this._buildRuntime({
 				activeToolNames: requestedActiveToolNamesBeforeRebuild,
-				flagValues: previousFlagValues,
+				// Read at the swap, not before the awaits above: a flag set on the live runner while this
+				// reload ran (an attach moving the session's permission preset) carries over (senpi#2842).
+				flagValues: oldExtensionRunner.getFlagValues(),
 				includeAllExtensionTools: true,
 				previousActiveToolRegistrationIds,
 				addedToolNames: addedDefaultTools,

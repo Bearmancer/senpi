@@ -344,6 +344,10 @@ export class AgentSessionRuntime {
 	private async apply(result: CreateAgentSessionRuntimeResult, hold?: SessionHold): Promise<void> {
 		this._sessionHold = hold ?? holdActiveSession(result.session.sessionManager, false);
 		this._session = result.session;
+		// The replacement was built from the profile read before its runtime was created; an attach
+		// that moved the preset while it was being built reached only the retired session (senpi#2842).
+		const preset = this._launchProfile?.permissionPreset;
+		if (preset !== undefined) this._session.extensionRunner.setFlagValue("permission-preset", preset);
 		this._services = result.services;
 		this._diagnostics = result.diagnostics;
 		this._modelFallbackMessage = result.modelFallbackMessage;

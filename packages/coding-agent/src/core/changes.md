@@ -1,3 +1,23 @@
+## 2026-10-07 - An attach that lands during a rebuild keeps its permission preset (senpi#2842)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `_rebuildRuntimeForReload()` reads the retiring runner's flag values at the runner swap (`_buildRuntime({ flagValues: oldExtensionRunner.getFlagValues() })`) instead of snapshotting them before its awaits, so a flag set on the live runner while the reload ran carries over to the rebuilt one.
+- `packages/coding-agent/src/core/agent-session-runtime.ts`: `apply()` sets the replacement session's `permission-preset` flag from the runtime's current launch profile as it installs it, so new / switch / fork / import end on the preset the last attach named.
+
+### Why
+
+An attach moves a live session's preset through `AgentSessionRuntime.setPermissionPreset`, which writes the runtime's launch profile and the live runner's flag. An attach that landed during a reload was overwritten by the reload's pre-await flag snapshot. One that landed while a replacement's runtime was being created reached only the retired session, because the replacement was built from the profile read before the await. Either way the rebuilt session enforced the looser preset while the host reported the stricter one.
+
+### Why an extension could not handle it
+
+The reload's flag carry-over and the replacement install are inside `AgentSession` and `AgentSessionRuntime`; no extension sees the runner swap or the runtime's launch profile.
+
+### Expected merge conflict zones
+
+- `agent-session.ts`: the head of `_rebuildRuntimeForReload()` (the removed `previousFlagValues` snapshot) and its `_buildRuntime({ ... flagValues })` call.
+- `agent-session-runtime.ts`: `apply()`.
+
 ## 2026-10-06 - An attach moves the live session to the permission preset it names (senpi#2823)
 
 ### What changed
