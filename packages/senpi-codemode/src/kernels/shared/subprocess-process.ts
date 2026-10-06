@@ -151,6 +151,11 @@ export class SubprocessProcess {
 	}
 
 	private kill(signal: NodeJS.Signals): void {
+		if (globalThis.process.platform === "win32") {
+			if (this.child.pid !== undefined) killProcessTree(this.child.pid);
+			else this.child.kill(signal);
+			return;
+		}
 		if (this.child.pid !== undefined) {
 			try {
 				globalThis.process.kill(-this.child.pid, signal);
@@ -160,6 +165,15 @@ export class SubprocessProcess {
 			}
 		}
 		this.child.kill(signal);
+	}
+}
+
+// Windows has no process-group signal: taskkill /T /F walks the tree rooted at the child.
+function killProcessTree(pid: number): void {
+	try {
+		nodeSpawn("taskkill", ["/PID", String(pid), "/T", "/F"], { stdio: "ignore" });
+	} catch (error) {
+		if (!(error instanceof Error)) throw error;
 	}
 }
 

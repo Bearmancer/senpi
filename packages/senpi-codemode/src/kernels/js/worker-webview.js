@@ -5,6 +5,7 @@ import { DELIVER_EVENT, WebViewPortClient, webViewError } from "./worker-webview
 // `Bun` parameter bound to a stand-in whose `WebView` forwards Chrome-backed views to the
 // main-thread service over a private port; every other `Bun.*` member is the real one.
 const KERNEL_BUN = Symbol.for("senpi.kernel.bun");
+const KERNEL_PROCESS_MODE = Symbol.for("senpi.kernel.processMode");
 
 export function bindKernelBun(source) {
 	if (!globalThis[KERNEL_BUN]) return source;
@@ -15,6 +16,10 @@ export function installKernelWebView(requestPort) {
 	const bun = globalThis.Bun;
 	if (typeof bun !== "object" || bun === null || typeof bun.WebView !== "function") return;
 	globalThis[KERNEL_BUN] = shadowBun(bun, createKernelWebView(bun.WebView, requestPort));
+}
+
+export function markKernelProcessMode() {
+	globalThis[KERNEL_PROCESS_MODE] = true;
 }
 
 function shadowBun(real, WebView) {
@@ -35,7 +40,10 @@ function shadowBun(real, WebView) {
 }
 
 // The macOS default (WebKit) stays a native worker view: its host process serves any thread.
+// A process-mode kernel already runs its cells on the child's main thread, so the native
+// WebView constructs there directly and no MessagePort proxy is ever needed.
 function needsMainThread(options) {
+	if (globalThis[KERNEL_PROCESS_MODE]) return false;
 	const backend = options?.backend;
 	if (backend === undefined) return process.platform !== "darwin";
 	return backend === "chrome" || (typeof backend === "object" && backend !== null && backend.type === "chrome");

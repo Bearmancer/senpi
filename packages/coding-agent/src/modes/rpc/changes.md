@@ -1,3 +1,23 @@
+## 2026-10-05 - Refresh model availability after another session changes credentials (senpi#2769)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: `get_available_models` awaits `ModelRuntime.getAvailable()` instead of reading the synchronous compatibility snapshot.
+- `test/suite/rpc-model-availability.test.ts`: file-backed credential additions and removals are reflected by the existing RPC session.
+- `docs/rpc.md`: documents per-request credential availability refresh.
+
+### Why
+
+A session that had already cached availability kept returning its old model list after another session saved or removed credentials. This left the desktop picker empty despite a connected provider.
+
+### Why an extension could not handle it
+
+The RPC handler owns this model-list response; extensions cannot replace the command's availability read.
+
+### Expected merge conflict zones
+
+- The `get_available_models` case in `packages/coding-agent/src/modes/rpc/connection-handler.ts`.
+
 ## 2026-10-05 - `set_retry_fallback` for a single-session rpc process (omo#9582)
 
 ### What changed
