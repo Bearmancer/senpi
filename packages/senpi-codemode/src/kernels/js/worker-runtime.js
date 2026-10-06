@@ -74,7 +74,10 @@ export class JsWorkerRuntime {
 				if (typeof prepared.sourceFile === "string") sourceName = prepared.sourceFile;
 			}
 			if (prelude) indirectEval(prelude, PRELUDE_SOURCE_URL);
-			const value = await awaitMaybePromise(indirectEval(bindKernelBun(wrapUserCode(cellCode)), sourceName));
+			const shadowed = [];
+			const source = bindKernelBun(wrapUserCode(cellCode, shadowed));
+			if (shadowed.length > 0) this.#emitText("stderr", shadowNote(shadowed));
+			const value = await awaitMaybePromise(indirectEval(source, sourceName));
 			await this.#drainPendingDisplays();
 			return value;
 		} finally {
@@ -421,6 +424,12 @@ export class JsWorkerRuntime {
 		}
 		return current;
 	}
+}
+
+function shadowNote(names) {
+	const list = names.map((name) => `\`${name}\``).join(", ");
+	const restore = names.map((name) => `delete ${name}`).join("; ");
+	return `Note: ${list} ${names.length === 1 ? "shadows a kernel or platform global" : "shadow kernel or platform globals"} in your later cells; the kernel and imported libraries keep the original. \`${restore}\` restores ${names.length === 1 ? "it" : "them"}.\n`;
 }
 
 function isPlainObject(value) {

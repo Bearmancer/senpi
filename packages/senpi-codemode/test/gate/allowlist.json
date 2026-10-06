@@ -1014,6 +1014,35 @@
 				"legacyContracts/test/eval-detach-terminal-truth.test.ts/detached cell terminal truth Given a queued cell with nothing ahead of it when its result renders then the header says it waits for the kernel"
 			],
 			"reason": "senpi#2790/#2791: a detached cell with nothing ahead of it says it waits for the kernel (detach reply, eval list, TUI header) instead of an empty predecessor list; a stopped or failed detached cell settles with its buffered output or error text, never the live 'running' frame. These contracts fail on main."
+		},
+		"senpi#2793": {
+			"additions": [
+				"legacyContracts/test/kernel-js-persistence.test.ts/JavaScript kernel declaration persistence Given a cell that declares a platform global name when later cells run then they see the cell's value while the kernel and libraries keep the built-in",
+				"legacyContracts/test/kernel-js-persistence.test.ts/JavaScript kernel declaration persistence Given let, var and destructured declarations of platform global names when later cells run then each persists for the cells",
+				"legacyContracts/test/kernel-js-persistence.test.ts/JavaScript kernel declaration persistence Given a cell that declares a kernel helper name when later cells run then they see the cell's value and the kernel still prints",
+				"legacyContracts/test/kernel-js-persistence.test.ts/JavaScript kernel declaration persistence Given a shadowed name when a cell deletes it then later cells see the original global again",
+				"legacyContracts/test/kernel-js-persistence.test.ts/JavaScript kernel declaration persistence Given a cell that shadows kernel globals when it runs then its output notes each name once and how to restore it",
+				"legacyContracts/test/kernel-js-persistence.test.ts/JavaScript kernel declaration persistence Given a cell that declares globalThis when it runs then it is refused and later cells still persist variables"
+			],
+			"reason": "senpi#2793: a top-level declaration of a kernel or platform global name (log, fetch, print, URL...) persists for the user's cells in a per-kernel user scope while globalThis keeps the original; `delete` restores it and the cell gets a note. These contracts fail on main, which refuses such declarations.",
+			"changes": [
+				{
+					"key": "legacyContracts/test/kernel-js-persistence.test.ts/JavaScript kernel declaration persistence rejects a top-level declaration that would replace a platform global",
+					"reason": "senpi#2793 replaces the refusal with a cell-scoped binding: a declaration of a kernel or platform global name now persists for the user's cells while globalThis keeps the original, so the old refusal contract leaves the baseline; its replacement is listed under additions."
+				},
+				{
+					"key": "legacyContracts/test/kernel-js-persistence.test.ts/JavaScript kernel declaration persistence rejects let and var declarations that would replace a platform global",
+					"reason": "senpi#2793 replaces the refusal with a cell-scoped binding: a declaration of a kernel or platform global name now persists for the user's cells while globalThis keeps the original, so the old refusal contract leaves the baseline; its replacement is listed under additions."
+				},
+				{
+					"key": "legacyContracts/test/kernel-js-persistence.test.ts/JavaScript kernel declaration persistence rejects destructured bindings that would replace a platform global",
+					"reason": "senpi#2793 replaces the refusal with a cell-scoped binding: a declaration of a kernel or platform global name now persists for the user's cells while globalThis keeps the original, so the old refusal contract leaves the baseline; its replacement is listed under additions."
+				},
+				{
+					"key": "legacyContracts/test/kernel-js-persistence.test.ts/JavaScript kernel declaration persistence rejects a declaration that would replace a kernel prelude global",
+					"reason": "senpi#2793 replaces the refusal with a cell-scoped binding: a declaration of a kernel or platform global name now persists for the user's cells while globalThis keeps the original, so the old refusal contract leaves the baseline; its replacement is listed under additions."
+				}
+			]
 		}
 	}
 }
