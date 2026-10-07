@@ -6,7 +6,7 @@
 - `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/options.ts`: the session-scoped inline settings pin `autoCompactEnabled: false` while senpi owns compaction and `true` only for `"sdk"`, so a session has exactly one compaction owner. While senpi owns, the options also carry `env: { CLAUDE_CODE_TOTAL_TOKENS_REMINDER: "off" }`: Claude Code's per-turn token reminder changes the prompt every turn (measured in another direct Agent SDK integration on this lane: about 3.7% prompt-cache reuse with it, about 97% without, at a 200K window and a 0.75 compaction threshold), and senpi's compaction carries its own budget reminder.
 - `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/auth-lane.ts`: both env assignments (ambient and managed slot) layer `options.env` from `buildOptions` over the environment they build, so the lane overlay reaches the subprocess without dropping auth variables.
 - `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/session-sync.ts`: `configFingerprint` hashes `options.settings` into `toolsetHash`. The owner is fixed into the resident process at spawn, so a mid-session owner change fails the fingerprint (`toolset_changed`) and the next turn reattaches with the new setting instead of continuing as a delta on the old process. Persisted restart bindings re-fingerprint once after upgrading, like a `HOST_TOOL_POLICY_FINGERPRINT` bump.
-- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/stream.ts`: while senpi owns compaction, a native `compact_boundary` fails the turn with `NATIVE_COMPACTION_WHILE_SENPI_OWNS` instead of being mirrored, so Claude Code can never silently take over compaction mid-turn.
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/stream.ts`: while senpi owns compaction, a native `compact_boundary` fails the turn with `NATIVE_COMPACTION_WHILE_SENPI_OWNS` instead of being mirrored, so Claude Code can never silently take over compaction mid-turn. The stopped turn also forgets the session's continuity binding (after the attempt's unwinding re-published a retry checkpoint), so the next turn rebuilds the resident session from senpi's own history instead of resuming the transcript Claude Code just rewrote.
 - `docs/providers.md`: the lane's compaction contract, settings list and env table.
 
 ### Why
@@ -19,7 +19,7 @@
 
 ### Expected merge conflict zones
 
-- LOW: `parseProviderSettings` / `parseEnvironmentSettings` return objects in `settings.ts`; the `settings`/`env` lines of `buildAnthropicSubscriptionQueryOptions` in `options.ts`; the two `options.env` assignments in `auth-lane.ts`; the `settings` field of `configFingerprint` in `session-sync.ts`; the `compact_boundary` branch in `stream.ts`.
+- LOW: `parseProviderSettings` / `parseEnvironmentSettings` return objects in `settings.ts`; the `settings`/`env` lines of `buildAnthropicSubscriptionQueryOptions` in `options.ts`; the two `options.env` assignments in `auth-lane.ts`; the `settings` field of `configFingerprint` in `session-sync.ts`; the `compact_boundary` branch and the `forgetBinding` line of the catch in `stream.ts`.
 
 ## 2026-10-02 - A one-model usage limit blocks only that model on the account (senpi#2555)
 

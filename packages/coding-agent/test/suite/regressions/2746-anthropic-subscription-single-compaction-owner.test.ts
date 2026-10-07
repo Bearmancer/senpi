@@ -31,6 +31,7 @@ import {
 	createCompactionLanePolicy,
 } from "../../../src/core/extensions/builtin/compaction/lane-policy.ts";
 import {
+	installAmbientLane,
 	installScriptedSdk,
 	installSingleAccountLane,
 	resetScriptedSdk,
@@ -233,7 +234,10 @@ describe("senpi#2746 one compaction owner per anthropic-subscription turn", () =
 	}, 30_000);
 
 	it("stops the turn instead of mirroring a native compaction while senpi owns the lane", async () => {
-		const lane = await laneSession([nativeCompactionThenAnswer("answer after a native compaction")]);
+		const lane = await laneSession([
+			nativeCompactionThenAnswer("answer after a native compaction"),
+			answer("answer from senpi's own history"),
+		]);
 
 		await lane.harness.session.prompt("first");
 
@@ -241,5 +245,42 @@ describe("senpi#2746 one compaction owner per anthropic-subscription turn", () =
 		expect(stopped).toMatchObject({ stopReason: "error" });
 		expect(stopped?.errorMessage).toContain(NATIVE_COMPACTION_WHILE_SENPI_OWNS);
 		expect(mirroredNativeCompactions(lane.harness)).toBe(0);
+		const compacted = servingQuery(lane.queries);
+
+		// The next turn must not resume the Claude Code session that just compacted natively:
+		// it is rebuilt from senpi's own history in a fresh resident process.
+		await lane.harness.session.prompt("second");
+
+		const rebuilt = servingQuery(lane.queries);
+		expect(rebuilt).not.toBe(compacted);
+		expect(rebuilt?.options?.resume).toBeUndefined();
+		expectSingleOwner(rebuilt, true);
+		expect(lane.calls()).toBe(2);
+		expect(lastAssistant(lane.harness)).toMatchObject({ stopReason: "stop" });
+	}, 30_000);
+
+	it("turns the token reminder off in the ambient lane's subprocess environment while senpi owns", async () => {
+		// The host sets the reminder on: the lane-owned overlay must win over the ambient environment.
+		installAmbientLane({ PATH: "/usr/bin", CLAUDE_CODE_TOTAL_TOKENS_REMINDER: "on" });
+		const queries = installScriptedSdk((sessionId, userUuid) => answer("ambient answer")(sessionId, userUuid));
+		const harness = await createHarness({
+			api: CLAUDE_SDK_OAUTH_API_ID,
+			provider: SCRIPTED_PROVIDER,
+			models: [{ id: "claude-test", contextWindow: 200_000 }],
+			extensionFactories: [(pi) => registerSessionRegistry(pi), compactionExtension],
+		});
+		harnesses.push(harness);
+		harness.agent.streamFunction = residentStreamFn;
+		harness.agent.sessionId = harness.sessionManager.getSessionId();
+
+		await harness.session.prompt("first");
+
+		const serving = servingQuery(queries);
+		expect(serving?.options?.env?.CLAUDE_CODE_TOTAL_TOKENS_REMINDER).toBe("off");
+		// Still layered over the host environment, never replacing it.
+		expect(serving?.options?.env?.PATH).toBe("/usr/bin");
+		expect(serving?.options?.env?.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined();
+		expectSingleOwner(serving, true);
+		expect(lastAssistant(harness)).toMatchObject({ stopReason: "stop" });
 	}, 30_000);
 });

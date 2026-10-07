@@ -134,6 +134,23 @@ export async function installSingleAccountLane(): Promise<void> {
 	});
 }
 
+/** No managed accounts and an explicit ambient opt-in: the host Claude CLI lane, with `hostEnvironment` as its environment. */
+export function installAmbientLane(hostEnvironment: Record<string, string>): void {
+	const agentDir = mkdtempSync(join(tmpdir(), "senpi-claude-sdk-oauth-ambient-"));
+	temporaryDirectories.push(agentDir);
+	process.env.SENPI_CODING_AGENT_DIR = agentDir;
+	process.env.CLAUDE_CODE_EXECUTABLE = "/bin/true";
+	writeFileSync(
+		join(agentDir, "settings.json"),
+		JSON.stringify({ claudeSdkOauthProvider: { tokenInjection: "ambient" } }),
+	);
+	overrideAuthLaneBoundary({
+		createStore: () => new InMemoryCredentialStore(),
+		env: () => ({ ...hostEnvironment }),
+		getAgentDir: () => agentDir,
+	});
+}
+
 export function resetScriptedSdk(): void {
 	resetSessionRegistryBoundary();
 	resetSdkBoundary();
