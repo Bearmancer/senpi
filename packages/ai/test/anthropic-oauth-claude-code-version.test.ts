@@ -70,7 +70,14 @@ function claudeCliVersion(headers: ClientHeaders | undefined): string {
 	return match[1];
 }
 
-function tooOldError(required = "2.1.290"): Error {
+// A version newer than the one a request advertises by default, so a rejection naming it is always
+// a real upgrade (a literal here broke when the bundled version moved past it: senpi#2545).
+function newerThan(version: string, patches: number): string {
+	const [major, minor, patch] = version.split(".").map(Number);
+	return `${major}.${minor}.${(patch ?? 0) + patches}`;
+}
+
+function tooOldError(required: string): Error {
 	const error = new Error(tooOld400(required));
 	Object.assign(error, { status: 400 });
 	return error;
@@ -111,29 +118,39 @@ describe("Anthropic OAuth Claude Code identity headers", () => {
 		expect(claudeCliVersion(mockState.clients.at(-1))).toBe("2.1.250");
 	});
 
+	async function advertisedByDefault(): Promise<string> {
+		await streamAnthropic(model, normalizeContext(context), { apiKey: oauthToken }).result();
+		const version = claudeCliVersion(mockState.clients.at(-1));
+		mockState.clients.length = 0;
+		return version;
+	}
+
 	it("retries once with the version a claude_code_version_too_old rejection names", async () => {
-		mockState.failuresBeforeSuccess.push(tooOldError());
+		const required = newerThan(await advertisedByDefault(), 1);
+		mockState.failuresBeforeSuccess.push(tooOldError(required));
 
 		const message = await streamAnthropic(model, normalizeContext(context), { apiKey: oauthToken }).result();
 
 		expect(message.stopReason).toBe("stop");
-		expect(mockState.clients.map(claudeCliVersion)).toEqual([expect.any(String), "2.1.290"]);
+		expect(mockState.clients.map(claudeCliVersion)).toEqual([expect.any(String), required]);
 	});
 
 	it("gives up after one retry and names the advertised version and the pin variable", async () => {
-		mockState.failuresBeforeSuccess.push(tooOldError("2.1.290"), tooOldError("2.1.295"));
+		const advertised = await advertisedByDefault();
+		const required = newerThan(advertised, 1);
+		mockState.failuresBeforeSuccess.push(tooOldError(required), tooOldError(newerThan(advertised, 6)));
 
 		const message = await streamAnthropic(model, normalizeContext(context), { apiKey: oauthToken }).result();
 
 		expect(message.stopReason).toBe("error");
 		expect(mockState.clients).toHaveLength(2);
-		expect(message.errorMessage).toContain("claude-cli/2.1.290");
+		expect(message.errorMessage).toContain(`claude-cli/${required}`);
 		expect(message.errorMessage).toContain(CLAUDE_CODE_VERSION_PIN_ENV);
 	});
 
 	it("never retries a too-old rejection when the version is pinned", async () => {
 		vi.stubEnv(CLAUDE_CODE_VERSION_PIN_ENV, "2.1.250");
-		mockState.failuresBeforeSuccess.push(tooOldError());
+		mockState.failuresBeforeSuccess.push(tooOldError("2.1.251"));
 
 		const message = await streamAnthropic(model, normalizeContext(context), { apiKey: oauthToken }).result();
 

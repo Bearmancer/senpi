@@ -10,6 +10,8 @@
 
 ### Changed
 
+- The bundled Claude Agent SDK is updated to 0.3.292 (from 0.3.289), so the Anthropic subscription lane runs Claude Code 2.1.292 and the models it knows ([#2545](https://github.com/code-yeongyu/senpi/issues/2545)).
+
 - A model picked in the terminal (Enter in `/model` or the favorites picker, a typed `/model <id>`, the favorites cycle key, or a terminal control endpoint's `set_model`) now applies to that session only, instead of silently rewriting the default model every later session starts on. To also make it the default, press Ctrl+S (`app.models.save`) in the model picker or type `/model <id> --default`; the status line then says so ([#2870](https://github.com/code-yeongyu/senpi/issues/2870)).
 
 ### Fixed

@@ -1,3 +1,22 @@
+## 2026-10-07 - Claude Agent SDK 0.3.292 (senpi#2545)
+
+### What changed
+
+- `packages/ai/src/api/anthropic-messages.ts`: `claudeCodeVersion` 2.1.289 -> 2.1.292, the Claude Code version the bundled SDK 0.3.292 declares.
+- `packages/ai/test/anthropic-oauth-claude-code-version.test.ts`: the two `claude_code_version_too_old` retry tests name one patch above the version a request advertises by default instead of a literal `2.1.290`, which the bundled version had passed.
+
+### Why
+
+The nightly Releasability gate (senpi#2545) fails its SDK currency check while a newer SDK is published; 0.3.292 bundles Claude Code 2.1.292.
+
+### Why an extension could not handle it
+
+The SDK pin and the advertised Claude Code version are fixed at build time in the package manifest and the provider module.
+
+### Expected merge conflict zones
+
+The SDK pin line and the lockfiles at the next upstream dependency sync.
+
 ## 2026-10-07 - A tool-change system param never lands directly before a user turn (senpi#2864)
 
 ### What changed
