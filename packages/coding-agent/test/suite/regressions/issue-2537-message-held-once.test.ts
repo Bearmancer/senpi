@@ -6,7 +6,8 @@ import { createHarness, type Harness } from "../harness.ts";
 /**
  * senpi#2537: a long session's heap grew with every turn because each message was held twice, once in
  * the agent's context and once as a JSON copy in the session mirror. A message the session persisted is
- * now one object in both places, and both still read exactly what the session file holds.
+ * now held once: the mirror's message is a shallow copy sharing the agent's content, and both still
+ * read exactly what the session file holds.
  */
 describe("issue #2537: a persisted message is held once", () => {
 	const harnesses: Harness[] = [];
@@ -21,7 +22,7 @@ describe("issue #2537: a persisted message is held once", () => {
 			.map((entry) => entry.message);
 	}
 
-	it("shares each message of a turn between the agent context and the session mirror", async () => {
+	it("shares each message's content between the agent context and the session mirror", async () => {
 		const harness = await createHarness();
 		harnesses.push(harness);
 		harness.setResponses([fauxAssistantMessage("a short reply")]);
@@ -31,9 +32,12 @@ describe("issue #2537: a persisted message is held once", () => {
 		const live = harness.session.messages.filter(
 			(message) => message.role === "user" || message.role === "assistant",
 		);
-		const mirrored = mirrorMessages(harness);
+		const mirrored = mirrorMessages(harness) as { content: unknown }[];
 		expect(live).toHaveLength(2);
-		for (const message of live) expect(mirrored).toContain(message);
+		// The message's content, its bulk, is one array shared by the agent and the mirror.
+		for (const message of live) {
+			expect(mirrored.some((entry) => entry.content === (message as { content: unknown }).content)).toBe(true);
+		}
 	});
 
 	it("keeps the mirror equal to a cold reload of the session file", async () => {
