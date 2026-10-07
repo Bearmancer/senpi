@@ -2,7 +2,7 @@
 
 ### What changed
 
-- `packages/coding-agent/src/core/session-manager.ts`: new `inheritSessionContextEntryId(derived, source)` copies a message's WeakMap-held context entry id onto a derived message object. Context pipeline stages that spread messages call it, so checkpoint provenance reaches the openai-remote replay boundary on the shared-transcript path exactly as the string tag did on the clone path. Sources are only read, never written.
+- `packages/coding-agent/src/core/session-manager.ts`: new `inheritSessionContextEntryId(derived, source)` copies a message's context entry id onto a derived message object — into the WeakMap, and as the own enumerable property the id would have carried via spread on the clone path (`canonical-routes.test.ts` pins the descriptor). Context pipeline stages that spread messages call it, so checkpoint provenance reaches the openai-remote replay boundary on the shared-transcript path exactly as on the clone path. Sources are only read, never written.
 - `packages/coding-agent/src/core/session-resident-store.ts`: `_mutateStringsInPlace` no longer writes a string slot when the mapped value is unchanged, so a read-only walk (a fully materialized message) never touches a frozen or shared object.
 
 ### Why

@@ -103,15 +103,19 @@ export function getSessionContextEntryId(message: AgentMessage): string | undefi
 }
 
 /**
- * Copy a message's context entry identity onto a derived message object. The identity
- * lives in a WeakMap, so a plain `{ ...message }` spread loses it; context pipeline
- * stages that return derived messages call this so checkpoint provenance (the
+ * Copy a message's context entry identity onto a derived message object. Context
+ * pipeline stages that spread messages call this so checkpoint provenance (the
  * openai-remote replay boundary) survives both the cloned and the shared-transcript
- * context-hook paths. The source is only read, never written (senpi#2525).
+ * context-hook paths. The derived object gets the id both in the WeakMap (matching
+ * originals) and as the own enumerable property it would have carried via spread on
+ * the clone path — the source is only read, never written (senpi#2525).
  */
 export function inheritSessionContextEntryId<T extends AgentMessage>(derived: T, source: AgentMessage): T {
-	const entryId = getSessionContextEntryId(source);
-	if (entryId !== undefined) contextMessageEntryIds.set(derived, entryId);
+	const fromProperty = Object.getOwnPropertyDescriptor(source, SESSION_CONTEXT_ENTRY_ID)?.value;
+	const entryId = getSessionContextEntryId(source) ?? (typeof fromProperty === "string" ? fromProperty : undefined);
+	if (entryId === undefined) return derived;
+	contextMessageEntryIds.set(derived, entryId);
+	Object.assign(derived, { [SESSION_CONTEXT_ENTRY_ID]: entryId });
 	return derived;
 }
 
