@@ -346,7 +346,7 @@ describe("issue 2870: every model switch records its source", () => {
 		) => Promise<void>;
 		await showFavoriteModelsSelector.call({
 			...fakeThis,
-			showSelector: (create: (done: () => void) => { component: unknown }) => {
+			showSelector: (create: (done: () => void) => { component: object }) => {
 				const built = create(() => {});
 				onSelect = (Reflect.get(built.component, "callbacks") as { onSelect: (model: unknown) => void }).onSelect;
 			},
