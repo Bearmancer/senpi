@@ -567,4 +567,40 @@ describe("RpcClient prompt admission during compaction", () => {
 			await host.close();
 		}
 	});
+	test("an acknowledged prompt whose session then compacts past its ceiling keeps the compaction's wait (senpi#2871)", async () => {
+		// Given: the host acknowledged the prompt, then its session starts compacting
+		const host = await createHost();
+		try {
+			vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+			let settled = false;
+			const prompt = host.client
+				.prompt("request")
+				.catch((error: unknown) => error)
+				.finally(() => {
+					settled = true;
+				});
+			const { id } = await host.request;
+			await host.emit({ type: "queued", for_request: id, position: 1, in_flight: 0 } as unknown as RpcClientEvent);
+			await host.emit({ type: "compaction_start", reason: "threshold", requestId: "current" });
+
+			// When: the compaction outlasts the acknowledged-prompt ceiling
+			await vi.advanceTimersByTimeAsync(PROMPT_AFTER_QUEUED_DEADLINE_MS + 60_000);
+
+			// Then: the prompt is still waiting, and the host's answer admits it
+			expect(settled).toBe(false);
+			host.peer.write(
+				serializeJsonLine({
+					type: "response",
+					command: "prompt",
+					id,
+					success: true,
+					data: { disposition: "started" },
+				}),
+			);
+			expect(await prompt).toBe("started");
+			expect(vi.getTimerCount()).toBe(0);
+		} finally {
+			await host.close();
+		}
+	});
 });
