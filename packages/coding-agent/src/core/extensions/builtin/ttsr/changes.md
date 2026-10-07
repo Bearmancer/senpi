@@ -8,7 +8,7 @@
 
 ### Why
 
-Same-shaped code or markup (SVG elements, JSON objects) repeats one skeleton with different literals and scored as near-duplicate paragraphs. TTSR then aborted the stream and retried, discarding the model's valid output. oh-my-pi v18.8.0 drops the same line shapes before its loop heuristics.
+Same-shaped code or markup (SVG elements, JSON objects) repeats one skeleton with different literals and scored as near-duplicate paragraphs. TTSR then aborted the stream and retried, discarding the model's valid output. oh-my-pi v18.8.0 drops the same line shapes before its loop heuristics. Trade-off, accepted on review: oh-my-pi applies its rule only to Gemini, DeepSeek and Grok streams, while TTSR applies it to every model, so a narration loop in which EVERY paragraph ends in `,` or `>` or is indented is no longer counted by this detector. Real narration (the incident fixture) carries no such lines and is still caught.
 
 ### Why an extension could not handle it
 
