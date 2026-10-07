@@ -6,6 +6,8 @@
 
 ### Added
 
+- senpi now owns compaction on `anthropic-subscription` by default: speculative and idle compaction, restoration and the other compaction features run there with the session's own model, Claude Code's native auto-compact is off for the session so only one side compacts, and Claude Code's per-turn total-tokens reminder is turned off so the prompt cache keeps being reused. `anthropicSubscriptionProvider.compactionOwner: "sdk"` (or `SENPI_CLAUDE_SDK_OAUTH_COMPACTION_OWNER=sdk`) hands compaction back to Claude Code. Changing the owner mid-session restarts the resident Claude Code process on the next turn, and a failed senpi compaction ends the turn with its error instead of Claude Code compacting natively ([#2746](https://github.com/code-yeongyu/senpi/issues/2746)).
+
 ### Changed
 
 ### Fixed
