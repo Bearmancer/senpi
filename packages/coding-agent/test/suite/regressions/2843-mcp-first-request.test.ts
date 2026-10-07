@@ -18,11 +18,14 @@ it("delivers the first provider request and response while a cold MCP catalog is
 	const listEntered = fixture.holdLists();
 	const firstRequest = Promise.withResolvers<readonly string[]>();
 	process.env[ENV_AGENT_DIR] = root.agentDir;
-	process.env[MCP_STARTUP_TIMEOUT_ENV] = "0";
-	setConfig(root, { fx: { type: "http", url: fixture.url, auth: false, lifecycle: "eager" } });
-	const harness = await createHarness({ extensionFactories: [createMcpExtension(service)] });
+	process.env[MCP_STARTUP_TIMEOUT_ENV] = "5000";
+	setConfig(root, {
+		fx: { type: "http", url: fixture.url, auth: false, lifecycle: "eager", startupTimeoutMs: 5000 },
+	});
+	let harness: Awaited<ReturnType<typeof createHarness>> | undefined;
 	let prompt: Promise<unknown> | undefined;
 	try {
+		harness = await createHarness({ extensionFactories: [createMcpExtension(service)] });
 		harness.setResponses([
 			(context) => {
 				firstRequest.resolve(getCurrentTools(context.messages).map((tool) => tool.name));
@@ -40,7 +43,7 @@ it("delivers the first provider request and response while a cold MCP catalog is
 		fixture.releaseLists();
 		await prompt;
 		await service.dispose("quit");
-		harness.cleanup();
+		harness?.cleanup();
 		await fixture.close();
 		restoreEnv(ENV_AGENT_DIR, originalAgentDir);
 		restoreEnv(MCP_STARTUP_TIMEOUT_ENV, originalStartupTimeout);

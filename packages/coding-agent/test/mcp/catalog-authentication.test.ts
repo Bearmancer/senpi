@@ -83,12 +83,9 @@ it("never dispatches a retained tool using the earlier account after credentials
 			undefined,
 			undefined,
 		]);
-		expect(fixture.callAuthorizations).not.toContain("Bearer account-a");
-		if (fixture.callAuthorizations.length > 0) {
-			expect(fixture.callAuthorizations).toEqual(["Bearer account-b"]);
-		} else {
-			expect(result).toHaveProperty("details.error");
-		}
+		expect(fixture.callAuthorizations).toEqual([]);
+		expect(fixture.calls).toBe(0);
+		expect(result).toMatchObject({ details: { error: { kind: "unavailable", server: "fx", tool: "echo" } } });
 	} finally {
 		await service.dispose("quit");
 		await fixture.close();

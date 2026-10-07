@@ -170,7 +170,15 @@ export class SharedMcpConnection {
 		if (!ownsCatalog()) return catalog;
 		if (this.#cacheGeneration !== generation) {
 			this.#cacheGeneration = generation;
-			await writeMcpCachedServer(this.#options.agentDir, this.#options.serverName, catalog, ownsCatalog);
+			try {
+				await writeMcpCachedServer(this.#options.agentDir, this.#options.serverName, catalog, ownsCatalog);
+			} catch (error) {
+				for (const lease of this.leases) {
+					lease.options.logger.warn("Failed to persist MCP catalog cache", {
+						error: error instanceof Error ? error.message : String(error),
+					});
+				}
+			}
 		}
 		if (ownsCatalog()) await ensureMcpResourceSubscriptions(this.connection.client, catalog.resources);
 		return catalog;

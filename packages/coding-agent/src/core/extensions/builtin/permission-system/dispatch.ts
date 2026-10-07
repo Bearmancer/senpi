@@ -51,7 +51,8 @@ export function registerDispatchAuthorizer(session: object, authorizer: Dispatch
 	authorizers.set(session, registration);
 	previous?.retired.abort(new Error("Permission authorizer was retired"));
 	return () => {
-		if (authorizers.get(session) === registration) authorizers.delete(session);
+		// Retain the retired registration so required authority cannot become
+		// indistinguishable from a session where enforcement was never loaded.
 		registration.retired.abort(new Error("Permission authorizer was retired"));
 	};
 }
@@ -64,6 +65,7 @@ export function hasDispatchAuthorizer(session: object): boolean {
 export function prepareDispatchApproval(session: object, request: DispatchRequest, policy: DispatchPolicy): () => void {
 	const registration = authorizers.get(session);
 	if (!registration) throw new Error("Permission authorizer is unavailable");
+	registration.retired.signal.throwIfAborted();
 	const approval: Approval = {
 		registration,
 		toolCallId: request.toolCallId,
@@ -73,6 +75,7 @@ export function prepareDispatchApproval(session: object, request: DispatchReques
 		policy: { ...policy },
 	};
 	return () => {
+		registration.retired.signal.throwIfAborted();
 		if (authorizers.get(session) !== registration) throw new Error("Permission authorizer was retired");
 		approvals.set(request.input, approval);
 	};
@@ -129,6 +132,7 @@ export async function authorizeToolDispatch(
 	signal?.throwIfAborted();
 	const registration = authorizers.get(session);
 	if (!registration) throw new Error("Permission authorizer is unavailable");
+	registration.retired.signal.throwIfAborted();
 	const policy = registration.authorizer.policy(request, ctx);
 	if (policy.action === "deny") throw new DeniedError(["*"]);
 	if (policy.action === "ask" && !matches(approvals.get(request.input), registration, request, policy)) {
@@ -141,16 +145,10 @@ export async function authorizeToolDispatch(
 		approve();
 	}
 	const approvedInput = JSON.stringify(request.input);
-	const approvedIdentity = { ...request.identity };
 	return () => {
-		if (signal?.aborted || authorizers.get(session) !== registration) return false;
-		if (JSON.stringify(request.input) !== approvedInput) return false;
-		if (
-			request.identity.owner !== approvedIdentity.owner ||
-			request.identity.metadata !== approvedIdentity.metadata
-		) {
+		if (signal?.aborted || registration.retired.signal.aborted || authorizers.get(session) !== registration)
 			return false;
-		}
+		if (JSON.stringify(request.input) !== approvedInput) return false;
 		const current = registration.authorizer.policy(request, ctx);
 		if (current.action === "deny") return false;
 		return current.action === "allow" || matches(approvals.get(request.input), registration, request, current);

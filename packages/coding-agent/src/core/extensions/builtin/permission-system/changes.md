@@ -5,6 +5,8 @@
 ### What changed
 
 - `dispatch.ts` owns session-scoped authorizer registration and invocation-scoped approvals keyed by the validated input object. It keeps the policy and operation presented before an approval wait, rechecks live authority at dispatch, and invalidates retired registrations without removing their replacements.
+- `dispatch.ts` removes a comparison of the readonly dispatch identity with its own copy. The MCP resolver still compares live metadata immediately before dispatch; argument, registration, approval and live-policy fences remain independent.
+- `dispatch.ts` retains retirement state in the session registry instead of erasing required authority. Inline/factory loads do not become indistinguishable from never-loaded enforcement; approval preparation, approval settlement and final dispatch all reject the retired registration.
 - `service.ts` exposes the matched rules alongside its existing decision so final dispatch uses the same evaluator as permission prompts and pending-request rechecks.
 - `dispatch-metadata.ts`, `dispatch-policy.ts`, `index.ts`, and `prompt.ts` connect the authorizer to the existing live parser, evaluator, preset, and approval UI. Offered operation evidence is captured before approval; unique registration lifetimes cancel pending prompts when retired, including re-registration of the same callback object.
 - `test/permission/dispatch.test.ts` covers independent identical calls, unchanged Once approval, changed policy or operation, authority retirement, cancellation, and the real session's preflight-to-execution input ownership.
