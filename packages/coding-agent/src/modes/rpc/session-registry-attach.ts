@@ -44,7 +44,9 @@ export async function attachToOpenSession(
 		entry.profile = frozenProfile({ ...entry.profile, browserEngine: profile.browserEngine });
 		entry.runtime?.setBrowserEngine(profile.browserEngine);
 	}
-	if (profile.permissionPreset !== undefined && profile.permissionPreset !== entry.profile.permissionPreset) {
+	// The preset is applied even when the record already names it: the record is not the live session,
+	// so a resent attach also repairs a session that drifted from it (senpi#2842).
+	if (profile.permissionPreset !== undefined) {
 		entry.profile = frozenProfile({ ...entry.profile, permissionPreset: profile.permissionPreset });
 		entry.runtime?.setPermissionPreset(profile.permissionPreset);
 	}

@@ -1,3 +1,21 @@
+## 2026-10-07 - A resent attach repairs a session whose live preset drifted (senpi#2842)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/session-registry-attach.ts` and `worker-session-registry.ts`: an attach that names a `permissionPreset` applies it to the live session (in-process) or sends it to the worker even when the entry's recorded profile already names it.
+
+### Why
+
+The recorded profile is not the live session. When the two diverged (an attach lost to a rebuild before senpi#2842), every resend of the same attach was skipped as already applied, so nothing could repair the session. Applying the preset is idempotent, and only the session (in the worker's case, only the worker) sees its live flag.
+
+### Why an extension could not handle it
+
+Attach handling belongs to the host registries.
+
+### Expected merge conflict zones
+
+- LOW: the `permissionPreset` block of `attachToOpenSession` and of `WorkerSessionRegistry.attach`.
+
 ## 2026-10-06 - `interrupt` on a host session; model data shared with the terminal endpoint (oh-my-openagent#9660)
 
 ### What changed

@@ -95,18 +95,22 @@ export const HTML_RENDER_CONTENT_SECURITY_POLICY = [
 ].join("; ");
 
 const POLICY_META = `<meta http-equiv="Content-Security-Policy" content="${HTML_RENDER_CONTENT_SECURITY_POLICY}">`;
-// A doctype must stay first, or the page drops into quirks mode.
-const LEADING_DOCTYPE = /^(?:\s|<!--[\s\S]*?-->)*<!doctype[^>]*>/i;
+// Every written page starts with a UTF-8 byte order mark, a standards-mode
+// doctype and the policy, in that order and in plain ASCII. The mark makes the
+// browser decode the file as UTF-8 whatever charset the page declares, so no
+// declared encoding can turn the policy into text, and nothing the page wrote
+// comes before it. A leading doctype of the page's own is dropped only when it is
+// printable ASCII; anything else stays where it is, after the policy, where the
+// parser ignores a doctype.
+const PREAMBLE = `\uFEFF<!doctype html>${POLICY_META}`;
+const LEADING_ASCII_DOCTYPE = /^\uFEFF?[\t\n\f\r ]*<!doctype[ -=?-~]*>/i;
 
 /**
  * Inserts the theme bootstrap at the start of the document head, and the
  * snapshot policy ahead of everything the page wrote.
  */
 export function injectHtmlRenderBootstrap(html: string): string {
-	const themed = injectThemeBootstrap(html);
-	const doctype = LEADING_DOCTYPE.exec(themed);
-	const at = doctype ? doctype[0].length : 0;
-	return themed.slice(0, at) + POLICY_META + themed.slice(at);
+	return PREAMBLE + injectThemeBootstrap(html).replace(LEADING_ASCII_DOCTYPE, "");
 }
 
 function injectThemeBootstrap(html: string): string {

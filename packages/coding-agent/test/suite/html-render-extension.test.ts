@@ -76,8 +76,31 @@ describe("html-render builtin", () => {
 		);
 		const written = readFileSync((result.details as { path: string }).path, "utf8");
 		const policy = `<meta http-equiv="Content-Security-Policy" content="${HTML_RENDER_CONTENT_SECURITY_POLICY}">`;
-		expect(written.startsWith(`<!doctype html>${policy}`)).toBe(true);
+		expect(written.startsWith(`\uFEFF<!doctype html>${policy}`)).toBe(true);
 		expect(written.indexOf(policy)).toBeLessThan(written.indexOf("cdn.example"));
+	});
+
+	it.each(["<!-->", "<!--->", "<!-- note --!>", "<!-- note -->"])(
+		"keeps the policy ahead of a script hidden behind %s before the doctype",
+		(comment) => {
+			const policy = `<meta http-equiv="Content-Security-Policy" content="${HTML_RENDER_CONTENT_SECURITY_POLICY}">`;
+			const injected = injectHtmlRenderBootstrap(
+				`${comment}<script>fetch("http://127.0.0.1:1/")</script>--><!doctype html><html><head></head><body>x</body></html>`,
+			);
+			expect(injected.startsWith(`\uFEFF<!doctype html>${policy}${comment}`)).toBe(true);
+		},
+	);
+
+	it("keeps the policy readable when the page declares an encoding that would swallow it", () => {
+		const policy = `<meta http-equiv="Content-Security-Policy" content="${HTML_RENDER_CONTENT_SECURITY_POLICY}">`;
+		// ISO-2022-JP switches to two-byte text at ESC $ B; a policy written after that
+		// escape would decode as kanji. The byte order mark makes the browser decode the
+		// file as UTF-8, and nothing the page wrote precedes the policy.
+		const injected = injectHtmlRenderBootstrap(
+			'<!DOCTYPE html \u001b$B><html><head><meta charset="iso-2022-jp"><script>fetch("https://example.com/")</script></head></html>',
+		);
+		expect(injected.startsWith(`\uFEFF<!doctype html>${policy}`)).toBe(true);
+		expect(injected.indexOf("\u001b")).toBeGreaterThan(policy.length);
 	});
 
 	it("hands the page to the host in details and never puts it in the content the model reads", async () => {

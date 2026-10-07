@@ -1162,6 +1162,36 @@
 			],
 			"changes": [],
 			"reason": "senpi#2831 (follow-ups from #2810's review): pins that a live row's summary is sanitized to one clean line, that the collapsed headline is measured and cut in screen cells so a wide-character summary stays on one line, and that a streaming peek/stop without its cell id renders the action alone instead of 'undefined'."
+		},
+		"senpi#2839": {
+			"additions": [
+				"legacyContracts/test/eval-render-live-headline.test.ts/live eval rows stay one clean line (senpi#2831) Given a cell without a summary whose first code line carries escape and control characters when its live row renders then the row is one clean line (senpi#2839)"
+			],
+			"reason": "senpi#2839: a live eval row sanitizes its code-line headline (the summary-less fallback) before measuring it; the contract fails before the change."
+		},
+		"senpi#2832": {
+			"additions": [
+				"legacyContracts/test/kernel-js-require-resolve.test.ts/the cell-global require in worker mode (senpi#2832) Given a project package and a relative file when a cell calls require.resolve then it gets the absolute paths the call itself would load",
+				"legacyContracts/test/kernel-js-require-resolve.test.ts/the cell-global require in worker mode (senpi#2832) Given a module that does not exist when a cell calls require.resolve then the runtime's not-found error names it",
+				"legacyContracts/test/kernel-js-require-resolve.test.ts/the cell-global require in worker mode (senpi#2832) Given a cell when it reads require.resolve.paths and require.cache then both exist, and the cache holds a module the cell required",
+				"legacyContracts/test/kernel-js-require-resolve.test.ts/the cell-global require in process mode (senpi#2832) Given a project package and a relative file when a cell calls require.resolve then it gets the absolute paths the call itself would load",
+				"legacyContracts/test/kernel-js-require-resolve.test.ts/the cell-global require in process mode (senpi#2832) Given a module that does not exist when a cell calls require.resolve then the runtime's not-found error names it",
+				"legacyContracts/test/kernel-js-require-resolve.test.ts/the cell-global require in process mode (senpi#2832) Given a cell when it reads require.resolve.paths and require.cache then both exist, and the cache holds a module the cell required",
+				"legacyContracts/test/kernel-js-require-order.test.ts/the cell's require lookup order (senpi#2832) Given a package only the managed environment has when a cell requires and resolves it then both use the managed copy",
+				"legacyContracts/test/kernel-js-require-order.test.ts/the cell's require lookup order (senpi#2832) Given a package both the project and the managed environment have when a cell requires and resolves it then both use the project copy",
+				"legacyContracts/test/kernel-js-require-order.test.ts/the cell's require lookup order (senpi#2832) Given a project package whose own dependency is missing when a cell requires it then the dependency's error surfaces and the managed copy is never loaded",
+				"legacyContracts/test/kernel-js-require-order.test.ts/the cell's require lookup order (senpi#2832) Given builtins when a cell resolves them then the runtime's own ids come back and their lookup paths are null",
+				"legacyContracts/test/kernel-js-require-order.test.ts/the cell's require lookup order (senpi#2832) Given a bare name when a cell reads its lookup paths then the project's come first, then the managed environment's, each once",
+				"legacyContracts/test/kernel-js-require-order.test.ts/the cell's require lookup order (senpi#2832) Given a module a cell required when its cache entry is deleted then the next require loads it again",
+				"legacyContracts/test/kernel-js-require-resolve.test.ts/the cell-global require under Bun, the product's runtime (senpi#2832) Given a Bun builtin when a process-mode cell resolves and requires it then the id is Bun's own and it loads"
+			],
+			"reason": "senpi#2832: the cell-global require carries resolve, resolve.paths and cache like Node's own require; the call and resolve share one lookup (builtins natively, then the project, then the managed package environment). The six contracts fail before the fix ('require.resolve is not a function'). Round 2 (review 5434200346): the call loads exactly what require.resolve names, so the two cannot pick different copies; builtins resolve natively (Bun's bun:sqlite too); the order contracts run against createCellRequire with real project and managed roots."
+		},
+		"senpi#2850": {
+			"additions": [
+				"legacyContracts/test/eval-render-live-headline.test.ts/live eval rows stay one clean line (senpi#2831) Given a cell without a summary whose first code line is only escape and control characters when its live row renders then the headline is the next line with content (senpi#2850)"
+			],
+			"reason": "senpi#2850: a summary-less live row skips a first code line that sanitizes to nothing; the contract fails before the change (the row shows only the ellipsis)."
 		}
 	}
 }

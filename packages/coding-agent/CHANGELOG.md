@@ -6,6 +6,18 @@
 
 ### Added
 
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.10-5] - 2026-10-07
+
+### Breaking Changes
+
+### Added
+
 - `visibleWidth` (a string's width in terminal cells) is exported for extensions that lay out their own rows ([#2831](https://github.com/code-yeongyu/senpi/issues/2831)).
 
 - A `show_html_page` tool (builtin `html-render` extension) lets a standalone senpi agent show a self-contained HTML page (chart, table, diagram, mockup): the page is prepared with the theme bootstrap injected, absolute-path local images inlined after a magic-byte check, and size caps enforced, then written to `.senpi/html-pages/` with an open-in-desktop hint. The written page opens as an offline snapshot: a Content-Security-Policy placed ahead of everything the page wrote refuses fetch, XHR, WebSockets and every remote script, style, image, font and frame. In an OmO desktop thread the desktop shows the page inline: the tool hands it over in its result details (never in the text the model reads), capped at 512,000 characters (omo-desktop-app#1724).
@@ -15,8 +27,11 @@
 
 ### Fixed
 
+- Scrolling up while a reply is streaming no longer snaps the terminal back to the top of the conversation. When the reply re-lays out rows that have already scrolled off (a markdown table widening its columns, for example), senpi now repaints from the visible screen down instead of clearing and rewriting the whole scrollback on every update. Rows above stay as first drawn until your next key press, which corrects them once. Multiplexer panes behave as before ([#2836](https://github.com/code-yeongyu/senpi/issues/2836)).
+- `show_html_page` now writes its offline policy first in every page: a page that opens with a comment the browser closes early (`<!-->`, `<!--->`, `--!>`) or declares an encoding such as ISO-2022-JP can no longer run a script ahead of it or turn it into text ([#2846](https://github.com/code-yeongyu/senpi/issues/2846)).
 - A notice shown while a reply is streaming (for example the list `/todo` prints) no longer makes the terminal jump to the top of the conversation with every new token. It now appears above the live reply instead of after it, so a notice taller than the screen no longer pushes the reply off-screen and forces a full repaint of the scrollback ([#2836](https://github.com/code-yeongyu/senpi/issues/2836)).
 - An `open_session` that attaches to a session another client already holds open now applies the `permissionPreset` it names: from the next tool call on, the live session enforces that preset, in both directions (a stricter preset starts asking; a looser one stops asking), on the in-process and the worker host runtimes. An attach without a preset keeps the session's preset, and an attach accepts and treats every value exactly as `open_session` does (an unknown name makes the next tool call fail closed with `Permission setup failed: Invalid --permission-preset "<name>"`). Before, the attach kept the session's original preset, so a thread switched from full access to ask kept running tools without approval ([#2823](https://github.com/code-yeongyu/senpi/issues/2823)).
+- An `open_session` attach that names a stricter `permissionPreset` (for example `ask` on a `full-access` session) is no longer lost when it lands while that session is reloading or being replaced by `new_session`, `switch_session`, `fork` / `clone` or `import_jsonl`: the session that comes out of the rebuild enforces the attached preset from its next tool call, on the in-process and the worker host runtimes, also when two reloads overlap. A `promptSurface` or `browserEngine` an attach names while a replacement is being built is kept the same way. Before, the rebuilt session kept the looser preset while the host reported the stricter one, and resending the same attach was skipped as already applied; an attach that names a preset now always reaches the live session, so a resend also repairs a session that drifted ([#2842](https://github.com/code-yeongyu/senpi/issues/2842)).
 
 - A session reopened on a new RPC host right after the old host closed it no longer fails with the old host still listed as its owner: closing a session now finishes only after its path claim is removed, and a late attachment update from the old host can no longer overwrite the new host's claim ([#2729](https://github.com/code-yeongyu/senpi/issues/2729)).
 

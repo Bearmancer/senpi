@@ -371,8 +371,7 @@ function headlined(
 	environment: RenderEnvironment,
 ): string {
 	const budget = environment.expanded ? undefined : environment.width - 3 - visibleWidth(`${icon}  · ${rest}`);
-	// Sanitize before measuring, so the cut is made on what the terminal actually shows.
-	return `${icon} ${liveHeadline(summary === undefined ? undefined : sanitizeTerminalLabel(summary), code, budget)} · ${rest}`;
+	return `${icon} ${liveHeadline(summary, code, budget)} · ${rest}`;
 }
 
 function previewText(
