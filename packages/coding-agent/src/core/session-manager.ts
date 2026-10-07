@@ -87,6 +87,32 @@ import {
 	createCustomMessage,
 } from "./messages.ts";
 
+/**
+ * Whether `value` is plain JSON: null, booleans, finite numbers, strings, arrays of those, and objects
+ * with a plain prototype. Object properties that are undefined are allowed (JSON omits them and reading
+ * them gives undefined either way); an undefined array element is not (JSON turns it into null).
+ */
+function isPlainJson(value: unknown, depth = 0): boolean {
+	if (depth > 64) return false;
+	if (value === null || typeof value === "string" || typeof value === "boolean") return true;
+	if (typeof value === "number") return Number.isFinite(value);
+	if (Array.isArray(value)) {
+		// A plain loop, not every(): every() skips holes in a sparse array, which JSON turns into null.
+		for (let index = 0; index < value.length; index++) {
+			const item = value[index];
+			if (item === undefined || !isPlainJson(item, depth + 1)) return false;
+		}
+		return true;
+	}
+	if (typeof value !== "object") return false;
+	const prototype = Object.getPrototypeOf(value);
+	if (prototype !== Object.prototype && prototype !== null) return false;
+	for (const item of Object.values(value)) {
+		if (item !== undefined && !isPlainJson(item, depth + 1)) return false;
+	}
+	return true;
+}
+
 const contextMessageEntryIds = new WeakMap<object, string>();
 
 /** Request-local field carried across context hooks; never persisted or sent to providers. */
@@ -1547,10 +1573,28 @@ export class SessionManager {
 		this.flushed = true;
 	}
 
-	private _appendEntry(entry: SessionEntry): void {
+	private _appendEntry(entry: SessionEntry, shareable?: object): void {
 		const residentEntry = this.residentStore.externalize(entry);
 		this._persist(residentEntry);
-		this._commitEntry(residentEntry);
+		this._commitEntry(this._shareMessage(residentEntry, shareable));
+	}
+
+	/**
+	 * senpi#2537: the mirror used to hold its own JSON copy of every message the agent persisted, so each
+	 * message's object and array skeleton was resident twice (strings were already shared). For a message
+	 * that is plain JSON with no resident token, the mirror keeps a shallow copy instead: its own object
+	 * (context projections tag it, never the agent's object), sharing the agent's content arrays. The file
+	 * holds what `_persist` wrote, and a reload reads the same JSON. Anything else keeps the JSON copy: a
+	 * resident token means the idle release may tokenize the agent's strings in place later, and a
+	 * non-JSON value (a Date, NaN, a class instance) would make the mirror differ from a reload.
+	 */
+	private _shareMessage(residentEntry: SessionEntry, shareable: object | undefined): SessionEntry {
+		if (shareable === undefined || residentEntry.type !== "message") return residentEntry;
+		if (!this.residentStore.isTokenFree(residentEntry)) return residentEntry;
+		if (!isPlainJson(shareable)) return residentEntry;
+		const shared = { ...residentEntry, message: { ...shareable } as SessionMessageEntry["message"] };
+		this.residentStore.adoptTokenFree(shared);
+		return shared;
 	}
 
 	private _commitEntry(residentEntry: SessionEntry): void {
@@ -1641,6 +1685,20 @@ export class SessionManager {
 	 * These need to be appended via appendCompaction() and appendBranchSummary() methods.
 	 */
 	appendMessage(message: Message | CustomMessage | BashExecutionMessage): string {
+		return this._appendMessage(message, false);
+	}
+
+	/**
+	 * `appendMessage` for a message the session's own agent produced and whose content it does not change
+	 * after it is persisted (senpi#2537). The mirror keeps a shallow copy that shares the message's content
+	 * instead of a full JSON copy (see `_shareMessage` for when it falls back). `appendMessage` keeps the
+	 * full copy: a caller may still change its object after appending.
+	 */
+	appendOwnedMessage(message: Message | CustomMessage | BashExecutionMessage): string {
+		return this._appendMessage(message, true);
+	}
+
+	private _appendMessage(message: Message | CustomMessage | BashExecutionMessage, owned: boolean): string {
 		const entry: SessionMessageEntry = {
 			type: "message",
 			id: generateId(this.idsInUse),
@@ -1648,7 +1706,7 @@ export class SessionManager {
 			timestamp: new Date().toISOString(),
 			message,
 		};
-		this._appendEntry(entry);
+		this._appendEntry(entry, owned ? message : undefined);
 		const order = this.entryOrdersById.get(entry.id);
 		if (order !== undefined) {
 			this.messageEntryPositions.set(message, { entryId: entry.id, order });

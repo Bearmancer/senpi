@@ -3184,7 +3184,7 @@ export class AgentSession {
 					event.message.role === "toolResult"
 				) {
 					// Regular LLM message - persist as SessionMessageEntry
-					entryId = this.sessionManager.appendMessage(event.message);
+					entryId = this.sessionManager.appendOwnedMessage(event.message);
 					this._emitEntryAppended(entryId);
 					this._incrementMessageRevision();
 					this.externalAdmission.observePersisted(event.message);
@@ -3666,7 +3666,7 @@ export class AgentSession {
 		// Agent-core stores the finalized message object in its state before emitting message_end.
 		// SessionManager persistence happens later in _processAgentEvent() with event.message.
 		// Mutating this object in place keeps agent state, later turn/agent events, listeners,
-		// and the eventual SessionManager.appendMessage(event.message) persistence in sync.
+		// and the eventual SessionManager.appendOwnedMessage(event.message) persistence in sync.
 		if (target === replacement) {
 			return;
 		}

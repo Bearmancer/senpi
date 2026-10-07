@@ -93,13 +93,14 @@ describe.skipIf(!unprivileged)("a delivery whose entry the session file refuses"
 		]);
 		const { sessionId, sessionPath, session } = await host.open("midrun-recovery");
 		const manager = session.sessionManager;
-		const appendMessage = manager.appendMessage.bind(manager);
+		// AgentSession persists its own turn messages through appendOwnedMessage (senpi#2537).
+		const appendOwnedMessage = manager.appendOwnedMessage.bind(manager);
 		let assistantWritten!: () => void;
 		firstAssistantWritten = new Promise((resolve) => {
 			assistantWritten = resolve;
 		});
-		manager.appendMessage = (message) => {
-			const id = appendMessage(message);
+		manager.appendOwnedMessage = (message) => {
+			const id = appendOwnedMessage(message);
 			if (message.role === "assistant") assistantWritten();
 			return id;
 		};
