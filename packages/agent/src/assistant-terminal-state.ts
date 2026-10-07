@@ -7,10 +7,8 @@ import {
 	readProviderDiagnostic,
 	type ToolResultMessage,
 } from "@earendil-works/pi-ai";
-import {
-	isOAuthRefreshUnavailableError,
-	OAUTH_REFRESH_UNAVAILABLE_DIAGNOSTIC,
-} from "@earendil-works/pi-ai/utils/oauth-refresh-error";
+import { isOAuthRefreshUnavailableError } from "@earendil-works/pi-ai/utils/oauth-refresh-error";
+import { OAUTH_REFRESH_UNAVAILABLE_DIAGNOSTIC } from "@earendil-works/pi-ai/utils/retry";
 import type { AgentLoopConfig } from "./types.ts";
 
 const EMPTY_USAGE = {

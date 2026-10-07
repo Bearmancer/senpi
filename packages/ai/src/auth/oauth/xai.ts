@@ -89,7 +89,9 @@ async function postForm(url: string, fields: Record<string, string>, signal: Abo
 		if (signal.aborted) {
 			throw new Error("Login cancelled", { cause: signal.reason });
 		}
-		throw new Error(`xAI OAuth returned invalid JSON (HTTP ${response.status})`);
+		const message = `xAI OAuth returned invalid JSON (HTTP ${response.status})`;
+		// An error page (an HTML 503 from a proxy, say) still carries the status the retry decision needs.
+		throw response.ok ? new Error(message) : new OAuthTokenEndpointError(message, response.status);
 	}
 	return {
 		ok: response.ok,

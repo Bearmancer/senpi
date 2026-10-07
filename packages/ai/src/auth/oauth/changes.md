@@ -15,6 +15,7 @@
 
 - `cursor.ts`, `xai.ts`, `radius.ts`, `kimi-coding.ts`: the cancelled/aborted errors they throw when the refresh signal aborts keep `signal.reason` as `cause`. When the shared refresh's 15 s cap fires, that reason is the `TimeoutError`, so the failure classifies transient as it does for the other providers; the message text is unchanged.
 
+- `xai.ts`: an error page that is not JSON (an HTML 503 from a proxy, say) is thrown as `OAuthTokenEndpointError` with its status, so it classifies transient; a 2xx with an unreadable body stays a plain error.
 ### Why
 
 HTTP status and transport causes must survive provider wrappers so token refresh can distinguish outages from expired grants without matching prose.

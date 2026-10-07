@@ -28,7 +28,8 @@ const TRANSPORT_CODES = new Set([
 /** Closed, log-safe facts only; never inspect the message or response body. */
 export function oauthRefreshFailureCause(error: unknown): string | undefined {
 	const seen = new Set<unknown>();
-	while (typeof error === "object" && error !== null && !seen.has(error)) {
+	// Bounded as well as cycle-safe: a refresh failure's cause chain is a few links deep.
+	while (typeof error === "object" && error !== null && !seen.has(error) && seen.size < 16) {
 		seen.add(error);
 		if (Reflect.get(error, "name") === "TimeoutError") return "timeout";
 		const code: unknown = Reflect.get(error, "code");
@@ -68,5 +69,3 @@ export function isOAuthRefreshUnavailableError(error: unknown): error is OAuthRe
 	}
 	return false;
 }
-
-export const OAUTH_REFRESH_UNAVAILABLE_DIAGNOSTIC = "oauth_refresh_unavailable";

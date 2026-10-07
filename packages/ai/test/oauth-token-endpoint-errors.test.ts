@@ -75,6 +75,15 @@ describe("token endpoint HTTP error facts (#2893)", () => {
 		expect(classifyOAuthRefreshFailure(error)).toBe("transient");
 	});
 
+	it("xAI keeps the status of a non-JSON error page", async () => {
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async () => new Response("<html>503 Service Unavailable</html>", { status: 503 })),
+		);
+		const error = await xaiOAuth.refresh(credential, signal).catch((error: unknown) => error);
+		expect(classifyOAuthRefreshFailure(error)).toBe("transient");
+	});
+
 	it("Devin token exchange retains status", async () => {
 		vi.stubGlobal(
 			"fetch",

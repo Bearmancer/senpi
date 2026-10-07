@@ -4,6 +4,7 @@
 
 - `packages/coding-agent/src/core/agent-session.ts`: summary auth rethrows branded transient refresh errors and uses the existing bounded retry helper, settings and summary callbacks. Compaction and branch summaries forward their cancellation signals through auth and backoff.
 
+- `agent-session.ts`: session-title generation passes its own abort signal and silent callbacks to the summarization auth, so a transient refresh failure during a background title neither shows a retry or summary indicator nor outlives an aborted title.
 ### Why
 
 Summary authentication swallowed a refresh outage as missing auth, and compaction authenticated outside its summarizer's retry boundary.

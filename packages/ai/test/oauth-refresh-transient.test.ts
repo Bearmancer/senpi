@@ -117,6 +117,7 @@ describe("transient OAuth refresh failures (#2893)", () => {
 				},
 			},
 		};
+		const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
 		await expect(
 			resolveProviderAuth(
 				provider,
@@ -126,5 +127,8 @@ describe("transient OAuth refresh failures (#2893)", () => {
 			),
 		).rejects.toBe(reason);
 		expect(await credentials.read("fixture")).toEqual(stored);
+		// A caller abort is not a refresh failure: no transient-refresh log line for it.
+		expect(warn.mock.calls.filter((call) => call[0] === "OAuth refresh unavailable")).toEqual([]);
+		warn.mockRestore();
 	});
 });

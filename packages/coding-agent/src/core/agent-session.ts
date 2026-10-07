@@ -1035,6 +1035,15 @@ export function providerRetryWatchdogAbortMessage(
 	);
 }
 
+/** Auth for a summarization or title request, resolved for the physical model. */
+type SummarizationRequestAuth = {
+	model: Model<any>;
+	apiKey?: string;
+	headers?: Record<string, string>;
+	env?: Record<string, string>;
+	thinkingLevel: ThinkingLevel;
+};
+
 export class AgentSession {
 	readonly agent: Agent;
 	readonly sessionManager: SessionManager;
@@ -1507,7 +1516,7 @@ export class AgentSession {
 		selectedModel: Model<any>,
 		signal?: AbortSignal,
 		callbacks?: RetryCallbacks,
-	) {
+	): Promise<SummarizationRequestAuth> {
 		// Resolve a virtual selection once so auth retries cannot choose another model.
 		const { model, thinkingLevel } = isVirtualModel(selectedModel)
 			? await this._modelRuntime.resolveModel(selectedModel, convertToLlm(this.messages), {
@@ -1529,13 +1538,7 @@ export class AgentSession {
 		model: Model<any>,
 		thinkingLevel: ThinkingLevel,
 		signal?: AbortSignal,
-	): Promise<{
-		model: Model<any>;
-		apiKey?: string;
-		headers?: Record<string, string>;
-		env?: Record<string, string>;
-		thinkingLevel: ThinkingLevel;
-	}> {
+	): Promise<SummarizationRequestAuth> {
 		if (this.agent.streamFunction === streamSimple) {
 			return { ...(await this._getRequiredRequestAuth(model, signal)), thinkingLevel };
 		}
@@ -5390,7 +5393,9 @@ export class AgentSession {
 		abortController: AbortController,
 	): Promise<void> {
 		try {
-			const auth = await this._getSummarizationRequestAuth(model);
+			// A title is a background, cosmetic job: its auth retry is cancellable with the title and reports
+			// nothing to the UI (no retry banner or summary spinner for a job the user never started).
+			const auth = await this._getSummarizationRequestAuth(model, abortController.signal, {});
 			const title = await generateSessionTitle({
 				firstPrompt,
 				model,

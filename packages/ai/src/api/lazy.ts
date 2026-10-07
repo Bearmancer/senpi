@@ -1,7 +1,8 @@
 import type { Api, AssistantMessage, AssistantMessageEvent, Model, ProviderStreams } from "../types.ts";
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
-import { isOAuthRefreshUnavailableError, OAUTH_REFRESH_UNAVAILABLE_DIAGNOSTIC } from "../utils/oauth-refresh-error.ts";
+import { isOAuthRefreshUnavailableError } from "../utils/oauth-refresh-error.ts";
 import { describeReplacedInstall } from "../utils/provider-failure-description.ts";
+import { OAUTH_REFRESH_UNAVAILABLE_DIAGNOSTIC } from "../utils/retry.ts";
 
 function createSetupErrorMessage(model: Model<Api>, error: unknown): AssistantMessage {
 	return {
