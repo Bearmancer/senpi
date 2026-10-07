@@ -42,6 +42,8 @@ export interface RetryFallbackControllerDeps {
 	circuits?: FallbackCircuitAccess;
 	logger: FallbackLogger;
 	switchModel(model: Model<Api>, thinking: ThinkingLevel, reason: "fallback" | "fallback-revert"): Promise<void>;
+	/** True when `switchModel` refused this candidate itself (e.g. its window cannot hold the session), so the next rung may still fit. */
+	isCandidateRefusal?(error: unknown): boolean;
 	emit(
 		event:
 			| {
