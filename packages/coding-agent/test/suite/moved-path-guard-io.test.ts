@@ -1,0 +1,73 @@
+import * as fs from "node:fs";
+import { join } from "node:path";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { builtinExtensions } from "../../src/core/extensions/builtin/index.ts";
+import { commandPaths, MAX_PATHS_PER_CALL } from "../../src/core/extensions/builtin/moved-path-guard/command-paths.ts";
+import { createHarness, type Harness } from "./harness.ts";
+import { createMovedLayout, type MovedLayout, runTool } from "./moved-path-guard-fixtures.ts";
+
+// code-yeongyu/senpi#2898 review M1: the per-call guard runs on the session's event loop, so it must never resolve
+// a path with synchronous I/O (a wedged mount would freeze the host), and it examines a bounded number of paths.
+
+vi.mock("node:fs", async (importOriginal) => {
+	const actual = await importOriginal<typeof import("node:fs")>();
+	return {
+		...actual,
+		existsSync: vi.fn(actual.existsSync),
+		statSync: vi.fn(actual.statSync),
+		readFileSync: vi.fn(actual.readFileSync),
+		realpathSync: Object.assign(vi.fn(actual.realpathSync), { native: actual.realpathSync.native }),
+	};
+});
+
+const syncProbes = () => [fs.existsSync, fs.statSync, fs.readFileSync, fs.realpathSync] as const;
+
+function syncCallsUnder(root: string): string[] {
+	return syncProbes().flatMap((probe) =>
+		vi
+			.mocked(probe)
+			.mock.calls.map((call) => String(call[0]))
+			.filter((path) => path.startsWith(root)),
+	);
+}
+
+describe("moved-path-guard I/O on the session loop (#2898)", () => {
+	const layouts: MovedLayout[] = [];
+	const harnesses: Harness[] = [];
+
+	afterEach(() => {
+		while (harnesses.length > 0) harnesses.pop()?.cleanup();
+		while (layouts.length > 0) layouts.pop()?.cleanup();
+	});
+
+	it("checks shell commands and file writes without synchronous path I/O", async () => {
+		const guard = builtinExtensions.find((entry) => entry.id === "moved-path-guard");
+		if (!guard) throw new Error("moved-path-guard is not registered");
+		const layout = createMovedLayout();
+		layouts.push(layout);
+		const harness = await createHarness({
+			cwd: layout.home,
+			extensionFactories: [guard.factory],
+			initialActiveToolNames: ["bash", "write"],
+		});
+		harnesses.push(harness);
+		await harness.session.bindExtensions({});
+		for (const probe of syncProbes()) vi.mocked(probe).mockClear();
+
+		const bash = await runTool(harness, "bash", { command: `mkdir -p ${layout.oldWorktree}/x` });
+		const write = await runTool(harness, "write", { path: join(layout.oldSessions, "s.jsonl"), content: "x" });
+
+		expect([bash.outcome, write.outcome]).toEqual(["blocked", "error"]);
+		expect(syncCallsUnder(layout.home)).toEqual([]);
+	});
+
+	it("examines a bounded number of paths per call, anchored ones first", () => {
+		const relative = Array.from({ length: 300 }, (_, index) => `rel/${index}`).join(" ");
+		const anchored = "/first/anchored ~/second";
+
+		const paths = commandPaths(`touch ${relative} ${anchored}`, "/cwd");
+
+		expect(paths).toHaveLength(MAX_PATHS_PER_CALL);
+		expect(paths.slice(0, 2)).toEqual(["/first/anchored", expect.stringMatching(/second$/)]);
+	});
+});

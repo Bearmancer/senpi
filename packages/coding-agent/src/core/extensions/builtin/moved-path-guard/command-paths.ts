@@ -3,6 +3,8 @@ import { isAbsolute, resolve, sep } from "node:path";
 
 // biome-ignore lint/suspicious/noTemplateCurlyInString: literal shell spellings of the home directory, not a template.
 const HOME_ANCHORS = ["~", "$HOME", "${HOME}", "%USERPROFILE%", "$env:USERPROFILE"] as const;
+/** Paths one tool call examines (senpi#2898 review M1); anchored paths come first, so the cap drops relative words. */
+export const MAX_PATHS_PER_CALL = 64;
 const DRIVE_PATH = /^[A-Za-z]:[\\/]/;
 const QUOTED = /"([^"]*)"|'([^']*)'/g;
 const BARE_WORD = /[^\s"'`;|&<>()]+/g;
@@ -60,5 +62,5 @@ export function commandPaths(command: string, cwd: string): string[] {
 		if (anchored !== undefined) paths.add(anchored);
 		else if (word.includes("/") || word.includes("\\") || word.startsWith(".")) paths.add(resolve(cwd, word));
 	}
-	return [...paths];
+	return [...paths].slice(0, MAX_PATHS_PER_CALL);
 }

@@ -130,11 +130,11 @@
 			"note": "rendered HTML export (session-scale, MB on long sessions)"
 		},
 		{
-			"file": "src/core/extensions/builtin/moved-path-guard/resolve.ts",
+			"file": "src/core/extensions/builtin/moved-path-guard/breadcrumb-trust.ts",
 			"api": "readFileSync",
-			"symbol": "readJsonFile",
+			"symbol": "readJsonFileSync",
 			"count": 1,
-			"note": "OmO desktop data-home breadcrumb omo-desktop-moved.json and the moved home's omo-desktop-home.json marker (<1 KB each), read only when that file exists and memoized by mtime+size, so at most once per file version per process; sync because holder claims and the registry reservation it feeds are synchronous (senpi#2898)"
+			"note": "OmO desktop data-home breadcrumb omo-desktop-moved.json and the moved home's omo-desktop-home.json marker (<1 KB each), read only when that file exists and memoized by mtime+size; reached only from the synchronous one-session-path callers (registry open, holder claims, schedule delivery), never from a tool call, which uses the async bounded probe (senpi#2898)"
 		},
 		{
 			"file": "src/core/model-config.ts",
