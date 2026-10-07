@@ -1399,6 +1399,7 @@ export class AgentSession {
 					repairWithSlice: true,
 				});
 			},
+			isCandidateRefusal: (error) => error instanceof ModelUsabilityBudgetError,
 			emit: (event) => this._emit(event),
 			getCurrentSelector: () => (this.model ? { model: this.model, thinkingLevel: this.thinkingLevel } : undefined),
 			isAuthAvailable: (provider) => this._modelRuntime.hasConfiguredAuth(provider),
