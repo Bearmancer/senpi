@@ -1,3 +1,21 @@
+## 2026-10-08 - Brand-dir copy-forward reserved-entry match folds case on darwin and win32 (senpi#2898 review L6)
+
+### What changed
+
+- `packages/coding-agent/src/brand-dir-migration.ts`: `isDesktopReserved` lower-cases the entry on darwin and win32 before matching `desktop` / `desktop.init-*`.
+
+### Why
+
+Those volumes fold case, so `Desktop` is the desktop's own folder there.
+
+### Why an extension could not handle it
+
+The copy-forward runs at startup, before any extension loads.
+
+### Expected merge conflict zones
+
+- Fork-only file. `isDesktopReserved`.
+
 ## 2026-10-08 - Brand-dir copy-forward skips the OmO desktop's reserved entries (oh-my-openagent#9727)
 
 ### What changed

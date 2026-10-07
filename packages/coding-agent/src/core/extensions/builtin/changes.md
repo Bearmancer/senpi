@@ -1,3 +1,24 @@
+## 2026-10-08 - moved-path-guard: review fixes (senpi#2898)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/moved-path-guard/breadcrumb.ts`, `home-marker.ts` (new), `breadcrumb-trust.ts` (new), `resolve.ts`: a breadcrumb is trusted only when `movedTo` is absolute and normalized on the host's path rules, lies outside the breadcrumb's folder, and holds the desktop's ownership marker `omo-desktop-home.json` with the breadcrumb's `homeId`. Ignored breadcrumbs go to the debug log, not the terminal.
+- `resolve-async.ts` (new), `index.ts`: tool calls are checked with an async probe that canonicalizes through `canonicalizeFilesystemPath`; at most `MAX_PATHS_PER_CALL` (64) paths and `CALL_DEADLINE_MS` (2 s) per call. A tool missing from the class table has every string argument scanned.
+- `command-paths.ts`: anchored paths are found anywhere in the text (inline code, glued flags, quote-split words); relative words resolve against the latest `cd` in the same text.
+- `tool-classes.ts`: `eval` (its `code`) and `tool_search` are classified.
+
+### Why
+
+Review of PR #2900: an untrusted breadcrumb could redirect writes, embedded or `cd`-relative paths bypassed the command guard, an unclassified tool was allowed, and the per-call check did unbounded synchronous I/O on the session loop.
+
+### Why an extension could not handle it
+
+It is an extension.
+
+### Expected merge conflict zones
+
+- Fork-only directory.
+
 ## 2026-10-08 - moved-path-guard: guard and resolve paths the OmO desktop moved (senpi#2898)
 
 ### What changed

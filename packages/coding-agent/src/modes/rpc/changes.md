@@ -1,3 +1,22 @@
+## 2026-10-08 - open_session re-validates moved paths and refuses a moved file that is gone (senpi#2898 review)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/session-registry.ts`: the resolved profile is validated again (absolute paths), and an old session path whose moved file does not exist fails `open_failed` naming the new path instead of creating a fresh session there.
+- `packages/coding-agent/src/modes/rpc/session-worker.ts`: `prepare` resolves the requested `cwd` as well, refuses a non-absolute resolved session path, and refuses a moved session file that is gone the same way.
+
+### Why
+
+A breadcrumb-derived path must never reach the session unvalidated, and a missing moved file is an error the client must see, not a silent new session.
+
+### Why an extension could not handle it
+
+Session open is host-registry behavior that runs before any extension of the session exists.
+
+### Expected merge conflict zones
+
+- LOW: the head of `RpcSessionRegistry.openSession`; the `prepare` case of `session-worker.ts`.
+
 ## 2026-10-08 - open_session resolves paths the OmO desktop moved; host capability moved_path_guard (senpi#2898)
 
 ### What changed
