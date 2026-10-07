@@ -46,16 +46,6 @@ function parseRequest(args: unknown): PackagesInstallRequest {
 	};
 }
 
-/** The `%pip install` argument string for these requirements; quoting keeps one requirement one argument. */
-function pipArguments(requirements: readonly string[]): string {
-	const quoted = requirements.map((requirement) => {
-		if (!/[\s"'\\]/.test(requirement)) return requirement;
-		if (requirement.includes('"')) throw invalid(`a requirement cannot contain a double quote: ${requirement}`);
-		return `"${requirement}"`;
-	});
-	return `install ${quoted.join(" ")}`;
-}
-
 function jsArguments(requirements: readonly string[]): string {
 	for (const requirement of requirements) {
 		if (/\s/.test(requirement)) throw invalid(`a package spec cannot contain whitespace: ${requirement}`);
@@ -67,22 +57,22 @@ function jsArguments(requirements: readonly string[]): string {
  * `packages.install(manager, requirements, {timeout?})`: the in-cell form of `%pip install` / `%bun add` /
  * `%npm add`. It drives the same session environment the magic cells use and returns its receipt; a stop of the
  * owning cell cancels it (environment_install_cancelled), and the timeout fails it with environment_install_timeout.
+ * pip receives the requirement list as separate arguments, never re-split. The installer's output is not streamed
+ * into the cell: the receipt is the result, and a failure carries the installer's stderr tail.
  */
 export async function runPackagesInstall(
 	args: unknown,
 	environments: PackagesInstallEnvironments,
 	signal: AbortSignal | undefined,
-	onOutput?: (stream: "stdout" | "stderr", data: string) => void,
 ): Promise<InstallReceipt | JsInstallReceipt> {
 	const request = parseRequest(args);
 	const { python, js } = environments;
 	const manager = request.manager;
 	let install: ((signal: AbortSignal) => Promise<InstallReceipt | JsInstallReceipt>) | undefined;
 	if (manager === "pip") {
-		if (python !== undefined)
-			install = (signal) => python.install(pipArguments(request.requirements), signal, onOutput);
+		if (python !== undefined) install = (signal) => python.install(request.requirements, signal);
 	} else if (js !== undefined) {
-		install = (signal) => js.install(jsArguments(request.requirements), signal, onOutput, manager);
+		install = (signal) => js.install(jsArguments(request.requirements), signal, undefined, manager);
 	}
 	if (install === undefined) {
 		throw new EnvironmentError(

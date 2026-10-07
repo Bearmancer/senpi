@@ -1202,11 +1202,15 @@
 				"legacyContracts/test/environments/packages-install-e2e.test.ts/Given packages.install() in a JavaScript cell When the manager is not a JavaScript installer, then the cell fails with environment_installer_unavailable and installs nothing",
 				"legacyContracts/test/environments/packages-install-e2e.test.ts/Given packages.install() in a Python cell When it installs a local wheel, then it returns the %pip receipt and the next cell imports the package",
 				"legacyContracts/test/environments/packages-install-e2e.test.ts/Given packages.install() in a Python cell When the install fails, then the cell error carries environment_install_failed and pip's stderr tail",
-				"legacyContracts/test/environments/packages-install.test.ts/packages.install() host dispatch passes the requirements to the session installer as one %pip install argument string and returns its receipt",
 				"legacyContracts/test/environments/packages-install.test.ts/packages.install() host dispatch fails with environment_install_timeout when the install outlives its timeout",
 				"legacyContracts/test/environments/packages-install.test.ts/packages.install() host dispatch reports the owning cell's stop as environment_install_cancelled, not as a timeout",
 				"legacyContracts/test/environments/packages-install.test.ts/packages.install() host dispatch refuses a manager whose environment the cell does not have",
-				"legacyContracts/test/environments/packages-install.test.ts/packages.install() host dispatch refuses malformed arguments before any install starts"
+				"legacyContracts/test/environments/packages-install.test.ts/packages.install() host dispatch refuses malformed arguments before any install starts",
+				"legacyContracts/test/environments/packages-install-e2e.test.ts/Given packages.install() in a JavaScript cell When the owning cell is cancelled once the installer has started, then the install itself is cancelled, nothing is published and the kernel answers the next cell",
+				"legacyContracts/test/environments/packages-install-e2e.test.ts/Given packages.install() in a Python cell When the owning cell is cancelled once pip has started, then the install itself is cancelled and nothing is published",
+				"legacyContracts/test/environments/packages-install-runtime-wiring.test.ts/Given a session runtime with Python enabled When it is created, then the bridge's packages.install() and the %pip magics share one Python environment",
+				"legacyContracts/test/environments/packages-install.test.ts/packages.install() host dispatch passes the requirement list to the session installer as separate arguments, never re-split, and returns its receipt",
+				"legacyContracts/test/environments/packages-install.test.ts/packages.install() host dispatch validates a list with the same %pip rules, keeping markers and backslashes as written"
 			],
 			"reason": "Plan row 38 (F4 shortfall, IS-6): the packages.install() cell helper, a module the extension and first kernel load, and its contract tests. The helper is reached through a reserved bridge tool and documented on demand; no prompt cell changes."
 		}

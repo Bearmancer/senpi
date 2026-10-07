@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { defaultCodemodeSettings } from "../../src/config/settings.ts";
 import { runPackagesInstall } from "../../src/environments/packages-install.ts";
 import type { InstallReceipt } from "../../src/environments/py-environment.ts";
-import { EnvironmentError } from "../../src/environments/py-installer.ts";
+import { EnvironmentError, normalizePipInstall } from "../../src/environments/py-installer.ts";
 import { PythonEnvironments } from "../../src/environments/python-environments.ts";
 
 function python(install: PythonEnvironments["install"]): PythonEnvironments {
@@ -35,21 +35,25 @@ const untilAborted: PythonEnvironments["install"] = (_requirements, signal) =>
 	});
 
 describe("packages.install() host dispatch", () => {
-	it("passes the requirements to the session installer as one %pip install argument string and returns its receipt", async () => {
-		let seen = "";
+	it("passes the requirement list to the session installer as separate arguments, never re-split, and returns its receipt", async () => {
+		let seen: string | readonly string[] = "";
 		const environments = python(async (requirements) => {
 			seen = requirements;
 			return receipt;
 		});
+		const requirements = ["--no-index", "/tmp/a wheel.whl", 'requests; python_version >= "3.8"', "/tmp/a\\$b.whl"];
 
-		const result = await runPackagesInstall(
-			{ manager: "pip", requirements: ["--no-index", "/tmp/a wheel.whl"] },
-			{ python: environments },
-			undefined,
-		);
+		const result = await runPackagesInstall({ manager: "pip", requirements }, { python: environments }, undefined);
 
 		expect(result).toBe(receipt);
-		expect(seen).toBe('install --no-index "/tmp/a wheel.whl"');
+		expect(seen).toEqual(requirements);
+	});
+
+	it("validates a list with the same %pip rules, keeping markers and backslashes as written", () => {
+		expect(
+			normalizePipInstall(["install", "--no-index", 'requests; python_version >= "3.8"', "/tmp/a\\$b.whl"]),
+		).toEqual(["--no-index", 'requests; python_version >= "3.8"', "/tmp/a\\$b.whl"]);
+		expect(() => normalizePipInstall(["install", "--target=/elsewhere", "probe"])).toThrow(/--target is not allowed/);
 	});
 
 	it("fails with environment_install_timeout when the install outlives its timeout", async () => {
@@ -90,7 +94,6 @@ describe("packages.install() host dispatch", () => {
 			{ manager: "pip", requirements: [] },
 			{ manager: "pip", requirements: [""] },
 			{ manager: "pip", requirements: "probe", timeout: 0 },
-			{ manager: "pip", requirements: ['a"b'] },
 		]) {
 			await expect(runPackagesInstall(args, environments, undefined)).rejects.toThrow(
 				/^environment_install_failed: packages\.install\(\): /,

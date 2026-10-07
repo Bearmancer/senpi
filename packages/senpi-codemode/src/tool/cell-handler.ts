@@ -55,7 +55,7 @@ export interface CellBridgeRuntime {
 	readonly handles?: HandleRegistry;
 	/** Absolute wall-clock deadline of this cell; a completion handle it creates is bounded by it. */
 	readonly hardDeadlineMs?: number;
-	/** This cell's session environment for `packages.install()`: Python cells get the Python one, JS cells the JS one. */
+	/** A JS cell's session environment for `packages.install()`; Python cells reach theirs over the bridge. */
 	readonly environments?: PackagesInstallEnvironments;
 }
 

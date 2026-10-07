@@ -33,14 +33,15 @@ describe.skipIf(!hasCommand("bun") || !hasCommand("npm"))("Given packages.instal
 		expect(textOf(imported)).toContain("ok");
 	}, 180_000);
 
-	it("When the owning cell is cancelled once the installer has started, then nothing is published and the kernel answers the next cell", async () => {
+	it("When the owning cell is cancelled once the installer has started, then the install itself is cancelled, nothing is published and the kernel answers the next cell", async () => {
 		const { root, fixtures, environments, run } = await session("npm");
 		const tarball = await packFixture(fixtures, "senpi-probe", "1.0.0", probeSource);
 		const controller = new AbortController();
 		const installerStarted = Promise.withResolvers<void>();
+		const installs: Promise<unknown>[] = [];
 		const original = environments.install.bind(environments);
-		environments.install = (requested, signal, onOutput, installer) =>
-			original(
+		environments.install = (requested, signal, onOutput, installer) => {
+			const installing = original(
 				requested,
 				signal,
 				(stream, data) => {
@@ -49,11 +50,17 @@ describe.skipIf(!hasCommand("bun") || !hasCommand("npm"))("Given packages.instal
 				},
 				installer,
 			);
+			installs.push(installing);
+			return installing;
+		};
 
 		const pending = run(`await packages.install("npm", ${JSON.stringify(tarball)})`, controller.signal);
 		await installerStarted.promise;
 		controller.abort();
 		await expect(pending).rejects.toThrow(/interrupted|aborted/i);
+		// The install runs on the host: wait for IT to settle, so a dropped signal would show as a published revision.
+		expect(installs).toHaveLength(1);
+		await expect(installs[0]).rejects.toThrow(/^environment_install_cancelled:/);
 		const next = await run("40 + 2");
 
 		expect(await readActiveRevision(join(root, "artifacts", "environments", "js", "test"))).toBeUndefined();
@@ -103,11 +110,11 @@ async function pythonSession() {
 		cellTimeoutSeconds: 120,
 		pythonEnvironments: environments,
 	});
-	const run = async (code: string) =>
+	const run = async (code: string, signal?: AbortSignal) =>
 		await tool.execute(
 			`packages-install-${crypto.randomUUID()}`,
 			{ language: "py", code, summary: "Run a cell" },
-			undefined,
+			signal,
 			undefined,
 			fakeExtensionContext(),
 		);
@@ -115,7 +122,7 @@ async function pythonSession() {
 		await manager.dispose();
 		await rm(root, { recursive: true, force: true });
 	};
-	return { wheels, environments, run, dispose };
+	return { root, wheels, environments, run, dispose };
 }
 
 describe.skipIf(!pythonReady)("Given packages.install() in a Python cell", () => {
@@ -148,6 +155,36 @@ describe.skipIf(!pythonReady)("Given packages.install() in a Python cell", () =>
 
 			expect(textOf(failure)).toContain("environment_install_failed");
 			expect(textOf(failure)).toContain("No matching distribution");
+		} finally {
+			await dispose();
+		}
+	}, 180_000);
+
+	it("When the owning cell is cancelled once pip has started, then the install itself is cancelled and nothing is published", async () => {
+		const { root, wheels, environments, run, dispose } = await pythonSession();
+		try {
+			const wheel = buildWheel(wheels, "senpi_slow", "1.0");
+			const controller = new AbortController();
+			const pipStarted = Promise.withResolvers<void>();
+			const installs: Promise<unknown>[] = [];
+			const original = environments.install.bind(environments);
+			environments.install = (requested, signal, onOutput) => {
+				const installing = original(requested, signal, (stream, data) => {
+					pipStarted.resolve();
+					onOutput?.(stream, data);
+				});
+				installs.push(installing);
+				return installing;
+			};
+
+			const pending = run(`packages.install("pip", ["--no-index", ${JSON.stringify(wheel)}])`, controller.signal);
+			await pipStarted.promise;
+			controller.abort();
+			await pending.catch(() => undefined);
+			expect(installs).toHaveLength(1);
+			await expect(installs[0]).rejects.toThrow(/^environment_install_cancelled:/);
+
+			expect(await readActiveRevision(join(root, "artifacts", "environments", "py"))).toBeUndefined();
 		} finally {
 			await dispose();
 		}

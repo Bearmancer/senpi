@@ -11,7 +11,6 @@ import { resolveSandbox } from "../config/feature-settings.ts";
 import { DEFAULT_FOREGROUND_WINDOW_SECONDS, defaultCodemodeSettings } from "../config/settings.ts";
 import type { JsEnvironments } from "../environments/js-environments.ts";
 import type { PackagesInstallEnvironments } from "../environments/packages-install.ts";
-import type { PythonEnvironments } from "../environments/python-environments.ts";
 import {
 	KERNEL_TOOLS_CAPABILITIES,
 	type KernelToolsCapability,
@@ -369,13 +368,12 @@ function kernelToolsFor(kernel: EvalKernel): KernelToolsCapability | undefined {
 	} satisfies ExtensionKernelTools;
 }
 
-/** `packages.install()` reaches the environment of its own cell's language, the same one that language's magic cells use. */
+// Only JS cells call tools in-process; a Python cell reaches packages.install() over the bridge, whose session manager
+// holds the same Python environment its magics use.
 function cellEnvironments(
 	language: string,
-	options: { readonly pythonEnvironments?: PythonEnvironments; readonly jsEnvironments?: JsEnvironments },
+	options: { readonly jsEnvironments?: JsEnvironments },
 ): { readonly environments?: PackagesInstallEnvironments } {
-	if (language === "py" && options.pythonEnvironments !== undefined)
-		return { environments: { python: options.pythonEnvironments } };
 	if (language === "js" && options.jsEnvironments !== undefined)
 		return { environments: { js: options.jsEnvironments } };
 	return {};
