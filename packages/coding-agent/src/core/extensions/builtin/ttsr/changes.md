@@ -1,5 +1,23 @@
 # TTSR Fork Tracker
 
+## 2026-10-07 - Code-shaped lines are left out of near-duplicate scoring (senpi#2865)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/ttsr/detectors/collapse-near-duplicates.ts`: `foldLine` leaves out an unfenced line shaped like code (indented and not a nested list item, or ending in `{ } [ ] ( ) ; , >`), so a paragraph made only of such lines is never scored. Fenced paragraphs keep their existing exemption.
+
+### Why
+
+Same-shaped code or markup (SVG elements, JSON objects) repeats one skeleton with different literals and scored as near-duplicate paragraphs. TTSR then aborted the stream and retried, discarding the model's valid output. The same rule is what oh-my-pi v18.8.0 applies to its loop heuristics.
+
+### Why an extension could not handle it
+
+The paragraph scoring is inside the TTSR detector itself.
+
+### Expected merge conflict zones
+
+- `foldLine` and the line state in `collapse-near-duplicates.ts`.
+
 ## 2026-09-25 - The handoff Ask exemption needs a closing status label (senpi#2143)
 
 ### What changed

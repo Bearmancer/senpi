@@ -12,6 +12,8 @@
 
 ### Fixed
 
+- TTSR no longer aborts and retries a reply of repetitive code or markup written outside a fence (SVG elements, JSON objects): code-shaped lines are left out of the near-duplicate paragraph check, and prose narration loops are still caught ([#2865](https://github.com/code-yeongyu/senpi/issues/2865)).
+
 ### Removed
 
 ## [2026.10.10-5] - 2026-10-07
