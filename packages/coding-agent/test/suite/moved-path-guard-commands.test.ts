@@ -108,6 +108,25 @@ describe("moved-path-guard: commands, patches, and nested calls (#2898)", () => 
 		},
 	);
 
+	// Review H2: paths written out inside inline code, glued to a flag, or split by shell quoting.
+	const embedded: ReadonlyArray<readonly [string, (layout: MovedLayout) => string]> = [
+		["python -c", (layout) => `python3 -c "open('${layout.oldWorktree}/x','w').write('a')"`],
+		["node -e", (layout) => `node -e 'require("fs").writeFileSync("${layout.oldWorktree}/x","a")'`],
+		["tar -C<path>", (layout) => `tar -C${layout.oldWorktree} -xf a.tar`],
+		['"$HOME"/…', () => 'mkdir -p "$HOME"/.t3/worktrees/app/w1/x'],
+		['$HOME/".t3"/…', () => 'mkdir -p $HOME/".t3"/worktrees/app/w1/x'],
+		["--flag=~/…", () => "rsync -a src/ --target=~/.t3/worktrees/app/w1"],
+	];
+
+	it.each(embedded)("blocks a moved path embedded in %s", async (_form, command) => {
+		const { layout, harness } = await setup();
+
+		const result = await runTool(harness, "bash", { command: command(layout) });
+
+		expect(result.outcome).toBe("blocked");
+		expect(result.text).toContain(layout.newWorktree);
+	});
+
 	it("blocks a shell call whose working directory is a moved path", async () => {
 		const { layout, harness } = await setup({ cwd: (moved) => moved.oldWorktree });
 
