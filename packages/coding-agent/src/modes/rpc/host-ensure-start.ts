@@ -157,8 +157,8 @@ export async function startHost(
 	const stopFailure = await stopSpawnedChild(
 		child,
 		childExit,
-		stopTarget("readiness_timeout"),
 		testOptions?.stopTimeoutMs ?? DEFAULT_STOP_TIMEOUT_MS,
+		stopTarget("readiness_timeout"),
 	).then(
 		() => undefined,
 		(error: unknown) => (error instanceof Error ? error.message : String(error)),
