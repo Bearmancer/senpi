@@ -61,6 +61,7 @@ RESERVED_HANDLE_STATUS_TOOL = "__handle_status__"
 RESERVED_HANDLE_OUTPUT_TOOL = "__handle_output__"
 RESERVED_HANDLE_SEND_TOOL = "__handle_send__"
 RESERVED_HANDLE_CANCEL_TOOL = "__handle_cancel__"
+RESERVED_PACKAGES_INSTALL_TOOL = "__packages_install__"
 TIMEOUT_PAUSE_OP = "timeout-pause"
 TIMEOUT_RESUME_OP = "timeout-resume"
 
@@ -1162,6 +1163,27 @@ def tool_schema(name: str | None = None) -> Any:
     )
 
 
+class _Packages:
+    """packages.install(manager, requirements, *, timeout=600): the %pip installer as a call; returns its receipt."""
+
+    __slots__ = ()
+
+    def install(self, manager: str, requirements: Any, *, timeout: float | None = None) -> Any:
+        args: dict[str, Any] = {"manager": manager, "requirements": requirements}
+        if timeout is not None:
+            args["timeout"] = timeout
+        # A long install must not hit the 60 s socket cap; the host bounds it by the timeout (600 s by default).
+        socket_timeout = (600 if timeout is None else float(timeout)) + _WAIT_SOCKET_GRACE_SECONDS
+        return bridge_post(
+            "/call",
+            {"callId": f"py-{uuid.uuid4()}", "toolName": RESERVED_PACKAGES_INSTALL_TOOL, "args": args},
+            socket_timeout=socket_timeout,
+        )
+
+
+packages = _Packages()
+
+
 def output(
     *ids: str,
     format: str = "raw",
@@ -1789,6 +1811,7 @@ USER_NS.update(
         "workpool": workpool,
         "output": output,
         "tool_schema": tool_schema,
+        "packages": packages,
         "wait": wait,
         "handle": handle,
         "__senpi_magic": _magic,

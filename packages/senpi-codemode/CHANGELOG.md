@@ -6,6 +6,8 @@
 
 ### Added
 
+- `packages.install(manager, requirements, {timeout?})` in JavaScript and Python cells installs through the same session environment as `%pip install` / `%bun add` / `%npm add` and returns the install receipt; a stop cancels it and the timeout (600 seconds by default) fails it with `environment_install_timeout`.
+
 ### Changed
 
 ### Fixed

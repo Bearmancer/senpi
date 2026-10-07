@@ -9,6 +9,9 @@ import {
 import type { KernelToHostMessage } from "../bridge/protocol.ts";
 import { resolveSandbox } from "../config/feature-settings.ts";
 import { DEFAULT_FOREGROUND_WINDOW_SECONDS, defaultCodemodeSettings } from "../config/settings.ts";
+import type { JsEnvironments } from "../environments/js-environments.ts";
+import type { PackagesInstallEnvironments } from "../environments/packages-install.ts";
+import type { PythonEnvironments } from "../environments/python-environments.ts";
 import {
 	KERNEL_TOOLS_CAPABILITIES,
 	type KernelToolsCapability,
@@ -241,6 +244,7 @@ async function executeCell(
 				...(kernelTools === undefined ? {} : { kernelTools }),
 				...(options.handles === undefined ? {} : { handles: options.handles }),
 				hardDeadlineMs: cell.startedAtMs + cell.hardLimitSeconds * 1_000,
+				...cellEnvironments(invocation.input.language, options),
 			});
 			handler = activeHandler;
 			cellManager.bindKernel(
@@ -363,4 +367,16 @@ function kernelToolsFor(kernel: EvalKernel): KernelToolsCapability | undefined {
 		describe: (names) => withTools.describeKernelTools(names),
 		invoke: (request, options) => withTools.invokeKernelTool(request, options),
 	} satisfies ExtensionKernelTools;
+}
+
+/** `packages.install()` reaches the environment of its own cell's language, the same one that language's magic cells use. */
+function cellEnvironments(
+	language: string,
+	options: { readonly pythonEnvironments?: PythonEnvironments; readonly jsEnvironments?: JsEnvironments },
+): { readonly environments?: PackagesInstallEnvironments } {
+	if (language === "py" && options.pythonEnvironments !== undefined)
+		return { environments: { python: options.pythonEnvironments } };
+	if (language === "js" && options.jsEnvironments !== undefined)
+		return { environments: { js: options.jsEnvironments } };
+	return {};
 }

@@ -14,6 +14,7 @@ import { appendSchemaHint } from "../bridges/schema-hint.ts";
 import type { CompletionRequest, CompletionResult } from "../completion/handler.ts";
 import { handleCompletionToolCall } from "../completion/tool-bridge.ts";
 import type { ResolvedCodemodeSettings } from "../config/settings.ts";
+import type { PackagesInstallEnvironments } from "../environments/packages-install.ts";
 import type { HandleRegistry } from "../handles/handle-registry.ts";
 import type { KernelToolsCapability } from "../kernels/js/kernel-tools-types.ts";
 import {
@@ -54,6 +55,8 @@ export interface CellBridgeRuntime {
 	readonly handles?: HandleRegistry;
 	/** Absolute wall-clock deadline of this cell; a completion handle it creates is bounded by it. */
 	readonly hardDeadlineMs?: number;
+	/** This cell's session environment for `packages.install()`: Python cells get the Python one, JS cells the JS one. */
+	readonly environments?: PackagesInstallEnvironments;
 }
 
 export class CellHandler {

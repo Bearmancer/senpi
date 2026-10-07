@@ -162,6 +162,15 @@ export class JsWorkerRuntime {
 			return isPlainObject(opts) && opts.handle === true ? handles.handle(value) : value;
 		};
 		globalThis.wait = async (list, options) => await handles.wait(list, options);
+		// The `%bun add` / `%npm add` installer as a call: same environment, receipt, cancellation and codes (senpi row 38).
+		globalThis.packages = Object.freeze({
+			install: async (manager, requirements, options = {}) =>
+				await this.#callTool("__packages_install__", {
+					manager,
+					requirements,
+					...(isPlainObject(options) && options.timeout !== undefined ? { timeout: options.timeout } : {}),
+				}),
+		});
 		globalThis.handle = value => handles.handle(value);
 		globalThis.tool = createToolNamespace(
 			(fn, metadata) => this.#tools.define(fn, metadata),
