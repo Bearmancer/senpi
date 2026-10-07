@@ -134,7 +134,10 @@ export async function verifyRestoredTranscript(
 	if (messages.length === 0 || messages.some((message) => message.session_id !== binding.sdkSessionId)) {
 		return false;
 	}
-	if (binding.lastAssistantUuid === null) return true;
+	// A restored binding with no recorded assistant turn has nothing the transcript can prove: the
+	// store keeps only the newest boundary (`bindingFromStored` maps none when it is null), so the
+	// binding is never resumed unchecked. It is rejected, and the session is rebuilt (senpi#2858).
+	if (binding.lastAssistantUuid === null) return false;
 	const anchorIndex = messages.findIndex(
 		(message) =>
 			message.type === "assistant" &&
