@@ -1,6 +1,7 @@
 import { readFileSync, statSync } from "node:fs";
 import { readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
+import { appendDebugLogEntry } from "../../../hidden-stdout-log.ts";
 import { MOVED_BREADCRUMB_FILE, type MovedBreadcrumb, parseMovedBreadcrumb } from "./breadcrumb.ts";
 import { DESKTOP_HOME_MARKER_FILE, parseDesktopHomeId } from "./home-marker.ts";
 import { matchMovedPrefix, type PathPlatform } from "./path-match.ts";
@@ -75,7 +76,11 @@ function ignoreBreadcrumb(file: string, reason: string): undefined {
 	const key = `${file}\0${reason}`;
 	if (!reported.has(key)) {
 		reported.add(key);
-		console.warn(`moved-path-guard: ignoring ${file}: ${reason}`);
+		try {
+			appendDebugLogEntry("moved-path-guard: ignoring a breadcrumb", `${file}: ${reason}`);
+		} catch {
+			// The debug log is diagnostics only; a full disk must not change the guard's answer.
+		}
 	}
 	return undefined;
 }

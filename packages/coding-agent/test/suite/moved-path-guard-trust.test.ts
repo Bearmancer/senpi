@@ -1,6 +1,6 @@
 import { mkdirSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type {
 	CreateAgentSessionRuntimeFactory,
 	CreateAgentSessionRuntimeResult,
@@ -78,6 +78,21 @@ describe("moved-path-guard breadcrumb trust (#2898)", () => {
 		for (const movedTo of [moved.oldRoot, inside]) {
 			writeBreadcrumb(moved.oldRoot, breadcrumbBody(movedTo, [MOVED_SESSIONS]));
 			expect(findMovedPath(join(moved.oldSessions, "s.jsonl"))).toBeUndefined();
+		}
+	});
+
+	// Review L5: an ignored breadcrumb is recorded in the debug log, never printed into the terminal a TUI owns.
+	it("reports an ignored breadcrumb without writing to the terminal", () => {
+		const moved = layout({ schemaVersion: 2 });
+		const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+		const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+		try {
+			expect(findMovedPath(join(moved.oldWorktree, "a.ts"))).toBeUndefined();
+			expect(warn).not.toHaveBeenCalled();
+			expect(stderr).not.toHaveBeenCalled();
+		} finally {
+			warn.mockRestore();
+			stderr.mockRestore();
 		}
 	});
 
