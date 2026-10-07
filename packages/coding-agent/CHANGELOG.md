@@ -10,7 +10,7 @@
 
 ### Changed
 
-- A long session holds each persisted message once: the session's in-memory history shares the message object the agent keeps for its context instead of keeping its own copy, which roughly halves the memory a session gains per turn ([#2537](https://github.com/code-yeongyu/senpi/issues/2537)).
+- A long session no longer keeps a second copy of each message's object structure: the session's in-memory history keeps a shallow copy that shares the agent's message content, so the history's own cost per turn drops from about 2.6 KB to about 1.9 KB in a deterministic driver (message strings were already shared) ([#2537](https://github.com/code-yeongyu/senpi/issues/2537)).
 
 - The bundled Claude Agent SDK is updated to 0.3.292 (from 0.3.289), so the Anthropic subscription lane runs Claude Code 2.1.292 and the models it knows ([#2545](https://github.com/code-yeongyu/senpi/issues/2545)).
 

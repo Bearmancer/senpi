@@ -1,14 +1,14 @@
-## 2026-10-07 - A persisted message is held once (senpi#2537)
+## 2026-10-07 - The session mirror shares a persisted message's content (senpi#2537)
 
 ### What changed
 
-- `packages/coding-agent/src/core/session-manager.ts`: new `appendOwnedMessage`, used by `AgentSession` for the agent's own persisted messages. When the externalized entry holds no resident token and its JSON equals the persisted JSON, `_shareMessage` stores a shallow copy of the agent's message in the mirror entry: a separate object, so context projections tag it and never the agent's object (exactly as with the old JSON copy), whose content arrays are the agent's own, so the message's bulk is held once. The shared entry is marked token-free, so `materialize` returns it as is. The public `appendMessage` keeps the full JSON copy, because a caller may still change its object after appending.
+- `packages/coding-agent/src/core/session-manager.ts`: new `appendOwnedMessage`, used by `AgentSession` for the agent's own persisted messages. When the externalized entry holds no resident token and the message is plain JSON (`isPlainJson`: no Date, NaN, class instance or undefined array element), `_shareMessage` stores a shallow copy of the agent's message in the mirror entry: a separate object, so context projections tag it and never the agent's object (exactly as with the old JSON copy), whose content arrays are the agent's own, so the message's bulk is held once. The shared entry is marked token-free, so `materialize` returns it as is. The public `appendMessage` keeps the full JSON copy, because a caller may still change its object after appending.
 - `packages/coding-agent/src/core/session-resident-store.ts`: `isTokenFree` / `adoptTokenFree` expose the store's token-free set.
-- `packages/coding-agent/src/core/agent-session.ts`: the two notes added to a failed turn's assistant message after it was persisted (quota hint, rejected image) go on a copy that replaces it in the agent's context (`_annotateFailedAssistantMessage`), so the persisted object, the mirror and the file stay identical.
+- `packages/coding-agent/src/core/agent-session.ts`: the agent's own turn messages are persisted through `appendOwnedMessage`. The notes added to a failed turn's assistant message after it is persisted still go on the agent's object in place, as before: the mirror's shallow copy keeps what was persisted.
 
 ### Why
 
-Every turn's messages were held twice in a long session: once in the agent's context and once as the mirror's JSON copy. The session's resident memory grew by about 2.9 KB per turn in a deterministic driver, about 2.3x the messages' JSON size.
+The mirror kept its own JSON copy of every message the agent persisted, so each message's object and array structure was held twice (the strings were already shared). In a deterministic SessionManager driver (3,000 turns, heap after GC) the mirror's own cost per turn was about 2.6-2.7 KB; with the shallow copy it is about 1.9-2.0 KB, independent of tool-result size.
 
 ### Why an extension could not handle it
 

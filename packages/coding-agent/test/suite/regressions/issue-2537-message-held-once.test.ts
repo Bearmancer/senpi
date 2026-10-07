@@ -9,6 +9,8 @@ import { createHarness, type Harness } from "../harness.ts";
  * now held once: the mirror's message is a shallow copy sharing the agent's content, and both still
  * read exactly what the session file holds.
  */
+type OwnedMessage = Parameters<SessionManager["appendOwnedMessage"]>[0];
+
 describe("issue #2537: a persisted message is held once", () => {
 	const harnesses: Harness[] = [];
 	afterEach(() => {
@@ -59,7 +61,7 @@ describe("issue #2537: a persisted message is held once", () => {
 		);
 	});
 
-	it("puts a failed turn's post-save note on a copy, never on the persisted message object", async () => {
+	it("keeps the mirror equal to the file when a failed turn gets its post-save note", async () => {
 		const harness = await createHarness({ persistSession: true, settings: { retry: { enabled: false } } });
 		harnesses.push(harness);
 		harness.setResponses([
@@ -68,20 +70,10 @@ describe("issue #2537: a persisted message is held once", () => {
 				errorMessage: "invalid_image: does not represent a valid image",
 			}),
 		]);
-		const persisted: unknown[] = [];
-		harness.session.subscribe((event) => {
-			if (event.type === "message_end" && event.message.role === "assistant") persisted.push(event.message);
-		});
-
 		await harness.session.prompt("look", { images: [{ type: "image", mimeType: "image/png", data: "ZmFrZQ==" }] });
 
 		const live = harness.session.messages.at(-1);
 		expect(live?.role === "assistant" && live.errorMessage).toContain("is left out of later requests");
-		// The object handed to persistence (and shared with the session mirror) keeps what the file holds.
-		expect(persisted).toHaveLength(1);
-		expect((persisted[0] as { errorMessage?: string }).errorMessage).toBe(
-			"invalid_image: does not represent a valid image",
-		);
 		const file = harness.sessionManager.getSessionFile();
 		if (file === undefined) throw new Error("the harness session is not persisted to a file");
 		const reloaded = SessionManager.open(file)
@@ -89,5 +81,46 @@ describe("issue #2537: a persisted message is held once", () => {
 			.filter((entry): entry is SessionMessageEntry => entry.type === "message")
 			.map((entry) => entry.message);
 		expect(JSON.parse(JSON.stringify(mirrorMessages(harness)))).toEqual(reloaded);
+	});
+
+	it("keeps the JSON copy for a message that is not plain JSON", () => {
+		const manager = SessionManager.inMemory();
+		const message = {
+			role: "toolResult" as const,
+			toolCallId: "call-1",
+			toolName: "read",
+			content: [{ type: "text" as const, text: "ok" }],
+			details: { when: new Date(0), ratio: Number.NaN },
+			isError: false,
+			timestamp: 1,
+		};
+		const id = manager.appendOwnedMessage(message as unknown as OwnedMessage);
+		const stored = (manager.getEntry(id) as SessionMessageEntry).message as unknown as {
+			content: unknown;
+			details: { when: unknown; ratio: unknown };
+		};
+		// What a cold reload reads: the Date as its ISO string, NaN as null.
+		expect(stored.details).toEqual({ when: "1970-01-01T00:00:00.000Z", ratio: null });
+		expect(stored.content).not.toBe(message.content);
+	});
+
+	it("keeps the JSON copy for a message with a resident string, so the idle release cannot leak a token", () => {
+		const manager = SessionManager.inMemory();
+		const big = "x".repeat(40 * 1024);
+		const message = {
+			role: "toolResult" as const,
+			toolCallId: "call-1",
+			toolName: "read",
+			content: [{ type: "text" as const, text: big }],
+			isError: false,
+			timestamp: 1,
+		};
+		const id = manager.appendOwnedMessage(message);
+		// The idle release tokenizes the agent's live messages in place.
+		manager.getResidentStore().externalizeInPlace([message]);
+		const stored = (manager.getEntry(id) as SessionMessageEntry).message as { content: { text: string }[] };
+		expect(stored.content[0]?.text).toBe(big);
+		const projected = manager.buildSessionContext().messages.at(-1) as { content: { text: string }[] };
+		expect(projected.content[0]?.text).toBe(big);
 	});
 });
