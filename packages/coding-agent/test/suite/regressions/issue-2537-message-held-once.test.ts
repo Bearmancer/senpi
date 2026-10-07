@@ -11,6 +11,14 @@ import { createHarness, type Harness } from "../harness.ts";
  */
 type OwnedMessage = Parameters<SessionManager["appendOwnedMessage"]>[0];
 
+/** A three-slot array whose middle slot is a hole (JSON writes it as null). */
+function sparse(first: number, last: number): number[] {
+	const list = new Array<number>(3);
+	list[0] = first;
+	list[2] = last;
+	return list;
+}
+
 describe("issue #2537: a persisted message is held once", () => {
 	const harnesses: Harness[] = [];
 	afterEach(() => {
@@ -88,7 +96,7 @@ describe("issue #2537: a persisted message is held once", () => {
 		["NaN", { ratio: Number.NaN }, { ratio: null }],
 		["Infinity", { ratio: Number.POSITIVE_INFINITY }, { ratio: null }],
 		["a class instance", { set: new Set([1]) }, { set: {} }],
-		["a sparse array", { list: [1, , 3] }, { list: [1, null, 3] }],
+		["a sparse array", { list: sparse(1, 3) }, { list: [1, null, 3] }],
 	] as const)("keeps the JSON copy for a message holding %s", (_name, details, reloaded) => {
 		const manager = SessionManager.inMemory();
 		const message = {
