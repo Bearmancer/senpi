@@ -1,3 +1,21 @@
+## 2026-10-07 - A tool-change system param never lands directly before a user turn (senpi#2864)
+
+### What changed
+
+- `packages/ai/src/api/anthropic-messages.ts`: `convertMessages` flushes the pending mid-conversation system messages when an assistant param is actually pushed, after the `blocks.length === 0` skip, instead of at the start of every assistant message.
+
+### Why
+
+A reply that converts to no blocks (for example a same-model reply that ended with nothing replayable) was skipped after the flush, leaving the tool-change `system` param directly before the next `user` turn. Anthropic rejects that (`role 'system' must precede an 'assistant' message`), and since the transcript keeps the layout, every later request in the session failed. The same class was fixed upstream in oh-my-pi v18.8.0.
+
+### Why an extension could not handle it
+
+The placement of system params is decided inside the provider's message conversion.
+
+### Expected merge conflict zones
+
+- The assistant branch of `convertMessages` in `packages/ai/src/api/anthropic-messages.ts`, around the `blocks.length === 0` skip.
+
 ## 2026-10-06 - A forced tool_choice refused inside a 200 stream is retried (senpi#2801)
 
 ### What changed
