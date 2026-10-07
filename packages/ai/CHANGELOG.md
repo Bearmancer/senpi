@@ -8,7 +8,7 @@
 
 ### Changed
 
-- The advertised Claude Code fingerprint floor follows the bundled Claude Agent SDK to Claude Code 2.1.292, and the model catalog is regenerated ([#2545](https://github.com/code-yeongyu/senpi/issues/2545)).
+- The advertised Claude Code fingerprint floor follows the bundled Claude Agent SDK to Claude Code 2.1.292 ([#2545](https://github.com/code-yeongyu/senpi/issues/2545)).
 
 ### Fixed
 

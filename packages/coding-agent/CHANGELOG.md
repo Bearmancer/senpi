@@ -8,6 +8,8 @@
 
 ### Changed
 
+- The bundled Claude Agent SDK is updated to 0.3.292 (from 0.3.289), so the Anthropic subscription lane runs Claude Code 2.1.292 and the models it knows ([#2545](https://github.com/code-yeongyu/senpi/issues/2545)).
+
 ### Fixed
 
 ### Removed
@@ -22,7 +24,6 @@
 
 ### Changed
 
-- The bundled Claude Agent SDK is updated to 0.3.292 (from 0.3.289), so the Anthropic subscription lane runs Claude Code 2.1.292 and the models it knows ([#2545](https://github.com/code-yeongyu/senpi/issues/2545)).
 ### Fixed
 
 - On a busy shared RPC host, a new child's first prompt no longer fails at 30 s and leaves the host writing into a closed session ("Provider scope is closed"): the host acknowledges the prompt on receipt and the client waits for it to be accepted, and a reply for a session that already closed is dropped ([#2871](https://github.com/code-yeongyu/senpi/issues/2871)).
