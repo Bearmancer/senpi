@@ -1,6 +1,7 @@
 /**
- * How the moved-path guard sees each tool's targets (senpi#2898). A test enumerates every tool of a full
- * builtin load against this table, so a new tool must be classified before it can ship.
+ * How the moved-path guard sees each tool's targets (senpi#2898). A test enumerates every tool of a full load
+ * against this table, so a new builtin must be classified before it can ship. A tool missing from it (a third-party
+ * extension or MCP tool) is not allowed silently: every string in its arguments is scanned as command text.
  */
 export type MovedPathToolClass =
 	/** The tool checks the registered filesystem policy before its own I/O. */
@@ -23,6 +24,7 @@ export const MOVED_PATH_TOOL_CLASSES: Readonly<Record<string, MovedPathToolClass
 	grep: { kind: "filesystem-policy" },
 	apply_patch: { kind: "patch" },
 	bash: { kind: "command", field: "command" },
+	eval: { kind: "command", field: "code" },
 	bash_input: { kind: "command", field: "input" },
 	monitor: { kind: "command", field: "command" },
 	powershell: { kind: "command", field: "command" },
@@ -36,6 +38,7 @@ export const MOVED_PATH_TOOL_CLASSES: Readonly<Record<string, MovedPathToolClass
 	ask_user_question: { kind: "none" },
 	todo: { kind: "none" },
 	web_search: { kind: "none" },
+	tool_search: { kind: "none" },
 	webfetch: { kind: "none" },
 	create_goal: { kind: "none" },
 	update_goal: { kind: "none" },

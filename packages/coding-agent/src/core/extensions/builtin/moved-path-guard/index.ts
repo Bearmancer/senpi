@@ -10,6 +10,16 @@ import { MOVED_PATH_TOOL_CLASSES } from "./tool-classes.ts";
 /** Wall-clock bound on one call's whole check; past it the call proceeds unguarded rather than stall the session. */
 const CALL_DEADLINE_MS = 2000;
 
+/** Every string in a tool's arguments, depth-first, at most MAX_PATHS_PER_CALL of them. */
+function allStrings(value: unknown, found: string[] = []): string[] {
+	if (found.length >= MAX_PATHS_PER_CALL) return found;
+	if (typeof value === "string") found.push(value);
+	else if (Array.isArray(value)) for (const item of value) allStrings(item, found);
+	else if (typeof value === "object" && value !== null)
+		for (const item of Object.values(value)) allStrings(item, found);
+	return found;
+}
+
 function stringsOf(value: unknown): string[] {
 	if (typeof value === "string") return [value];
 	return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
@@ -56,9 +66,10 @@ async function movedTarget(
 					true,
 				)
 			);
+		case undefined:
+			return firstMoved(probe, commandPaths(allStrings(input).join("\n"), cwd), cwd);
 		case "filesystem-policy":
 		case "none":
-		case undefined:
 			return undefined;
 	}
 }
