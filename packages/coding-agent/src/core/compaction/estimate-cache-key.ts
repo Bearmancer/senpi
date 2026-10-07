@@ -18,7 +18,8 @@ const bunHash: BunHash | undefined = (globalThis as { Bun?: { hash?: BunHash } }
  * the resident store's in-place token/text swaps. Under Bun the key is the text's length plus a 128-bit
  * digest (two seeded wyhash passes), so a cache entry does not hold a second copy of the message's text
  * (review of senpi#2884: the text key retained about 1.4x the message's JSON per cached message). Other
- * runtimes keep the exact text.
+ * runtimes keep the exact text. The input must be `JSON.stringify` output: Bun.hash maps lone surrogates
+ * to U+FFFD, and JSON serialization escapes them, so distinct messages never meet that collision.
  */
 export function estimateCacheKey(serialized: string): string {
 	if (bunHash === undefined) return serialized;
