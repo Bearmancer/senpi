@@ -10,6 +10,7 @@
 
 ### Changed
 
+- The bundled Claude Agent SDK is updated to 0.3.292 (from 0.3.286), so the Anthropic subscription lane runs Claude Code 2.1.292 and the models it knows ([#2545](https://github.com/code-yeongyu/senpi/issues/2545)).
 ### Fixed
 
 ### Removed
