@@ -200,73 +200,17 @@ describe("claude-sdk-oauth restored security", () => {
 			expect(await verifyRestoredTranscript(persistedBinding(), CWD, "config-dir")).toBe(false);
 		});
 
-		// senpi#2858: a binding whose newest assistant was never mapped used to skip the check entirely.
-		describe("a binding whose newest assistant boundary was never mapped", () => {
-			async function verifyUnmapped(
-				assistantUuidByIndex: readonly (readonly [number, string])[],
-				messages: SessionMessage[],
-			): Promise<boolean> {
-				overrideSdkBoundary({ getSessionMessages: async () => messages });
-				return verifyRestoredTranscript(
-					persistedBinding({ lastAssistantUuid: null, assistantUuidByIndex }),
-					CWD,
-					"oauth-slots",
-				);
-			}
-
-			it("is rejected when no boundary was ever mapped, even for a transcript of the same session", async () => {
-				expect(
-					await verifyUnmapped(
-						[],
-						[
-							sdkMessage({ type: "user", uuid: "uuid-u1", session_id: SDK_SESSION_ID }),
-							sdkMessage({ type: "assistant", uuid: "uuid-unmapped", session_id: SDK_SESSION_ID }),
-						],
-					),
-				).toBe(false);
+		// senpi#2858: a restored binding whose newest assistant was never recorded used to skip the check.
+		it("rejects a restored binding with no recorded assistant turn, even for a matching transcript of the same session", async () => {
+			overrideSdkBoundary({
+				getSessionMessages: async () => [
+					sdkMessage({ type: "user", uuid: "uuid-u1", session_id: SDK_SESSION_ID }),
+					sdkMessage({ type: "assistant", uuid: "uuid-unrecorded", session_id: SDK_SESSION_ID }),
+				],
 			});
-
-			it("is rejected when its newest mapped boundary is not in the transcript", async () => {
-				expect(
-					await verifyUnmapped(
-						[[1, "uuid-a1"]],
-						[sdkMessage({ type: "assistant", uuid: "uuid-someone-else", session_id: SDK_SESSION_ID })],
-					),
-				).toBe(false);
-			});
-
-			it("is rejected when its newest mapped boundary only appears nested under a tool use", async () => {
-				expect(
-					await verifyUnmapped(
-						[[1, "uuid-a1"]],
-						[
-							sdkMessage({
-								type: "assistant",
-								uuid: "uuid-a1",
-								session_id: SDK_SESSION_ID,
-								parent_tool_use_id: "tool-1",
-							}),
-						],
-					),
-				).toBe(false);
-			});
-
-			it("is admitted when its newest mapped boundary is a top-level assistant, with its own later turns after it", async () => {
-				expect(
-					await verifyUnmapped(
-						[
-							[1, "uuid-a1"],
-							[3, "uuid-past-the-sent-count"],
-						],
-						[
-							sdkMessage({ type: "user", uuid: "uuid-u1", session_id: SDK_SESSION_ID }),
-							sdkMessage({ type: "assistant", uuid: "uuid-a1", session_id: SDK_SESSION_ID }),
-							sdkMessage({ type: "user", uuid: "uuid-u2", session_id: SDK_SESSION_ID }),
-							sdkMessage({ type: "assistant", uuid: "uuid-unmapped", session_id: SDK_SESSION_ID }),
-						],
-					),
-				).toBe(true);
-			});
+			// The shape the store restores (`bindingFromStored`): no recorded assistant means no mapped boundary.
+			const restored = persistedBinding({ lastAssistantUuid: null, assistantUuidByIndex: [] });
+			expect(await verifyRestoredTranscript(restored, CWD, "oauth-slots")).toBe(false);
 		});
 
 		it("returns true for a matching top-level assistant", async () => {
