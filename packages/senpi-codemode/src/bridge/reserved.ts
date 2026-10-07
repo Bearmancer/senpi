@@ -15,6 +15,8 @@ export const RESERVED_HANDLE_OUTPUT_TOOL = "__handle_output__" as const;
 export const RESERVED_HANDLE_SEND_TOOL = "__handle_send__" as const;
 /** `handle(node).control.cancel()`: idempotent for its epoch; a successor run is never touched. */
 export const RESERVED_HANDLE_CANCEL_TOOL = "__handle_cancel__" as const;
+/** In-cell `packages.install(manager, requirements, {timeout?})`: the `%pip` / `%bun` / `%npm` installer as a call. */
+export const RESERVED_PACKAGES_INSTALL_TOOL = "__packages_install__" as const;
 /** Canonical oh-my-pi eval-timeout pause operation. */
 export const TIMEOUT_PAUSE_OP = "timeout-pause" as const;
 /** Canonical oh-my-pi eval-timeout resume operation. */

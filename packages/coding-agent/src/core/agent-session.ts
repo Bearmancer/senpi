@@ -253,6 +253,12 @@ import {
 	convertToLlm,
 	filterContextExcludedMessages,
 } from "./messages.ts";
+import {
+	heldSwitchOrigin,
+	type ModelChangeOrigin,
+	modelChangeLogFields,
+	SDK_MODEL_CHANGE,
+} from "./model-change-origin.ts";
 import { ModelRegistry } from "./model-registry.ts";
 import { type AvailableModelsSource, getModelNarrowingPatterns, resolveModelScope } from "./model-resolver.ts";
 import type { ModelRuntime } from "./model-runtime.ts";
@@ -476,6 +482,12 @@ export type AgentSessionEvent =
 			model: Model<any>;
 			thinkingLevel: ThinkingLevel;
 			source: ModelSelectSource;
+			/** What made the switch and who issued it (senpi#2870). */
+			origin: ModelChangeOrigin;
+			/** The model active before the switch, when there was one. */
+			previousModel?: Model<any>;
+			/** The switch landed while a turn was streaming. */
+			duringTurn: boolean;
 	  }
 	/** A switch the session refused; recorded so the attempt survives (#1526). */
 	| {
@@ -1367,6 +1379,7 @@ export class AgentSession {
 					persistDefault: false,
 					appendSessionEntry: true,
 					entryReason: reason,
+					origin: { source: reason },
 					emitModelSelect: true,
 					modelSelectSource: reason,
 					invalidateCompaction: true,
@@ -1590,7 +1603,10 @@ export class AgentSession {
 		if (!recorded || (recorded.provider === model.provider && recorded.modelId === model.id)) return;
 		const recordedModel = getModel(recorded.provider, recorded.modelId);
 		if (!isVirtualModel(model) && !(recordedModel && isVirtualModel(recordedModel))) return;
-		this.sessionManager.appendModelChange(model.provider, model.id);
+		this.sessionManager.appendModelChange(model.provider, model.id, undefined, undefined, undefined, {
+			origin: { source: "restore" },
+			duringTurn: false,
+		});
 	}
 
 	/** The model whose limits apply to the conversation. */
@@ -5909,8 +5925,11 @@ export class AgentSession {
 	 * Validates that auth is configured, saves to session and settings.
 	 * @throws Error if no auth is configured for the model
 	 */
-	async setModel(model: Model<any>): Promise<SystemPromptChangeEvent | undefined> {
-		return this._setModel(model, true);
+	async setModel(
+		model: Model<any>,
+		origin: ModelChangeOrigin = SDK_MODEL_CHANGE,
+	): Promise<SystemPromptChangeEvent | undefined> {
+		return this._setModel(model, true, origin);
 	}
 
 	assertModelUsable(
@@ -5967,8 +5986,9 @@ export class AgentSession {
 		model: Model<Api>,
 		projection: ModelUsabilityBudgetProjection,
 		persistDefault: boolean,
+		origin: ModelChangeOrigin,
 	): void {
-		const pending = createPendingModelSwitch({ model, projection, persistDefault });
+		const pending = createPendingModelSwitch({ model, projection, persistDefault, origin });
 		this._pendingModelSwitch = pending;
 		this._emit({
 			type: "model_change_pending",
@@ -6064,6 +6084,7 @@ export class AgentSession {
 			modelSelectSource: "set",
 			invalidateCompaction: true,
 			allowDeferral: false,
+			origin: heldSwitchOrigin(pending.origin),
 		});
 		return true;
 	}
@@ -6152,8 +6173,11 @@ export class AgentSession {
 	 * Set the model for this session without changing the global model defaults.
 	 * The selection is still persisted in this session's history.
 	 */
-	async setSessionModel(model: Model<Api>): Promise<SystemPromptChangeEvent | undefined> {
-		return this._setModel(model, false);
+	async setSessionModel(
+		model: Model<Api>,
+		origin: ModelChangeOrigin = SDK_MODEL_CHANGE,
+	): Promise<SystemPromptChangeEvent | undefined> {
+		return this._setModel(model, false, origin);
 	}
 
 	/**
@@ -6225,6 +6249,7 @@ export class AgentSession {
 	private async _setModel(
 		model: Model<Api>,
 		updateGlobalDefaults: boolean,
+		origin: ModelChangeOrigin,
 	): Promise<SystemPromptChangeEvent | undefined> {
 		const liveContextTokens = this._getDownswitchLiveContextTokens(model);
 		const deferral = this._projectSwitchDeferral(model, liveContextTokens);
@@ -6240,7 +6265,7 @@ export class AgentSession {
 		// once it is otherwise good: a pending switch to a model with no key would
 		// surface its failure a whole message later.
 		if (deferral !== undefined) {
-			this._admitSwitchCompactionRequired(model, deferral, updateGlobalDefaults);
+			this._admitSwitchCompactionRequired(model, deferral, updateGlobalDefaults, origin);
 			return undefined;
 		}
 
@@ -6259,6 +6284,7 @@ export class AgentSession {
 			emitModelSelect: true,
 			modelSelectSource: "set",
 			invalidateCompaction: true,
+			origin,
 		});
 	}
 
@@ -6289,6 +6315,8 @@ export class AgentSession {
 			persistDefault: boolean;
 			appendSessionEntry: boolean;
 			entryReason?: "fallback" | "fallback-revert";
+			/** Recorded on the `model_change` entry, the event and the session log (senpi#2870). */
+			origin: ModelChangeOrigin;
 			emitModelSelect: boolean;
 			modelSelectSource: ModelSelectSource;
 			invalidateCompaction: boolean;
@@ -6309,6 +6337,7 @@ export class AgentSession {
 		},
 	): Promise<SystemPromptChangeEvent | undefined> {
 		const previousModel = this.model;
+		const duringTurn = this.isStreaming;
 		if (
 			opts.invalidateCompaction &&
 			(this._modelSelectionChangesContext(previousModel, model) ||
@@ -6340,7 +6369,7 @@ export class AgentSession {
 		if (opts.ephemeralThinkingLevel !== undefined) {
 			this._applyEphemeralThinkingLevel(thinking.level);
 		} else {
-			this._setThinkingLevel(thinking.level, false, thinking.selection);
+			this._setThinkingLevel(thinking.level, false, thinking.selection, opts.origin);
 		}
 
 		this._emitHighReasoningWarningIfNeeded();
@@ -6361,7 +6390,7 @@ export class AgentSession {
 				this.agent.state.reasoningBaseline = previousReasoningBaseline;
 				this.agent.abortServerSideFallback = previousAbortServerSideFallback;
 				this._currentServiceTier = previousTier;
-				this._admitSwitchCompactionRequired(model, deferral, opts.persistDefault);
+				this._admitSwitchCompactionRequired(model, deferral, opts.persistDefault, opts.origin);
 				return undefined;
 			}
 			const admittedLiveContextTokens = opts.repairWithSlice
@@ -6375,9 +6404,20 @@ export class AgentSession {
 					opts.entryReason,
 					previousModel?.provider,
 					previousModel?.id,
+					{ origin: opts.origin, duringTurn },
 				);
 			}
 			if (opts.persistDefault) this.settingsManager.setDefaultModelAndProvider(model.provider, model.id);
+			this._sessionLogger.info(
+				"model_change",
+				modelChangeLogFields({
+					origin: opts.origin,
+					from: previousModel,
+					to: model,
+					duringTurn,
+					persistDefault: opts.persistDefault,
+				}),
+			);
 			// A switch that actually landed supersedes anything still being held (#1873).
 			// Without this a held switch survives its own resolution - an explicit
 			// /compact followed by a manual retry applies the switch here, and the stale
@@ -6389,6 +6429,9 @@ export class AgentSession {
 				model,
 				thinkingLevel: this.thinkingLevel,
 				source: opts.modelSelectSource,
+				origin: opts.origin,
+				...(previousModel === undefined ? {} : { previousModel }),
+				duringTurn,
 			});
 			this._emitServiceTierChangeIfNeeded(previousTier, previousFastMode);
 			return systemPromptChange;
@@ -6420,10 +6463,16 @@ export class AgentSession {
 	 * @param direction - "forward" (default) or "backward"
 	 * @returns The new model info, or undefined if only one model available
 	 */
-	async cycleModel(direction: "forward" | "backward" = "forward"): Promise<ModelCycleResult | undefined> {
+	async cycleModel(
+		direction: "forward" | "backward" = "forward",
+		options: { readonly persistDefault?: boolean; readonly origin?: ModelChangeOrigin } = {},
+	): Promise<ModelCycleResult | undefined> {
 		const favoriteModels = this._getCurrentFavoriteModels();
 		if (favoriteModels.length > 0) {
-			return this._cycleFavoriteModel(direction, favoriteModels);
+			return this._cycleFavoriteModel(direction, favoriteModels, {
+				persistDefault: options.persistDefault ?? true,
+				origin: options.origin ?? { source: "cycle" },
+			});
 		}
 		return undefined;
 	}
@@ -6431,6 +6480,7 @@ export class AgentSession {
 	private async _cycleFavoriteModel(
 		direction: "forward" | "backward",
 		favoriteModels: SessionModelEntry[],
+		cycle: { readonly persistDefault: boolean; readonly origin: ModelChangeOrigin },
 	): Promise<ModelCycleResult | undefined> {
 		if (favoriteModels.length <= 1) return undefined;
 
@@ -6481,7 +6531,12 @@ export class AgentSession {
 				const onlyLiveContextTokens = this._getDownswitchLiveContextTokens(onlyAlternative.model);
 				const onlyDeferral = this._projectSwitchDeferral(onlyAlternative.model, onlyLiveContextTokens);
 				if (onlyDeferral !== undefined) {
-					this._admitSwitchCompactionRequired(onlyAlternative.model, onlyDeferral, true);
+					this._admitSwitchCompactionRequired(
+						onlyAlternative.model,
+						onlyDeferral,
+						cycle.persistDefault,
+						cycle.origin,
+					);
 				} else {
 					this._assertModelUsableForSwitch(onlyAlternative.model, onlyLiveContextTokens);
 				}
@@ -6499,7 +6554,7 @@ export class AgentSession {
 		// refusing it. Nothing is mutated yet, so holding here needs no rollback.
 		const cycleDeferral = this._projectSwitchDeferral(next.model, liveContextTokens);
 		if (cycleDeferral !== undefined) {
-			this._admitSwitchCompactionRequired(next.model, cycleDeferral, true);
+			this._admitSwitchCompactionRequired(next.model, cycleDeferral, cycle.persistDefault, cycle.origin);
 			return {
 				model: currentModel,
 				thinkingLevel: this.thinkingLevel,
@@ -6525,7 +6580,7 @@ export class AgentSession {
 		this._currentServiceTier = this._resolveServiceTier(next.model, next.serviceTier);
 
 		// Apply thinking level and provenance from the favorite projection or remembered preference.
-		this._setThinkingLevel(thinking.level, false, thinking.selection);
+		this._setThinkingLevel(thinking.level, false, thinking.selection, cycle.origin);
 
 		const previousSystemPrompt = this.agent.state.systemPrompt;
 		try {
@@ -6542,7 +6597,7 @@ export class AgentSession {
 				if (currentModel) this.agent.state.model = currentModel;
 				this.agent.state.systemPrompt = previousSystemPrompt;
 				this._currentServiceTier = previousTier;
-				this._admitSwitchCompactionRequired(next.model, postHookDeferral, true);
+				this._admitSwitchCompactionRequired(next.model, postHookDeferral, cycle.persistDefault, cycle.origin);
 				return {
 					model: currentModel,
 					thinkingLevel: this.thinkingLevel,
@@ -6551,8 +6606,26 @@ export class AgentSession {
 				};
 			}
 			this._assertModelUsableForSwitch(next.model, liveContextTokens);
-			this.sessionManager.appendModelChange(next.model.provider, next.model.id);
-			this.settingsManager.setDefaultModelAndProvider(next.model.provider, next.model.id);
+			const duringTurn = this.isStreaming;
+			this.sessionManager.appendModelChange(
+				next.model.provider,
+				next.model.id,
+				undefined,
+				currentModel?.provider,
+				currentModel?.id,
+				{ origin: cycle.origin, duringTurn },
+			);
+			if (cycle.persistDefault) this.settingsManager.setDefaultModelAndProvider(next.model.provider, next.model.id);
+			this._sessionLogger.info(
+				"model_change",
+				modelChangeLogFields({
+					origin: cycle.origin,
+					from: currentModel,
+					to: next.model,
+					duringTurn,
+					persistDefault: cycle.persistDefault,
+				}),
+			);
 			// #1873: the cycle commits here rather than through `_switchActiveModel`, so it
 			// has to supersede a held switch itself - otherwise cycling onto a model that
 			// fits leaves an older hold to reclaim the session on the next message.
@@ -6563,6 +6636,9 @@ export class AgentSession {
 				model: next.model,
 				thinkingLevel: this.thinkingLevel,
 				source: "cycle",
+				origin: cycle.origin,
+				...(currentModel === undefined ? {} : { previousModel: currentModel }),
+				duringTurn,
 			});
 			this._emitServiceTierChangeIfNeeded(previousTier, previousFastMode);
 
@@ -6610,6 +6686,7 @@ export class AgentSession {
 		level: ThinkingLevel,
 		updateGlobalDefault: boolean,
 		selection: ThinkingSelection | undefined,
+		trigger?: ModelChangeOrigin,
 	): void {
 		const availableLevels = this.getAvailableThinkingLevels();
 		const effectiveLevel = availableLevels.includes(level) ? level : this._clampThinkingLevel(level, availableLevels);
@@ -6643,7 +6720,7 @@ export class AgentSession {
 		}
 
 		if (isChanging || selectionChanged) {
-			this.sessionManager.appendThinkingLevelChange(effectiveLevel, effectiveSelection);
+			this.sessionManager.appendThinkingLevelChange(effectiveLevel, effectiveSelection, trigger);
 			const model = this.model;
 			if (isChanging && model !== undefined && supportsConfigurationUpdate(model)) {
 				this.agent.state.reasoningBaseline ??= previousLevel;
@@ -8874,16 +8951,16 @@ export class AgentSession {
 					this._lazyToolActivation.register(activator);
 				},
 				getCommands,
-				setModel: async (model) => {
+				setModel: async (model, origin) => {
 					if (!this._modelRuntime.hasConfiguredAuth(model.provider)) return false;
-					await this.setModel(model);
+					await this.setModel(model, origin ?? { source: "extension" });
 					return true;
 				},
 				getThinkingLevel: () => this.thinkingLevel,
 				setThinkingLevel: (level) => this.setThinkingLevel(level),
-				setSessionModel: async (model) => {
+				setSessionModel: async (model, origin) => {
 					if (!this._modelRuntime.hasConfiguredAuth(model.provider)) return false;
-					await this.setSessionModel(model);
+					await this.setSessionModel(model, origin ?? { source: "extension" });
 					return true;
 				},
 				setSessionThinkingLevel: (level) => this.setSessionThinkingLevel(level),

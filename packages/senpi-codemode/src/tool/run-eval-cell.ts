@@ -9,6 +9,8 @@ import {
 import type { KernelToHostMessage } from "../bridge/protocol.ts";
 import { resolveSandbox } from "../config/feature-settings.ts";
 import { DEFAULT_FOREGROUND_WINDOW_SECONDS, defaultCodemodeSettings } from "../config/settings.ts";
+import type { JsEnvironments } from "../environments/js-environments.ts";
+import type { PackagesInstallEnvironments } from "../environments/packages-install.ts";
 import {
 	KERNEL_TOOLS_CAPABILITIES,
 	type KernelToolsCapability,
@@ -241,6 +243,7 @@ async function executeCell(
 				...(kernelTools === undefined ? {} : { kernelTools }),
 				...(options.handles === undefined ? {} : { handles: options.handles }),
 				hardDeadlineMs: cell.startedAtMs + cell.hardLimitSeconds * 1_000,
+				...cellEnvironments(invocation.input.language, options),
 			});
 			handler = activeHandler;
 			cellManager.bindKernel(
@@ -363,4 +366,15 @@ function kernelToolsFor(kernel: EvalKernel): KernelToolsCapability | undefined {
 		describe: (names) => withTools.describeKernelTools(names),
 		invoke: (request, options) => withTools.invokeKernelTool(request, options),
 	} satisfies ExtensionKernelTools;
+}
+
+// Only JS cells call tools in-process; a Python cell reaches packages.install() over the bridge, whose session manager
+// holds the same Python environment its magics use.
+function cellEnvironments(
+	language: string,
+	options: { readonly jsEnvironments?: JsEnvironments },
+): { readonly environments?: PackagesInstallEnvironments } {
+	if (language === "js" && options.jsEnvironments !== undefined)
+		return { environments: { js: options.jsEnvironments } };
+	return {};
 }

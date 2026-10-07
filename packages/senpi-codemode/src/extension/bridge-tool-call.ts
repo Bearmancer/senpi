@@ -19,7 +19,10 @@ export interface BridgeToolCallRequest {
 // and ordinary tool results are marshalled to { text, images, details, hasError } — the raw
 // { content } shape left python cells unable to reach tool.read image blocks.
 export async function routeBridgeToolCall(
-	options: Pick<CreateCodemodeSessionManagerOptions, "executeTool" | "listTools" | "settings" | "handles">,
+	options: Pick<
+		CreateCodemodeSessionManagerOptions,
+		"executeTool" | "listTools" | "settings" | "handles" | "environments"
+	>,
 	request: BridgeToolCallRequest,
 	evalHandleHost?: EvalHandleHost,
 ): Promise<unknown> {
@@ -39,5 +42,6 @@ export async function routeBridgeToolCall(
 		marshalToolResult,
 		...(options.handles === undefined ? {} : { handles: options.handles }),
 		...(evalHandleHost === undefined ? {} : { evalHandleHost }),
+		...(options.environments === undefined ? {} : { environments: options.environments }),
 	});
 }

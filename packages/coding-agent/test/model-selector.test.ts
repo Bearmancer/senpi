@@ -95,7 +95,7 @@ describe("model selector", () => {
 	// Upstream #9149 made the selector's separate "set as default" chord follow app.models.save.
 	// The fork has no separate chord: confirming a model already persists it as the default, so a
 	// rebound app.models.save must neither select nor save here, while confirm still does both.
-	it("persists the default on confirm and ignores the rebound save chord", async () => {
+	it("applies a selection to the session on confirm, and Ctrl+S no longer saves once the save chord is rebound", async () => {
 		setKeybindings(new KeybindingsManager({ "app.models.save": "ctrl+r" }));
 		harness = await createHarness({
 			models: [
@@ -114,19 +114,46 @@ describe("model selector", () => {
 			onSelect,
 			() => {},
 		);
+		const defaultBefore = harness.settingsManager.getDefaultModel();
 
-		expect(stripAnsi(selector.render(120).join("\n"))).not.toContain("set as default");
+		expect(stripAnsi(selector.render(120).join("\n"))).toContain("select as default");
 		selector.handleInput("\x1b[B");
 		selector.handleInput("\x13");
-		selector.handleInput("\x12");
 		expect(onSelect).not.toHaveBeenCalled();
-		expect(harness.settingsManager.getDefaultModel()).not.toBe("other-model");
 
 		selector.handleInput("\r");
 		expect(onSelect).toHaveBeenCalledTimes(1);
 		expect(onSelect.mock.calls[0]?.[0]?.id).toBe("other-model");
-		expect(harness.settingsManager.getDefaultProvider()).toBe(currentModel.provider);
-		expect(harness.settingsManager.getDefaultModel()).toBe("other-model");
+		expect(onSelect.mock.calls[0]?.[1]).toEqual({ asDefault: false });
+		// senpi#2870: the selector itself never writes the default for new sessions.
+		expect(harness.settingsManager.getDefaultModel()).toBe(defaultBefore);
+	});
+
+	it("passes asDefault for the save chord (Ctrl+S by default), which makes the selection the default", async () => {
+		setKeybindings(new KeybindingsManager({}));
+		harness = await createHarness({
+			models: [
+				{ id: "current-model", name: "Current Model", reasoning: true },
+				{ id: "other-model", name: "Other Model", reasoning: true },
+			],
+		});
+		const onSelect = vi.fn();
+		const selector = new ModelSelectorComponent(
+			createFakeTui(),
+			harness.getModel("current-model")!,
+			harness.settingsManager,
+			harness.session.modelRuntime,
+			[],
+			onSelect,
+			() => {},
+		);
+
+		selector.handleInput("\x1b[B");
+		selector.handleInput("\x13");
+
+		expect(onSelect).toHaveBeenCalledTimes(1);
+		expect(onSelect.mock.calls[0]?.[0]?.id).toBe("other-model");
+		expect(onSelect.mock.calls[0]?.[1]).toEqual({ asDefault: true });
 	});
 
 	it("lists every catalog that failed to refresh", async () => {

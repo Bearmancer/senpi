@@ -1,5 +1,11 @@
 import type { AgentToolResult, EvalHandleHost } from "@code-yeongyu/senpi";
-import { RESERVED_AGENT_TOOL, RESERVED_OUTPUT_TOOL, RESERVED_SCHEMA_TOOL } from "../bridge/reserved.ts";
+import {
+	RESERVED_AGENT_TOOL,
+	RESERVED_OUTPUT_TOOL,
+	RESERVED_PACKAGES_INSTALL_TOOL,
+	RESERVED_SCHEMA_TOOL,
+} from "../bridge/reserved.ts";
+import { type PackagesInstallEnvironments, runPackagesInstall } from "../environments/packages-install.ts";
 import type { HandleRegistry } from "../handles/handle-registry.ts";
 import type { EvalStatusEvent, ExecuteTool } from "../tool/types.ts";
 import { type AgentExecuteTool, runEvalAgent } from "./agent-bridge.ts";
@@ -21,6 +27,8 @@ export interface ReservedDispatchContext {
 	readonly handles?: HandleRegistry;
 	/** `ctx.evalHandleHost` at dispatch time; agent/workpool refs need it, completion refs do not. */
 	readonly evalHandleHost?: EvalHandleHost;
+	/** The calling cell's session environments; `packages.install()` fails with environment_installer_unavailable without one. */
+	readonly environments?: PackagesInstallEnvironments;
 }
 
 class SchemaUnavailableError extends Error {
@@ -36,6 +44,7 @@ export function isReservedToolName(toolName: string): boolean {
 		toolName === RESERVED_AGENT_TOOL ||
 		toolName === RESERVED_OUTPUT_TOOL ||
 		toolName === RESERVED_SCHEMA_TOOL ||
+		toolName === RESERVED_PACKAGES_INSTALL_TOOL ||
 		isHandleToolName(toolName)
 	);
 }
@@ -65,6 +74,9 @@ export async function runReservedTool(toolName: string, context: ReservedDispatc
 			...(context.signal === undefined ? {} : { signal: context.signal }),
 			marshalToolResult: context.marshalToolResult,
 		});
+	}
+	if (toolName === RESERVED_PACKAGES_INSTALL_TOOL) {
+		return await runPackagesInstall(context.args, context.environments ?? {}, context.signal);
 	}
 	if (toolName === RESERVED_SCHEMA_TOOL) {
 		const listTools = context.listTools;

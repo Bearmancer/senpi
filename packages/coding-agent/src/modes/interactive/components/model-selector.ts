@@ -27,6 +27,11 @@ type ModelScope = "all" | "narrowed";
 type ModelSelectorTui = Pick<TUI, "requestRender"> & { terminal?: { rows: number } };
 type ModelSelectorSource = ModelRuntime | ModelRegistry;
 
+export interface ModelSelection {
+	/** Also make it the default model for new sessions (the select-as-default key). */
+	readonly asDefault: boolean;
+}
+
 export interface ModelSelectorFavoriteOptions {
 	favoriteModelIds?: FavoriteModelIds;
 	onFavoriteChange?: (
@@ -58,9 +63,8 @@ export class ModelSelectorComponent extends Container implements Focusable {
 	private filteredModels: ModelItem[] = [];
 	private selectedIndex: number = 0;
 	private currentModel?: Model<any>;
-	private settingsManager: SettingsManager;
 	private modelRuntime: ModelSelectorSource;
-	private onSelectCallback: (model: Model<any>) => void;
+	private onSelectCallback: (model: Model<any>, selection: ModelSelection) => void;
 	private onCancelCallback: () => void;
 	private favoriteIds: FavoriteModelIds = [];
 	// Favorite membership snapshot taken when the selector opens. Ordering
@@ -83,10 +87,11 @@ export class ModelSelectorComponent extends Container implements Focusable {
 	constructor(
 		tui: ModelSelectorTui,
 		currentModel: Model<any> | undefined,
-		settingsManager: SettingsManager,
+		// Kept for its callers: a selection no longer writes the default model itself (senpi#2870).
+		_settingsManager: SettingsManager,
 		modelRuntime: ModelSelectorSource,
 		scopedModels: ReadonlyArray<ScopedModelItem>,
-		onSelect: (model: Model<any>) => void,
+		onSelect: (model: Model<any>, selection: ModelSelection) => void,
 		onCancel: () => void,
 		initialSearchInput?: string,
 		favorites?: ModelSelectorFavoriteOptions,
@@ -95,7 +100,6 @@ export class ModelSelectorComponent extends Container implements Focusable {
 
 		this.tui = tui;
 		this.currentModel = currentModel;
-		this.settingsManager = settingsManager;
 		this.modelRuntime = modelRuntime;
 		this.scopedModels = scopedModels;
 		this.scope = scopedModels.length > 0 ? "narrowed" : "all";
@@ -122,7 +126,7 @@ export class ModelSelectorComponent extends Container implements Focusable {
 		this.addChild(new Spacer(1));
 		this.addChild(
 			new Text(
-				`${keyHint("tui.select.confirm", "select")} ${keyHint("app.models.toggleFavorite", "favorite")}`,
+				`${keyHint("tui.select.confirm", "select")} ${keyHint("app.models.save", "select as default")} ${keyHint("app.models.toggleFavorite", "favorite")}`,
 				0,
 				0,
 			),
@@ -137,7 +141,7 @@ export class ModelSelectorComponent extends Container implements Focusable {
 		this.searchInput.onSubmit = () => {
 			// Enter on search input selects the first filtered item
 			if (this.filteredModels[this.selectedIndex]) {
-				this.handleSelect(this.filteredModels[this.selectedIndex].model);
+				this.handleSelect(this.filteredModels[this.selectedIndex].model, { asDefault: false });
 			}
 		};
 		this.addChild(this.searchInput);
@@ -409,7 +413,14 @@ export class ModelSelectorComponent extends Container implements Focusable {
 		else if (kb.matches(keyData, "tui.select.confirm")) {
 			const selectedModel = this.filteredModels[this.selectedIndex];
 			if (selectedModel) {
-				this.handleSelect(selectedModel.model);
+				this.handleSelect(selectedModel.model, { asDefault: false });
+			}
+		}
+		// Select and make it the default for new sessions (senpi#2870)
+		else if (kb.matches(keyData, "app.models.save")) {
+			const selectedModel = this.filteredModels[this.selectedIndex];
+			if (selectedModel) {
+				this.handleSelect(selectedModel.model, { asDefault: true });
 			}
 		}
 		// Toggle favorite for selected model
@@ -428,11 +439,10 @@ export class ModelSelectorComponent extends Container implements Focusable {
 		}
 	}
 
-	private handleSelect(model: Model<any>): void {
+	// A selection applies to this session; only an explicit select-as-default changes the default for new sessions (senpi#2870).
+	private handleSelect(model: Model<any>, selection: ModelSelection): void {
 		this.dispose();
-		// Save as new default
-		this.settingsManager.setDefaultModelAndProvider(model.provider, model.id);
-		this.onSelectCallback(model);
+		this.onSelectCallback(model, selection);
 	}
 
 	private handleToggleFavorite(): void {

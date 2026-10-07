@@ -51,6 +51,26 @@ describe.skipIf(!hasPythonWithPip())("Given a Python environment root", () => {
 		expect(importFrom(receipt.root, "senpi_probe")).toBe("1.0");
 	});
 
+	it("When packages.install() passes a requirement list, then each item reaches pip as one argument: a path with a space and a marker stay intact", async () => {
+		const { root, base, wheels } = await workspace();
+		const spaced = join(wheels, "with space");
+		await mkdir(spaced, { recursive: true });
+		buildWheel(spaced, "senpi_probe", "1.0");
+
+		const receipt = await installPythonPackages({
+			base,
+			mode: "managed",
+			interpreter: "python3",
+			requirements: ["--no-index", "--find-links", spaced, 'senpi_probe; python_version >= "3.0"'],
+			cwd: root,
+			signal: new AbortController().signal,
+		});
+
+		expect(receipt).toMatchObject({ revision: 1, changed: true });
+		expect(receipt.resolved).toEqual([expect.stringMatching(/^senpi[-_]probe-1\.0$/)]);
+		expect(importFrom(receipt.root, "senpi_probe")).toBe("1.0");
+	});
+
 	it("When a later install fails, then the previous revision stays active and importable and nothing partial is left", async () => {
 		const { root, base, wheels } = await workspace();
 		const first = await install(base, root, `install --no-index ${buildWheel(wheels, "senpi_probe", "1.0")}`);
