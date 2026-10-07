@@ -6,9 +6,16 @@ import { virtualEvalSchema, virtualEvalSchemaNames } from "../src/bridges/eval-v
 const SRC = join(import.meta.dirname, "..", "src");
 const DOCUMENTED_CODE = /\b(environment_[a-z_]+|eval_isolate_[a-z_]+)\b/g;
 const CODE = "(?:environment|eval_isolate)_[a-z_]+";
-// A raise or a mapping writes the code as a string literal (or as the prefix of a message); a comparison, a switch
-// case or a type-union member only reads it and does not count.
-const LITERAL_CODE = new RegExp(`(===|!==|\\bcase|\\|)?\\s*["'\`](${CODE})(?:["'\`]|: )`, "g");
+// The only places a code is raised: an EnvironmentError constructed with it (the code may sit on the next line), an
+// entry of a kind-to-code table, a `return "<code>"` from a classifier, and an error or result text it prefixes. A comparison, a list or a type member
+// does not raise anything, so it is not matched.
+const RAISE_SITES = [
+	new RegExp(`new EnvironmentError\\(\\s*"(${CODE})"`, "g"),
+	new RegExp(`^\\s*[a-z]+: "(${CODE})",\\s*$`, "gm"),
+	new RegExp(`\\breturn "(${CODE})";`, "g"),
+	new RegExp(`\\bsuper\\(\\s*\`(${CODE}): `, "g"),
+	new RegExp(`\`; (${CODE}): `, "g"),
+];
 
 function sourceFiles(dir: string): string[] {
 	return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
@@ -26,9 +33,8 @@ function emittedCodes(): Set<string> {
 	const codes = new Set<string>();
 	for (const file of sourceFiles(SRC)) {
 		if (file.endsWith("eval-environment-schemas.ts")) continue;
-		for (const match of withoutComments(readFileSync(file, "utf8")).matchAll(LITERAL_CODE)) {
-			if (match[1] === undefined && match[2] !== undefined) codes.add(match[2]);
-		}
+		const source = withoutComments(readFileSync(file, "utf8"));
+		for (const site of RAISE_SITES) for (const match of source.matchAll(site)) if (match[1]) codes.add(match[1]);
 	}
 	return codes;
 }
