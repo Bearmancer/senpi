@@ -1,0 +1,112 @@
+#!/usr/bin/env node
+// senpi-qa driver for the moved-path-guard builtin extension (#2898).
+// A sandboxed HOME holds an OmO desktop home that moved from ~/.t3 to ~/.omo/desktop, with the
+// desktop's breadcrumb left in ~/.t3. The REAL CLI runs scripted tool calls from the local fake
+// model server (zero tokens) and the driver asserts, from the next provider request and the
+// filesystem: writes and shell commands that target a moved prefix are refused with the new
+// path, a read of a moved path gets the hint, an unlisted path under the breadcrumb is left
+// alone, and nothing is created under the old prefix.
+//
+//   node .agents/skills/senpi-qa/scripts/moved-path-guard-qa.mjs --self-test
+//   node .agents/skills/senpi-qa/scripts/moved-path-guard-qa.mjs --self-test --evidence moved-path-guard
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { createChecks, evidenceDir, guardRealAuth, installCleanupHooks, makeSandbox, runCli } from "./lib/common.mjs";
+import { startFakeModelServer } from "./lib/fake-model-server.mjs";
+import { API_PRESETS, checkRealAuthUnchanged, hermeticEnv, writeMockModelsJson } from "./lib/mock-loop-support.mjs";
+
+const argv = process.argv.slice(2);
+const evidenceSlug = argv.includes("--evidence") ? argv[argv.indexOf("--evidence") + 1] : undefined;
+const API = "openai-completions";
+const WORKTREE = join("worktrees", "demo-project", "feature-1");
+
+function seedMovedHome(home) {
+	const oldHome = join(home, ".t3");
+	const newHome = join(home, ".omo", "desktop");
+	mkdirSync(join(newHome, WORKTREE), { recursive: true });
+	writeFileSync(join(newHome, WORKTREE, "notes.txt"), "moved content\n");
+	mkdirSync(join(newHome, "userdata", "omo-sessions"), { recursive: true });
+	mkdirSync(oldHome, { recursive: true });
+	writeFileSync(
+		join(oldHome, "omo-desktop-moved.json"),
+		`${JSON.stringify(
+			{
+				kind: "omo-desktop-moved",
+				schemaVersion: 1,
+				movedTo: newHome,
+				homeId: "qa-home-0001",
+				movedAt: "2026-10-08T00:00:00.000Z",
+				byVersion: "qa",
+				moved: [WORKTREE, "userdata/omo-sessions"],
+			},
+			null,
+			2,
+		)}\n`,
+	);
+	return { oldHome, newHome };
+}
+
+function toolResultTexts(requests) {
+	const texts = [];
+	for (const request of requests) {
+		for (const message of request.body?.messages ?? []) {
+			if (message.role !== "tool") continue;
+			const content = message.content;
+			texts.push(typeof content === "string" ? content : JSON.stringify(content));
+		}
+	}
+	return [...new Set(texts)];
+}
+
+async function selfTest() {
+	installCleanupHooks();
+	const checks = createChecks("moved-path-guard-qa.mjs --self-test");
+	const guard = guardRealAuth();
+	const preset = API_PRESETS[API];
+	const box = makeSandbox("moved-path-guard-qa");
+	const { oldHome, newHome } = seedMovedHome(box.dir);
+	const oldWorktree = join(oldHome, WORKTREE);
+	const newWorktree = join(newHome, WORKTREE);
+	const turns = [
+		{ toolCalls: [{ name: "write", args: { path: join(oldWorktree, "edit.txt"), content: "hi\n" } }] },
+		{ toolCalls: [{ name: "eval", args: { language: "js", summary: "shell write by the old path", code: `const r = await tool.bash({ command: "mkdir -p ~/.t3/${WORKTREE}/x && echo hi > ~/.t3/${WORKTREE}/x/y" }); return r.text;` } }] },
+		{ toolCalls: [{ name: "read", args: { path: join(oldWorktree, "notes.txt") } }] },
+		{ toolCalls: [{ name: "write", args: { path: join(oldHome, "unlisted.txt"), content: "t3 code's own file\n" } }] },
+		{ toolCalls: [{ name: "write", args: { path: join(newWorktree, "edit.txt"), content: "hi\n" } }] },
+		{ text: "done" },
+	];
+	const server = await startFakeModelServer({ turns });
+	writeMockModelsJson(box.agentDir, server, API);
+	const result = await runCli(
+		["--provider", preset.provider, "--model", preset.modelId, "--no-context-files", "--no-extensions", "--approve", "--print", "Run the scripted tools, then reply done."],
+		{ env: hermeticEnv(box.env), cwd: box.cwd, timeoutMs: 180000 },
+	);
+	const results = toolResultTexts(server.requests);
+	const mentionsNew = (text) => text.includes(newWorktree) || text.includes(newHome);
+	const refusedWrite = results.find((text) => text.includes("edit.txt") && mentionsNew(text) && /moved/i.test(text));
+	const refusedBash = results.find((text) => /moved/i.test(text) && text.includes(join(newHome, WORKTREE, "x")));
+	const readHint = results.find((text) => text.includes("notes.txt") && mentionsNew(text));
+
+	checks.ok("run completed", result.code === 0, `code=${result.code} requests=${server.requests.length}`);
+	checks.ok("write to an old moved path is refused and names the new path", refusedWrite !== undefined, refusedWrite?.slice(0, 200) ?? "no refusal");
+	checks.ok("bash in an eval cell naming ~/.t3/<moved prefix> is refused", refusedBash !== undefined, refusedBash?.slice(0, 200) ?? "no refusal");
+	checks.ok("read of a moved path gets the hint with the new path", readHint !== undefined, readHint?.slice(0, 200) ?? "no hint");
+	checks.ok("nothing created under the old moved prefix", !existsSync(oldWorktree), `exists=${existsSync(oldWorktree)}`);
+	checks.ok("an unlisted path under the breadcrumb is written normally", existsSync(join(oldHome, "unlisted.txt")), "");
+	checks.ok("the same write under the new path succeeds", existsSync(join(newWorktree, "edit.txt")), "");
+	checks.ok("the moved home's existing file is untouched", readFileSync(join(newWorktree, "notes.txt"), "utf8") === "moved content\n", "");
+
+	if (evidenceSlug !== undefined) {
+		writeFileSync(
+			join(evidenceDir(evidenceSlug), "moved-path-guard.json"),
+			JSON.stringify({ exitCode: result.code, requestCount: server.requests.length, toolResults: results.map((text) => text.replaceAll(box.dir, "<HOME>")) }, null, 2),
+		);
+	}
+	if (result.code !== 0) process.stderr.write(`\n--- stderr tail ---\n${result.stderr.slice(-800)}\n`);
+	await server.stop();
+	box.cleanup();
+	checkRealAuthUnchanged(checks, guard);
+	process.exit(checks.finish() ? 0 : 1);
+}
+
+await selfTest();
