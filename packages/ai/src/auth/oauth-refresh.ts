@@ -16,6 +16,7 @@
  */
 
 import { raceWithAbortSignal } from "../utils/abort.ts";
+import { oauthRefreshFailureCause } from "../utils/oauth-refresh-error.ts";
 import { mergeRefreshed, mergeRefreshedSlot, projectSlot } from "./pool/slots.ts";
 import type { Credential, CredentialStore, OAuthAuth, OAuthCredential } from "./types.ts";
 
@@ -126,6 +127,15 @@ async function exchangeAndStore(request: OAuthRefreshRequest, signal: AbortSigna
 		// A result that arrives after every owning waiter left is not persisted.
 		signal.throwIfAborted();
 	} catch (error) {
+		signal.throwIfAborted();
+		const causeClass = oauthRefreshFailureCause(error);
+		if (causeClass !== undefined) {
+			console.warn("OAuth refresh unavailable", {
+				provider: providerId,
+				...(slotName ? { slot: slotName } : {}),
+				cause: causeClass,
+			});
+		}
 		throw new OAuthRefreshExchangeError(error);
 	}
 

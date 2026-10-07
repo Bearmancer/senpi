@@ -2,6 +2,7 @@
  * xAI OAuth device-code flow.
  */
 
+import { OAuthTokenEndpointError } from "../../utils/oauth-refresh-error.ts";
 import type { OAuthAuth, OAuthCredential, ProviderAuthInteraction } from "../types.ts";
 import { pollOAuthDeviceCodeFlow } from "./device-code.ts";
 
@@ -102,7 +103,10 @@ function requestFailure(action: string, response: OAuthHttpResponse): Error {
 	const description =
 		typeof response.body.error_description === "string" ? response.body.error_description : undefined;
 	const detail = [error, description].filter(Boolean).join(": ");
-	return new Error(`xAI OAuth ${action} failed (HTTP ${response.status})${detail ? `: ${detail}` : ""}`);
+	return new OAuthTokenEndpointError(
+		`xAI OAuth ${action} failed (HTTP ${response.status})${detail ? `: ${detail}` : ""}`,
+		response.status,
+	);
 }
 
 function parseDeviceCode(body: JsonObject): XaiDeviceCode {

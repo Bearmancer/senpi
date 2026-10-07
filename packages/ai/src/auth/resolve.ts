@@ -1,6 +1,7 @@
 import type { ProviderEnv } from "../types.ts";
 import { operationSignal, raceWithAbortSignal } from "../utils/abort.ts";
 import { ModelsError } from "../utils/models-error.ts";
+import { classifyOAuthRefreshFailure, OAuthRefreshUnavailableError } from "../utils/oauth-refresh-error.ts";
 import {
 	OAuthRefreshExchangeError,
 	OAuthRefreshStoreError,
@@ -179,6 +180,9 @@ const DEFAULT_OAUTH_MINIMUM_VALIDITY_MS = 5 * 60 * 1000;
 export function oauthRefreshModelsError(error: unknown, providerId: string): ModelsError {
 	if (error instanceof ModelsError) return error;
 	if (error instanceof OAuthRefreshExchangeError) {
+		if (classifyOAuthRefreshFailure(error.cause) === "transient") {
+			return new OAuthRefreshUnavailableError(providerId, error.cause);
+		}
 		return new ModelsError("oauth", `OAuth refresh failed for ${providerId}`, { cause: error.cause });
 	}
 	const cause = error instanceof OAuthRefreshStoreError ? error.cause : error;
@@ -222,6 +226,7 @@ async function resolveStoredOAuth(
 				owning: true,
 			});
 		} catch (error) {
+			signal.throwIfAborted();
 			throw oauthRefreshModelsError(error, providerId);
 		}
 		if (post?.type !== "oauth") return undefined; // logged out meanwhile

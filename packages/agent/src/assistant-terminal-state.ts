@@ -7,6 +7,10 @@ import {
 	readProviderDiagnostic,
 	type ToolResultMessage,
 } from "@earendil-works/pi-ai";
+import {
+	isOAuthRefreshUnavailableError,
+	OAUTH_REFRESH_UNAVAILABLE_DIAGNOSTIC,
+} from "@earendil-works/pi-ai/utils/oauth-refresh-error";
 import type { AgentLoopConfig } from "./types.ts";
 
 const EMPTY_USAGE = {
@@ -95,7 +99,17 @@ export function createTerminalFailureAssistantMessage(
 		model: partialMessage?.model ?? model.id,
 		responseModel: partialMessage?.responseModel,
 		responseId: partialMessage?.responseId,
-		diagnostics: partialMessage?.diagnostics,
+		diagnostics:
+			reason === "error" && isOAuthRefreshUnavailableError(error)
+				? [
+						...(partialMessage?.diagnostics ?? []),
+						{
+							type: OAUTH_REFRESH_UNAVAILABLE_DIAGNOSTIC,
+							timestamp: Date.now(),
+							details: { provider: model.provider },
+						},
+					]
+				: partialMessage?.diagnostics,
 		usage: partialMessage?.usage ?? EMPTY_USAGE,
 		stopReason: reason,
 		errorMessage: errorMessage || (reason === "aborted" ? "Request was aborted" : "Error"),

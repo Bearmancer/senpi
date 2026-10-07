@@ -1,5 +1,6 @@
 import type { AssistantMessage } from "../types.ts";
 import { FORWARDED_EMPTY_RESPONSE_ERROR, FORWARDED_EMPTY_TOOL_USE_ERROR } from "./empty-response-errors.ts";
+import { OAUTH_REFRESH_UNAVAILABLE_DIAGNOSTIC } from "./oauth-refresh-error.ts";
 
 // A provider's support request id is opaque hex like `C6FD:AB660:AEB5548:6ABA4D81`.
 // It can contain `429` or `500`, which message classifiers read as HTTP statuses,
@@ -464,6 +465,12 @@ export async function retryAssistantCall(
  * before restarting the assistant turn.
  */
 export function isRetryableAssistantError(message: AssistantMessage): boolean {
+	if (
+		message.stopReason === "error" &&
+		message.diagnostics?.some((diagnostic) => diagnostic.type === OAUTH_REFRESH_UNAVAILABLE_DIAGNOSTIC)
+	) {
+		return true;
+	}
 	if (
 		message.stopReason !== "error" ||
 		message.stopDetails?.type === "refusal" ||

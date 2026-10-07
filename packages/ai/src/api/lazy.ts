@@ -1,5 +1,6 @@
 import type { Api, AssistantMessage, AssistantMessageEvent, Model, ProviderStreams } from "../types.ts";
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
+import { isOAuthRefreshUnavailableError, OAUTH_REFRESH_UNAVAILABLE_DIAGNOSTIC } from "../utils/oauth-refresh-error.ts";
 import { describeReplacedInstall } from "../utils/provider-failure-description.ts";
 
 function createSetupErrorMessage(model: Model<Api>, error: unknown): AssistantMessage {
@@ -19,6 +20,17 @@ function createSetupErrorMessage(model: Model<Api>, error: unknown): AssistantMe
 		},
 		stopReason: "error",
 		errorMessage: describeReplacedInstall(error) ?? (error instanceof Error ? error.message : String(error)),
+		...(isOAuthRefreshUnavailableError(error)
+			? {
+					diagnostics: [
+						{
+							type: OAUTH_REFRESH_UNAVAILABLE_DIAGNOSTIC,
+							timestamp: Date.now(),
+							details: { provider: model.provider },
+						},
+					],
+				}
+			: {}),
 		timestamp: Date.now(),
 	};
 }

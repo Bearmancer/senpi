@@ -1,3 +1,21 @@
+## 2026-10-07 - Terminal auth failures preserve retry diagnostics (senpi#2893)
+
+### What changed
+
+- `packages/agent/src/assistant-terminal-state.ts`: branded transient refresh errors get a fixed diagnostic with provider-only details; existing partial diagnostics remain intact.
+
+### Why
+
+An auth setup error otherwise became a terminal assistant message with only wording to drive retry.
+
+### Why an extension could not handle it
+
+The agent loop constructs terminal messages before session-level retry handling.
+
+### Expected merge conflict zones
+
+- `createTerminalFailureAssistantMessage`.
+
 ## 2026-10-02 - Interrupted shell commands keep their full-output path (upstream v1.0.0 port P-2)
 
 ### What changed

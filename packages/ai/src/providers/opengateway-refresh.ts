@@ -13,6 +13,7 @@
 import type { RefreshModelsContext } from "../models.ts";
 import type { AnyModel, Model } from "../types.ts";
 import { isModelType } from "../utils/model-operations.ts";
+import { OAuthTokenEndpointError } from "../utils/oauth-refresh-error.ts";
 import { applyOpenAiInputCap } from "../utils/openai-input-cap.ts";
 import {
 	isServableChatModel,
@@ -99,7 +100,11 @@ export function overlayOpenGatewayCatalog(
 
 async function fetchJson(url: string, signal: AbortSignal): Promise<unknown> {
 	const response = await fetch(url, { headers: { accept: "application/json" }, signal });
-	if (!response.ok) throw new Error(`OpenGateway catalog request failed: ${url} returned ${response.status}`);
+	if (!response.ok)
+		throw new OAuthTokenEndpointError(
+			`OpenGateway catalog request failed: ${url} returned ${response.status}`,
+			response.status,
+		);
 	return response.json();
 }
 
