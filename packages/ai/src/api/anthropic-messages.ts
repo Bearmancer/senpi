@@ -2673,7 +2673,6 @@ function convertMessages(
 				appendUserBlocks(params, filteredBlocks);
 			}
 		} else if (msg.role === "assistant") {
-			flushPendingSystemMessages();
 			const blocks: ContentBlockParam[] = [];
 			const isSameModel = isSameAnthropicModel(msg, model);
 			// Blocks before the final fallback marker are the declined attempt; the
@@ -2761,7 +2760,11 @@ function convertMessages(
 					}
 				}
 			}
+			// Pending system messages are emitted only in front of an assistant param that is actually sent: a reply
+			// that converts to no blocks is skipped, and flushing for it would leave a `system` param directly before
+			// the next `user` turn, which Anthropic rejects on every later request (senpi#2864).
 			if (blocks.length === 0) continue;
+			flushPendingSystemMessages();
 			const messageIndex = params.length;
 			params.push({
 				role: "assistant",
