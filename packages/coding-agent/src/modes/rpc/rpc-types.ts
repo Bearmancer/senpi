@@ -1372,9 +1372,9 @@ export interface RpcOpenQueuedEvent {
 	type: "queued";
 	/** The `open_session` or `prompt` request this position belongs to. */
 	for_request: string;
-	/** 1-based place in the open queue at the moment of acceptance. */
+	/** 1-based place in the open queue at acceptance; for a `prompt`, its place among that session's requests in flight. */
 	position: number;
-	/** Opens already in flight when this one arrived; `position` is this plus one. */
+	/** Opens (for a `prompt`, that session's requests) already in flight when this one arrived; `position` is this plus one. */
 	in_flight: number;
 }
 

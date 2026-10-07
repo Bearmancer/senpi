@@ -1354,9 +1354,11 @@ export class RpcClient {
 										? deadline.extend(PROMPT_AFTER_QUEUED_DEADLINE_MS, promptStalledMessage)
 										: deadline.extend(REQUEST_DEADLINE_MS, timeoutMessage),
 							// The host received the prompt: its preflight may outlive the plain request deadline (senpi#2871).
+							// A compaction's own wait is longer: the acknowledgement must never shorten it.
 							onQueued: () => {
 								promptReceived = true;
-								deadline.extend(PROMPT_AFTER_QUEUED_DEADLINE_MS, promptStalledMessage);
+								if (!this.isCompacting())
+									deadline.extend(PROMPT_AFTER_QUEUED_DEADLINE_MS, promptStalledMessage);
 							},
 						}
 					: {}),

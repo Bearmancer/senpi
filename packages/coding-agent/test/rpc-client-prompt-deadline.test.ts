@@ -40,6 +40,7 @@ async function fakeHost(): Promise<FakeHost> {
 		send: (record) => peer?.write(`${JSON.stringify(record)}\n`),
 		drop: () => peer?.destroy(),
 		close: () => {
+			void client.stop();
 			server.close();
 			rmSync(directory, { recursive: true, force: true });
 		},
