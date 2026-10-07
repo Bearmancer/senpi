@@ -5,8 +5,8 @@
  */
 import { createConnection, type Socket } from "node:net";
 import { ClientOccupancy } from "./host-client-occupancy.ts";
-import { SessionRunActivity } from "./host-run-activity.ts";
 import { type HostActivity, IdleExitDecider, type IdleExitDecision } from "./host-lifecycle-policy.ts";
+import { SessionRunActivity } from "./host-run-activity.ts";
 import { attachJsonlLineReader, MAX_RPC_LINE_CHARACTERS } from "./jsonl.ts";
 import { activeTurnsForIdleDecision, createObserverLink, type ObserverLink } from "./observer-link.ts";
 import { resolveSocketTransportAddress, sendSocketHandshake } from "./socket-transport.ts";

@@ -18,15 +18,10 @@ import {
 } from "./host-daemon-registration.ts";
 import { decideHostAction, type HostDecision, HostEnsureRefusedError, type HostProtocolInfo } from "./host-decision.ts";
 import { ensureClient } from "./host-ensure-client.ts";
+import { publicEndpointAccepts, refuseIfStalled } from "./host-ensure-liveness.ts";
 import { hostEnsureLockOptions, hostEnsureLockTarget } from "./host-ensure-lock.ts";
 import { appendStderr, DEFAULT_READINESS_TIMEOUT_MS, DEFAULT_STOP_TIMEOUT_MS, startHost } from "./host-ensure-start.ts";
-import { publicEndpointAccepts, refuseIfStalled } from "./host-ensure-liveness.ts";
-import {
-	ensureSender,
-	matchesPidFileOrUnknown,
-	STOP_WAIT_BUDGET_MS,
-	stopManagedHost,
-} from "./host-ensure-stop.ts";
+import { ensureSender, matchesPidFileOrUnknown, STOP_WAIT_BUDGET_MS, stopManagedHost } from "./host-ensure-stop.ts";
 import type { EnsuredHost, EnsureHostOptions } from "./host-ensure-types.ts";
 import { scheduleOpportunisticHostGc } from "./host-gc-pass.ts";
 import { HANDOFF_LOCK_HOLD_MS, handoffHostLocked } from "./host-handoff.ts";
@@ -185,7 +180,6 @@ async function ensureHostLocked(
 	if (registeredHere) await clearHostRegistration(paths);
 	return startHost(paths, socket, options);
 }
-
 
 /** `fallback` belongs to clients that can live without a host; an ensure must produce one or fail. */
 function decide(
