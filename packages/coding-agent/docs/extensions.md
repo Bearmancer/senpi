@@ -878,6 +878,17 @@ pi.on("context", async (event, ctx) => {
 
 `context` handlers see conversation messages without the prompt and tool system messages; senpi restores that state after they run, so filtering or slicing messages no longer drops the system prompt or tool declarations.
 
+By default `event.messages` is a deep copy of the live transcript, so in-place edits never reach the session. A handler that never mutates message objects in place can declare it and skip that copy:
+
+```typescript
+pi.on("context", (event, ctx) => {
+  // Reads only; returns new lists/objects instead of editing in place
+  return { messages: event.messages.filter(m => keep(m)) };
+}, { mutatesMessages: false });
+```
+
+`mutatesMessages: false` is an opt-in performance declaration: the handler may return a new list and new message objects, but must never assign to a property of a message it received, or of anything nested in one. When every `context` and `context_with_system` handler about to run declares it, senpi shares the live transcript instead of cloning the whole context each turn; while any handler has not declared it, the deep copy stays for everyone.
+
 #### context_with_system
 
 Runs after `context` handlers on the full transcript, including system messages, and sends the result verbatim. Use it only when a request-local transformation must own the complete transcript, and keep a system message at index zero.
@@ -888,6 +899,8 @@ pi.on("context_with_system", async (event, ctx) => {
   return { messages: event.messages };
 });
 ```
+
+The same `{ mutatesMessages: false }` registration option is honored here; one undeclared handler of either hook keeps the per-turn deep copy for the whole pipeline.
 
 #### provider_stream_event
 

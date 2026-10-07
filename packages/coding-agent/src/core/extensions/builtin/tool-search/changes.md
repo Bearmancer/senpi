@@ -1,5 +1,23 @@
 # Tool Search Builtin Changes
 
+## 2026-10-07 - Tool-search context hook declares non-mutation (senpi#2525)
+
+### What changed
+
+- `index.ts`: the `context` handler is registered `{ mutatesMessages: false }`; `maybeRehydrateFromHistory` is a read-only scan over the messages.
+
+### Why
+
+senpi#2525: with both builtin `context` handlers declared, the runner skips the per-turn whole-context clone for the default extension set.
+
+### Why an extension could not handle it
+
+This is the extension itself; only its own registration can declare its mutation behavior to the runner.
+
+### Expected merge conflict zones
+
+- `index.ts`: the `pi.on("context")` registration.
+
 ## 2026-10-01 - Each session owns its tool-search service (senpi#2509)
 
 ### What changed
