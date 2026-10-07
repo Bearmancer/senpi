@@ -2,7 +2,7 @@
 
 ### What changed
 
-- `packages/coding-agent/src/core/compaction/compaction.ts`: `estimateTokens` memoizes per message object in a WeakMap, keyed by the message's JSON text from `packages/coding-agent/src/core/compaction/estimate-cache-key.ts`. Any in-place change (strings of any length, numbers, booleans, shape, the resident store's token/text swaps) misses the cache and re-estimates; building the key costs less than the estimate it guards (about 4 ms vs 6-8 ms for the previous structural fingerprint on 10k messages). A message the runner marks transient (`markTransientMessage`, its per-turn clone when a `context` handler is undeclared) is estimated directly, with no key and no cache entry: a fresh clone never repeats, so caching it only added cost.
+- `packages/coding-agent/src/core/compaction/compaction.ts`: `estimateTokens` memoizes per message object in a WeakMap, keyed by a key derived from the message's JSON text (`packages/coding-agent/src/core/compaction/estimate-cache-key.ts`): under Bun its length plus a 128-bit digest, so an entry holds no second copy of the text; elsewhere the exact text. Any in-place change (strings of any length, numbers, booleans, shape, the resident store's token/text swaps) misses the cache and re-estimates; building the key costs less than the estimate it guards (about 4 ms vs 6-8 ms for the previous structural fingerprint on 10k messages). A message marked transient (`markTransientMessage`, a non-enumerable symbol flag: the runner's per-turn clone when a `context` handler is undeclared, and admission's sizing probes) is estimated directly, with no key and no cache entry: a fresh clone never repeats, so caching it only added cost.
 
 ### Why
 

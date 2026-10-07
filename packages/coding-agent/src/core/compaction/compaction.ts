@@ -39,11 +39,7 @@ import {
 	sessionEntryToContextMessages,
 } from "../session-manager.ts";
 import type { CompactionSettings as BaseCompactionSettings } from "./compaction-settings.ts";
-import {
-	collectMessageEstimateFingerprint,
-	estimateFingerprintsEqual,
-	isTransientMessage,
-} from "./estimate-cache-key.ts";
+import { estimateCacheKey, isTransientMessage, serializeForEstimate } from "./estimate-cache-key.ts";
 
 export type CompactionSettings = BaseCompactionSettings & {
 	/** Optional "provider/model" override for the compaction summarization model. */
@@ -442,18 +438,18 @@ function estimateTextAndImageContentChars(content: string | readonly (TextConten
  */
 export function estimateTokens(message: AgentMessage): number {
 	if (isTransientMessage(message)) return computeEstimateTokens(message);
-	const fingerprint = collectMessageEstimateFingerprint(message);
+	const serialized = serializeForEstimate(message);
+	if (serialized === undefined) return computeEstimateTokens(message);
+	const key = estimateCacheKey(serialized);
 	const cached = tokenEstimateCache.get(message);
-	if (cached !== undefined && estimateFingerprintsEqual(cached.fingerprint, fingerprint)) {
-		return cached.tokens;
-	}
+	if (cached !== undefined && cached.key === key) return cached.tokens;
 	const tokens = computeEstimateTokens(message);
-	if (fingerprint !== undefined) tokenEstimateCache.set(message, { fingerprint, tokens });
+	tokenEstimateCache.set(message, { key, tokens });
 	return tokens;
 }
 
 interface TokenEstimateCacheEntry {
-	readonly fingerprint: string;
+	readonly key: string;
 	readonly tokens: number;
 }
 

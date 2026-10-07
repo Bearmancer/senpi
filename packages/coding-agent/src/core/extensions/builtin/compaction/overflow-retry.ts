@@ -1,9 +1,5 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
-import {
-	collectMessageEstimateFingerprint,
-	estimateFingerprintsEqual,
-	isTransientMessage,
-} from "../../../compaction/estimate-cache-key.ts";
+import { estimateCacheKey, isTransientMessage, serializeForEstimate } from "../../../compaction/estimate-cache-key.ts";
 import { estimateTokens } from "../../../compaction/index.ts";
 
 /**
@@ -56,19 +52,18 @@ function cjkExtraChars(text: string): number {
  * serialization the scan needs anyway, so a miss costs nothing extra.
  */
 function estimateWireTokens(message: AgentMessage): number {
-	if (isTransientMessage(message)) return computeWireTokens(message, collectMessageEstimateFingerprint(message));
-	const fingerprint = collectMessageEstimateFingerprint(message);
+	const serialized = serializeForEstimate(message);
+	if (serialized === undefined || isTransientMessage(message)) return computeWireTokens(message, serialized);
+	const key = estimateCacheKey(serialized);
 	const cached = wireEstimateCache.get(message);
-	if (cached !== undefined && estimateFingerprintsEqual(cached.fingerprint, fingerprint)) {
-		return cached.tokens;
-	}
-	const tokens = computeWireTokens(message, fingerprint);
-	if (fingerprint !== undefined) wireEstimateCache.set(message, { fingerprint, tokens });
+	if (cached !== undefined && cached.key === key) return cached.tokens;
+	const tokens = computeWireTokens(message, serialized);
+	wireEstimateCache.set(message, { key, tokens });
 	return tokens;
 }
 
 interface WireEstimateCacheEntry {
-	readonly fingerprint: string;
+	readonly key: string;
 	readonly tokens: number;
 }
 
