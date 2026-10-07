@@ -16,8 +16,8 @@ const WORD_PATTERN = /[\p{L}\p{N}#]+/gu;
 const FENCE_PATTERN = /^(?:```|~~~)/;
 // An indented line that is not a nested list item (two spaces or a tab, then not `- `, `* `, `+ `, `1. `, `1) `).
 const INDENTED_CODE = /^(?: {2,}|\t)(?![ \t]*(?:[-*+]|\d+[.)])[ \t])/;
-// A line ending in a block, statement or markup delimiter: `{`, `}`, `[`, `]`, `(`, `)`, `;`, `,`, `>`.
-const CODE_LINE_ENDINGS = new Set(["{", "}", "[", "]", "(", ")", ";", ",", ">"]);
+// A line ending in a block, statement or markup delimiter: `{`, `}`, `[`, `]`, `(`, `;`, `,`, `>` (oh-my-pi's set).
+const CODE_LINE_ENDINGS = new Set(["{", "}", "[", "]", "(", ";", ",", ">"]);
 
 interface ParagraphSignature {
 	readonly tokens: ReadonlySet<string>;
@@ -153,7 +153,7 @@ function completeParagraph(state: NearDuplicateState): DetectorMatch | null {
 /**
  * Code and markup repeat one skeleton with different literals, so a run of same-shaped lines (SVG elements, JSON
  * objects) is not a narration loop. Lines shaped like code are left out of the paragraph, fenced or not, and a
- * paragraph made only of them is never scored (senpi#2865; the same rule oh-my-pi applies to its loop heuristics).
+ * paragraph made only of them is never scored (senpi#2865; oh-my-pi v18.8.0 drops the same line shapes before its loop heuristics).
  */
 function isCodeShapedLine(state: NearDuplicateState): boolean {
 	return INDENTED_CODE.test(state.lineText) || CODE_LINE_ENDINGS.has(state.lineLastChar);

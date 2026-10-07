@@ -163,6 +163,16 @@ describe("near-duplicate paragraph frequency detector", () => {
 		expect(perChar(joinParagraphs(parts)).match?.detail.mechanism).toBe("near-duplicate-paragraphs");
 	});
 
+	it("still catches a prose narration loop whose paragraphs end in a parenthesis", () => {
+		const parts = Array.from({ length: 24 }, (_, index) => `${paraphraseOfOneAction(index)} (retrying)`);
+		expect(perChar(joinParagraphs(parts)).match?.detail.mechanism).toBe("near-duplicate-paragraphs");
+	});
+
+	it("still catches a narration loop written as indented nested list items", () => {
+		const parts = Array.from({ length: 24 }, (_, index) => `- step ${index}\n  - ${paraphraseOfOneAction(index)}`);
+		expect(perChar(joinParagraphs(parts)).match?.detail.mechanism).toBe("near-duplicate-paragraphs");
+	});
+
 	it("does not watch tool argument streams", () => {
 		expect(perChar(INCIDENT, "tool").match).toBeNull();
 		expect(perChar(INCIDENT, "thinking").match?.detail.mechanism).toBe("near-duplicate-paragraphs");
