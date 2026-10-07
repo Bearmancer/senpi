@@ -49,11 +49,15 @@ host-gc-pass.ts, host-gc-pass-marker.ts   The budgeted gc pass ensure schedules 
 host-ensure-{start,stop,client,types}.ts, host-internal-dir-reaper.ts, host-ensure-liveness.ts   ensureHost's start + readiness gate, the recorded stop path, client identity, options, tmpdir reaper, stall refusal
 host-observers.ts, host-zero-session-trim.ts  Host self-observation: stall watchdog, memory sampler, zero-session trim (`host_trimmed`)
 host-lifecycle.ts, supervisor-route.ts    Supervisor that owns the public socket + idle exit (orchestration only)
-host-lifecycle-{launch,proxy,activity,drain,shutdown}.ts
-                          Supervisor argv/child launch, public proxy, idle activity, drain, teardown + child stop
+host-lifecycle-{launch,proxy,activity,drain,shutdown,scratch,stall-wait}.ts, host-cli-entry.ts, host-supervisor-log.ts
+                          Supervisor argv/child launch (CLI entry resolution), public proxy, idle activity, drain, teardown + child stop,
+                          scratch dir, the bounded wait for a stalled child, the supervisor's stderr log line
 host-stop-intent.ts, host-child-exit.ts, host-crash-record.ts
                           Stop intent per generation, how a generation's end is read, `crashes.jsonl`
 host-stalled-evidence.ts  Per-generation stall evidence + heartbeat, stop progress; `host_stalled` refusals read it
+loop-lag-threshold.ts     The stall threshold shared by the host's watchdog and every evidence reader (a supervisor leaf)
+host-endpoint-names.ts, host-generation-paths.ts, host-state-json.ts
+                          Endpoint dir/socket names, a generation's file paths, the atomic JSON writer the evidence files use
 host-lifecycle-policy.ts  Cold-start / idle-exit policy resolution + the pure IdleExitDecider
 host-client-occupancy.ts, host-observe-request.ts
                           Which public clients count for idle exit; `observe: true` reads never do

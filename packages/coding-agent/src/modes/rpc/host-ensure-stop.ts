@@ -16,7 +16,7 @@ import { noteEscalatedStop } from "./host-child-exit.ts";
 import type { HostStopSender } from "./host-crash-record.ts";
 import type { HostGenerationPaths } from "./host-daemon-paths.ts";
 import type { ChildExit } from "./host-readiness.ts";
-import { activeStopProgress, DEFAULT_CHILD_STALLED_STOP_MAX_MS } from "./host-stalled-evidence.ts";
+import { activeStopProgress, childStalledStopMaxMs } from "./host-stalled-evidence.ts";
 import { type HostStopIntent, readStopIntent, writeStopIntent } from "./host-stop-intent.ts";
 
 export const DEFAULT_STOP_TIMEOUT_MS = 10_000;
@@ -25,9 +25,13 @@ export const SIGKILL_GRACE_MS = 2_000;
 const STOP_PROGRESS_FRESH_MS = 10_000;
 /** After a reported stall wait ends, the supervisor still escalates, records and exits: one more window. */
 const AFTER_STALL_WAIT_GRACE_MS = 5_000;
-/** The longest a SIGTERM wait here can run: the ordinary window, or a supervisor's reported stall wait. */
+/**
+ * The longest a SIGTERM wait here can run: the ordinary window, or a supervisor's reported stall wait. The
+ * stall wait is read from the same `SENPI_RPC_CHILD_STALLED_STOP_MAX_MS` the supervisor bounds itself by, so
+ * an operator who raises it also raises every lock and deadline sized from this budget.
+ */
 export const STOP_WAIT_BUDGET_MS =
-	Math.max(DEFAULT_STOP_TIMEOUT_MS, DEFAULT_CHILD_STALLED_STOP_MAX_MS + AFTER_STALL_WAIT_GRACE_MS) + SIGKILL_GRACE_MS;
+	Math.max(DEFAULT_STOP_TIMEOUT_MS, childStalledStopMaxMs() + AFTER_STALL_WAIT_GRACE_MS) + SIGKILL_GRACE_MS;
 
 export interface StopTarget {
 	readonly daemonDir: string;

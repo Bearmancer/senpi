@@ -169,6 +169,8 @@ function expectCallerRecord(qa: SupervisedScratch, instanceId: string, kind: str
 			reason: `${reason}; supervisor_escalated`,
 		}),
 	]);
+	// The caller never saw the child start, so it claims no uptime rather than a made-up zero.
+	expect(terminalRecords(qa, instanceId)[0]).not.toHaveProperty("uptimeMs");
 	expect(watchdogRecords(qa, instanceId)).toHaveLength(1);
 }
 

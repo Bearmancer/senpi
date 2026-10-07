@@ -7,7 +7,7 @@ import { generationPaths, type HostDaemonPaths } from "./host-daemon-paths.ts";
 import { HostEnsureRefusedError, type HostProtocolInfo } from "./host-decision.ts";
 import { probeSocketReachable } from "./host-probe.ts";
 import { hostChildAlive, hostLoopStalled, stallRefusalWindowMs } from "./host-stalled-evidence.ts";
-import { loopLagErrorMs } from "./loop-lag-watchdog.ts";
+import { loopLagErrorMs } from "./loop-lag-threshold.ts";
 import { statSocketIdentity } from "./socket-ownership.ts";
 
 /**

@@ -60,4 +60,34 @@ describe("loop lag evidence files", () => {
 		await fileAppears(join(dir, "host-alive.json"), 5_000);
 		expect(existsSync(join(dir, "host-stalled.json"))).toBe(false);
 	});
+
+	// Review of #2571 (M1): readers call a host stalled once its heartbeat is older than the stall threshold,
+	// so the heartbeat is refreshed at most once per fifth of it, not on every 200 ms tick.
+	it("refreshes the heartbeat at most once per fifth of the stall threshold", async () => {
+		const root = await mkdtemp(join(tmpdir(), "senpi-looplag-heartbeat-"));
+		roots.push(root);
+		const instanceId = "generation-under-test";
+		await mkdir(join(root, "generations", instanceId), { recursive: true });
+		let clock = 0;
+		const beats: string[] = [];
+		const watchdog = new LoopLagWatchdog({
+			emit: () => {},
+			log: () => {},
+			now: () => clock,
+			env: { [HOST_DAEMON_DIR_ENV]: root, [HOST_INSTANCE_ID_ENV]: instanceId },
+			writeHeartbeat: async (_dir, at) => {
+				beats.push(at);
+			},
+		});
+
+		for (let tick = 0; tick <= 10; tick += 1) {
+			watchdog.tick();
+			// Each write settles before the next tick, so the in-flight guard never hides a write.
+			await Promise.resolve();
+			clock += LOOP_LAG_TICK_MS;
+		}
+
+		// 11 healthy ticks over 2 s at the default 5 s threshold: beats at 0, 1 s and 2 s only.
+		expect(beats).toEqual([0, 1_000, 2_000].map((ms) => new Date(ms).toISOString()));
+	});
 });

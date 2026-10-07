@@ -1,24 +1,25 @@
 import { parseIdleExitMs } from "./host-lifecycle-policy.ts";
 import { ownGenerationDir, writeHeartbeat, writeStallEvidence } from "./host-stalled-evidence.ts";
 import { recordLoopBlockedMs } from "./loop-blocked-time.ts";
+import { loopLagErrorMs } from "./loop-lag-threshold.ts";
 import type { RpcHostStalledEvent } from "./rpc-types.ts";
 import { type SessionAttribution, sessionActivityMark, sessionActivitySince } from "./session-attribution.ts";
 
 /** Environment override for the drift that logs a warning, in milliseconds. */
 export const LOOP_LAG_WARN_MS_ENV = "SENPI_RPC_LOOP_LAG_WARN_MS";
-/** Environment override for the drift that also emits `host_stalled`, in milliseconds. */
-export const LOOP_LAG_ERROR_MS_ENV = "SENPI_RPC_LOOP_LAG_ERROR_MS";
 export const DEFAULT_LOOP_LAG_WARN_MS = 500;
-export const DEFAULT_LOOP_LAG_ERROR_MS = 5_000;
+export { DEFAULT_LOOP_LAG_ERROR_MS, LOOP_LAG_ERROR_MS_ENV, loopLagErrorMs } from "./loop-lag-threshold.ts";
 /** Measurement interval: short enough to bound the blamed window, cheap enough to ignore. */
 export const LOOP_LAG_TICK_MS = 200;
 /** One warning per window, however many stalls it covers. */
 export const LOOP_LAG_WARN_INTERVAL_MS = 10_000;
 
-/** The drift past which a tick is a stall, as the host itself judges it. Readers of its evidence use the same. */
-export function loopLagErrorMs(env: Readonly<Record<string, string | undefined>> = process.env): number {
-	return parseIdleExitMs(env[LOOP_LAG_ERROR_MS_ENV]) ?? DEFAULT_LOOP_LAG_ERROR_MS;
-}
+/**
+ * A heartbeat is refreshed at most once per this fraction of the stall threshold: a reader calls the host
+ * stalled only once the heartbeat is older than the threshold, so a beat this often keeps it at most a
+ * fifth stale without a disk write on every 200 ms tick.
+ */
+const HEARTBEAT_THRESHOLD_FRACTION = 5;
 
 export interface LoopLagWatchdogOptions {
 	/** Delivers one `host_stalled` lifecycle record to every connection. */
@@ -31,6 +32,8 @@ export interface LoopLagWatchdogOptions {
 	readonly cpuUsage?: () => { readonly user: number; readonly system: number };
 	/** Live JS heap in bytes; defaults to `process.memoryUsage().heapUsed`. */
 	readonly heapUsed?: () => number;
+	/** Refreshes the generation's heartbeat file; defaults to `writeHeartbeat`. */
+	readonly writeHeartbeat?: (generationDir: string, at: string) => Promise<void>;
 }
 
 const BYTES_PER_MB = 1024 * 1024;
@@ -78,6 +81,9 @@ export class LoopLagWatchdog {
 	/** This host's own generation directory when a supervisor launched it; evidence goes nowhere else. */
 	private readonly evidenceDir: string | undefined;
 	private heartbeatInFlight = false;
+	private lastHeartbeatAt: number | undefined;
+	private readonly heartbeatIntervalMs: number;
+	private readonly writeHeartbeat: (generationDir: string, at: string) => Promise<void>;
 	/**
 	 * The parent this host was launched under. Once it is gone the host is orphaned and on its way out:
 	 * its generation directory belongs to nobody now (gc may be judging or removing it), so the host
@@ -93,8 +99,10 @@ export class LoopLagWatchdog {
 		this.now = options.now ?? Date.now;
 		this.cpuUsage = options.cpuUsage ?? (() => process.cpuUsage());
 		this.heapUsed = options.heapUsed ?? (() => process.memoryUsage().heapUsed);
+		this.writeHeartbeat = options.writeHeartbeat ?? writeHeartbeat;
 		this.warnMs = parseIdleExitMs(env[LOOP_LAG_WARN_MS_ENV]) ?? DEFAULT_LOOP_LAG_WARN_MS;
 		this.errorMs = loopLagErrorMs(env);
+		this.heartbeatIntervalMs = Math.max(LOOP_LAG_TICK_MS, Math.floor(this.errorMs / HEARTBEAT_THRESHOLD_FRACTION));
 		this.evidenceDir = ownGenerationDir(env);
 	}
 
@@ -169,8 +177,10 @@ export class LoopLagWatchdog {
 	 */
 	private beat(now: number): void {
 		if (!this.ownsEvidenceDir() || this.evidenceDir === undefined || this.heartbeatInFlight) return;
+		if (this.lastHeartbeatAt !== undefined && now - this.lastHeartbeatAt < this.heartbeatIntervalMs) return;
+		this.lastHeartbeatAt = now;
 		this.heartbeatInFlight = true;
-		void writeHeartbeat(this.evidenceDir, new Date(now).toISOString())
+		void this.writeHeartbeat(this.evidenceDir, new Date(now).toISOString())
 			.catch((cause: unknown) => this.evidenceFailed(cause))
 			.finally(() => {
 				this.heartbeatInFlight = false;

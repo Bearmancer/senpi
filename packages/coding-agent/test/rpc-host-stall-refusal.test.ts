@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { readHostRegistration } from "../src/modes/rpc/host-daemon-registration.ts";
 import { acceptsWithin, fillListenBacklog, type ListenBacklog } from "./helpers/rpc-host-backlog-fixture.ts";
 import {
 	ensureSupervised,
@@ -67,13 +68,19 @@ describe.skipIf(process.platform === "win32")("an unreachable host with fresh st
 		const qa = await supervisedScratch("stalled-foreign");
 		const pointerFile = supervisedDaemonPaths(qa).pointerFile;
 		await ensureSupervised(qa, { env: NO_STALL_ENV }).then((ensured) => ensured.release());
-		const pointer: unknown = JSON.parse(await readFile(pointerFile, "utf8"));
+		// The registration's writer is read from the generation's host.pid (readHostRegistration), not the
+		// pointer: naming another process there is what makes this registration foreign to the next ensure.
+		const { instanceId } = await registeredSupervisor(qa);
+		const pidFile = join(generationDir(qa, instanceId), "host.pid");
+		const registration: unknown = JSON.parse(await readFile(pidFile, "utf8"));
 		await writeFile(
-			pointerFile,
-			`${JSON.stringify({ ...Object(pointer), writer: { pid: 1, startTime: "foreign" } })}\n`,
+			pidFile,
+			`${JSON.stringify({ ...Object(registration), writer: { pid: 1, startTime: "foreign" } })}\n`,
 		);
+		expect((await readHostRegistration(supervisedDaemonPaths(qa)))?.writer).toEqual({ pid: 1, startTime: "foreign" });
 		const { pid } = await freezeUnreachableRegistered(qa);
 		const before = await readFile(pointerFile, "utf8");
+		const pidBefore = await readFile(pidFile, "utf8");
 
 		const failure = await ensureSupervised(qa, { env: NO_STALL_ENV }).then(
 			() => undefined,
@@ -83,6 +90,7 @@ describe.skipIf(process.platform === "win32")("an unreachable host with fresh st
 		expect(failure).toMatchObject({ reason: "host_stalled" });
 		expect(processAlive(pid)).toBe(true);
 		expect(await readFile(pointerFile, "utf8")).toBe(before);
+		expect(await readFile(pidFile, "utf8")).toBe(pidBefore);
 	}, 60_000);
 
 	it("is still replaced when the evidence is older than the refusal window", async () => {

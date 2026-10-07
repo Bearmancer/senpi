@@ -50,8 +50,11 @@ export interface HostCrashRecord {
 	readonly signal?: string;
 	/** The exit code, when it exited rather than signalled. */
 	readonly code?: number;
-	/** How long the child had been alive, in milliseconds. */
-	readonly uptimeMs: number;
+	/**
+	 * How long the child had been alive, in milliseconds. Absent when the writer cannot know it: a caller
+	 * recording a supervisor it had to SIGKILL never saw the child start.
+	 */
+	readonly uptimeMs?: number;
 	/** `rpc-host` (terminal) or `rpc-host-watchdog`; absent on records written before the field existed. */
 	readonly kind?: "rpc-host" | "rpc-host-watchdog";
 	/** The generation (`instanceId`) the record is about. */

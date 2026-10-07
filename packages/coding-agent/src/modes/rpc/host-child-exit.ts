@@ -109,7 +109,6 @@ export async function noteEscalatedStop(
 	await recordTerminalHostRecord(daemonDir, {
 		at: new Date(now).toISOString(),
 		signal: "SIGKILL",
-		uptimeMs: 0,
 		kind: "rpc-host",
 		generation: instanceId,
 		detection: "engine_stop",

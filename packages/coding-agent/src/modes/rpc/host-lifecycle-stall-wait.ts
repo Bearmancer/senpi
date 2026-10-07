@@ -16,7 +16,7 @@ import {
 	writeStopProgress,
 } from "./host-stalled-evidence.ts";
 import { supervisorLog } from "./host-supervisor-log.ts";
-import { loopLagErrorMs } from "./loop-lag-watchdog.ts";
+import { loopLagErrorMs } from "./loop-lag-threshold.ts";
 
 const STALL_WAIT_SLICE_MS = 5_000;
 
