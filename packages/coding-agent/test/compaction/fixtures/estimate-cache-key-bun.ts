@@ -9,7 +9,7 @@ const swapped = prose(3996) + "wxyz"; // same length, different text
 block.text = swapped;
 console.log(
 	JSON.stringify({
-		runtime: typeof Bun === "undefined" ? "node" : "bun",
+		runtime: "Bun" in globalThis ? "bun" : "node",
 		keyIsText: estimateCacheKey(serialized) === serialized,
 		keyLength: estimateCacheKey(serialized).length,
 		sameLengthKeysDiffer: estimateCacheKey(serialized) !== estimateCacheKey(serializeForEstimate(message) ?? ""),
