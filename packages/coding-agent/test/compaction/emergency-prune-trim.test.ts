@@ -22,11 +22,6 @@ vi.mock("../../src/core/compaction/index.ts", () => ({
 		if (message.role === "custom") return 1;
 		return 1;
 	},
-	// Content-derived stand-ins for the senpi#2525 fingerprint helpers the wire estimator
-	// imports from the same barrel; fresh fixture messages mean the cache never goes stale here.
-	collectMessageEstimateFingerprint: (message: AgentMessage) => [JSON.stringify(message).length],
-	estimateFingerprintsEqual: (left: readonly number[], right: readonly number[]) =>
-		left.length === right.length && left.every((value, index) => value === right[index]),
 	prepareCompaction: () => undefined,
 	serializeConversation: () => "",
 }));

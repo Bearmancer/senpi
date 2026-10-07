@@ -39,6 +39,7 @@ import {
 	sessionEntryToContextMessages,
 } from "../session-manager.ts";
 import type { CompactionSettings as BaseCompactionSettings } from "./compaction-settings.ts";
+import { collectMessageEstimateFingerprint, estimateFingerprintsEqual } from "./estimate-cache-key.ts";
 
 export type CompactionSettings = BaseCompactionSettings & {
 	/** Optional "provider/model" override for the compaction summarization model. */
@@ -430,14 +431,10 @@ function estimateTextAndImageContentChars(content: string | readonly (TextConten
  * Estimate token count for a message using chars/4 heuristic.
  * This is conservative (overestimates tokens).
  *
- * Cached per message object (senpi#2525): a message whose estimate-relevant content
- * is unchanged returns the memoized value instead of re-walking every content block.
- * Reuse is validated by a fingerprint, never by identity alone: the fingerprint is a
- * structural walk of the message that records, for every string in the graph, its
- * length and first/last char codes (plus array/object shape markers). It changes
- * whenever the resident store swaps a string in place (idle tokenization and
- * request-time materialization), and it pins no string content, so cached entries
- * never defeat the resident store's memory budget.
+ * Cached per message object (senpi#2525): a message whose JSON is unchanged returns the memoized
+ * value instead of re-scanning every content block. Reuse is validated by the message's JSON text,
+ * never by identity alone, so any in-place change (including the resident store's token/text swaps)
+ * re-estimates.
  */
 export function estimateTokens(message: AgentMessage): number {
 	const fingerprint = collectMessageEstimateFingerprint(message);
@@ -446,63 +443,16 @@ export function estimateTokens(message: AgentMessage): number {
 		return cached.tokens;
 	}
 	const tokens = computeEstimateTokens(message);
-	tokenEstimateCache.set(message, { fingerprint, tokens });
+	if (fingerprint !== undefined) tokenEstimateCache.set(message, { fingerprint, tokens });
 	return tokens;
 }
 
 interface TokenEstimateCacheEntry {
-	readonly fingerprint: readonly number[];
+	readonly fingerprint: string;
 	readonly tokens: number;
 }
 
 const tokenEstimateCache = new WeakMap<AgentMessage, TokenEstimateCacheEntry>();
-
-const FINGERPRINT_ARRAY_MARKER = -1;
-const FINGERPRINT_OBJECT_MARKER = -2;
-
-function fingerprintString(text: string, out: number[]): void {
-	if (text.length === 0) {
-		out.push(0, 0, 0);
-		return;
-	}
-	out.push(text.length, text.charCodeAt(0), text.charCodeAt(text.length - 1));
-}
-
-function collectFingerprintValue(value: unknown, out: number[], seen: Set<object>): void {
-	if (typeof value === "string") {
-		fingerprintString(value, out);
-		return;
-	}
-	if (typeof value !== "object" || value === null || seen.has(value)) return;
-	seen.add(value);
-	if (Array.isArray(value)) {
-		out.push(FINGERPRINT_ARRAY_MARKER, value.length);
-		for (const item of value) collectFingerprintValue(item, out, seen);
-		return;
-	}
-	const record = value as Record<string, unknown>;
-	const keys = Object.keys(record);
-	out.push(FINGERPRINT_OBJECT_MARKER, keys.length);
-	for (const key of keys) {
-		fingerprintString(key, out);
-		collectFingerprintValue(record[key], out, seen);
-	}
-}
-
-/**
- * The reuse fingerprint for the per-message estimate caches: O(nodes), holds only
- * numbers, and changes whenever any string reachable from the message is swapped.
- */
-export function collectMessageEstimateFingerprint(message: AgentMessage): readonly number[] {
-	const fingerprint: number[] = [];
-	collectFingerprintValue(message, fingerprint, new Set());
-	return fingerprint;
-}
-
-/** Structural equality for estimate fingerprints. */
-export function estimateFingerprintsEqual(left: readonly number[], right: readonly number[]): boolean {
-	return left.length === right.length && left.every((value, index) => value === right[index]);
-}
 
 function computeEstimateTokens(message: AgentMessage): number {
 	let chars = 0;

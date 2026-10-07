@@ -20,6 +20,7 @@ import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import { estimateContextTokens } from "../../src/core/compaction/index.ts";
 import compactionExtension from "../../src/core/extensions/builtin/compaction/index.ts";
 import toolSearchExtension from "../../src/core/extensions/builtin/tool-search/index.ts";
+import type { ExtensionAPI } from "../../src/core/extensions/index.ts";
 import { createHarness } from "../suite/harness.ts";
 
 const MESSAGE_COUNT = 10_000;
@@ -132,7 +133,10 @@ function median(values: number[]): number {
 	return sorted[Math.floor(sorted.length / 2)] ?? 0;
 }
 
-export async function runContextHookPipelineBench(_args: string[]): Promise<void> {
+export async function runContextHookPipelineBench(args: string[]): Promise<void> {
+	// `--undeclared` adds one handler without `mutatesMessages: false`: the clone path every
+	// third-party `context` extension keeps (review of senpi#2884, M1).
+	const undeclared = args.includes("--undeclared");
 	const messages = buildSyntheticTranscript();
 	const harness = await createHarness({
 		models: [{ id: "bench-model", contextWindow: BENCH_CONTEXT_WINDOW, maxTokens: BENCH_MAX_TOKENS }],
@@ -141,6 +145,9 @@ export async function runContextHookPipelineBench(_args: string[]): Promise<void
 		extensionFactories: [
 			{ name: "compaction", factory: compactionExtension },
 			{ name: "tool-search", factory: toolSearchExtension },
+			...(undeclared
+				? [{ name: "undeclared", factory: (pi: ExtensionAPI) => pi.on("context", () => undefined) }]
+				: []),
 		],
 	});
 	try {
@@ -158,6 +165,7 @@ export async function runContextHookPipelineBench(_args: string[]): Promise<void
 		const head = git.status === 0 ? git.stdout.toString().trim() : "unknown";
 		const report = {
 			benchmark: "emitContext + context pipeline, 10k uncompacted messages (senpi#2525)",
+			undeclaredHandler: undeclared,
 			head,
 			messages: MESSAGE_COUNT,
 			estimatedTokens: estimate.tokens,

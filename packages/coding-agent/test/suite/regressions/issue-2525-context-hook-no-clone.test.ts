@@ -188,4 +188,55 @@ describe("issue #2525: context hooks share an uncloned transcript with declared 
 		expect(capturedMessages[0]?.includes(anchor)).toBe(false);
 		expect(getAssistantTexts(harness)).toContain("ok");
 	});
+
+	it("does not let a handler registered mid-pass see the live transcript (review H1)", async () => {
+		// Given only declared handlers at the start of the pass, one of which registers an undeclared
+		// context_with_system handler while it runs
+		let registered = false;
+		const lateExtension = (pi: ExtensionAPI) => {
+			pi.on(
+				"context",
+				() => {
+					if (registered) return;
+					registered = true;
+					pi.on("context_with_system", (event) => {
+						for (const message of event.messages) {
+							if (
+								message.role === "user" &&
+								Array.isArray(message.content) &&
+								message.content[0]?.type === "text"
+							) {
+								message.content[0].text = "MUTATED BY UNDECLARED HANDLER";
+							}
+						}
+					});
+				},
+				{ mutatesMessages: false },
+			);
+		};
+		const harness = await createHarness({
+			settings: TINY_WINDOW_SETTINGS,
+			extensionFactories: [{ name: "late", factory: lateExtension }],
+		});
+		harnesses.push(harness);
+		await harness.session.bindExtensions({});
+		respondOk(harness);
+
+		// When the first request runs (the late handler joins mid-pass) and a second request follows
+		await harness.session.prompt("first");
+		respondOk(harness);
+		await harness.session.prompt("second");
+
+		// Then the transcript the session keeps was never edited: the late handler ran on a clone
+		// (it joined the second pass, which then cloned because it is undeclared)
+		const userTexts = harness.session.agent.state.messages
+			.filter((message) => message.role === "user")
+			.map((message) =>
+				Array.isArray(message.content) && message.content[0]?.type === "text"
+					? message.content[0].text
+					: message.content,
+			);
+		expect(userTexts).not.toContain("MUTATED BY UNDECLARED HANDLER");
+		expect(registered).toBe(true);
+	});
 });

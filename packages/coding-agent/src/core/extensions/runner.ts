@@ -1972,8 +1972,13 @@ export class ExtensionRunner {
 		// edits, so when every handler of both context phases about to run declares it, the
 		// live transcript objects are shared and per-turn cost is proportional to what the
 		// handlers actually change. Any undeclared handler keeps the historical clone.
-		const handlersShareTranscript = (["context", "context_with_system"] as const).every((eventType) =>
-			snapshotEventHandlers(this.extensions, eventType).every(
+		// Both phases are snapshotted once, here: a handler registered while an earlier one runs must
+		// not join this pass, or it could see the shared live transcript without having declared
+		// `mutatesMessages: false` (review of senpi#2884, H1). It runs from the next request on.
+		const contextHandlers = snapshotEventHandlers(this.extensions, "context");
+		const contextWithSystemHandlers = snapshotEventHandlers(this.extensions, "context_with_system");
+		const handlersShareTranscript = [contextHandlers, contextWithSystemHandlers].every((snapshot) =>
+			snapshot.every(
 				({ ext, handlers }) =>
 					ext.path === excludeExtensionPath ||
 					handlers.every((handler) => ext.nonMutatingContextHandlers?.has(handler) === true),
@@ -1986,7 +1991,7 @@ export class ExtensionRunner {
 					return entryId ? Object.assign(message, { [SESSION_CONTEXT_ENTRY_ID]: entryId }) : message;
 				});
 
-		for (const { ext, handlers } of snapshotEventHandlers(this.extensions, "context")) {
+		for (const { ext, handlers } of contextHandlers) {
 			if (ext.path === excludeExtensionPath) continue;
 			for (const handler of handlers) {
 				try {
@@ -2023,7 +2028,7 @@ export class ExtensionRunner {
 			}
 		}
 
-		for (const { ext, handlers } of snapshotEventHandlers(this.extensions, "context_with_system")) {
+		for (const { ext, handlers } of contextWithSystemHandlers) {
 			if (ext.path === excludeExtensionPath) continue;
 			for (const handler of handlers) {
 				try {

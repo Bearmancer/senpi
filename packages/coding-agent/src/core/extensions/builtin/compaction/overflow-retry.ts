@@ -2,8 +2,8 @@ import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import {
 	collectMessageEstimateFingerprint,
 	estimateFingerprintsEqual,
-	estimateTokens,
-} from "../../../compaction/index.ts";
+} from "../../../compaction/estimate-cache-key.ts";
+import { estimateTokens } from "../../../compaction/index.ts";
 
 /**
  * Overflow-retry policy for summarization requests (issue #650).
@@ -49,10 +49,10 @@ function cjkExtraChars(text: string): number {
  * correction. JSON serialization carries every content field, so CJK runs are
  * counted wherever they appear (text, tool arguments, outputs, summaries).
  *
- * Cached per message object with the same validated fingerprint as
- * `estimateTokens` (senpi#2525): the emergency-prune path estimates the whole
- * context every turn, and an unchanged message must not pay for another
- * JSON.stringify + CJK scan.
+ * Cached per message object with the same JSON-text key as `estimateTokens`
+ * (senpi#2525): the emergency-prune path estimates the whole context every turn,
+ * and an unchanged message must not pay for another CJK scan. The key is the
+ * serialization the scan needs anyway, so a miss costs nothing extra.
  */
 function estimateWireTokens(message: AgentMessage): number {
 	const fingerprint = collectMessageEstimateFingerprint(message);
@@ -60,26 +60,21 @@ function estimateWireTokens(message: AgentMessage): number {
 	if (cached !== undefined && estimateFingerprintsEqual(cached.fingerprint, fingerprint)) {
 		return cached.tokens;
 	}
-	const tokens = computeWireTokens(message);
-	wireEstimateCache.set(message, { fingerprint, tokens });
+	const tokens = computeWireTokens(message, fingerprint);
+	if (fingerprint !== undefined) wireEstimateCache.set(message, { fingerprint, tokens });
 	return tokens;
 }
 
 interface WireEstimateCacheEntry {
-	readonly fingerprint: readonly number[];
+	readonly fingerprint: string;
 	readonly tokens: number;
 }
 
 const wireEstimateCache = new WeakMap<AgentMessage, WireEstimateCacheEntry>();
 
-function computeWireTokens(message: AgentMessage): number {
+function computeWireTokens(message: AgentMessage, serialized: string | undefined): number {
 	const base = estimateTokens(message);
-	let serialized: string;
-	try {
-		serialized = JSON.stringify(message);
-	} catch {
-		return base;
-	}
+	if (serialized === undefined) return base;
 	return base + Math.ceil(cjkExtraChars(serialized) / 4);
 }
 

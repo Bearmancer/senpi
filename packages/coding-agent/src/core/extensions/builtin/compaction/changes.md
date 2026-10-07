@@ -4,7 +4,7 @@
 
 - `index.ts`: the `context` handler is registered `{ mutatesMessages: false }`. The pipeline only derives or replaces messages, never mutates them in place — audited through `admitContextToolResults`, `reduceContextMessages`, `hardLimitEmergencyPrune`, `injectTokenBudgetReminder`, `markOpenAiRemoteReplayBoundary`, `repairOrphanedToolResults` and `convertToLlm`.
 - `orchestration.ts`, `context-reduction.ts`, `emergency-prune.ts`: every `{ ...message }` derivation routes through `inheritSessionContextEntryId`, so entry identity survives derivation without writing to the transcript objects.
-- `overflow-retry.ts`: `estimateWireTokens` memoizes per message object behind the same validated fingerprint as `estimateTokens`, eliminating the per-turn JSON.stringify + CJK scan for unchanged messages on the emergency-prune path.
+- `overflow-retry.ts`: `estimateWireTokens` memoizes per message object behind the same JSON-text key as `estimateTokens`, and reuses that serialization for its CJK scan, so a miss costs no extra `JSON.stringify` and an unchanged message skips the scan.
 
 ### Why
 

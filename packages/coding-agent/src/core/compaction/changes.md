@@ -1,8 +1,8 @@
-## 2026-10-07 - Per-message token estimates cached behind a validated fingerprint (senpi#2525)
+## 2026-10-07 - Per-message token estimates cached behind their JSON text (senpi#2525)
 
 ### What changed
 
-- `packages/coding-agent/src/core/compaction/compaction.ts`: `estimateTokens` memoizes per message object in a WeakMap. Reuse is gated by `collectMessageEstimateFingerprint`, a structural walk recording each reachable string's length and first/last char codes plus array/object shape markers — O(nodes) per validation, pinning no string content, so cached entries never defeat the resident store's memory budget. Any in-place string swap (resident-store tokenize/materialize, or a direct write) changes the fingerprint and re-estimates. The fingerprint and `estimateFingerprintsEqual` are exported for the wire estimator in `extensions/builtin/compaction/overflow-retry.ts`.
+- `packages/coding-agent/src/core/compaction/compaction.ts`: `estimateTokens` memoizes per message object in a WeakMap, keyed by the message's JSON text from `packages/coding-agent/src/core/compaction/estimate-cache-key.ts`. Any in-place change (strings of any length, numbers, booleans, shape, the resident store's token/text swaps) misses the cache and re-estimates; building the key costs less than the estimate it guards (about 4 ms vs 6-8 ms for the previous structural fingerprint on 10k messages).
 
 ### Why
 
