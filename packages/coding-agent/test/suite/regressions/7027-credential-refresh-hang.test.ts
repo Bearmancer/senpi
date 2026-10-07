@@ -189,9 +189,9 @@ describe("post-login model discovery", () => {
 		expect(defaultModelPerProvider.radius).toBe("balanced");
 		const login = await startLogin();
 		await login.discover(models);
-		// The fork's AgentSession.setModel(model) persists by default (`_setModel(model, true)`, one
-		// parameter) where upstream passes an explicit `{ persist: true }`: same persisted selection,
-		// different signature, so the call carries the model alone.
+		// The fork's AgentSession.setModel(model, origin) persists by default where upstream passes an
+		// explicit `{ persist: true }`: same persisted selection; the call names the model and that the
+		// provider login made it (#2870).
 		expect(login.setModel).toHaveBeenCalledWith(expect.objectContaining({ provider: "radius", id: selected }), {
 			source: "provider-login",
 		});

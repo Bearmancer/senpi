@@ -26,6 +26,17 @@ function modelChanges(harness: Harness): ModelChangeEntry[] {
 		.filter((entry): entry is ModelChangeEntry => entry.type === "model_change");
 }
 
+// Resolves on the session's next model_changed event, so a fire-and-forget selection is awaited, not polled.
+function nextModelChanged(harness: Harness): Promise<void> {
+	return new Promise((resolve) => {
+		const unsubscribe = harness.session.subscribe((event) => {
+			if (event.type !== "model_changed") return;
+			unsubscribe();
+			resolve();
+		});
+	});
+}
+
 function other(harness: Harness) {
 	const model = harness.getModel("other");
 	if (model === undefined) throw new Error("missing fixture model");
@@ -250,14 +261,16 @@ describe("issue 2870: every model switch records its source", () => {
 		});
 		if (captured === undefined) throw new Error("the picker exposed no selection callback");
 
+		let changed = nextModelChanged(harness);
 		captured.call(undefined, other(harness), { asDefault: false });
-		await vi.waitFor(() =>
-			expect(modelChanges(harness).at(-1)).toMatchObject({ source: "picker", actor: "model-selector" }),
-		);
+		await changed;
+		expect(modelChanges(harness).at(-1)).toMatchObject({ source: "picker", actor: "model-selector" });
 		expect(harness.settingsManager.getDefaultModel()).toBe(before);
 
+		changed = nextModelChanged(harness);
 		captured.call(undefined, harness.getModel("main"), { asDefault: true });
-		await vi.waitFor(() => expect(harness.settingsManager.getDefaultModel()).toBe("main"));
+		await changed;
+		expect(harness.settingsManager.getDefaultModel()).toBe("main");
 	});
 
 	it("an RPC set_model records rpc and keeps persisting the default", async () => {
@@ -321,5 +334,48 @@ describe("issue 2870: every model switch records its source", () => {
 			originalModelId: "main",
 			modelId: "other",
 		});
+	});
+
+	it("the favorites picker's selection records picker/favorites through its real callback", async () => {
+		const harness = await createHarness({ models: MODELS });
+		harnesses.push(harness);
+		const { fakeThis } = interactiveSelection(harness);
+		let onSelect: ((model: unknown) => void) | undefined;
+		const showFavoriteModelsSelector = Reflect.get(InteractiveMode.prototype, "showFavoriteModelsSelector") as (
+			this: unknown,
+		) => Promise<void>;
+		await showFavoriteModelsSelector.call({
+			...fakeThis,
+			showSelector: (create: (done: () => void) => { component: unknown }) => {
+				const built = create(() => {});
+				onSelect = (Reflect.get(built.component, "callbacks") as { onSelect: (model: unknown) => void }).onSelect;
+			},
+			getFavoriteModelIdsForUi: async () => [],
+			captureFavoritePatternSnapshot: async () => undefined,
+		});
+		if (onSelect === undefined) throw new Error("the favorites picker exposed no selection callback");
+
+		const changed = nextModelChanged(harness);
+		onSelect(other(harness));
+		await changed;
+
+		expect(modelChanges(harness).at(-1)).toMatchObject({ source: "picker", actor: "favorites" });
+	});
+
+	it("a session switch to a model with a remembered level names the switch on the re-applied thinking entry", async () => {
+		const harness = await createHarness({ models: MODELS });
+		harnesses.push(harness);
+		harness.settingsManager.setModelThinkingLevel(harness.getModel().provider, "other", "high");
+		harness.session.setThinkingLevel("low");
+
+		await harness.session.setSessionModel(other(harness), { source: "control" });
+
+		const thinking = harness.sessionManager
+			.getEntries()
+			.filter((entry): entry is ThinkingLevelChangeEntry => entry.type === "thinking_level_change");
+		expect(thinking.map((entry) => [entry.thinkingLevel, entry.triggerSource])).toEqual([
+			["low", undefined],
+			["high", "control"],
+		]);
 	});
 });
