@@ -186,18 +186,21 @@ type FamilyEntry = { file: string; api: string; id: string; contextWindow: unkno
 type Catalog = Record<string, Record<string, CatalogEntry>>;
 
 /**
- * Whether a catalog key names OpenAI's own model of this tier, under any route's naming: the bare id
- * (`gpt-6-luna`, `gpt-6-luna-fast`), the OpenAI-owned path (`openai/gpt-6-luna:batch`), Bedrock's dotted
- * form with an optional region (`global.openai.gpt-6-luna`), or a flat vendor prefix (`openai-gpt-6-luna`).
- * A third party's model whose id merely CONTAINS the name is not OpenAI's - a router alias such as
- * `typesafe-system-one/classifier:openai/gpt-6-luna-decisions` is somebody else's product with its own
- * window - and the release regenerates catalogs from live provider lists, so such aliases appear.
+ * Whether a catalog key names OpenAI's own chat model of this tier. The WHOLE key must be one of the shapes routes give
+ * OpenAI's models, anchored at both ends:
+ * - `chat:` - a classifier or image row is never the tier's chat model;
+ * - the vendor form: bare (`gpt-6-luna`), `openai/` (OpenRouter, gateways), `openai-` (Venice), or Bedrock's dotted
+ *   `openai.` with an optional region (`global.`, `us.`);
+ * - the tier name, then only `-fast` or `-pro`, then only `:batch`, then the end of the key.
+ * A third party's model whose id merely contains the tier name is somebody else's product with its own window. The
+ * release regenerates catalogs from live provider lists, which do list such models, for example OpenRouter's
+ * `classifier:openai/gpt-6-luna-decisions`.
  */
 function isOpenAIFamilyModel(key: string, marker: FamilyId): boolean {
-	// A leading mode tag (`chat:`) is not part of the model id; a path segment never precedes it.
-	const id = key.replace(/^[a-z-]+:/u, "");
-	const escaped = marker.replaceAll(".", "\\.");
-	return new RegExp(`^(?:[a-z]{2,6}\\.)?(?:openai[./-])?${escaped}(?:$|[-:.])`, "u").test(id);
+	const tier = marker.replaceAll(".", "\\.");
+	return new RegExp(`^chat:(?:(?:[a-z]{2,6}\\.)?openai\\.|openai[/-])?${tier}(?:-fast|-pro)?(?::batch)?$`, "u").test(
+		key,
+	);
 }
 
 function collectFamilyEntriesFrom(catalogs: ReadonlyMap<string, Catalog>, marker: FamilyId): FamilyEntry[] {
@@ -252,7 +255,12 @@ describe("which catalog entries carry a GPT-6 tier's window", () => {
 		const entries = collectFamilyEntriesFrom(
 			synthetic({
 				"chat:openai/gpt-6-luna": LUNA_CONTEXT_WINDOW,
+				// The exact entry the release run regenerated from OpenRouter.
+				"classifier:openai/gpt-6-luna-decisions": 1_050_000,
 				"chat:typesafe-system-one/classifier:openai/gpt-6-luna-decisions": 1_050_000,
+				"chat:openai/gpt-6-luna-decisions": 1_050_000,
+				"chat:openrouter/openai/gpt-6-luna": 1_050_000,
+				"chat:gpt-6-luna-mini": 1_050_000,
 			}),
 			"gpt-6-luna",
 		);
