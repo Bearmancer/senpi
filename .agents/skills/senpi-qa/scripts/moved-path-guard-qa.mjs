@@ -51,6 +51,13 @@ function seedMovedHome(home) {
 	return { oldHome, newHome };
 }
 
+function shellInEval(command) {
+	return {
+		name: "eval",
+		args: { language: "js", summary: "shell command by an old path", code: `const r = await tool.bash({ command: ${JSON.stringify(command)} }); return r.text;` },
+	};
+}
+
 function toolResultTexts(requests) {
 	const texts = [];
 	for (const request of requests) {
@@ -72,12 +79,29 @@ async function selfTest() {
 	const { oldHome, newHome } = seedMovedHome(box.dir);
 	const oldWorktree = join(oldHome, WORKTREE);
 	const newWorktree = join(newHome, WORKTREE);
+	// Review H1: a breadcrumb planted in a repository, pointing at a folder with no desktop marker, is ignored.
+	const repo = join(box.dir, "repo");
+	const elsewhere = join(box.dir, "elsewhere");
+	mkdirSync(join(repo, "src"), { recursive: true });
+	mkdirSync(elsewhere, { recursive: true });
+	writeFileSync(
+		join(repo, "omo-desktop-moved.json"),
+		JSON.stringify({ kind: "omo-desktop-moved", schemaVersion: 1, movedTo: elsewhere, homeId: "qa-home-0001", moved: ["src"] }),
+	);
 	const turns = [
 		{ toolCalls: [{ name: "write", args: { path: join(oldWorktree, "edit.txt"), content: "hi\n" } }] },
 		{ toolCalls: [{ name: "eval", args: { language: "js", summary: "shell write by the old path", code: `const r = await tool.bash({ command: "mkdir -p ~/.t3/${WORKTREE}/x && echo hi > ~/.t3/${WORKTREE}/x/y" }); return r.text;` } }] },
 		{ toolCalls: [{ name: "read", args: { path: join(oldWorktree, "notes.txt") } }] },
 		{ toolCalls: [{ name: "write", args: { path: join(oldHome, "unlisted.txt"), content: "t3 code's own file\n" } }] },
 		{ toolCalls: [{ name: "write", args: { path: join(newWorktree, "edit.txt"), content: "hi\n" } }] },
+		// Review H2: a path written out inside inline code, and one split by shell quoting (bash runs inside eval here).
+		{ toolCalls: [shellInEval(`python3 -c "open('${oldWorktree}/py.txt','w').write('x')"`)] },
+		{ toolCalls: [shellInEval(`mkdir -p "$HOME"/.t3/${WORKTREE}/q`)] },
+		// Review M2: a relative path after cd in the same command; only the nested bash call can see it.
+		{ toolCalls: [shellInEval(`cd ~/.t3 && mkdir -p ${WORKTREE}/cdx`)] },
+		// Review M3: eval code that writes by the old path itself, with no nested tool call.
+		{ toolCalls: [{ name: "eval", args: { language: "js", summary: "direct fs write by the old path", code: `const fs = await import("node:fs"); fs.writeFileSync("${oldWorktree}/eval.txt", "x"); return "wrote";` } }] },
+		{ toolCalls: [{ name: "write", args: { path: join(repo, "src", "planted.txt"), content: "repo file\n" } }] },
 		{ text: "done" },
 	];
 	const server = await startFakeModelServer({ turns });
@@ -99,6 +123,12 @@ async function selfTest() {
 	checks.ok("nothing created under the old moved prefix", !existsSync(oldWorktree), `exists=${existsSync(oldWorktree)}`);
 	checks.ok("an unlisted path under the breadcrumb is written normally", existsSync(join(oldHome, "unlisted.txt")), "");
 	checks.ok("the same write under the new path succeeds", existsSync(join(newWorktree, "edit.txt")), "");
+	const refusedFor = (name) => results.find((text) => /moved/i.test(text) && text.includes(join(newWorktree, name)));
+	checks.ok("H2: python -c with the old path inline is refused", refusedFor("py.txt") !== undefined, refusedFor("py.txt")?.slice(0, 160) ?? "no refusal");
+	checks.ok('H2: "$HOME"/.t3/<moved prefix> is refused', refusedFor("q") !== undefined, refusedFor("q")?.slice(0, 160) ?? "no refusal");
+	checks.ok("M2: a relative path after cd ~/.t3 is refused", refusedFor("cdx") !== undefined, refusedFor("cdx")?.slice(0, 160) ?? "no refusal");
+	checks.ok("M3: eval code naming the old path is refused", refusedFor("eval.txt") !== undefined, refusedFor("eval.txt")?.slice(0, 160) ?? "no refusal");
+	checks.ok("H1: a planted breadcrumb without a desktop marker is ignored", existsSync(join(repo, "src", "planted.txt")) && !existsSync(join(elsewhere, "src")), `repo=${existsSync(join(repo, "src", "planted.txt"))} redirected=${existsSync(join(elsewhere, "src"))}`);
 	checks.ok("the moved home's existing file is untouched", readFileSync(join(newWorktree, "notes.txt"), "utf8") === "moved content\n", "");
 
 	if (evidenceSlug !== undefined) {
