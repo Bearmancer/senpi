@@ -47,7 +47,7 @@ export class PythonEnvironments {
 	}
 
 	async install(
-		requirements: string,
+		requirements: string | readonly string[],
 		signal: AbortSignal,
 		onOutput?: (stream: "stdout" | "stderr", data: string) => void,
 	): Promise<InstallReceipt> {

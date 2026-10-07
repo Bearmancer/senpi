@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { assertInstalledInRevision, assertNoEditableInstalls } from "./editable-check.ts";
-import { parsePipRequirements, runPipInstall } from "./py-installer.ts";
+import { normalizePipInstall, parsePipRequirements, runPipInstall } from "./py-installer.ts";
 import { publishNextRevision, type Revision } from "./revision-store.ts";
 
 const execFileAsync = promisify(execFile);
@@ -40,12 +40,16 @@ export async function installPythonPackages(input: {
 	readonly base: string;
 	readonly mode: EnvironmentMode;
 	readonly interpreter: string;
-	readonly requirements: string;
+	/** `%pip` argument text, or the requirement list `packages.install()` passes without re-parsing. */
+	readonly requirements: string | readonly string[];
 	readonly cwd: string;
 	readonly signal: AbortSignal;
 	readonly onOutput?: (stream: "stdout" | "stderr", data: string) => void;
 }): Promise<InstallReceipt> {
-	const requested = parsePipRequirements(input.requirements);
+	const requested =
+		typeof input.requirements === "string"
+			? parsePipRequirements(input.requirements)
+			: normalizePipInstall(["install", ...input.requirements]);
 	let stdout = "";
 	const { revision } = await publishNextRevision(
 		input.base,

@@ -29,6 +29,7 @@ export function reservedDispatchContext(
 		marshalToolResult,
 		...(runtime.handles === undefined ? {} : { handles: runtime.handles }),
 		...(host === undefined ? {} : { evalHandleHost: host }),
+		...(runtime.environments === undefined ? {} : { environments: runtime.environments }),
 	};
 }
 

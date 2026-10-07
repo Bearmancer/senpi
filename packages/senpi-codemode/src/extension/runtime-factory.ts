@@ -92,6 +92,15 @@ export async function createRuntime(
 	const sessionEnv = { ...sessionEnvironmentFrom(ctx), ...bundledBunPathEntry() };
 	const configuredPoolWidth = settings.parallelPoolWidth;
 	const parallelPoolWidth = Number.isFinite(configuredPoolWidth) ? Math.max(1, Math.trunc(configuredPoolWidth)) : 1;
+	const pythonEnvironments =
+		availability.py.detected.ok && enabledLanguages.py
+			? new PythonEnvironments({
+					artifactsDir: artifacts.dir,
+					cwd: ctx.cwd,
+					interpreter: availability.py.detected.path,
+					settings,
+				})
+			: undefined;
 	const manager = await create({
 		sessionId,
 		ownerSessionId: ctx.sessionManager.getSessionId(),
@@ -104,6 +113,7 @@ export async function createRuntime(
 		listTools: () => pi.getAllTools(),
 		complete,
 		...(handles === undefined ? {} : { handles }),
+		...(pythonEnvironments === undefined ? {} : { environments: { python: pythonEnvironments } }),
 	});
 	return {
 		sessionId,
@@ -127,16 +137,7 @@ export async function createRuntime(
 			env: { ...process.env, ...sessionEnv },
 			settings,
 		}),
-		...(availability.py.detected.ok && enabledLanguages.py
-			? {
-					pythonEnvironments: new PythonEnvironments({
-						artifactsDir: artifacts.dir,
-						cwd: ctx.cwd,
-						interpreter: availability.py.detected.path,
-						settings,
-					}),
-				}
-			: {}),
+		...(pythonEnvironments === undefined ? {} : { pythonEnvironments }),
 	};
 }
 
