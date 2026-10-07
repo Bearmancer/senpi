@@ -90,7 +90,7 @@ describe("transient OAuth refresh failures (#2893)", () => {
 		expect(warn).toHaveBeenCalledTimes(1);
 		expect(warn.mock.calls[0]).toEqual([
 			"OAuth refresh unavailable",
-			{ provider: "fixture", cause: "connection_refused" },
+			JSON.stringify({ provider: "fixture", cause: "connection_refused" }),
 		]);
 		expect(JSON.stringify(warn.mock.calls)).not.toContain("fixture-refresh");
 		expect((await resolveProviderAuth(provider, credentials, context))?.auth.apiKey).toBe("fixture-next");

@@ -2,7 +2,7 @@
 
 ### What changed
 
-- `packages/ai/src/auth/oauth-refresh.ts`: preserve caller cancellation; log one provider/optional-slot/closed-cause record per transient exchange without changing stored credentials.
+- `packages/ai/src/auth/oauth-refresh.ts`: preserve caller cancellation; log one JSON-encoded provider/optional-slot/closed-cause line per transient exchange without changing stored credentials. JSON encoding prevents object inspection or embedded newlines from splitting the log record.
 - `packages/ai/src/auth/resolve.ts`: map transient exchanges to a symbol-branded OAuth ModelsError while preserving permanent errors and message text.
 
 ### Why

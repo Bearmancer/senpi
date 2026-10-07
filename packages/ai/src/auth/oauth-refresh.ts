@@ -130,11 +130,14 @@ async function exchangeAndStore(request: OAuthRefreshRequest, signal: AbortSigna
 		signal.throwIfAborted();
 		const causeClass = oauthRefreshFailureCause(error);
 		if (causeClass !== undefined) {
-			console.warn("OAuth refresh unavailable", {
-				provider: providerId,
-				...(slotName ? { slot: slotName } : {}),
-				cause: causeClass,
-			});
+			console.warn(
+				"OAuth refresh unavailable",
+				JSON.stringify({
+					provider: providerId,
+					...(slotName ? { slot: slotName } : {}),
+					cause: causeClass,
+				}),
+			);
 		}
 		throw new OAuthRefreshExchangeError(error);
 	}
