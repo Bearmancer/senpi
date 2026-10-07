@@ -6,9 +6,13 @@
 
 ### Added
 
+- `context` and `context_with_system` extension handlers accept a `{ mutatesMessages: false }` registration option, an opt-in performance declaration that the handler never edits a received message object in place ([#2525](https://github.com/code-yeongyu/senpi/issues/2525)).
+
 - Every model switch records what made it: `model_change` entries, the `model_changed` event and one `session.log` line per switch carry a `source` (`command`, `picker`, `cycle`, `control`, `rpc`, `app-server`, `extension`, `provider-login`, `fallback`, `fallback-revert`, `held-switch`, `restore`, `sdk`) and, where known, an `actor`; a switch that lands while a turn is streaming is marked `duringTurn` and shown as a transcript row naming both models, and the `thinking_level_change` a switch writes names the same source ([#2870](https://github.com/code-yeongyu/senpi/issues/2870)).
 
 ### Changed
+
+- When every `context`/`context_with_system` handler about to run declares `mutatesMessages: false` (the built-in compaction and tool-search hooks now do), the request pipeline shares the live transcript instead of deep-cloning it every turn, and per-message token estimates are memoized behind a content fingerprint: on a synthetic 10,000-message uncompacted session, one `emitContext` + context-pipeline pass dropped from a 135 ms to a 53 ms median ([#2525](https://github.com/code-yeongyu/senpi/issues/2525)).
 
 - A model picked in the terminal (Enter in `/model` or the favorites picker, a typed `/model <id>`, the favorites cycle key, or a terminal control endpoint's `set_model`) now applies to that session only, instead of silently rewriting the default model every later session starts on. To also make it the default, press Ctrl+S (`app.models.save`) in the model picker or type `/model <id> --default`; the status line then says so ([#2870](https://github.com/code-yeongyu/senpi/issues/2870)).
 

@@ -957,34 +957,42 @@ export default function compactionExtension(
 	};
 	pi.on("before_agent_start", onBeforeAgentStart, { previewSafe: true });
 
-	pi.on("context", (event, ctx) => {
-		const usage = ctx.getContextUsage();
-		const settings = ctx.getCompactionSettings();
-		const contextWindow = usage?.contextWindow ?? ctx.model?.contextWindow ?? DEFAULT_CONTEXT_WINDOW;
-		const laneOwnsCompaction = lanePolicy.disablesSenpiCompaction(ctx);
-		const breakerFallback =
-			!laneOwnsCompaction &&
-			breaker.isTripped(state, Date.now()) &&
-			usage?.tokens !== null &&
-			usage !== undefined &&
-			usage.tokens >= contextWindow * policy.computeEffectiveThreshold(contextWindow, state.lastYield ?? undefined);
-		if (breakerFallback)
-			getLogger(ctx).debug("breaker_deterministic_fallback", { route: "context-event", tokens: usage.tokens ?? 0 });
-		return {
-			messages: buildCompactionContext({
-				event,
-				ctx,
-				contextWindow,
-				promptContextWindow: getPromptContextWindow(contextWindow, ctx.model?.maxTokens),
-				toolAdmissionEnabled: settings.toolAdmissionEnabled !== false,
-				breakerFallback,
-				laneOwnsCompaction,
-				appendOnlyTranscript: lanePolicy.hasAppendOnlyTranscript(ctx),
-				emergencyPruneLatch,
-				logEmergencyPrune: (fields) => getLogger(ctx).debug("emergency_prune", fields),
-			}),
-		};
-	});
+	pi.on(
+		"context",
+		(event, ctx) => {
+			const usage = ctx.getContextUsage();
+			const settings = ctx.getCompactionSettings();
+			const contextWindow = usage?.contextWindow ?? ctx.model?.contextWindow ?? DEFAULT_CONTEXT_WINDOW;
+			const laneOwnsCompaction = lanePolicy.disablesSenpiCompaction(ctx);
+			const breakerFallback =
+				!laneOwnsCompaction &&
+				breaker.isTripped(state, Date.now()) &&
+				usage?.tokens !== null &&
+				usage !== undefined &&
+				usage.tokens >=
+					contextWindow * policy.computeEffectiveThreshold(contextWindow, state.lastYield ?? undefined);
+			if (breakerFallback)
+				getLogger(ctx).debug("breaker_deterministic_fallback", {
+					route: "context-event",
+					tokens: usage.tokens ?? 0,
+				});
+			return {
+				messages: buildCompactionContext({
+					event,
+					ctx,
+					contextWindow,
+					promptContextWindow: getPromptContextWindow(contextWindow, ctx.model?.maxTokens),
+					toolAdmissionEnabled: settings.toolAdmissionEnabled !== false,
+					breakerFallback,
+					laneOwnsCompaction,
+					appendOnlyTranscript: lanePolicy.hasAppendOnlyTranscript(ctx),
+					emergencyPruneLatch,
+					logEmergencyPrune: (fields) => getLogger(ctx).debug("emergency_prune", fields),
+				}),
+			};
+		},
+		{ mutatesMessages: false },
+	);
 
 	pi.on("before_provider_request", async (event, ctx) => {
 		const model = event.model ?? ctx.model;

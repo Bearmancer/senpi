@@ -1,5 +1,9 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
-import { estimateTokens } from "../../../compaction/index.ts";
+import {
+	collectMessageEstimateFingerprint,
+	estimateFingerprintsEqual,
+	estimateTokens,
+} from "../../../compaction/index.ts";
 
 /**
  * Overflow-retry policy for summarization requests (issue #650).
@@ -44,8 +48,31 @@ function cjkExtraChars(text: string): number {
  * Request-sizing estimate: the shared chars/4 estimate plus a CJK density
  * correction. JSON serialization carries every content field, so CJK runs are
  * counted wherever they appear (text, tool arguments, outputs, summaries).
+ *
+ * Cached per message object with the same validated fingerprint as
+ * `estimateTokens` (senpi#2525): the emergency-prune path estimates the whole
+ * context every turn, and an unchanged message must not pay for another
+ * JSON.stringify + CJK scan.
  */
 function estimateWireTokens(message: AgentMessage): number {
+	const fingerprint = collectMessageEstimateFingerprint(message);
+	const cached = wireEstimateCache.get(message);
+	if (cached !== undefined && estimateFingerprintsEqual(cached.fingerprint, fingerprint)) {
+		return cached.tokens;
+	}
+	const tokens = computeWireTokens(message);
+	wireEstimateCache.set(message, { fingerprint, tokens });
+	return tokens;
+}
+
+interface WireEstimateCacheEntry {
+	readonly fingerprint: readonly number[];
+	readonly tokens: number;
+}
+
+const wireEstimateCache = new WeakMap<AgentMessage, WireEstimateCacheEntry>();
+
+function computeWireTokens(message: AgentMessage): number {
 	const base = estimateTokens(message);
 	let serialized: string;
 	try {

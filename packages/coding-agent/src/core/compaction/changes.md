@@ -1,3 +1,21 @@
+## 2026-10-07 - Per-message token estimates cached behind a validated fingerprint (senpi#2525)
+
+### What changed
+
+- `packages/coding-agent/src/core/compaction/compaction.ts`: `estimateTokens` memoizes per message object in a WeakMap. Reuse is gated by `collectMessageEstimateFingerprint`, a structural walk recording each reachable string's length and first/last char codes plus array/object shape markers — O(nodes) per validation, pinning no string content, so cached entries never defeat the resident store's memory budget. Any in-place string swap (resident-store tokenize/materialize, or a direct write) changes the fingerprint and re-estimates. The fingerprint and `estimateFingerprintsEqual` are exported for the wire estimator in `extensions/builtin/compaction/overflow-retry.ts`.
+
+### Why
+
+senpi#2525: the per-turn context pipeline re-estimated every message every turn; on the issue's 10k-message transcript the estimators were about 55% of run-loop time. The estimates are pure functions of message content, so a validated cache makes the per-turn cost proportional to what changed.
+
+### Why an extension could not handle it
+
+The estimator is core mechanics shared by the extension pipeline, admission checks, and summarization sizing; memoizing it inside one extension would leave the other callers uncached.
+
+### Expected merge conflict zones
+
+- `compaction.ts`: the `estimateTokens` definition.
+
 ## 2026-10-01 - A failed assistant weighs nothing in the keep budget (senpi#2480)
 
 ### What changed

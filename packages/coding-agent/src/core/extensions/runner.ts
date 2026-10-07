@@ -1967,10 +1967,24 @@ export class ExtensionRunner {
 	 * handlers then see the full transcript and their output is used as returned.
 	 */
 	async emitContext(messages: AgentMessage[], excludeExtensionPath?: string): Promise<AgentMessage[]> {
-		let currentMessages = cloneJsonValue(messages).map((message, index) => {
-			const entryId = getSessionContextEntryId(messages[index]!);
-			return entryId ? Object.assign(message, { [SESSION_CONTEXT_ENTRY_ID]: entryId }) : message;
-		});
+		// The deep copy exists to isolate the transcript from in-place handler edits
+		// (senpi#2525). Handlers registered with `{ mutatesMessages: false }` forgo in-place
+		// edits, so when every handler of both context phases about to run declares it, the
+		// live transcript objects are shared and per-turn cost is proportional to what the
+		// handlers actually change. Any undeclared handler keeps the historical clone.
+		const handlersShareTranscript = (["context", "context_with_system"] as const).every((eventType) =>
+			snapshotEventHandlers(this.extensions, eventType).every(
+				({ ext, handlers }) =>
+					ext.path === excludeExtensionPath ||
+					handlers.every((handler) => ext.nonMutatingContextHandlers?.has(handler) === true),
+			),
+		);
+		let currentMessages = handlersShareTranscript
+			? messages.slice()
+			: cloneJsonValue(messages).map((message, index) => {
+					const entryId = getSessionContextEntryId(messages[index]!);
+					return entryId ? Object.assign(message, { [SESSION_CONTEXT_ENTRY_ID]: entryId }) : message;
+				});
 
 		for (const { ext, handlers } of snapshotEventHandlers(this.extensions, "context")) {
 			if (ext.path === excludeExtensionPath) continue;

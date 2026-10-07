@@ -1,3 +1,25 @@
+## 2026-10-07 - Opt-in shared transcript for non-mutating context hooks (senpi#2525)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts`: new `ContextHandlerOptions` with `mutatesMessages?: boolean`; the `context` and `context_with_system` `pi.on` overloads accept it; `Extension` gains `nonMutatingContextHandlers?: WeakSet<HandlerFn>`.
+- `packages/coding-agent/src/core/extensions/loader.ts`: `pi.on("context" | "context_with_system", handler, { mutatesMessages: false })` records the handler on the extension.
+- `packages/coding-agent/src/core/extensions/runner.ts`: `emitContext` skips the per-turn `cloneJsonValue` deep copy and shares the live transcript objects (a shallow array copy only) when every `context` and `context_with_system` handler about to run, honoring `excludeExtensionPath`, declared `mutatesMessages: false`. Any undeclared handler keeps the historical behavior: one deep clone up front. Entry-id tagging is unchanged: originals resolve through the existing WeakMap, and messages derived by pipeline stages keep identity through `inheritSessionContextEntryId`.
+
+### Why
+
+senpi#2525: the per-turn deep clone of the whole context cost about 27% of a turn's run-loop time on a 10k-message uncompacted session. Handlers that only read or return new objects pay for isolation they never use; the declaration lets them share the transcript, while any undeclared handler forces the clone back on for everyone.
+
+### Why an extension could not handle it
+
+The clone decision is made by the runner before any handler runs; no extension API can observe or change how the host passes `event.messages`.
+
+### Expected merge conflict zones
+
+- `types.ts`: the `pi.on` overload block and the `Extension` handler-registry fields.
+- `loader.ts`: the `on()` registration body.
+- `runner.ts`: the `emitContext` prologue.
+
 ## 2026-10-07 - An extension's model switch names the extension (senpi#2870)
 
 ### What changed
