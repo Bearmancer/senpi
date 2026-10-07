@@ -219,15 +219,26 @@ export class RetryFallbackController {
 		if (current && reason === "transient") this.noteHealthFailure(current.model, current.thinkingLevel, failure);
 		const limit = usageLimitScope(failure.errorMessage);
 		if (current) this.unusable.note(current.model, failure);
-		const candidate = this.nextCandidate(false, true);
+		let candidate = this.nextCandidate(false, true);
 		if (!current || !candidate) return false;
 		const currentBase = formatSelector(current.model);
 		if (reason === "transient" || reason === "hard-error" || reason === "billing") {
 			this.deps.cooldowns.note(currentBase, failure);
 			this.deps.logger.info("cooldown_noted", { selector: currentBase, errorMessage: failure.errorMessage });
 		}
-		await this.applyCandidate(current, candidate, reason, limit);
-		return true;
+		// A rung the switch itself refuses does not end the walk: the next rung may fit (senpi#2894).
+		while (candidate) {
+			try {
+				await this.applyCandidate(current, candidate, reason, limit);
+				return true;
+			} catch (error) {
+				if (!this.deps.isCandidateRefusal?.(error)) throw error;
+				this.triedSelectors.add(baseSelector(candidate.selector));
+				this.skip(formatSelector(candidate.model), "refused");
+			}
+			candidate = this.nextCandidate(false, true);
+		}
+		return false;
 	}
 
 	private async applyCandidate(
