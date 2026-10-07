@@ -39,7 +39,11 @@ import {
 	sessionEntryToContextMessages,
 } from "../session-manager.ts";
 import type { CompactionSettings as BaseCompactionSettings } from "./compaction-settings.ts";
-import { collectMessageEstimateFingerprint, estimateFingerprintsEqual } from "./estimate-cache-key.ts";
+import {
+	collectMessageEstimateFingerprint,
+	estimateFingerprintsEqual,
+	isTransientMessage,
+} from "./estimate-cache-key.ts";
 
 export type CompactionSettings = BaseCompactionSettings & {
 	/** Optional "provider/model" override for the compaction summarization model. */
@@ -437,6 +441,7 @@ function estimateTextAndImageContentChars(content: string | readonly (TextConten
  * re-estimates.
  */
 export function estimateTokens(message: AgentMessage): number {
+	if (isTransientMessage(message)) return computeEstimateTokens(message);
 	const fingerprint = collectMessageEstimateFingerprint(message);
 	const cached = tokenEstimateCache.get(message);
 	if (cached !== undefined && estimateFingerprintsEqual(cached.fingerprint, fingerprint)) {

@@ -16,6 +16,7 @@ import type { KeyId } from "@earendil-works/pi-tui";
 import { getAgentDir } from "../../config.ts";
 import { type Theme, theme } from "../../modes/interactive/theme/theme.ts";
 import { stripAnsi } from "../../utils/ansi.ts";
+import { markTransientMessage } from "../compaction/estimate-cache-key.ts";
 import type { ResourceDiagnostic } from "../diagnostics.ts";
 import type { DiscoveredResourceEntry } from "../discovered-resource-scope.ts";
 import { createEventBus, type EventBus, EXTENSION_RPC_EVENT_CHANNEL, type ExtensionRpcEvent } from "../event-bus.ts";
@@ -1988,7 +1989,10 @@ export class ExtensionRunner {
 			? messages.slice()
 			: cloneJsonValue(messages).map((message, index) => {
 					const entryId = getSessionContextEntryId(messages[index]!);
-					return entryId ? Object.assign(message, { [SESSION_CONTEXT_ENTRY_ID]: entryId }) : message;
+					// A per-turn clone never repeats, so the estimators skip their caches for it.
+					return markTransientMessage(
+						entryId ? Object.assign(message, { [SESSION_CONTEXT_ENTRY_ID]: entryId }) : message,
+					);
 				});
 
 		for (const { ext, handlers } of contextHandlers) {

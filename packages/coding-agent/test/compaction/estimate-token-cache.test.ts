@@ -1,6 +1,7 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import { describe, expect, it } from "vitest";
+import { markTransientMessage } from "../../src/core/compaction/estimate-cache-key.ts";
 import { estimateTokens } from "../../src/core/compaction/index.ts";
 import { estimateTotalTokens } from "../../src/core/extensions/builtin/compaction/overflow-retry.ts";
 import { ResidentStringStore } from "../../src/core/session-resident-store.ts";
@@ -95,5 +96,16 @@ describe("per-message token estimate cache (senpi#2525)", () => {
 
 		store.materializeInPlace(message);
 		expect(estimateTokens(message)).toBe(baseline);
+	});
+
+	it("estimates a per-turn clone correctly, including after an in-place change (the uncached M1 path)", () => {
+		const message = markTransientMessage(textMessage(prose(4000)));
+		expect(estimateTokens(message)).toBe(1000);
+		expect(estimateTotalTokens([message])).toBe(1000);
+
+		firstBlock(message).text = prose(2000);
+
+		expect(estimateTokens(message)).toBe(500);
+		expect(estimateTotalTokens([message])).toBe(500);
 	});
 });

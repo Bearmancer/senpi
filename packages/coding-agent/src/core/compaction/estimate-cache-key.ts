@@ -19,3 +19,20 @@ export function collectMessageEstimateFingerprint(message: AgentMessage): string
 export function estimateFingerprintsEqual(left: string | undefined, right: string | undefined): boolean {
 	return left !== undefined && left === right;
 }
+
+/**
+ * Messages that exist for one request only: the runner's per-turn deep clone when a `context` handler has
+ * not declared `mutatesMessages: false`. Each clone is a fresh object every turn, so an estimate cache keyed
+ * on it can never hit; the estimators compute such messages directly instead of paying for a key and a
+ * cache entry (review of senpi#2884, M1).
+ */
+const transientMessages = new WeakSet<object>();
+
+export function markTransientMessage(message: AgentMessage): AgentMessage {
+	transientMessages.add(message);
+	return message;
+}
+
+export function isTransientMessage(message: AgentMessage): boolean {
+	return transientMessages.has(message);
+}

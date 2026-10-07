@@ -2,6 +2,7 @@ import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import {
 	collectMessageEstimateFingerprint,
 	estimateFingerprintsEqual,
+	isTransientMessage,
 } from "../../../compaction/estimate-cache-key.ts";
 import { estimateTokens } from "../../../compaction/index.ts";
 
@@ -55,6 +56,7 @@ function cjkExtraChars(text: string): number {
  * serialization the scan needs anyway, so a miss costs nothing extra.
  */
 function estimateWireTokens(message: AgentMessage): number {
+	if (isTransientMessage(message)) return computeWireTokens(message, collectMessageEstimateFingerprint(message));
 	const fingerprint = collectMessageEstimateFingerprint(message);
 	const cached = wireEstimateCache.get(message);
 	if (cached !== undefined && estimateFingerprintsEqual(cached.fingerprint, fingerprint)) {
