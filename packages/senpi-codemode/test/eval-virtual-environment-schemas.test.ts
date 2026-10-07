@@ -1,11 +1,14 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { virtualEvalSchema } from "../src/bridges/eval-virtual-schemas.ts";
+import { virtualEvalSchema, virtualEvalSchemaNames } from "../src/bridges/eval-virtual-schemas.ts";
 
 const SRC = join(import.meta.dirname, "..", "src");
 const DOCUMENTED_CODE = /\b(environment_[a-z_]+|eval_isolate_[a-z_]+)\b/g;
-const EMITTED_CODE = /"(environment_[a-z_]+|eval_isolate_[a-z_]+)"|(environment_[a-z_]+|eval_isolate_[a-z_]+): /g;
+const CODE = "(?:environment|eval_isolate)_[a-z_]+";
+// A raise or a mapping writes the code as a string literal (or as the prefix of a message); a comparison, a switch
+// case or a type-union member only reads it and does not count.
+const LITERAL_CODE = new RegExp(`(===|!==|\\bcase|\\|)?\\s*["'\`](${CODE})(?:["'\`]|: )`, "g");
 
 function sourceFiles(dir: string): string[] {
 	return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
@@ -15,15 +18,16 @@ function sourceFiles(dir: string): string[] {
 	});
 }
 
-// A code counts as emitted when the source constructs an error with it, maps to it, or writes it as a message prefix;
-// a name that only appears in a type union (declared, never raised) does not count.
+function withoutComments(source: string): string {
+	return source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:"'`])\/\/.*$/gm, "$1");
+}
+
 function emittedCodes(): Set<string> {
 	const codes = new Set<string>();
 	for (const file of sourceFiles(SRC)) {
 		if (file.endsWith("eval-environment-schemas.ts")) continue;
-		for (const line of readFileSync(file, "utf8").split("\n")) {
-			if (/^\s*\|\s*"/.test(line)) continue;
-			for (const match of line.matchAll(EMITTED_CODE)) codes.add(match[1] ?? match[2] ?? "");
+		for (const match of withoutComments(readFileSync(file, "utf8")).matchAll(LITERAL_CODE)) {
+			if (match[1] === undefined && match[2] !== undefined) codes.add(match[2]);
 		}
 	}
 	return codes;
@@ -31,15 +35,16 @@ function emittedCodes(): Set<string> {
 
 function entry(name: string): { readonly name: string; readonly description: string; readonly parameters: unknown } {
 	const found = virtualEvalSchema(name);
-	if (found === undefined || !("name" in found)) throw new Error(`${name} is not a named schema entry`);
-	return found;
+	if (found === undefined || !("name" in found) || found.description === undefined)
+		throw new Error(`${name} is not a documented schema entry`);
+	return { name: found.name, description: found.description, parameters: found.parameters };
 }
 
 describe("tool_schema('eval:*') virtual entries", () => {
 	it("are exactly the five documented names", () => {
-		for (const name of ["eval:wait", "eval:helpers", "eval:kernel-tools", "eval:environments", "eval:isolation"]) {
-			expect(entry(name).name).toBe(name);
-		}
+		const names = ["eval:wait", "eval:helpers", "eval:kernel-tools", "eval:environments", "eval:isolation"];
+		expect([...virtualEvalSchemaNames()].sort()).toEqual([...names].sort());
+		for (const name of names) expect(entry(name).name).toBe(name);
 		expect(virtualEvalSchema("eval:environment")).toBeUndefined();
 		expect(virtualEvalSchema("eval:isolate")).toBeUndefined();
 	});
@@ -60,7 +65,12 @@ describe("tool_schema('eval:*') virtual entries", () => {
 
 	it("document isolate, its refusals and the sandbox limits", () => {
 		const { description } = entry("eval:isolation");
-		for (const text of ["isolate: true", "sandbox.enabled", "eval_isolate_invalid", "SENPI_CODEMODE_SANDBOX_MEMORY_MB"]) {
+		for (const text of [
+			"isolate: true",
+			"sandbox.enabled",
+			"eval_isolate_invalid",
+			"SENPI_CODEMODE_SANDBOX_MEMORY_MB",
+		]) {
 			expect(description).toContain(text);
 		}
 	});
@@ -72,5 +82,12 @@ describe("tool_schema('eval:*') virtual entries", () => {
 			expect(documented.length).toBeGreaterThan(0);
 			expect(documented.filter((code) => code !== undefined && !emitted.has(code))).toEqual([]);
 		}
+	});
+
+	it("keep each code in the entry that owns it", () => {
+		const environmentCodes = [...entry("eval:environments").description.matchAll(DOCUMENTED_CODE)].map((m) => m[1]);
+		const isolationCodes = [...entry("eval:isolation").description.matchAll(DOCUMENTED_CODE)].map((m) => m[1]);
+		expect(environmentCodes.every((code) => code?.startsWith("environment_"))).toBe(true);
+		expect(isolationCodes.every((code) => code?.startsWith("eval_isolate_"))).toBe(true);
 	});
 });

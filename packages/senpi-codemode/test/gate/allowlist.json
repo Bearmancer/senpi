@@ -1200,7 +1200,8 @@
 				"legacyContracts/test/eval-virtual-environment-schemas.test.ts/tool_schema('eval:*') virtual entries are exactly the five documented names",
 				"legacyContracts/test/eval-virtual-environment-schemas.test.ts/tool_schema('eval:*') virtual entries document the magics, %load and the environment modes",
 				"legacyContracts/test/eval-virtual-environment-schemas.test.ts/tool_schema('eval:*') virtual entries document isolate, its refusals and the sandbox limits",
-				"legacyContracts/test/eval-virtual-environment-schemas.test.ts/tool_schema('eval:*') virtual entries name only error codes the source actually emits"
+				"legacyContracts/test/eval-virtual-environment-schemas.test.ts/tool_schema('eval:*') virtual entries name only error codes the source actually emits",
+				"legacyContracts/test/eval-virtual-environment-schemas.test.ts/tool_schema('eval:*') virtual entries keep each code in the entry that owns it"
 			],
 			"reason": "Plan row 37 (F4/F5 shortfall, IS-3): the eval:environments and eval:isolation virtual tool_schema entries, a module the extension and first kernel load, and their contract tests. Additive only; no prompt cell changes."
 		}
