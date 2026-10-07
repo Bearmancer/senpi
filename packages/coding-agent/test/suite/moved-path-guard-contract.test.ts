@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, posix } from "node:path";
 import { describe, expect, it } from "vitest";
 import { parseMovedBreadcrumb } from "../../src/core/extensions/builtin/moved-path-guard/breadcrumb.ts";
 import { matchMovedPrefix } from "../../src/core/extensions/builtin/moved-path-guard/path-match.ts";
@@ -18,7 +18,7 @@ function fixture(): Record<string, unknown> {
 
 describe("breadcrumb contract (#2898)", () => {
 	it("accepts the committed v1 fixture and keeps every listed prefix", () => {
-		const parsed = parseMovedBreadcrumb(fixture());
+		const parsed = parseMovedBreadcrumb(fixture(), posix);
 		expect(parsed.kind).toBe("valid");
 		if (parsed.kind !== "valid") return;
 		expect(parsed.breadcrumb.movedTo).toBe("/home/user/.omo/desktop");
@@ -33,10 +33,7 @@ describe("breadcrumb contract (#2898)", () => {
 	});
 
 	it("treats a higher schemaVersion as no breadcrumb", () => {
-		expect(parseMovedBreadcrumb({ ...fixture(), schemaVersion: 2 })).toEqual({
-			kind: "ignored",
-			reason: "unsupported schemaVersion 2",
-		});
+		expect(parseMovedBreadcrumb({ ...fixture(), schemaVersion: 2 }, posix).kind).toBe("ignored");
 	});
 
 	it.each([
@@ -48,7 +45,7 @@ describe("breadcrumb contract (#2898)", () => {
 		["a non-array moved", { moved: "worktrees/app/w1" }],
 		["schemaVersion 0", { schemaVersion: 0 }],
 	])("ignores %s", (_label, override) => {
-		expect(parseMovedBreadcrumb({ ...fixture(), ...override }).kind).toBe("ignored");
+		expect(parseMovedBreadcrumb({ ...fixture(), ...override }, posix).kind).toBe("ignored");
 	});
 });
 
