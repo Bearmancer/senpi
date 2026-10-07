@@ -18,6 +18,26 @@ Session persistence and the mirror are core state.
 
 - `SessionManager.appendMessage` / `_appendEntry`, and the failed-turn notes in `AgentSession`'s `agent_end` handling.
 
+## 2026-10-08 - A fallback rung the context-window guard refuses no longer ends the chain (senpi#2894)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: the retry-fallback controller is wired with `isCandidateRefusal: (error) => error instanceof ModelUsabilityBudgetError`, so the controller can tell a candidate the switch refused (its window cannot hold the session even after the #1880 slice repair) from a real failure.
+- `packages/coding-agent/src/core/retry-fallback/controller.ts` / `controller-types.ts`: `tryFallback` walks the chain. When `switchModel` throws a candidate refusal, that rung is marked tried and the next usable rung is applied in the same call. Any other error still propagates. When no rung is left, `tryFallback` returns `false` with `exhaustedChainKey` set, so the session's existing exhaustion path emits `retry_fallback_exhausted`.
+
+### Why
+
+A child on a long transcript hit a usage limit. Its next rung (a 200k-window model) was refused by the context-window guard, and the retry wrapper in `agent-session.ts` turned that refusal into "no candidate": later rungs, including one whose window could hold the session, were never tried, and no exhaustion event was emitted. The turn ended on the original usage-limit error.
+
+### Why an extension could not handle it
+
+The chain walk, the tried-selector set and the exhaustion signal are owned by the core retry path (`RetryFallbackController` driven from `AgentSession`'s retry handler). An extension sees the refusal only after the retry has already given up.
+
+### Expected merge conflict zones
+
+- `agent-session.ts`: the `RetryFallbackController` construction (the `switchModel` / `emit` deps block).
+- `retry-fallback/controller.ts`: `tryFallback`.
+
 ## 2026-10-07 - Every model switch records its source (senpi#2870)
 
 ### What changed
