@@ -1,5 +1,6 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import { copyContextProvenance } from "@earendil-works/pi-ai";
+import { markTransientMessage } from "../../../compaction/estimate-cache-key.ts";
 import { type CompactionPreparation, estimateTokens } from "../../../compaction/index.ts";
 import { inheritSessionContextEntryId } from "../../../session-manager.ts";
 import type { BeforeAgentStartEventResult } from "../../types.ts";
@@ -114,7 +115,9 @@ export function admitContextToolResults(
 		}
 
 		const textTokens = message.content.map((part) =>
-			part.type === "text" ? estimateTokens({ role: "user", content: part.text, timestamp: 0 }) : 0,
+			part.type === "text"
+				? estimateTokens(markTransientMessage({ role: "user", content: part.text, timestamp: 0 }))
+				: 0,
 		);
 		const totalTextTokens = textTokens.reduce((total, tokens) => total + tokens, 0);
 		const capTokens = resolveToolResultAdmissionCapTokens(contextWindow);
@@ -134,7 +137,9 @@ export function admitContextToolResults(
 			const budget = Math.floor((remainingBudget * partTokens) / Math.max(1, remainingOversizedTokens));
 			const admitted = admitToolResultWithinBudget(part.text, budget);
 			remainingOversizedTokens -= partTokens;
-			remainingBudget -= estimateTokens({ role: "user", content: admitted.text, timestamp: 0 });
+			remainingBudget -= estimateTokens(
+				markTransientMessage({ role: "user", content: admitted.text, timestamp: 0 }),
+			);
 			if (!admitted.projected) return part;
 			projected = true;
 			return { ...part, text: admitted.text };
