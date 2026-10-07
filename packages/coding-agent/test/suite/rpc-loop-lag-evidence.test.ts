@@ -82,7 +82,7 @@ describe("loop lag evidence files", () => {
 
 		for (let tick = 0; tick <= 10; tick += 1) {
 			watchdog.tick();
-			// Each write settles before the next tick, so the in-flight guard never hides a write.
+			// Lets the injected write settle before the next tick, so the in-flight guard is not what spaces the beats.
 			await Promise.resolve();
 			clock += LOOP_LAG_TICK_MS;
 		}
