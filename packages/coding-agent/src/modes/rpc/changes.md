@@ -314,21 +314,21 @@ The launch commands in `packages/coding-agent/src/modes/rpc/host-launch.ts` and 
 ### What changed
 
 - `packages/coding-agent/src/modes/rpc/host-daemon-registration.ts`: `releaseGeneration` takes `superseded`; a superseded generation removes only its own generation directory and never reads or removes the pointer or `settings.json`.
-- `packages/coding-agent/src/modes/rpc/host-lifecycle-drain.ts`, `packages/coding-agent/src/modes/rpc/host-lifecycle-shutdown.ts`: the supervisor records a `replaced` supersession loss (`SupervisorState.endpointReplaced`, wired from `host-lifecycle.ts`) and releases as superseded on shutdown. An `absent` loss, an idle exit and a drain-stop release exactly as before.
+- `packages/coding-agent/src/modes/rpc/host-lifecycle.ts`: the supervisor records a `replaced` supersession loss and releases as superseded on shutdown. An `absent` loss, an idle exit and a drain-stop release exactly as before.
 - `packages/coding-agent/src/modes/rpc/host-handoff.ts`, `packages/coding-agent/src/modes/rpc/host-successor.ts`: test-only `_test.beforeRegistration` hook between the successor's answer and the pointer move.
 
 ### Why
 
-- `packages/coding-agent/src/modes/rpc/host-daemon-registration.ts`, `packages/coding-agent/src/modes/rpc/host-lifecycle-drain.ts`, `packages/coding-agent/src/modes/rpc/host-lifecycle-shutdown.ts`: a predecessor that noticed the successor's rename before the handoff moved the pointer read "the pointer is mine" and removed it and `settings.json` (already the successor's). Landing just after the handoff's pointer move, that removal left the successor serving with no registration, and an ensure reused it reporting `pid: 0`. The check-then-remove crosses processes and cannot be made atomic, so the replaced generation must not touch state that belongs to its replacer (I3).
+- `packages/coding-agent/src/modes/rpc/host-daemon-registration.ts`, `packages/coding-agent/src/modes/rpc/host-lifecycle.ts`: a predecessor that noticed the successor's rename before the handoff moved the pointer read "the pointer is mine" and removed it and `settings.json` (already the successor's). Landing just after the handoff's pointer move, that removal left the successor serving with no registration, and an ensure reused it reporting `pid: 0`. The check-then-remove crosses processes and cannot be made atomic, so the replaced generation must not touch state that belongs to its replacer (I3).
 
 ### Why an extension could not handle it
 
-- `packages/coding-agent/src/modes/rpc/host-daemon-registration.ts`, `packages/coding-agent/src/modes/rpc/host-lifecycle-drain.ts`, `packages/coding-agent/src/modes/rpc/host-lifecycle-shutdown.ts`, `packages/coding-agent/src/modes/rpc/host-handoff.ts`, `packages/coding-agent/src/modes/rpc/host-successor.ts`: the supervisor's shutdown and the handoff's registration run in the host process lifecycle, before and outside any extension runtime.
+- `packages/coding-agent/src/modes/rpc/host-daemon-registration.ts`, `packages/coding-agent/src/modes/rpc/host-lifecycle.ts`, `packages/coding-agent/src/modes/rpc/host-handoff.ts`, `packages/coding-agent/src/modes/rpc/host-successor.ts`: the supervisor's shutdown and the handoff's registration run in the host process lifecycle, before and outside any extension runtime.
 
 ### Expected merge conflict zones
 
 - `packages/coding-agent/src/modes/rpc/host-daemon-registration.ts`: `releaseGeneration` signature and its early return.
-- `packages/coding-agent/src/modes/rpc/host-lifecycle-drain.ts`: `drainOnPublicSocketLoss`'s supersession watch callback. `packages/coding-agent/src/modes/rpc/host-lifecycle-shutdown.ts`: `SupervisorState.endpointReplaced` and `performShutdown`'s release call.
+- `packages/coding-agent/src/modes/rpc/host-lifecycle.ts`: the drain state declarations, the supersession watch callback and `performShutdown`'s release call.
 - `packages/coding-agent/src/modes/rpc/host-handoff.ts`, `packages/coding-agent/src/modes/rpc/host-successor.ts`: the `_test` options and the line before `writeHostRegistration`.
 
 ## 2026-10-02 - Host stops are attributable, and a stalled host is waited for instead of replaced or killed
