@@ -3173,7 +3173,7 @@ export class AgentSession {
 					event.message.role === "toolResult"
 				) {
 					// Regular LLM message - persist as SessionMessageEntry
-					entryId = this.sessionManager.appendMessage(event.message);
+					entryId = this.sessionManager.appendOwnedMessage(event.message);
 					this._emitEntryAppended(entryId);
 					this._incrementMessageRevision();
 					this.externalAdmission.observePersisted(event.message);

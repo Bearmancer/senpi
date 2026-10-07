@@ -2041,6 +2041,12 @@ export class ExtensionRunner {
 			}
 		}
 
+		// The entry id rides on this request's clones only while hooks run; it is never sent to a provider.
+		for (const message of currentMessages) {
+			if (Object.hasOwn(message, SESSION_CONTEXT_ENTRY_ID)) {
+				delete (message as AgentMessage & { [SESSION_CONTEXT_ENTRY_ID]?: string })[SESSION_CONTEXT_ENTRY_ID];
+			}
+		}
 		return currentMessages;
 	}
 

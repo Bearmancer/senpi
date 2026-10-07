@@ -1640,6 +1640,19 @@ export class SessionManager {
 	 * These need to be appended via appendCompaction() and appendBranchSummary() methods.
 	 */
 	appendMessage(message: Message | CustomMessage | BashExecutionMessage): string {
+		return this._appendMessage(message, false);
+	}
+
+	/**
+	 * `appendMessage` for a message the session's own agent produced and never changes after it is
+	 * persisted (senpi#2537). The mirror holds that object instead of a JSON copy, so the turn is resident
+	 * once. `appendMessage` keeps the copy: a caller may still change its object after appending.
+	 */
+	appendOwnedMessage(message: Message | CustomMessage | BashExecutionMessage): string {
+		return this._appendMessage(message, true);
+	}
+
+	private _appendMessage(message: Message | CustomMessage | BashExecutionMessage, owned: boolean): string {
 		const entry: SessionMessageEntry = {
 			type: "message",
 			id: generateId(this.idsInUse),
@@ -1647,7 +1660,7 @@ export class SessionManager {
 			timestamp: new Date().toISOString(),
 			message,
 		};
-		this._appendEntry(entry, message);
+		this._appendEntry(entry, owned ? message : undefined);
 		const order = this.entryOrdersById.get(entry.id);
 		if (order !== undefined) {
 			this.messageEntryPositions.set(message, { entryId: entry.id, order });
