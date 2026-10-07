@@ -1726,6 +1726,7 @@ export abstract class TuiBase extends Container {
 		// for an external editor or a suspend in the middle of a turn must not drop it.
 		this.#scrollbackStale = false;
 		this.#scrollbackCatchUpPending = false;
+		this.#muxViewportRepaintPending = false;
 		this.renderRequested = false;
 		this.inputRenderPending = false;
 		this.cancelRenderTimer();
@@ -3097,7 +3098,13 @@ export abstract class TuiBase extends Container {
 			this.#muxViewportRepaintPending = false;
 			if (preserveMuxScrollback && !heightChanged) {
 				logRedraw("multiplexer pane focus regained");
-				if (!this.renderMuxViewportRepaint(newLines, rawLines, cursorPos, width, height, prevViewportTop)) {
+				// A frame queued before the focus event may have grown the content: follow it exactly as an
+				// ordinary frame does, so rows added below (the editor, the status line) stay on screen.
+				const focusViewportTop = Math.min(
+					Math.max(0, newLines.length - height),
+					Math.max(0, prevViewportTop + newLines.length - this.previousLines.length),
+				);
+				if (!this.renderMuxViewportRepaint(newLines, rawLines, cursorPos, width, height, focusViewportTop)) {
 					fullRender(true, false);
 				}
 				return;

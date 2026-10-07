@@ -86,6 +86,8 @@ describe("TUI multiplexer scrollback preservation", () => {
 
 		const writes = terminal.getWrites();
 		// senpi#1704: a screen clear plus a re-emission of the whole buffer flooded the pane's history.
+		// A real pane re-wraps its own screen on a width change, which the headless terminal here does not
+		// model, so the repaint is pinned by its absolute home rather than by re-wrapped screen contents.
 		assert.ok(writes.includes(HOME), "width change homes the cursor to repaint the visible screen");
 		assert.strictEqual(countOccurrences(writes, SCREEN_CLEAR), 0, "width change must not clear the mux pane screen");
 		assert.strictEqual(countOccurrences(writes, SCROLLBACK_CLEAR), 0, "width change must not clear mux pane history");
@@ -328,6 +330,86 @@ describe("TUI multiplexer scrollback preservation", () => {
 		assert.ok(!writes.includes("transcript row 0"), "rows above the viewport are not re-emitted into pane history");
 		assert.deepStrictEqual(terminal.getViewport().at(-1), "transcript row 59");
 		assertFrameBalanced(writes);
+		tui.stop();
+	});
+
+	// Review of #2882: a frame that grew the content was still pending when the focus event arrived; the
+	// repaint must show the grown bottom (the editor/status rows), not the viewport of the frame before it.
+	it("follows content a pending frame added when a tmux focus event repaints the viewport", async () => {
+		await withEnv({ TMUX: "/tmp/tmux-test,1,0" }, async () => {
+			const terminal = new LoggingVirtualTerminal(40, 6);
+			const tui = new TUI(terminal, muxOptions());
+			const component = new StaticComponent();
+			component.lines = Array.from({ length: 20 }, (_, index) => `transcript row ${index}`);
+			tui.addChild(component);
+
+			tui.start();
+			await terminal.waitForRender();
+			terminal.sendInput("\x1b[O");
+			await terminal.waitForRender();
+
+			component.lines = [...component.lines, "status row", "editor row"];
+			tui.requestRender();
+			const repaintsBefore = tui.muxViewportRepaints;
+			terminal.sendInput("\x1b[I");
+			await terminal.waitForRender();
+
+			assert.deepStrictEqual(terminal.getViewport().slice(-2), ["status row", "editor row"]);
+			assert.strictEqual(tui.muxViewportRepaints - repaintsBefore, 1, "the focus-in is one viewport repaint");
+			// The repaint records the grown frame as drawn, so the next keystroke diffs against what is on screen.
+			component.lines = [...component.lines.slice(0, -1), "editor row typed"];
+			tui.requestRender();
+			await terminal.waitForRender();
+			assert.deepStrictEqual(terminal.getViewport().slice(-2), ["status row", "editor row typed"]);
+			tui.stop();
+		});
+	});
+
+	it("repaints the visible rows on a tmux focus-in, not nothing", async () => {
+		await withEnv({ TMUX: "/tmp/tmux-test,1,0" }, async () => {
+			const terminal = new LoggingVirtualTerminal(40, 6);
+			const tui = new TUI(terminal, muxOptions());
+			const component = new StaticComponent();
+			component.lines = Array.from({ length: 20 }, (_, index) => `transcript row ${index}`);
+			tui.addChild(component);
+
+			tui.start();
+			await terminal.waitForRender();
+			terminal.clearWrites();
+
+			terminal.sendInput("\x1b[I");
+			await terminal.waitForRender();
+
+			const writes = terminal.getWrites();
+			assert.strictEqual(countOccurrences(writes, ROW_CLEAR), terminal.rows, "focus in rewrites every visible row");
+			assert.ok(writes.includes("transcript row 19"), "the bottom row is repainted");
+			tui.stop();
+		});
+	});
+
+	it("keeps a forced render inside a multiplexer a full render, not a viewport repaint", async () => {
+		const terminal = new LoggingVirtualTerminal(40, 6);
+		const tui = new TUI(terminal, muxOptions());
+		const component = new StaticComponent();
+		component.lines = Array.from({ length: 20 }, (_, index) => `transcript row ${index}`);
+		tui.addChild(component);
+
+		tui.start();
+		await terminal.waitForRender();
+		terminal.clearWrites();
+		const repaintsBefore = tui.muxViewportRepaints;
+
+		// A forced render resets every cached frame (previousWidth -1): it is not a width change to re-wrap.
+		tui.requestRender(true);
+		await terminal.waitForRender();
+
+		assert.strictEqual(tui.muxViewportRepaints, repaintsBefore, "a forced render takes the full-render path");
+		assert.strictEqual(
+			countOccurrences(terminal.getWrites(), SCROLLBACK_CLEAR),
+			0,
+			"inside a multiplexer, without 3J",
+		);
+		assert.deepStrictEqual(terminal.getViewport().at(-1), "transcript row 19");
 		tui.stop();
 	});
 });
