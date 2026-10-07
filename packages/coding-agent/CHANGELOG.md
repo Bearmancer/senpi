@@ -12,6 +12,8 @@
 
 ### Fixed
 
+- A restored `anthropic-subscription` session whose newest reply was never recorded is rebuilt instead of being resumed without any check of its Claude Code transcript ([#2858](https://github.com/code-yeongyu/senpi/issues/2858))
+
 ### Removed
 
 ## [2026.10.10-5] - 2026-10-07
