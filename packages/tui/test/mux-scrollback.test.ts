@@ -412,4 +412,30 @@ describe("TUI multiplexer scrollback preservation", () => {
 		assert.deepStrictEqual(terminal.getViewport().at(-1), "transcript row 19");
 		tui.stop();
 	});
+
+	// Review round 2 of #2882: after a shrink the viewport keeps its top, so a focus-in must not scroll the
+	// rows above it (already in the pane's history) into view a second time.
+	it("keeps the viewport top after a shrink when a tmux focus event repaints", async () => {
+		await withEnv({ TMUX: "/tmp/tmux-test,1,0" }, async () => {
+			const terminal = new LoggingVirtualTerminal(40, 6);
+			const tui = new TUI(terminal, muxOptions());
+			const component = new StaticComponent();
+			component.lines = Array.from({ length: 30 }, (_, index) => `transcript row ${index}`);
+			tui.addChild(component);
+			tui.start();
+			await terminal.waitForRender();
+			component.lines = component.lines.slice(0, 26);
+			tui.requestRender();
+			await terminal.waitForRender();
+			const afterShrink = terminal.getViewport();
+			terminal.clearWrites();
+
+			terminal.sendInput("\x1b[I");
+			await terminal.waitForRender();
+
+			assert.deepStrictEqual(terminal.getViewport(), afterShrink);
+			assert.ok(!terminal.getWrites().includes("transcript row 20"), "rows above the viewport are not re-emitted");
+			tui.stop();
+		});
+	});
 });

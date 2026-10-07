@@ -3081,12 +3081,14 @@ export abstract class TuiBase extends Container {
 
 		// Width changes always need a full re-render because wrapping changes.
 		if (widthChanged) {
+			// A width change (or a forced render) repaints everything below; a focus repaint queued in the
+			// same tick is satisfied by it.
+			this.#muxViewportRepaintPending = false;
 			logRedraw(`terminal width changed (${this.previousWidth} -> ${width})`);
 			// In a multiplexer only the re-wrapped viewport is repainted: re-emitting every line of the buffer scrolled a
 			// copy of the whole transcript into the pane's history on each width change (senpi#1704). Rows already in
 			// that history keep their old wrapping. The pane re-wrapped the screen itself, so the repaint homes there.
 			if (preserveMuxScrollback && this.previousWidth > 0) {
-				this.#muxViewportRepaintPending = false;
 				if (this.renderMuxViewportRepaint(newLines, rawLines, cursorPos, width, height, undefined, "absolute"))
 					return;
 			}
@@ -3100,10 +3102,12 @@ export abstract class TuiBase extends Container {
 				logRedraw("multiplexer pane focus regained");
 				// A frame queued before the focus event may have grown the content: follow it exactly as an
 				// ordinary frame does, so rows added below (the editor, the status line) stay on screen.
-				const focusViewportTop = Math.min(
-					Math.max(0, newLines.length - height),
-					Math.max(0, prevViewportTop + newLines.length - this.previousLines.length),
-				);
+				// After a shrink the viewport keeps its top (as the deleted-lines path does), so the repaint does
+				// not scroll rows already in the pane's history into view a second time.
+				const focusViewportTop =
+					newLines.length > prevViewportTop
+						? Math.max(prevViewportTop, newLines.length - height)
+						: Math.max(0, newLines.length - height);
 				if (!this.renderMuxViewportRepaint(newLines, rawLines, cursorPos, width, height, focusViewportTop)) {
 					fullRender(true, false);
 				}
