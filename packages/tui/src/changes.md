@@ -1,3 +1,27 @@
+## 2026-10-07 - Multiplexer focus events and width changes repaint the viewport only (senpi#1704)
+
+### What changed
+
+- `packages/tui/src/tui.ts`:
+  - `handleTerminalInput`: inside a multiplexer (when the mux scrollback is preserved), a focus-out event repaints nothing. A focus-in resets the capability cache, invalidates, and marks one viewport repaint (`#muxViewportRepaintPending`) instead of `requestRender(true)`, which reset every cached frame and re-emitted the whole buffer.
+  - `doRender`: a width change inside a multiplexer repaints the re-wrapped viewport through `renderMuxViewportRepaint(..., "absolute")`. The repaint homes the cursor, because the pane already re-wrapped the screen. A pending focus repaint takes the same viewport path. An image row in the viewport still falls back to the no-3J full render.
+  - `renderMuxViewportRepaint` takes a `home` argument (`relative` by default, as before).
+- `packages/tui/test/mux-scrollback.test.ts`:
+  - new: a focus event repaints at most the visible rows (and focus out nothing), and a width change rewrites only the visible rows with no screen or scrollback clear;
+  - the existing mux width-change test now asserts a home plus a viewport repaint instead of a screen clear.
+
+### Why
+
+In a tmux pane, each focus event and each width change cleared the screen and re-emitted every line of the transcript buffer. That scrolled a full copy of the transcript into the pane's history per event (about 1.7k lines each, with a ~1.9k-line transcript), evicted real history, and flashed the pane mid-replay.
+
+### Why an extension could not handle it
+
+The render path and the focus handling belong to the TUI renderer.
+
+### Expected merge conflict zones
+
+- `packages/tui/src/tui.ts`: the focus branch of `handleTerminalInput`, the `widthChanged` branch of `doRender`, and `renderMuxViewportRepaint`'s signature and homing.
+
 ## 2026-10-07 - Hold the scrollback replay while a reply streams (senpi#2836)
 
 ### What changed

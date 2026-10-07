@@ -70,7 +70,7 @@ describe("TUI multiplexer scrollback preservation", () => {
 		tui.stop();
 	});
 
-	it("emits a screen clear without clearing scrollback when width changes inside a multiplexer", async () => {
+	it("homes and repaints the viewport without a screen or scrollback clear when width changes inside a multiplexer", async () => {
 		const terminal = new LoggingVirtualTerminal(40, 6);
 		const tui = new TUI(terminal, muxOptions());
 		const component = new StaticComponent();
@@ -85,8 +85,11 @@ describe("TUI multiplexer scrollback preservation", () => {
 		await terminal.waitForRender();
 
 		const writes = terminal.getWrites();
-		assert.ok(writes.includes(SCREEN_CLEAR + HOME), "width change should clear and home the visible screen");
+		// senpi#1704: a screen clear plus a re-emission of the whole buffer flooded the pane's history.
+		assert.ok(writes.includes(HOME), "width change homes the cursor to repaint the visible screen");
+		assert.strictEqual(countOccurrences(writes, SCREEN_CLEAR), 0, "width change must not clear the mux pane screen");
 		assert.strictEqual(countOccurrences(writes, SCROLLBACK_CLEAR), 0, "width change must not clear mux pane history");
+		assert.deepStrictEqual(terminal.getViewport().slice(0, 3), ["alpha", "beta", "gamma"]);
 		assertFrameBalanced(writes);
 		tui.stop();
 	});
@@ -270,5 +273,61 @@ describe("TUI multiplexer scrollback preservation", () => {
 		assert.strictEqual(injected.tui.fullRedraws, baseline.tui.fullRedraws);
 		baseline.tui.stop();
 		injected.tui.stop();
+	});
+
+	// senpi#1704: a tmux focus event and a pane width change re-emitted the WHOLE transcript buffer, flooding the pane's
+	// history with a copy of it per event. Inside a multiplexer only the viewport is repainted.
+	it("repaints only the viewport on a tmux focus event, and nothing at all on focus out", async () => {
+		await withEnv({ TMUX: "/tmp/tmux-test,1,0" }, async () => {
+			const terminal = new LoggingVirtualTerminal(40, 6);
+			const tui = new TUI(terminal, muxOptions());
+			const component = new StaticComponent();
+			component.lines = Array.from({ length: 60 }, (_, index) => `transcript row ${index}`);
+			tui.addChild(component);
+
+			tui.start();
+			await terminal.waitForRender();
+			terminal.clearWrites();
+
+			terminal.sendInput("\x1b[O");
+			await terminal.waitForRender();
+			assert.strictEqual(terminal.getWrites(), "", "focus out repaints nothing: the pane is not visible");
+
+			terminal.sendInput("\x1b[I");
+			await terminal.waitForRender();
+			const writes = terminal.getWrites();
+			assert.strictEqual(countOccurrences(writes, SCREEN_CLEAR), 0, "focus in must not clear the screen");
+			assert.ok(
+				countOccurrences(writes, ROW_CLEAR) <= terminal.rows,
+				`focus in repaints at most the visible rows, not the ${component.lines.length}-row transcript`,
+			);
+			assert.ok(!writes.includes("transcript row 0\r"), "rows above the viewport are not re-emitted");
+			assertFrameBalanced(writes);
+			tui.stop();
+		});
+	});
+
+	it("repaints only the re-wrapped viewport when the pane width changes inside a multiplexer", async () => {
+		const terminal = new LoggingVirtualTerminal(40, 6);
+		const tui = new TUI(terminal, muxOptions());
+		const component = new StaticComponent();
+		component.lines = Array.from({ length: 60 }, (_, index) => `transcript row ${index}`);
+		tui.addChild(component);
+
+		tui.start();
+		await terminal.waitForRender();
+		terminal.clearWrites();
+
+		terminal.resize(36, 6);
+		await terminal.waitForRender();
+
+		const writes = terminal.getWrites();
+		assert.strictEqual(countOccurrences(writes, SCREEN_CLEAR), 0, "width change in mux must not clear the screen");
+		assert.strictEqual(countOccurrences(writes, SCROLLBACK_CLEAR), 0, "width change must not clear mux pane history");
+		assert.ok(countOccurrences(writes, ROW_CLEAR) <= terminal.rows, "only the visible rows are rewritten");
+		assert.ok(!writes.includes("transcript row 0"), "rows above the viewport are not re-emitted into pane history");
+		assert.deepStrictEqual(terminal.getViewport().at(-1), "transcript row 59");
+		assertFrameBalanced(writes);
+		tui.stop();
 	});
 });
