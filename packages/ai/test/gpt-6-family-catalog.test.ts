@@ -261,6 +261,9 @@ describe("which catalog entries carry a GPT-6 tier's window", () => {
 				"chat:openai/gpt-6-luna-decisions": 1_050_000,
 				"chat:openrouter/openai/gpt-6-luna": 1_050_000,
 				"chat:gpt-6-luna-mini": 1_050_000,
+				// Same tier name, but not a chat row: the mode tag alone has to exclude these.
+				"classifier:openai/gpt-6-luna": 1_050_000,
+				"image:gpt-6-luna": 1_050_000,
 			}),
 			"gpt-6-luna",
 		);
