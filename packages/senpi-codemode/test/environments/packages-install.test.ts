@@ -83,7 +83,7 @@ describe("packages.install() host dispatch", () => {
 			/^environment_installer_unavailable: bun\/npm installs run only in a JavaScript cell/,
 		);
 		await expect(runPackagesInstall({ manager: "pip", requirements: "probe" }, {}, undefined)).rejects.toThrow(
-			/^environment_installer_unavailable: pip installs run only in a Python cell/,
+			/^environment_installer_unavailable: pip installs need this session to have a Python interpreter/,
 		);
 	});
 

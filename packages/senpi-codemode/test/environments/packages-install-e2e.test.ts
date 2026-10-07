@@ -1,4 +1,5 @@
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -161,23 +162,27 @@ describe.skipIf(!pythonReady)("Given packages.install() in a Python cell", () =>
 	}, 180_000);
 
 	it("When the owning cell is cancelled once pip has started, then the install itself is cancelled and nothing is published", async () => {
-		const { root, wheels, environments, run, dispose } = await pythonSession();
+		const { root, environments, run, dispose } = await pythonSession();
 		try {
-			const wheel = buildWheel(wheels, "senpi_slow", "1.0");
 			const controller = new AbortController();
+			// An index that never answers keeps pip working until the cancel lands, so the test cannot race pip.
 			const pipStarted = Promise.withResolvers<void>();
+			const index = createServer(() => pipStarted.resolve());
+			await new Promise<void>((resolve) => index.listen(0, "127.0.0.1", resolve));
+			const address = index.address();
+			const port = typeof address === "object" && address !== null ? address.port : 0;
 			const installs: Promise<unknown>[] = [];
 			const original = environments.install.bind(environments);
 			environments.install = (requested, signal, onOutput) => {
-				const installing = original(requested, signal, (stream, data) => {
-					pipStarted.resolve();
-					onOutput?.(stream, data);
-				});
+				const installing = original(requested, signal, onOutput);
 				installs.push(installing);
 				return installing;
 			};
 
-			const pending = run(`packages.install("pip", ["--no-index", ${JSON.stringify(wheel)}])`, controller.signal);
+			const pending = run(
+				`packages.install("pip", ["--index-url", "http://127.0.0.1:${port}/simple", "senpi-slow"])`,
+				controller.signal,
+			);
 			await pipStarted.promise;
 			controller.abort();
 			await pending.catch(() => undefined);
@@ -185,6 +190,7 @@ describe.skipIf(!pythonReady)("Given packages.install() in a Python cell", () =>
 			await expect(installs[0]).rejects.toThrow(/^environment_install_cancelled:/);
 
 			expect(await readActiveRevision(join(root, "artifacts", "environments", "py"))).toBeUndefined();
+			await new Promise((resolve) => index.close(resolve));
 		} finally {
 			await dispose();
 		}

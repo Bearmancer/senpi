@@ -1210,7 +1210,8 @@
 				"legacyContracts/test/environments/packages-install-e2e.test.ts/Given packages.install() in a Python cell When the owning cell is cancelled once pip has started, then the install itself is cancelled and nothing is published",
 				"legacyContracts/test/environments/packages-install-runtime-wiring.test.ts/Given a session runtime with Python enabled When it is created, then the bridge's packages.install() and the %pip magics share one Python environment",
 				"legacyContracts/test/environments/packages-install.test.ts/packages.install() host dispatch passes the requirement list to the session installer as separate arguments, never re-split, and returns its receipt",
-				"legacyContracts/test/environments/packages-install.test.ts/packages.install() host dispatch validates a list with the same %pip rules, keeping markers and backslashes as written"
+				"legacyContracts/test/environments/packages-install.test.ts/packages.install() host dispatch validates a list with the same %pip rules, keeping markers and backslashes as written",
+				"legacyContracts/test/environments/py-environment.test.ts/Given a Python environment root When packages.install() passes a requirement list, then each item reaches pip as one argument: a path with a space and a marker stay intact"
 			],
 			"reason": "Plan row 38 (F4 shortfall, IS-6): the packages.install() cell helper, a module the extension and first kernel load, and its contract tests. The helper is reached through a reserved bridge tool and documented on demand; no prompt cell changes."
 		}

@@ -78,7 +78,7 @@ export async function runPackagesInstall(
 		throw new EnvironmentError(
 			"environment_installer_unavailable",
 			manager === "pip"
-				? "pip installs run only in a Python cell of a session with a Python interpreter"
+				? "pip installs need this session to have a Python interpreter"
 				: "bun/npm installs run only in a JavaScript cell",
 		);
 	}
