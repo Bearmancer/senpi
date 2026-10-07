@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { join } from "node:path";
+import { isAbsolute, join } from "node:path";
 import { parentPort, workerData } from "node:worker_threads";
 import { runWithProviderScope } from "@earendil-works/pi-ai/node/provider-scope";
 import { isBunBinary } from "../../config.ts";
@@ -138,6 +138,7 @@ async function handle(message: HostToSessionWorker): Promise<void> {
 					getDefaultSessionDir(message.profile.cwd, message.configuration.agentDir),
 					`${new Date().toISOString().replace(/[:.]/g, "-")}_${randomUUID()}.jsonl`,
 				);
+			if (!isAbsolute(path)) throw new Error("invalid_path");
 			prepared = { ...message, profile: { ...message.profile, sessionPath: canonicalSessionPath(path) } };
 			send({ type: "prepared", request: message.request, sessionPath: canonicalSessionPath(path) });
 			return;

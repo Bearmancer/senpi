@@ -30,20 +30,46 @@ export function writeBreadcrumb(oldRoot: string, body: Record<string, unknown>):
 	writeFileSync(join(oldRoot, "omo-desktop-moved.json"), `${JSON.stringify(body, null, 2)}\n`);
 }
 
+export const HOME_ID = "0199f0d4-0000-7000-8000-000000000000";
+
 export function breadcrumbBody(newRoot: string, moved: readonly string[], schemaVersion = 1): Record<string, unknown> {
 	return {
 		kind: "omo-desktop-moved",
 		schemaVersion,
 		movedTo: newRoot,
-		homeId: "0199f0d4-0000-7000-8000-000000000000",
+		homeId: HOME_ID,
 		movedAt: "2026-10-07T00:00:00.000Z",
 		byVersion: "0.0.0-test",
 		moved,
 	};
 }
 
-/** Builds the post-move layout; `breadcrumb: false` leaves the old root with no breadcrumb at all. */
-export function createMovedLayout(options: { breadcrumb?: boolean; schemaVersion?: number } = {}): MovedLayout {
+/** The desktop's ownership marker (plan section 2) that binds a breadcrumb to a real home. */
+export function writeHomeMarker(home: string, homeId: string = HOME_ID): void {
+	mkdirSync(home, { recursive: true });
+	writeFileSync(
+		join(home, "omo-desktop-home.json"),
+		`${JSON.stringify({
+			kind: "omo-desktop-data-home",
+			appId: "com.omo.desktop",
+			schemaVersion: 1,
+			homeId,
+			createdAt: "2026-10-07T00:00:00.000Z",
+			createdByVersion: "0.0.0-test",
+			createdBy: "desktop",
+			placement: "final",
+			origin: { type: "moved", from: "/elsewhere", method: "rename", ledgerMaxId: 69, proof: "ledger" },
+		})}\n`,
+	);
+}
+
+/**
+ * Builds the post-move layout. `breadcrumb: false` leaves the old root with no breadcrumb at all;
+ * `marker` controls the new home's ownership marker (default: one with the breadcrumb's homeId).
+ */
+export function createMovedLayout(
+	options: { breadcrumb?: boolean; schemaVersion?: number; marker?: "valid" | "missing" | "other-home" } = {},
+): MovedLayout {
 	const home = realpathSync(mkdtempSync(join(tmpdir(), "senpi-moved-home-")));
 	const oldRoot = join(home, ".t3");
 	const newRoot = join(home, ".omo", "desktop");
@@ -52,6 +78,8 @@ export function createMovedLayout(options: { breadcrumb?: boolean; schemaVersion
 	mkdirSync(oldRoot, { recursive: true });
 	mkdirSync(newWorktree, { recursive: true });
 	mkdirSync(newSessions, { recursive: true });
+	if (options.marker !== "missing")
+		writeHomeMarker(newRoot, options.marker === "other-home" ? "another-home" : HOME_ID);
 	if (options.breadcrumb !== false) {
 		writeBreadcrumb(oldRoot, breadcrumbBody(newRoot, [MOVED_WORKTREE, MOVED_SESSIONS], options.schemaVersion));
 	}

@@ -104,6 +104,7 @@ export class RpcSessionRegistry {
 			cwd: resolveMovedPath(requested.cwd),
 			...(requested.sessionPath ? { sessionPath: resolveMovedPath(requested.sessionPath) } : {}),
 		};
+		this.validateProfile(profile);
 		this.syncRuntimeMetadata();
 		const sessionPath = profile.sessionPath ? canonicalSessionPath(profile.sessionPath) : undefined;
 		// Taken SYNCHRONOUSLY, before any await, exactly like the path reservation below: a

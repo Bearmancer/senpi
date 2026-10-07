@@ -2,6 +2,7 @@ import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { MOVED_BREADCRUMB_FILE, type MovedBreadcrumb, parseMovedBreadcrumb } from "./breadcrumb.ts";
+import { DESKTOP_HOME_MARKER_FILE, parseDesktopHomeId } from "./home-marker.ts";
 import { currentPathPlatform, matchMovedPrefix, type PathPlatform } from "./path-match.ts";
 
 export interface MovedPath {
@@ -12,7 +13,7 @@ export interface MovedPath {
 }
 
 const MAX_HOPS = 3;
-const parsedByFile = new Map<string, { readonly stamp: string; readonly breadcrumb: MovedBreadcrumb | undefined }>();
+const jsonByFile = new Map<string, { readonly stamp: string; readonly value: unknown }>();
 
 /** Realpath of the deepest existing ancestor plus the missing tail, so every spelling of a path compares equal. */
 function canonicalPath(path: string): string {
@@ -31,8 +32,8 @@ function canonicalPath(path: string): string {
 	}
 }
 
-function readBreadcrumb(dir: string): MovedBreadcrumb | undefined {
-	const file = join(dir, MOVED_BREADCRUMB_FILE);
+/** One JSON file, re-read only when its mtime or size changed; `undefined` when it is absent or unreadable. */
+function readJsonFile(file: string): unknown {
 	let stamp: string;
 	try {
 		const stats = statSync(file);
@@ -41,17 +42,45 @@ function readBreadcrumb(dir: string): MovedBreadcrumb | undefined {
 	} catch {
 		return undefined;
 	}
-	const cached = parsedByFile.get(file);
-	if (cached?.stamp === stamp) return cached.breadcrumb;
-	let breadcrumb: MovedBreadcrumb | undefined;
+	const cached = jsonByFile.get(file);
+	if (cached?.stamp === stamp) return cached.value;
+	let value: unknown;
 	try {
-		const parsed = parseMovedBreadcrumb(JSON.parse(readFileSync(file, "utf8")));
-		if (parsed.kind === "valid") breadcrumb = parsed.breadcrumb;
-		else console.warn(`moved-path-guard: ignoring ${file}: ${parsed.reason}`);
-	} catch (error) {
-		console.warn(`moved-path-guard: ignoring ${file}: ${error instanceof Error ? error.message : String(error)}`);
+		value = JSON.parse(readFileSync(file, "utf8"));
+	} catch {
+		value = undefined;
 	}
-	parsedByFile.set(file, { stamp, breadcrumb });
+	jsonByFile.set(file, { stamp, value });
+	return value;
+}
+
+const warned = new Set<string>();
+function ignoreBreadcrumb(file: string, reason: string): undefined {
+	const key = `${file}\0${reason}`;
+	if (!warned.has(key)) {
+		warned.add(key);
+		console.warn(`moved-path-guard: ignoring ${file}: ${reason}`);
+	}
+	return undefined;
+}
+
+/**
+ * The breadcrumb in `dir`, when it is valid and bound to a real desktop home: `movedTo` lies outside `dir` and
+ * holds the desktop's ownership marker with the breadcrumb's `homeId`. The marker is immutable and its
+ * `origin.from` names only a home's first source, so a later hop cannot be checked against it; the binding is the
+ * homeId (plan section 2).
+ */
+function readTrustedBreadcrumb(dir: string, platform: PathPlatform): MovedBreadcrumb | undefined {
+	const file = join(dir, MOVED_BREADCRUMB_FILE);
+	const raw = readJsonFile(file);
+	if (raw === undefined) return undefined;
+	const parsed = parseMovedBreadcrumb(raw);
+	if (parsed.kind === "ignored") return ignoreBreadcrumb(file, parsed.reason);
+	const breadcrumb = parsed.breadcrumb;
+	if (matchMovedPrefix(canonicalPath(breadcrumb.movedTo), dir, [[]], platform))
+		return ignoreBreadcrumb(file, "movedTo is the breadcrumb's own folder or inside it");
+	if (parseDesktopHomeId(readJsonFile(join(breadcrumb.movedTo, DESKTOP_HOME_MARKER_FILE))) !== breadcrumb.homeId)
+		return ignoreBreadcrumb(file, "movedTo holds no desktop home marker with this homeId");
 	return breadcrumb;
 }
 
@@ -64,7 +93,7 @@ function movedOnce(path: string, platform: PathPlatform): MovedPath | undefined 
 	const canonical = canonicalPath(path);
 	const stop = dirname(homedir());
 	for (let dir = dirname(canonical); ; dir = dirname(dir)) {
-		const breadcrumb = readBreadcrumb(dir);
+		const breadcrumb = readTrustedBreadcrumb(dir, platform);
 		if (breadcrumb) {
 			const match = matchMovedPrefix(canonical, dir, breadcrumb.moved, platform);
 			if (match && !liveAgain(dir, match.prefix))

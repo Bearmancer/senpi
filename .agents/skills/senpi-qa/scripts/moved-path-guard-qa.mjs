@@ -26,6 +26,11 @@ function seedMovedHome(home) {
 	mkdirSync(join(newHome, WORKTREE), { recursive: true });
 	writeFileSync(join(newHome, WORKTREE, "notes.txt"), "moved content\n");
 	mkdirSync(join(newHome, "userdata", "omo-sessions"), { recursive: true });
+	// The desktop's ownership marker (plan section 2); a breadcrumb is trusted only when its home carries it.
+	writeFileSync(
+		join(newHome, "omo-desktop-home.json"),
+		`${JSON.stringify({ kind: "omo-desktop-data-home", appId: "com.omo.desktop", schemaVersion: 1, homeId: "qa-home-0001" })}\n`,
+	);
 	mkdirSync(oldHome, { recursive: true });
 	writeFileSync(
 		join(oldHome, "omo-desktop-moved.json"),

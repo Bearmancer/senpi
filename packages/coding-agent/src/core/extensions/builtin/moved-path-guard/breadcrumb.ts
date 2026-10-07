@@ -1,4 +1,4 @@
-import { posix, win32 } from "node:path";
+import path, { type PlatformPath, posix, win32 } from "node:path";
 
 /**
  * Vendored contract: the old-location breadcrumb the OmO desktop leaves at a data root it moved
@@ -11,8 +11,10 @@ export const MOVED_BREADCRUMB_KIND = "omo-desktop-moved";
 export const MOVED_BREADCRUMB_SCHEMA_VERSION = 1;
 
 export interface MovedBreadcrumb {
-	/** Absolute path of the new data root. */
+	/** Absolute, normalized path of the new data root, on this host's path rules. */
 	readonly movedTo: string;
+	/** The moved home's id; its ownership marker must carry the same one. */
+	readonly homeId: string;
 	/** The moved prefixes, relative to the breadcrumb's directory, as path segments. */
 	readonly moved: readonly (readonly string[])[];
 }
@@ -32,7 +34,13 @@ function prefixSegments(prefix: unknown): string[] | undefined {
 	return segments;
 }
 
-export function parseMovedBreadcrumb(raw: unknown): BreadcrumbParse {
+/** Absolute on the host's own rules and already normalized: no `..`, no `.`, no trailing separator. */
+function isNormalizedAbsolute(value: string, host: PlatformPath): boolean {
+	if (!host.isAbsolute(value) || host.normalize(value) !== value) return false;
+	return value === host.parse(value).root || !(value.endsWith("/") || value.endsWith(host.sep));
+}
+
+export function parseMovedBreadcrumb(raw: unknown, host: PlatformPath = path): BreadcrumbParse {
 	if (typeof raw !== "object" || raw === null) return ignored("not an object");
 	const record = raw as Record<string, unknown>;
 	if (record.kind !== MOVED_BREADCRUMB_KIND) return ignored("foreign kind");
@@ -41,8 +49,10 @@ export function parseMovedBreadcrumb(raw: unknown): BreadcrumbParse {
 		return ignored("invalid schemaVersion");
 	if (version > MOVED_BREADCRUMB_SCHEMA_VERSION) return ignored(`unsupported schemaVersion ${version}`);
 	const movedTo = record.movedTo;
-	if (typeof movedTo !== "string" || !(posix.isAbsolute(movedTo) || win32.isAbsolute(movedTo)))
-		return ignored("movedTo is not absolute");
+	if (typeof movedTo !== "string" || !isNormalizedAbsolute(movedTo, host))
+		return ignored("movedTo is not a normalized absolute path on this host");
+	const homeId = record.homeId;
+	if (typeof homeId !== "string" || homeId.length === 0) return ignored("homeId is missing");
 	if (!Array.isArray(record.moved)) return ignored("moved is not an array");
 	const moved: string[][] = [];
 	for (const prefix of record.moved) {
@@ -50,5 +60,5 @@ export function parseMovedBreadcrumb(raw: unknown): BreadcrumbParse {
 		if (!segments) return ignored(`invalid moved prefix ${JSON.stringify(prefix)}`);
 		moved.push(segments);
 	}
-	return { kind: "valid", breadcrumb: { movedTo, moved } };
+	return { kind: "valid", breadcrumb: { movedTo, homeId, moved } };
 }
