@@ -1,7 +1,7 @@
 import { Type } from "typebox";
 import { describe, expect, test } from "vitest";
 import { streamSimple } from "../src/compat.ts";
-import type { Api, Context, Model, Tool } from "../src/types.ts";
+import type { Api, AssistantMessage, Context, Model, Tool } from "../src/types.ts";
 
 class PayloadCaptured extends Error {}
 
@@ -339,5 +339,56 @@ describe("transcript system messages", () => {
 		expect(payload.tools?.map((value) => value.function?.name)).toEqual(["late_tool"]);
 		expect(payload.messages.map((message) => message.role)).toEqual(["system", "user"]);
 		expect(payload.messages[0]?.content).toBe("base prompt\n\nupdated guidance\n\n<rules>\nnew rules\n</rules>");
+	});
+});
+
+describe("a tool change before an assistant reply that converts to nothing (senpi#2864)", () => {
+	const usage = {
+		input: 0,
+		output: 0,
+		cacheRead: 0,
+		cacheWrite: 0,
+		totalTokens: 0,
+		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+	};
+	function transcript(reply: AssistantMessage["content"]): Context {
+		return {
+			messages: [
+				{ role: "system", content: "base prompt", toolsAdded: [baseTool], timestamp: 0 },
+				{ role: "user", content: "one", timestamp: 1 },
+				{ role: "system", content: "", toolsAdded: [lateTool], timestamp: 2 },
+				{
+					role: "assistant",
+					content: reply,
+					api: "anthropic-messages",
+					provider: "anthropic",
+					model: "claude-opus-5",
+					usage,
+					stopReason: "stop",
+					timestamp: 3,
+				},
+				{ role: "user", content: "two", timestamp: 4 },
+			],
+		};
+	}
+
+	test("never sends a system param directly before a user turn", async () => {
+		const payload = await capturePayload<AnthropicPayload>(anthropicNativeModel, transcript([]));
+
+		// The two user turns merge and the change ends the request: before the fix it sat between them.
+		expect(payload.messages.map((message) => message.role)).toEqual(["user", "system"]);
+		expect(payload.messages.at(-1)).toMatchObject({
+			role: "system",
+			content: [{ type: "tool_addition", tool: { name: "late_tool" } }],
+		});
+	});
+
+	test("still places the change before an assistant reply that is sent", async () => {
+		const payload = await capturePayload<AnthropicPayload>(
+			anthropicNativeModel,
+			transcript([{ type: "text", text: "done" }]),
+		);
+
+		expect(payload.messages.map((message) => message.role)).toEqual(["user", "system", "assistant", "user"]);
 	});
 });
