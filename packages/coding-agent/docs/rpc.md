@@ -1317,6 +1317,12 @@ REPORT: nothing here aborts a turn, kills a session, or refuses an `open_session
   acknowledged open waits up to 10 minutes for its response instead of the 30 s request
   deadline (a busy host was measured answering after 57 s), and a timeout after it names the
   queue position instead of a bare deadline. A lost transport still rejects at once.
+- A multi-session host sends the same `queued` record for a session-routed `prompt` the moment it receives it,
+  before the prompt's preflight runs on the session's loop (`position` counts that session's requests in flight).
+  The bundled `RpcClient` then waits up to 5 minutes for the prompt to be accepted instead of the 30 s request
+  deadline, and a timeout after it says the host received the prompt. A prompt the host never acknowledged still
+  fails at the request deadline. A reply written for a session that already closed is dropped, with one stderr
+  line naming the session.
   `SENPI_RPC_LOOP_LAG_ERROR_MS` (default 5000) additionally broadcasts a `host_stalled` record
   (`{ type, driftMs, sessionId?, tool?, processCpuMs?, heapDeltaMb? }`) to every connection, like the other content-free lifecycle records.
   `processCpuMs` is the process CPU time spent during the stalled window and `heapDeltaMb` the JS heap change across it, so a

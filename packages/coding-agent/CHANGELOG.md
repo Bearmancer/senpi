@@ -12,6 +12,8 @@
 
 ### Fixed
 
+- On a busy shared RPC host, a new child's first prompt no longer fails at 30 s and leaves the host writing into a closed session ("Provider scope is closed"): the host acknowledges the prompt on receipt and the client waits for it to be accepted, and a reply for a session that already closed is dropped ([#2871](https://github.com/code-yeongyu/senpi/issues/2871)).
+
 - TTSR no longer aborts and retries a reply of repetitive code or markup written outside a fence (SVG elements, JSON objects): code-shaped lines are left out of the near-duplicate paragraph check, and prose narration loops are still caught ([#2865](https://github.com/code-yeongyu/senpi/issues/2865)).
 
 - A restored `anthropic-subscription` session whose newest reply was never recorded is rebuilt instead of being resumed without any check of its Claude Code transcript ([#2858](https://github.com/code-yeongyu/senpi/issues/2858))

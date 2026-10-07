@@ -24,6 +24,18 @@ export const PROMPT_ACK_MAX_WAIT_MS = PROMPT_COMPACTION_DEADLINE_MS + REQUEST_DE
  */
 export const OPEN_AFTER_QUEUED_DEADLINE_MS = 10 * 60_000;
 
+/**
+ * How long a prompt the host acknowledged as received may take to be accepted. Its preflight runs on the
+ * session's loop, which on a starved shared host outlived the 30 s request deadline: the client gave up,
+ * discarded the session, and the host answered into its closed scope (senpi#2871). A lost transport still
+ * rejects at once; this only bounds a host that received the prompt and then went silent.
+ */
+export const PROMPT_AFTER_QUEUED_DEADLINE_MS = 5 * 60_000;
+
+export function promptStalledMessage(): string {
+	return `prompt was received by the host but not accepted within ${PROMPT_AFTER_QUEUED_DEADLINE_MS / 60_000} minutes`;
+}
+
 export function openStalledMessage(position: unknown): string {
 	const queued = typeof position === "number" ? ` at queue position ${position}` : "";
 	const minutes = OPEN_AFTER_QUEUED_DEADLINE_MS / 60_000;
