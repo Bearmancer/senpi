@@ -13,6 +13,8 @@
 - `packages/ai/src/auth/oauth/radius.ts`: its existing status-bearing response error extends the shared endpoint error.
 - `packages/ai/src/auth/oauth/devin-token.ts`: typed token exchange errors; Devin's no-op refresh remains unchanged.
 
+- `cursor.ts`, `xai.ts`, `radius.ts`, `kimi-coding.ts`: the cancelled/aborted errors they throw when the refresh signal aborts keep `signal.reason` as `cause`. When the shared refresh's 15 s cap fires, that reason is the `TimeoutError`, so the failure classifies transient as it does for the other providers; the message text is unchanged.
+
 ### Why
 
 HTTP status and transport causes must survive provider wrappers so token refresh can distinguish outages from expired grants without matching prose.

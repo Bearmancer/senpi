@@ -230,7 +230,7 @@ async function refreshCursorCredential(credential: OAuthCredential, signal: Abor
 			signal,
 		});
 	} catch (error) {
-		if (signal.aborted) throw new Error("Cursor token refresh cancelled");
+		if (signal.aborted) throw new Error("Cursor token refresh cancelled", { cause: signal.reason });
 		throw error;
 	}
 

@@ -49,6 +49,32 @@ describe("token endpoint HTTP error facts (#2893)", () => {
 		expect(classifyOAuthRefreshFailure(error)).toBe("permanent");
 	});
 
+	it.each([
+		["anthropic", anthropicOAuth],
+		["chatgpt-subscription", chatgptSubscriptionOAuth],
+		["cursor", cursorOAuth],
+		["github-copilot", githubCopilotOAuth],
+		["kimi-coding", kimiCodingOAuth],
+		["openai-chatgpt", openaiChatGPTOAuth],
+		["radius", createRadiusOAuth({ name: "fixture", gateway: "https://fixture.example" })],
+		["xai", xaiOAuth],
+	] satisfies [string, OAuthAuth][])("%s keeps the refresh timeout as a transient cause", async (_name, oauth) => {
+		// The shared refresh caps each exchange with AbortSignal.timeout; when it fires, fetch rejects
+		// and the provider sees an aborted signal whose reason is the TimeoutError.
+		const timedOut = new AbortController();
+		const timeout = new DOMException("The operation timed out.", "TimeoutError");
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async () => {
+				timedOut.abort(timeout);
+				throw timeout;
+			}),
+		);
+		const error = await oauth.refresh(credential, timedOut.signal).catch((error: unknown) => error);
+		expect(error).toBeInstanceOf(Error);
+		expect(classifyOAuthRefreshFailure(error)).toBe("transient");
+	});
+
 	it("Devin token exchange retains status", async () => {
 		vi.stubGlobal(
 			"fetch",

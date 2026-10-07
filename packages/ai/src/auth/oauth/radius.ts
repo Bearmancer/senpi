@@ -105,7 +105,7 @@ async function requestOAuthToken(
 		});
 	} catch (error) {
 		if (signal.aborted) {
-			throw new Error("Login cancelled");
+			throw new Error("Login cancelled", { cause: signal.reason });
 		}
 		throw error;
 	}
@@ -196,7 +196,7 @@ async function requestDeviceAuthorization(gateway: string, signal: AbortSignal):
 		});
 	} catch (error) {
 		if (signal.aborted) {
-			throw new Error("Login cancelled");
+			throw new Error("Login cancelled", { cause: signal.reason });
 		}
 		throw error;
 	}

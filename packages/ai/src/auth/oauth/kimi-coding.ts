@@ -217,7 +217,7 @@ async function refreshToken(oauthHost: string, refreshTokenValue: string, signal
 			await sleep(1000 * 2 ** (attempt - 1), signal);
 		}
 		if (signal.aborted) {
-			throw new Error("Kimi Code token refresh aborted");
+			throw new Error("Kimi Code token refresh aborted", { cause: signal.reason });
 		}
 
 		let response: Response;

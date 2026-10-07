@@ -76,7 +76,7 @@ async function postForm(url: string, fields: Record<string, string>, signal: Abo
 		});
 	} catch (error) {
 		if (signal.aborted) {
-			throw new Error("Login cancelled");
+			throw new Error("Login cancelled", { cause: signal.reason });
 		}
 		throw error;
 	}
@@ -87,7 +87,7 @@ async function postForm(url: string, fields: Record<string, string>, signal: Abo
 		body = parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as JsonObject) : {};
 	} catch {
 		if (signal.aborted) {
-			throw new Error("Login cancelled");
+			throw new Error("Login cancelled", { cause: signal.reason });
 		}
 		throw new Error(`xAI OAuth returned invalid JSON (HTTP ${response.status})`);
 	}
