@@ -83,24 +83,30 @@ describe("issue #2537: a persisted message is held once", () => {
 		expect(JSON.parse(JSON.stringify(mirrorMessages(harness)))).toEqual(reloaded);
 	});
 
-	it("keeps the JSON copy for a message that is not plain JSON", () => {
+	it.each([
+		["a Date", { when: new Date(0) }, { when: "1970-01-01T00:00:00.000Z" }],
+		["NaN", { ratio: Number.NaN }, { ratio: null }],
+		["Infinity", { ratio: Number.POSITIVE_INFINITY }, { ratio: null }],
+		["a class instance", { set: new Set([1]) }, { set: {} }],
+		["a sparse array", { list: [1, , 3] }, { list: [1, null, 3] }],
+	] as const)("keeps the JSON copy for a message holding %s", (_name, details, reloaded) => {
 		const manager = SessionManager.inMemory();
 		const message = {
 			role: "toolResult" as const,
 			toolCallId: "call-1",
 			toolName: "read",
 			content: [{ type: "text" as const, text: "ok" }],
-			details: { when: new Date(0), ratio: Number.NaN },
+			details,
 			isError: false,
 			timestamp: 1,
 		};
 		const id = manager.appendOwnedMessage(message as unknown as OwnedMessage);
 		const stored = (manager.getEntry(id) as SessionMessageEntry).message as unknown as {
 			content: unknown;
-			details: { when: unknown; ratio: unknown };
+			details: unknown;
 		};
-		// What a cold reload reads: the Date as its ISO string, NaN as null.
-		expect(stored.details).toEqual({ when: "1970-01-01T00:00:00.000Z", ratio: null });
+		// What a cold reload reads.
+		expect(stored.details).toEqual(reloaded);
 		expect(stored.content).not.toBe(message.content);
 	});
 

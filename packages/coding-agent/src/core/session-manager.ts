@@ -96,7 +96,14 @@ function isPlainJson(value: unknown, depth = 0): boolean {
 	if (depth > 64) return false;
 	if (value === null || typeof value === "string" || typeof value === "boolean") return true;
 	if (typeof value === "number") return Number.isFinite(value);
-	if (Array.isArray(value)) return value.every((item) => item !== undefined && isPlainJson(item, depth + 1));
+	if (Array.isArray(value)) {
+		// A plain loop, not every(): every() skips holes in a sparse array, which JSON turns into null.
+		for (let index = 0; index < value.length; index++) {
+			const item = value[index];
+			if (item === undefined || !isPlainJson(item, depth + 1)) return false;
+		}
+		return true;
+	}
 	if (typeof value !== "object") return false;
 	const prototype = Object.getPrototypeOf(value);
 	if (prototype !== Object.prototype && prototype !== null) return false;
