@@ -42,7 +42,7 @@ Type `/` in the editor to open command completion. Extensions can register custo
 |---------|-------------|
 | `/login`, `/logout` | Manage OAuth or API-key credentials |
 | [`/llama`](llama-cpp.md) | Download, load, and unload llama.cpp router models |
-| `/model` | Switch models; Ctrl+S in the picker saves the startup default |
+| `/model` | Switch this session's model; Ctrl+S in the picker, or `/model <id> --default`, also makes it the startup default |
 | `/thinking [level]` | Set the thinking level for this session (`/thinking high`), or open the picker with no argument; Ctrl+S in the picker saves it as the startup default |
 | `/scoped-models` | Enable/disable models for Ctrl+P cycling |
 | `/reasoning [on\|off]` | Show or toggle reasoning for the current model |

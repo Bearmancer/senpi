@@ -653,7 +653,7 @@ function createExtensionAPI(
 
 		setModel(model) {
 			assertActive();
-			return runtime.setModel(model);
+			return runtime.setModel(model, { source: "extension", actor: extension.path });
 		},
 
 		getThinkingLevel() {
@@ -668,7 +668,7 @@ function createExtensionAPI(
 
 		setSessionModel(model) {
 			runtime.assertActive();
-			return runtime.setSessionModel(model);
+			return runtime.setSessionModel(model, { source: "extension", actor: extension.path });
 		},
 
 		setSessionThinkingLevel(level) {
