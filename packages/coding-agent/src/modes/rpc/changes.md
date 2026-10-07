@@ -16,6 +16,29 @@ Attach handling belongs to the host registries.
 
 - LOW: the `permissionPreset` block of `attachToOpenSession` and of `WorkerSessionRegistry.attach`.
 
+## 2026-10-07 - A slow first prompt no longer loses its session, and a late reply into a closed session is dropped (senpi#2871)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/session-command-router.ts`: a session-routed `prompt` is acknowledged with the existing `queued` record (`for_request` = the prompt's request id) the moment the host receives it, before its preflight runs on the session's loop.
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts`, `rpc-request-deadline.ts`: a prompt's acknowledgement extends its wait to `PROMPT_AFTER_QUEUED_DEADLINE_MS` (5 min), failing with "prompt was received by the host but not accepted within 5 minutes". A prompt the host never acknowledged still fails at `REQUEST_DEADLINE_MS`; compaction still extends it as before.
+- `packages/coding-agent/src/modes/rpc/session-binding.ts`: a record written for a session whose provider scope has closed is dropped, with one stderr line naming the session, instead of throwing `Provider scope is closed`.
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: the `queued` record's doc names its second use.
+
+### Why
+
+On a long-lived shared host whose loop was starved (stalls of 1-42 s), a new child's first prompt waited longer than the client's 30 s request deadline. The client gave up and the child's session was discarded. The host then answered into the closed scope, and the throw ("Provider scope is closed", from an unawaited prompt) repeated on every such spawn until the host was restarted.
+
+### Why an extension could not handle it
+
+The request deadline is enforced by the RPC client, and the session sink is bound inside the multi-session host.
+
+### Expected merge conflict zones
+
+- The deadline map in `rpc-client.ts` `send()`.
+- The session dispatch tail of `SessionCommandRouter.dispatch`.
+- The sink in `createRpcSessionBinding`.
+
 ## 2026-10-06 - `interrupt` on a host session; model data shared with the terminal endpoint (oh-my-openagent#9660)
 
 ### What changed

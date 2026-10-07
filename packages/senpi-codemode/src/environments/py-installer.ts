@@ -125,7 +125,11 @@ export function splitShellWords(text: string, posix = process.platform !== "win3
 }
 
 export function parsePipRequirements(text: string): string[] {
-	const args = splitShellWords(text);
+	return normalizePipInstall(splitShellWords(text));
+}
+
+/** `%pip` words already split (`["install", ...]`): `packages.install()` passes its list as-is, so nothing is re-quoted. */
+export function normalizePipInstall(args: readonly string[]): string[] {
 	const command = args[0] === "install" ? args.slice(1) : undefined;
 	if (command === undefined) {
 		throw new EnvironmentError("environment_install_failed", "only `%pip install <requirements>` is supported");
