@@ -19,7 +19,7 @@ const SENPI_SESSION_ID = "senpi-session-1";
 const CWD = "/repo";
 const ASSISTANT_UUID = "uuid-a2";
 
-function persistedBinding(): ContinuityBinding {
+function persistedBinding(overrides: Partial<ContinuityBinding> = {}): ContinuityBinding {
 	return {
 		senpiSessionId: SENPI_SESSION_ID,
 		sdkSessionId: SDK_SESSION_ID,
@@ -30,6 +30,7 @@ function persistedBinding(): ContinuityBinding {
 		modelId: "claude-opus-4-5",
 		systemPromptHash: "prompt-v1",
 		toolsetHash: "tools-v1",
+		...overrides,
 	};
 }
 
@@ -197,6 +198,75 @@ describe("claude-sdk-oauth restored security", () => {
 			};
 			overrideSdkBoundary(boundary);
 			expect(await verifyRestoredTranscript(persistedBinding(), CWD, "config-dir")).toBe(false);
+		});
+
+		// senpi#2858: a binding whose newest assistant was never mapped used to skip the check entirely.
+		describe("a binding whose newest assistant boundary was never mapped", () => {
+			async function verifyUnmapped(
+				assistantUuidByIndex: readonly (readonly [number, string])[],
+				messages: SessionMessage[],
+			): Promise<boolean> {
+				overrideSdkBoundary({ getSessionMessages: async () => messages });
+				return verifyRestoredTranscript(
+					persistedBinding({ lastAssistantUuid: null, assistantUuidByIndex }),
+					CWD,
+					"oauth-slots",
+				);
+			}
+
+			it("is rejected when no boundary was ever mapped, even for a transcript of the same session", async () => {
+				expect(
+					await verifyUnmapped(
+						[],
+						[
+							sdkMessage({ type: "user", uuid: "uuid-u1", session_id: SDK_SESSION_ID }),
+							sdkMessage({ type: "assistant", uuid: "uuid-unmapped", session_id: SDK_SESSION_ID }),
+						],
+					),
+				).toBe(false);
+			});
+
+			it("is rejected when its newest mapped boundary is not in the transcript", async () => {
+				expect(
+					await verifyUnmapped(
+						[[1, "uuid-a1"]],
+						[sdkMessage({ type: "assistant", uuid: "uuid-someone-else", session_id: SDK_SESSION_ID })],
+					),
+				).toBe(false);
+			});
+
+			it("is rejected when its newest mapped boundary only appears nested under a tool use", async () => {
+				expect(
+					await verifyUnmapped(
+						[[1, "uuid-a1"]],
+						[
+							sdkMessage({
+								type: "assistant",
+								uuid: "uuid-a1",
+								session_id: SDK_SESSION_ID,
+								parent_tool_use_id: "tool-1",
+							}),
+						],
+					),
+				).toBe(false);
+			});
+
+			it("is admitted when its newest mapped boundary is a top-level assistant, with its own later turns after it", async () => {
+				expect(
+					await verifyUnmapped(
+						[
+							[1, "uuid-a1"],
+							[3, "uuid-past-the-sent-count"],
+						],
+						[
+							sdkMessage({ type: "user", uuid: "uuid-u1", session_id: SDK_SESSION_ID }),
+							sdkMessage({ type: "assistant", uuid: "uuid-a1", session_id: SDK_SESSION_ID }),
+							sdkMessage({ type: "user", uuid: "uuid-u2", session_id: SDK_SESSION_ID }),
+							sdkMessage({ type: "assistant", uuid: "uuid-unmapped", session_id: SDK_SESSION_ID }),
+						],
+					),
+				).toBe(true);
+			});
 		});
 
 		it("returns true for a matching top-level assistant", async () => {

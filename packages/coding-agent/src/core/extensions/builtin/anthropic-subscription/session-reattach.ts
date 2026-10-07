@@ -134,13 +134,19 @@ export async function verifyRestoredTranscript(
 	if (messages.length === 0 || messages.some((message) => message.session_id !== binding.sdkSessionId)) {
 		return false;
 	}
-	if (binding.lastAssistantUuid === null) return true;
-	const anchorIndex = messages.findIndex(
-		(message) =>
-			message.type === "assistant" &&
-			message.uuid === binding.lastAssistantUuid &&
-			message.parent_tool_use_id === null,
-	);
+	const isTopLevelAssistant = (message: SessionMessage, uuid: string): boolean =>
+		message.type === "assistant" && message.uuid === uuid && message.parent_tool_use_id === null;
+	if (binding.lastAssistantUuid === null) {
+		// The newest assistant was never mapped (Claude Code rejected its boundary, senpi#1958), so the
+		// binding can only be proven by the newest boundary that WAS mapped: it must be a top-level assistant
+		// of this transcript. The turns after it are the binding's own unmapped ones, so a user frame there is
+		// expected and is not an orphan. With no mapped boundary at all, nothing in the transcript proves the
+		// binding, so it is never resumed unchecked (senpi#2858): the session is rebuilt instead.
+		const proof = newestMappedBoundary(binding);
+		return proof !== undefined && messages.some((message) => isTopLevelAssistant(message, proof));
+	}
+	const anchorUuid = binding.lastAssistantUuid;
+	const anchorIndex = messages.findIndex((message) => isTopLevelAssistant(message, anchorUuid));
 	if (anchorIndex < 0) return false;
 	// A top-level user frame after the anchored assistant is a turn the SDK transcript already
 	// holds but the ledger never committed: the process died between pushing the message and
@@ -156,6 +162,16 @@ export async function verifyRestoredTranscript(
 		return false;
 	}
 	return true;
+}
+
+/** The uuid of the newest mapped assistant boundary at or below the binding's sent count (index >= 1). */
+function newestMappedBoundary(binding: ContinuityBinding): string | undefined {
+	let newest: readonly [number, string] | undefined;
+	for (const boundary of binding.assistantUuidByIndex ?? []) {
+		const [index] = boundary;
+		if (index >= 1 && index <= binding.sentCount && (newest === undefined || index > newest[0])) newest = boundary;
+	}
+	return newest?.[1];
 }
 
 async function awaitInitialization(entry: AnthropicSubscriptionSessionEntry, signal?: AbortSignal): Promise<void> {

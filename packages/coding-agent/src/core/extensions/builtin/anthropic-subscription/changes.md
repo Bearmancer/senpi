@@ -1,3 +1,21 @@
+## 2026-10-07 - A restored binding whose newest assistant was never mapped is proven before it is resumed (senpi#2858)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/session-reattach.ts`: `verifyRestoredTranscript` no longer accepts a binding with `lastAssistantUuid: null` unchecked. It looks up the newest mapped boundary in `assistantUuidByIndex` at or below `sentCount` (index >= 1), and admits the binding only when that boundary is a top-level assistant of the same session's transcript. User frames after that boundary are the binding's own unmapped turns, so they are not treated as an orphan tail. A binding with no mapped boundary at all is rejected; `admitRestoredBinding` then forgets it and the session is rebuilt.
+
+### Why
+
+- `lastAssistantUuid` is null when Claude Code rejected the newest assistant's boundary (senpi#1958). The skip let such a binding, restored after a restart or crash, plain-reattach to an SDK session the transcript never proved, because `decideFromBinding` reattaches on a prefix match. Found in the review of #2749 (senpi#2858).
+
+### Why an extension could not handle it
+
+- Restored-binding admission and the SDK transcript lookup are private to this builtin provider.
+
+### Expected merge conflict zones
+
+- LOW: the `lastAssistantUuid === null` branch of `verifyRestoredTranscript` and the new `newestMappedBoundary` helper below it.
+
 ## 2026-10-04 - `compactionOwner` provider setting (senpi default, sdk opt-out)
 
 ### What changed
