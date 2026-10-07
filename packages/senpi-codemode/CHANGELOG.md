@@ -6,6 +6,20 @@
 
 ### Added
 
+- `tool_schema("eval:environments")` and `tool_schema("eval:isolation")` document the package magics (`%pip`, `%bun`/`%npm`, `%environment`, `%load`) and isolated cells on demand, with the error codes each one raises. Nothing is added to the eval prompt or its input schema.
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.10-6] - 2026-10-07
+
+### Breaking Changes
+
+### Added
+
 ### Changed
 
 ### Fixed
