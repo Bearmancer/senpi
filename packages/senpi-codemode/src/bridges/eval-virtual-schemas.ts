@@ -1,3 +1,4 @@
+import { environmentsEntry, isolationEntry } from "./eval-environment-schemas.ts";
 import type { EvalSchemaResult } from "./schema-bridge.ts";
 
 /**
@@ -94,6 +95,8 @@ const VIRTUAL_ENTRIES: ReadonlyMap<string, EvalSchemaResult> = new Map([
 	[waitEntry.name, waitEntry],
 	[helpersEntry.name, helpersEntry],
 	[kernelToolsEntry.name, kernelToolsEntry],
+	[environmentsEntry.name, environmentsEntry],
+	[isolationEntry.name, isolationEntry],
 ]);
 
 export function virtualEvalSchema(name: string): EvalSchemaResult | undefined {
