@@ -22,7 +22,10 @@ describe("regression surface matrix", () => {
 			),
 		);
 		expect(Object.keys(surfaces.prompts).sort()).toEqual(expected.sort());
-		expect(Object.keys(surfaces.schemas).sort()).toEqual(["all", "js", "js+py"]);
+		// Each language set has its default schema and, measured separately, the shape with sandbox cells on.
+		expect(Object.keys(surfaces.schemas).sort()).toEqual(
+			["all", "all+sandbox", "js", "js+py", "js+py+sandbox", "js+sandbox"].sort(),
+		);
 		expect(surfaces.prompts["gpt/true/true/all/bun"]).toBeDefined();
 		expect(surfaces.prompts["default/false/false/js/node"]).toBeDefined();
 		expect(surfaces.prompts["gpt/true/true/all/bun/host"]).toBeDefined();

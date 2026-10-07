@@ -1,3 +1,99 @@
+## 2026-10-03 - Publish-only releases ship the full native PTY prebuild matrix (senpi#1193)
+
+### What changed
+
+- `.github/workflows/native-prebuilds.yml`: the Stage step selects each addon by name (`senpi_pty.*` / `senpi_grep.*`) instead of copying the first sorted `.node` file, and stages the PTY addon at the loader-relative `native/prebuilds/<host>/senpi_pty.<host>.node` inside the artifact while the grep addon stays flat for its own consumers.
+- `.github/workflows/publish-npm.yml`: the publish-only job downloads the same-commit native matrix into an untracked scratch root, then a new staging step copies every target's PTY addon into `packages/pty/native/prebuilds/<target>/` before packing, and passes `--require-native-prebuilds=darwin-arm64,darwin-x64,linux-x64,linux-arm64,win32-x64` to the publish script.
+- `scripts/publish.mjs`: accepts `--require-native-prebuilds=<target>[,...]` and forwards the required set to the published-workspace pack check; unknown arguments are still rejected.
+- `scripts/senpi-publish-pack-checks.mjs`: `assertPublishedWorkspacePackFiles` takes an optional `requiredNativePrebuildTargets` list and throws, naming the missing `native/prebuilds/<target>/senpi_pty.<target>.node`, when a required target is absent from the `@earendil-works/pi-pty` tarball. Targets outside the list keep the warn-only pipe-fallback behavior, so the best-effort win32-arm64 row never fails a publish.
+
+### Why
+
+- The native workflow built the six-target matrix, but the publish path never
+  consumed it: `publish.mjs` only warned about the runner's own host target, so
+  the published `@code-yeongyu/senpi-pty` tarball shipped a single committed
+  darwin-arm64 prebuild and every Linux user silently fell back to the pipe
+  backend (senpi#1193). The pack check must fail the publish when a required
+  release-built target is missing instead of warning.
+
+### Why an extension could not handle it
+
+- Native compilation, GitHub Actions artifact staging, and npm tarball
+  validation all run in release tooling before any Senpi runtime extension
+  loads.
+
+### Expected merge conflict zones
+
+- `.github/workflows/native-prebuilds.yml`: the Stage artifact step.
+- `.github/workflows/publish-npm.yml`: the download, staging, and publish steps
+  of the publish-only job.
+- `scripts/publish.mjs`: the argument parser and `validatePack`.
+- `scripts/senpi-publish-pack-checks.mjs`:
+  `assertPublishedWorkspacePackFiles` and the prebuild file maps.
+
+
+## 2026-10-03 - A release stops when a catalog regeneration drops a provider default (senpi#2645)
+
+### What changed
+
+- `scripts/release-artifacts.mjs`: new `runProviderDefaultsCheck` runs `npm --prefix packages/coding-agent run check:provider-defaults` (the "default model selection" tests in `test/model-resolver.test.ts`, with `CI=1`).
+- `scripts/release.mjs`: runs it right after `runGenerateModels`.
+- `scripts/local-release.mjs`: runs the same check right after its own `generate-models`.
+- `scripts/release-test-gate.mjs`: new `catalogChangedSinceHead(cwd)` (`git status` over `packages/ai/src/models.generated.ts` and `packages/ai/src/providers`, untracked files included). `decideTestGate` takes `catalogChanged` and never skips when it is true.
+- `scripts/release.mjs`: reads `catalogChangedSinceHead` right after the regeneration, before anything is committed, and passes it to the test gate.
+
+### Why
+
+- `scripts/release.mjs`, `scripts/local-release.mjs`, `scripts/release-artifacts.mjs`: the release regenerates the model catalog from the network and then may skip its test gate because HEAD already has a green "Check and test" run, but that run tested the pre-regeneration catalog. v2026.10.4 shipped an `nvidia` default its new catalog no longer had, and `main` went red only after the release commit. The check runs on the regenerated catalog, before anything is committed or tagged. And whenever the regeneration changed the catalog, the test gate now runs the full suite instead of trusting HEAD's pre-regeneration CI, so every regeneration-induced failure, not just a dropped default, stops the release.
+
+### Why an extension could not handle it
+
+- `scripts/release.mjs`, `scripts/local-release.mjs`, `scripts/release-artifacts.mjs`: release tooling, not runtime behavior.
+
+### Expected merge conflict zones
+
+- `scripts/release.mjs`: the step list in `main()` around `runGenerateModels`, and `runTests`.
+- `scripts/release-test-gate.mjs`: `decideTestGate`'s branch order.
+- `scripts/local-release.mjs`: the `generate-models` block.
+
+## 2026-10-03 - The changelog gate fails a PR that removes existing change-log lines (senpi#2609)
+
+### What changed
+
+- `scripts/check-pr-changelog.mjs`: for every `changes.md` tracker the PR changes, `collectPrFacts` counts the base file's non-blank lines that are missing from the head (by content, with multiplicity, so diff alignment around a prepend is not a removal), and a deleted tracker counts all of them. Any removal fails the gate, naming the file and the count. For a `CHANGELOG.md`, a base `[Unreleased]` bullet that no longer appears anywhere in the head fails the gate unless a new `[Unreleased]` bullet is recognizably its edited form, one for one: it cites every issue/PR the old bullet cited (a credit or a reword keeps those), or it starts with the old bullet's full text (a credit or link appended to a bullet that cited nothing). Release stamping (the bullets move into the new released section) and in-place credits and rewords pass; deleting a bullet fails, including deleting another PR's bullet while adding this PR's own. A bullet that cites nothing can be extended but not reworded. Released sections keep their existing check.
+- `scripts/check-pr-changelog.test.mjs`: CLI cases for a tracker rewritten to only its new entry (#2598's shape), a deleted tracker, a deleted `[Unreleased]` bullet, another PR's bullet deleted while this PR adds its own, and the cases that must still pass: plain prepends, release stamping, a bullet credited or reworded in place, and a bullet that cited nothing gaining a credit.
+
+### Why
+
+- `scripts/check-pr-changelog.mjs`: the gate only read a tracker's added lines, so #2598 passed with `packages/ai/src/changes.md` cut from 5,756 lines to 18 and `packages/coding-agent/changes.md` from 1,516 to 19.
+
+### Why an extension could not handle it
+
+- Repository tooling; no extension surface reaches the PR gate.
+
+### Expected merge conflict zones
+
+- LOW: `scripts/check-pr-changelog.mjs`, `checkPrChangelog`'s violation chain, `collectPrFacts` and `main`'s facts plumbing.
+
+## 2026-10-03 - Release notes cover every published package (senpi#2585)
+
+### What changed
+
+- `scripts/release-notes.mjs`: `extract` accepts `--changelog` more than once. With several changelogs, each package's non-empty section for the version is emitted in the given order under `## <published package name>` (the registry name from `registry-packages.mjs`, else the manifest name), and relative links resolve against that package's directory. A single `--changelog` (or the default) produces the same output as before, and a version with no section in any changelog still yields `Release <version>`. `--published` selects the changelog of every workspace package (`release-packages.mjs`) that `registry-packages.mjs` publishes, coding-agent first, so the release list has one source of truth.
+- `scripts/release-notes.test.mjs`: fixture-monorepo tests for the single and combined output, and for `--published` including every published package's section while leaving an unpublished package out.
+
+### Why
+
+- `scripts/release-notes.mjs`: the GitHub release body held only the coding-agent section, so the other packages' notes and contributor credits for the same version were dropped (v2026.10.2 lost 24 bullets across ai, senpi-codemode, tui and agent).
+
+### Why an extension could not handle it
+
+- Release tooling, not runtime behavior; no extension surface reaches the tag pipeline.
+
+### Expected merge conflict zones
+
+- LOW: `scripts/release-notes.mjs`, `parseOptions` and `extractReleaseNotes`.
+
 ## 2026-10-01 - Changelog gate reads changelogs larger than one mebibyte
 
 ### What changed

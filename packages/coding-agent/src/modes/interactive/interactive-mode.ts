@@ -78,6 +78,7 @@ import {
 	type TreeNavigationOptions,
 } from "../../core/agent-session.ts";
 import { type AgentSessionRuntime, SessionImportFileNotFoundError } from "../../core/agent-session-runtime.ts";
+import { formatNoModelsAvailableMessage } from "../../core/auth-guidance.ts";
 import { isApiKeyLoginProvider } from "../../core/auth-providers.ts";
 import { envValue } from "../../core/brand.ts";
 import {
@@ -108,7 +109,7 @@ import type {
 	WorkingIndicatorOptions,
 } from "../../core/extensions/index.ts";
 import { buildNoticeBox, type NoticeLine, type NoticeSpec } from "../../core/extensions/notice/index.ts";
-import type { QuestionRequest, QuestionResponse } from "../../core/extensions/types.ts";
+import type { QuestionRequest, QuestionResponse, SystemPromptChangeEvent } from "../../core/extensions/types.ts";
 import { FooterDataProvider, type ReadonlyFooterDataProvider } from "../../core/footer-data-provider.ts";
 import { appendUncaughtCrashLog, appendUnhandledRejectionLog } from "../../core/hidden-stdout-log.ts";
 import { buildHighReasoningWarning } from "../../core/high-reasoning-warning.ts";
@@ -135,6 +136,7 @@ import type { FullscreenExitOutput, QuietStartup, TuiMode } from "../../core/set
 import { BUILTIN_SLASH_COMMANDS } from "../../core/slash-commands.ts";
 import type { SourceInfo } from "../../core/source-info.ts";
 import { isInstallTelemetryEnabled } from "../../core/telemetry.ts";
+import { formatThinkingClampWarning } from "../../core/thinking-levels.ts";
 import { formatTimings, resetTimings, time } from "../../core/timings.ts";
 import { withBuiltInRenderers } from "../../core/tools/renderers/index.ts";
 import type { TruncationResult } from "../../core/tools/truncate.ts";
@@ -263,6 +265,7 @@ import { getModelSearchText } from "./model-search.ts";
 import {
 	isNetworkProviderError,
 	isNetworkProviderMessage,
+	isRetryableProviderError,
 	ProviderErrorPresentation,
 } from "./provider-error-presentation.ts";
 import { replayAssistantTools } from "./replay-assistant-tools.ts";
@@ -916,6 +919,7 @@ export class InteractiveMode {
 	private readonly sessionShownTipIds = new Set<string>();
 	private shortcutOverlay: ShortcutOverlay | undefined;
 	private lastEditorText = "";
+	private startupProviderGuidanceShown = false;
 	private lastInputWasPaste = false;
 	private sessionLogger: SessionLogger | undefined;
 	private readonly continuityNotices = new ContinuityNoticeTracker();
@@ -1876,16 +1880,38 @@ export class InteractiveMode {
 			this.showError(`models.json error: ${modelsJsonError}`);
 		}
 
-		for (const warning of this.session.modelRuntime.getWarnings()) {
-			this.showWarning(warning);
+		const modelRuntimeWarnings = this.session.modelRuntime.getWarnings();
+		// Fold repeated warnings only in quiet startup; a hand-built context without getQuietStartup
+		// is treated as not-quiet so full detail shows (the safe default, and what the old path did).
+		const getQuietStartup = this.settingsManager?.getQuietStartup?.bind(this.settingsManager);
+		const quietStartup = getQuietStartup ? getQuietStartup() : false;
+		if (showsStartupDetails(this.options.verbose, quietStartup)) {
+			for (const warning of modelRuntimeWarnings) {
+				this.showWarning(warning);
+			}
+		} else if (modelRuntimeWarnings.length === 1) {
+			this.showWarning(modelRuntimeWarnings[0]!);
+		} else if (modelRuntimeWarnings.length > 1) {
+			this.showNoticeBox({
+				title: `${modelRuntimeWarnings.length} model warnings`,
+				tone: "warning",
+				why: modelRuntimeWarnings[0]!,
+				extra: modelRuntimeWarnings.slice(1).map((text) => ({ text })),
+			});
 		}
 
 		if (modelFallbackMessage) {
 			this.showWarning(modelFallbackMessage);
+			if (modelFallbackMessage === formatNoModelsAvailableMessage()) this.startupProviderGuidanceShown = true;
 		}
 
 		for (const warning of this.session.fallbackValidationWarnings) {
 			this.showWarning(warning);
+		}
+
+		const startupThinkingClamp = this.session.startupThinkingClamp;
+		if (startupThinkingClamp) {
+			this.showWarning(formatThinkingClampWarning(startupThinkingClamp));
 		}
 
 		this.showRiskyMainModelWarning(this.session.model);
@@ -2120,10 +2146,12 @@ export class InteractiveMode {
 		}
 
 		const seeded = seedKeybindingsFile(configPath, this.keybindings);
-		const edit = await editFileInExternalEditor({
-			command: editorCommand,
-			path: configPath,
-		});
+		const edit = await this.withTerminalHandedOver(() =>
+			editFileInExternalEditor({
+				command: editorCommand,
+				path: configPath,
+			}),
+		);
 		if (edit.status === "launch-failed") {
 			// The editor never ran, so a file we just seeded carries no user content.
 			if (seeded) fs.rmSync(configPath, { force: true });
@@ -2441,7 +2469,13 @@ export class InteractiveMode {
 			if (options?.sort !== false) {
 				labels.sort((a, b) => a.localeCompare(b));
 			}
-			return theme.fg("dim", `  ${labels.join(", ")}`);
+			// A short listing fits on one line and shows in full; a long one (dozens of skills) is
+			// what flooded the first screen on a narrow terminal, so it truncates to a few names
+			// with a +N more hint. The full list is one Ctrl+O away.
+			const shown = labels.length <= 8 ? labels : labels.slice(0, 3);
+			const hidden = labels.length - shown.length;
+			const more = hidden > 0 ? theme.fg("muted", ` +${hidden} more (${keyText("app.tools.expand")})`) : "";
+			return theme.fg("dim", `  ${shown.join(", ")}`) + more;
 		};
 		// System resources are left out of the compact body; a section with nothing else to show stays
 		// hidden until the listing is expanded, where the system group lists them. Bodies are built on
@@ -3967,6 +4001,11 @@ export class InteractiveMode {
 					return state !== undefined;
 				},
 				notice: (line) => this.showWarning(line),
+				selectModel: (model) => InteractiveMode.applyModelSelection(this, model),
+				selectThinkingLevel: (level, remember) => InteractiveMode.applyThinkingLevel(this, level, remember),
+				interruptTurn: async () => {
+					await this.abortAndFireQueuedMessages();
+				},
 			},
 		};
 	}
@@ -5061,6 +5100,11 @@ export class InteractiveMode {
 		switch (event.type) {
 			case "agent_start":
 				this.agentIdle = false;
+				// Keep a scrolled-up reader in place for this turn: rows re-laid out above the viewport are not
+				// replayed until the next key press (#2836). No catch-up here: a turn nobody typed (auto-retry,
+				// an extension's triggerTurn) can start while the reader is still scrolled up, and a turn the user
+				// started already caught up on their Enter key.
+				this.ui.setScrollbackReplayHold(true);
 				this.transcriptWriteNoticeShown = false;
 				this.clearPendingTools();
 				this.clearActiveToolExecutionStatus();
@@ -5173,11 +5217,25 @@ export class InteractiveMode {
 				this.showHighReasoningWarning(event);
 				break;
 
+			case "thinking_level_clamped":
+				this.showWarning(formatThinkingClampWarning(event));
+				break;
+
 			case "resume_compaction_required":
 				this.showWarning(event.notice);
 				break;
 
 			case "resume_context_reduced":
+				this.showWarning(event.notice);
+				break;
+
+			case "provider_required":
+				// The first notice repeats the startup "No models available" warning (same /login guidance), so it
+				// is absorbed by it; the session emits again only after a turn was admitted in between.
+				if (this.startupProviderGuidanceShown) {
+					this.startupProviderGuidanceShown = false;
+					break;
+				}
 				this.showWarning(event.notice);
 				break;
 
@@ -5372,6 +5430,8 @@ export class InteractiveMode {
 				if (this.settingsManager.getShowTerminalProgress() && this.ui.terminal) {
 					this.ui.terminal.setProgress(false);
 				}
+				// Keep holding until the next key press: a replay at turn end would snap a reader who is scrolled up.
+				this.ui.setScrollbackReplayHold("until-input");
 				this.clearActiveToolExecutionStatus();
 				this.clearToolHookStatuses();
 				this.streamingReveal.stop();
@@ -5498,6 +5558,9 @@ export class InteractiveMode {
 						this.showStatus("Auto-compaction cancelled");
 					}
 				} else if (event.result) {
+					// A successful compaction ends the retry episode: no finish is owed, so a later
+					// never-retried terminal failure must not reopen the banner.
+					this.providerErrors?.clear();
 					// Compaction event consumers in the fork are session-backed and do not
 					// necessarily expose InteractiveMode's SessionManager convenience getter.
 					// Keep the structural fallback for focused handler consumers while using
@@ -5546,7 +5609,11 @@ export class InteractiveMode {
 					this.footer?.setCompactionDelegated?.(false);
 				} else if (event.errorMessage) {
 					const errorMessage = sanitizeTerminalLabel(event.errorMessage);
-					if (isNetworkProviderError(errorMessage)) {
+					// The quiet provider-retry banner's finish() closes out a retry recorded in the CURRENT
+					// episode. A terminal compaction failure after an episode that already finished (or one
+					// that never retried) must always surface as an error, even when its message looks
+					// transient ("timeout", "truncated generator").
+					if (isRetryableProviderError(errorMessage) && this.providerErrors?.awaitingRetryFinish === true) {
 						this.getProviderErrors().finish(errorMessage);
 					} else if (event.reason === "manual") {
 						this.showError(errorMessage);
@@ -5663,7 +5730,7 @@ export class InteractiveMode {
 				break;
 
 			case "retry_fallback_exhausted":
-				if (isNetworkProviderError(event.lastError)) {
+				if (isRetryableProviderError(event.lastError)) {
 					this.getProviderErrors().finish(event.lastError);
 					this.setExtensionStatus(FALLBACK_STATUS_KEY, undefined);
 					break;
@@ -5687,7 +5754,7 @@ export class InteractiveMode {
 				break;
 
 			case "auto_retry_start": {
-				if (isNetworkProviderError(event.errorMessage)) {
+				if (isRetryableProviderError(event.errorMessage)) {
 					this.getProviderErrors().retrying(event.errorMessage, this.toolOutputExpanded);
 				}
 				// During retry waits, isStreaming flips false between attempts. The main Esc handler
@@ -5725,7 +5792,7 @@ export class InteractiveMode {
 				// Show error only on final failure (success shows normal response)
 				if (event.success || event.finalError === "Retry cancelled") {
 					this.providerErrors?.clear();
-				} else if (isNetworkProviderError(event.finalError)) {
+				} else if (isRetryableProviderError(event.finalError)) {
 					this.getProviderErrors().finish(event.finalError, event.attempt);
 				} else {
 					this.showError(`Retry failed after ${event.attempt} attempts: ${event.finalError || "Unknown error"}`);
@@ -5735,7 +5802,7 @@ export class InteractiveMode {
 			}
 
 			case "summarization_retry_scheduled": {
-				if (isNetworkProviderError(event.errorMessage)) {
+				if (isRetryableProviderError(event.errorMessage)) {
 					this.getProviderErrors().retrying(event.errorMessage, this.toolOutputExpanded);
 				} else {
 					this.showError(event.errorMessage);
@@ -5756,7 +5823,7 @@ export class InteractiveMode {
 			}
 
 			case "summarization_retry_finished": {
-				this.providerErrors?.clear();
+				this.providerErrors?.clearTransient();
 				this.clearStatusIndicator("retry");
 				this.ui.requestRender();
 				break;
@@ -5817,7 +5884,7 @@ export class InteractiveMode {
 				event.maxAttempts,
 				event.delayMs,
 				indicator,
-				isNetworkProviderError(event.errorMessage),
+				isRetryableProviderError(event.errorMessage),
 			),
 		);
 		this.ui.requestRender();
@@ -5855,8 +5922,13 @@ export class InteractiveMode {
 	 */
 	private showStatus(message: string): void {
 		const children = this.chatContainer.children;
-		const last = children.length > 0 ? children[children.length - 1] : undefined;
-		const secondLast = children.length > 1 ? children[children.length - 2] : undefined;
+		// While a turn streams, a notice goes above the live message, like a custom entry does. Appended
+		// after it, a notice taller than the screen pushed the live output above the viewport, and every
+		// streamed delta then replayed the whole scrollback: the view kept jumping to the top (#2836).
+		const streamingIndex = this.streamingComponent ? children.indexOf(this.streamingComponent) : -1;
+		const end = streamingIndex >= 0 ? streamingIndex : children.length;
+		const last = end > 0 ? children[end - 1] : undefined;
+		const secondLast = end > 1 ? children[end - 2] : undefined;
 
 		if (last && secondLast && last === this.lastStatusText && secondLast === this.lastStatusSpacer) {
 			this.lastStatusMessage = message;
@@ -5868,8 +5940,12 @@ export class InteractiveMode {
 		const spacer = new Spacer(1);
 		this.lastStatusMessage = message;
 		const text = new ThemedText(() => theme.fg("dim", this.lastStatusMessage), 1, 0);
-		this.chatContainer.addChild(spacer);
-		this.chatContainer.addChild(text);
+		if (streamingIndex >= 0) {
+			children.splice(streamingIndex, 0, spacer, text);
+		} else {
+			this.chatContainer.addChild(spacer);
+			this.chatContainer.addChild(text);
+		}
 		this.lastStatusSpacer = spacer;
 		this.lastStatusText = text;
 		this.ui.requestRender();
@@ -6980,17 +7056,28 @@ export class InteractiveMode {
 	private async handleOpenExternalEditor(): Promise<void> {
 		const editorCmd = this.settingsManager.getExternalEditorCommand();
 		const content = this.getExpandedEditorText();
+		const result = await this.withTerminalHandedOver(() =>
+			editInExternalEditor({
+				command: editorCmd,
+				content,
+			}),
+		);
+		if (result.status === "complete") {
+			this.editor.setText(result.content);
+		}
+	}
+
+	/**
+	 * Runs `work` (an external program that draws on the terminal itself) with the terminal handed
+	 * back: the TUI stops, fd 1 and fd 2 point at the terminal again, and both are taken over again
+	 * afterwards. An editor launched without this would draw into the debug log (#2815).
+	 */
+	private async withTerminalHandedOver<T>(work: () => Promise<T>): Promise<T> {
 		this.pauseQuestionMouseCapture();
 		this.ui.stop();
 		restoreInteractiveStderr();
 		try {
-			const result = await editInExternalEditor({
-				command: editorCmd,
-				content,
-			});
-			if (result.status === "complete") {
-				this.editor.setText(result.content);
-			}
+			return await work();
 		} finally {
 			takeOverInteractiveStderr();
 			this.ui.start();
@@ -7813,14 +7900,23 @@ export class InteractiveMode {
 	 */
 	private selectThinkingLevel(level: ThinkingLevel, persist: boolean): void {
 		try {
-			if (persist) this.session.setThinkingLevel(level);
-			else this.session.setSessionThinkingLevel(level);
-			this.footer.invalidate();
-			this.updateEditorBorderColor();
-			this.showStatus(persist ? `Default thinking level: ${level}` : `Thinking level: ${level}`);
+			InteractiveMode.applyThinkingLevel(this, level, persist);
 		} catch (error) {
 			this.showError(error instanceof Error ? error.message : String(error));
 		}
+	}
+
+	/**
+	 * The level switch itself; the control endpoint's `set_thinking_level` runs it too.
+	 * Static and called through the class, so a handler invoked on a partial `this`
+	 * reaches exactly the members the switch uses.
+	 */
+	private static applyThinkingLevel(mode: InteractiveMode, level: ThinkingLevel, persist: boolean): void {
+		if (persist) mode.session.setThinkingLevel(level);
+		else mode.session.setSessionThinkingLevel(level);
+		mode.footer.invalidate();
+		mode.updateEditorBorderColor();
+		mode.showStatus(persist ? `Default thinking level: ${level}` : `Thinking level: ${level}`);
 	}
 
 	private async showThinkingSelector(): Promise<void> {
@@ -7901,22 +7997,34 @@ export class InteractiveMode {
 		done?.();
 		this.ui?.requestRender();
 		try {
-			const systemPromptChange = await this.session.setModel(model);
-			this.footer.invalidate();
-			// A model switch ends any external-owner delegation episode.
-			this.externalOwnerCompactionNoticeShown = false;
-			this.footer?.setCompactionDelegated?.(false);
-			this.updateEditorBorderColor();
-			const systemPromptStr = systemPromptChange?.systemPromptName
-				? ` (optimized system prompt applied: ${systemPromptChange.systemPromptName})`
-				: "";
-			this.showStatus(`Model: ${model.id}${systemPromptStr}`);
-			this.showRiskyMainModelWarning(model);
-			void this.maybeWarnAboutAnthropicSubscriptionAuth(model);
-			this.checkDaxnutsEasterEgg(model);
+			await InteractiveMode.applyModelSelection(this, model);
 		} catch (error) {
 			this.showError(error instanceof Error ? error.message : String(error));
 		}
+	}
+
+	/**
+	 * The `/model` switch itself; the control endpoint's `set_model` runs it too, and reports a throw.
+	 * Static and called through the class for the same reason as `applyThinkingLevel`.
+	 */
+	private static async applyModelSelection(
+		mode: InteractiveMode,
+		model: Model<any>,
+	): Promise<SystemPromptChangeEvent | undefined> {
+		const systemPromptChange = await mode.session.setModel(model);
+		mode.footer.invalidate();
+		// A model switch ends any external-owner delegation episode.
+		mode.externalOwnerCompactionNoticeShown = false;
+		mode.footer?.setCompactionDelegated?.(false);
+		mode.updateEditorBorderColor();
+		const systemPromptStr = systemPromptChange?.systemPromptName
+			? ` (optimized system prompt applied: ${systemPromptChange.systemPromptName})`
+			: "";
+		mode.showStatus(`Model: ${model.id}${systemPromptStr}`);
+		mode.showRiskyMainModelWarning(model);
+		void mode.maybeWarnAboutAnthropicSubscriptionAuth(model);
+		mode.checkDaxnutsEasterEgg(model);
+		return systemPromptChange;
 	}
 
 	private async resolveFavoriteModelsForUi(

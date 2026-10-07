@@ -1,5 +1,63 @@
 # changes.md — dynamic-prompt
 
+## 2026-10-04 - Format examples are no longer markdown quote lines (senpi#2714)
+
+### What changed
+
+- `packages/coding-agent/src/core/dynamic-prompt/handoff.ts`: the handoff template line reads `Ask: [the user's original request] - wanted: ...` instead of `> Ask: ...`.
+- `packages/coding-agent/src/core/dynamic-prompt/intent-gate.ts`: the terminal routing line reads `I read this as [intent] - [plan]. ...` instead of `> I read this as ...`.
+- Labels, slots and every other sentence are unchanged; each prompt loses two characters per line.
+
+### Why
+
+- The model copies a format example as the shape of its reply, `>` included. A recorded app-surface session on claude-opus-5-5 stored its final messages as `> Ask: ...`, and the desktop drew each whole answer as a grey blockquote that read like a paused turn; the TUI quotes the routing line the same way. Live A/B on the real engine (RPC, app surface, Opus 5.5, same prompts, only the template line changed): before 2 of 3 handoff replies quoted, after 0 of 6. Prompt-engineering category B (misframing): the marker meant "this is the example" and was read as "this is the format", so it is removed at its source; nothing is added.
+
+### Why an extension could not handle it
+
+- These sections are built inside the shared prompt builder; an extension could only append a competing rule.
+
+### Expected merge conflict zones
+
+- Fork-only files. The template line in `buildHandoffSection` and `TERMINAL_ROUTING`.
+
+## 2026-10-04 - A reply that only answers a question is the answer itself, not a handoff block (senpi#2723)
+
+### What changed
+
+- `packages/coding-agent/src/core/dynamic-prompt/handoff.ts`: `HANDOFF_MOMENTS` names "the final message of a turn that did work" instead of "the final message", and adds "a reply that only answers a question is the answer itself".
+- `packages/coding-agent/src/core/dynamic-prompt/style.ts`: "The final message of work opens with the Handoff block" (was "The final message opens with ...").
+
+### Why
+
+- Every final message had to open with the handoff block, so a one-line answer went into the `For you:` slot of a status block that ended `Now: none. Next: none.` and read as a progress report. The model said so in its own reasoning: "Since the final message needs the handoff block format but the user just wants a single line, I should put that one-line answer in the For you section." The rule is narrowed at its source; the block stays for turns that did work.
+
+### Why an extension could not handle it
+
+- These sections are built inside the shared prompt builder; an extension could only append a competing rule.
+
+### Expected merge conflict zones
+
+- Fork-only files. `HANDOFF_MOMENTS` in `handoff.ts`; the final-message sentence in `style.ts`.
+
+## 2026-10-04 - Handoff: the Fable-only between-handoff sentence names the moment and the shape (senpi#2681)
+
+### What changed
+
+- `packages/coding-agent/src/core/dynamic-prompt/handoff.ts`: the `briefUpdatesBetweenHandoffs` branch of `buildHandoffSection` now reads "Between handoffs, after each tool wave that changes what you know, write one line of reply text: what you found, then `Now: [task]. Next: [task].`" (was "Between handoffs, a one-line update on what you just found, ending with `Now: [task]. Next: [task].`, helps the user follow along."). The option's doc comment names its only caller. The default branch ("Between handoffs, work without narration."), the handoff moments, the block template and the language rule are unchanged.
+- Only the Claude Fable 5.1 preset passes `briefUpdatesBetweenHandoffs: true`; the default dynamic prompt and every other preset render byte-identical before and after (24-render diff, 0 differences outside `claude-fable-5-1`).
+
+### Why
+
+- The sentence was a recommendation ("helps the user follow along") with no stated moment, and measured sessions showed it produced no more reply text between tool calls than cores that say "work without narration". The Fable 5.1 guide's remedy is a system-prompt line that says when user-facing text is wanted and what each update contains, so the sentence is rewritten at its source rather than reinforced from another section.
+
+### Why an extension could not handle it
+
+- The handoff section is built inside the shared prompt builder; an extension could only append a competing rule.
+
+### Expected merge conflict zones
+
+- Fork-only file. The `betweenRule` ternary and the `HandoffSectionOptions` doc comments in `handoff.ts`.
+
 ## 2026-09-30 - Chat surface: no routing line, no handoff block, no ledger lines (senpi#2398)
 
 ### What changed

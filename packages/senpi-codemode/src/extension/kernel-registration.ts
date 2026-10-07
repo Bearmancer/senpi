@@ -4,6 +4,7 @@ import type { BridgeConnectionConfig, KernelToHostMessage } from "../bridge/prot
 import { JuliaKernel } from "../kernels/jl/kernel.ts";
 import type { JavaScriptKernel } from "../kernels/js/context-manager.ts";
 import { PythonKernel } from "../kernels/py/kernel.ts";
+import type { PeerKernelToolsDescribe } from "../kernels/py/kernel-tools-host.ts";
 import { defaultSpawn } from "../kernels/py/process.ts";
 import { RubyKernel } from "../kernels/rb/kernel.ts";
 import type { SessionEnvironment } from "../kernels/session-env.ts";
@@ -27,6 +28,7 @@ export interface SubprocessKernelStart {
 		readonly connection: BridgeConnectionConfig;
 		readonly onMessage: (message: KernelToHostMessage) => void;
 	};
+	readonly peerKernelToolsDescribe?: PeerKernelToolsDescribe;
 }
 
 export function registerKernel(sessionId: string, language: EvalLanguage, memory: RegisteredKernelSource): string {
@@ -35,12 +37,42 @@ export function registerKernel(sessionId: string, language: EvalLanguage, memory
 	return id;
 }
 
+/** One registry entry per language for a session; replacing a language's kernel replaces its entry. */
+export class SessionKernelRegistrations {
+	readonly #owner: string;
+	readonly #ids = new Map<EvalLanguage, string>();
+
+	constructor(owner: string) {
+		this.#owner = owner;
+	}
+
+	register(language: EvalLanguage, memory: RegisteredKernelSource | undefined): void {
+		this.unregister(language);
+		if (memory !== undefined) this.#ids.set(language, registerKernel(this.#owner, language, memory));
+	}
+
+	unregister(language: EvalLanguage): void {
+		const id = this.#ids.get(language);
+		if (id !== undefined) kernelRegistry.unregister(id);
+		this.#ids.delete(language);
+	}
+
+	clear(): void {
+		for (const language of [...this.#ids.keys()]) this.unregister(language);
+	}
+}
+
 export function javaScriptKernelMemory(kernel: JavaScriptKernel): RegisteredKernelSource {
+	const measure = kernel.mode === "process" ? "footprint" : "heap";
 	return {
-		measure: "heap",
+		measure,
 		lastLiveBytes: () => kernel.lastLiveBytes,
 		busy: () => kernel.queueSnapshot().activeCellId !== null,
-		queryMemory: () => kernel.queryMemory(),
+		queryMemory: async () => {
+			const reading = await kernel.queryMemory();
+			return reading === undefined ? undefined : { liveBytes: reading.liveBytes, measure: reading.measure };
+		},
+		...(measure === "footprint" ? { pid: () => kernel.processPid } : {}),
 	};
 }
 
@@ -57,6 +89,9 @@ export async function startSubprocessKernel(start: SubprocessKernelStart): Promi
 			...shared,
 			interpreterPath: start.interpreterPath,
 			memory,
+			...(start.peerKernelToolsDescribe === undefined
+				? {}
+				: { peerKernelToolsDescribe: start.peerKernelToolsDescribe }),
 			spawnProcess: (options) => {
 				const child = defaultSpawn(options);
 				pid = child.pid;

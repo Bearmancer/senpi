@@ -1,12 +1,7 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { getAgentDir } from "../../config.ts";
-import {
-	type DaemonPidFile,
-	ProcessIdentityUnreadableError,
-	processMatchesPidFile,
-	readProcessStartTime,
-} from "../app-server/daemon/process.ts";
+import { readProcessStartTime } from "../app-server/daemon/process.ts";
 import {
 	createDaemonDirectories,
 	createHostDaemonPaths,
@@ -23,14 +18,21 @@ import {
 } from "./host-daemon-registration.ts";
 import { decideHostAction, type HostDecision, HostEnsureRefusedError, type HostProtocolInfo } from "./host-decision.ts";
 import { ensureClient } from "./host-ensure-client.ts";
-import { publicEndpointAccepts, refuseIfStalled } from "./host-ensure-liveness.ts";
 import { hostEnsureLockOptions, hostEnsureLockTarget } from "./host-ensure-lock.ts";
-import { appendStderr, reapOrphanedInternalHostDirs, startHost } from "./host-ensure-start.ts";
-import { DEFAULT_STOP_TIMEOUT_MS, ensureSender, STOP_WAIT_BUDGET_MS, stopManagedHost } from "./host-ensure-stop.ts";
+import { appendStderr, DEFAULT_READINESS_TIMEOUT_MS, DEFAULT_STOP_TIMEOUT_MS, startHost } from "./host-ensure-start.ts";
+import { publicEndpointAccepts, refuseIfStalled } from "./host-ensure-liveness.ts";
+import {
+	ensureSender,
+	matchesPidFileOrUnknown,
+	STOP_WAIT_BUDGET_MS,
+	stopManagedHost,
+} from "./host-ensure-stop.ts";
 import type { EnsuredHost, EnsureHostOptions } from "./host-ensure-types.ts";
+import { scheduleOpportunisticHostGc } from "./host-gc-pass.ts";
 import { HANDOFF_LOCK_HOLD_MS, handoffHostLocked } from "./host-handoff.ts";
+import { reapOrphanedInternalHostDirs } from "./host-internal-dir-reaper.ts";
 import { retireIdleLegacyHost } from "./host-legacy.ts";
-import type { HostColdStart, HostLifecyclePolicyInput } from "./host-lifecycle-policy.ts";
+import type { HostColdStart, HostLifecyclePolicyInput } from "./host-lifecycle.ts";
 import { holdProtocolInfo, probeSocketReachable } from "./host-probe.ts";
 import { isHostGenerationProcess } from "./host-process-role.ts";
 import { acquireOwnershipSafeLock } from "./ownership-safe-lock.ts";
@@ -49,7 +51,6 @@ export { type ProbeHostOptions, probeHost } from "./host-probe.ts";
 export type { HostColdStart, HostLifecyclePolicyInput };
 
 const EXISTING_HOST_PROBE_TIMEOUT_MS = 10_000;
-const DEFAULT_READINESS_TIMEOUT_MS = 10_000;
 /**
  * A lock waiter must outlast the longest critical section a holder can run:
  * probing an existing host, then either stopping an incompatible one (SIGTERM wait
@@ -81,12 +82,17 @@ export async function ensureHost(options: EnsureHostOptions): Promise<EnsuredHos
 	// locked". Its own guards (60s age, dead owner pid) already make it safe unlocked.
 	await reapOrphanedInternalHostDirs();
 	const release = await acquireOwnershipSafeLock(`${lockTarget}.lock`, lockOptions);
+	let ensured: EnsuredHost;
 	try {
 		await options._test?.afterLockAcquired?.();
-		return await ensureHostLocked(paths, socket, options);
+		ensured = await ensureHostLocked(paths, socket, options);
 	} finally {
 		await release();
 	}
+	// Off the awaited path and outside the lock: the caller gets its host first, then dead endpoint
+	// records under this agent dir are reaped in the background on `host gc`'s own evidence.
+	scheduleOpportunisticHostGc({ agentDir: options.agentDir ?? getAgentDir(), exclude: socket });
+	return ensured;
 }
 
 async function ensureHostLocked(
@@ -180,6 +186,7 @@ async function ensureHostLocked(
 	return startHost(paths, socket, options);
 }
 
+
 /** `fallback` belongs to clients that can live without a host; an ensure must produce one or fail. */
 function decide(
 	options: EnsureHostOptions,
@@ -234,23 +241,6 @@ async function holdEnsured(socket: string): Promise<() => void> {
 function registersSocket(registered: RegisteredHost | undefined, socket: string): boolean {
 	if (registered === undefined) return false;
 	return registered.socket === undefined || sameEndpoint(registered.socket, socket);
-}
-
-/**
- * Ownership for the reuse decision. An identity we cannot read proves nothing: it can neither
- * claim the host nor authorize a kill, so it reads as "not ours" and the caller starts fresh
- * rather than failing the whole ensure on an observation gap.
- */
-async function matchesPidFileOrUnknown(
-	pidFile: DaemonPidFile,
-	probe: (pid: number) => Promise<string | undefined>,
-): Promise<boolean> {
-	try {
-		return await processMatchesPidFile(pidFile, probe);
-	} catch (error: unknown) {
-		if (error instanceof ProcessIdentityUnreadableError) return false;
-		throw error;
-	}
 }
 
 function normalizeSocketPath(value: string): string {

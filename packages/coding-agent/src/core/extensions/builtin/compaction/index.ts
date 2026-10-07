@@ -125,7 +125,8 @@ export default function compactionExtension(
 	let speculativeJob: SpeculativeJob | undefined;
 	const pendingMetadata = new Map<string, PendingCompactionMetadata>();
 	let logger: CompactionLogger | undefined;
-	const getLogger = (ctx: ExtensionContext): CompactionLogger => (logger ??= createCompactionLogger(ctx.agentDir));
+	const getLogger = (ctx: ExtensionContext): CompactionLogger =>
+		(logger ??= createCompactionLogger(ctx.agentDir, { getSessionId: () => ctx.sessionManager.getSessionId() }));
 
 	function getSummarizationTools(): Tool[] {
 		if (typeof pi.getAllTools !== "function" || typeof pi.getActiveTools !== "function") return [];
@@ -978,6 +979,7 @@ export default function compactionExtension(
 				toolAdmissionEnabled: settings.toolAdmissionEnabled !== false,
 				breakerFallback,
 				laneOwnsCompaction,
+				appendOnlyTranscript: lanePolicy.hasAppendOnlyTranscript(ctx),
 				emergencyPruneLatch,
 				logEmergencyPrune: (fields) => getLogger(ctx).debug("emergency_prune", fields),
 			}),

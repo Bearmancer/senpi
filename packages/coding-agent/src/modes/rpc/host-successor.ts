@@ -21,7 +21,12 @@ import { randomUUID } from "node:crypto";
 import { open, rm, writeFile } from "node:fs/promises";
 import { waitForStartTime } from "../app-server/daemon/process.ts";
 import { generationPaths, HOST_STATE_FILE_MODE, type HostDaemonPaths } from "./host-daemon-paths.ts";
-import { releaseGeneration, writeGenerationRecord, writeHostRegistration } from "./host-daemon-registration.ts";
+import {
+	type HostRegistration,
+	releaseGeneration,
+	writeGenerationRecord,
+	writeHostRegistration,
+} from "./host-daemon-registration.ts";
 import { readFileOrUndefined, readHostSettings, writeHostSettings } from "./host-daemon-state.ts";
 import { announceStop, recordEscalation, type StopTarget, signalPid } from "./host-ensure-stop.ts";
 import type { HandoffHostOptions, HandoffRefusal, HandoffResult } from "./host-handoff.ts";
@@ -52,9 +57,12 @@ export async function startSuccessor(context: {
 	options: HandoffHostOptions;
 	paths: HostDaemonPaths;
 	host: HostProtocolInfo;
-	owner: { pid: number; processStartTime: string; instanceId: string };
+	/** The predecessor's proven identity; `undefined` when nothing proves it, and then it is never signalled. */
+	owner: { readonly pid: number } | undefined;
+	/** Asked once the successor owns the socket: the drain request is sent only when it answers true. */
+	drainGate?: () => Promise<boolean>;
 }): Promise<HandoffResult> {
-	const { options, paths, host, owner } = context;
+	const { options, paths, host, owner, drainGate } = context;
 	const generation = (host.generation ?? 0) + 1;
 	// The successor's identity, chosen here so its generation directory holds its settings before it
 	// boots and the pointer can name it the instant it answers on the public socket.
@@ -144,13 +152,14 @@ export async function startSuccessor(context: {
 		// The pointer moves to the successor only now: until the rename landed, the generation the
 		// clients reach is still the predecessor, and the pointer has to name whoever owns the socket.
 		await options._test?.beforeRegistration?.();
-		await writeHostRegistration(paths, registration);
+		await writeHostRegistration(paths, { ...registration, ...successorBuild(answer) });
 		child.unref();
 		// The successor owns the socket now: the predecessor may drain. SIGUSR1 is sent only here,
 		// to a pid the record proved and a host that advertised it can survive the signal. A
 		// predecessor that exited on its own in the meantime is already drained, and the handoff it
 		// was being asked to make room for has already happened.
-		signalGeneration(owner.pid, "SIGUSR1");
+		if (owner !== undefined && (drainGate === undefined || (await drainGate())))
+			signalGeneration(owner.pid, "SIGUSR1");
 		return {
 			action: "handoff",
 			pid: child.pid,
@@ -234,6 +243,12 @@ async function exitedWithin(exited: Promise<void>, ms: number): Promise<boolean>
 	} finally {
 		clearTimeout(timer);
 	}
+}
+
+/** The successor's build as the successor itself reported it on the socket; never this process's build. */
+function successorBuild(answer: HostProtocolInfo): Pick<HostRegistration, "build"> {
+	if (answer.engineVersion === undefined || answer.engineOrdinal === undefined) return {};
+	return { build: { text: answer.engineVersion, ordinal: answer.engineOrdinal } };
 }
 
 /**

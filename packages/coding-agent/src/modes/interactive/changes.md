@@ -1,3 +1,131 @@
+## 2026-10-07 - Streaming turns hold the scrollback replay (senpi#2836)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`:
+  - `agent_start` calls `ui.setScrollbackReplayHold(true)` and deliberately does not catch up. A turn nobody typed (auto-retry, an extension's `triggerTurn`) can start while the reader is still scrolled up, and a turn the user started already caught up on their Enter key.
+  - `agent_end` sets `ui.setScrollbackReplayHold("until-input")`, so finishing a reply never replays under a reader who scrolled up. Their next key press corrects the stale rows once.
+- `packages/coding-agent/test/interactive-mode-scrollback-hold.test.ts`: a real `TUI`. A turn leaves stale rows, the reader scrolls up, then an untyped turn's `agent_start` arrives. There is no `ESC[3J` and the view is unchanged. With a catch-up at `agent_start` it fails (1 replay).
+- Four tests with hand-built `ui` doubles (`interactive-mode-transcript-write-failed`, `tool-execution-update-wiring`, `tui-vertical-jitter`, `tui-vertical-jitter-lifecycle`) gain the two methods.
+
+### Why
+
+See `packages/tui/src/changes.md` (same date): a streamed table widening its columns re-laid out rows above the viewport, and every frame then replayed the scrollback, snapping a scrolled-up view to the top.
+
+### Why an extension could not handle it
+
+The turn lifecycle and the TUI instance belong to the interactive mode, not to an extension.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: the `agent_start` and `agent_end` cases.
+
+## 2026-10-07 - A notice during a streaming turn goes above the live reply (senpi#2836)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: `showStatus()` (the path for `ctx.ui.notify(..., "info")`, including bare `/todo`) inserts its spacer and text before `streamingComponent` while a turn streams, the way `addCustomEntryToChat()` already does. The "replace the previous notice in place" check now looks at the two children above the live message. When idle it appends as before.
+- `packages/coding-agent/test/interactive-mode-notice-during-stream.test.ts`, a real `TUI` on a counting `VirtualTerminal` (80x20):
+  - a 40-line notice posted mid-stream causes no `ESC[3J` scrollback replay across five more deltas, and the live tail stays in view;
+  - a user scrolled up 8 rows keeps seeing the same top row through the notice and the deltas;
+  - a second notice in the same turn replaces the first above the live message;
+  - an idle notice still lands at the end.
+  The first three fail before this change (on main the scrolled-up view is thrown back to the first line).
+
+### Why
+
+Appended after the live reply, a notice taller than the screen pushed the reply's tail above the viewport. Every streamed delta then changed rows above it while the line count changed, so `TUI.doRender()` took `renderScrollbackReplay()` (`ESC[3J` plus a full rewrite) once per token, which a terminal shows as the view jumping to the top again and again.
+
+### Why an extension could not handle it
+
+Notice placement is the interactive mode's own chat container logic.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: `showStatus()`.
+
+## 2026-10-06 - A terminal session takes model, thinking-level and interrupt controls from its control endpoint (oh-my-openagent#9660)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: two private static methods, called through the class with the mode, are split out of the UI paths (static so that a handler run on a partial `this`, as existing tests do, reaches only the members the switch uses). `applyModelSelection` is the `/model` switch, and `applyThinkingLevel` is the thinking-level selector's apply; each throws instead of showing the error. `selectModelFromUi` and `selectThinkingLevel` call them and show a throw as before. `sessionControlContext` gives the control endpoint `selectModel`, `selectThinkingLevel` and `interruptTurn`, which runs the Esc path `abortAndFireQueuedMessages`.
+- `packages/coding-agent/src/modes/interactive/session-control-commands.ts` and `session-control-session-commands.ts` (new): the endpoint answers `get_available_models`, `get_available_thinking_levels`, `set_model`, `set_thinking_level` and `interrupt` through those surface methods. `get_protocol_info` lists the accepted `commands`.
+- `test/suite/interactive-session-controls.test.ts` (new): a real interactive mode on a virtual terminal, driven over its live control socket. It covers the model switch (session, footer, pane status, remembered default), an unknown model, a supported level and an unsupported one, an interrupt on an idle session, and an interrupt mid-turn that answers only after the turn settled.
+
+### Why
+
+- `thread_set_model`, `thread_set_reasoning` and `thread_interrupt` failed against every terminal session, which is most live sessions. Running the pane's own paths gives a remote change the same validation, footer update and persistence the user gets typing it in the pane.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: the footer, the editor border, the status line and the Esc queue restore are private to the interactive mode. An extension switching the model through `pi` would skip them.
+
+### Expected merge conflict zones
+
+- LOW: `selectModelFromUi` / `selectThinkingLevel` in `interactive-mode.ts` (bodies moved into `applyModelSelection` / `applyThinkingLevel`), and `sessionControlContext`.
+
+## 2026-10-06 - A delivered message says who sent it (oh-my-openagent#9660)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/session-control-types.ts`: `admitExternalMessage` takes optional `sender` (`agent { session_id, name? }`, `command_line { user? }`, `external { platform, author? }`) and `display_text`, the message as its sender wrote it. Both are stored on the delivery's `details` (`core/external-admission.ts`). `sessionControlSenderOf` reads a sender back.
+- `packages/coding-agent/src/modes/interactive/components/remote-delivery-message.ts`: a delivery that names its sender renders one dim label line, `Sent by another agent · <name>`, `Sent from the command line`, or `Sent from <platform> · <author>`, over `display_text`. A delivery without a sender keeps the `remote message` heading over the full text.
+- `test/remote-delivery-message.test.ts` (new): each sender kind renders its label (an agent with and without a name, the command line, an external chat with and without an author). A sender it cannot read, or a sender without `display_text`, falls back to the old heading over the full text, never to a wrong label.
+
+### Why
+
+- The terminal showed the raw provenance header (`[OMO_GATEWAY v=1 source=peer_agent actor=...]`) to its user. The model still reads that header in the message content; the human surface gets a clean label.
+
+### Why an extension could not handle it
+
+- The `session_control_delivery` renderer is built in, and `details` is written by admission; an extension sees neither before the entry is written.
+
+### Expected merge conflict zones
+
+- LOW: `AdmitExternalMessageInput` / `SessionControlDeliveryDetails` in `session-control-types.ts` and `deliveryMessage` in `external-admission.ts`.
+
+## 2026-10-06 - Stray writes to fd 1 can no longer push the input box off-screen (senpi#2815)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/stdout-fd-redirect.ts` (new): while the TUI owns the screen, fd 1 is `dup2`'d to the debug log, and `process.stdout` (the renderer's writer) writes through a duplicate of the terminal descriptor. Its `columns`/`rows` come from that duplicate and are refreshed on `SIGWINCH`, with a `resize` event re-emitted. `restore()` puts fd 1 back and unwinds the patch. One terminal duplicate per process is reused across suspend and editor round-trips.
+- `packages/coding-agent/src/modes/interactive/interactive-stderr-guard.ts`: `takeOverInteractiveStderr()` also redirects fd 1, but only when stdout is a TTY, and starts an unref'd 5 s check that keeps the debug log under 32 MiB (`capHiddenOutputLog`: past the cap, the file is cut to its last 256 KiB behind a marker line). `restoreInteractiveStderr()` stops the check and restores fd 1 before fd 2. Every path that already hands the terminal back (exit, crash, suspend, the external editor) therefore restores fd 1 too.
+- `packages/coding-agent/src/modes/interactive/components/extension-editor.ts`: the extension editor's external-editor path stopped the TUI without handing the descriptors back; it now restores them first and takes them over again afterwards, like the main editor path.
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: `withTerminalHandedOver()` holds the stop -> restore -> run -> take over -> start sequence. The main external editor and `/keybindings` both use it; `/keybindings` used to spawn `$VISUAL`/`$EDITOR` with `stdio: "inherit"` while the TUI owned the terminal, so under the redirect its editor would draw into the log.
+- `stdout-fd-redirect.ts` also never stacks `write` wrappers across suspend/resume cycles (the next takeover wraps the original write), and a takeover that fails after `dup2` puts fd 1 back instead of leaving it redirected.
+- `packages/coding-agent/test/suite/regressions/2815-tui-stdout-never-floods.test.ts`: run under a real terminal (`script`). A raw fd 1 write, a child inheriting stdout and native `console.log` reach the log while the renderer's frame (with the terminal's width) reaches the screen. A piped stdout is untouched. The bash tool still captures its command's output. The crash path hands fd 1 back before exit. The cap cuts an oversized log. `/keybindings` runs its editor with the terminal handed back (fails before `withTerminalHandedOver`).
+
+### Why
+
+A community report: in a long session the input box vanished after "some read message flooded the terminal". A raw write of 120 lines to fd 1 on a 26-row terminal reproduces it: the terminal scrolls behind the renderer, whose cursor math then puts the editor below the screen. fd 2 was already captured this way (#2284).
+
+### Why an extension could not handle it
+
+The redirect has to be installed and released together with the TUI's own terminal ownership, inside interactive mode.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/interactive/interactive-stderr-guard.ts`: `takeOverInteractiveStderr()`, `restoreInteractiveStderr()` and the fd helpers next to `takeOverStderrFd()`.
+- `packages/coding-agent/src/modes/interactive/components/extension-editor.ts`: `handleOpenExternalEditor()`.
+
+## 2026-10-03 - The first-run provider guidance is shown once (senpi#2677)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: handles the new `provider_required` session event by showing its notice as a warning; when the startup warning was already "No models available" (`formatNoModelsAvailableMessage()`), the first such event is absorbed by it. `test/interactive-mode-provider-required.test.ts` covers the absorb, a later notice, and no-startup-warning.
+
+### Why
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: a first run with no provider used to show a compaction error from a startup extension's background turn. The decision is that such a turn is neither silent nor an error: the user sees the same `/login` guidance a typed prompt gets, once, on the first screen.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: session events are rendered by the interactive mode itself; no extension owns the first-run warning list.
+
+### Expected merge conflict zones
+
+- LOW: the `resume_context_reduced` / `provider_required` cases in the session event switch.
+
 ## 2026-10-03 - Exact tool-card result bytes for the memory report (senpi#1960)
 
 ### What changed
@@ -190,6 +318,24 @@ Interactive mode is the host UI that renders extensions.
 ### Expected merge conflict zones
 
 Every path listed above conflicts again where upstream edits the hunks named in its line; the fork-kept constructs named there are the anchors to preserve.
+
+## 2026-09-30 - The TUI warns once about a clamped explicit thinking level (senpi#2395)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: startup shows `session.startupThinkingClamp` as a warning, and a `thinking_level_clamped` session event shows the same warning.
+
+### Why
+
+- An explicit thinking level on a model not marked `reasoning: true` was clamped to off with no visible explanation (senpi#2395).
+
+### Why an extension could not handle it
+
+- The startup warning list and the session-event switch belong to `InteractiveMode`.
+
+### Expected merge conflict zones
+
+- `interactive-mode.ts`: the startup warning block after fallback-chain warnings, and the `high_reasoning_warning` case of the session event switch.
 
 ## 2026-09-30 - Ask-user navigation stays in range; a fully answered widget click submits (omo#9268)
 
@@ -2269,3 +2415,104 @@ Interactive-mode components and theme are rendering internals below the extensio
 ### Expected merge conflict zones
 
 Upstream edits to interactive-mode components at the next sync.
+
+## 2026-10-03 - Rate-limit (429) and 5xx errors take the quiet provider-error path (senpi#2652)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/provider-error-presentation.ts`: adds `isRetryableProviderError`, a presentation classifier that is true for any transient provider failure (network drop, 429 rate-limit, or 5xx) by delegating to the shared `isRetryableErrorMessage` classifier in `@earendil-works/pi-ai`, and false for hard auth/quota/billing failures.
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: the retry-event paths (mid-retry `retrying`, fallback-exhausted `finish`, summarization retry, the retry-status indicator's trouble variant) now use `isRetryableProviderError` instead of the network-only `isNetworkProviderError`, so a 429 coalesces into one banner with a status-line countdown instead of printing its raw JSON on every retry. The general `showError` path is unchanged: it still only routes genuine network-envelope errors to the quiet presentation, so non-provider error text is never hidden behind the provider banner.
+
+### Why
+
+A 429 rate-limit was excluded from the quiet path by the auth/quota guard, so it printed raw `Error: 429: {...}` JSON once per automatic retry. Transient failures should retry quietly behind one banner; the change is scoped to the retry loop so unrelated errors still render verbatim.
+
+### Why an extension could not handle it
+
+The presentation classification and the retry-event render decision live in interactive-mode internals below the extension API.
+
+### Expected merge conflict zones
+
+Upstream edits to `provider-error-presentation.ts` or the provider-error event cases in interactive-mode.ts at the next sync.
+
+## 2026-10-03 - Tool-card diff contrast raised to >= 7:1 (senpi#2655)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/theme/dark.json`
+- `packages/coding-agent/src/modes/interactive/theme/light.json`
+
+`packages/coding-agent/src/modes/interactive/theme/dark.json` and `light.json`: tool success/error/pending card backgrounds move from saturated dark-tinted blocks to muted near-plain tints that stay distinct per status (success green-tint, error red-tint, pending neutral), and the diff foreground colors are decoupled from the shared `success`/`error` roles into dedicated brighter values, so added and removed diff lines keep distinct backgrounds and read at >= 7:1 for the full line content. Dark: success `okhsl(158 26% 13%)`, error `okhsl(19 28% 14%)`, added `okhsl(159 58% 76%)` (9.1:1), removed `okhsl(20 70% 77%)` (8.5:1). Light: success `okhsl(156 25% 91%)`, error `okhsl(24 28% 91%)`, added `okhsl(159 85% 28%)` (7.8:1), removed `okhsl(20 100% 30%)` (8.2:1). Status is still visible from the card background; general text contrast on the card is unchanged or better.
+
+### Why
+
+The saturated card backgrounds dropped diff text contrast to 4.2-4.7:1, and flattening them to one shared background made added and removed lines indistinguishable. Distinct muted tints plus brighter diff foregrounds restore both readability and the added/removed distinction.
+
+### Why an extension could not handle it
+
+Theme color roles are interactive-mode assets resolved at startup; an extension cannot re-map the tool-card backgrounds or the diff foreground roles.
+
+### Expected merge conflict zones
+
+Upstream edits to `theme/dark.json` or `theme/light.json` color roles at the next sync.
+
+
+## Deleting a session also deletes its tool images (2026-10-03)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/components/session-selector.ts`
+
+`deleteSessionFile` reads the session id from the file header before the file is removed and, only once the file is gone, removes that session's `media/<durableSessionId>` directory next to it (the tool-result images the RPC host persisted for `media_placeholders` clients). A delete that fails removes nothing. When the images cannot be removed after the session file is gone (the id is unrecoverable from then on), `deleteSessionFile` still reports the session as deleted but returns `mediaError` naming the leftover directory, and the selector shows it as an error instead of a clean delete.
+
+### Why
+
+The RPC host keeps tool-result images next to the session files so a client can render them from a path; they must not outlive the session that owns them.
+
+### Why an extension could not handle it
+
+The session selector's delete action is interactive-mode UI code with no extension hook.
+
+### Expected merge conflict zones
+
+`deleteSessionFile` in `session-selector.ts`.
+
+## 2026-10-03 - Fold the startup banner into one summary line (senpi#2651)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: the compact resource listing now truncates to a few names with a `+N more (ctrl+o)` hint when it would be long (a 69-skill list filled the whole first screen on an 80x24 terminal); short listings (<= 8 names) still show in full, and the full list always renders on Ctrl+O via the existing `setToolsExpanded` re-expansion. More than one startup model-runtime warning now collapses into a single expandable notice box (`N model warnings` with the first as the body and the rest as Ctrl+O-detail `extra` lines) when startup details are hidden (quiet startup); a single warning still shows in full, and verbose/detail-showing modes keep the per-warning lines.
+
+### Why
+
+The first screen was only the skill list plus up to 7 warning lines. A truncated listing and a single expandable warning notice keep the count and the first items visible without flooding the first frame, and every detail stays one keypress away.
+
+### Why an extension could not handle it
+
+The startup banner and the startup-warning loop are interactive-mode internals below the extension API; an extension cannot rewrite what `showLoadedResources` or the warning loop prints.
+
+### Expected merge conflict zones
+
+Upstream edits to `showLoadedResources` or the startup-warning block in interactive-mode.ts at the next sync.
+
+## 2026-10-05 - A terminal's control endpoint registers without the work a sender does not need (senpi#2756)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/session-control-endpoint.ts`: `openEndpoint` starts `thisProcessStartTime()` at entry (the writer stamp's `ps` lookup overlaps the header write and the bind), starts `persistHeaderNow()` without awaiting it, resolves the socket, creates the secret and binds, and awaits the header only before `registerTuiEndpoint` - so `endpoint.json` still never appears before the session id is on disk. `gcHostEndpoints(agentDir, { kinds: ["tui"] })` no longer runs in front of the bind: it runs once on `setImmediate` after activation, and a failure is a notice (`control endpoint gc of dead terminals failed: <reason>`), never a failed registration. After the first `inbox` pass, one more `inbox` pass runs once the inbox watch's arming settled.
+- `packages/coding-agent/src/modes/interactive/session-control-wake.ts`: `watchInbox` returns `InboxWatch { armed, stop }` as soon as the watch is created, instead of a stop function after the sentinel's event came back. The bounded sentinel re-touch runs in the background; `armed` settles when the sentinel's event arrives, or when the retry ran out (reported through `onError` as before) or the watch was stopped (which ends the retry and removes the sentinel, with no error).
+- `packages/coding-agent/src/modes/interactive/session-control-registry.ts`: `registerTuiEndpoint` passes `{ fresh: true }` to `writeHostRegistration`, so a terminal's registration skips `pruneDeadGenerations`.
+- Tests: `test/suite/tui-endpoint-deferred-gc.test.ts` (the 50-cycle reap test moved here from `test/interactive-session-control-lifecycle.test.ts`, now waiting for the deferred pass), `tui-endpoint-registration-order.test.ts`, `tui-endpoint-fresh-generation.test.ts`, `tui-endpoint-inbox-arm.test.ts`, `tui-endpoint-reach.test.ts`, helper `test/helpers/tui-endpoint-seams.ts`.
+
+### Why
+
+- A profile of the endpoint's startup cost put about 15.5 ms of registration after `settled`, spread over some 25 awaited filesystem round trips rather than one hot spot. Three of those steps are not on the path a sender takes (`endpoint.json` -> socket -> `wake`): reaping other terminals' dead records (about 2 ms per dead record, 0.6 ms with none), the dead-generation prune of a directory that is named by a fresh instance id and so cannot hold an older generation (0.24 ms), and the inbox watch's arming, which held `registerIncarnation` - and so admission - for 200 ms whenever the first sentinel event was missed (8 of 30 sends in the reach run). The writer stamp's `ps` lookup (2.5 ms) and the bind (about 1.6 ms) could run while the header is written.
+- The post-arm pass is what keeps the reachability rule once arming no longer gates registration: an entry written after the first pass but before the watch can see it produces no event, and that pass drains it.
+
+### Why an extension could not handle it
+
+- The registration order, the inbox watch and the registry write are the engine's own control-endpoint implementation; an extension only calls `pi.session.registerControlEndpoint`.
+
+### Expected merge conflict zones
+
+- LOW: `openEndpoint` in `session-control-endpoint.ts`, `watchInbox` in `session-control-wake.ts`, and the `writeHostRegistration` call in `registerTuiEndpoint`. All three files are fork-only.

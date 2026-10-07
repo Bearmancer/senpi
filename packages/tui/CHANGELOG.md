@@ -12,6 +12,145 @@
 
 ### Removed
 
+## [2026.10.10-5] - 2026-10-07
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.10-4] - 2026-10-06
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.10-3] - 2026-10-06
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.10-2] - 2026-10-05
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.10] - 2026-10-05
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.9] - 2026-10-04
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- Accepting an `@` path suggestion with Tab or Enter while the picker still showed a list computed for earlier text no longer splices the stale item into the prompt (`@~/Dev` became `@~/De@go/`); the editor re-queries for the current token and accepts its best match ([#2735](https://github.com/code-yeongyu/senpi/issues/2735); [#2736](https://github.com/code-yeongyu/senpi/pull/2736) by [@trac3r00](https://github.com/trac3r00)).
+
+### Removed
+
+## [2026.10.8] - 2026-10-04
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.7] - 2026-10-04
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.6] - 2026-10-04
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.5] - 2026-10-03
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.4] - 2026-10-03
+
+### Breaking Changes
+
+### Added
+
+- `PI_TUI_BURST_WINDOW_MS` sets how long a line break ending a read with text is held in case the rest of a paste follows, when the terminal sends no bracketed-paste markers. It defaults to `100` ms over SSH and `20` ms otherwise, and `0` never holds a line break ([#2622](https://github.com/code-yeongyu/senpi/issues/2622), reported by [@Bearmancer](https://github.com/Bearmancer)).
+
+### Changed
+
+### Fixed
+
+- A multiline paste that arrives without bracketed-paste markers no longer submits one prompt per line: newline-bearing stdin bursts coalesce into a single `paste` event, so the editor receives one block ([#2600](https://github.com/code-yeongyu/senpi/issues/2600), [#2606](https://github.com/code-yeongyu/senpi/pull/2606) by [@Bearmancer](https://github.com/Bearmancer)).
+- An Enter typed right after other input is no longer lost when the next stdin read is half of a multibyte character (an emoji over SSH): the held line break is released on time, and a read that arrives after the paste window releases it as Enter instead of joining it to a later paste ([#2621](https://github.com/code-yeongyu/senpi/issues/2621), reported by [@Bearmancer](https://github.com/Bearmancer)).
+
+### Removed
+
 ## [2026.10.3] - 2026-10-03
 
 ### Breaking Changes

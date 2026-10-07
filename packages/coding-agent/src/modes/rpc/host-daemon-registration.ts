@@ -23,7 +23,7 @@
  * this module reads and writes through its primitives and never builds a path of its own.
  */
 import { rename, rm } from "node:fs/promises";
-import { engineBuildIdentity } from "../../core/engine-build-identity.ts";
+import type { EngineOrdinal } from "../../core/engine-build-identity.ts";
 import {
 	type DaemonPidFile,
 	parseDaemonPidFile,
@@ -55,6 +55,11 @@ export interface HostRegistration {
 	readonly generation: number;
 	/** The profile the spawned host was launched with, for a client comparing two generations. */
 	readonly launchProfileId: string;
+	/**
+	 * The build of the process this record names. Absent while it is not known yet (a handoff's
+	 * successor before it answers): the record then claims no engine version rather than the writer's.
+	 */
+	readonly build?: { readonly text: string; readonly ordinal: EngineOrdinal };
 }
 
 export interface RegisteredHost {
@@ -91,12 +96,19 @@ export async function readHostRegistration(paths: HostDaemonPaths): Promise<Regi
  * Registers a generation and points the daemon directory at it, under this process's writer stamp.
  * The stamp is what authorizes a later stop: only the process that wrote a record may signal the
  * host it names, and the recorded start time keeps a recycled pid from inheriting that right.
+ *
+ * `fresh` says the directory cannot hold an earlier generation (a terminal's endpoint, named by a
+ * socket built from a new instance id), so there is nothing to prune.
  */
-export async function writeHostRegistration(paths: HostDaemonPaths, registration: HostRegistration): Promise<void> {
+export async function writeHostRegistration(
+	paths: HostDaemonPaths,
+	registration: HostRegistration,
+	options: { readonly fresh?: boolean } = {},
+): Promise<void> {
 	// Every write is also the moment to drop what is no longer running: records of dead generations
 	// and their session-path claims otherwise accumulate for the life of the agent directory, and a
 	// stale pointer among them reads as "a daemon serves this endpoint" (#1893).
-	await pruneDeadGenerations(paths);
+	if (options.fresh !== true) await pruneDeadGenerations(paths);
 	const { generation, writer } = await writeGenerationRecord(paths, registration);
 	// The pointer is replaced by rename: a reader either sees the generation that owned the socket
 	// before this call or the one that owns it now, never a half-written pointer.
@@ -121,14 +133,13 @@ export async function writeGenerationRecord(
 ): Promise<{ generation: HostGenerationPaths; writer: HostPidFileWriter }> {
 	const generation = generationPaths(paths, registration.instanceId);
 	const writer: HostPidFileWriter = { pid: process.pid, startTime: await thisProcessStartTime() };
-	const build = engineBuildIdentity();
+	const { build } = registration;
 	await createGenerationDirectory(generation);
 	await writeStateFile(generation.pidFile, {
 		...registration.record,
 		instance_id: registration.instanceId,
 		generation: registration.generation,
-		engineVersion: build.text,
-		engineOrdinal: build.ordinal,
+		...(build && { engineVersion: build.text, engineOrdinal: build.ordinal }),
 		launchProfileId: registration.launchProfileId,
 		socket: registration.socket,
 		writer,

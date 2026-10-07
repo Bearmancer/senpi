@@ -161,7 +161,7 @@ function getCacheControl(
 // The bundled Claude Code version and the floor of the advertised `claude-cli/<version>`
 // (see utils/claude-code-version.ts). Keep this exact declaration: a downstream installer
 // (oh-my-openagent) rewrites it byte-for-byte in the installed dist and bundle.
-const claudeCodeVersion = "2.1.288";
+const claudeCodeVersion = "2.1.289";
 
 // Claude Code 2.x tool names (canonical casing)
 // Source: https://cchistory.mariozechner.at/data/prompts-2.1.11.md
@@ -2673,7 +2673,6 @@ function convertMessages(
 				appendUserBlocks(params, filteredBlocks);
 			}
 		} else if (msg.role === "assistant") {
-			flushPendingSystemMessages();
 			const blocks: ContentBlockParam[] = [];
 			const isSameModel = isSameAnthropicModel(msg, model);
 			// Blocks before the final fallback marker are the declined attempt; the
@@ -2761,7 +2760,11 @@ function convertMessages(
 					}
 				}
 			}
+			// Pending system messages are emitted only in front of an assistant param that is actually sent: a reply
+			// that converts to no blocks is skipped, and flushing for it would leave a `system` param directly before
+			// the next `user` turn, which Anthropic rejects on every later request (senpi#2864).
 			if (blocks.length === 0) continue;
+			flushPendingSystemMessages();
 			const messageIndex = params.length;
 			params.push({
 				role: "assistant",

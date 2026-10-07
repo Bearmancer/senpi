@@ -72,10 +72,24 @@ export async function rebindSessionFile(
 	const targetDir = sessionDir ? normalizePath(sessionDir) : getDefaultSessionDir(cwd);
 	const target = join(targetDir, basename(source));
 	if (target !== source && !existsSync(source) && existsSync(target)) return target;
-	const { header } = readHeaderLine(source);
+	const header = readHeaderBeforeLock(source, target);
+	if (header === undefined) return target;
 	return withSessionMoveLock(source, header.id, () => moveSessionFile(source, target, cwd), {
 		...(options.moveLockWaitMs === undefined ? {} : { waitMs: options.moveLockWaitMs }),
 	});
+}
+
+// The lock is keyed by the session id, so the header is read before the lock is held. A concurrent rebind can finish
+// the move between the existence check and this read; the mover writes the target before it removes the source, so a
+// missing source next to an existing target means the move is already done (`undefined`).
+function readHeaderBeforeLock(source: string, target: string): SessionHeaderLine["header"] | undefined {
+	try {
+		return readHeaderLine(source).header;
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code === "ENOENT" && target !== source && existsSync(target))
+			return undefined;
+		throw error;
+	}
 }
 
 function moveSessionFile(source: string, target: string, cwd: string): string {

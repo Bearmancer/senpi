@@ -7,6 +7,8 @@ import {
 } from "@code-yeongyu/senpi";
 import { afterEach, describe, expect, it } from "vitest";
 import type { KernelToHostMessage } from "../src/bridge/protocol.ts";
+import { ReplaceableKernel } from "../src/extension/kernel-replacement.ts";
+import { hasKernelTools } from "../src/extension/kernel-tools-probe.ts";
 import { JavaScriptKernel } from "../src/kernels/js/context-manager.ts";
 import type { KernelToolsDescribeResult } from "../src/kernels/js/kernel-tools-types.ts";
 import { createEvalTool } from "../src/tool/eval-tool.ts";
@@ -69,6 +71,11 @@ class LiveJavaScriptKernelManager implements EvalKernelManager {
 	async close(): Promise<void> {
 		await this.#kernel?.close();
 	}
+}
+
+async function describeThrough(kernel: EvalKernel): Promise<unknown> {
+	if (!hasKernelTools(kernel)) throw new Error("the kernel exposes no kernel tools");
+	return await kernel.describeKernelTools(["add"]);
 }
 
 function textResult(text: string): AgentToolResult<unknown> {
@@ -209,8 +216,8 @@ describe("kernel tools on the real worker tool-call path", () => {
 	});
 
 	it("leaves a host tool dispatched by a non-JS cell without a kernel-tool capability", async () => {
-		// A stub py kernel keeps the negative interpreter-free; the language gate lives in
-		// run-eval-cell.ts, and py/rb/jl kernels expose no describe/invoke at all.
+		// A stub py kernel keeps the negative interpreter-free: a kernel gets the capability only if it
+		// exposes describe/invoke, and this one exposes neither.
 		const kernel = new FakeKernel([
 			{ type: "tool-call", callId: "py-1", toolName: "probe", args: { phase: "py" } },
 			result("kernel-tools-host-dispatch-py", "done"),
@@ -256,5 +263,54 @@ describe("kernel tools on the real worker tool-call path", () => {
 		expect(observations).toEqual([{ phase: "py", kernelToolsDefined: false }]);
 		expect(cell.details.toolCalls[0]).toMatchObject({ name: "probe", ok: true });
 		expect(ctx.kernelTools).toBeUndefined();
+	});
+
+	it("Given the replaceable kernel a session holds for rb and jl when it is probed for kernel tools then it exposes none of the interpreter's stubs", async () => {
+		for (const language of ["rb", "jl"] as const) {
+			const inner = Object.assign(new FakeKernel([]), {
+				describeKernelTools: async () => {
+					throw new Error("tools_unavailable");
+				},
+				invokeKernelTool: async () => {
+					throw new Error("tools_unavailable");
+				},
+				drainPending: () => [],
+			});
+			const held = await ReplaceableKernel.create(language, async () => inner);
+
+			expect("describeKernelTools" in held).toBe(false);
+			expect("invokeKernelTool" in held).toBe(false);
+			await held.close();
+		}
+	});
+
+	it("Given the replaceable kernel a session holds for py when its interpreter is replaced then kernel tools reach only the new instance", async () => {
+		const instances: string[] = [];
+		const deaths: Array<() => void> = [];
+		const start = async (lifecycle: { onDeath: (reason: string) => void }) => {
+			const name = `instance-${instances.length + 1}`;
+			instances.push(name);
+			let alive = true;
+			deaths.push(() => {
+				alive = false;
+				lifecycle.onDeath("interpreter exited");
+			});
+			return Object.assign(new FakeKernel([]), {
+				describeKernelTools: async (names: readonly string[]) => ({ from: name, names }),
+				invokeKernelTool: async () => name,
+				drainPending: () => [],
+				isAlive: () => alive,
+			});
+		};
+		const held = await ReplaceableKernel.create("py", start);
+		expect(hasKernelTools(held)).toBe(true);
+		expect(await describeThrough(held)).toEqual({ from: "instance-1", names: ["add"] });
+
+		deaths[0]?.();
+		await held.reset();
+
+		expect(instances).toEqual(["instance-1", "instance-2"]);
+		expect(await describeThrough(held)).toEqual({ from: "instance-2", names: ["add"] });
+		await held.close();
 	});
 });

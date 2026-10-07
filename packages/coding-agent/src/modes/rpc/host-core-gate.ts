@@ -22,6 +22,8 @@ export interface HostCoreHooks {
 	readonly runtimeBuildId?: string;
 	/** Present on a host that can hand over at its next idle point (a POSIX socket host). */
 	readonly handover?: Omit<HostIdleHandoverOptions, "isIdle">;
+	/** Called with the in-process registry's session count after every open and close. */
+	readonly onSessionCountChange?: (size: number) => void;
 }
 
 export class HostCoreGate {

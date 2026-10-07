@@ -461,16 +461,16 @@ describe("ensureHost", () => {
 	}, 20_000);
 
 	it("fails fast when the spawned host exits before readiness", async () => {
+		// The readiness deadline is far beyond the test budget, so settling at all proves the child's
+		// exit ended the wait; the exit-code message proves it was not the readiness timeout.
 		const qa = await scratch("early-exit");
-		const startedAt = Date.now();
 		await expect(
 			ensureFixtureHost(qa, {
-				readinessTimeoutMs: 5_000,
+				readinessTimeoutMs: 600_000,
 				spawn: { command: process.execPath, args: ["-e", "process.exit(7)"] },
 			}),
-		).rejects.toThrow(/exited.*7/);
-		expect(Date.now() - startedAt).toBeLessThan(2_500);
-	}, 10_000);
+		).rejects.toThrow(/exited with code 7 before answering get_protocol_info/);
+	}, 30_000);
 
 	it("reports an incompatible protocol answer instead of a readiness timeout", async () => {
 		const qa = await scratch("incompatible-answer");

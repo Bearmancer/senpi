@@ -140,10 +140,11 @@ export function hostDaemonDirectoryPaths(dir: string): HostDaemonDirectory {
 }
 
 /**
- * Creates this endpoint's directories and publishes the flat marker. The modes are set explicitly
- * rather than left to `mkdir`, because a directory that already exists keeps whatever mode it was
- * created with - and this one holds the evidence that decides who may signal the daemon. A `tui`
- * registrant passes its kind; everything else is an `rpc_host`.
+ * Creates this endpoint's directories and publishes the flat marker. A directory that already exists
+ * keeps whatever mode it was created with - and this one holds the evidence that decides who may
+ * signal the daemon - so an existing one is re-moded explicitly; one `mkdir` just created already
+ * has the mode. The siblings inside the endpoint directory and the marker are written concurrently.
+ * A `tui` registrant passes its kind; everything else is an `rpc_host`.
  */
 export async function createDaemonDirectories(
 	paths: HostDaemonPaths,
@@ -153,19 +154,26 @@ export async function createDaemonDirectories(
 		// The flat directory may predate this layout and may hold a legacy host's files: it is created
 		// when missing and never re-moded, so a legacy host keeps whatever it set up for itself.
 		await mkdir(paths.flatDir, { recursive: true, mode: DIRECTORY_MODE });
-		for (const directory of [paths.dir, paths.generationsDir, paths.reservationsDir]) {
-			await mkdir(directory, { recursive: true, mode: DIRECTORY_MODE });
-			await chmod(directory, DIRECTORY_MODE);
-		}
-		await writeFile(
-			paths.layoutMarker,
-			`${JSON.stringify({ layout: HOST_DAEMON_LAYOUT, dir: basename(paths.dir) })}\n`,
-			{ mode: HOST_STATE_FILE_MODE },
-		);
+		await makePrivateDirectory(paths.dir);
+		await Promise.all([
+			makePrivateDirectory(paths.generationsDir),
+			makePrivateDirectory(paths.reservationsDir),
+			writeFile(
+				paths.layoutMarker,
+				`${JSON.stringify({ layout: HOST_DAEMON_LAYOUT, dir: basename(paths.dir) })}\n`,
+				{ mode: HOST_STATE_FILE_MODE },
+			),
+		]);
 	} catch (cause) {
 		throw new HostDaemonStateError(paths.dir, cause);
 	}
 	await ensureEndpointIdentity(paths, paths.socket, identity);
+}
+
+/** `mkdir` names the directory it created; only one that already existed needs its mode set. */
+async function makePrivateDirectory(directory: string): Promise<void> {
+	const created = await mkdir(directory, { recursive: true, mode: DIRECTORY_MODE });
+	if (created === undefined) await chmod(directory, DIRECTORY_MODE);
 }
 
 /**

@@ -1,8 +1,5 @@
-/**
- * What an ensure is asked to do and what it answers. Split out of `host-ensure.ts` (senpi#2566), which
- * re-exports every name here.
- */
-import type { HostLifecyclePolicyInput } from "./host-lifecycle-policy.ts";
+/** The options and result of `ensureHost`, kept apart so the ensure's helpers can name them without a cycle. */
+import type { HostLifecyclePolicyInput } from "./host-lifecycle.ts";
 
 /**
  * What an ensure may do to a host that is already running.

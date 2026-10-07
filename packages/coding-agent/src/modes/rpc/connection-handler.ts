@@ -24,6 +24,7 @@ import type { AgentAbortSource } from "../../core/agent-abort-provenance.ts";
 import type { AgentSession } from "../../core/agent-session.ts";
 import type { AgentSessionRuntime } from "../../core/agent-session-runtime.ts";
 import { authMethodStatus, buildLoginProviderInfos } from "../../core/auth-providers.ts";
+import { ContinueFromLeafError } from "../../core/continue-from-leaf.ts";
 import {
 	getCredentialAccounts,
 	pinCredentialAccount,
@@ -54,7 +55,6 @@ import type {
 	ExtensionWidgetOptions,
 	WorkingIndicatorOptions,
 } from "../../core/extensions/index.ts";
-import { getSupportedThinkingLevels } from "../../core/thinking-levels.ts";
 import { type Theme, theme } from "../interactive/theme/theme.ts";
 import { DURABLE_CLIENT_MESSAGE_ID_CAPABILITY } from "./client-admission-record.ts";
 import { ClientAdmissions } from "./client-admissions.ts";
@@ -64,10 +64,12 @@ import { ConnectionQuestionBridge, degradeQuestion, sessionQuestionBridges } fro
 import {
 	AUTO_TITLE_SESSIONS_CAPABILITY,
 	buildCustomUnsupportedRequest,
+	CONTINUE_FROM_LEAF_CAPABILITY,
 	DEFAULT_CUSTOM_EXTENSION_LABEL,
 	EXTENSION_EVENTS_CAPABILITY,
 	MEDIA_PLACEHOLDERS_CAPABILITY,
 	QUESTION_CAPABILITY,
+	RETRY_FALLBACK_COMMAND_CAPABILITY,
 } from "./custom-capability.ts";
 import { createRpcEventOutputBuffer } from "./event-output-buffer.ts";
 import { settleExtensionUiResponse } from "./extension-ui-response.ts";
@@ -76,7 +78,12 @@ import { createRpcLoginPromptCallbacks } from "./login-prompts.ts";
 import { answerMemoryReport } from "./memory-report-command.ts";
 import { protocolIdentity } from "./protocol-identity.ts";
 import { buildRpcCommandsForSession, createCommandsChangedEvent, rpcCommandListDigest } from "./rpc-command-surface.ts";
-import { rpcCommandPayloadError, rpcCommandShapeError, rpcMessageLengthError } from "./rpc-input-validation.ts";
+import {
+	rpcCommandPayloadError,
+	rpcCommandShapeError,
+	rpcMessageLengthError,
+	sessionRetryFallbackError,
+} from "./rpc-input-validation.ts";
 import { buildRpcSessionState } from "./rpc-session-state.ts";
 import type {
 	RpcAuthProvider,
@@ -94,6 +101,7 @@ import type {
 	RpcSkillInvocationEvent,
 } from "./rpc-types.ts";
 import { RPC_ERROR_MEDIA_NOT_FOUND } from "./rpc-types.ts";
+import { availableModelsData, interruptRunningTurn, unsupportedThinkingLevel } from "./session-control-actions-data.ts";
 import { SessionExtensionUiRequests } from "./session-extension-ui-requests.ts";
 
 export { buildRpcSessionState } from "./rpc-session-state.ts";
@@ -110,6 +118,11 @@ export interface RpcConnectionOptions {
 	eventFlushScheduler?: (flush: () => void) => void;
 	/** Multi-session routing handle. Absent preserves classic wire output exactly. */
 	sessionId?: string;
+	/**
+	 * A single-session `--mode rpc` process: it accepts `set_retry_fallback` and advertises it. A host's
+	 * session connection leaves it off; a host session takes its chain from `open_session.retryFallback`.
+	 */
+	retryFallbackCommand?: boolean;
 	/**
 	 * Shared-session capability registry. A `set_client_info` carrying `capabilities`
 	 * registers them for the connection that sent it; absent on a classic connection.
@@ -154,6 +167,15 @@ export interface RpcConnectionHandler {
 	cancelPendingExtensionUiRequests(): void;
 	/** Tear down subscriptions and dispose the runtime. Never calls process.exit. */
 	dispose(): Promise<void>;
+}
+
+/** The tool call a dialog is about, as wire fields (absent when the dialog is not a permission request). */
+function dialogCall(opts: ExtensionUIDialogOptions | undefined): { toolCallId?: string; parentToolCallId?: string } {
+	if (opts?.toolCallId === undefined) return {};
+	return {
+		toolCallId: opts.toolCallId,
+		...(opts.parentToolCallId === undefined ? {} : { parentToolCallId: opts.parentToolCallId }),
+	};
 }
 
 function loadedExtensionName(path: string): string {
@@ -266,6 +288,8 @@ export function createRpcConnectionHandler(
 	let session = runtimeHost.session;
 	let sessionControl: HostSessionControl | undefined;
 	const promptCalls = new Set<Promise<unknown>>();
+	// Set by the first command that asks this session for a turn; `set_retry_fallback` is refused after it.
+	let turnRequested = false;
 	let unsubscribe: (() => void) | undefined;
 	let unsubscribeBackpressure: (() => void) | undefined;
 	let unsubscribeLoadedSurfaces: (() => void) | undefined;
@@ -447,8 +471,11 @@ export function createRpcConnectionHandler(
 				? questions.ask(request, opts)
 				: degradeQuestion(createExtensionUIContext(), request, opts),
 		select: (title, options, opts) =>
-			createDialogPromise(opts, undefined, { method: "select", title, options, timeout: opts?.timeout }, (r) =>
-				"cancelled" in r && r.cancelled ? undefined : "value" in r ? r.value : undefined,
+			createDialogPromise(
+				opts,
+				undefined,
+				{ method: "select", title, options, timeout: opts?.timeout, ...dialogCall(opts) },
+				(r) => ("cancelled" in r && r.cancelled ? undefined : "value" in r ? r.value : undefined),
 			),
 
 		confirm: (title, message, opts) =>
@@ -457,8 +484,11 @@ export function createRpcConnectionHandler(
 			),
 
 		input: (title, placeholder, opts) =>
-			createDialogPromise(opts, undefined, { method: "input", title, placeholder, timeout: opts?.timeout }, (r) =>
-				"cancelled" in r && r.cancelled ? undefined : "value" in r ? r.value : undefined,
+			createDialogPromise(
+				opts,
+				undefined,
+				{ method: "input", title, placeholder, timeout: opts?.timeout, ...dialogCall(opts) },
+				(r) => ("cancelled" in r && r.cancelled ? undefined : "value" in r ? r.value : undefined),
 			),
 
 		notify(message: string, type?: "info" | "warning" | "error"): void {
@@ -926,6 +956,8 @@ export function createRpcConnectionHandler(
 								AUTO_TITLE_SESSIONS_CAPABILITY,
 								MEDIA_PLACEHOLDERS_CAPABILITY,
 								DURABLE_CLIENT_MESSAGE_ID_CAPABILITY,
+								CONTINUE_FROM_LEAF_CAPABILITY,
+								...(options.retryFallbackCommand ? [RETRY_FALLBACK_COMMAND_CAPABILITY] : []),
 								...(options.capabilities ?? []),
 							]),
 						],
@@ -941,6 +973,7 @@ export function createRpcConnectionHandler(
 			// =================================================================
 
 			case "prompt": {
+				turnRequested = true;
 				const admission = handleClientInput(session, command, { output, promptCalls });
 				promptCalls.add(admission);
 				void admission.finally(() => promptCalls.delete(admission));
@@ -963,7 +996,20 @@ export function createRpcConnectionHandler(
 				return success(id, "append_session_entry");
 			}
 
+			case "continue_from_leaf": {
+				turnRequested = true;
+				try {
+					await session.continueFromLeaf();
+					return success(id, "continue_from_leaf");
+				} catch (err) {
+					if (err instanceof ContinueFromLeafError) return error(id, command.type, err.message, err.code);
+					throw err;
+				}
+			}
+
 			case "send_custom_message": {
+				// A context message that asks for no turn does not block a launch-time chain, like an extension's.
+				if (command.triggerTurn === true) turnRequested = true;
 				await session.sendCustomMessage(
 					{
 						customType: command.customType,
@@ -978,6 +1024,7 @@ export function createRpcConnectionHandler(
 
 			case "steer":
 			case "follow_up": {
+				turnRequested = true;
 				await handleClientInput(session, command, { output, promptCalls });
 				return undefined;
 			}
@@ -989,6 +1036,9 @@ export function createRpcConnectionHandler(
 				});
 				return success(id, "abort");
 			}
+
+			case "interrupt":
+				return success(id, "interrupt", await interruptRunningTurn(session, command.turnId, () => session.abort()));
 
 			case "abort_compaction": {
 				session.abortCompaction();
@@ -1089,15 +1139,8 @@ export function createRpcConnectionHandler(
 				return success(id, "cycle_model", result);
 			}
 
-			case "get_available_models": {
-				const models = await session.modelRegistry.getAvailable();
-				return success(id, "get_available_models", {
-					models: models.map((model) => ({
-						...model,
-						supportedThinkingLevels: getSupportedThinkingLevels(model),
-					})),
-				});
-			}
+			case "get_available_models":
+				return success(id, "get_available_models", await availableModelsData(session));
 
 			// =================================================================
 			// Thinking
@@ -1109,11 +1152,7 @@ export function createRpcConnectionHandler(
 					// neighbour, so applying first would leave a REJECTED request's clamped level in
 					// place. A failed command must not change session state.
 					if (!session.getAvailableThinkingLevels().includes(command.level)) {
-						return error(
-							id,
-							"set_thinking_level",
-							`Thinking level ${command.level} is not supported by the active model.`,
-						);
+						return error(id, "set_thinking_level", unsupportedThinkingLevel(command.level));
 					}
 					session.setSessionThinkingLevel(command.level);
 				} else {
@@ -1211,6 +1250,33 @@ export function createRpcConnectionHandler(
 			case "abort_retry": {
 				session.abortRetry();
 				return success(id, "abort_retry");
+			}
+
+			case "set_retry_fallback": {
+				if (!options.retryFallbackCommand) {
+					return error(
+						id,
+						"set_retry_fallback",
+						"set_retry_fallback is for a single-session rpc process; a host session takes open_session.retryFallback.",
+					);
+				}
+				const profileError = sessionRetryFallbackError(command.retryFallback);
+				if (profileError !== undefined || command.retryFallback === undefined) {
+					return error(id, "set_retry_fallback", profileError ?? "set_retry_fallback needs retryFallback.");
+				}
+				// A launch-time setting: refused once this connection asked for a turn (even one not started yet), while
+				// any turn runs, or once the session holds turn history, so a chain never changes under a turn or a
+				// retry already in flight. Extension context messages (`custom`, e.g. one a component adds on
+				// session_start) are not a turn and do not count.
+				if (turnRequested || session.isStreaming || session.messages.some((message) => message.role !== "custom")) {
+					return error(
+						id,
+						"set_retry_fallback",
+						"set_retry_fallback must arrive before the session's first turn.",
+					);
+				}
+				runtimeHost.setRetryFallback(command.retryFallback);
+				return success(id, "set_retry_fallback");
 			}
 
 			// =================================================================

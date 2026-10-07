@@ -1,3 +1,75 @@
+## 2026-10-06 - visibleWidth export for extensions that lay out their own rows (senpi#2831)
+
+### What changed
+
+- `packages/coding-agent/src/index.ts`: `visibleWidth` is exported from `@earendil-works/pi-tui` beside `sanitizeTerminalLabel`.
+
+### Why
+
+The eval extension's live row cuts its headline to the terminal width. Counting code points let a wide-character summary (Korean, Chinese, Japanese, emoji) wrap a narrow terminal. Measuring in screen cells needs the TUI's own width function, and extensions reach the TUI only through this package.
+
+### Why an extension could not handle it
+
+Extensions import `@code-yeongyu/senpi`, not `@earendil-works/pi-tui`, and a second copy of the width tables in an extension would drift from the renderer's.
+
+### Expected merge conflict zones
+
+- LOW: the `sanitizeTerminalLabel` export line at the top of `src/index.ts`.
+
+## 2026-10-05 - A single-session rpc process takes its fallback chain over the wire (omo#9582)
+
+### What changed
+
+- `packages/coding-agent/src/main.ts`: `createServices` applies a launch profile's `retryFallback` through the shared `applyRetryFallbackProfile` helper (`core/agent-session-runtime.ts`) instead of an inline `applyOverrides` block, so `open_session` and `set_retry_fallback` apply the policy the same way.
+
+### Why
+
+- omo task children that run as their own `--mode rpc` process (every Windows child) had no way to receive their category's fallback chain, so a usage limit after a tool call ended the child even with `fallback_models` configured. `set_retry_fallback` gives that process the same in-memory policy `open_session.retryFallback` gives a host session; the runtime factory has to apply it identically for later sessions of the process.
+
+### Why an extension could not handle it
+
+- The runtime factory builds each session's `SettingsManager` before any extension loads. An extension cannot reach a later replacement session's settings before its first turn.
+
+### Expected merge conflict zones
+
+- `main.ts`: the `createServices` block directly after `SettingsManager.create(cwd, agentDir, { projectTrusted })`.
+
+## 2026-10-03 - EvalHandleHost capability exports (codemode plan node 10)
+
+### What changed
+
+- `packages/coding-agent/src/index.ts`: re-exports the `EvalHandleHost` capability surface from `core/extensions/eval-handle-host.ts` (`EvalHandleHost`, `HandleRef`, `HandlePhase`, `HandleSnapshot`, `HandleOutcome`, `HandleWatch`, `HandleCallContext`, `HandleError`, `HandleKind`, `CancelReceipt`, `OutputRequest`, `OutputSnapshot`, `EVAL_HANDLE_ERROR_CODES`, `EvalHandleErrorCode`, `EvalHandleError`) beside the kernel-tools context exports.
+
+### Why
+
+- The task owner (an extension) implements the capability and codemode (another extension) consumes it; both import the contract from the package root, never from each other.
+
+### Why an extension could not handle it
+
+- The package root is the only import path published to extensions; an extension cannot add exports to it.
+
+### Expected merge conflict zones
+
+- `index.ts`: the export block directly before the `kernel-tools-context.ts` re-exports.
+
+## 2026-10-03 - A session's own fallback policy reaches its settings in memory only (omo#9512)
+
+### What changed
+
+- `packages/coding-agent/src/main.ts`: `createCliRuntimeFactory` applies a launch profile's `retryFallback` (`open_session.retryFallback`) to that session's own `SettingsManager` through `applyOverrides`, the session-only layer that `save()` never writes.
+
+### Why
+
+- `packages/coding-agent/src/main.ts`: each host session builds its own `SettingsManager`, so the override reaches only that session, and the user's `settings.json` stays byte-identical (`test/suite/rpc-open-session-retry-fallback.test.ts`).
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/main.ts`: the settings manager is created before the session's extensions load, and `ctx.sessionSettings` setters persist to the global settings file.
+
+### Expected merge conflict zones
+
+- LOW: the `runtimeSettingsManager` construction in `createCliRuntimeFactory`.
+
 ## 2026-10-02 - Memory report trigger at startup (senpi#2561)
 
 ### What changed
@@ -244,6 +316,24 @@ Every upstream release that touches these paths re-adds or modifies them: re-run
 ### Expected merge conflict zones
 
 - LOW: the settlement call immediately before final text selection in `packages/coding-agent/src/modes/print-mode.ts`.
+
+## 2026-09-30 - Print, JSON, and RPC runs warn once about a clamped explicit thinking level (senpi#2395)
+
+### What changed
+
+- `packages/coding-agent/src/main.ts`: after runtime creation, non-interactive modes report `session.startupThinkingClamp` as one stderr warning. The CLI thinking re-apply passes the requested level from a clamped selection, so it keeps the clamp record instead of replacing it with the applied level.
+
+### Why
+
+- `--thinking high` on a model not marked `reasoning: true` silently ran with thinking off (senpi#2395). Spawned RPC children are one common way this level is set.
+
+### Why an extension could not handle it
+
+- The warning belongs to CLI startup before extensions see the session, and the re-apply is part of `main.ts` session creation.
+
+### Expected merge conflict zones
+
+- `main.ts`: the `cliThinkingOverride` re-apply in the session factory and the diagnostics block after `reportDiagnostics(runtime.diagnostics)`.
 
 ## 2026-09-30 - A runtime snapshot holds its own dependencies, and shared hosts run from it (#2408, #2409)
 
@@ -4561,3 +4651,21 @@ Session runtime, settings and interactive mode own these paths below the extensi
 ### Expected merge conflict zones
 
 Upstream edits to session/settings/runtime paths at the next sync.
+
+## The CLI runtime factory forwards the browser engine (2026-10-03)
+
+### What changed
+
+- `packages/coding-agent/src/main.ts`: `createCliRuntimeFactory` passes `launchProfile.browserEngine` to session creation next to `promptSurface`.
+
+### Why
+
+A session opened with `open_session.browserEngine` must be created with it (senpi#2611).
+
+### Why an extension could not handle it
+
+The runtime factory builds the session before any extension is loaded.
+
+### Expected merge conflict zones
+
+The `promptSurface: launchProfile?.promptSurface` line in the session creation call.

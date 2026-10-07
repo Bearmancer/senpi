@@ -1,3 +1,99 @@
+## 2026-10-07 - A tool-change system param never lands directly before a user turn (senpi#2864)
+
+### What changed
+
+- `packages/ai/src/api/anthropic-messages.ts`: `convertMessages` flushes the pending mid-conversation system messages when an assistant param is actually pushed, after the `blocks.length === 0` skip, instead of at the start of every assistant message.
+
+### Why
+
+A reply that converts to no blocks (for example a same-model reply that ended with nothing replayable) was skipped after the flush, leaving the tool-change `system` param directly before the next `user` turn. Anthropic rejects that (`role 'system' must precede an 'assistant' message`), and since the transcript keeps the layout, every later request in the session failed. The same class was fixed upstream in oh-my-pi v18.8.0.
+
+### Why an extension could not handle it
+
+The placement of system params is decided inside the provider's message conversion.
+
+### Expected merge conflict zones
+
+- The assistant branch of `convertMessages` in `packages/ai/src/api/anthropic-messages.ts`, around the `blocks.length === 0` skip.
+
+## 2026-10-06 - A forced tool_choice refused inside a 200 stream is retried (senpi#2801)
+
+### What changed
+
+- `packages/ai/src/utils/tool-choice-fallback.ts`: `primeStreamUntilContent` reads a forced request's stream until its first content (text, reasoning, a tool call or a finish), replaying what it read. An error the stream raises before that is marked as a request refusal, and `isForcedToolChoiceUnsupportedError` / `refusalNamesForcedTool` treat it like a 400. The existing rules apply unchanged: the known wordings, the forced-tool naming rule, one retry, and no memory for thinking-blamed refusals.
+- `packages/ai/src/api/openai-completions.ts`: the forced request's `send` primes its stream through `primeStreamUntilContent` (`chatChunkHasContent`). An unforced request's stream is untouched.
+- `packages/ai/test/openai-completions-tool-choice.test.ts`: the fake gateway can now answer 200 and raise in-band. Five new cases, three of which fail on main: an in-band refusal is retried once and the turn completes; a thinking-blamed one is not remembered; a second refusal surfaces once. Two guards: a refusal after content streamed is not retried (nothing is sent twice), and an unforced request is not retried.
+
+### Why
+
+A keepalive gateway serving Kimi K3 with thinking on answered the first-turn forced `todo` request with 200 and then `tool_choice 'specified' is incompatible with thinking enabled` in-band. The retry only wrapped the HTTP response, so the first turn ended in an error until the user typed `continue`.
+
+### Why an extension could not handle it
+
+The refusal has to be caught where the provider request is sent and its stream is opened, which is inside the AI package's provider implementation.
+
+### Expected merge conflict zones
+
+- `packages/ai/src/api/openai-completions.ts`: the `createRequest` call to `sendWithForcedToolChoiceFallback` and the helpers next to `isForcedOpenAICompletionsToolChoice`.
+- `packages/ai/src/utils/tool-choice-fallback.ts`: the status gate at the top of `isForcedToolChoiceUnsupportedError` and `refusalNamesForcedTool`.
+
+## 2026-10-04 - Claude Agent SDK 0.3.289
+
+### What changed
+
+- `packages/ai/src/api/anthropic-messages.ts`: `claudeCodeVersion` 2.1.288 -> 2.1.289, the Claude Code version the bundled SDK 0.3.289 declares.
+
+### Why
+
+The Releasability gate's SDK currency check fails while a newer SDK is published; 0.3.289 bundles Claude Code 2.1.289.
+
+### Why an extension could not handle it
+
+The SDK pin and the advertised Claude Code version are fixed at build time in the package manifest and the provider module.
+
+### Expected merge conflict zones
+
+The SDK pin line and the lockfiles at the next upstream dependency sync.
+
+## 2026-10-03 - Cursor resource_exhausted signatures are Cursor-only; "reset in N minutes" is a retry hint (senpi#2660)
+
+### What changed
+
+- `packages/ai/src/utils/overflow.ts`: `isCursorPayloadResourceExhausted`, `isCursorQuotaResourceExhausted` and `isCursorZeroTokenResourceExhausted` return false unless the message's provider is `cursor` or `cursor-cli-oauth` (or unset, as in provider-agnostic callers).
+- `packages/ai/src/utils/retry-hint.ts`: `fromBodyProse` reads "reset(s) in N <unit>" when the body is already rate-limited.
+
+### Why
+
+- `packages/ai/src/utils/overflow.ts`: Devin rejects a turn over its free-model limit with a trailer-only `resource_exhausted`, so the message bills zero tokens and matched Cursor's zero-token signature. The session then compacted and re-minted on the refused model instead of reaching the fallback chain.
+- `packages/ai/src/utils/retry-hint.ts`: the same message says "Your limit will reset in 9 minutes", which the prose parser ignored, so the wait fell back to the 60 s cap.
+
+### Why an extension could not handle it
+
+- Both functions are the classification the session's retry loop calls before any extension sees the failure.
+
+### Expected merge conflict zones
+
+- LOW: the three Cursor functions in `overflow.ts` and the prose branch of `fromBodyProse`.
+
+## 2026-10-03 - Model `supportsAssistantPrefill` (senpi#1930)
+
+### What changed
+
+- `packages/ai/src/model.ts`: `Model.supportsAssistantPrefill?: boolean` (absent = no) and `modelSupportsAssistantPrefill(model, { thinkingEnabled })`, false unless the model is marked and, on the Anthropic Messages API, extended thinking is off.
+- `packages/ai/src/index.ts`: exports `modelSupportsAssistantPrefill`.
+
+### Why
+
+- `packages/ai/src/model.ts`, `packages/ai/src/index.ts`: #1930. Whether a request may end with an assistant message is a property of the model and of the request settings. No default model supports it today, and it is set per model only after a live probe.
+
+### Why an extension could not handle it
+
+- `packages/ai/src/model.ts`, `packages/ai/src/index.ts`: model metadata is defined in packages/ai, below the extension runtime.
+
+### Expected merge conflict zones
+
+- LOW: the field beside `recoverTextToolCalls` in `Model`, and the export line beside `./models.ts`.
+
 ## 2026-10-03 - Claude Code fingerprint floor 2.1.288 (senpi#2545)
 
 ### What changed

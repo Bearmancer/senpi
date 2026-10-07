@@ -5,6 +5,7 @@
  */
 import { createConnection, type Socket } from "node:net";
 import { ClientOccupancy } from "./host-client-occupancy.ts";
+import { SessionRunActivity } from "./host-run-activity.ts";
 import { type HostActivity, IdleExitDecider, type IdleExitDecision } from "./host-lifecycle-policy.ts";
 import { attachJsonlLineReader, MAX_RPC_LINE_CHARACTERS } from "./jsonl.ts";
 import { activeTurnsForIdleDecision, createObserverLink, type ObserverLink } from "./observer-link.ts";
@@ -21,7 +22,7 @@ export interface SupervisorActivityOptions {
 export class SupervisorActivity {
 	readonly decider: IdleExitDecider;
 	readonly clients: ClientOccupancy;
-	private readonly busySessions = new Map<string, number>();
+	private readonly runs = new SessionRunActivity();
 	private readonly observerLink: ObserverLink;
 	private observerSocket: Socket | undefined;
 	private readonly options: SupervisorActivityOptions;
@@ -54,7 +55,7 @@ export class SupervisorActivity {
 				unhealthySince: this.observerLink.unhealthySince(),
 				now: Date.now(),
 				unknownGraceMs: this.decider.idleExitMs,
-				observedBusy: this.countBusySessions(),
+				observedBusy: this.runs.busySessions,
 			}),
 		};
 	}
@@ -89,28 +90,8 @@ export class SupervisorActivity {
 		};
 	}
 
-	private countBusySessions(): number {
-		let busy = 0;
-		for (const count of this.busySessions.values()) if (count > 0) busy++;
-		return busy;
-	}
-
 	private observeHostEvent(line: string): void {
-		let event: unknown;
-		try {
-			event = JSON.parse(line);
-		} catch {
-			return;
-		}
-		if (typeof event !== "object" || event === null) return;
-		const type = Reflect.get(event, "type");
-		const sessionId = Reflect.get(event, "sessionId");
-		if (typeof sessionId !== "string") return;
-		const busy = this.busySessions.get(sessionId);
-		if (type === "agent_start") this.busySessions.set(sessionId, (busy ?? 0) + 1);
-		else if (type === "agent_settled") this.busySessions.set(sessionId, Math.max(0, (busy ?? 1) - 1));
-		else return;
-		this.refresh();
+		if (this.runs.observe(line)) this.refresh();
 	}
 }
 

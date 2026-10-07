@@ -125,12 +125,18 @@ async function judgeLegacyHost(
 	}
 	const sessions = await probeSessionCount(host.socket, LEGACY_PROBE_TIMEOUT_MS);
 	if (sessions === 0) return { verdict: "idle", host };
-	const held =
-		sessions === undefined ? "an unknown number of sessions" : `${sessions} open session${sessions === 1 ? "" : "s"}`;
-	return {
-		verdict: "held",
-		detail: `${where} holds ${held}; run \`${APP_NAME} host stop --drain --socket ${host.socket}\` to let it finish that work and exit, then retry`,
-	};
+	return { verdict: "held", detail: busyLegacyHostDetail(pid, host.socket, sessions) };
+}
+
+/** Why a proven legacy host that holds work is left alone, and the command that retires it. */
+export function busyLegacyHostDetail(pid: number, socket: string, sessions: number | undefined): string {
+	return `pid ${pid} (${socket}) holds ${describeSessions(sessions)}; run \`${APP_NAME} host stop --drain --socket ${socket}\` to let it finish that work and exit, then retry`;
+}
+
+export function describeSessions(sessions: number | undefined): string {
+	return sessions === undefined
+		? "an unknown number of sessions"
+		: `${sessions} open session${sessions === 1 ? "" : "s"}`;
 }
 
 /**

@@ -5,7 +5,14 @@ import { formatModelTruncationNotice } from "../output/output-meta.ts";
 import { DEFAULT_MAX_BYTES, TailLineRing } from "../output/streaming-output.ts";
 import type { EvalToolCallMetric } from "./call-capture.ts";
 import { type EvalImageResizer, EvalOutputCollector, type EvalOutputResult } from "./image.ts";
-import type { EvalMemoryDetails, EvalRuntimeInfo, EvalStatusEvent, EvalToolDetails, EvalToolInput } from "./types.ts";
+import type {
+	EvalKernelState,
+	EvalMemoryDetails,
+	EvalRuntimeInfo,
+	EvalStatusEvent,
+	EvalToolDetails,
+	EvalToolInput,
+} from "./types.ts";
 
 const LIVE_UPDATE_LINES = 8;
 /** Same cadence as the core bash tool's streaming updates (BASH_UPDATE_THROTTLE_MS). */
@@ -48,6 +55,8 @@ export class CellResultBuilder {
 	readonly #output: EvalOutputCollector;
 	readonly #state: CellState;
 	#memory: KernelMemoryReport | undefined;
+	#restartNotice: string | undefined;
+	#kernelState: EvalKernelState | undefined;
 	readonly #liveLines = new TailLineRing({ maxBytes: DEFAULT_MAX_BYTES * 2, maxLines: LIVE_UPDATE_LINES });
 	#lastOutputUpdateAt = 0;
 	#outputUpdateTimer: ReturnType<typeof setTimeout> | undefined;
@@ -85,6 +94,8 @@ export class CellResultBuilder {
 	async finalize(result: KernelResult): Promise<AgentToolResult<EvalToolDetails>> {
 		this.#state.durationMs = result.durationMs;
 		this.#memory = result.memory;
+		this.#restartNotice = result.notice;
+		this.#kernelState = result.kernelState;
 		if (result.ok) {
 			if (result.valueRepr) this.#output.pushValue(`${result.valueRepr}\n`);
 			this.#state.status = "complete";
@@ -160,9 +171,10 @@ export class CellResultBuilder {
 				? `(displayed ${output.images.length} image${output.images.length === 1 ? "" : "s"}; no text output)`
 				: "(no output)");
 		const text = output.meta === undefined ? shown : `${shown}\n${formatModelTruncationNotice(output.meta)}`;
-		const notice = this.#memory?.notice;
-		const noticePart = notice === undefined ? [] : [{ type: "text" as const, text: notice }];
-		return { content: [{ type: "text", text }, ...noticePart, ...output.images], details };
+		const noticeParts = [this.#restartNotice, this.#memory?.notice].flatMap((notice) =>
+			notice === undefined ? [] : [{ type: "text" as const, text: notice }],
+		);
+		return { content: [{ type: "text", text }, ...noticeParts, ...output.images], details };
 	}
 
 	#details(output: EvalOutputResult | undefined, isError: boolean): EvalToolDetails {
@@ -202,12 +214,15 @@ export class CellResultBuilder {
 			...(output?.notice === undefined ? {} : { notice: output.notice }),
 			...(output?.meta === undefined ? {} : { meta: output.meta }),
 			...(output === undefined || this.#memory === undefined ? {} : { memory: memoryDetails(this.#memory) }),
+			...(this.#kernelState === undefined ? {} : { kernelState: this.#kernelState }),
 		};
 	}
 
 	#liveUpdateText(): string {
-		if (this.#state.status === "queued" && this.#state.queuedBehind?.length) {
-			return `queued behind ${this.#state.queuedBehind.join(", ")} in the ${this.#state.input.language} kernel`;
+		if (this.#state.status === "queued" && this.#state.queuedBehind !== undefined) {
+			return this.#state.queuedBehind.length === 0
+				? `waiting for the ${this.#state.input.language} kernel to be ready`
+				: `queued behind ${this.#state.queuedBehind.join(", ")} in the ${this.#state.input.language} kernel`;
 		}
 		const summary = this.#state.input.summary === undefined ? "" : ` ${this.#state.input.summary}`;
 		const output = this.#liveLines.text();

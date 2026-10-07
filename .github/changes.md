@@ -1,3 +1,111 @@
+## 2026-10-05 - The process-mode kernel suite runs on Linux and macOS (codemode plan node 17)
+
+### What changed
+
+- `.github/workflows/ci.yml`: a new job, `process-kernel` (`Eval kernel process isolation (ubuntu-latest)` and `(macos-latest)`), runs `test/js-process-kernel.test.ts` with the JSON reporter on both platforms. A following step fails unless the suite ran (at least 30 passed, none failed, and on macOS only the Linux-only subreaper case skipped) and no `process-entry.js` child was left behind with ppid 1.
+
+### Why
+
+- Process mode could not start on Linux at all (a spawn's stdout is a socket there, and the entry reopened it by path), and no CI run caught it: the suite never ran on macOS, and the PR that added it was stacked, so it got no test workflow (#2759). A platform where the kernel child cannot start must fail a check instead of shipping.
+
+### Why an extension could not handle it
+
+- This is CI configuration.
+
+### Expected merge conflict zones
+
+- LOW: the job list in `ci.yml`, where the new job sits before `python-kernel-windows`.
+
+## 2026-10-05 - CI runs on pull requests to any branch (senpi#2759)
+
+### What changed
+
+- `.github/workflows/ci.yml`: the `pull_request` trigger no longer filters on `branches: [main]`, so a pull request stacked on another feature branch runs the same CI as one that targets `main`. The existing concurrency group (`ci-${{ github.ref }}`, which is `refs/pull/<n>/merge` for a pull request) with `cancel-in-progress` keeps one run per pull request.
+
+### Why
+
+- A stacked pull request ran no test workflow, so its code could look reviewed while it had never run in CI. The process-mode kernel in #2706 could not start on Linux and nothing caught it.
+
+### Why an extension could not handle it
+
+- This is CI configuration.
+
+### Expected merge conflict zones
+
+- LOW: the `on:` block at the top of `ci.yml`.
+
+## 2026-10-04 - The Windows Python job checks that environment installs stay inside the revision (codemode plan node 14)
+
+### What changed
+
+- `.github/workflows/ci.yml` (`python-kernel-windows`): a new step runs the environment tests for pip's config file and staged revisions with the JSON reporter, and fails unless the pip-config test actually ran and passed.
+
+### Why
+
+- pip skips every config file only when `PIP_CONFIG_FILE` equals Python's `os.devnull`, which is `nul` on Windows. A string check on another OS can't prove that, and a skipped test must not count as a pass.
+
+### Why an extension could not handle it
+
+- This is CI configuration.
+
+### Expected merge conflict zones
+
+- LOW: the `python-kernel-windows` job's step list.
+
+## 2026-10-04 - The Windows Python job runs the kernel-tool suites (codemode plan node 11)
+
+### What changed
+
+- `.github/workflows/ci.yml` (`python-kernel-windows`): a new step runs `test/py-kernel-tools.test.ts`, `test/kernel-tools-registry.test.ts` and `test/kernel-tools-reentrancy.test.ts` with the JSON reporter, and the next step fails unless they all ran: no failures, no skips, and at least 15 Python kernel-tool cases passed.
+
+### Why
+
+- Python kernel tools serve callbacks on threads beside a runner whose interrupt is SIGTERM-only on Windows; the plan requires those suites to run on Windows, and a skipped suite must not count as a pass.
+
+### Why an extension could not handle it
+
+- This is CI configuration.
+
+### Expected merge conflict zones
+
+- LOW: the `python-kernel-windows` job's step list.
+
+## 2026-10-03 - codemode-gate checks out full history to review baseline changes (senpi#2452)
+
+### What changed
+
+- `.github/workflows/ci.yml`: the `codemode-gate` job's checkout step sets `fetch-depth: 0`.
+
+### Why
+
+- The eval gate now reads `packages/senpi-codemode/test/gate/baseline.json` at the pull request's merge base and requires every baseline cell the PR edits or removes to be listed with a reason. A shallow checkout cannot resolve the merge base, and the gate fails closed when it cannot, so the job needs full history.
+
+### Why an extension could not handle it
+
+- Checkout depth is CI workflow configuration evaluated before any Senpi runtime or extension loader exists.
+
+### Expected merge conflict zones
+
+- LOW: the `codemode-gate` job's checkout step in `.github/workflows/ci.yml`.
+
+## 2026-10-03 - The release body includes every published package's notes (senpi#2585)
+
+### What changed
+
+- `.github/workflows/build-binaries.yml`: the `release-notes.mjs extract` step passes `--published`, so `RELEASE_NOTES.md` holds the section of every published package (the workspace packages in `scripts/registry-packages.mjs`), coding-agent first, each under its published name (`scripts/changes.md` records the extractor change). A newly published package is included without editing the workflow.
+
+### Why
+
+- The step named no changelog, so the extractor's coding-agent default was the whole release body and the other packages' notes and contributor credits were dropped.
+
+### Why an extension could not handle it
+
+- The release body is produced by the tag workflow, outside any runtime.
+
+### Expected merge conflict zones
+
+- LOW: the `release-notes.mjs extract` command in the `build-binaries.yml` release-assets step.
+
 ## 2026-10-02 - The WebView job runs the readiness regression and prints the readiness log (senpi#2353)
 
 ### What changed

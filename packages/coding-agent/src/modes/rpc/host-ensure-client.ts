@@ -1,8 +1,4 @@
-/**
- * This build as an ensure CLIENT of a host: the protocol it speaks, what it needs from a host, and
- * which host child argv it would launch. Shared by the ensure decision and the start's readiness
- * gate, which must agree on what "compatible" means (I2). Split out of `host-ensure.ts` (senpi#2566).
- */
+/** This build as a host client: what it declares to `decideHostAction`, and when a host is compatible with it. */
 import { engineBuildIdentity } from "../../core/engine-build-identity.ts";
 import {
 	decideHostAction,
@@ -11,12 +7,11 @@ import {
 	type HostProtocolInfo,
 	REQUIRED_HOST_CAPABILITIES,
 } from "./host-decision.ts";
+import type { EnsureHostOptions } from "./host-ensure-types.ts";
 import { hostLaunchProfile } from "./protocol-identity.ts";
 
-export function ensureClient(
-	options: { readonly upgrade?: "never" | "if-engine-differs"; readonly hostArgs?: readonly string[] },
-	startedByUs: boolean,
-): HostDecisionClient {
+/** This build as a client: which protocol it speaks, what it needs from a host, and which build it is. */
+export function ensureClient(options: EnsureHostOptions, startedByUs: boolean): HostDecisionClient {
 	return {
 		protocolVersion: HOST_PROTOCOL_VERSION,
 		requiredCapabilities: REQUIRED_HOST_CAPABILITIES,
@@ -42,5 +37,5 @@ export function hostChildArgv(hostArgs: readonly string[]): string[] {
  * when a client that is forbidden to upgrade would attach to it. Never a version-string comparison (I2).
  */
 export function isCompatible(protocol: HostProtocolInfo | undefined): boolean {
-	return decideHostAction(ensureClient({}, false), protocol, "never").action === "reuse";
+	return decideHostAction(ensureClient({ socket: "" }, false), protocol, "never").action === "reuse";
 }

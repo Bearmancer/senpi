@@ -11,6 +11,7 @@ import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { shardSocketPath } from "../../src/modes/rpc/host-daemon-paths.ts";
 import { type EnsuredHost, ensureHost } from "../../src/modes/rpc/host-ensure.ts";
+import { settledOpportunisticHostGc } from "../../src/modes/rpc/host-gc-pass.ts";
 import { runHostRequest } from "../../src/modes/rpc/host-runner.ts";
 import type { HostEndpointStatus } from "../../src/modes/rpc/host-status-all.ts";
 import { signalGeneration, stopHost } from "../../src/modes/rpc/host-stop.ts";
@@ -114,7 +115,13 @@ export function hostArgs(extension?: string): string[] {
 	return [...GENERATION_HOST_ARGS, ...(extension ? ["--extension", extension] : [])];
 }
 
-type RealHostOptions = { idleExitMs?: number; extension?: string; afterLockAcquired?: () => Promise<void> };
+type RealHostOptions = {
+	idleExitMs?: number;
+	extension?: string;
+	afterLockAcquired?: () => Promise<void>;
+	/** Return while the gc pass the ensure scheduled may still run; by default it has finished first. */
+	gcPassInFlight?: boolean;
+};
 
 /** A real supervised host, released at once: the suite's own connections are what attach to it. */
 export async function realHost(qa: EndpointScratch, socket: string, options: RealHostOptions = {}): Promise<number> {
@@ -144,6 +151,8 @@ export async function heldRealHost(
 	ensured.push({ socket, agentDir: qa.agentDir });
 	supervisors.push(host.pid);
 	held.push(host);
+	// The pass may reap or record under the agent dir; a scenario's own steps start once it is done.
+	if (options.gcPassInFlight !== true) await settledOpportunisticHostGc(qa.agentDir);
 	return host;
 }
 

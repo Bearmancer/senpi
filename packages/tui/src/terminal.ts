@@ -259,6 +259,8 @@ export interface ProcessTerminalOptions {
 
 const DEFAULT_ESCAPE_TIMEOUT_MS = 10;
 const DEFAULT_SSH_ESCAPE_TIMEOUT_MS = 100;
+const DEFAULT_BURST_WINDOW_MS = 20;
+const DEFAULT_SSH_BURST_WINDOW_MS = 100;
 
 /**
  * Resolve how long to wait for the rest of an escape sequence before
@@ -274,6 +276,25 @@ export function resolveEscapeTimeoutMs(env: NodeJS.ProcessEnv = process.env): nu
 		return DEFAULT_SSH_ESCAPE_TIMEOUT_MS;
 	}
 	return DEFAULT_ESCAPE_TIMEOUT_MS;
+}
+
+/**
+ * Resolve how long a line break that ends a read with text is held as a possible paste fragment
+ * when the terminal sends no bracketed-paste markers. Paste chunks over SSH arrive further apart,
+ * so the default window is longer there. `PI_TUI_BURST_WINDOW_MS=0` never holds a line break.
+ */
+export function resolveBurstWindowMs(env: NodeJS.ProcessEnv = process.env): number {
+	const raw = env.PI_TUI_BURST_WINDOW_MS?.trim();
+	if (raw !== undefined && raw.length > 0) {
+		const configured = Number(raw);
+		if (Number.isFinite(configured) && configured >= 0) {
+			return configured;
+		}
+	}
+	if (env.SSH_CONNECTION || env.SSH_TTY) {
+		return DEFAULT_SSH_BURST_WINDOW_MS;
+	}
+	return DEFAULT_BURST_WINDOW_MS;
 }
 
 /**
@@ -526,7 +547,10 @@ export class ProcessTerminal implements Terminal {
 	 * to handle the case where the response arrives split across multiple events.
 	 */
 	private setupStdinBuffer(): void {
-		this.stdinBuffer = new StdinBuffer({ escapeTimeout: resolveEscapeTimeoutMs() });
+		this.stdinBuffer = new StdinBuffer({
+			escapeTimeout: resolveEscapeTimeoutMs(),
+			burstWindowMs: resolveBurstWindowMs(),
+		});
 
 		// Forward individual sequences to the input handler
 		this.stdinBuffer.on("data", (sequence) => {

@@ -1,10 +1,12 @@
 import { join } from "node:path";
 import type { BridgeConnectionConfig, KernelToHostMessage } from "../../bridge/protocol.ts";
 import type { SessionEnvironment } from "../session-env.ts";
+import type { KernelLifecycle } from "../shared/kernel-death.ts";
+import { readProcessGroupCpuTime } from "../shared/process-group-cpu.ts";
 import { type CodemodeRuntimeAssetEnvironment, requireCodemodeRuntimeAsset } from "../shared/runtime-asset.ts";
 import { SubprocessKernel, type SubprocessKernelMemory, type SubprocessSpawn } from "../shared/subprocess-kernel.ts";
 
-export interface RubyKernelStartOptions {
+export interface RubyKernelStartOptions extends KernelLifecycle {
 	readonly cwd: string;
 	readonly sessionId: string;
 	readonly connection: BridgeConnectionConfig;
@@ -13,7 +15,7 @@ export interface RubyKernelStartOptions {
 	readonly command?: string;
 	readonly spawn?: SubprocessSpawn;
 	readonly onMessage?: (message: KernelToHostMessage) => void;
-	/** Ceiling-only memory management (no notice or globals list: the runner reports no memory). */
+	/** Memory management: the runner reports its largest globals and the host reads the interpreter footprint for the ceiling. */
 	readonly memory?: SubprocessKernelMemory;
 }
 
@@ -41,6 +43,8 @@ export class RubyKernel extends SubprocessKernel {
 			spawn: options.spawn,
 			onMessage: options.onMessage,
 			memory: options.memory && { language: "rb", ...options.memory },
+			onDeath: options.onDeath,
+			startup: { label: "Ruby", readGroupCpuTime: readProcessGroupCpuTime },
 		});
 	}
 }

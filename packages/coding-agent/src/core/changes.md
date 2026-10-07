@@ -1,3 +1,311 @@
+## 2026-10-07 - An attach that lands during a rebuild keeps its permission preset (senpi#2842)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `_rebuildRuntimeForReload()` reads the flag values of the runner that is live at the runner swap (`_buildRuntime({ flagValues: this._extensionRunner.getFlagValues() })`) instead of snapshotting them before its awaits, so a flag set on the live runner while the reload ran carries over to the rebuilt one. It reads the current runner, not the one the reload started with, because an overlapping reload may have installed another runner in the meantime, and an attach then writes that one.
+- `packages/coding-agent/src/core/agent-session-runtime.ts`: `apply()` sets the replacement session's `permission-preset` flag, prompt surface and browser engine from the runtime's current launch profile as it installs it, so new / switch / fork / import end on the values the last attach named.
+
+### Why
+
+An attach moves a live session's preset through `AgentSessionRuntime.setPermissionPreset`, which writes the runtime's launch profile and the live runner's flag. An attach that landed during a reload was overwritten by the reload's pre-await flag snapshot. One that landed while a replacement's runtime was being created reached only the retired session, because the replacement was built from the profile read before the await. Either way the rebuilt session enforced the looser preset while the host reported the stricter one. Two overlapping reloads lost it too: the reload that finished last installed a runner from the flags of the runner it started with, not of the runner the other reload had installed and the attach had written. The prompt surface and browser engine an attach named during a replacement were lost the same way, because the replacement was created from the same stale launch profile.
+
+### Why an extension could not handle it
+
+The reload's flag carry-over and the replacement install are inside `AgentSession` and `AgentSessionRuntime`; no extension sees the runner swap or the runtime's launch profile.
+
+### Expected merge conflict zones
+
+- `agent-session.ts`: the head of `_rebuildRuntimeForReload()` (the removed `previousFlagValues` snapshot) and its `_buildRuntime({ ... flagValues })` call.
+- `agent-session-runtime.ts`: `apply()`.
+
+## 2026-10-06 - An attach moves the live session to the permission preset it names (senpi#2823)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session-runtime.ts`: new `AgentSessionRuntime.setPermissionPreset(preset)`, beside `setPromptSurface` / `setBrowserEngine`. It stores the preset in the runtime's launch profile, so `new_session` / `switch_session` / `fork` keep it, and sets the live extension runner's `permission-preset` flag. The builtin permission-system extension reloads its rules from that flag at the next tool call (`core/extensions/builtin/permission-system/index.ts`).
+
+### Why
+
+`open_session` on a file another client holds open attaches to the live session (`modes/rpc/session-registry-attach.ts`, `worker-session-registry.ts`). The attach moved the session to a named prompt surface and browser engine, but ignored `permissionPreset`, so a thread switched from full access to ask kept running tools unrestricted.
+
+### Why an extension could not handle it
+
+The launch profile that later replacement sessions are built from is private to `AgentSessionRuntime`, and the RPC host reaches a live session only through the runtime. An extension can read its flag, but nothing outside the runtime can change it for the session that is already running.
+
+### Expected merge conflict zones
+
+- `agent-session-runtime.ts`: the setter block after `setBrowserEngine`.
+
+## 2026-10-06 - Stale generated global-default extension shims no longer fail every start (senpi#2765)
+
+### What changed
+
+- `packages/coding-agent/src/core/resource-loader.ts`: `ensureGlobalDefaultExtensions()` removes a generated shim (any accepted banner) whose re-exported target no longer exists when this engine has no on-disk builtin to point it at, as in a compiled binary. Before, it skipped such an extension entirely, so the dead shim stayed. When a builtin exists, the existing rewrite still runs. The extension factory resolver also maps a banner-marked shim at `<agentDir>/extensions/<id>.js` whose target is missing to a no-op factory, in any agent dir, so the loader never imports it. A file counts as a dead shim only when it is exactly an accepted banner followed by the single export line the generator writes; a file a person wrote (no banner, or the banner plus anything else) is never treated as a shim, rewritten or removed. Removal is idempotent across concurrent starts (a lost race's `ENOENT` is ignored).
+- `packages/coding-agent/test/suite/regressions/2765-stale-generated-extension-shims.test.ts`: covers the rewrite with builtins present, the removal without builtins (no load errors), the silent skip in a non-default agent dir, and a user-authored file left byte-identical.
+
+### Why
+
+The shim records an absolute `file://` path into the install that wrote it. After an install-method change (npm to bun, or to the standalone binary) that path is gone, and every start reported `Extension load errors: Cannot find module` for the four default extensions.
+
+### Why an extension could not handle it
+
+The shims are generated and loaded by the resource loader itself, before any extension runs.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/resource-loader.ts`: `ensureGlobalDefaultExtensions()` and the helpers above `resolveGeneratedGlobalDefaultExtensionFactory()`.
+
+## 2026-10-06 - The retry watchdog stops once the retried request streams (senpi#2804)
+
+### What changed
+
+- `packages/coding-agent/src/core/provider-timeout-retry.ts`: `runBoundedRetryContinuation` takes `onStreamStarted` and clears its watchdog at the retried request's first stream event. Before that it bounded the whole continuation.
+- `packages/coding-agent/src/core/agent-session.ts`: `_continueAgentAfterCurrentRun` passes the first assistant `message_start` of the continuation as that event. `providerRetryWatchdogAbortMessage` now reads "The retried request never started streaming after Ns.", with `retry.provider.streamStartTimeoutMs` only as a hint.
+- `packages/coding-agent/test/suite/regressions/provider-idle-recovery.test.ts`: a retry that streams and then works for three times the bound completes (fails on main). A user abort during a streaming retry still ends as the user's abort. The existing no-first-event and budget tests keep the abort at the bound; their message assertions now use the new wording.
+
+### Why
+
+The watchdog (`max(streamRetryTimeoutMs, 1.1 x streamStartTimeoutMs)`, 660 s with the defaults) ran around the entire `agent.continue()`. A retried turn that was visibly working (streaming, running tools) for longer than that was aborted with "Provider retry continuation watchdog timed out after 660000ms".
+
+### Why an extension could not handle it
+
+The watchdog wraps the session's own retry continuation inside `AgentSession`; no extension hook sees or owns that timer.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/agent-session.ts`: the `runBoundedRetryContinuation` call in `_continueAgentAfterCurrentRun` and `providerRetryWatchdogAbortMessage`.
+- `packages/coding-agent/src/core/provider-timeout-retry.ts`: `BoundedRetryContinuation` and `runBoundedRetryContinuation`.
+
+## 2026-10-05 - A reload requested while session_start is dispatching is deferred (senpi#2719)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `_rebuildRuntimeForReload()` sets `_sessionStartDispatching` for the whole `session_start` settlement (`beforeSessionStart`, the emit, `extendResourcesFromExtensions`) and clears it in the existing `finally`. `checkReloadVeto()` passes it to `checkSessionReloadVeto()`.
+- `packages/coding-agent/src/core/reload-veto.ts`: `checkSessionReloadVeto()` takes an optional `isSessionStartDispatching` predicate and vetoes with "A session is starting." before and after the `session_before_reload` emit, like the existing prompt-admission veto.
+
+### Why
+
+- config-reload requests a second reload from inside its own `session_start` handler when files changed during the first. The nested reload shut down and invalidated the runner whose later `session_start` handlers (MCP attach, memory reconcile) were still running, so their first `ctx` read threw "stale extension generation after reload". The veto defers the nested request through config-reload's existing `reload_deferred` / `armVetoRecheck` path, which reloads once after dispatch ends.
+
+### Why an extension could not handle it
+
+- The dispatch state is private to `AgentSession`; an extension cannot know that its own handler is running inside a reload's `session_start` dispatch.
+
+### Expected merge conflict zones
+
+- `agent-session.ts`: the `_promptStartPending` field block, the `hasBindings` block of `_rebuildRuntimeForReload()`, and `checkReloadVeto()`.
+
+### Must not break
+
+- A reload requested while no `session_start` dispatch is running (`/reload`, config-reload after dispatch, prompt-admission veto) behaves as before.
+
+## 2026-10-05 - Resume queued work after failed extension feedback (senpi#2778)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `_endExtensionCompactionFeedback` releases queued work through the existing continuation admission path after non-aborted feedback completes without applying a summary. Cancelled and superseded feedback does not schedule work.
+
+### Why
+
+- A hidden goal continuation arriving during summary generation remained queued forever when the summary was stale. Only successful non-auto compaction previously resumed it. Fresh continuation admission still enforces required compaction and preserves queued messages on rejection.
+
+### Why an extension could not handle it
+
+- Queue ownership and the feedback lifecycle are private to `AgentSession`; a builtin cannot safely schedule or release another session operation.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/agent-session.ts`: `_endExtensionCompactionFeedback`.
+
+## 2026-10-05 - Require explicit gateway fallback selectors (senpi#2774)
+
+### What changed
+
+- `packages/coding-agent/src/core/retry-fallback/expansion.ts`: exclude OpenGateway and Vercel AI Gateway from bare fallback key and candidate expansion, matching the existing OpenRouter policy. Explicit provider-qualified selectors remain supported.
+
+### Why
+
+- Authenticating a gateway for a selected model also makes its built-in catalog available. Bare model-family defaults must not treat those credentials as permission to route unrelated sessions through that gateway.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/retry-fallback/expansion.ts` owns candidate expansion for every AgentSession consumer, including extension-free SDK and RPC sessions.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/retry-fallback/expansion.ts`: the bare-expansion provider exclusion set.
+
+## 2026-10-05 - A runtime's fallback policy can be set before its first turn (omo#9582)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session-runtime.ts`: new exported `applyRetryFallbackProfile(settingsManager, profile)` overlays a `SessionRetryFallbackProfile` with `applyOverrides`, the session-only layer `save()` never writes. New `AgentSessionRuntime.setRetryFallback(profile)` stores a frozen copy in the runtime's launch profile, so `new_session` / `switch_session` / `fork` keep it, and applies it to the current session's settings.
+
+### Why
+
+- A single-session `--mode rpc` process (an omo task child run as its own process, which is every child on Windows) needs its own fallback chain without a settings file. `set_retry_fallback` (`modes/rpc`) calls this before the first turn.
+
+### Why an extension could not handle it
+
+- The launch profile that later replacement sessions are built from is private to `AgentSessionRuntime`. An extension can change the current session's settings, but not what the runtime hands the next session it creates.
+
+### Expected merge conflict zones
+
+- `agent-session-runtime.ts`: the `SessionRetryFallbackProfile` interface block and the setter block after `setBrowserEngine`.
+
+## 2026-10-04 - models.json `hideFreeModels` hides a provider's zero-cost models (senpi#2720)
+
+### What changed
+
+- `packages/coding-agent/src/core/provider-composer.ts`: `applyModelsJson()` drops every model of the provider whose `cost.input` and `cost.output` are both `0` when the provider block sets `hideFreeModels: true`, and the "must specify ..." guard counts `hideFreeModels` so a block with only that key is valid.
+- `packages/coding-agent/src/core/model-config-schema.ts` (fork-owned): `ProviderConfigSchema` gains optional boolean `hideFreeModels` next to `whitelist` / `blacklist`.
+
+### Why
+
+- Zen free-tier models (cost 0) are listed and selectable but every request returns 403 `FreeTierError`. `blacklist` takes exact ids and cannot express "cost is zero"; `big-pickle` has no `-free` suffix. One provider-scoped switch hides the class and keeps working when a catalog refresh adds a new free id.
+
+### Why an extension could not handle it
+
+- The `whitelist` / `blacklist` filter runs inside `applyModelsJson()` while the provider catalog is composed, before any extension hook sees the models. Every catalog consumer (`/model`, `--list-models`, startup selection, `enabledModels` / `favoriteModels`) reads that composed list, so the filter has to live there.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/provider-composer.ts`: the guard in `applyModelsJson()` and the final `models.filter(...)` that applies `whitelist` / `blacklist`.
+
+### Must not break
+
+- A provider without `hideFreeModels: true` keeps its zero-cost models, including custom local providers (Ollama, LM Studio, vLLM) whose models default to cost 0.
+
+## 2026-10-04 - continue_from_leaf acknowledges at turn admission, not turn end (senpi#2708)
+
+### What changed
+
+- `packages/coding-agent/src/core/continue-from-leaf.ts`: `trackTurnAdmission()` pairs the `started` disposition with the turn's `agent_start`, resolving once both hold (or immediately on a delegated queue), so the order of the two never drops a same-tick `agent_start`.
+- `packages/coding-agent/src/core/agent-session.ts`: `continueFromLeaf()` resolves once the runtime took the continuation (through `trackTurnAdmission`) instead of awaiting the whole continued turn; the turn keeps running in the background.
+
+### Why
+
+- The desktop sends `continue_from_leaf` with a deadline. Answering only after the whole turn timed out every continuation longer than the deadline and left the editor stuck on "submitting" while the agent kept going (omo-desktop-app#1571 review HIGH-1). `prompt` acknowledges at admission; the continuation now does the same.
+
+### Why an extension could not handle it
+
+- Admission timing is session-core behavior inside `AgentSession.continueFromLeaf()` / `_promptAgent`, not an extension hook. No extension event can change when the method resolves without owning the prompt admission it shares with `prompt()`.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/agent-session.ts` (`continueFromLeaf()` and the surrounding admission helpers), against any upstream change to prompt admission or `sendCustomMessage`.
+
+### Must not break
+
+- The refusals `streaming`, `nothing_to_continue` and `leaf_not_assistant` still throw with their typed codes before any turn starts. A start-time failure rejects the start promise; the turn events are unchanged.
+
+## 2026-10-03 - A model's free or plan limit falls back at once and keeps its reset window (senpi#2660)
+
+### What changed
+
+- `packages/coding-agent/src/core/retry-fallback/usage-limit.ts`: `usageLimitScope` also recognises a reached free, plan, tier or model limit whose message says to switch to a different model, scoped `model` because it names the model.
+
+### Why
+
+- `packages/coding-agent/src/core/retry-fallback/usage-limit.ts`: Devin's "Reached free model rate limit ... switch to a different model. Your limit will reset in 9 minutes" carried none of the existing usage-limit wording. With the Cursor signatures scoped to Cursor (packages/ai), the failure takes the rate-limited path, falls back to the next chain model on the first failure, and the refused model is cooled down for the stated window. `test/suite/regressions/issue-2660-devin-free-model-limit-fallback.test.ts` covers the immediate fallback and its `limit: "model"`, the 9-minute window with an injected clock, that a plain rate limit is not reported as a usage limit, and a near-threshold context; two of its cases fail on main.
+
+### Expected merge conflict zones
+
+- LOW: the pattern list at the top of `usage-limit.ts`.
+
+## 2026-10-03 - A launch profile carries the session's own fallback policy (omo#9512)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session-runtime.ts`: `AgentSessionLaunchProfile.retryFallback?: SessionRetryFallbackProfile` (`{ modelFallback, fallbackChains }`).
+
+### Why
+
+- `test/suite/rpc-open-session-retry-fallback.test.ts` opens two sessions on one host with different chains: each falls back to its own model on a usage limit, a session without a profile keeps the host's settings and fails cleanly, and the user's `settings.json` is byte-identical afterwards. Three of its four cases fail on main. `test/suite/rpc-worker-retry-fallback.test.ts` checks the same per-session chain on worker-isolate sessions.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/agent-session-runtime.ts`: the launch profile is built by the host before any extension loads, and an extension's only settings lever (`ctx.sessionSettings`) writes the global settings file.
+
+### Expected merge conflict zones
+
+- LOW: the `AgentSessionLaunchProfile` fields in `agent-session-runtime.ts`.
+
+## 2026-10-03 - A first run with no provider gets the /login guidance, not a compaction error (senpi#2677)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `_assertModelReadyForTurn()` (no model, or no credentials for its provider) is shared by `prompt()` and the `triggerTurn` path of `sendCustomMessage`, which used to reach the compaction gate unchecked. `_enforceCompactionBeforeProvider` and `_enforceFinalProviderAdmission` treat a context window `<= 0` as unknown for every model, not only virtual ones. The check throws `ModelNotReadyError`; the extension `sendMessage` and `sendUserMessage` error reporters turn it into one `provider_required` session event (with the same guidance text) instead of `runner.emitError`, so a background turn on a first run is neither silent nor an error; the once-latch resets when a turn is admitted, so losing the provider again later is reported again.
+
+### Why
+
+- `packages/coding-agent/src/core/agent-session.ts`: with no provider the session runs on the agent's placeholder model (`contextWindow: 0`), where `shouldCompact(tokens, 0)` is always true, so a startup extension's triggered turn threw `RequiredCompactionError` before anything said no provider was configured. `test/suite/regressions/first-run-no-provider-not-compaction.test.ts` covers the typed prompt, the extension-triggered turn and a zero-window model; the last two fail on main.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/agent-session.ts`: turn admission and the compaction gate run inside the session before any extension hook can intervene.
+
+### Expected merge conflict zones
+
+- LOW: the pre-provider threshold condition and the start of the `triggerTurn` branch in `sendCustomMessage`.
+
+## 2026-10-03 - Continue a session from its leaf with no new prompt (senpi#1930)
+
+### What changed
+
+- `packages/coding-agent/src/core/continue-from-leaf.ts` (new): `CONTINUE_FROM_LEAF_CUSTOM_TYPE` ("continue-from-leaf"), the hidden `CONTINUE_FROM_LEAF_DIRECTIVE`, and `ContinueFromLeafError` with codes `streaming | nothing_to_continue | leaf_not_assistant`; `AgentSession.continueFromLeaf()` refuses unless the last message is an assistant answer, and resolves when the continued turn STARTS (its `agent_start` or a delegated queue), not after the turn ends (#2708). Before v2026.10.7 it awaited the whole turn.
+- `packages/coding-agent/src/core/agent-session.ts`: `continueFromLeaf()` starts a turn from the current leaf by sending the directive as a hidden custom message (`display: false`, `triggerTurn: true`), the same mechanism as the "." manual continue. It refuses while streaming and on a session with no messages. After `editAssistantMessage` makes an edited answer the leaf, the model continues from the edited text.
+
+### Why
+
+- `packages/coding-agent/src/core/agent-session.ts`: #1930. `agent.continue()` refuses an assistant tail, and assistant prefill is rejected by the default models (Claude 4.6+ returns 400 on a trailing assistant message; OpenAI's Responses API has no prefill), so a clean "regenerate from my edited answer" needs a user-turn nudge the transcript never shows. It has its own type so the goal extension's manual-continue hook does not treat it as a "." continue.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/agent-session.ts`: the RPC command must start a turn with the session's own refusal semantics (streaming, empty session) and typed errors; an extension command is a prompt, which the desktop would render as user text.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/agent-session.ts`: the import block beside `./manual-continue.ts`, and the method inserted before `editAssistantMessage`.
+
+## 2026-10-03 - nvidia's default is a model its regenerated catalog still has (senpi#2645)
+
+### What changed
+
+- `packages/coding-agent/src/core/model-resolver.ts`: `defaultModelPerProvider.nvidia` is `nvidia/nemotron-3-ultra-550b-a55b` (was `nvidia/nemotron-3-super-120b-a12b`).
+
+### Why
+
+- `packages/coding-agent/src/core/model-resolver.ts`: the v2026.10.4 catalog regeneration dropped `nemotron-3-super-120b-a12b` (models.dev no longer lists it). `selectProviderDefault` found no `nvidia` default, so an NVIDIA-only user without a saved model started on the catalog's first entry (`deepseek-ai/deepseek-v4.1-flash`, provenance `first-available`), and the default-model tests failed on `main`. Same class as #2175/#2179, #2295 and #926.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/model-resolver.ts`: the built-in provider default table is core resolver data read before any extension runs.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/model-resolver.ts`: the `nvidia` row of `defaultModelPerProvider`.
+
+## 2026-10-03 - session.log lines name their session, provider and model (senpi#2541)
+
+### What changed
+
+- `packages/coding-agent/src/core/session-log.ts`: `provider` and `model` join the content-free field allowlist, and `createSessionLogger` takes an optional `context` callback whose fields (same allowlist) are stamped on every line at write time; an event's own fields win over the context.
+- `packages/coding-agent/src/core/agent-session.ts`: the session's logger context is its current `sessionId` plus the active model's `provider` and `model`, so every line the session writes (compaction, provider errors, prompt rejections, queue and resume events) is attributable. `provider_error` also passes the failing message's own `provider` and `model`.
+
+### Why
+
+- `packages/coding-agent/src/core/session-log.ts`, `packages/coding-agent/src/core/agent-session.ts`: every session in an agent dir appends to one `logs/session.log`, so with a parent and its task children (or several TUIs) running, a `provider_error` such as a billing 400 could not be traced to the session or provider that hit it. `sessionId` was allowlisted but never passed, and `provider`/`model` were stripped.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/session-log.ts`, `packages/coding-agent/src/core/agent-session.ts`: the session writes these lines from its own event path with its private logger; extensions never see or wrap it.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/session-log.ts`: `ALLOWED_DATA_KEY`, `SessionLoggerOptions` and the `formatLine` call in `log`.
+- `packages/coding-agent/src/core/agent-session.ts`: the `createSessionLogger` call in the constructor and the `provider_error` branch of `_logSessionEvent`.
+
 ## 2026-10-02 - On-demand memory report (senpi#2561)
 
 ### What changed
@@ -17,7 +325,6 @@
 ### Expected merge conflict zones
 
 - LOW: the end of the `AgentSession` constructor and `dispose()`; `session-resident-store.ts` (fork-only).
-
 ## 2026-10-02 - Mark repeated and cap-skipped skill invocations in place
 
 ### What changed
@@ -789,6 +1096,27 @@ The warning predicate is core session policy evaluated before the warning event 
 ### Expected merge conflict zones
 
 - `packages/coding-agent/src/core/high-reasoning-warning.ts`: fork-only file.
+
+## 2026-09-30 - An explicit thinking level the model cannot use is recorded and warned about (senpi#2395)
+
+### What changed
+
+- `packages/coding-agent/src/core/thinking-levels.ts`: `clampThinkingSelection()` applies the effective level to an explicit selection and, when it differs from the requested level, keeps `requested` and a `clampReason` (`model-not-reasoning` or `level-unsupported`) on it. `getThinkingClampNotice()` and `formatThinkingClampWarning()` describe a clamp for the user.
+- `packages/coding-agent/src/core/sdk.ts`: the startup clamp in `createAgentSession` goes through `clampThinkingSelection()` instead of overwriting the selection's level. A level that comes only from the global `defaultThinkingLevel` is applied as a default: no requested level, no reason, no notice.
+- `packages/coding-agent/src/core/agent-session.ts`: `_setThinkingLevel` and `_getThinkingForModelSwitch` record clamps the same way (the global-default fallback on a model switch stays a default), and a changed requested level counts as a selection change. `thinking_level_clamped` is emitted once per model and requested level, and `startupThinkingClamp` exposes a clamp applied at creation so the starting mode can show it once.
+
+### Why
+
+- An explicit `--thinking high` on a model without `reasoning: true` ran with thinking off and recorded `{"level":"off","source":"explicit"}`, as if off had been requested, with no warning (senpi#2395).
+
+### Why an extension could not handle it
+
+- The clamp runs inside session creation and `AgentSession` before any extension event carries the requested level, and core writes the recorded selection.
+
+### Expected merge conflict zones
+
+- `sdk.ts`: the thinking clamp block in `createAgentSession`.
+- `agent-session.ts`: `_setThinkingLevel`, `_getThinkingForModelSwitch`, the `AgentSessionEvent` union, and the constructor after fallback-chain validation.
 
 ## 2026-09-30 - High-reasoning warning covers Venice's dotless gpt-61-sol (senpi#2390)
 
@@ -8780,3 +9108,41 @@ Session runtime, model runtime, remote catalog and settings own these paths belo
 ### Expected merge conflict zones
 
 Upstream edits to core session/settings/runtime paths at the next sync.
+
+## The session launch profile carries the browser engine (2026-10-03)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session-runtime.ts`: `AgentSessionLaunchProfile.browserEngine` and `setBrowserEngine`, which also updates the frozen profile so a later switch, new session or fork keeps the engine.
+- `packages/coding-agent/src/core/agent-session.ts`, `agent-session-services.ts`, `sdk.ts`: the engine is passed through session creation, held on `AgentSession` (`browserEngine`, `setBrowserEngine`) and handed to extensions through the context action `getBrowserEngine`.
+- `core/browser-engine.ts` (new): the `BrowserEngine` values and the `OMO_BROWSER_ENGINE` name.
+
+### Why
+
+`open_session.browserEngine` (senpi#2611) is a per-session choice; the profile is where every other per-session open field (`promptSurface`, `kind`, `context`) already lives.
+
+### Why an extension could not handle it
+
+Session creation and the launch profile are core lifecycle code that runs before extensions load.
+
+### Expected merge conflict zones
+
+The `promptSurface` plumbing in `agent-session.ts`, `agent-session-services.ts` and `sdk.ts`, which the new field sits next to.
+
+## 2026-10-05 - A project codemode file that names an executable asks for project trust
+
+### What changed
+
+- `packages/coding-agent/src/core/trust-manager.ts`: `hasTrustRequiringProjectResources` also returns `true` when `<cwd>/.senpi/codemode.json` sets any setting on the codemode package's list of executable-naming settings (`@code-yeongyu/senpi-codemode/executable-settings.json`, today `languages.pyInterpreter`), found through the bundled-extension resolver. A codemode file that sets none of them stays trust-free. A file that is not valid JSON asks, as a project `mcp.json` does by its presence alone; so does any codemode file when the list cannot be read.
+
+### Why
+
+- An executable-naming setting is run by the codemode extension at session start (its `--version` probe, then the kernel). Codemode honours a project-scoped value only when the project is trusted, but a project whose only config was `.senpi/codemode.json` counted as having no trust-requiring resources, so it was treated as trusted without asking and a cloned repository could run a binary of its choosing. Keeping the list in the codemode package means a new executable setting there is covered here without a core change.
+
+### Why an extension could not handle it
+
+- The launch-time trust decision is made in the host before any extension is bound; an extension can only read the decision through `isProjectTrusted()`, which reported "trusted" for a project the host never asked about.
+
+### Expected merge conflict zones
+
+- LOW: the `projectCodemodeNamesExecutable` helpers after `LEGACY_PROJECT_CONFIG_DIR_NAME`, the `bundled-resources.ts` import, and the one-line call after the config-dir check at the top of `hasTrustRequiringProjectResources` in `packages/coding-agent/src/core/trust-manager.ts`.

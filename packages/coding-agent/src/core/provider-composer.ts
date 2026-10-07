@@ -362,6 +362,7 @@ function applyModelsJson(
 		!hasOverrides &&
 		!config.whitelist &&
 		!config.blacklist &&
+		config.hideFreeModels === undefined &&
 		!config.apiKey &&
 		config.authHeader === undefined
 	) {
@@ -397,9 +398,12 @@ function applyModelsJson(
 	}
 	const whitelist = config.whitelist ? new Set(config.whitelist) : undefined;
 	const blacklist = config.blacklist ? new Set(config.blacklist) : undefined;
+	const hideFree = config.hideFreeModels === true;
 	return models.filter(
 		(model) =>
-			(whitelist === undefined || whitelist.has(model.id)) && (blacklist === undefined || !blacklist.has(model.id)),
+			(whitelist === undefined || whitelist.has(model.id)) &&
+			(blacklist === undefined || !blacklist.has(model.id)) &&
+			!(hideFree && model.cost.input === 0 && model.cost.output === 0),
 	);
 }
 

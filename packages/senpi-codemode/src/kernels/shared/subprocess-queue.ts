@@ -44,6 +44,11 @@ export class SubprocessRunQueue {
 		};
 	}
 
+	/** Removes every queued run that has not started, oldest first. */
+	drain(): PendingRun[] {
+		return this.#queue.splice(0);
+	}
+
 	releaseActive(run: PendingRun): boolean {
 		if (this.#active !== run) return false;
 		this.#active = null;
@@ -115,6 +120,7 @@ export class SubprocessRunQueue {
 				return false;
 			case "webview-connect":
 			case "memory-query-result":
+			case "kernel-tools-defined":
 				return false;
 			default: {
 				const exhaustive: never = message;

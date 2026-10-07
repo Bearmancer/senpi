@@ -22,11 +22,26 @@ catalog costs almost nothing until the model actually needs it.
 }
 ```
 
-2. Start senpi. Run `/mcp` for the status panel, `/mcp status` for a one-line
+2. Start senpi. Run `/mcp` for the interactive server manager, `/mcp status` for a one-line
    summary, `/mcp add <name> <command...>` to add servers interactively.
 3. Servers needing OAuth: `/mcp auth <name>` (see [Auth](#auth)).
 4. Use it: small catalogs register directly; big ones surface through
    `tool_search` (see [Exposure tiers](#exposure-tiers)).
+
+## Interactive manager
+
+`/mcp` lists servers with their connection state, tool and available resource
+counts, exposure mode, and configuration source. Select a server to inspect its
+tools, details, or logs; test or reconnect it; or sign in/out when OAuth applies.
+The list updates when connections and catalogs change and preserves selection.
+Navigation, confirmation, and cancellation use your configured keybindings.
+
+Enable/disable and exposure changes are saved to the selected server's global
+or trusted project `mcp.json`. Imported, skill-owned, extension-owned, and
+untrusted definitions are read-only in this manager. OAuth actions close the
+manager before running the existing authorization flow, keeping its notices
+visible. Outside the TUI, `/mcp` reports status through the existing notification
+channel; existing subcommands remain available.
 
 ## Configuration reference
 

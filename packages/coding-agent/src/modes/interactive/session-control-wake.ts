@@ -101,42 +101,72 @@ export const INBOX_ENGINE_ENTRY_PREFIX = ".senpi-";
 const INBOX_ARM_ATTEMPTS = 25;
 const INBOX_ARM_ATTEMPT_MS = 200;
 
+/** A live inbox watch. `armed` settles once arming did: the watch confirmed, the bounded retry ran out, or it was stopped. */
+export interface InboxWatch {
+	readonly armed: Promise<void>;
+	stop(): void;
+}
+
 /**
  * One watch on the inbox directory. Creation and teardown run on the shared watch worker (FSEvents
  * and inotify setup/teardown block the calling thread), so neither ever stalls the terminal.
  *
  * The worker arms the watch asynchronously, and an entry written before it is armed produces no
- * event. So registration returns only once a sentinel entry's own event has come back - the
- * sentinel is re-touched until then, bounded, which is the only timer here and runs only while
- * arming (an unconfirmed arm is reported through `onError`). Anything created before that point is
- * picked up by the pass the endpoint requests right after registration.
+ * event. Arming is confirmed by a sentinel entry's own event coming back - the sentinel is re-touched
+ * until then, bounded, which is the only timer here and runs only while arming (an unconfirmed arm is
+ * reported through `onError`). Nothing waits on that confirmation: the watch is returned at once and
+ * `armed` settles when arming did, so the caller can request the pass that picks up anything created
+ * before the watch could see it.
  */
 export async function watchInbox(
 	inboxDir: string,
 	onChange: () => void,
 	onError: (error: unknown) => void,
-): Promise<() => void> {
+): Promise<InboxWatch> {
 	await mkdir(inboxDir, { recursive: true, mode: 0o700 });
 	const sentinel = `${INBOX_ENGINE_ENTRY_PREFIX}armed-${randomUUID()}`;
-	const armed = Promise.withResolvers<boolean>();
+	const confirmation = Promise.withResolvers<boolean>();
+	let stopped = false;
 	const unsubscribe = createFsWatchEventSource((error) => onError(error))(
 		inboxDir,
 		(_eventType, filename) => {
-			if (filename === sentinel) armed.resolve(true);
+			if (filename === sentinel) confirmation.resolve(true);
 			else if (!filename?.startsWith(INBOX_ENGINE_ENTRY_PREFIX)) onChange();
 		},
 		{ recursive: false },
 	);
-	let confirmed = false;
-	for (let attempt = 0; attempt < INBOX_ARM_ATTEMPTS && !confirmed; attempt++) {
-		await writeFile(join(inboxDir, sentinel), String(attempt), { mode: 0o600 });
-		confirmed = await Promise.race([armed.promise, delay(INBOX_ARM_ATTEMPT_MS, false)]);
-	}
-	await rm(join(inboxDir, sentinel), { force: true });
-	if (!confirmed) onError(new Error(`inbox watch on ${inboxDir} was not confirmed`));
-	return () => {
-		void Promise.resolve(unsubscribe()).catch(onError);
+	const arming = confirmArm(join(inboxDir, sentinel), confirmation.promise, () => stopped).then(
+		(confirmed) => {
+			if (!confirmed && !stopped) onError(new Error(`inbox watch on ${inboxDir} was not confirmed`));
+		},
+		(error: unknown) => {
+			if (!stopped) onError(error);
+		},
+	);
+	// Settles on the sentinel's own event, before any later event of the same watch is delivered, so a
+	// pass requested on it runs ahead of the passes those events cause; otherwise when arming ended.
+	const armed = Promise.race([confirmation.promise.then((confirmed) => (confirmed ? undefined : arming)), arming]);
+	return {
+		armed,
+		stop: () => {
+			stopped = true;
+			confirmation.resolve(false);
+			void Promise.resolve(unsubscribe()).catch(onError);
+		},
 	};
+}
+
+async function confirmArm(sentinelPath: string, confirmed: Promise<boolean>, stopped: () => boolean): Promise<boolean> {
+	let seen = false;
+	try {
+		for (let attempt = 0; attempt < INBOX_ARM_ATTEMPTS && !seen && !stopped(); attempt++) {
+			await writeFile(sentinelPath, String(attempt), { mode: 0o600 });
+			seen = await Promise.race([confirmed, delay(INBOX_ARM_ATTEMPT_MS, false)]);
+		}
+	} finally {
+		await rm(sentinelPath, { force: true });
+	}
+	return seen;
 }
 
 /**

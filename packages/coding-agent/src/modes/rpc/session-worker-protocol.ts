@@ -1,3 +1,4 @@
+import type { BrowserEngine } from "../../core/browser-engine.ts";
 import type { PromptSurface } from "../../core/dynamic-prompt/types.ts";
 import type { CliRuntimeConfiguration } from "../../main.ts";
 import type { RpcSessionState } from "./rpc-types.ts";
@@ -39,6 +40,8 @@ export type HostToSessionWorker =
 	| { type: "bind"; request: number; sessionId: string; capabilities: readonly string[]; connection?: string }
 	| { type: "command"; request: number; command: object; connection?: string }
 	| { type: "prompt_surface"; request: number; surface: PromptSurface }
+	| { type: "browser_engine"; request: number; engine: BrowserEngine }
+	| { type: "permission_preset"; request: number; preset: string }
 	| { type: "cancel_ui" }
 	| { type: "close" };
 

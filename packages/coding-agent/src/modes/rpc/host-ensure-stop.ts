@@ -54,6 +54,23 @@ export async function announceStop(target: StopTarget, targetPid: number): Promi
 }
 
 /**
+ * Ownership for the reuse decision. An identity we cannot read proves nothing: it can neither
+ * claim the host nor authorize a kill, so it reads as "not ours" and the caller starts fresh
+ * rather than failing the whole ensure on an observation gap.
+ */
+export async function matchesPidFileOrUnknown(
+	pidFile: DaemonPidFile,
+	probe: (pid: number) => Promise<string | undefined>,
+): Promise<boolean> {
+	try {
+		return await processMatchesPidFile(pidFile, probe);
+	} catch (error: unknown) {
+		if (error instanceof ProcessIdentityUnreadableError) return false;
+		throw error;
+	}
+}
+
+/**
  * The supervisor was SIGKILLed and is gone: record the generation's end before the caller releases
  * the registration that holds the intent. The intent as the supervisor last left it wins - it may have
  * layered its own step on - and the one this caller wrote stands in when the file is gone.
@@ -130,7 +147,7 @@ type PidFileOwnership = "owns" | "gone" | "unknown";
 // may still be running. A failed probe against a dead pid is "gone".
 export async function resolvePidFileOwnership(
 	pidFile: DaemonPidFile,
-	readStartTime: (pid: number) => Promise<string | undefined>,
+	readStartTime: (pid: number) => Promise<string | undefined> = readProcessStartTime,
 ): Promise<PidFileOwnership> {
 	try {
 		return (await processMatchesPidFile(pidFile, readStartTime, processIsLive, { attempts: 1 })) ? "owns" : "gone";
@@ -143,7 +160,7 @@ export async function resolvePidFileOwnership(
 async function signalValidated(
 	pidFile: DaemonPidFile,
 	signal: NodeJS.Signals,
-	readStartTime: (pid: number) => Promise<string | undefined>,
+	readStartTime: (pid: number) => Promise<string | undefined> = readProcessStartTime,
 ): Promise<void> {
 	if ((await resolvePidFileOwnership(pidFile, readStartTime)) !== "owns") return;
 	signalPid(pidFile.pid, signal);
@@ -152,7 +169,7 @@ async function signalValidated(
 async function waitForGone(
 	pidFile: DaemonPidFile,
 	timeoutMs: number,
-	readStartTime: (pid: number) => Promise<string | undefined>,
+	readStartTime: (pid: number) => Promise<string | undefined> = readProcessStartTime,
 ): Promise<boolean> {
 	const deadline = Date.now() + timeoutMs;
 	while (Date.now() <= deadline) {
@@ -167,10 +184,14 @@ export function signalPid(pid: number, signal: NodeJS.Signals): void {
 	try {
 		process.kill(pid, signal);
 	} catch (error: unknown) {
-		if (!(error instanceof Error && "code" in error && error.code === "ESRCH")) throw error;
+		if (!isNodeErrorCode(error, "ESRCH")) throw error;
 	}
 }
 
 export function delay(ms: number): Promise<void> {
 	return new Promise((resolveDelay) => setTimeout(resolveDelay, ms));
+}
+
+export function isNodeErrorCode(error: unknown, code: string): boolean {
+	return error instanceof Error && "code" in error && error.code === code;
 }

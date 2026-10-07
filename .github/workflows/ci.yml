@@ -3,9 +3,11 @@ name: CI
 on:
   push:
     branches: [main]
+  # Every pull request runs CI, whatever its base: a PR stacked on another feature branch must not reach main untested
+  # (senpi#2759).
   pull_request:
-    branches: [main]
 
+# One run per pull request (its ref is refs/pull/<n>/merge): a push or restack cancels the run it supersedes.
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
@@ -18,6 +20,9 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The gate reviews baseline.json changes against the pull request's merge base, so it needs history.
+          fetch-depth: 0
       - name: Setup Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
@@ -523,6 +528,76 @@ jobs:
           '
         working-directory: packages/senpi-codemode
 
+  process-kernel:
+    name: Eval kernel process isolation (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+          cache: npm
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: "1.4.2"
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      # How this runner handles a crashing process: a piped core-dump handler keeps a crashed kernel child alive
+      # until its dump is consumed, which the SIGSEGV case waits on.
+      - name: Show the crash-handling environment
+        shell: bash
+        run: |
+          echo "core_pattern: $(cat /proc/sys/kernel/core_pattern 2>/dev/null || sysctl -n kern.corefile 2>/dev/null || echo n/a)"
+          echo "ulimit -c: $(ulimit -c)"
+          ( bun -e 'process.kill(process.pid, "SIGSEGV")' >/dev/null 2>&1; echo "bun SIGSEGV exit status: $?" ) &
+          start=$(date +%s); wait; echo "bun SIGSEGV took $(( $(date +%s) - start ))s to exit"
+
+      # Process mode spawns its kernel child with bun on both platforms; a platform where the child cannot start
+      # (senpi#2706: a Linux spawn's stdout is a socket) fails here instead of shipping.
+      - name: Run the process-mode kernel suite
+        timeout-minutes: 12
+        run: npx vitest run test/js-process-kernel.test.ts --reporter=verbose --reporter=json --outputFile=vitest-process.json
+        working-directory: packages/senpi-codemode
+
+      # Runs whatever the suite's outcome: a failed run is when a kernel child is most likely to leak.
+      - name: Fail on any orphaned kernel child
+        if: always()
+        shell: bash
+        run: |
+          orphans=$(ps -eo pid,ppid,command | grep '[p]rocess-entry.js' | awk '$2 == 1' || true)
+          if [ -n "$orphans" ]; then echo "$orphans"; echo "::error::kernel children outlived the suite"; exit 1; fi
+
+      - name: Require the process-mode suite to have executed
+        if: always()
+        shell: bash
+        run: |
+          node -e '
+            const r = JSON.parse(require("fs").readFileSync("vitest-process.json", "utf8"));
+            const results = r.testResults.flatMap((file) => file.assertionResults);
+            const passed = results.filter((a) => a.status === "passed").length;
+            const failed = results.filter((a) => a.status === "failed").length;
+            const skipped = results.filter((a) => a.status !== "passed" && a.status !== "failed");
+            // A skip is allowed only for a Linux-only case off Linux (named, so a newly skipped test still fails here).
+            const linuxOnly = /When a Linux kernel child|SENPI_KERNEL_CORE_DUMPS=1|parent is a subreaper/;
+            const unexpected = skipped.filter((a) => process.platform === "linux" || !linuxOnly.test(a.title));
+            console.log("process-mode suite: passed=" + passed + " failed=" + failed + " skipped=" + skipped.length);
+            for (const a of unexpected) console.log("unexpected skip: " + a.title);
+            if (passed < 30 || failed !== 0 || unexpected.length !== 0) process.exit(1);
+          '
+        working-directory: packages/senpi-codemode
+
   python-kernel-windows:
     name: Python kernel cold startup (Windows)
     runs-on: windows-latest
@@ -540,6 +615,34 @@ jobs:
       - name: Slow and hung bootstrap regressions
         working-directory: packages/senpi-codemode
         run: bun ../../node_modules/vitest/vitest.mjs run test/py-kernel-startup.test.ts test/py-kernel.test.ts test/py-kernel-child-error.test.ts
+      - name: Python environments stay inside the revision on Windows
+        working-directory: packages/senpi-codemode
+        shell: pwsh
+        run: |
+          bun ../../node_modules/vitest/vitest.mjs run test/environments/py-environment.test.ts -t "pip config file|staged revision|null device" --reporter=default --reporter=json --outputFile="$env:RUNNER_TEMP/py-env-win.json"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          # A skipped test is not a pass: the pip-config case must have run on this Windows interpreter.
+          bun -e "const r = JSON.parse(await Bun.file(process.argv[1]).text()); const t = r.testResults.flatMap((f) => f.assertionResults).find((a) => a.title.startsWith('When a pip config file names a root')); const d = r.testResults.flatMap((f) => f.assertionResults).find((a) => a.title.includes('pointed at the null device')); if (!t || t.status !== 'passed' || !d || d.status !== 'passed') { console.error('pip config test: ' + (t ? t.status : 'missing') + ', null device test: ' + (d ? d.status : 'missing')); process.exit(1) }" "$env:RUNNER_TEMP/py-env-win.json"
+      # Plan node 11: Python kernel tools serve callbacks on threads beside a SIGTERM-only interrupt; run them on Windows too.
+      - name: Kernel-tool suites
+        working-directory: packages/senpi-codemode
+        run: python --version && bun ../../node_modules/vitest/vitest.mjs run test/py-kernel-tools.test.ts test/kernel-tools-registry.test.ts test/kernel-tools-reentrancy.test.ts --reporter=default --reporter=json --outputFile.json=vitest-kernel-tools.json
+      - name: Require the kernel-tool suites to have executed
+        shell: bash
+        run: |
+          node -e '
+            const r = JSON.parse(require("fs").readFileSync("vitest-kernel-tools.json", "utf8"));
+            const results = r.testResults.flatMap((file) => file.assertionResults);
+            const python = r.testResults.filter((file) => file.name.endsWith("py-kernel-tools.test.ts")).flatMap((file) => file.assertionResults);
+            const passed = results.filter((a) => a.status === "passed").length;
+            const failed = results.filter((a) => a.status === "failed").length;
+            const skipped = results.length - passed - failed;
+            console.log("kernel-tool suites: passed=" + passed + " failed=" + failed + " skipped=" + skipped + " python=" + python.length);
+            if (failed !== 0 || skipped !== 0 || python.length < 15 || python.some((a) => a.status !== "passed")) process.exit(1);
+            const forward = python.find((a) => a.title.startsWith("a cell compiles a bare forward annotation"));
+            if (!forward || forward.status !== "passed") { console.error("bare forward annotation test: " + (forward ? forward.status : "missing")); process.exit(1); }
+          '
+        working-directory: packages/senpi-codemode
       - name: Build isolated packaged Python host
         shell: pwsh
         run: |

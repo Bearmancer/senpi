@@ -85,6 +85,7 @@ export interface CreateAgentSessionFromServicesOptions {
 	customTools?: ToolDefinition[];
 	autoTitleSessions?: boolean;
 	promptSurface?: CreateAgentSessionOptions["promptSurface"];
+	browserEngine?: CreateAgentSessionOptions["browserEngine"];
 }
 
 /**
@@ -281,5 +282,6 @@ export async function createAgentSessionFromServices(
 		sessionStartEvent: options.sessionStartEvent,
 		autoTitleSessions: options.autoTitleSessions,
 		promptSurface: options.promptSurface,
+		browserEngine: options.browserEngine,
 	});
 }

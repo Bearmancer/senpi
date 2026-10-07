@@ -3,6 +3,7 @@ import { basename, join, parse, resolve } from "node:path";
 import { resolvePath } from "../utils/paths.ts";
 import type { AgentSession } from "./agent-session.ts";
 import type { AgentSessionRuntimeDiagnostic, AgentSessionServices } from "./agent-session-services.ts";
+import type { BrowserEngine } from "./browser-engine.ts";
 import type { PromptSurface } from "./dynamic-prompt/types.ts";
 import type { HostMcpRegistry } from "./extensions/builtin/mcp/host-registry.ts";
 import type {
@@ -19,6 +20,7 @@ import { assertSessionCwdExists } from "./session-cwd.ts";
 import { holdSessionFile, type SessionHold } from "./session-holders.ts";
 import { SessionManager } from "./session-manager.ts";
 import { reserveSessionWrite, unregisterSessionWriter } from "./session-write-reservation.ts";
+import type { SettingsManager } from "./settings-manager.ts";
 import { resetTimings, time } from "./timings.ts";
 
 /**
@@ -53,6 +55,36 @@ export interface AgentSessionLaunchProfile {
 	autoTitle?: boolean;
 	/** Per-session prompt surface (`open_session.promptSurface`); absent means `SENPI_PROMPT_SURFACE`. */
 	promptSurface?: PromptSurface;
+	/** Per-session browser engine (`open_session.browserEngine`); absent means none was chosen. */
+	browserEngine?: BrowserEngine;
+	/**
+	 * Per-session retry fallback (`open_session.retryFallback`): applied to THIS session's settings as an
+	 * in-memory override that is never written to a settings file, so one session's chain never reaches
+	 * another session on the host or the user's settings. Absent means the host's settings decide.
+	 */
+	retryFallback?: SessionRetryFallbackProfile;
+}
+
+/** The fallback policy one session runs with, chosen by its opener (e.g. a task child's own chain). */
+export interface SessionRetryFallbackProfile {
+	readonly modelFallback: boolean;
+	/** Chain key (selector, optionally `:thinking`) to its ordered fallback selectors. */
+	readonly fallbackChains: Readonly<Record<string, readonly string[]>>;
+}
+
+/** Overlays a session's fallback policy on its settings in memory: never saved, never shared. */
+export function applyRetryFallbackProfile(
+	settingsManager: SettingsManager,
+	profile: SessionRetryFallbackProfile,
+): void {
+	settingsManager.applyOverrides({
+		retry: {
+			modelFallback: profile.modelFallback,
+			fallbackChains: Object.fromEntries(
+				Object.entries(profile.fallbackChains).map(([key, entries]) => [key, [...entries]]),
+			),
+		},
+	});
 }
 
 /**
@@ -173,6 +205,40 @@ export class AgentSessionRuntime {
 		this._session.setPromptSurface(surface);
 	}
 
+	/** Moves this session to another browser engine; later replacements (switch, new, fork) keep it. */
+	setBrowserEngine(engine: BrowserEngine): void {
+		this._launchProfile = Object.freeze({ ...(this._launchProfile ?? { cwd: this.cwd }), browserEngine: engine });
+		this._session.setBrowserEngine(engine);
+	}
+
+	/**
+	 * Moves this session to another permission preset (a later `open_session.permissionPreset`): the
+	 * permission extension enforces it from the next tool call, and later replacements (switch, new,
+	 * fork) keep it.
+	 */
+	setPermissionPreset(preset: string): void {
+		this._launchProfile = Object.freeze({ ...(this._launchProfile ?? { cwd: this.cwd }), permissionPreset: preset });
+		this._session.extensionRunner.setFlagValue("permission-preset", preset);
+	}
+
+	/**
+	 * Gives this process's sessions their fallback policy (`set_retry_fallback`); later replacements
+	 * (switch, new, fork) keep it. Callers set it before the first turn: a chain never changes under a
+	 * retry already in flight.
+	 */
+	setRetryFallback(profile: SessionRetryFallbackProfile): void {
+		const retryFallback = Object.freeze({
+			modelFallback: profile.modelFallback,
+			fallbackChains: Object.freeze(
+				Object.fromEntries(
+					Object.entries(profile.fallbackChains).map(([key, entries]) => [key, Object.freeze([...entries])]),
+				),
+			),
+		});
+		this._launchProfile = Object.freeze({ ...(this._launchProfile ?? { cwd: this.cwd }), retryFallback });
+		applyRetryFallbackProfile(this._session.settingsManager, retryFallback);
+	}
+
 	setRebindSession(rebindSession?: (session: AgentSession) => Promise<void>): void {
 		this.rebindSession = rebindSession;
 	}
@@ -278,6 +344,13 @@ export class AgentSessionRuntime {
 	private async apply(result: CreateAgentSessionRuntimeResult, hold?: SessionHold): Promise<void> {
 		this._sessionHold = hold ?? holdActiveSession(result.session.sessionManager, false);
 		this._session = result.session;
+		// The replacement was built from the profile read before its runtime was created; an attach
+		// that moved a setting while it was being built reached only the retired session (senpi#2842).
+		const profile = this._launchProfile;
+		if (profile?.permissionPreset !== undefined)
+			this._session.extensionRunner.setFlagValue("permission-preset", profile.permissionPreset);
+		if (profile?.promptSurface !== undefined) this._session.setPromptSurface(profile.promptSurface);
+		if (profile?.browserEngine !== undefined) this._session.setBrowserEngine(profile.browserEngine);
 		this._services = result.services;
 		this._diagnostics = result.diagnostics;
 		this._modelFallbackMessage = result.modelFallbackMessage;

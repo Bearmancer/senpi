@@ -10,14 +10,15 @@ import type { ImageContent, Model, ProviderDiagnostic, ThinkingSelection } from 
 import type { SessionRuntimeKind } from "../../cli/args.ts";
 import type { AgentAbortSource } from "../../core/agent-abort-provenance.ts";
 import type { PromptDisposition, QueuedInput, QueuedInputDisposition, SessionStats } from "../../core/agent-session.ts";
+import type { SessionRetryFallbackProfile } from "../../core/agent-session-runtime.ts";
 import type { BashResult } from "../../core/bash-executor.ts";
+import type { BrowserEngine } from "../../core/browser-engine.ts";
 import type { ClientMessageIdentity } from "../../core/client-message-identity.ts";
 import type { CompactionResult } from "../../core/compaction/index.ts";
 import type { PromptSurface } from "../../core/dynamic-prompt/types.ts";
 import type { EngineOrdinal } from "../../core/engine-build-identity.ts";
 import type { ServiceTier } from "../../core/extensions/builtin/service-tier.ts";
 import type { ContextUsage, SessionControlAdmission, SessionKind } from "../../core/extensions/types.ts";
-import type { ProcessFootprintMeasure } from "../../core/process-footprint.ts";
 import type { SessionEntry, SessionMessageEntry, SessionTreeNode, UsageTotals } from "../../core/session-manager.ts";
 import type { SourceInfo } from "../../core/source-info.ts";
 import type { ClientMessageAdmission } from "./client-admission-record.ts";
@@ -26,6 +27,14 @@ import type { RpcSlashCommand } from "./rpc-command-surface.ts";
 export type { SessionContext, SessionKind } from "../../core/extensions/types.ts";
 export type { RpcCommandInvocationEvent } from "./rpc-command-invocation.ts";
 export type { RpcCommandsChangedEvent, RpcSlashCommand } from "./rpc-command-surface.ts";
+export type {
+	RpcHostKernelMemory,
+	RpcHostLifecycleEvent,
+	RpcHostMemoryPressureEvent,
+	RpcHostStalledEvent,
+	RpcHostSupersededEvent,
+	RpcHostTrimmedEvent,
+} from "./rpc-host-lifecycle-types.ts";
 
 // ============================================================================
 // RPC Commands (stdin)
@@ -56,6 +65,7 @@ type RpcSessionCommand =
 			triggerTurn?: boolean;
 			deliverAs?: "steer" | "followUp" | "nextTurn";
 	  }
+	| { id?: string; type: "continue_from_leaf" }
 	| { id?: string; type: "append_user_message"; content: unknown }
 	| { id?: string; type: "append_session_entry"; entry: SessionEntry }
 	| ({
@@ -73,6 +83,7 @@ type RpcSessionCommand =
 			enqueueOrder?: number;
 	  } & ClientMessageIdentity)
 	| { id?: string; type: "abort" }
+	| { id?: string; type: "interrupt"; turnId?: string }
 	| { id?: string; type: "abort_compaction" }
 	| { id?: string; type: "reload" }
 	| { id?: string; type: "check_reload_veto" }
@@ -118,6 +129,7 @@ type RpcSessionCommand =
 	// Retry
 	| { id?: string; type: "set_auto_retry"; enabled: boolean }
 	| { id?: string; type: "abort_retry" }
+	| { id?: string; type: "set_retry_fallback"; retryFallback: SessionRetryFallbackProfile }
 
 	// Bash
 	| {
@@ -405,6 +417,23 @@ export type RpcCommand =
 			 * Requires the host capability `prompt_surface`. Any other value is refused with `invalid_launch_profile`.
 			 */
 			promptSurface?: PromptSurface;
+			/**
+			 * Which browser THIS session's skills drive: `connected` (the user's own browser), `builtin` (the
+			 * app's in-app browser) or `none`. Session-scoped, never process-wide: the session's tool
+			 * subprocesses and eval kernel see `OMO_BROWSER_ENGINE=<value>`, other sessions on the host do
+			 * not, and a session opened without it sees no such variable. A later open that attaches with
+			 * another value moves the live session to it; an attach without it keeps the current engine.
+			 * Requires the host capability `browser_engine`. Any other value is refused with `invalid_launch_profile`.
+			 */
+			browserEngine?: BrowserEngine;
+			/**
+			 * The fallback policy THIS session runs with (e.g. a task child's own chain): applied as an
+			 * in-memory override of this session's `retry.modelFallback` / `retry.fallbackChains`, never written
+			 * to a settings file and never seen by another session. Requires the host capability
+			 * `retry_fallback_profile`; a malformed value is refused with `invalid_launch_profile`. Applied
+			 * when the open creates the session; an attach keeps the session's existing policy.
+			 */
+			retryFallback?: SessionRetryFallbackProfile;
 	  }
 	| { id?: string; type: "close_session"; sessionId: string }
 	| {
@@ -739,6 +768,13 @@ export type RpcResponse =
 			data?: ClientMessageIdentity & { disposition?: QueuedInputDisposition; admission?: ClientMessageAdmission };
 	  }
 	| { id?: string; type: "response"; command: "abort"; success: true }
+	| {
+			id?: string;
+			type: "response";
+			command: "interrupt";
+			success: true;
+			data: { interrupted: boolean; turnId?: string };
+	  }
 	| { id?: string; type: "response"; command: "abort_compaction"; success: true }
 	| { id?: string; type: "response"; command: "reload"; success: true; data: { cancelled: boolean; reason?: string } }
 	| {
@@ -781,12 +817,15 @@ export type RpcResponse =
 			success: true;
 			data: { model: Model<any>; thinkingLevel: ThinkingLevel; isScoped: boolean } | null;
 	  }
+	| { id?: string; type: "response"; command: "continue_from_leaf"; success: true }
 	| {
 			id?: string;
 			type: "response";
 			command: "get_available_models";
 			success: true;
-			data: { models: Array<Model<any> & { supportedThinkingLevels: ThinkingLevel[] }> };
+			data: {
+				models: Array<Model<any> & { supportedThinkingLevels: ThinkingLevel[]; supportsAssistantPrefill: boolean }>;
+			};
 	  }
 
 	// Thinking
@@ -833,6 +872,7 @@ export type RpcResponse =
 	// Retry
 	| { id?: string; type: "response"; command: "set_auto_retry"; success: true }
 	| { id?: string; type: "response"; command: "abort_retry"; success: true }
+	| { id?: string; type: "response"; command: "set_retry_fallback"; success: true }
 
 	// Bash
 	| { id?: string; type: "response"; command: "bash"; success: true; data: BashResult }
@@ -1051,7 +1091,17 @@ export type RpcQuestionUiRequest = {
 
 /** Emitted when an extension needs user input */
 export type RpcExtensionUIRequest =
-	| { type: "extension_ui_request"; id: string; method: "select"; title: string; options: string[]; timeout?: number }
+	| {
+			type: "extension_ui_request";
+			id: string;
+			method: "select";
+			title: string;
+			options: string[];
+			timeout?: number;
+			/** The tool call this dialog approves, when it is a permission request. */
+			toolCallId?: string;
+			parentToolCallId?: string;
+	  }
 	| { type: "extension_ui_request"; id: string; method: "confirm"; title: string; message: string; timeout?: number }
 	| {
 			type: "extension_ui_request";
@@ -1060,6 +1110,8 @@ export type RpcExtensionUIRequest =
 			title: string;
 			placeholder?: string;
 			timeout?: number;
+			toolCallId?: string;
+			parentToolCallId?: string;
 	  }
 	| { type: "extension_ui_request"; id: string; method: "editor"; title: string; prefill?: string }
 	| {
@@ -1293,17 +1345,6 @@ export type RpcSessionClosedEvent = {
 	sessionPath?: string;
 };
 
-/** Sent once to every connection before this generation starts parking for a handoff. */
-export interface RpcHostSupersededEvent {
-	type: "host_superseded";
-	instanceId: string;
-	generation: number;
-	/** Public endpoint of the successor, or null for a drain without a known successor. */
-	successor: { socket: string } | null;
-}
-
-export type RpcHostLifecycleEvent = RpcHostSupersededEvent | RpcHostStalledEvent | RpcHostMemoryPressureEvent;
-
 /** Emitted after the loaded skill, extension, or MCP inventory changes. */
 export interface RpcLoadedSurfacesChangedEvent {
 	type: "loaded_surfaces_changed";
@@ -1315,11 +1356,6 @@ export interface RpcAuthAccountsChangedEvent {
 	provider: string;
 }
 
-/**
- * Emitted when the host's event loop was blocked long enough to stall every session it
- * serves, naming the routing handle and tool whose work held it when that can be
- * attributed. Informational: the host never aborts or refuses anything because of it.
- */
 /**
  * Sent to ONE opener the moment its `open_session` is accepted, before the open enters the
  * session loop. The in-process host serves opens one at a time, so a burst queues; without this
@@ -1337,64 +1373,6 @@ export interface RpcOpenQueuedEvent {
 	position: number;
 	/** Opens already in flight when this one arrived; `position` is this plus one. */
 	in_flight: number;
-}
-
-export interface RpcHostStalledEvent {
-	type: "host_stalled";
-	/** How late the host's own 200ms timer was invoked, i.e. how long the loop was held. */
-	driftMs: number;
-	/** Routing handle blamed for the stall, absent when no session work was running. */
-	sessionId?: string;
-	/** Tool that session was executing, when the stall happened inside one. */
-	tool?: string;
-	/**
-	 * Process CPU time spent during the stalled window, in milliseconds. Near `driftMs`: the host
-	 * was busy (JS work or a collection). Near zero: the process did not run (starved or waiting).
-	 */
-	processCpuMs?: number;
-	/** JS heap change across the stalled window, in megabytes; a large drop means a collection ran. */
-	heapDeltaMb?: number;
-}
-
-/**
- * Emitted while the host process's memory footprint is above its warning threshold. Capacity is memory,
- * never a refusal: the host reports the pressure and parks idle sessions sooner, and
- * never declines or kills a session because of it.
- */
-export interface RpcHostMemoryPressureEvent {
-	type: "host_memory_pressure";
-	/** Resident set size of the host process, in megabytes (what `ps` shows; it stays high after memory is returned). */
-	rssMb: number;
-	/**
-	 * Memory footprint of the host process, in megabytes: the number compared with the threshold (senpi#2261).
-	 * Hosts released before it omit this and `measure`.
-	 */
-	footprintMb?: number;
-	/** Kernel counter behind `footprintMb`; `"rss"` when the platform exposes no footprint counter. */
-	measure?: ProcessFootprintMeasure;
-	/** Live sessions the host is holding, including ones opening or closing. */
-	sessions: number;
-	/**
-	 * Main-thread heap in bytes (senpi#1960): `bun:jsc heapSize()` when the runtime offers it, else
-	 * `process.memoryUsage().heapUsed` - which on Bun counts the main thread only, never a kernel
-	 * worker's heap (the loop-lag watchdog's `heapDeltaMb` reads the same main-thread number).
-	 */
-	main?: { readonly heapBytes: number };
-	/**
-	 * Every live kernel, mapped to its session: a JS kernel's own heap estimate, an interpreter's
-	 * process footprint otherwise. A kernel without a reading yet reports `liveBytes: 0`; one that
-	 * crashed between samples is absent, never repeated with a stale number.
-	 */
-	kernels?: readonly RpcHostKernelMemory[];
-}
-
-/** One kernel's memory as the host reports it on the pressure event and the session listing. */
-export interface RpcHostKernelMemory {
-	readonly sessionId: string;
-	readonly language: string;
-	readonly liveBytes: number;
-	/** `"heap"` for a JS worker's own estimate; `"footprint"` for an interpreter process. */
-	readonly measure: string;
 }
 
 /** Emitted when the SDK failover engine advances to a different account slot. */

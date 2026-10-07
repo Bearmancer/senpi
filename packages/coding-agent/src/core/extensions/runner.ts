@@ -514,6 +514,7 @@ export class ExtensionRunner {
 		enabled: true,
 		timeoutMinutes: 30,
 	});
+	private getBrowserEngineFn: NonNullable<ExtensionContextActions["getBrowserEngine"]> = () => undefined;
 	private getImageSettingsFn: ExtensionContextActions["getImageSettings"] = () => ({
 		autoResize: true,
 		blockImages: false,
@@ -648,6 +649,7 @@ export class ExtensionRunner {
 			this.getPromptCacheKeepAliveSettingsFn = contextActions.getPromptCacheKeepAliveSettings;
 		this.getLookAtSettingsFn = contextActions.getLookAtSettings;
 		if (contextActions.getAskUserSettings) this.getAskUserSettingsFn = contextActions.getAskUserSettings;
+		if (contextActions.getBrowserEngine) this.getBrowserEngineFn = contextActions.getBrowserEngine;
 		this.getImageSettingsFn = contextActions.getImageSettings;
 		this.sessionSettingsFn = contextActions.sessionSettings;
 		this.compactFn = contextActions.compact;
@@ -1276,6 +1278,10 @@ export class ExtensionRunner {
 				runner.assertActive();
 				return goalFilePath(goalStoreRef(runner.sessionManager, runner.cwd));
 			},
+			get browserEngine() {
+				runner.assertActive();
+				return runner.getBrowserEngineFn();
+			},
 			get modelRegistry() {
 				runner.assertActive();
 				return runner.modelRegistry;
@@ -1315,6 +1321,10 @@ export class ExtensionRunner {
 			get kernelTools() {
 				runner.assertActive();
 				return kernelToolsStorage.getStore();
+			},
+			get evalHandleHost() {
+				runner.assertActive();
+				return runner.runtime.evalHandleHost;
 			},
 			abort: (source) => {
 				runner.assertActive();

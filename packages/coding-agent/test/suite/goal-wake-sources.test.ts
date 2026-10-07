@@ -1,5 +1,6 @@
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { AgentSession } from "../../src/core/agent-session.ts";
 import {
 	GOAL_CONTINUATION_RESUMED_EVENT,
 	GOAL_CONTINUATION_SCHEDULED_EVENT,
@@ -207,6 +208,7 @@ describe("goal wake sources", () => {
 
 	it("fires after the micro-grace when a background session exits without a notification", async () => {
 		vi.useFakeTimers();
+		vi.setSystemTime(0);
 		const ctx = await makeGoalContext([], "thread-background-drain");
 		const harness = createMonitorHarness();
 		const goal = activeGoal("goal-background-drain");
@@ -233,6 +235,9 @@ describe("goal wake sources", () => {
 		await Promise.all([delivered, resumed]);
 		expect(emitted(harness.events, GOAL_CONTINUATION_RESUMED_EVENT)[0]).toMatchObject({
 			iteration: 1,
+			wakeCause: "sources-drained",
+			dueAtMs: 270_000,
+			waitedMs: 1_000,
 			activeMonitorCount: 0,
 			wakeSources: { "terminal-background-sessions": 0 },
 		});
@@ -243,12 +248,20 @@ describe("goal wake sources", () => {
 		const threadId = threadIdFromResponse(
 			await registry.dispatch(connection, { id: 1, method: "thread/start", params: { cwd: root } }),
 		);
-		const session = threads.getLoadedThread(threadId).session as unknown as {
-			onExtensionEvent?: (channel: string, handler: (data: unknown) => void) => () => void;
-		};
+		const session = threads.getLoadedThread(threadId).session;
+		if (!(session instanceof AgentSession)) throw new Error("Expected the real session");
 		expect(session.onExtensionEvent).toBeTypeOf("function");
 		const scheduled = Promise.withResolvers<unknown>();
-		const unsubscribe = session.onExtensionEvent?.(GOAL_CONTINUATION_SCHEDULED_EVENT, scheduled.resolve);
+		const unsubscribe = session.onExtensionEvent(GOAL_CONTINUATION_SCHEDULED_EVENT, scheduled.resolve);
+		const delivered = Promise.withResolvers<void>();
+		const sendCustomMessage = session.sendCustomMessage.bind(session);
+		const delivery = vi.spyOn(session, "sendCustomMessage").mockImplementation(async (...args) => {
+			try {
+				return await sendCustomMessage(...args);
+			} finally {
+				delivered.resolve();
+			}
+		});
 
 		await registry.dispatch(connection, {
 			id: 2,
@@ -260,7 +273,9 @@ describe("goal wake sources", () => {
 			goalId: expect.any(String),
 			reason: "goal_store_changed",
 		});
-		unsubscribe?.();
+		await Promise.race([delivered.promise, timeoutAfter(2_000)]);
+		expect(delivery).toHaveBeenCalledTimes(1);
+		unsubscribe();
 	});
 
 	it("sums a terminal monitor with a background session and keeps waiting when only one drains", async () => {

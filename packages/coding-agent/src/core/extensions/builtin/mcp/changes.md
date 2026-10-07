@@ -1,3 +1,27 @@
+## 2026-10-04 - Interactive MCP server manager (senpi#2716)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/commands.ts`: blank `/mcp` opens a custom manager in TUI mode; non-TUI status and existing subcommands remain unchanged.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/manager.ts` and `manager-view.ts`: compact server rows, state-specific actions, tool/detail/log screens, configured keyboard navigation, bounded lists, and event-driven refresh preserving selected identity. Existing connection/catalog subscriptions and auth/test/reconnect handlers are reused; subscriptions and stale async renders are discarded on exit.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/config-edit.ts`: selected global/project definitions can persist enable/disable and exposure changes without expanding placeholders or rewriting other servers. Imported, extension, skill, and untrusted sources are not editable in the manager.
+- Review follow-ups: manager display text strips remote terminal controls while selected values remain unchanged; manager commands pass raw server names without reparsing; OAuth actions follow stored token status rather than connection state.
+- Owner context fix: `packages/coding-agent/src/core/extensions/builtin/mcp/manager.ts` passes the original guarded command context to Test/Reconnect and captures notices through a private optional callback; `packages/coding-agent/src/core/extensions/builtin/mcp/commands.ts` forwards that callback without copying context/UI or changing the extension API.
+
+### Why
+
+- The prior panel used verbose diagnostics as a generic selector's title, making multiple servers difficult to inspect and manage. Upstream Pi's dedicated manager supplies a compact reference while Senpi retains its own MCP runtime and exposure modes.
+- Original context identity, live UI/mode getters, and stale-session guards must survive reconnect's service binding; notice capture must not freeze or mutate session context.
+
+### Why an extension could not handle it
+
+- This is implemented inside the existing MCP builtin through `ctx.ui.custom`; no core UI or extension API changes are needed. The builtin owns its resolved server metadata and command handlers.
+
+### Expected merge conflict zones
+
+- Blank-command dispatch in `commands.ts` and validated config updates in `config-edit.ts`; the manager modules are fork-only.
+- Private Test/Reconnect notification parameters in `packages/coding-agent/src/core/extensions/builtin/mcp/commands.ts`; callback dispatch in fork-only `packages/coding-agent/src/core/extensions/builtin/mcp/manager.ts`.
+
 ## 2026-10-03 - A deferred MCP dispose settles before its release returns
 
 ### What changed

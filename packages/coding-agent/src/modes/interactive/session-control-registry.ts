@@ -5,12 +5,15 @@
  * Registration runs under the endpoint's ensure lock (the lock `host gc` takes) and writes the
  * generation record BEFORE `endpoint.json`: a reader that can see the endpoint can always see a
  * live generation behind it, so the endpoint is never judged `dead` while it is being registered.
+ * The directory is named by a socket built from a fresh instance id, so it never holds an earlier
+ * generation and the registration skips the dead-generation prune a host's directory needs.
  * A TUI endpoint has nothing to reattach to, so a clean exit removes its whole directory.
  */
 import { createHash } from "node:crypto";
 import { rmSync } from "node:fs";
 import { chmod, lstat, mkdir, realpath, rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { engineBuildIdentity } from "../../core/engine-build-identity.ts";
 import { createDaemonDirectories, createHostDaemonPaths, type HostDaemonPaths } from "../rpc/host-daemon-paths.ts";
 import { thisProcessStartTime, writeHostRegistration } from "../rpc/host-daemon-registration.ts";
 import { acquireHostEnsureLock } from "../rpc/host-ensure-lock.ts";
@@ -71,13 +74,18 @@ export async function registerTuiEndpoint(options: {
 	const paths = createHostDaemonPaths({ socket: options.socket, agentDir: options.agentDir });
 	const release = await acquireHostEnsureLock(options.socket, REGISTRY_LOCK_WAIT_MS);
 	try {
-		await writeHostRegistration(paths, {
-			record: { pid: process.pid, processStartTime: await thisProcessStartTime() },
-			socket: options.socket,
-			instanceId: options.instanceId,
-			generation: 0,
-			launchProfileId: "tui",
-		});
+		await writeHostRegistration(
+			paths,
+			{
+				record: { pid: process.pid, processStartTime: await thisProcessStartTime() },
+				socket: options.socket,
+				instanceId: options.instanceId,
+				generation: 0,
+				launchProfileId: "tui",
+				build: engineBuildIdentity(),
+			},
+			{ fresh: true },
+		);
 		await createDaemonDirectories(paths, { kind: "tui" });
 	} finally {
 		await release();

@@ -1,4 +1,114 @@
+## 2026-10-07 - Hold the scrollback replay while a reply streams (senpi#2836)
+
+### What changed
+
+- `packages/tui/src/tui.ts`:
+  - new `setScrollbackReplayHold(true | false | "until-input")` and `catchUpScrollback()`.
+  - While held, a main-screen frame that changes rows above the viewport while the line count changes takes `renderHeldRepaint()` instead of `renderScrollbackReplay()`. That rewrites the frame from the old viewport top down, so rows that scroll off land in scrollback in their current form, without `ESC[3J`. A user scrolled up keeps their place.
+  - Rows above the old viewport stay as the terminal shows them and are marked stale.
+  - The first key press, or `catchUpScrollback()`, triggers one catch-up replay. `"until-input"` keeps holding until that key press.
+  - What counts as a key press is decided after the color, color-scheme and other report consumers have run. `isTerminalReport()` excludes anything the terminal sends on its own: mouse and wheel reports, OSC/DCS/APC replies, DEC private reports such as the `ESC[?997;1n` theme flip, and window and cell-size reports.
+  - A pending catch-up that a resize frame skips leaves the rows marked stale for the next key press. `stop()` and forced resets clear the stale and pending flags. `stop()` keeps the hold itself, because the hold belongs to the turn: a `stop()`/`start()` handover for an external editor or a suspend mid-turn must not drop it. OSC/DCS/APC count as reports only with a body after the introducer, so a legacy Alt+] / Alt+Shift+P / Alt+_ key press still catches up.
+  - The multiplexer path, idle frames, resize and image rows behave as before.
+- `packages/tui/test/scrollback-replay-hold.test.ts`, a real `TUI` on a counting `VirtualTerminal` (60x12):
+  - a table widening every row streamed 30 rows deep causes 0 replays, and the newest row is on screen;
+  - a reader scrolled up 6 rows stays on the same row;
+  - 0 replays at turn end, all 30 rows in scrollback (some at older widths), exactly one replay at the next key that leaves every row at the final width, and none at the key after;
+  - idle frames still replay;
+  - mux panes still never replay, held or not;
+  - a wheel report, an OS theme flip, a cell-size reply and a late OSC reply leave a scrolled-up reader in place;
+  - after the turn, the next key releases the hold, so later updates replay normally again;
+  - the hold survives a `stop()`/`start()` handover mid-turn;
+  - a legacy `ESC]`, `ESC P` or `ESC _` key press catches up.
+
+  The first three fail on main. Removing the report filter fails the reports test, and making `"until-input"` never release fails the release test. Dropping the hold in `stop()` fails the handover test, and dropping the body check fails the Alt-key test.
+
+### Why
+
+A main-screen terminal cannot report its scroll position. Any frame that changed rows above the viewport replayed the whole scrollback, which throws a reader who scrolled up during a streaming reply back to the top, once per update.
+
+### Why an extension could not handle it
+
+Repaint decisions live inside the TUI renderer, below any extension.
+
+### Expected merge conflict zones
+
+- `packages/tui/src/tui.ts`: the two non-mux `renderScrollbackReplay` call sites in `doRender()`, the start of `handleTerminalInput()`, and the new methods next to `renderNow()` and `renderMuxViewportRepaint()`.
+
 # TUI delta rendering fork changes
+
+## 2026-10-04 - Accepting a suggestion list that predates the text re-queries instead of splicing
+
+### What changed
+
+- `packages/tui/src/components/editor.ts`: `applyAutocompleteSuggestions()` records the text and cursor the shown list was computed for. When Tab, or Enter on a non-slash list, arrives after either changed, the editor re-queries the provider for the current token (`acceptRefreshedAutocomplete()`, `AutocompleteRequestOptions.acceptSelection`) and applies the best match of the fresh suggestions instead of the stale selected item.
+
+### Why
+
+- `applyCompletion()` was called with the cached `autocompletePrefix` against the live line. While a slow refresh was pending (an `fd` walk over `$HOME` takes longer than a typing gap), the `@` list stayed on screen and accepting it spliced the stale item into the new text: `@~/Dev` + Tab gave `@~/De@go/` instead of `@~/Developer/`.
+
+### Why an extension could not handle it
+
+- The key handling, the cached prefix, and the request sequencing are private to `Editor`; an `AutocompleteProvider` only sees the prefix it is handed.
+
+### Expected merge conflict zones
+
+- `packages/tui/src/components/editor.ts`: the autocomplete field declarations, the Tab and confirm branches of the autocomplete-mode input handler, `runAutocompleteRequest()`, `applyAutocompleteSuggestions()`, `clearAutocompleteUi()`, and the request option signatures.
+
+## 2026-10-03 - The paste burst window is configurable and longer over SSH (senpi#2622)
+
+### What changed
+
+- `packages/tui/src/terminal.ts`: `resolveBurstWindowMs()` returns `PI_TUI_BURST_WINDOW_MS` when it is a finite number of at least 0, otherwise 100 ms over SSH (`SSH_CONNECTION` / `SSH_TTY`) and 20 ms locally, mirroring `resolveEscapeTimeoutMs()`. `ProcessTerminal.setupStdinBuffer` passes it to `StdinBuffer` as `burstWindowMs`; `0` never holds a line break.
+
+### Why
+
+- The marker-free paste fallback (#2606) held a trailing line break for a fixed 20 ms on every transport, so paste chunks arriving further apart (routine over SSH) still split into separate prompts, with no way to widen the window (reported in senpi#2622).
+
+### Why an extension could not handle it
+
+- Stdin framing and the terminal's environment-derived settings are set up before any extension runs.
+
+### Expected merge conflict zones
+
+- `packages/tui/src/terminal.ts`: the escape/burst constants, `resolveBurstWindowMs()` after `resolveEscapeTimeoutMs()`, and the `StdinBuffer` construction in `setupStdinBuffer`.
+
+## 2026-10-03 - A held paste line break survives an empty read and never joins a late paste (senpi#2621)
+
+### What changed
+
+- `packages/tui/src/stdin-buffer.ts`: `process()` clears the burst-release timer only once a read adds input, so a read that returns early (an empty decode of half a multibyte character, a dropped mouse fragment) keeps a held line break's release on time. When a read arrives while a line break is held, the clock decides: outside `burstWindowMs` the held break is released first (as Enter, or as the end of the paste it closes), so it never joins a later read's paste; inside the window it joins the read as before.
+
+### Why
+
+- An empty decoded read cleared the release timer and returned before re-arming it, so the held line break was stranded; when the rest of the character arrived, the break was prepended and glued into a paste, and an Enter never submitted (reported in senpi#2621).
+
+### Why an extension could not handle it
+
+- Stdin framing happens before any input reaches an extension.
+
+### Expected merge conflict zones
+
+- `packages/tui/src/stdin-buffer.ts`: the top of `process()` and the held-line-break block after `this.buffer += str`.
+
+## 2026-10-03 - Coalesce marker-free paste bursts into one paste event (senpi#2600)
+
+### What changed
+
+- `packages/tui/src/stdin-buffer.ts`: `StdinBuffer` recognises a marker-free paste from stdin framing. A read with no ESC bytes that carries two or more line breaks (`\n`, `\r\n`, `\r`), or text after a line break, plus pasted text emits one `paste` event instead of per-character `data` events; typing delivers one key per read, so a read of bare Enters stays keystrokes and is forwarded at once. Text plus a trailing line break that arrives inside `burstWindowMs` (default 20ms) of the previous input holds the line break until the next read, a flush or the timeout, so a paste split across reads still lands as one block; a line break held within the window right after such a paste is released as part of the paste, never as Enter. Keystroke-paced input (gap above the window, first-ever input, ESC-bearing sequences, bracketed pastes) flows through the previous paths byte-identically. New options `burstWindowMs` and `now` (clock injection for tests).
+
+### Why
+
+- Terminals that do not send bracketed-paste markers deliver a multiline paste as plain text with newline bytes, so every line submitted as its own prompt: a 50-line paste became about 50 messages and the agent answered the last line (reported downstream in code-yeongyu/oh-my-openagent#9463).
+
+### Why an extension could not handle it
+
+- By the time an `input` event reaches an extension the host has already admitted one message per line: `agent-session.ts` awaits `emitInput` per message, so a later fragment is never dispatched until the earlier one resolves, and `InputEventResult` (`continue` | `transform` | `handled`) can only pass, rewrite, or consume that single event. Only stdin framing sees the burst before it becomes messages.
+
+### Expected merge conflict zones
+
+- `packages/tui/src/stdin-buffer.ts`: the `process` framing tail around `extractCompleteSequences`, the `pasteMode` marker block, `flush`/`clear`.
+- `packages/tui/test/stdin-buffer.test.ts`: the `StdinBuffer unbracketed paste bursts` block.
 
 ## 2026-10-02 - Frame-line byte accounting for the memory report (senpi#1960)
 

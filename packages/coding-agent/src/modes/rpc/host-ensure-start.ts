@@ -1,20 +1,9 @@
-/**
- * HOW an ensure starts a generation: settings before the spawn, the supervisor launch, its
- * registration, and the readiness gate - with every teardown of a start that failed going through
- * the recorded stop path (senpi#2566). Split out of `host-ensure.ts`.
- */
+/** Starting a fresh generation for `ensureHost`: settings first, then the supervisor, its pidfile, its readiness. */
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { open, readdir, readFile, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import {
-	type DaemonPidFile,
-	ProcessIdentityUnreadableError,
-	processMatchesPidFile,
-	readProcessStartTime,
-	waitForStartTime,
-} from "../app-server/daemon/process.ts";
+import { open, readFile } from "node:fs/promises";
+import { engineBuildIdentity } from "../../core/engine-build-identity.ts";
+import { type DaemonPidFile, readProcessStartTime, waitForStartTime } from "../app-server/daemon/process.ts";
 import { generationPaths, type HostDaemonPaths } from "./host-daemon-paths.ts";
 import { clearHostRegistration, writeHostRegistration } from "./host-daemon-registration.ts";
 import { writeHostSettings } from "./host-daemon-state.ts";
@@ -25,6 +14,7 @@ import {
 	DEFAULT_STOP_TIMEOUT_MS,
 	delay,
 	ensureSender,
+	isNodeErrorCode,
 	recordEscalation,
 	SIGKILL_GRACE_MS,
 	type StopTarget,
@@ -33,13 +23,14 @@ import {
 } from "./host-ensure-stop.ts";
 import type { EnsuredHost, EnsureHostOptions } from "./host-ensure-types.ts";
 import { defaultHostLaunch, PINNED_HOST_CLIENT_CAPABILITIES } from "./host-launch.ts";
-import { DEFAULT_HOST_IDLE_EXIT_MS } from "./host-lifecycle-policy.ts";
+import { DEFAULT_HOST_IDLE_EXIT_MS } from "./host-lifecycle.ts";
 import { type ChildExit, pollProtocolInfo } from "./host-readiness.ts";
 import { initialHostEnvironment } from "./host-spawn-environment.ts";
 import { hostLaunchProfile } from "./protocol-identity.ts";
 import { createSocketSecret, socketSecretPath } from "./socket-transport.ts";
 
-const DEFAULT_READINESS_TIMEOUT_MS = 10_000;
+export const DEFAULT_READINESS_TIMEOUT_MS = 10_000;
+export { DEFAULT_STOP_TIMEOUT_MS };
 
 /**
  * `generation` is 0 for a fresh endpoint; a start that leaves a stranded generation running beside
@@ -82,23 +73,28 @@ export async function startHost(
 	try {
 		const supervisorArgs = ["--socket", socket, ...(options.hostArgs ?? [])];
 		const launch = testOptions?.spawn ?? testOptions?.launch?.(supervisorArgs) ?? defaultHostLaunch(supervisorArgs);
-		const spawned = spawn(launch.command, [...launch.args], {
+		child = spawn(launch.command, [...launch.args], {
 			detached: true,
 			windowsHide: true,
-			env: initialHostEnvironment({ agentDir: options.agentDir, env: options.env, paths, instanceId, generation }),
+			env: initialHostEnvironment({
+				agentDir: options.agentDir,
+				env: options.env,
+				paths,
+				instanceId,
+				generation,
+			}),
 			stdio: ["ignore", "ignore", stderr.fd],
 		});
-		child = spawned;
 		childExit = new Promise((resolveExit) => {
-			spawned.once("exit", (code, signal) => {
+			child!.once("exit", (code, signal) => {
 				exitedEarly = { code, signal };
 				resolveExit(exitedEarly);
 			});
 		});
-		if (spawned.pid === undefined) throw new Error("failed to spawn RPC socket host");
+		if (child.pid === undefined) throw new Error("failed to spawn RPC socket host");
 		const probe = testOptions?.readProcessStartTime ?? readProcessStartTime;
 		const observedStartTime = await Promise.race([
-			waitForStartTime(spawned.pid, 10_000, probe),
+			waitForStartTime(child.pid, 10_000, probe),
 			childExit.then(() => {
 				throw new Error("RPC socket host exited before its start time could be read");
 			}),
@@ -109,12 +105,12 @@ export async function startHost(
 		const unhurriedProbe = testOptions?.readProcessStartTime
 			? testOptions.readProcessStartTime
 			: (pid: number) => readProcessStartTime(pid, process.platform, 15_000);
-		const processStartTime = observedStartTime ?? (await unhurriedProbe(spawned.pid).catch(() => undefined));
+		const processStartTime = observedStartTime ?? (await unhurriedProbe(child.pid).catch(() => undefined));
 		// Still unreadable: the host is ours, alive, and about to prove itself on the socket, so it is
 		// registered WITHOUT an ownership guard instead of being torn down for a starved probe. A
 		// guard-less record never claims ownership and never authorizes a signal - every later caller
 		// reads it as unknown - so the worst case is a fresh host next time, not a killed healthy one.
-		pidFile = { pid: spawned.pid, processStartTime: processStartTime ?? null };
+		pidFile = { pid: child.pid, processStartTime: processStartTime ?? null };
 		await testOptions?.beforePidFileWrite?.();
 		await writeHostRegistration(paths, {
 			record: pidFile,
@@ -122,8 +118,9 @@ export async function startHost(
 			instanceId,
 			generation,
 			launchProfileId: hostLaunchProfile(hostChildArgv(options.hostArgs ?? []), process.cwd()).profile_id,
+			build: engineBuildIdentity(),
 		});
-		spawned.unref();
+		child.unref();
 	} catch (error: unknown) {
 		// Whether the child died on its own decides which diagnostic is true, and the
 		// cleanup kill below records an `exitedEarly` indistinguishable from a real
@@ -160,8 +157,8 @@ export async function startHost(
 	const stopFailure = await stopSpawnedChild(
 		child,
 		childExit,
-		testOptions?.stopTimeoutMs ?? DEFAULT_STOP_TIMEOUT_MS,
 		stopTarget("readiness_timeout"),
+		testOptions?.stopTimeoutMs ?? DEFAULT_STOP_TIMEOUT_MS,
 	).then(
 		() => undefined,
 		(error: unknown) => (error instanceof Error ? error.message : String(error)),
@@ -211,42 +208,7 @@ export async function appendStderr(paths: HostDaemonPaths, message: string): Pro
 		const stderr = (await readFile(paths.stderrLog, "utf8")).trim();
 		return stderr ? `${message}\n${stderr}` : message;
 	} catch (error: unknown) {
-		if (error instanceof Error && "code" in error && error.code === "ENOENT") return message;
+		if (isNodeErrorCode(error, "ENOENT")) return message;
 		throw error;
 	}
-}
-
-export async function reapOrphanedInternalHostDirs(): Promise<void> {
-	try {
-		const entries = await readdir(tmpdir(), { withFileTypes: true });
-		await Promise.all(
-			entries
-				.filter((entry) => entry.isDirectory() && entry.name.startsWith("senpi-rpc-host-internal-"))
-				.map(async (entry) => {
-					try {
-						const owner = JSON.parse(await readFile(join(tmpdir(), entry.name, ".owner"), "utf8")) as {
-							pid?: unknown;
-							processStartTime?: unknown;
-							createdAt?: unknown;
-						};
-						if (
-							typeof owner.pid === "number" &&
-							typeof owner.processStartTime === "string" &&
-							typeof owner.createdAt === "number" &&
-							owner.processStartTime.length > 0 &&
-							owner.createdAt < Date.now() - 60_000 &&
-							(await readdir(join(tmpdir(), entry.name))).length === 1 &&
-							!(await processMatchesPidFile({ pid: owner.pid, processStartTime: owner.processStartTime }).catch(
-								(error: unknown) => {
-									// Unreadable but live: assume the owner is alive rather than steal its lock.
-									if (error instanceof ProcessIdentityUnreadableError) return true;
-									throw error;
-								},
-							))
-						)
-							await rm(join(tmpdir(), entry.name), { recursive: true, force: true });
-					} catch {}
-				}),
-		);
-	} catch {}
 }

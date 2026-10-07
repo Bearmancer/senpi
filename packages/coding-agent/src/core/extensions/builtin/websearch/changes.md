@@ -1,3 +1,23 @@
+## 2026-10-05 - Keenable web search provider, keyed and keyless-public
+
+### What changed
+
+- `websearch/providers/keenable.ts` (new): POSTs `{query, max_results (<=50), site?}` to `https://api.keenable.ai/v1/search` with `X-API-Key` when `apiKey` is configured, and to `https://api.keenable.ai/v1/search/public` with an `X-Keenable-Title: <APP_NAME>` header when it is not. A lone `allowedDomains` entry maps to the native host-only `site` field; multiple allowed or any blocked domains stay `site:`/`-site:` query terms via `appendDomainFilters`. Response `results[]` normalize `snippet` (falling back to `description`) and `published_at` into `publishedAt`; non-http(s) or control-character URLs are dropped.
+- `websearch/types.ts`, `provider-endpoints.ts`, `providers.ts`, `config.ts`: `keenable` joins the provider union, the default endpoint table, the module registry and `PROVIDERS`/`KEYLESS_PROVIDERS`. Keyless means `websearch.json` may list it without `apiKey`, and a block cools it down like the other keyless engines; it is deliberately not in `DEFAULT_FREE_CONFIG` because the public tier is a shared per-IP pool.
+- Covered by `test/suite/websearch-keenable-provider.test.ts`.
+
+### Why
+
+- Keenable is a search API with a keyless public tier; explicit config entries can use it with or without a key.
+
+### Why an extension could not handle it
+
+- The provider registry and config validation are private to this builtin.
+
+### Expected merge conflict zones
+
+- LOW: one line per provider in `types.ts`, `config.ts` `PROVIDERS`/`KEYLESS_PROVIDERS`, `provider-endpoints.ts`, `providers.ts`.
+
 ## 2026-09-29 - Free keyless engine chain, per-engine cooldown, SearXNG (senpi#2339)
 
 ### What changed

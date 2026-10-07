@@ -233,7 +233,13 @@ function deliveryMessage(input: AdmitExternalMessageInput): SessionControlDelive
 		customType: SESSION_CONTROL_DELIVERY_TYPE,
 		content: input.text,
 		display: true,
-		details: { delivery_id: input.delivery_id, source: "session_control", deliverAs: input.deliverAs },
+		details: {
+			delivery_id: input.delivery_id,
+			source: "session_control",
+			deliverAs: input.deliverAs,
+			...(input.sender === undefined ? {} : { sender: input.sender }),
+			...(input.display_text === undefined ? {} : { display_text: input.display_text }),
+		},
 		timestamp: Date.now(),
 	};
 }

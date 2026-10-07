@@ -7,6 +7,7 @@ import { resolvePath } from "../utils/paths.ts";
 import { AgentSession } from "./agent-session.ts";
 import { formatNoModelsAvailableMessage } from "./auth-guidance.ts";
 import { AuthStorage } from "./auth-storage.ts";
+import type { BrowserEngine } from "./browser-engine.ts";
 import { estimateTokens } from "./compaction/compaction.ts";
 import { createSessionCursorExecBridge } from "./cursor-exec-bridge-session.ts";
 import { DEFAULT_THINKING_LEVEL } from "./defaults.ts";
@@ -30,7 +31,7 @@ import type { ResourceLoader } from "./resource-loader.ts";
 import { DefaultResourceLoader } from "./resource-loader.ts";
 import { getDefaultSessionDir, SessionManager } from "./session-manager.ts";
 import { DEFAULT_TOOL_NAMES, SettingsManager } from "./settings-manager.ts";
-import { getSupportedThinkingLevels } from "./thinking-levels.ts";
+import { clampThinkingSelection, getSupportedThinkingLevels } from "./thinking-levels.ts";
 import { time } from "./timings.ts";
 import {
 	createBashTool,
@@ -129,6 +130,8 @@ export interface CreateAgentSessionOptions {
 	autoTitleSessions?: boolean;
 	/** Where this session's replies render; omitted means `SENPI_PROMPT_SURFACE` decides. */
 	promptSurface?: PromptSurface;
+	/** Browser engine this session's skills drive (`open_session.browserEngine`); omitted means none was chosen. */
+	browserEngine?: BrowserEngine;
 }
 
 /** Result from createAgentSession */
@@ -365,23 +368,33 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 	if (thinkingLevel === undefined && model?.defaultThinkingLevel !== undefined) {
 		thinkingLevel = model.defaultThinkingLevel;
 	}
+	let thinkingFromGlobalDefault = false;
 	if (thinkingLevel === undefined) {
 		const configuredDefault = settingsManager.getDefaultThinkingLevel();
 		if (configuredDefault !== undefined) {
 			thinkingLevel = configuredDefault;
 			thinkingSelection = { level: configuredDefault, source: "explicit" };
+			thinkingFromGlobalDefault = true;
 		} else {
 			thinkingLevel = DEFAULT_THINKING_LEVEL;
 		}
 	}
 
 	// Clamp to model capabilities without inventing provenance for a defaulted level.
+	const requestedThinkingLevel = thinkingLevel;
 	if (!model) {
 		thinkingLevel = "off";
 	} else {
 		thinkingLevel = clampThinkingLevelToModel(thinkingLevel, model);
 	}
-	if (thinkingSelection) thinkingSelection = { ...thinkingSelection, level: thinkingLevel };
+	// senpi#2395: an explicit request the clamp changed keeps the requested level and the reason. The global
+	// default is a default, not a request, so its clamp records no requested level and shows no warning.
+	thinkingSelection = clampThinkingSelection(
+		thinkingSelection,
+		thinkingFromGlobalDefault ? thinkingLevel : requestedThinkingLevel,
+		thinkingLevel,
+		model,
+	);
 
 	const configuredDefaultToolNames = settingsManager.getDefaultTools();
 	const sessionDefaultToolNames =
@@ -577,6 +590,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		sessionStartEvent,
 		autoTitleSessions: options.autoTitleSessions,
 		promptSurface: options.promptSurface,
+		browserEngine: options.browserEngine,
 	});
 	const liveContextTokens = hasExistingSession
 		? existingSession.messages.reduce((total, message) => total + estimateTokens(message), 0)
