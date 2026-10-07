@@ -18,6 +18,7 @@
 
 ### Fixed
 
+- The first start of a branded install (`~/.omo`) no longer copies a `desktop` or `desktop.init-*` entry from `~/.senpi/agent` into the OmO desktop's data home location, which the desktop app owns ([oh-my-openagent#9727](https://github.com/code-yeongyu/oh-my-openagent/issues/9727)).
 - A fallback model whose context window cannot hold the session no longer ends the fallback: when the switch is refused, the next model in the chain is tried in the same turn, and `retry_fallback_exhausted` is emitted when none fits instead of the turn silently ending on the original error ([#2894](https://github.com/code-yeongyu/senpi/issues/2894)).
 - A shared RPC host that the engine stops on purpose is now recorded in the endpoint's `crashes.jsonl`, naming who stopped it and why (an ensure replacing an unreachable host, `host stop`, a failed start or handoff, the supervisor's own idle exit), and a host killed from outside is recorded as `external` instead of being indistinguishable from a crash; `host status` keeps counting only real deaths. An ensure no longer stops or replaces a host that is alive but measurably stalled - it refuses with `host_stalled` - and a graceful stop waits out a measured stall (up to `SENPI_RPC_CHILD_STALLED_STOP_MAX_MS`, 60 s by default) before escalating to SIGKILL ([#2566](https://github.com/code-yeongyu/senpi/issues/2566)).
 

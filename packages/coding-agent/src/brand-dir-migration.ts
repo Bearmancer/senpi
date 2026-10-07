@@ -19,8 +19,13 @@ export const MIGRATION_MARKER = ".migrated-from-senpi";
 /** Regenerable state: caches, logs and build worktrees are rebuilt on demand. */
 const SKIPPED_ENTRIES = new Set(["cache", "logs", "omo-local-update"]);
 
+/** The OmO desktop app owns `~/.omo/desktop*` (code-yeongyu/omo-desktop-app#1829); the engine never writes there. */
+function isDesktopReserved(entry: string): boolean {
+	return entry === "desktop" || entry.startsWith("desktop.init-");
+}
+
 function isSkipped(entry: string): boolean {
-	return SKIPPED_ENTRIES.has(entry) || entry.endsWith(".log");
+	return SKIPPED_ENTRIES.has(entry) || entry.endsWith(".log") || isDesktopReserved(entry);
 }
 
 export interface BrandDirMigrationResult {

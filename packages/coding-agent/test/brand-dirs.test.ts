@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
@@ -96,6 +96,39 @@ describe("copy-forward migration", () => {
 
 		expect(second.migrated).toBe(false);
 		expect(existsSync(join(brandDir, "models.json"))).toBe(false);
+	});
+
+	// code-yeongyu/oh-my-openagent#9727: the OmO desktop app owns `~/.omo/desktop*` (omo-desktop-app#1829).
+	test("never creates or copies into the OmO desktop's reserved entries", () => {
+		const legacy = seedLegacyAgentDir();
+		mkdirSync(join(legacy, "desktop"), { recursive: true });
+		mkdirSync(join(legacy, "desktop.init-abc"), { recursive: true });
+		writeFileSync(join(legacy, "desktop", "x"), "engine");
+		writeFileSync(join(legacy, "desktop.init-abc", "y"), "engine");
+		const brandDir = join(root, ".omo");
+		mkdirSync(join(brandDir, "desktop"), { recursive: true });
+		writeFileSync(join(brandDir, "desktop", "app.db"), "desktop-owned");
+
+		const result = migrateEngineStateToBrandDir(legacy, brandDir);
+
+		expect(result.migrated).toBe(true);
+		expect(readFileSync(join(brandDir, "settings.json"), "utf-8")).toBe('{"theme":"dark"}');
+		expect(result.copied).not.toContain("desktop");
+		expect(result.copied).not.toContain("desktop.init-abc");
+		expect(existsSync(join(brandDir, "desktop.init-abc"))).toBe(false);
+		expect(readdirSync(join(brandDir, "desktop"))).toEqual(["app.db"]);
+		expect(readFileSync(join(brandDir, "desktop", "app.db"), "utf-8")).toBe("desktop-owned");
+	});
+
+	test("leaves a missing desktop home uncreated", () => {
+		const legacy = seedLegacyAgentDir();
+		mkdirSync(join(legacy, "desktop"), { recursive: true });
+		writeFileSync(join(legacy, "desktop", "x"), "engine");
+		const brandDir = join(root, ".omo");
+
+		migrateEngineStateToBrandDir(legacy, brandDir);
+
+		expect(existsSync(join(brandDir, "desktop"))).toBe(false);
 	});
 
 	test("does nothing when there is no engine state to copy", () => {

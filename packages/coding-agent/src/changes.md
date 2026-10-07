@@ -1,3 +1,21 @@
+## 2026-10-08 - Brand-dir copy-forward skips the OmO desktop's reserved entries (oh-my-openagent#9727)
+
+### What changed
+
+- `packages/coding-agent/src/brand-dir-migration.ts`: `isSkipped` also skips `desktop` and every `desktop.init-*` entry, so the copy-forward never creates or writes into them in the brand dir.
+
+### Why
+
+The OmO desktop app owns `~/.omo/desktop*` (omo-desktop-app#1829); an engine copy-forward must not create its data home or a half-initialized one.
+
+### Why an extension could not handle it
+
+The copy-forward runs at startup, before any extension loads.
+
+### Expected merge conflict zones
+
+- Fork-only file. `isSkipped`.
+
 ## 2026-10-06 - visibleWidth export for extensions that lay out their own rows (senpi#2831)
 
 ### What changed
