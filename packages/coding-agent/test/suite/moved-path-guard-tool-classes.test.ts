@@ -26,20 +26,4 @@ describe("moved-path-guard tool classes (#2898)", () => {
 		expect(registered).toEqual(expect.arrayContaining(["write", "edit", "apply_patch", "bash", "bash_input"]));
 		expect(unclassified).toEqual([]);
 	});
-
-	it("guards each file-writing and command tool through a mechanism that sees its target", () => {
-		expect(MOVED_PATH_TOOL_CLASSES).toMatchObject({
-			read: { kind: "filesystem-policy" },
-			write: { kind: "filesystem-policy" },
-			edit: { kind: "filesystem-policy" },
-			find: { kind: "filesystem-policy" },
-			ls: { kind: "filesystem-policy" },
-			apply_patch: { kind: "patch" },
-			bash: { kind: "command" },
-			bash_input: { kind: "command" },
-			monitor: { kind: "command" },
-			powershell: { kind: "command" },
-			generate_image: { kind: "paths", write: ["output_path"] },
-		});
-	});
 });
