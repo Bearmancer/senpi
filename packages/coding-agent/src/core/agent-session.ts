@@ -2681,6 +2681,20 @@ export class AgentSession {
 		}
 	}
 
+	/**
+	 * Annotates a failed turn's assistant message after it was persisted. The session mirror shares the
+	 * persisted message object (senpi#2537), so the note goes on a copy that replaces it in the agent's
+	 * context only: the mirror and the file keep what was persisted, as before.
+	 */
+	private _annotateFailedAssistantMessage(message: AssistantMessage, errorMessage: string): AssistantMessage {
+		const annotated: AssistantMessage = { ...message, errorMessage };
+		const messages = this.agent.state.messages;
+		const index = messages.lastIndexOf(message);
+		if (index !== -1)
+			this.agent.state.messages = [...messages.slice(0, index), annotated, ...messages.slice(index + 1)];
+		return annotated;
+	}
+
 	/** Extract text content used to track fork-owned queued user messages. */
 	private _extractUserMessageText(content: string | Array<{ type: string; text?: string }>): string {
 		if (typeof content === "string") return content;
@@ -3230,7 +3244,7 @@ export class AgentSession {
 				? this._agentEndAllowsQueuedContinuation(event.messages)
 				: false;
 		if (event.type === "agent_end" && this._lastAssistantMessage) {
-			const msg = this._lastAssistantMessage;
+			let msg = this._lastAssistantMessage;
 			this._lastAssistantMessage = undefined;
 			this._skipNextPostRetryCompactionCheck = false;
 			this._clearCircuitProbeWatchdog();
@@ -3318,12 +3332,18 @@ export class AgentSession {
 				(msg.stopReason === "error" || msg.stopReason === "aborted");
 
 			if (retryOutcome === "not-handled" && cursorQuotaRe && msg.errorMessage) {
-				msg.errorMessage = `${msg.errorMessage} (likely provider usage/quota exhaustion: conversation is well below the model context window)`;
+				msg = this._annotateFailedAssistantMessage(
+					msg,
+					`${msg.errorMessage} (likely provider usage/quota exhaustion: conversation is well below the model context window)`,
+				);
 			}
 			if (retryOutcome === "not-handled" && msg.stopReason === "error" && msg.errorMessage) {
 				const rejectedImages = rejectedImageSources(this.agent.state.messages, msg);
 				if (rejectedImages.length > 0) {
-					msg.errorMessage = `${msg.errorMessage} (the rejected image from ${rejectedImages.join(", ")} is left out of later requests; send your next message to continue)`;
+					msg = this._annotateFailedAssistantMessage(
+						msg,
+						`${msg.errorMessage} (the rejected image from ${rejectedImages.join(", ")} is left out of later requests; send your next message to continue)`,
+					);
 				}
 			}
 			if (retryOutcome === "not-handled" && this._retryAttempt > 0 && msg.errorMessage) {

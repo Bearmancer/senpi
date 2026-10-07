@@ -102,6 +102,19 @@ export class ResidentStringStore {
 		return transformJson(value, (text) => this.materializeString(text, onMissing));
 	}
 
+	/**
+	 * Whether `externalize` returned this value without any resident token: it is then the store's
+	 * JSON-normalized copy and `materialize` returns it as is.
+	 */
+	isTokenFree(value: object): boolean {
+		return this.tokenFree.has(value);
+	}
+
+	/** Records `value` as token-free, so `materialize` returns it as is (senpi#2537). */
+	adoptTokenFree(value: object): void {
+		this.tokenFree.add(value);
+	}
+
 	resolvedBlobsDir(): string | undefined {
 		return this.blobsDir?.();
 	}

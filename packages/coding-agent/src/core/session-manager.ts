@@ -1530,10 +1530,26 @@ export class SessionManager {
 		this.flushed = true;
 	}
 
-	private _appendEntry(entry: SessionEntry): void {
+	private _appendEntry(entry: SessionEntry, shareable?: object): void {
 		const residentEntry = this.residentStore.externalize(entry);
 		this._persist(residentEntry);
-		this._commitEntry(residentEntry);
+		this._commitEntry(this._shareMessage(residentEntry, shareable));
+	}
+
+	/**
+	 * senpi#2537: the mirror used to hold its own JSON copy of every message, so each turn's message was
+	 * resident twice (here and in the agent's context). A message with no resident token is JSON-normal
+	 * already, and the agent does not mutate it after it is persisted (the one post-persist annotation,
+	 * on a failed turn's assistant message, copies first), so the mirror holds the agent's own object.
+	 * The file holds what `_persist` wrote; a reload reads the same JSON.
+	 */
+	private _shareMessage(residentEntry: SessionEntry, shareable: object | undefined): SessionEntry {
+		if (shareable === undefined || residentEntry.type !== "message") return residentEntry;
+		if (!this.residentStore.isTokenFree(residentEntry)) return residentEntry;
+		if (JSON.stringify(shareable) !== JSON.stringify(residentEntry.message)) return residentEntry;
+		const shared = { ...residentEntry, message: shareable as SessionMessageEntry["message"] };
+		this.residentStore.adoptTokenFree(shared);
+		return shared;
 	}
 
 	private _commitEntry(residentEntry: SessionEntry): void {
@@ -1631,7 +1647,7 @@ export class SessionManager {
 			timestamp: new Date().toISOString(),
 			message,
 		};
-		this._appendEntry(entry);
+		this._appendEntry(entry, message);
 		const order = this.entryOrdersById.get(entry.id);
 		if (order !== undefined) {
 			this.messageEntryPositions.set(message, { entryId: entry.id, order });

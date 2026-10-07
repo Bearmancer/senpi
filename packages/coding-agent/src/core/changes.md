@@ -1,3 +1,23 @@
+## 2026-10-07 - A persisted message is held once (senpi#2537)
+
+### What changed
+
+- `packages/coding-agent/src/core/session-manager.ts`: `appendMessage` passes the agent's message to `_appendEntry`, and `_shareMessage` stores that object in the mirror entry when the externalized entry holds no resident token and its JSON equals the persisted JSON. The shared entry is marked token-free, so `materialize` returns it as is.
+- `packages/coding-agent/src/core/session-resident-store.ts`: `isTokenFree` / `adoptTokenFree` expose the store's token-free set.
+- `packages/coding-agent/src/core/agent-session.ts`: the two notes added to a failed turn's assistant message after it was persisted (quota hint, rejected image) go on a copy that replaces it in the agent's context (`_annotateFailedAssistantMessage`), so the persisted object, the mirror and the file stay identical.
+
+### Why
+
+Every turn's messages were held twice in a long session: once in the agent's context and once as the mirror's JSON copy. The session's resident memory grew by about 2.9 KB per turn in a deterministic driver, about 2.3x the messages' JSON size.
+
+### Why an extension could not handle it
+
+Session persistence and the mirror are core state.
+
+### Expected merge conflict zones
+
+- `SessionManager.appendMessage` / `_appendEntry`, and the failed-turn notes in `AgentSession`'s `agent_end` handling.
+
 ## 2026-10-07 - Every model switch records its source (senpi#2870)
 
 ### What changed
