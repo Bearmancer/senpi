@@ -47,15 +47,17 @@ describe("MCP manager OAuth actions", () => {
 			harness?.cleanup();
 			await service.dispose("quit");
 		});
+		const store = new McpTokenStore({ agentDir: root.agentDir, serverName: "fx", serverUrl });
+		// Bind the transport to this fixture's principal, not credentials changed after attachment.
+		// No record has a refresh token, so an expired record cannot initiate remote refresh IO.
+		if (record !== undefined) await store.write(record);
 		await service.attachSession(
 			{ type: "session_start", reason: "startup" },
 			{ cwd: root.cwd, isProjectTrusted: () => true },
 			undefined,
 			{ agentDir: root.agentDir, logDir: join(root.agentDir, "logs"), env: {} },
 		);
-		const store = new McpTokenStore({ agentDir: root.agentDir, serverName: "fx", serverUrl });
-		// Write after attach so even expired fixtures never trigger a token refresh.
-		if (record !== undefined) await store.write(record);
+		expect(await service.whenAttachSettled(10_000)).toBe("settled");
 		const connection = service.getConnection("fx");
 		if (connection === undefined) throw new Error("fixture connection missing");
 		vi.spyOn(connection, "state", "get").mockReturnValue(state);

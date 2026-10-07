@@ -1308,6 +1308,12 @@ REPORT: nothing here aborts a turn, kills a session, or refuses an `open_session
 - **Event-loop stalls**: a 200 ms timer measures how late it is actually invoked; that lateness is the time the loop
   could serve nobody. Drift above `SENPI_RPC_LOOP_LAG_WARN_MS` (default 500) writes one stderr line per 10 seconds,
   `senpi rpc host stall: event loop blocked <drift>ms (sessionId=<handle> tool=<tool>)`. Drift above
+  `SENPI_RPC_LOOP_LAG_ERROR_MS` (default 5000) additionally broadcasts a `host_stalled` record
+  (`{ type, driftMs, sessionId?, tool?, processCpuMs?, heapDeltaMb? }`) to every connection, like the other content-free lifecycle records.
+  `processCpuMs` is the process CPU time spent during the stalled window and `heapDeltaMb` the JS heap change across it, so a
+  stall explains itself: CPU close to `driftMs` means the host was busy (a large heap drop in the same window points at a
+  collection), and CPU close to zero means the process did not run at all (the machine starved it, or it sat in a blocking
+  wait). The stderr line carries the same two numbers as `cpu=<ms> heap=<+/-MB>`.
 - On accepting an `open_session`, the host sends that connection a `queued` record
   (`{ type, for_request, position, in_flight }`) before the open enters the session loop.
   `position` is 1-based and `in_flight` counts opens already accepted across the whole host,
@@ -1317,12 +1323,12 @@ REPORT: nothing here aborts a turn, kills a session, or refuses an `open_session
   acknowledged open waits up to 10 minutes for its response instead of the 30 s request
   deadline (a busy host was measured answering after 57 s), and a timeout after it names the
   queue position instead of a bare deadline. A lost transport still rejects at once.
-  `SENPI_RPC_LOOP_LAG_ERROR_MS` (default 5000) additionally broadcasts a `host_stalled` record
-  (`{ type, driftMs, sessionId?, tool?, processCpuMs?, heapDeltaMb? }`) to every connection, like the other content-free lifecycle records.
-  `processCpuMs` is the process CPU time spent during the stalled window and `heapDeltaMb` the JS heap change across it, so a
-  stall explains itself: CPU close to `driftMs` means the host was busy (a large heap drop in the same window points at a
-  collection), and CPU close to zero means the process did not run at all (the machine starved it, or it sat in a blocking
-  wait). The stderr line carries the same two numbers as `cpu=<ms> heap=<+/-MB>`.
+- A multi-session host sends the same `queued` record for a session-routed `prompt` the moment it receives it,
+  before the prompt's preflight runs on the session's loop (`position` counts that session's requests in flight).
+  The bundled `RpcClient` then waits up to 5 minutes for the prompt to be accepted instead of the 30 s request
+  deadline (a compaction's longer wait is never shortened by it), and a timeout after it says the host received the prompt. A prompt the host never acknowledged still
+  fails at the request deadline. A reply written for a session that already closed is dropped, with one stderr
+  line naming the session.
 - **Stall attribution**: each routed command is dispatched inside an `AsyncLocalStorage` scope carrying its routing
   `sessionId`, and an in-process session's tool executions open a span carrying `{ sessionId, tool }` for as long as
   the tool runs. A stall is blamed on the synchronous work that finished inside the measured window, or on the tool

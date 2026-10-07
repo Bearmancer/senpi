@@ -1,3 +1,4 @@
+import { environmentsEntry, isolationEntry, type NamedEvalSchema } from "./eval-environment-schemas.ts";
 import type { EvalSchemaResult } from "./schema-bridge.ts";
 
 /**
@@ -22,7 +23,7 @@ const handleRefSchema = {
 	required: ["kind", "id", "run_epoch"],
 } as const;
 
-const waitEntry: EvalSchemaResult = {
+const waitEntry: NamedEvalSchema = {
 	name: "eval:wait",
 	description: [
 		"wait(handles, {timeout?, mode?}) blocks the cell until the given handles settle (js: await wait(...); py/rb: wait(...); jl: wait(handle(node)) or wait([handle(a), handle(b)])).",
@@ -44,7 +45,7 @@ const waitEntry: EvalSchemaResult = {
 	},
 };
 
-const helpersEntry: EvalSchemaResult = {
+const helpersEntry: NamedEvalSchema = {
 	name: "eval:helpers",
 	description: [
 		"Advanced cell helpers (all four languages; js helpers are awaited).",
@@ -70,7 +71,7 @@ const helpersEntry: EvalSchemaResult = {
 	},
 };
 
-const kernelToolsEntry: EvalSchemaResult = {
+const kernelToolsEntry: NamedEvalSchema = {
 	name: "eval:kernel-tools",
 	description: [
 		"Kernel tools: functions a cell defines that in-process children can call (js and py; rb/jl answer tools_unavailable).",
@@ -90,12 +91,18 @@ const kernelToolsEntry: EvalSchemaResult = {
 	},
 };
 
-const VIRTUAL_ENTRIES: ReadonlyMap<string, EvalSchemaResult> = new Map([
+const VIRTUAL_ENTRIES: ReadonlyMap<string, EvalSchemaResult> = new Map<string, EvalSchemaResult>([
 	[waitEntry.name, waitEntry],
 	[helpersEntry.name, helpersEntry],
 	[kernelToolsEntry.name, kernelToolsEntry],
+	[environmentsEntry.name, environmentsEntry],
+	[isolationEntry.name, isolationEntry],
 ]);
 
 export function virtualEvalSchema(name: string): EvalSchemaResult | undefined {
 	return VIRTUAL_ENTRIES.get(name);
+}
+
+export function virtualEvalSchemaNames(): readonly string[] {
+	return [...VIRTUAL_ENTRIES.keys()];
 }

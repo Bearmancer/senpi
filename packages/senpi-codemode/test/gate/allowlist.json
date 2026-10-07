@@ -1193,6 +1193,18 @@
 			],
 			"reason": "senpi#2850: a summary-less live row skips a first code line that sanitizes to nothing; the contract fails before the change (the row shows only the ellipsis)."
 		},
+		"37": {
+			"additions": [
+				"imports/extension/packages/senpi-codemode/src/bridges/eval-environment-schemas.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/bridges/eval-environment-schemas.ts",
+				"legacyContracts/test/eval-virtual-environment-schemas.test.ts/tool_schema('eval:*') virtual entries are exactly the five documented names",
+				"legacyContracts/test/eval-virtual-environment-schemas.test.ts/tool_schema('eval:*') virtual entries document the magics, %load and the environment modes",
+				"legacyContracts/test/eval-virtual-environment-schemas.test.ts/tool_schema('eval:*') virtual entries document isolate, its refusals and the sandbox limits",
+				"legacyContracts/test/eval-virtual-environment-schemas.test.ts/tool_schema('eval:*') virtual entries name only error codes the source actually emits",
+				"legacyContracts/test/eval-virtual-environment-schemas.test.ts/tool_schema('eval:*') virtual entries keep each code in the entry that owns it"
+			],
+			"reason": "Plan row 37 (F4/F5 shortfall, IS-3): the eval:environments and eval:isolation virtual tool_schema entries, a module the extension and first kernel load, and their contract tests. Additive only; no prompt cell changes."
+		},
 		"38": {
 			"additions": [
 				"imports/extension/packages/senpi-codemode/src/environments/packages-install.ts",
