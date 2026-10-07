@@ -14,6 +14,20 @@
 
 ### Removed
 
+## [2026.10.10-6] - 2026-10-07
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- Anthropic sessions no longer fail on every request after a tool change is followed by a reply that has nothing to replay: the tool-change system message now always precedes an assistant turn or ends the request ([#2864](https://github.com/code-yeongyu/senpi/issues/2864)).
+
+### Removed
+
 ## [2026.10.10-5] - 2026-10-07
 
 ### Breaking Changes

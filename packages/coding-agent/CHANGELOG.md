@@ -6,12 +6,32 @@
 
 ### Added
 
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.10-6] - 2026-10-07
+
+### Breaking Changes
+
+### Added
+
 - senpi now owns compaction on `anthropic-subscription` by default: speculative and idle compaction, restoration and the other compaction features run there with the session's own model, Claude Code's native auto-compact is off for the session so only one side compacts, and Claude Code's per-turn total-tokens reminder is turned off so the prompt cache keeps being reused. `anthropicSubscriptionProvider.compactionOwner: "sdk"` (or `SENPI_CLAUDE_SDK_OAUTH_COMPACTION_OWNER=sdk`) hands compaction back to Claude Code. Changing the owner mid-session restarts the resident Claude Code process on the next turn, and a failed senpi compaction ends the turn with its error instead of Claude Code compacting natively ([#2746](https://github.com/code-yeongyu/senpi/issues/2746)).
 
 ### Changed
 
-- The bundled Claude Agent SDK is updated to 0.3.292 (from 0.3.286), so the Anthropic subscription lane runs Claude Code 2.1.292 and the models it knows ([#2545](https://github.com/code-yeongyu/senpi/issues/2545)).
+- The bundled Claude Agent SDK is updated to 0.3.292 (from 0.3.289), so the Anthropic subscription lane runs Claude Code 2.1.292 and the models it knows ([#2545](https://github.com/code-yeongyu/senpi/issues/2545)).
 ### Fixed
+
+- On a busy shared RPC host, a new child's first prompt no longer fails at 30 s and leaves the host writing into a closed session ("Provider scope is closed"): the host acknowledges the prompt on receipt and the client waits for it to be accepted, and a reply for a session that already closed is dropped ([#2871](https://github.com/code-yeongyu/senpi/issues/2871)).
+
+- TTSR no longer aborts and retries a reply of repetitive code or markup written outside a fence (SVG elements, JSON objects): code-shaped lines are left out of the near-duplicate paragraph check, and prose narration loops are still caught ([#2865](https://github.com/code-yeongyu/senpi/issues/2865)).
+
+- A restored `anthropic-subscription` session whose newest reply was never recorded is rebuilt instead of being resumed without any check of its Claude Code transcript ([#2858](https://github.com/code-yeongyu/senpi/issues/2858))
+
+- A first message no longer waits for MCP servers to finish connecting or refreshing their catalogs. Matching cached tools are available immediately; each call checks the current tool schema, credentials and permissions before dispatch, and a connecting server without a cached catalog does not block the reply ([#2843](https://github.com/code-yeongyu/senpi/issues/2843)).
 
 ### Removed
 

@@ -1,3 +1,21 @@
+## 2026-10-07 - A restored binding with no recorded assistant turn is never resumed unchecked (senpi#2858)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/session-reattach.ts`: `verifyRestoredTranscript` returns false for a binding with `lastAssistantUuid: null` instead of true without looking at the transcript. `admitRestoredBinding` then forgets the binding and the session is rebuilt (flatten) instead of plain-reattaching.
+
+### Why
+
+- `lastAssistantUuid` is null when Claude Code rejected the newest assistant's boundary (senpi#1958). The skip let such a binding, restored after a restart or crash, plain-reattach to an SDK session the transcript never proved. The store keeps only the newest boundary (`bindingFromStored` maps none when it is null), so the transcript has nothing to verify such a binding against. Found in the review of #2749 (senpi#2858).
+
+### Why an extension could not handle it
+
+- Restored-binding admission and the SDK transcript lookup are private to this builtin provider.
+
+### Expected merge conflict zones
+
+- LOW: the `lastAssistantUuid === null` line of `verifyRestoredTranscript`.
+
 ## 2026-10-04 - `compactionOwner` provider setting (senpi default, sdk opt-out)
 
 ### What changed

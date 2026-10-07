@@ -2,7 +2,7 @@
 
 ### What changed
 
-- `packages/coding-agent/package.json`: `@anthropic-ai/claude-agent-sdk` 0.3.286 -> 0.3.292; `bun.lock`, the root `package-lock.json` (with the 8 platform packages relocked) and `packages/coding-agent/install-lock` follow.
+- `packages/coding-agent/package.json`: `@anthropic-ai/claude-agent-sdk` 0.3.289 -> 0.3.292; `bun.lock`, the root `package-lock.json` (with the 8 platform packages relocked) and `packages/coding-agent/install-lock` follow.
 
 ### Why
 
