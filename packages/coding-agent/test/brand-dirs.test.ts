@@ -120,6 +120,30 @@ describe("copy-forward migration", () => {
 		expect(readFileSync(join(brandDir, "desktop", "app.db"), "utf-8")).toBe("desktop-owned");
 	});
 
+	// #2898 review L6: on darwin and win32 `~/.omo/Desktop` is the desktop's own folder.
+	test.runIf(process.platform === "darwin" || process.platform === "win32")(
+		"skips the reserved entries in any case where the volume folds case",
+		() => {
+			const legacy = seedLegacyAgentDir();
+			mkdirSync(join(legacy, "Desktop"), { recursive: true });
+			mkdirSync(join(legacy, "DESKTOP.init-abc"), { recursive: true });
+			const brandDir = join(root, ".omo");
+
+			const result = migrateEngineStateToBrandDir(legacy, brandDir);
+
+			expect(result.copied).not.toContain("Desktop");
+			expect(result.copied).not.toContain("DESKTOP.init-abc");
+			expect(existsSync(join(brandDir, "desktop"))).toBe(false);
+		},
+	);
+
+	test.runIf(process.platform === "linux")("copies a differently cased entry where names are case-sensitive", () => {
+		const legacy = seedLegacyAgentDir();
+		mkdirSync(join(legacy, "Desktop"), { recursive: true });
+
+		expect(migrateEngineStateToBrandDir(legacy, join(root, ".omo")).copied).toContain("Desktop");
+	});
+
 	test("leaves a missing desktop home uncreated", () => {
 		const legacy = seedLegacyAgentDir();
 		mkdirSync(join(legacy, "desktop"), { recursive: true });
