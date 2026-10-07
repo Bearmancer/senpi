@@ -11,6 +11,8 @@ describe.skipIf(!bunAvailable)("estimate cache key under Bun (senpi#2525)", () =
 		const run = spawnSync("bun", [join(import.meta.dirname, "fixtures/estimate-cache-key-bun.ts")], {
 			encoding: "utf8",
 			cwd: join(import.meta.dirname, "../.."),
+			// A blocking spawn ignores vitest's timeout; bound it so a stuck bun fails instead of hanging.
+			timeout: 30_000,
 		});
 		expect(run.status, run.stderr).toBe(0);
 		const result = JSON.parse(run.stdout.trim().split("\n").at(-1) ?? "{}");
