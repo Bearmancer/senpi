@@ -85,6 +85,8 @@ import {
 	stripTurnRetrySuppressionPrefix,
 } from "@earendil-works/pi-ai/compat";
 import { getCursorContextLimit } from "@earendil-works/pi-ai/utils/cursor-context-limit";
+import { isOAuthRefreshUnavailableError } from "@earendil-works/pi-ai/utils/oauth-refresh-error";
+import { retryTransientCall } from "@earendil-works/pi-ai/utils/retry";
 import { extract429RetryAfterMs, parseRetryAfterMsMarker } from "@earendil-works/pi-ai/utils/retry-hint";
 import { retryBackoffDelayMs } from "@earendil-works/pi-ai/utils/retry-profile/backoff";
 import { getAgentDir } from "../config.ts";
@@ -1033,6 +1035,15 @@ export function providerRetryWatchdogAbortMessage(
 	);
 }
 
+/** Auth for a summarization or title request, resolved for the physical model. */
+type SummarizationRequestAuth = {
+	model: Model<any>;
+	apiKey?: string;
+	headers?: Record<string, string>;
+	env?: Record<string, string>;
+	thinkingLevel: ThinkingLevel;
+};
+
 export class AgentSession {
 	readonly agent: Agent;
 	readonly sessionManager: SessionManager;
@@ -1505,14 +1516,9 @@ export class AgentSession {
 	private async _getSummarizationRequestAuth(
 		selectedModel: Model<any>,
 		signal?: AbortSignal,
-	): Promise<{
-		model: Model<any>;
-		apiKey?: string;
-		headers?: Record<string, string>;
-		env?: Record<string, string>;
-		thinkingLevel: ThinkingLevel;
-	}> {
-		// Route a virtual model first: summaries size their input and output from the model they get.
+		callbacks?: RetryCallbacks,
+	): Promise<SummarizationRequestAuth> {
+		// Resolve a virtual selection once so auth retries cannot choose another model.
 		const { model, thinkingLevel } = isVirtualModel(selectedModel)
 			? await this._modelRuntime.resolveModel(selectedModel, convertToLlm(this.messages), {
 					reason: "direct",
@@ -1520,6 +1526,20 @@ export class AgentSession {
 					signal,
 				})
 			: { model: selectedModel, thinkingLevel: this.thinkingLevel };
+		return retryTransientCall(
+			() => this._resolveSummarizationRequestAuth(model, thinkingLevel, signal),
+			isOAuthRefreshUnavailableError,
+			this.settingsManager.getRetrySettings(),
+			signal,
+			callbacks ?? this._summarizationRetryCallbacks({ source: "branchSummary" }),
+		);
+	}
+
+	private async _resolveSummarizationRequestAuth(
+		model: Model<any>,
+		thinkingLevel: ThinkingLevel,
+		signal?: AbortSignal,
+	): Promise<SummarizationRequestAuth> {
 		if (this.agent.streamFunction === streamSimple) {
 			return { ...(await this._getRequiredRequestAuth(model, signal)), thinkingLevel };
 		}
@@ -1541,7 +1561,7 @@ export class AgentSession {
 				thinkingLevel,
 			};
 		} catch (error) {
-			if (signal?.aborted) throw error;
+			if (signal?.aborted || isOAuthRefreshUnavailableError(error)) throw error;
 			return { model, thinkingLevel };
 		}
 	}
@@ -1564,7 +1584,11 @@ export class AgentSession {
 		return this._modelRuntime.getModel(provider, modelId) ?? sessionModel;
 	}
 
-	private async _getCompactionRequestAuth(model: Model<any>): Promise<{
+	private async _getCompactionRequestAuth(
+		model: Model<any>,
+		signal?: AbortSignal,
+		callbacks?: RetryCallbacks,
+	): Promise<{
 		model: Model<any>;
 		apiKey?: string;
 		headers?: Record<string, string>;
@@ -1572,7 +1596,7 @@ export class AgentSession {
 		env?: Record<string, string>;
 		thinkingLevel: ThinkingLevel;
 	}> {
-		const auth = await this._getSummarizationRequestAuth(model);
+		const auth = await this._getSummarizationRequestAuth(model, signal, callbacks);
 		return {
 			...auth,
 			extraBody: this._modelRuntime.getCompatibilityRequestConfig(model).extraBody,
@@ -5370,7 +5394,9 @@ export class AgentSession {
 		abortController: AbortController,
 	): Promise<void> {
 		try {
-			const auth = await this._getSummarizationRequestAuth(model);
+			// A title is a background, cosmetic job: its auth retry is cancellable with the title and reports
+			// nothing to the UI (no retry banner or summary spinner for a job the user never started).
+			const auth = await this._getSummarizationRequestAuth(model, abortController.signal, {});
 			const title = await generateSessionTitle({
 				firstPrompt,
 				model,
@@ -7467,7 +7493,11 @@ export class AgentSession {
 						extraBody,
 						env,
 						thinkingLevel,
-					} = await this._getCompactionRequestAuth(compactionModel);
+					} = await this._getCompactionRequestAuth(
+						compactionModel,
+						signal,
+						this._summarizationRetryCallbacks({ source: "compaction", reason: request.reason }),
+					);
 					compactionResult = await this._runDefaultCompaction(
 						preparation,
 						requestModel,
@@ -10750,7 +10780,7 @@ export class AgentSession {
 					headers,
 					extraBody,
 					env,
-				} = await this._getCompactionRequestAuth(model);
+				} = await this._getCompactionRequestAuth(model, this._branchSummaryAbortController.signal);
 				const branchSummarySettings = this.settingsManager.getBranchSummarySettings();
 				const result = await generateBranchSummary(entriesToSummarize, {
 					model: requestModel,

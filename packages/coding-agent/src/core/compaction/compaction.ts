@@ -39,6 +39,7 @@ import {
 	sessionEntryToContextMessages,
 } from "../session-manager.ts";
 import type { CompactionSettings as BaseCompactionSettings } from "./compaction-settings.ts";
+import { estimateCacheKey, isTransientMessage, serializeForEstimate } from "./estimate-cache-key.ts";
 
 export type CompactionSettings = BaseCompactionSettings & {
 	/** Optional "provider/model" override for the compaction summarization model. */
@@ -429,8 +430,32 @@ function estimateTextAndImageContentChars(content: string | readonly (TextConten
 /**
  * Estimate token count for a message using chars/4 heuristic.
  * This is conservative (overestimates tokens).
+ *
+ * Cached per message object (senpi#2525): a message whose JSON is unchanged returns the memoized
+ * value instead of re-scanning every content block. Reuse is validated by the message's JSON text,
+ * never by identity alone, so any in-place change (including the resident store's token/text swaps)
+ * re-estimates.
  */
 export function estimateTokens(message: AgentMessage): number {
+	if (isTransientMessage(message)) return computeEstimateTokens(message);
+	const serialized = serializeForEstimate(message);
+	if (serialized === undefined) return computeEstimateTokens(message);
+	const key = estimateCacheKey(serialized);
+	const cached = tokenEstimateCache.get(message);
+	if (cached !== undefined && cached.key === key) return cached.tokens;
+	const tokens = computeEstimateTokens(message);
+	tokenEstimateCache.set(message, { key, tokens });
+	return tokens;
+}
+
+interface TokenEstimateCacheEntry {
+	readonly key: string;
+	readonly tokens: number;
+}
+
+const tokenEstimateCache = new WeakMap<AgentMessage, TokenEstimateCacheEntry>();
+
+function computeEstimateTokens(message: AgentMessage): number {
 	let chars = 0;
 
 	switch (message.role) {

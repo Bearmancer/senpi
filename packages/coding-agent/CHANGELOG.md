@@ -6,6 +6,8 @@
 
 ### Added
 
+- `context` and `context_with_system` extension handlers accept a `{ mutatesMessages: false }` registration option, an opt-in performance declaration that the handler never edits a received message object in place ([#2525](https://github.com/code-yeongyu/senpi/issues/2525)).
+
 - Every model switch records what made it: `model_change` entries, the `model_changed` event and one `session.log` line per switch carry a `source` (`command`, `picker`, `cycle`, `control`, `rpc`, `app-server`, `extension`, `provider-login`, `fallback`, `fallback-revert`, `held-switch`, `restore`, `sdk`) and, where known, an `actor`; a switch that lands while a turn is streaming is marked `duringTurn` and shown as a transcript row naming both models, and the `thinking_level_change` a switch writes names the same source ([#2870](https://github.com/code-yeongyu/senpi/issues/2870)).
 
 ### Changed
@@ -14,9 +16,13 @@
 
 - The bundled Claude Agent SDK is updated to 0.3.292 (from 0.3.289), so the Anthropic subscription lane runs Claude Code 2.1.292 and the models it knows ([#2545](https://github.com/code-yeongyu/senpi/issues/2545)).
 
+- When every `context`/`context_with_system` handler about to run declares `mutatesMessages: false` (the built-in compaction and tool-search hooks now do), the request pipeline shares the live transcript instead of deep-cloning it every turn, and per-message token estimates are memoized per message and recomputed whenever the message's JSON changes: on a synthetic 10,000-message uncompacted session, one `emitContext` + context-pipeline pass is about 2.2x faster under Node and Bun, and a session with an undeclared handler stays within a few percent of before ([#2525](https://github.com/code-yeongyu/senpi/issues/2525)).
+
 - A model picked in the terminal (Enter in `/model` or the favorites picker, a typed `/model <id>`, the favorites cycle key, or a terminal control endpoint's `set_model`) now applies to that session only, instead of silently rewriting the default model every later session starts on. To also make it the default, press Ctrl+S (`app.models.save`) in the model picker or type `/model <id> --default`; the status line then says so ([#2870](https://github.com/code-yeongyu/senpi/issues/2870)).
 
 ### Fixed
+
+- Transient OAuth refresh retries the same credential slot without blocking it, and summary/compaction authentication uses bounded same-model backoff instead of losing the failure as a missing API key ([#2893](https://github.com/code-yeongyu/senpi/issues/2893)).
 
 - A fallback model whose context window cannot hold the session no longer ends the fallback: when the switch is refused, the next model in the chain is tried in the same turn, and `retry_fallback_exhausted` is emitted when none fits instead of the turn silently ending on the original error ([#2894](https://github.com/code-yeongyu/senpi/issues/2894)).
 - A shared RPC host that the engine stops on purpose is now recorded in the endpoint's `crashes.jsonl`, naming who stopped it and why (an ensure replacing an unreachable host, `host stop`, a failed start or handoff, the supervisor's own idle exit), and a host killed from outside is recorded as `external` instead of being indistinguishable from a crash; `host status` keeps counting only real deaths. An ensure no longer stops or replaces a host that is alive but measurably stalled - it refuses with `host_stalled` - and a graceful stop waits out a measured stall (up to `SENPI_RPC_CHILD_STALLED_STOP_MAX_MS`, 60 s by default) before escalating to SIGKILL ([#2566](https://github.com/code-yeongyu/senpi/issues/2566)).
