@@ -7974,6 +7974,12 @@ export class InteractiveMode {
 
 	private async handleModelCommand(argument?: string): Promise<void> {
 		const { searchTerm, asDefault } = parseModelCommandArgument(argument);
+		// --default needs the model it names; in the picker, the save chord does the same (senpi#2870).
+		if (asDefault && !searchTerm) {
+			this.showWarning("/model --default needs a model: /model <provider/id> --default, or Ctrl+S in the picker.");
+			this.showModelSelector();
+			return;
+		}
 		if (!searchTerm) {
 			this.showModelSelector();
 			return;
@@ -7985,6 +7991,10 @@ export class InteractiveMode {
 			return;
 		}
 
+		if (asDefault)
+			this.showWarning(
+				`No exact model match for "${searchTerm}"; pick one and press Ctrl+S to also make it the default.`,
+			);
 		this.showModelSelector(searchTerm);
 	}
 

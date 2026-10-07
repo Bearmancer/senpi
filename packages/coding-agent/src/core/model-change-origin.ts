@@ -8,11 +8,11 @@ export type ModelChangeSource =
 	| "command"
 	/** Enter in the model picker or the favorites picker. */
 	| "picker"
-	/** The favorites cycle key, or RPC `cycle_model`. */
+	/** The favorites cycle key. */
 	| "cycle"
 	/** A terminal session's control endpoint `set_model`. */
 	| "control"
-	/** An RPC client's `set_model`. */
+	/** An RPC client's `set_model`, `cycle_model` or `set_fast_mode`. */
 	| "rpc"
 	/** An app-server thread setting. */
 	| "app-server"

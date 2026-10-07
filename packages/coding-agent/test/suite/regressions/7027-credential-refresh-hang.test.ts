@@ -192,7 +192,9 @@ describe("post-login model discovery", () => {
 		// The fork's AgentSession.setModel(model) persists by default (`_setModel(model, true)`, one
 		// parameter) where upstream passes an explicit `{ persist: true }`: same persisted selection,
 		// different signature, so the call carries the model alone.
-		expect(login.setModel).toHaveBeenCalledWith(expect.objectContaining({ provider: "radius", id: selected }));
+		expect(login.setModel).toHaveBeenCalledWith(expect.objectContaining({ provider: "radius", id: selected }), {
+			source: "provider-login",
+		});
 		expect(login.showError).not.toHaveBeenCalled();
 	});
 

@@ -930,7 +930,7 @@ export function createRpcConnectionHandler(
 		notify: () => {},
 		setSessionModel: async (model) => {
 			if (!session.modelRuntime.hasConfiguredAuth(model.provider)) return false;
-			await session.setSessionModel(model, { source: "extension", actor: "service-tier" });
+			await session.setSessionModel(model, { source: "rpc", actor: "set_fast_mode" });
 			return true;
 		},
 		setSessionFastMode: (enabled) => session.setSessionFastMode(enabled),

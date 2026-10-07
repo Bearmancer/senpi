@@ -6607,10 +6607,14 @@ export class AgentSession {
 			}
 			this._assertModelUsableForSwitch(next.model, liveContextTokens);
 			const duringTurn = this.isStreaming;
-			this.sessionManager.appendModelChange(next.model.provider, next.model.id, undefined, undefined, undefined, {
-				origin: cycle.origin,
-				duringTurn,
-			});
+			this.sessionManager.appendModelChange(
+				next.model.provider,
+				next.model.id,
+				undefined,
+				currentModel?.provider,
+				currentModel?.id,
+				{ origin: cycle.origin, duringTurn },
+			);
 			if (cycle.persistDefault) this.settingsManager.setDefaultModelAndProvider(next.model.provider, next.model.id);
 			this._sessionLogger.info(
 				"model_change",

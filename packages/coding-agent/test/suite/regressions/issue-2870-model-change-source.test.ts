@@ -3,9 +3,13 @@ import { join } from "node:path";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import type { AgentSessionRuntime } from "../../../src/core/agent-session-runtime.ts";
 import type { ModelChangeEntry, ThinkingLevelChangeEntry } from "../../../src/core/session-manager.ts";
 import type { ExtensionAPI } from "../../../src/index.ts";
+import { InteractiveMode } from "../../../src/modes/interactive/interactive-mode.ts";
+import { initTheme } from "../../../src/modes/interactive/theme/theme.ts";
+import { createRpcConnectionHandler, type RpcConnectionSink } from "../../../src/modes/rpc/connection-handler.ts";
 import { createHarness, type Harness } from "../harness.ts";
 
 // senpi#2870: a mid-session model switch was recorded with no source, so a switch nobody remembered making could not
@@ -29,6 +33,7 @@ function other(harness: Harness) {
 }
 
 describe("issue 2870: every model switch records its source", () => {
+	beforeAll(() => initTheme("dark"));
 	const harnesses: Harness[] = [];
 	afterEach(() => {
 		while (harnesses.length > 0) harnesses.pop()?.cleanup();
@@ -141,12 +146,27 @@ describe("issue 2870: every model switch records its source", () => {
 			duringTurn: true,
 			originalModelId: "main",
 		});
+		expect(harness.eventsOfType("model_changed").at(-1)).toMatchObject({ duringTurn: true });
+	});
+
+	it("a thinking level a switch re-applies names the switch; one set by hand names nothing", async () => {
+		const harness = await createHarness({ models: MODELS });
+		harnesses.push(harness);
+		harness.session.setFavoriteModels([
+			{ model: harness.getModel(), thinkingLevel: "low" },
+			{ model: other(harness), thinkingLevel: "high" },
+		] as Parameters<typeof harness.session.setFavoriteModels>[0]);
+		harness.session.setThinkingLevel("low");
+
+		await harness.session.cycleModel("forward", { persistDefault: false });
+
 		const thinking = harness.sessionManager
 			.getEntries()
-			.filter((entry): entry is ThinkingLevelChangeEntry => entry.type === "thinking_level_change")
-			.filter((entry) => entry.triggerSource !== undefined);
-		expect(thinking.every((entry) => entry.triggerSource === "control")).toBe(true);
-		expect(harness.eventsOfType("model_changed").at(-1)).toMatchObject({ duringTurn: true });
+			.filter((entry): entry is ThinkingLevelChangeEntry => entry.type === "thinking_level_change");
+		expect(thinking.map((entry) => [entry.thinkingLevel, entry.triggerSource])).toEqual([
+			["low", undefined],
+			["high", "cycle"],
+		]);
 	});
 
 	it("writes one session-log line per switch with the source and the models", async () => {
@@ -164,5 +184,142 @@ describe("issue 2870: every model switch records its source", () => {
 		expect(lines[0]).toContain("rpc");
 		expect(lines[0]).toContain("/other");
 		expect(lines[0]).toContain("/main");
+	});
+
+	function interactiveSelection(harness: Harness) {
+		const showStatus = vi.fn();
+		const fakeThis = {
+			session: harness.session,
+			footer: { invalidate: () => {} },
+			updateEditorBorderColor: () => {},
+			showStatus,
+			showError: (message: string) => {
+				throw new Error(message);
+			},
+			showWarning: () => {},
+			showRiskyMainModelWarning: () => {},
+			maybeWarnAboutAnthropicSubscriptionAuth: async () => {},
+			checkDaxnutsEasterEgg: () => {},
+			ui: { requestRender: () => {} },
+			findExactModelMatch: async (term: string) => harness.getModel(term.split("/").at(-1) ?? term),
+			selectModelFromUi: Reflect.get(InteractiveMode.prototype, "selectModelFromUi"),
+			showModelSelector: () => {
+				throw new Error("the picker opened instead of an exact match");
+			},
+		};
+		return { fakeThis, showStatus };
+	}
+
+	it("a typed /model <id> records command and leaves the default; /model <id> --default also writes it", async () => {
+		const harness = await createHarness({ models: MODELS });
+		harnesses.push(harness);
+		const before = harness.settingsManager.getDefaultModel();
+		const { fakeThis, showStatus } = interactiveSelection(harness);
+		const handleModelCommand = Reflect.get(InteractiveMode.prototype, "handleModelCommand") as (
+			this: unknown,
+			argument?: string,
+		) => Promise<void>;
+
+		await handleModelCommand.call(fakeThis, "other");
+		expect(modelChanges(harness).at(-1)).toMatchObject({ source: "command", modelId: "other" });
+		expect(harness.settingsManager.getDefaultModel()).toBe(before);
+
+		await handleModelCommand.call(fakeThis, "main --default");
+		expect(modelChanges(harness).at(-1)).toMatchObject({ source: "command", modelId: "main" });
+		expect(harness.settingsManager.getDefaultModel()).toBe("main");
+		expect(String(showStatus.mock.calls.at(-1)?.[0])).toContain("default model for new sessions");
+	});
+
+	it("the model picker's Enter and save chord reach the session through its real callback", async () => {
+		const harness = await createHarness({ models: MODELS });
+		harnesses.push(harness);
+		const before = harness.settingsManager.getDefaultModel();
+		const { fakeThis } = interactiveSelection(harness);
+		let captured: ((model: unknown, selection: { asDefault: boolean }) => void) | undefined;
+		const showSelector = (create: (done: () => void) => { component: { onSelectCallback?: unknown } }) => {
+			const built = create(() => {});
+			captured = Reflect.get(built.component, "onSelectCallback") as typeof captured;
+		};
+		const showModelSelector = Reflect.get(InteractiveMode.prototype, "showModelSelector") as (this: unknown) => void;
+		showModelSelector.call({
+			...fakeThis,
+			showSelector,
+			settingsManager: harness.settingsManager,
+			captureFavoritePatternSnapshot: async () => undefined,
+			selectModelFromUi: Reflect.get(InteractiveMode.prototype, "selectModelFromUi"),
+		});
+		if (captured === undefined) throw new Error("the picker exposed no selection callback");
+
+		captured.call(undefined, other(harness), { asDefault: false });
+		await vi.waitFor(() =>
+			expect(modelChanges(harness).at(-1)).toMatchObject({ source: "picker", actor: "model-selector" }),
+		);
+		expect(harness.settingsManager.getDefaultModel()).toBe(before);
+
+		captured.call(undefined, harness.getModel("main"), { asDefault: true });
+		await vi.waitFor(() => expect(harness.settingsManager.getDefaultModel()).toBe("main"));
+	});
+
+	it("an RPC set_model records rpc and keeps persisting the default", async () => {
+		const harness = await createHarness({ models: MODELS });
+		harnesses.push(harness);
+		const lines: string[] = [];
+		const sink: RpcConnectionSink = { writeRaw: (chunk) => lines.push(chunk), waitForBackpressure: async () => {} };
+		const runtimeHost = { session: harness.session, setRebindSession: () => {}, dispose: async () => {} };
+		const handler = createRpcConnectionHandler(runtimeHost as unknown as AgentSessionRuntime, sink);
+		await handler.ready;
+		try {
+			await handler.handleInputLine(
+				JSON.stringify({ id: "m1", type: "set_model", provider: harness.getModel().provider, modelId: "other" }),
+			);
+
+			expect(modelChanges(harness).at(-1)).toMatchObject({ source: "rpc", modelId: "other" });
+			expect(harness.settingsManager.getDefaultModel()).toBe("other");
+		} finally {
+			await handler.dispose();
+		}
+	});
+
+	it("a retry fallback records fallback with the model it left", async () => {
+		const primary = "main";
+		const harness = await createHarness({
+			models: MODELS,
+			settings: {
+				retry: {
+					enabled: true,
+					maxRetries: 0,
+					baseDelayMs: 1,
+					fallbackChains: { "faux/main": ["faux/other"] },
+				},
+			},
+		});
+		harnesses.push(harness);
+		harness.setResponses([
+			fauxAssistantMessage("", { stopReason: "error", errorMessage: "overloaded_error" }),
+			fauxAssistantMessage("fallback answer"),
+		]);
+
+		await harness.session.prompt("hello");
+
+		expect(harness.session.model?.id).not.toBe(primary);
+		expect(modelChanges(harness).at(-1)).toMatchObject({
+			source: "fallback",
+			reason: "fallback",
+			originalModelId: "main",
+		});
+	});
+
+	it("a cycle records the model it left, so a mid-turn notice replays with both models", async () => {
+		const harness = await createHarness({ models: MODELS });
+		harnesses.push(harness);
+		harness.session.setFavoriteModels([{ model: harness.getModel() }, { model: other(harness) }]);
+
+		await harness.session.cycleModel("forward", { persistDefault: false });
+
+		expect(modelChanges(harness).at(-1)).toMatchObject({
+			source: "cycle",
+			originalModelId: "main",
+			modelId: "other",
+		});
 	});
 });

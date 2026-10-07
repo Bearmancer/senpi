@@ -4,7 +4,7 @@
 
 - `packages/coding-agent/src/core/agent-session.ts`:
   - `setModel(model, origin?)` and `setSessionModel(model, origin?)` take a `ModelChangeOrigin` (`source` plus an optional `actor`; it defaults to `sdk`). `_switchActiveModel` requires one, and writes it on the `model_change` entry with `duringTurn` when a turn is streaming, on the `model_changed` event (with `previousModel`), on the `thinking_level_change` the switch writes (`triggerSource` / `triggerActor`), and as one `model_change` line in `session.log`.
-  - `cycleModel(direction, { persistDefault?, origin? })`: persisting stays the default, for RPC `cycle_model`; the terminal passes `persistDefault: false`.
+  - `cycleModel(direction, { persistDefault?, origin? })`: persisting stays the default, for RPC `cycle_model`; the terminal passes `persistDefault: false`. The cycle's `model_change` names the model it left (`originalProvider` / `originalModelId`), as the other switches do; session restore reads those fields only for fallback entries.
   - A held switch (#1873) keeps its origin and is recorded as `held-switch`, with the first source as its `actor`. Fallback switches record `fallback` / `fallback-revert`, and a restored virtual-model selection records `restore`.
   - The extension actions pass the origin through.
 - `packages/coding-agent/src/core/session-manager.ts`: `ModelChangeEntry` gains the optional `source`, `actor` and `duringTurn`; `ThinkingLevelChangeEntry` gains the optional `triggerSource` and `triggerActor`. `appendModelChange` and `appendThinkingLevelChange` take them as trailing optional arguments.
