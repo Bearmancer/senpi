@@ -53,10 +53,11 @@ describe("#2894 fallback past a rung the context-window guard refuses", () => {
 		expect(harness.eventsOfType("retry_fallback_exhausted")).toEqual([]);
 	});
 
-	it("#given a delegated child's single long tool turn that a smaller rung can hold once trimmed #when the session model hits a usage limit #then the rung is repaired by the slice and answers", async () => {
+	it("#given a chain whose next rung cannot fit and whose rung after it fits once trimmed #when the session model hits a usage limit #then the first is refused, the second is trimmed once and answers", async () => {
 		const harness = await createHarness({
 			models: [
 				{ id: "faux-roomy", contextWindow: 400_000, maxTokens: 32_000 },
+				{ id: "faux-small", contextWindow: 5_120 },
 				{ id: "faux-mid", contextWindow: 60_000, maxTokens: 8_000 },
 			],
 			settings: {
@@ -64,7 +65,7 @@ describe("#2894 fallback past a rung the context-window guard refuses", () => {
 					enabled: true,
 					maxRetries: 0,
 					baseDelayMs: 60_000,
-					fallbackChains: { [primary]: ["faux/faux-mid"] },
+					fallbackChains: { [primary]: [small, "faux/faux-mid"] },
 				},
 			},
 		});
@@ -102,7 +103,8 @@ describe("#2894 fallback past a rung the context-window guard refuses", () => {
 
 		await harness.session.prompt("continue");
 
-		expect(harness.eventsOfType("model_change_rejected")).toEqual([]);
+		expect(harness.eventsOfType("model_change_rejected").map((event) => event.model.id)).toEqual(["faux-small"]);
+		expect(harness.eventsOfType("resume_context_reduced")).toHaveLength(1);
 		expect(harness.faux.getCallLog().map((call) => call.modelId)).toEqual(["faux-roomy", "faux-mid"]);
 		expect(harness.session.model?.id).toBe("faux-mid");
 	});
