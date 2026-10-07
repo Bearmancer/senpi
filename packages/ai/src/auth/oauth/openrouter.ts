@@ -11,6 +11,7 @@
  * It is only intended for CLI use, not browser environments.
  */
 
+import { OAuthTokenEndpointError } from "../../utils/oauth-refresh-error.ts";
 import { getProviderEnvValue } from "../../utils/provider-env.ts";
 import type { OAuthAuth, OAuthCredential, ProviderAuthInteraction } from "../types.ts";
 import { startOAuthCallbackServer, waitForCallbackOrManualInput } from "./callback-server.ts";
@@ -95,7 +96,10 @@ async function exchangeAuthorizationCode(
 
 	if (!response.ok) {
 		const detail = errorDetail(body);
-		throw new Error(`OpenRouter OAuth key exchange failed (HTTP ${response.status})${detail ? `: ${detail}` : ""}`);
+		throw new OAuthTokenEndpointError(
+			`OpenRouter OAuth key exchange failed (HTTP ${response.status})${detail ? `: ${detail}` : ""}`,
+			response.status,
+		);
 	}
 
 	if (typeof body.key !== "string" || body.key.length === 0) {

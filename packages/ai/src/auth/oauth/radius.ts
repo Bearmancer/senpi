@@ -10,6 +10,7 @@
  */
 
 import { normalizeRadiusGatewayUrl } from "../../providers/radius-config.ts";
+import { OAuthTokenEndpointError } from "../../utils/oauth-refresh-error.ts";
 import type { OAuthAuth, OAuthCredential, ProviderAuthInteraction } from "../types.ts";
 import { startOAuthCallbackServer } from "./callback-server.ts";
 import { pollOAuthDeviceCodeFlow } from "./device-code.ts";
@@ -57,8 +58,7 @@ async function loadRadiusOAuthDiscovery(gateway: string, signal: AbortSignal): P
 	return { authorizationEndpoint: discovery.authorizationEndpoint };
 }
 
-class OAuthResponseError extends Error {
-	readonly status: number;
+class OAuthResponseError extends OAuthTokenEndpointError {
 	readonly oauthError?: string;
 
 	constructor(status: number, oauthError: string | undefined, description: string | undefined, message: string) {
@@ -67,8 +67,7 @@ class OAuthResponseError extends Error {
 				? `${oauthError}: ${description}`
 				: oauthError
 			: description || String(status);
-		super(`${message}: ${detail}`);
-		this.status = status;
+		super(`${message}: ${detail}`, status);
 		this.oauthError = oauthError;
 	}
 }
@@ -106,7 +105,7 @@ async function requestOAuthToken(
 		});
 	} catch (error) {
 		if (signal.aborted) {
-			throw new Error("Login cancelled");
+			throw new Error("Login cancelled", { cause: signal.reason });
 		}
 		throw error;
 	}
@@ -197,7 +196,7 @@ async function requestDeviceAuthorization(gateway: string, signal: AbortSignal):
 		});
 	} catch (error) {
 		if (signal.aborted) {
-			throw new Error("Login cancelled");
+			throw new Error("Login cancelled", { cause: signal.reason });
 		}
 		throw error;
 	}

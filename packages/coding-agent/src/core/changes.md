@@ -1,3 +1,22 @@
+## 2026-10-07 - Retry summary authentication on transient refresh (senpi#2893)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: summary auth rethrows branded transient refresh errors and uses the existing bounded retry helper, settings and summary callbacks. Compaction and branch summaries forward their cancellation signals through auth and backoff.
+
+- `agent-session.ts`: session-title generation passes its own abort signal and silent callbacks to the summarization auth, so a transient refresh failure during a background title neither shows a retry or summary indicator nor outlives an aborted title.
+### Why
+
+Summary authentication swallowed a refresh outage as missing auth, and compaction authenticated outside its summarizer's retry boundary.
+
+### Why an extension could not handle it
+
+Private request-auth resolution runs before summarization and compaction extension results can recover it.
+
+### Expected merge conflict zones
+
+- Summary auth helpers and the default compaction/branch-summary auth calls in `agent-session.ts`.
+
 ## 2026-10-07 - Context entry identity survives handler derivation (senpi#2525)
 
 ### What changed

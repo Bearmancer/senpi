@@ -1,6 +1,13 @@
 import type { AssistantMessage } from "../types.ts";
 import { FORWARDED_EMPTY_RESPONSE_ERROR, FORWARDED_EMPTY_TOOL_USE_ERROR } from "./empty-response-errors.ts";
 
+/**
+ * Diagnostic type on a terminal assistant message whose request failed because an OAuth refresh failed
+ * transiently (senpi#2893). Defined here, beside the classifier that reads it, so the retry entry graph
+ * stays free of the OAuth error types.
+ */
+export const OAUTH_REFRESH_UNAVAILABLE_DIAGNOSTIC = "oauth_refresh_unavailable";
+
 // A provider's support request id is opaque hex like `C6FD:AB660:AEB5548:6ABA4D81`.
 // It can contain `429` or `500`, which message classifiers read as HTTP statuses,
 // so every id is rendered behind this marker and removed before classification.
@@ -464,6 +471,12 @@ export async function retryAssistantCall(
  * before restarting the assistant turn.
  */
 export function isRetryableAssistantError(message: AssistantMessage): boolean {
+	if (
+		message.stopReason === "error" &&
+		message.diagnostics?.some((diagnostic) => diagnostic.type === OAUTH_REFRESH_UNAVAILABLE_DIAGNOSTIC)
+	) {
+		return true;
+	}
 	if (
 		message.stopReason !== "error" ||
 		message.stopDetails?.type === "refusal" ||
