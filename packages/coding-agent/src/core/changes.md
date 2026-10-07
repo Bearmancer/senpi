@@ -4,7 +4,7 @@
 
 - `packages/coding-agent/src/core/session-manager.ts`: new `appendOwnedMessage`, used by `AgentSession` for the agent's own persisted messages, passes the message to `_appendEntry`, and `_shareMessage` stores that object in the mirror entry when the externalized entry holds no resident token and its JSON equals the persisted JSON. The shared entry is marked token-free, so `materialize` returns it as is.
   The public `appendMessage` keeps the mirror's JSON copy, because a caller may still change its object after appending.
-- `packages/coding-agent/src/core/extensions/runner.ts`: `emitContext` removes the request-local session entry id from its clones once the hooks have run. With the mirror sharing the agent's messages, a fresh session's next request would otherwise carry that field to the provider, as a resumed session already could.
+  A context projection (`sessionEntryToContextMessages`) tags a stable shallow view of a shared message instead of the agent's object, so the agent's own messages stay untagged as before: a request carries an entry id exactly when it did before sharing, and one message never changes shape between two requests.
 - `packages/coding-agent/src/core/session-resident-store.ts`: `isTokenFree` / `adoptTokenFree` expose the store's token-free set.
 - `packages/coding-agent/src/core/agent-session.ts`: the two notes added to a failed turn's assistant message after it was persisted (quota hint, rejected image) go on a copy that replaces it in the agent's context (`_annotateFailedAssistantMessage`), so the persisted object, the mirror and the file stay identical.
 

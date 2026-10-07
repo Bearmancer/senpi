@@ -1,21 +1,3 @@
-## 2026-10-07 - The request-local entry id never reaches a provider (senpi#2537)
-
-### What changed
-
-- `packages/coding-agent/src/core/extensions/runner.ts`: after both hook phases, `emitContext` deletes `__piSessionContextEntryId` from the request's messages. The field exists so hooks can match messages to session entries; it was documented as never sent to providers, but nothing removed it.
-
-### Why
-
-senpi#2537 makes the session mirror share the agent's own message objects, so a fresh session's later requests carried the field (resumed sessions already did). Four request-shape regression tests caught it.
-
-### Why an extension could not handle it
-
-The field is added by the runner itself, after every extension hook has had its turn.
-
-### Expected merge conflict zones
-
-- The end of `ExtensionRunner.emitContext`.
-
 ## 2026-10-07 - An extension's model switch names the extension (senpi#2870)
 
 ### What changed

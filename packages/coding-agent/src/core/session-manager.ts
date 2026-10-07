@@ -97,6 +97,25 @@ function withContextEntryId<T extends AgentMessage>(entryId: string, message: T)
 	return message;
 }
 
+/**
+ * Messages the mirror shares with the agent that produced them (senpi#2537). Context projections tag a
+ * stable shallow view of each instead of the agent's object, so the agent's own messages stay untagged
+ * as before sharing: a request carries a message's entry id exactly when it did when the mirror held a
+ * copy, and the same message never changes shape between two requests.
+ */
+const sharedAgentMessages = new WeakSet<object>();
+const sharedMessageViews = new WeakMap<object, AgentMessage>();
+
+function contextViewOf<T extends AgentMessage>(message: T): T {
+	if (!sharedAgentMessages.has(message)) return message;
+	let view = sharedMessageViews.get(message);
+	if (view === undefined) {
+		view = { ...message };
+		sharedMessageViews.set(message, view);
+	}
+	return view as T;
+}
+
 /** Entry identity for a transient message projected from session history. */
 export function getSessionContextEntryId(message: AgentMessage): string | undefined {
 	return contextMessageEntryIds.get(message);
@@ -653,7 +672,7 @@ export function sessionEntryToContextMessages(entry: SessionEntry): AgentMessage
 		) {
 			return [withContextEntryId(entry.id, { ...message, content: [] })];
 		}
-		return [withContextEntryId(entry.id, message)];
+		return [withContextEntryId(entry.id, contextViewOf(message))];
 	}
 	if (entry.type === "configuration_update") {
 		return [
@@ -1547,6 +1566,7 @@ export class SessionManager {
 		if (shareable === undefined || residentEntry.type !== "message") return residentEntry;
 		if (!this.residentStore.isTokenFree(residentEntry)) return residentEntry;
 		if (JSON.stringify(shareable) !== JSON.stringify(residentEntry.message)) return residentEntry;
+		sharedAgentMessages.add(shareable);
 		const shared = { ...residentEntry, message: shareable as SessionMessageEntry["message"] };
 		this.residentStore.adoptTokenFree(shared);
 		return shared;
