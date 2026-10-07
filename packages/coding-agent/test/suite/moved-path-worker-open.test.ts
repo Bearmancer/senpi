@@ -1,6 +1,7 @@
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { afterEach, expect, it } from "vitest";
 import { parseArgs } from "../../src/cli/args.ts";
+import { getDefaultSessionDir } from "../../src/core/session-manager.ts";
 import { WorkerSessionRegistry } from "../../src/modes/rpc/worker-session-registry.ts";
 import { createMovedLayout, type MovedLayout, writeSessionHeader } from "./moved-path-guard-fixtures.ts";
 import { startWorkerHost } from "./rpc-worker-host-support.ts";
@@ -30,7 +31,14 @@ async function movedWorkerHost() {
 		closeGraceMs: 1000,
 		now: Date.now,
 	});
-	return { layout, newSession, oldSession: join(layout.oldSessions, "s.jsonl"), host, registry };
+	return {
+		layout,
+		newSession,
+		oldSession: join(layout.oldSessions, "s.jsonl"),
+		host,
+		registry,
+		agentDir: join(host.scratch, "agent"),
+	};
 }
 
 it("worker open_session with an old sessionPath and cwd opens the new ones", async () => {
@@ -62,6 +70,36 @@ it("an old-path open never starts a second writer on a session open under its ne
 		await expect(second).rejects.toMatchObject({ code: "session_path_in_use" });
 	} finally {
 		for (const handle of handles) await registry.close(handle).catch(() => undefined);
+		await host.dispose();
+	}
+}, 60_000);
+
+// Review L2: a NEW session opened with an old cwd is filed under the moved cwd's session directory.
+it("worker files a new session opened with an old cwd under the moved cwd", async () => {
+	const { layout, host, registry, agentDir } = await movedWorkerHost();
+	let handle: string | undefined;
+	try {
+		const opened = await registry.openSession({ cwd: layout.oldWorktree });
+		handle = opened.sessionId;
+
+		expect(basename(dirname(opened.sessionPath ?? ""))).toBe(
+			basename(getDefaultSessionDir(layout.newWorktree, agentDir)),
+		);
+	} finally {
+		if (handle) await registry.close(handle).catch(() => undefined);
+		await host.dispose();
+	}
+}, 60_000);
+
+// Review L3: an old session path whose moved file is gone fails instead of starting a fresh session there.
+it("worker refuses an old session path whose moved file is missing", async () => {
+	const { layout, host, registry } = await movedWorkerHost();
+	const gone = join(layout.oldSessions, "gone.jsonl");
+	try {
+		await expect(registry.openSession({ cwd: layout.oldWorktree, sessionPath: gone })).rejects.toThrow(
+			join(layout.newSessions, "gone.jsonl"),
+		);
+	} finally {
 		await host.dispose();
 	}
 }, 60_000);

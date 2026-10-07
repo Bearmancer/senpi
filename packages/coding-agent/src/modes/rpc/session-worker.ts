@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { existsSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import { parentPort, workerData } from "node:worker_threads";
 import { runWithProviderScope } from "@earendil-works/pi-ai/node/provider-scope";
@@ -132,14 +133,19 @@ async function handle(message: HostToSessionWorker): Promise<void> {
 		case "prepare": {
 			if (prepared) throw new Error("Session worker already prepared");
 			// Resolved here, not on the host loop, which never inspects caller paths (senpi#2898).
+			const cwd = resolveMovedPath(message.profile.cwd);
+			const requestedPath = message.profile.sessionPath;
+			const movedPath = requestedPath && resolveMovedPath(requestedPath);
+			if (movedPath && movedPath !== requestedPath && !existsSync(movedPath))
+				throw new Error(`open_failed: moved session file does not exist: ${movedPath}`);
 			const path =
-				(message.profile.sessionPath && resolveMovedPath(message.profile.sessionPath)) ??
+				movedPath ??
 				join(
-					getDefaultSessionDir(message.profile.cwd, message.configuration.agentDir),
+					getDefaultSessionDir(cwd, message.configuration.agentDir),
 					`${new Date().toISOString().replace(/[:.]/g, "-")}_${randomUUID()}.jsonl`,
 				);
 			if (!isAbsolute(path)) throw new Error("invalid_path");
-			prepared = { ...message, profile: { ...message.profile, sessionPath: canonicalSessionPath(path) } };
+			prepared = { ...message, profile: { ...message.profile, cwd, sessionPath: canonicalSessionPath(path) } };
 			send({ type: "prepared", request: message.request, sessionPath: canonicalSessionPath(path) });
 			return;
 		}

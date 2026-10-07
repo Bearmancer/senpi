@@ -76,6 +76,21 @@ describe("moved path resolution (#2898)", () => {
 		await registry.close(opened.sessionId);
 	});
 
+	// Review L3: a moved session file that is gone is an error naming where it should be, never a fresh session.
+	it("open_session refuses an old session path whose moved file is missing", async () => {
+		const { layout } = movedSession();
+		const cwds: string[] = [];
+		const registry = new RpcSessionRegistry({ agentDir: layout.home, createRuntime: recordingFactory(cwds) });
+
+		await expect(
+			registry.openSession({ cwd: layout.oldWorktree, sessionPath: join(layout.oldSessions, "gone.jsonl") }),
+		).rejects.toMatchObject({
+			code: "open_failed",
+			message: expect.stringContaining(join(layout.newSessions, "gone.jsonl")),
+		});
+		expect(cwds).toEqual([]);
+	});
+
 	it("an open of the old path attaches to the session already open on the new path", async () => {
 		const { layout, newSession, oldSession } = movedSession();
 		const registry = new RpcSessionRegistry({ agentDir: layout.home, createRuntime: recordingFactory([]) });

@@ -105,6 +105,9 @@ export class RpcSessionRegistry {
 			...(requested.sessionPath ? { sessionPath: resolveMovedPath(requested.sessionPath) } : {}),
 		};
 		this.validateProfile(profile);
+		// A session the desktop moved whose file is gone is reported where it should be, never re-created there.
+		if (profile.sessionPath !== requested.sessionPath && profile.sessionPath && !existsSync(profile.sessionPath))
+			throw new RpcSessionRegistryError("open_failed", `moved session file does not exist: ${profile.sessionPath}`);
 		this.syncRuntimeMetadata();
 		const sessionPath = profile.sessionPath ? canonicalSessionPath(profile.sessionPath) : undefined;
 		// Taken SYNCHRONOUSLY, before any await, exactly like the path reservation below: a
