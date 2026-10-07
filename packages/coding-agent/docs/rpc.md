@@ -1172,8 +1172,9 @@ registrant opens no socket and writes no registry directory.
   - The session controls run the pane's own paths, so validation, the footer and persistence are the ones the
     user gets doing it in that terminal:
     - `get_available_models` and `get_available_thinking_levels`: the same answers as a host's.
-    - `set_model { provider, modelId }`: the `/model` switch (the footer, the remembered default model, the
-      pane's status line). An unknown model is refused `Model not found: <provider>/<modelId>`; a switch the
+    - `set_model { provider, modelId }`: the `/model` switch (the footer and the pane's status line). It applies
+      to that session only: the default model new sessions start on is left alone, and the `model_change` entry
+      records `source: "control"`. An unknown model is refused `Model not found: <provider>/<modelId>`; a switch the
       session refuses answers its reason. Success answers the model, as on a host.
     - `set_thinking_level { level, scope? }`: the thinking-level selector. `scope: "turn"` sets this session's
       level; otherwise the level is also remembered for the model (the selector's Ctrl+S). A level the active

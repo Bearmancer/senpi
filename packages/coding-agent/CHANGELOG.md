@@ -6,9 +6,13 @@
 
 ### Added
 
+- Every model switch records what made it: `model_change` entries, the `model_changed` event and one `session.log` line per switch carry a `source` (`command`, `picker`, `cycle`, `control`, `rpc`, `app-server`, `extension`, `provider-login`, `fallback`, `fallback-revert`, `held-switch`, `restore`, `sdk`) and, where known, an `actor`; a switch that lands while a turn is streaming is marked `duringTurn` and shown as a transcript row naming both models, and the `thinking_level_change` a switch writes names the same source ([#2870](https://github.com/code-yeongyu/senpi/issues/2870)).
+
 - senpi now owns compaction on `anthropic-subscription` by default: speculative and idle compaction, restoration and the other compaction features run there with the session's own model, Claude Code's native auto-compact is off for the session so only one side compacts, and Claude Code's per-turn total-tokens reminder is turned off so the prompt cache keeps being reused. `anthropicSubscriptionProvider.compactionOwner: "sdk"` (or `SENPI_CLAUDE_SDK_OAUTH_COMPACTION_OWNER=sdk`) hands compaction back to Claude Code. Changing the owner mid-session restarts the resident Claude Code process on the next turn, and a failed senpi compaction ends the turn with its error instead of Claude Code compacting natively ([#2746](https://github.com/code-yeongyu/senpi/issues/2746)).
 
 ### Changed
+
+- A model picked in the terminal (Enter in `/model` or the favorites picker, a typed `/model <id>`, the favorites cycle key, or a terminal control endpoint's `set_model`) now applies to that session only, instead of silently rewriting the default model every later session starts on. To also make it the default, press Ctrl+S (`app.models.save`) in the model picker or type `/model <id> --default`; the status line then says so ([#2870](https://github.com/code-yeongyu/senpi/issues/2870)).
 
 ### Fixed
 

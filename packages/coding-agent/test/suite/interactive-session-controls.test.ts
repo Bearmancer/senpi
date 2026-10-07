@@ -139,16 +139,24 @@ describe.skipIf(process.platform === "win32")("a terminal session's controls ove
 		});
 	});
 
-	it("switches the model as /model does: the session, the footer and the remembered default all follow", async () => {
+	it("switches the model as /model does: the session and the footer follow, the default for new sessions does not", async () => {
 		const { harness, mode, socket } = await controlledTerminal();
 		const target = harness.getModel("faux-plain");
 		if (target === undefined) throw new Error("no faux-plain model");
+		const defaultBefore = harness.settingsManager.getDefaultModel();
 		const reply = await controlData(socket, { type: "set_model", provider: target.provider, modelId: target.id });
 		expect(reply).toMatchObject({ provider: target.provider, id: "faux-plain" });
 		expect(harness.session.model?.id).toBe("faux-plain");
 		expect(footerText(mode)).toContain("faux-plain");
 		expect(paneStatus(mode)).toContain("faux-plain");
-		expect(harness.settingsManager.getDefaultModel()).toBe("faux-plain");
+		// senpi#2870: a pane's selection never rewrites the default other sessions start on, and it is attributed.
+		expect(harness.settingsManager.getDefaultModel()).toBe(defaultBefore);
+		expect(
+			harness.sessionManager
+				.getEntries()
+				.filter((entry) => entry.type === "model_change")
+				.at(-1),
+		).toMatchObject({ source: "control" });
 	});
 
 	it("refuses an unknown model with the reason and leaves the running model alone", async () => {

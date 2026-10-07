@@ -1,3 +1,24 @@
+## 2026-10-07 - An extension's model switch names the extension (senpi#2870)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts`: `SetModelHandler` takes an optional `ModelChangeOrigin` as its second argument.
+- `packages/coding-agent/src/core/extensions/loader.ts`: `pi.setModel` and `pi.setSessionModel` pass `{ source: "extension", actor: extension.path }`, so the `model_change` entry names the extension that switched. The public API (`pi.setModel(model)`) is unchanged.
+- `packages/coding-agent/src/core/extensions/builtin/compaction/switch-admission.ts`: a `PendingModelSwitch` carries the origin of the switch it holds.
+
+### Why
+
+senpi#2870: a switch made by an extension was indistinguishable from one made by the user.
+
+### Why an extension could not handle it
+
+The attribution is added by the loader around every extension's calls.
+
+### Expected merge conflict zones
+
+- `loader.ts`: the `setModel` and `setSessionModel` members of the extension API object.
+- `types.ts`: `SetModelHandler`.
+
 ## 2026-10-03 - Session-scoped EvalHandleHost provide/read pair (codemode plan node 10)
 
 ### What changed

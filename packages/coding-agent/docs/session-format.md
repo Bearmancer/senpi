@@ -236,8 +236,10 @@ A message in the conversation. The `message` field contains an `AgentMessage`.
 Emitted when the user switches models mid-session. The latest entry is the selected model, which may be a [virtual model](virtual-models.md); assistant messages then name the physical model that answered.
 
 ```json
-{"type":"model_change","id":"d4e5f6g7","parentId":"c3d4e5f6","timestamp":"2024-12-03T14:05:00.000Z","provider":"openai","modelId":"gpt-4o"}
+{"type":"model_change","id":"d4e5f6g7","parentId":"c3d4e5f6","timestamp":"2024-12-03T14:05:00.000Z","provider":"openai","modelId":"gpt-4o","originalProvider":"anthropic","originalModelId":"claude-sonnet-4-5","source":"picker","actor":"model-selector"}
 ```
+
+`source` says what made the switch: `command` (a typed `/model`), `picker` (the model or favorites picker), `cycle` (the favorites cycle key or RPC `cycle_model`), `control` (a terminal's control endpoint), `rpc`, `app-server`, `extension` (`actor` is the extension path), `provider-login`, `fallback`, `fallback-revert`, `held-switch` (a switch held until compaction made room; `actor` names what first asked for it), `restore`, or `sdk` (an SDK caller that named none). `actor` says who issued it where that is known. `duringTurn: true` marks a switch that landed while a turn was streaming; the terminal shows those as a transcript row. Entries written before these fields existed omit them. A `thinking_level_change` written because a switch re-applied the model's level carries the same `triggerSource` and `triggerActor`.
 
 ### ThinkingLevelChangeEntry
 

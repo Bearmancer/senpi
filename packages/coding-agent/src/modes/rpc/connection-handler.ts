@@ -930,7 +930,7 @@ export function createRpcConnectionHandler(
 		notify: () => {},
 		setSessionModel: async (model) => {
 			if (!session.modelRuntime.hasConfiguredAuth(model.provider)) return false;
-			await session.setSessionModel(model);
+			await session.setSessionModel(model, { source: "extension", actor: "service-tier" });
 			return true;
 		},
 		setSessionFastMode: (enabled) => session.setSessionFastMode(enabled),
@@ -1119,7 +1119,7 @@ export function createRpcConnectionHandler(
 				if (!model) {
 					return error(id, "set_model", `Model not found: ${command.provider}/${command.modelId}`);
 				}
-				const systemPromptChange = await session.setModel(model);
+				const systemPromptChange = await session.setModel(model, { source: "rpc" });
 				return success(id, "set_model", { ...model, systemPromptName: systemPromptChange?.systemPromptName });
 			}
 
@@ -1132,7 +1132,9 @@ export function createRpcConnectionHandler(
 				return success(id, "set_scoped_models");
 
 			case "cycle_model": {
-				const result = await session.cycleModel(command.direction);
+				const result = await session.cycleModel(command.direction, {
+					origin: { source: "rpc", actor: "cycle_model" },
+				});
 				if (!result) {
 					return success(id, "cycle_model", null);
 				}
