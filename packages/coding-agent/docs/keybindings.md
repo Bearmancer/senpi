@@ -163,7 +163,7 @@ User-verified image attachment after Ctrl+V in Warp on WSL:
 | `app.model.select` | `ctrl+l` | Open model selector |
 | `app.model.cycleForward` | `ctrl+p` | Cycle to next model |
 | `app.model.cycleBackward` | `shift+ctrl+p` (`alt+p` on Windows and WSL) | Cycle to previous model |
-| `app.models.save` | `ctrl+s` | Save the selected default model or scoped model configuration to settings |
+| `app.models.save` | `ctrl+s` | In the model picker, select the highlighted model and make it the default for new sessions; in the scoped models selector, save the configuration |
 | `app.thinking.cycle` | `shift+tab` | Cycle thinking level |
 | `app.thinking.save` | `ctrl+s` | Save current thinking level to settings |
 | `app.thinking.toggle` | `ctrl+t` | Collapse or expand thinking blocks |

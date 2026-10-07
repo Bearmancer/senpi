@@ -1,3 +1,28 @@
+## 2026-10-07 - Every model switch records its source (senpi#2870)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`:
+  - `setModel(model, origin?)` and `setSessionModel(model, origin?)` take a `ModelChangeOrigin` (`source` plus an optional `actor`; it defaults to `sdk`). `_switchActiveModel` requires one, and writes it on the `model_change` entry with `duringTurn` when a turn is streaming, on the `model_changed` event (with `previousModel`), on the `thinking_level_change` the switch writes (`triggerSource` / `triggerActor`), and as one `model_change` line in `session.log`.
+  - `cycleModel(direction, { persistDefault?, origin? })`: persisting stays the default, for RPC `cycle_model`; the terminal passes `persistDefault: false`. The cycle's `model_change` names the model it left (`originalProvider` / `originalModelId`), as the other switches do; session restore reads those fields only for fallback entries.
+  - A held switch (#1873) keeps its origin and is recorded as `held-switch`, with the first source as its `actor`. Fallback switches record `fallback` / `fallback-revert`, and a restored virtual-model selection records `restore`.
+  - The extension actions pass the origin through.
+- `packages/coding-agent/src/core/session-manager.ts`: `ModelChangeEntry` gains the optional `source`, `actor` and `duringTurn`; `ThinkingLevelChangeEntry` gains the optional `triggerSource` and `triggerActor`. `appendModelChange` and `appendThinkingLevelChange` take them as trailing optional arguments.
+- `packages/coding-agent/src/core/model-change-origin.ts` (new): the source union, `heldSwitchOrigin`, and the session-log fields. `packages/coding-agent/src/core/session-log.ts` allows those fields.
+
+### Why
+
+A session switched models mid-turn twice in an hour and its record could not say why: `model_change` carried no source, and nothing in the log matched. Attribution has to be readable from the session record alone.
+
+### Why an extension could not handle it
+
+Every switch path goes through `AgentSession`'s private switch and the session entries it appends.
+
+### Expected merge conflict zones
+
+- `agent-session.ts`: `setModel`, `setSessionModel`, `_setModel`, `_switchActiveModel` (its option bag, the entry append and the emit), `_cycleFavoriteModel`, `_setThinkingLevel`, the held-switch apply, and the extension action binding.
+- `session-manager.ts`: the two entry interfaces and their append methods.
+
 ## 2026-10-07 - An attach that lands during a rebuild keeps its permission preset (senpi#2842)
 
 ### What changed

@@ -117,6 +117,7 @@ import { configureHttpDispatcher, formatHttpIdleTimeoutMs } from "../../core/htt
 import { type AppKeybinding, KeybindingsManager } from "../../core/keybindings.ts";
 import { isManualContinueSubmission } from "../../core/manual-continue.ts";
 import { createCompactionSummaryMessage, createCustomMessage } from "../../core/messages.ts";
+import type { ModelChangeOrigin } from "../../core/model-change-origin.ts";
 import {
 	defaultModelPerProvider,
 	findExactModelReferenceMatch,
@@ -261,6 +262,12 @@ import {
 } from "./loaded-resource-scopes.ts";
 import { describeLoginFailure, type LoginFailureNotice } from "./login-outcome.ts";
 import { refreshModelCatalogs } from "./model-catalog-refresh.ts";
+import {
+	liveModelChangeNotice,
+	type ModelChangeNotice,
+	parseModelCommandArgument,
+	replayedModelChangeNotice,
+} from "./model-change-notice.ts";
 import { getModelSearchText } from "./model-search.ts";
 import {
 	isNetworkProviderError,
@@ -423,7 +430,15 @@ type CompactionCostNotice = {
 	usage: Usage;
 };
 
-type RenderSessionItem = AgentMessage | Extract<SessionEntry, { type: "custom" }> | CompactionCostNotice;
+type RenderSessionItem =
+	| AgentMessage
+	| Extract<SessionEntry, { type: "custom" }>
+	| CompactionCostNotice
+	| ModelChangeNotice;
+
+function isModelChangeNotice(item: RenderSessionItem): item is ModelChangeNotice {
+	return "type" in item && item.type === "model_change_notice";
+}
 
 function isCustomSessionEntry(item: RenderSessionItem): item is Extract<SessionEntry, { type: "custom" }> {
 	return "type" in item && item.type === "custom";
@@ -4001,7 +4016,7 @@ export class InteractiveMode {
 					return state !== undefined;
 				},
 				notice: (line) => this.showWarning(line),
-				selectModel: (model) => InteractiveMode.applyModelSelection(this, model),
+				selectModel: (model) => InteractiveMode.applyModelSelection(this, model, { source: "control" }),
 				selectThinkingLevel: (level, remember) => InteractiveMode.applyThinkingLevel(this, level, remember),
 				interruptTurn: async () => {
 					await this.abortAndFireQueuedMessages();
@@ -5682,13 +5697,16 @@ export class InteractiveMode {
 				break;
 			}
 
-			case "model_changed":
+			case "model_changed": {
 				// The new model must not inherit the previous model's
 				// SDK-delegation episode (post-#1188 core emits no repeat rejection to
 				// self-heal a stale marker).
 				this.externalOwnerCompactionNoticeShown = false;
 				this.footer?.setCompactionDelegated?.(false);
+				const notice = liveModelChangeNotice(event);
+				if (notice !== undefined) this.addModelChangeNotice(notice);
 				break;
+			}
 
 			case "retry_fallback_applied": {
 				if (this.pendingZeroDelayRetryIndicator) {
@@ -6293,6 +6311,10 @@ export class InteractiveMode {
 				this.addCompactionCostNotice(item);
 				continue;
 			}
+			if (isModelChangeNotice(item)) {
+				this.addModelChangeNotice(item);
+				continue;
+			}
 
 			const message = item;
 			// Assistant messages need special handling for tool calls
@@ -6346,6 +6368,10 @@ export class InteractiveMode {
 			if (entry.type === "custom") {
 				return [entry];
 			}
+			if (entry.type === "model_change") {
+				const notice = replayedModelChangeNotice(entry);
+				return notice === undefined ? [] : [notice];
+			}
 			const messages = sessionEntryToContextMessages(entry);
 			if ((entry.type === "compaction" || entry.type === "branch_summary") && entry.usage && messages.length > 0) {
 				return [...messages, { type: "compaction_cost", kind: entry.type, usage: entry.usage }];
@@ -6359,6 +6385,11 @@ export class InteractiveMode {
 	 * Render billing usage for a compaction or branch summary. The notice is derived
 	 * from persisted summary usage and is not stored as a separate session entry.
 	 */
+	private addModelChangeNotice(notice: ModelChangeNotice): void {
+		this.chatContainer.addChild(new Spacer(1));
+		this.chatContainer.addChild(new ThemedText(() => theme.fg("warning", notice.text), 1, 0));
+	}
+
 	private addCompactionCostNotice(notice: CompactionCostNotice): void {
 		if (!this.settingsManager.getShowCacheMissNotices()) return;
 
@@ -6977,7 +7008,7 @@ export class InteractiveMode {
 
 	private async cycleModel(direction: "forward" | "backward"): Promise<void> {
 		try {
-			const result = await this.session.cycleModel(direction);
+			const result = await this.session.cycleModel(direction, { persistDefault: false });
 			if (result === undefined) {
 				const msg =
 					this.session.favoriteModels.length > 0
@@ -7941,7 +7972,14 @@ export class InteractiveMode {
 		});
 	}
 
-	private async handleModelCommand(searchTerm?: string): Promise<void> {
+	private async handleModelCommand(argument?: string): Promise<void> {
+		const { searchTerm, asDefault } = parseModelCommandArgument(argument);
+		// --default needs the model it names; in the picker, the save chord does the same (senpi#2870).
+		if (asDefault && !searchTerm) {
+			this.showWarning("/model --default needs a model: /model <provider/id> --default, or Ctrl+S in the picker.");
+			this.showModelSelector();
+			return;
+		}
 		if (!searchTerm) {
 			this.showModelSelector();
 			return;
@@ -7949,10 +7987,14 @@ export class InteractiveMode {
 
 		const model = await this.findExactModelMatch(searchTerm);
 		if (model) {
-			await this.selectModelFromUi(model);
+			await this.selectModelFromUi(model, undefined, { origin: { source: "command" }, persistDefault: asDefault });
 			return;
 		}
 
+		if (asDefault)
+			this.showWarning(
+				`No exact model match for "${searchTerm}"; pick one and press Ctrl+S to also make it the default.`,
+			);
 		this.showModelSelector(searchTerm);
 	}
 
@@ -7990,14 +8032,18 @@ export class InteractiveMode {
 		return findExactModelReferenceMatch(searchTerm, [...this.session.modelRuntime.getAvailableSnapshot()]);
 	}
 
-	private async selectModelFromUi(model: Model<any>, done?: () => void): Promise<void> {
+	private async selectModelFromUi(
+		model: Model<any>,
+		done: (() => void) | undefined,
+		selection: { readonly origin: ModelChangeOrigin; readonly persistDefault: boolean },
+	): Promise<void> {
 		// The selector overlay is already disposed on Enter, so releasing it only
 		// after setModel resolves leaves a stale frozen frame for the whole provider
 		// auth round trip. Release and repaint first, then apply the switch.
 		done?.();
 		this.ui?.requestRender();
 		try {
-			await InteractiveMode.applyModelSelection(this, model);
+			await InteractiveMode.applyModelSelection(this, model, selection.origin, selection.persistDefault);
 		} catch (error) {
 			this.showError(error instanceof Error ? error.message : String(error));
 		}
@@ -8010,8 +8056,13 @@ export class InteractiveMode {
 	private static async applyModelSelection(
 		mode: InteractiveMode,
 		model: Model<any>,
+		origin: ModelChangeOrigin,
+		persistDefault = false,
 	): Promise<SystemPromptChangeEvent | undefined> {
-		const systemPromptChange = await mode.session.setModel(model);
+		// A selection applies to this session; only an explicit request changes the default for new sessions (senpi#2870).
+		const systemPromptChange = persistDefault
+			? await mode.session.setModel(model, origin)
+			: await mode.session.setSessionModel(model, origin);
 		mode.footer.invalidate();
 		// A model switch ends any external-owner delegation episode.
 		mode.externalOwnerCompactionNoticeShown = false;
@@ -8020,7 +8071,11 @@ export class InteractiveMode {
 		const systemPromptStr = systemPromptChange?.systemPromptName
 			? ` (optimized system prompt applied: ${systemPromptChange.systemPromptName})`
 			: "";
-		mode.showStatus(`Model: ${model.id}${systemPromptStr}`);
+		mode.showStatus(
+			persistDefault
+				? `Model: ${model.id}${systemPromptStr} · now the default model for new sessions`
+				: `Model: ${model.id}${systemPromptStr}`,
+		);
 		mode.showRiskyMainModelWarning(model);
 		void mode.maybeWarnAboutAnthropicSubscriptionAuth(model);
 		mode.checkDaxnutsEasterEgg(model);
@@ -8197,8 +8252,11 @@ export class InteractiveMode {
 				this.settingsManager,
 				this.session.modelRuntime,
 				this.session.scopedModels,
-				(model) => {
-					void this.selectModelFromUi(model, done);
+				(model, selection) => {
+					void this.selectModelFromUi(model, done, {
+						origin: { source: "picker", actor: "model-selector" },
+						persistDefault: selection.asDefault,
+					});
 				},
 				() => {
 					done();
@@ -8247,7 +8305,10 @@ export class InteractiveMode {
 						});
 					},
 					onSelect: (model) => {
-						void this.selectModelFromUi(model, done);
+						void this.selectModelFromUi(model, done, {
+							origin: { source: "picker", actor: "favorites" },
+							persistDefault: false,
+						});
 					},
 					onCancel: () => {
 						done();
@@ -9044,7 +9105,8 @@ export class InteractiveMode {
 						selectionError = `${actionLabel}, but its default model "${defaultModelId}" is not available. Use /model to select a model.`;
 					} else {
 						try {
-							systemPromptName = (await this.session.setModel(selectedModel))?.systemPromptName;
+							systemPromptName = (await this.session.setModel(selectedModel, { source: "provider-login" }))
+								?.systemPromptName;
 						} catch (error: unknown) {
 							selectedModel = undefined;
 							const errorMessage = error instanceof Error ? error.message : String(error);

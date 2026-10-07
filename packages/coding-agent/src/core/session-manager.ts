@@ -30,6 +30,7 @@ import { join, resolve } from "path";
 import { StringDecoder } from "string_decoder";
 import { APP_NAME, getAgentDir as getDefaultAgentDir, getSessionsDir } from "../config.ts";
 import { normalizePath, resolvePath } from "../utils/paths.ts";
+import type { ModelChangeOrigin, ModelChangeSource } from "./model-change-origin.ts";
 import type { RepositoryIdentity } from "./repository-identity.ts";
 import {
 	ALL_SESSION_LIST_PUBLISH_INTERVAL,
@@ -143,6 +144,9 @@ export interface ThinkingLevelChangeEntry extends SessionEntryBase {
 	thinkingLevel: string;
 	/** Explicit selector provenance. Omitted by legacy entries and SDK-defaulted fallbacks. */
 	thinkingSelection?: ThinkingSelection;
+	/** Set when a model switch re-applied this level: the switch's source (senpi#2870). */
+	triggerSource?: ModelChangeSource;
+	triggerActor?: string;
 }
 
 export interface ConfigurationUpdateEntry extends SessionEntryBase {
@@ -159,6 +163,12 @@ export interface ModelChangeEntry extends SessionEntryBase {
 	/** The model active before a fallback window, retained for restart restoration. */
 	originalProvider?: string;
 	originalModelId?: string;
+	/** What made the switch (senpi#2870); omitted by entries written before it was recorded. */
+	source?: ModelChangeSource;
+	/** Who issued it, where known: an extension path, an RPC client, the picker used. */
+	actor?: string;
+	/** The switch landed while a turn was streaming. */
+	duringTurn?: boolean;
 }
 
 /**
@@ -1640,7 +1650,11 @@ export class SessionManager {
 	}
 
 	/** Append a thinking level change as child of current leaf, then advance leaf. Returns entry id. */
-	appendThinkingLevelChange(thinkingLevel: string, thinkingSelection?: ThinkingSelection): string {
+	appendThinkingLevelChange(
+		thinkingLevel: string,
+		thinkingSelection?: ThinkingSelection,
+		trigger?: ModelChangeOrigin,
+	): string {
 		const entry: ThinkingLevelChangeEntry = {
 			type: "thinking_level_change",
 			id: generateId(this.idsInUse),
@@ -1648,6 +1662,8 @@ export class SessionManager {
 			timestamp: new Date().toISOString(),
 			thinkingLevel,
 			thinkingSelection,
+			...(trigger === undefined ? {} : { triggerSource: trigger.source }),
+			...(trigger?.actor === undefined ? {} : { triggerActor: trigger.actor }),
 		};
 		this._appendEntry(entry);
 		return entry.id;
@@ -1691,6 +1707,7 @@ export class SessionManager {
 		reason?: "fallback" | "fallback-revert",
 		originalProvider?: string,
 		originalModelId?: string,
+		attribution?: { readonly origin: ModelChangeOrigin; readonly duringTurn: boolean },
 	): string {
 		const entry: ModelChangeEntry = {
 			type: "model_change",
@@ -1702,6 +1719,9 @@ export class SessionManager {
 			reason,
 			originalProvider,
 			originalModelId,
+			...(attribution === undefined ? {} : { source: attribution.origin.source }),
+			...(attribution?.origin.actor === undefined ? {} : { actor: attribution.origin.actor }),
+			...(attribution?.duringTurn ? { duringTurn: true } : {}),
 		};
 		this._appendEntry(entry);
 		return entry.id;

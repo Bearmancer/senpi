@@ -68,6 +68,7 @@ import type { ExecOptions, ExecResult } from "../exec.ts";
 import type { ReadonlyFooterDataProvider } from "../footer-data-provider.ts";
 import type { KeybindingsManager } from "../keybindings.ts";
 import type { CustomMessage } from "../messages.ts";
+import type { ModelChangeOrigin } from "../model-change-origin.ts";
 import type { ModelRegistry } from "../model-registry.ts";
 import type { InitialModelProvenance, ScopedModel } from "../model-resolver.ts";
 import type {
@@ -2899,7 +2900,7 @@ export type RefreshToolsHandler = () => void;
 
 export type RegisterRemovedToolHintHandler = (name: string, hint: string) => void;
 
-export type SetModelHandler = (model: Model<any>) => Promise<boolean>;
+export type SetModelHandler = (model: Model<any>, origin?: ModelChangeOrigin) => Promise<boolean>;
 
 export type GetThinkingLevelHandler = () => ThinkingLevel;
 

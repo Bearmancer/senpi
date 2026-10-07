@@ -138,7 +138,10 @@ describe("#1873 deferred model switch", () => {
 		expect(harness.eventsOfType("compaction_start").length).toBeGreaterThan(0);
 		expect(harness.session.model?.id).toBe("372k");
 		expect(harness.session.pendingModelSwitch).toBeUndefined();
-		expect(harness.sessionManager.getEntries().filter((entry) => entry.type === "model_change")).toHaveLength(1);
+		const changes = harness.sessionManager.getEntries().filter((entry) => entry.type === "model_change");
+		expect(changes).toHaveLength(1);
+		// senpi#2870: the applied switch names itself held and names who first asked for it.
+		expect(changes[0]).toMatchObject({ source: "held-switch", actor: "sdk" });
 	});
 
 	it("compacts on the original model, sized for the target's window", async () => {
