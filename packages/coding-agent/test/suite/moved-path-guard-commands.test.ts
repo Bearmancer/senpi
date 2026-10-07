@@ -127,6 +127,31 @@ describe("moved-path-guard: commands, patches, and nested calls (#2898)", () => 
 		expect(result.text).toContain(layout.newWorktree);
 	});
 
+	// Review M2: a relative path after `cd <dir>` in the same text names <dir>/<path>. bash_input has no tracked shell
+	// cwd the guard can see, so for it only a `cd` inside the same input counts.
+	it.each([
+		["bash", { command: "cd ~/.t3 && mkdir -p worktrees/app/w1/x" }],
+		["bash", { command: 'cd "$HOME/.t3"; touch userdata/omo-sessions/a.jsonl' }],
+		["bash_input", { bash_id: "b1", input: "cd ~/.t3 && mkdir -p worktrees/app/w1/x" }],
+	] as const)("blocks %s naming a moved path relative to an earlier cd", async (tool, input) => {
+		const { layout, harness } = await setup({ builtins: ["terminal"] });
+
+		const result = await runTool(harness, tool, { ...input });
+
+		expect(result.outcome).toBe("blocked");
+		expect(result.text).toContain(layout.newRoot);
+	});
+
+	it("resolves relative paths against the directory a cd moved to, not the moved root", async () => {
+		const { layout, harness } = await setup();
+		mkdirSync(join(layout.home, "elsewhere"), { recursive: true });
+
+		const result = await runTool(harness, "bash", { command: "cd elsewhere && mkdir -p worktrees/app/w1/x" });
+
+		expect(result).toMatchObject({ outcome: "ok" });
+		expect(existsSync(join(layout.home, "elsewhere", "worktrees", "app", "w1", "x"))).toBe(true);
+	});
+
 	it("blocks a shell call whose working directory is a moved path", async () => {
 		const { layout, harness } = await setup({ cwd: (moved) => moved.oldWorktree });
 

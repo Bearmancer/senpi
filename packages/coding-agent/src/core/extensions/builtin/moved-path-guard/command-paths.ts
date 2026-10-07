@@ -44,23 +44,60 @@ function embeddedPaths(command: string): string[] {
 	});
 }
 
-function words(command: string): string[] {
-	const quoted = [...command.matchAll(QUOTED)].map((match) => match[1] ?? match[2] ?? "");
-	const bare = command.replace(QUOTED, " ").match(BARE_WORD) ?? [];
+function words(segment: string): string[] {
+	const quoted = [...segment.matchAll(QUOTED)].map((match) => match[1] ?? match[2] ?? "");
+	const bare = segment.replace(QUOTED, " ").match(BARE_WORD) ?? [];
 	return [...quoted, ...bare].flatMap((word) => word.split("="));
+}
+
+/** The command split on `;`, `&&`, `||`, `|`, `&` and newlines that sit outside quotes. */
+function segments(command: string): string[] {
+	const parts: string[] = [];
+	let quote: string | undefined;
+	let current = "";
+	for (const char of command) {
+		if (quote) {
+			if (char === quote) quote = undefined;
+		} else if (char === '"' || char === "'") quote = char;
+		else if (char === ";" || char === "&" || char === "|" || char === "\n") {
+			parts.push(current);
+			current = "";
+			continue;
+		}
+		current += char;
+	}
+	return [...parts, current];
+}
+
+/** The working directory a leading `cd`/`pushd` moves to, from `cwd`. */
+function cdTarget(segment: string, cwd: string): string | undefined {
+	const match = /^\s*(?:cd|pushd|Set-Location|sl)\s+("[^"]*"|'[^']*'|\S+)\s*$/.exec(segment);
+	if (!match?.[1]) return undefined;
+	const target = match[1].replace(/^["']|["']$/g, "");
+	return anchoredPath(target) ?? resolve(cwd, target);
 }
 
 /**
  * The paths a shell command names (senpi#2898): every anchored path embedded anywhere in the text (inline code,
  * flag values, quote-concatenated words), whole quoted strings that are paths (spaces included), and relative words
- * that contain a separator, resolved against `cwd`. A path the command assembles at run time is not seen.
+ * that contain a separator, resolved against the directory the latest `cd` in the same text moved to, else `cwd`.
+ * A path the command assembles at run time is not seen.
  */
 export function commandPaths(command: string, cwd: string): string[] {
 	const paths = new Set(embeddedPaths(command));
-	for (const word of words(command)) {
-		const anchored = anchoredPath(word);
-		if (anchored !== undefined) paths.add(anchored);
-		else if (word.includes("/") || word.includes("\\") || word.startsWith(".")) paths.add(resolve(cwd, word));
+	let current = cwd;
+	for (const segment of segments(command)) {
+		const moved = cdTarget(segment, current);
+		if (moved !== undefined) {
+			current = moved;
+			paths.add(moved);
+			continue;
+		}
+		for (const word of words(segment)) {
+			const anchored = anchoredPath(word);
+			if (anchored !== undefined) paths.add(anchored);
+			else if (word.includes("/") || word.includes("\\") || word.startsWith(".")) paths.add(resolve(current, word));
+		}
 	}
 	return [...paths].slice(0, MAX_PATHS_PER_CALL);
 }
