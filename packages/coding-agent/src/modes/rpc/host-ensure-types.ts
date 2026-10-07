@@ -36,6 +36,8 @@ export interface EnsureHostOptions {
 		 * to stall the real process-identity probe.
 		 */
 		readonly beforePidFileWrite?: () => Promise<void>;
+		/** Runs after readiness failed and before the start is torn down; deterministic teardown-test gate. */
+		readonly beforeReadinessTeardown?: () => Promise<void>;
 		/** Overrides the process-identity probe so a test can force its failure. */
 		readonly readProcessStartTime?: (pid: number) => Promise<string | undefined>;
 	};

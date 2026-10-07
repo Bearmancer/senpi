@@ -12,11 +12,15 @@
 
 ### Changed
 
+- The bundled Claude Agent SDK is updated to 0.3.292 (from 0.3.289), so the Anthropic subscription lane runs Claude Code 2.1.292 and the models it knows ([#2545](https://github.com/code-yeongyu/senpi/issues/2545)).
+
 - When every `context`/`context_with_system` handler about to run declares `mutatesMessages: false` (the built-in compaction and tool-search hooks now do), the request pipeline shares the live transcript instead of deep-cloning it every turn, and per-message token estimates are memoized behind a content fingerprint: on a synthetic 10,000-message uncompacted session, one `emitContext` + context-pipeline pass dropped from a 135 ms to a 53 ms median ([#2525](https://github.com/code-yeongyu/senpi/issues/2525)).
 
 - A model picked in the terminal (Enter in `/model` or the favorites picker, a typed `/model <id>`, the favorites cycle key, or a terminal control endpoint's `set_model`) now applies to that session only, instead of silently rewriting the default model every later session starts on. To also make it the default, press Ctrl+S (`app.models.save`) in the model picker or type `/model <id> --default`; the status line then says so ([#2870](https://github.com/code-yeongyu/senpi/issues/2870)).
 
 ### Fixed
+
+- A shared RPC host that the engine stops on purpose is now recorded in the endpoint's `crashes.jsonl`, naming who stopped it and why (an ensure replacing an unreachable host, `host stop`, a failed start or handoff, the supervisor's own idle exit), and a host killed from outside is recorded as `external` instead of being indistinguishable from a crash; `host status` keeps counting only real deaths. An ensure no longer stops or replaces a host that is alive but measurably stalled - it refuses with `host_stalled` - and a graceful stop waits out a measured stall (up to `SENPI_RPC_CHILD_STALLED_STOP_MAX_MS`, 60 s by default) before escalating to SIGKILL ([#2566](https://github.com/code-yeongyu/senpi/issues/2566)).
 
 ### Removed
 

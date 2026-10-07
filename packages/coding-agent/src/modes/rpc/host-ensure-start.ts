@@ -4,12 +4,23 @@ import { randomUUID } from "node:crypto";
 import { open, readFile } from "node:fs/promises";
 import { engineBuildIdentity } from "../../core/engine-build-identity.ts";
 import { type DaemonPidFile, readProcessStartTime, waitForStartTime } from "../app-server/daemon/process.ts";
-import type { HostDaemonPaths } from "./host-daemon-paths.ts";
+import { generationPaths, type HostDaemonPaths } from "./host-daemon-paths.ts";
 import { clearHostRegistration, writeHostRegistration } from "./host-daemon-registration.ts";
 import { writeHostSettings } from "./host-daemon-state.ts";
 import { HOST_PROTOCOL_VERSION, REQUIRED_HOST_CAPABILITIES } from "./host-decision.ts";
 import { hostChildArgv, isCompatible } from "./host-ensure-client.ts";
-import { delay, isNodeErrorCode, stopSpawnedChild } from "./host-ensure-stop.ts";
+import {
+	announceStop,
+	DEFAULT_STOP_TIMEOUT_MS,
+	delay,
+	ensureSender,
+	isNodeErrorCode,
+	recordEscalation,
+	SIGKILL_GRACE_MS,
+	type StopTarget,
+	signalPid,
+	stopSpawnedChild,
+} from "./host-ensure-stop.ts";
 import type { EnsuredHost, EnsureHostOptions } from "./host-ensure-types.ts";
 import { defaultHostLaunch, PINNED_HOST_CLIENT_CAPABILITIES } from "./host-launch.ts";
 import { DEFAULT_HOST_IDLE_EXIT_MS } from "./host-lifecycle.ts";
@@ -19,7 +30,7 @@ import { hostLaunchProfile } from "./protocol-identity.ts";
 import { createSocketSecret, socketSecretPath } from "./socket-transport.ts";
 
 export const DEFAULT_READINESS_TIMEOUT_MS = 10_000;
-export const DEFAULT_STOP_TIMEOUT_MS = 10_000;
+export { DEFAULT_STOP_TIMEOUT_MS };
 
 /**
  * `generation` is 0 for a fresh endpoint; a start that leaves a stranded generation running beside
@@ -35,6 +46,13 @@ export async function startHost(
 	// The generation this ensure is about to spawn, chosen HERE so its directory exists before the
 	// host boots and the pointer can name it the moment the host is registered.
 	const instanceId = randomUUID();
+	const stopTarget = (reason: string): StopTarget => ({
+		daemonDir: paths.dir,
+		generation: generationPaths(paths, instanceId),
+		instanceId,
+		sender: ensureSender(),
+		reason,
+	});
 	// The settings file must exist before the supervisor reads it at boot, so it
 	// records the policy before the spawn instead of beside the pidfile.
 	if (process.platform === "win32") await createSocketSecret(socketSecretPath(socket));
@@ -112,16 +130,8 @@ export async function startHost(
 		// Keep the ChildProcess handle owned until registration succeeds. If startup
 		// fails before the pidfile is written, terminate this exact child through
 		// its still-attached handle rather than leaving an unmanaged daemon behind.
-		if (!exitedBeforeCleanup && child && child.exitCode === null && child.signalCode === null) {
-			try {
-				child.kill("SIGTERM");
-			} catch {}
-			if (childExit) await Promise.race([childExit, delay(2_000)]);
-			if (child.exitCode === null && child.signalCode === null) {
-				try {
-					child.kill("SIGKILL");
-				} catch {}
-			}
+		if (!exitedBeforeCleanup && child?.pid !== undefined && childExit) {
+			await stopUnregisteredStart(child, childExit, stopTarget("start_failed"));
 		}
 		if (!exitedBeforeCleanup) {
 			await clearHostRegistration(paths);
@@ -139,17 +149,16 @@ export async function startHost(
 	const readinessTimeoutMs = testOptions?.readinessTimeoutMs ?? DEFAULT_READINESS_TIMEOUT_MS;
 	const result = await pollProtocolInfo(socket, readinessTimeoutMs, isCompatible, childExit);
 	if (result.ready) return { pid: pidFile.pid, socket, reused: false, release: result.hold.release };
-	// Teardown runs for the diagnostic's sake, so it must never replace it: a stop
-	// failure here (unreadable identity, a host that outlives SIGKILL) would other-
-	// wise propagate instead of the readiness message and skip cleanupState below,
-	// leaving the pidfile and socket behind. Record it and keep going.
-	// This child is ours and its handle is still attached: stop it through the handle.
-	// Validating ownership through the pidfile would re-run the identity probe whose
-	// failure is the very thing a loaded runner produces here.
+	await testOptions?.beforeReadinessTeardown?.();
+	// Teardown runs for the diagnostic's sake, so it must never replace it: a stop failure here
+	// (unreadable identity, a host that outlives SIGKILL) would otherwise propagate instead of the
+	// readiness message and skip the registration cleanup below. This child is ours and its handle is
+	// still attached: stop it through the handle, never through a re-probed pidfile identity.
 	const stopFailure = await stopSpawnedChild(
 		child,
 		childExit,
 		testOptions?.stopTimeoutMs ?? DEFAULT_STOP_TIMEOUT_MS,
+		stopTarget("readiness_timeout"),
 	).then(
 		() => undefined,
 		(error: unknown) => (error instanceof Error ? error.message : String(error)),
@@ -163,11 +172,35 @@ export async function startHost(
 		paths,
 		stopFailure === undefined ? message : `${message} (teardown also reported: ${stopFailure})`,
 	);
+	// The record of that teardown is already written: clearing the registration removes the
+	// generation directory, and with it the intent the record cites.
 	await clearHostRegistration(paths);
 	// The supervisor may have failed before binding, or another owner may have
 	// appeared while readiness was being checked. Never unlink an endpoint we
 	// cannot prove this start owned.
 	throw new Error(diagnostic);
+}
+
+/** A start that failed before its registration: SIGTERM, a 2 s grace, SIGKILL, and the record of it. */
+async function stopUnregisteredStart(
+	child: ReturnType<typeof spawn>,
+	childExit: Promise<ChildExit>,
+	target: StopTarget,
+): Promise<void> {
+	const pid = child.pid;
+	const running = () => child.exitCode === null && child.signalCode === null;
+	if (pid === undefined || !running()) return;
+	const announced = await announceStop(target, pid);
+	try {
+		signalPid(pid, "SIGTERM");
+	} catch {}
+	await Promise.race([childExit, delay(2_000)]);
+	if (!running()) return;
+	try {
+		signalPid(pid, "SIGKILL");
+	} catch {}
+	const gone = await Promise.race([childExit.then(() => true), delay(SIGKILL_GRACE_MS).then(() => false)]);
+	if (gone) await recordEscalation(target, announced);
 }
 
 export async function appendStderr(paths: HostDaemonPaths, message: string): Promise<string> {

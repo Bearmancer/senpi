@@ -1022,6 +1022,8 @@ export abstract class TuiBase extends Container {
 	private normalizedImageHint: ImageLineScan | undefined;
 	private normalizeMemo = new Map<string, string>();
 	protected previousKittyImageIds = new Set<number>();
+	/** A multiplexer pane regained focus: the next frame repaints its viewport once (senpi#1704). */
+	#muxViewportRepaintPending = false;
 	protected previousWidth = 0;
 	protected previousHeight = 0;
 	private focusedComponent: Component | null = null;
@@ -1724,6 +1726,7 @@ export abstract class TuiBase extends Container {
 		// for an external editor or a suspend in the middle of a turn must not drop it.
 		this.#scrollbackStale = false;
 		this.#scrollbackCatchUpPending = false;
+		this.#muxViewportRepaintPending = false;
 		this.renderRequested = false;
 		this.inputRenderPending = false;
 		this.cancelRenderTimer();
@@ -1908,9 +1911,21 @@ export abstract class TuiBase extends Container {
 		if (this.mode !== "fullscreen") {
 			const focus = consumeTmuxFocusEvent(data);
 			if (focus.event !== null) {
-				resetCapabilitiesCache();
-				this.invalidate();
-				this.requestRender(true);
+				if (this.shouldPreserveMuxScrollback()) {
+					// senpi#1704: a forced render re-emitted the whole transcript into the pane's history on every
+					// focus event. A pane losing focus is not visible, so it repaints nothing; a pane gaining focus
+					// refreshes the terminal capabilities and repaints its viewport only.
+					if (focus.event === "in") {
+						resetCapabilitiesCache();
+						this.invalidate();
+						this.#muxViewportRepaintPending = true;
+						this.requestRender();
+					}
+				} else {
+					resetCapabilitiesCache();
+					this.invalidate();
+					this.requestRender(true);
+				}
 				if (focus.data.length === 0) return;
 				data = focus.data;
 			}
@@ -2791,6 +2806,7 @@ export abstract class TuiBase extends Container {
 		width: number,
 		height: number,
 		viewportTop = Math.max(0, newLines.length - height),
+		home: "relative" | "absolute" = "relative",
 	): boolean {
 		const previousVisible = this.getViewportRows(this.previousLines, this.previousViewportTop, height);
 		const nextVisible = this.getViewportRows(newLines, viewportTop, height);
@@ -2799,9 +2815,13 @@ export abstract class TuiBase extends Container {
 		}
 
 		let buffer = TUI.FRAME_BEGIN;
-		const currentScreenRow = Math.max(0, Math.min(height - 1, this.hardwareCursorRow - this.previousViewportTop));
-		if (currentScreenRow > 0) {
-			buffer += `\x1b[${currentScreenRow}A`;
+		if (home === "absolute") {
+			buffer += "\x1b[H";
+		} else {
+			const currentScreenRow = Math.max(0, Math.min(height - 1, this.hardwareCursorRow - this.previousViewportTop));
+			if (currentScreenRow > 0) {
+				buffer += `\x1b[${currentScreenRow}A`;
+			}
 		}
 
 		for (let row = 0; row < height; row++) {
@@ -3061,10 +3081,38 @@ export abstract class TuiBase extends Container {
 
 		// Width changes always need a full re-render because wrapping changes.
 		if (widthChanged) {
+			// A width change (or a forced render) repaints everything below; a focus repaint queued in the
+			// same tick is satisfied by it.
+			this.#muxViewportRepaintPending = false;
 			logRedraw(`terminal width changed (${this.previousWidth} -> ${width})`);
-			// In multiplexers, re-emit the viewport without 3J so pane history survives; an older copy may remain above.
+			// In a multiplexer only the re-wrapped viewport is repainted: re-emitting every line of the buffer scrolled a
+			// copy of the whole transcript into the pane's history on each width change (senpi#1704). Rows already in
+			// that history keep their old wrapping. The pane re-wrapped the screen itself, so the repaint homes there.
+			if (preserveMuxScrollback && this.previousWidth > 0) {
+				if (this.renderMuxViewportRepaint(newLines, rawLines, cursorPos, width, height, undefined, "absolute"))
+					return;
+			}
 			fullRender(true, !preserveMuxScrollback);
 			return;
+		}
+
+		if (this.#muxViewportRepaintPending) {
+			this.#muxViewportRepaintPending = false;
+			if (preserveMuxScrollback && !heightChanged) {
+				logRedraw("multiplexer pane focus regained");
+				// A frame queued before the focus event may have grown the content: follow it exactly as an
+				// ordinary frame does, so rows added below (the editor, the status line) stay on screen.
+				// After a shrink the viewport keeps its top (as the deleted-lines path does), so the repaint does
+				// not scroll rows already in the pane's history into view a second time.
+				const focusViewportTop =
+					newLines.length > prevViewportTop
+						? Math.max(prevViewportTop, newLines.length - height)
+						: Math.max(0, newLines.length - height);
+				if (!this.renderMuxViewportRepaint(newLines, rawLines, cursorPos, width, height, focusViewportTop)) {
+					fullRender(true, false);
+				}
+				return;
+			}
 		}
 
 		// Height changes normally need a full re-render to keep the visible viewport aligned,
