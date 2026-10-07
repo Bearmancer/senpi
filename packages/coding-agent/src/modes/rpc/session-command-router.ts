@@ -406,6 +406,9 @@ export class SessionCommandRouter {
 			this.registry.getForCommand(command.sessionId, command.type);
 			const binding = this.bindings.get(command.sessionId);
 			if (!binding) return error(command.id, command.type, RPC_ERROR_UNKNOWN_SESSION);
+			// A prompt's preflight runs on the session's loop and can outlive the client's request deadline on a
+			// starved host; acknowledging receipt first lets the client wait it out (senpi#2871).
+			if (command.type === "prompt") this.acknowledgePrompt(command.id, command.sessionId);
 			await binding.handle(command);
 			return undefined;
 		} catch (cause) {
@@ -570,6 +573,18 @@ export class SessionCommandRouter {
 		if (this.sweepTimer === undefined) return;
 		clearInterval(this.sweepTimer);
 		this.sweepTimer = undefined;
+	}
+
+	private acknowledgePrompt(id: string | undefined, sessionId: string): void {
+		const connection = this.writer.currentConnection();
+		if (id === undefined || connection === undefined) return;
+		const inFlight = Math.max(0, (this.activeRequests.get(sessionId) ?? 1) - 1);
+		this.writer.sendOpenQueued(connection, {
+			type: "queued",
+			for_request: id,
+			position: inFlight + 1,
+			in_flight: inFlight,
+		});
 	}
 
 	private openWithBarrier(command: Extract<RpcCommand, { type: "open_session" }>): Promise<RpcResponse | undefined> {

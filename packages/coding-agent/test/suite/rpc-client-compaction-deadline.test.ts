@@ -7,6 +7,7 @@ import { attachJsonlLineReader, serializeJsonLine } from "../../src/modes/rpc/js
 import { RpcClient, type RpcClientEvent, RpcTransportGoneError } from "../../src/modes/rpc/rpc-client.ts";
 import {
 	PROMPT_ACK_MAX_WAIT_MS,
+	PROMPT_AFTER_QUEUED_DEADLINE_MS,
 	PROMPT_COMPACTION_DEADLINE_MS,
 	REQUEST_DEADLINE_MS,
 } from "../../src/modes/rpc/rpc-request-deadline.ts";
@@ -487,6 +488,116 @@ describe("RpcClient prompt admission during compaction", () => {
 
 			// Then
 			expect(await prompt).toBeInstanceOf(RpcTransportGoneError);
+			expect(vi.getTimerCount()).toBe(0);
+		} finally {
+			await host.close();
+		}
+	});
+	test("an acknowledgement received during a compaction never shortens the compaction's wait (senpi#2871)", async () => {
+		// Given: a prompt sent while a compaction runs, then acknowledged by the host
+		const host = await createHost();
+		try {
+			vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+			await host.emit({ type: "compaction_start", reason: "threshold", requestId: "current" });
+			let settled = false;
+			const prompt = host.client
+				.prompt("request")
+				.catch((error: unknown) => error)
+				.finally(() => {
+					settled = true;
+				});
+			const { id } = await host.request;
+			await host.emit({ type: "queued", for_request: id, position: 1, in_flight: 0 } as unknown as RpcClientEvent);
+
+			// When: the compaction runs well past the acknowledged-prompt ceiling
+			await vi.advanceTimersByTimeAsync(PROMPT_AFTER_QUEUED_DEADLINE_MS + 60_000);
+
+			// Then: the prompt is still waiting, and the host's answer admits it
+			expect(settled).toBe(false);
+			host.peer.write(
+				serializeJsonLine({
+					type: "response",
+					command: "prompt",
+					id,
+					success: true,
+					data: { disposition: "started" },
+				}),
+			);
+			expect(await prompt).toBe("started");
+			expect(vi.getTimerCount()).toBe(0);
+		} finally {
+			await host.close();
+		}
+	});
+
+	test("an acknowledged prompt keeps its own ceiling, not the request deadline, once a compaction ends (senpi#2871)", async () => {
+		// Given: an acknowledged prompt whose session then compacts and finishes compacting
+		const host = await createHost();
+		try {
+			vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+			let settled = false;
+			const prompt = host.client
+				.prompt("request")
+				.catch((error: unknown) => error)
+				.finally(() => {
+					settled = true;
+				});
+			const { id } = await host.request;
+			await host.emit({ type: "queued", for_request: id, position: 1, in_flight: 0 } as unknown as RpcClientEvent);
+			await host.emit({ type: "compaction_start", reason: "threshold", requestId: "current" });
+			await host.emit({
+				type: "compaction_end",
+				reason: "threshold",
+				requestId: "current",
+				result: undefined,
+				aborted: false,
+				willRetry: false,
+			});
+
+			// When: more than the request deadline passes, then the rest of the acknowledged ceiling
+			await vi.advanceTimersByTimeAsync(REQUEST_DEADLINE_MS * 2);
+			expect(settled).toBe(false);
+			await vi.advanceTimersByTimeAsync(PROMPT_AFTER_QUEUED_DEADLINE_MS - REQUEST_DEADLINE_MS * 2);
+
+			// Then: it fails at the acknowledged ceiling, saying the host received it
+			expect(settled).toBe(true);
+			expect(String(await prompt)).toContain("prompt was received by the host but not accepted");
+			expect(vi.getTimerCount()).toBe(0);
+		} finally {
+			await host.close();
+		}
+	});
+	test("an acknowledged prompt whose session then compacts past its ceiling keeps the compaction's wait (senpi#2871)", async () => {
+		// Given: the host acknowledged the prompt, then its session starts compacting
+		const host = await createHost();
+		try {
+			vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+			let settled = false;
+			const prompt = host.client
+				.prompt("request")
+				.catch((error: unknown) => error)
+				.finally(() => {
+					settled = true;
+				});
+			const { id } = await host.request;
+			await host.emit({ type: "queued", for_request: id, position: 1, in_flight: 0 } as unknown as RpcClientEvent);
+			await host.emit({ type: "compaction_start", reason: "threshold", requestId: "current" });
+
+			// When: the compaction outlasts the acknowledged-prompt ceiling
+			await vi.advanceTimersByTimeAsync(PROMPT_AFTER_QUEUED_DEADLINE_MS + 60_000);
+
+			// Then: the prompt is still waiting, and the host's answer admits it
+			expect(settled).toBe(false);
+			host.peer.write(
+				serializeJsonLine({
+					type: "response",
+					command: "prompt",
+					id,
+					success: true,
+					data: { disposition: "started" },
+				}),
+			);
+			expect(await prompt).toBe("started");
 			expect(vi.getTimerCount()).toBe(0);
 		} finally {
 			await host.close();

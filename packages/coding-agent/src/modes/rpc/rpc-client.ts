@@ -40,7 +40,9 @@ import {
 	OPEN_AFTER_QUEUED_DEADLINE_MS,
 	openStalledMessage,
 	PROMPT_ACK_MAX_WAIT_MS,
+	PROMPT_AFTER_QUEUED_DEADLINE_MS,
 	PROMPT_COMPACTION_DEADLINE_MS,
+	promptStalledMessage,
 	REQUEST_DEADLINE_MS,
 } from "./rpc-request-deadline.ts";
 import type {
@@ -1308,6 +1310,7 @@ export class RpcClient {
 		return new Promise((resolve, reject) => {
 			const timeoutMessage = () => `Timeout waiting for response to ${command.type}. Stderr: ${this.stderr}`;
 			let promptCap: ReturnType<typeof setTimeout> | undefined;
+			let promptReceived = false;
 			const expire = (timeoutError: Error) => {
 				clearTimeout(promptCap);
 				const pending = this.pendingRequests.get(id);
@@ -1345,10 +1348,18 @@ export class RpcClient {
 				...(command.type === "prompt"
 					? {
 							onCompaction: (compacting: boolean) =>
-								deadline.extend(
-									compacting ? PROMPT_COMPACTION_DEADLINE_MS : REQUEST_DEADLINE_MS,
-									timeoutMessage,
-								),
+								compacting
+									? deadline.extend(PROMPT_COMPACTION_DEADLINE_MS, timeoutMessage)
+									: promptReceived
+										? deadline.extend(PROMPT_AFTER_QUEUED_DEADLINE_MS, promptStalledMessage)
+										: deadline.extend(REQUEST_DEADLINE_MS, timeoutMessage),
+							// The host received the prompt: its preflight may outlive the plain request deadline (senpi#2871).
+							// A compaction's own wait is longer: the acknowledgement must never shorten it.
+							onQueued: () => {
+								promptReceived = true;
+								if (!this.isCompacting())
+									deadline.extend(PROMPT_AFTER_QUEUED_DEADLINE_MS, promptStalledMessage);
+							},
 						}
 					: {}),
 				...(command.type === "open_session"

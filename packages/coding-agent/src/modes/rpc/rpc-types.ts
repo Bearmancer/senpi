@@ -1359,7 +1359,10 @@ export interface RpcAuthAccountsChangedEvent {
 /**
  * Sent to ONE opener the moment its `open_session` is accepted, before the open enters the
  * session loop. The in-process host serves opens one at a time, so a burst queues; without this
- * the client's only signal is a deadline it cannot explain (senpi#1844).
+ * the client's only signal is a deadline it cannot explain (senpi#1844). A multi-session host sends
+ * the same record for a session-routed `prompt` the moment it is received, before its preflight runs
+ * on the session's loop, so a client waits out a slow preflight instead of discarding the session at
+ * its plain request deadline (senpi#2871).
  *
  * `for_request` carries the opener's request id deliberately, NOT the response-id field: a client
  * settles pending requests by response id, and a queued record wearing the open's id would be
@@ -1367,11 +1370,11 @@ export interface RpcAuthAccountsChangedEvent {
  */
 export interface RpcOpenQueuedEvent {
 	type: "queued";
-	/** The `open_session` request this position belongs to. */
+	/** The `open_session` or `prompt` request this position belongs to. */
 	for_request: string;
-	/** 1-based place in the open queue at the moment of acceptance. */
+	/** 1-based place in the open queue at acceptance; for a `prompt`, its place among that session's requests in flight. */
 	position: number;
-	/** Opens already in flight when this one arrived; `position` is this plus one. */
+	/** Opens (for a `prompt`, that session's requests) already in flight when this one arrived; `position` is this plus one. */
 	in_flight: number;
 }
 
