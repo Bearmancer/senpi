@@ -16,9 +16,13 @@ export function createToolSearchExtension(service: ToolSearchService): Extension
 			service.beginSession();
 			service.maybeRehydrateFromHistory(ctx.sessionManager.getEntries());
 		});
-		pi.on("context", (event) => {
-			service.maybeRehydrateFromHistory(event.messages);
-		});
+		pi.on(
+			"context",
+			(event) => {
+				service.maybeRehydrateFromHistory(event.messages);
+			},
+			{ mutatesMessages: false },
+		);
 		// A retired generation's activator declines, so the current generation's activator answers.
 		pi.registerLazyToolActivator((toolName) => !service.isDisposed && service.activateTool(toolName));
 		let toolRegistered = false;

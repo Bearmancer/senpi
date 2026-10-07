@@ -128,7 +128,10 @@ export class ResidentStringStore {
 		for (const key of Object.keys(record)) {
 			const current = record[key];
 			if (typeof current === "string") {
-				record[key] = mutate(current);
+				const next = mutate(current);
+				// Skip the write when nothing changes: a read-only walk must stay safe on
+				// frozen or shared message objects (senpi#2525).
+				if (next !== current) record[key] = next;
 			} else if (typeof current === "object" && current !== null) {
 				this._mutateStringsInPlace(current, seen, mutate);
 			}

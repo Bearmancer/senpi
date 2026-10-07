@@ -16,6 +16,7 @@ import type { KeyId } from "@earendil-works/pi-tui";
 import { getAgentDir } from "../../config.ts";
 import { type Theme, theme } from "../../modes/interactive/theme/theme.ts";
 import { stripAnsi } from "../../utils/ansi.ts";
+import { markTransientMessage } from "../compaction/estimate-cache-key.ts";
 import type { ResourceDiagnostic } from "../diagnostics.ts";
 import type { DiscoveredResourceEntry } from "../discovered-resource-scope.ts";
 import { createEventBus, type EventBus, EXTENSION_RPC_EVENT_CHANNEL, type ExtensionRpcEvent } from "../event-bus.ts";
@@ -1967,12 +1968,34 @@ export class ExtensionRunner {
 	 * handlers then see the full transcript and their output is used as returned.
 	 */
 	async emitContext(messages: AgentMessage[], excludeExtensionPath?: string): Promise<AgentMessage[]> {
-		let currentMessages = cloneJsonValue(messages).map((message, index) => {
-			const entryId = getSessionContextEntryId(messages[index]!);
-			return entryId ? Object.assign(message, { [SESSION_CONTEXT_ENTRY_ID]: entryId }) : message;
-		});
+		// The deep copy exists to isolate the transcript from in-place handler edits
+		// (senpi#2525). Handlers registered with `{ mutatesMessages: false }` forgo in-place
+		// edits, so when every handler of both context phases about to run declares it, the
+		// live transcript objects are shared and per-turn cost is proportional to what the
+		// handlers actually change. Any undeclared handler keeps the historical clone.
+		// Both phases are snapshotted once, here: a handler registered while an earlier one runs must
+		// not join this pass, or it could see the shared live transcript without having declared
+		// `mutatesMessages: false` (review of senpi#2884, H1). It runs from the next request on.
+		const contextHandlers = snapshotEventHandlers(this.extensions, "context");
+		const contextWithSystemHandlers = snapshotEventHandlers(this.extensions, "context_with_system");
+		const handlersShareTranscript = [contextHandlers, contextWithSystemHandlers].every((snapshot) =>
+			snapshot.every(
+				({ ext, handlers }) =>
+					ext.path === excludeExtensionPath ||
+					handlers.every((handler) => ext.nonMutatingContextHandlers?.has(handler) === true),
+			),
+		);
+		let currentMessages = handlersShareTranscript
+			? messages.slice()
+			: cloneJsonValue(messages).map((message, index) => {
+					const entryId = getSessionContextEntryId(messages[index]!);
+					// A per-turn clone never repeats, so the estimators skip their caches for it.
+					return markTransientMessage(
+						entryId ? Object.assign(message, { [SESSION_CONTEXT_ENTRY_ID]: entryId }) : message,
+					);
+				});
 
-		for (const { ext, handlers } of snapshotEventHandlers(this.extensions, "context")) {
+		for (const { ext, handlers } of contextHandlers) {
 			if (ext.path === excludeExtensionPath) continue;
 			for (const handler of handlers) {
 				try {
@@ -2009,7 +2032,7 @@ export class ExtensionRunner {
 			}
 		}
 
-		for (const { ext, handlers } of snapshotEventHandlers(this.extensions, "context_with_system")) {
+		for (const { ext, handlers } of contextWithSystemHandlers) {
 			if (ext.path === excludeExtensionPath) continue;
 			for (const handler of handlers) {
 				try {
