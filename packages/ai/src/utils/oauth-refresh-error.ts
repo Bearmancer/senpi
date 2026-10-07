@@ -25,11 +25,13 @@ const TRANSPORT_CODES = new Set([
 	"UND_ERR_SOCKET",
 ]);
 
+/** Both cause walks are bounded as well as cycle-safe: a refresh failure's cause chain is a few links deep. */
+const MAX_CAUSE_LINKS = 16;
+
 /** Closed, log-safe facts only; never inspect the message or response body. */
 export function oauthRefreshFailureCause(error: unknown): string | undefined {
 	const seen = new Set<unknown>();
-	// Bounded as well as cycle-safe: a refresh failure's cause chain is a few links deep.
-	while (typeof error === "object" && error !== null && !seen.has(error) && seen.size < 16) {
+	while (typeof error === "object" && error !== null && !seen.has(error) && seen.size < MAX_CAUSE_LINKS) {
 		seen.add(error);
 		if (Reflect.get(error, "name") === "TimeoutError") return "timeout";
 		const code: unknown = Reflect.get(error, "code");
@@ -62,7 +64,7 @@ export class OAuthRefreshUnavailableError extends ModelsError {
 
 export function isOAuthRefreshUnavailableError(error: unknown): error is OAuthRefreshUnavailableError {
 	const seen = new Set<unknown>();
-	while (typeof error === "object" && error !== null && !seen.has(error)) {
+	while (typeof error === "object" && error !== null && !seen.has(error) && seen.size < MAX_CAUSE_LINKS) {
 		seen.add(error);
 		if (Reflect.get(error, UNAVAILABLE) === true) return true;
 		error = Reflect.get(error, "cause");

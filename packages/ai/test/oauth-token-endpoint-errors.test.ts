@@ -38,7 +38,7 @@ describe("token endpoint HTTP error facts (#2893)", () => {
 		["radius", createRadiusOAuth({ name: "fixture", gateway: "https://fixture.example" })],
 		["xai", xaiOAuth],
 	] satisfies [string, OAuthAuth][])("%s retains HTTP status through refresh", async (_name, oauth) => {
-		// 400 has no built-in provider delay, and is permanently rejected even when prose says 503.
+		// 400 has no built-in provider delay and is a permanent rejection.
 		vi.stubGlobal(
 			"fetch",
 			vi.fn(async () => new Response(JSON.stringify({ error: "invalid_grant" }), { status: 400 })),
