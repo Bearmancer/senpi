@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import { isAbsolute } from "node:path";
 import { ProviderScope, runWithProviderScope } from "@earendil-works/pi-ai/node/provider-scope";
 import { createAgentSessionRuntime } from "../../core/agent-session-runtime.ts";
+import { resolveMovedPath } from "../../core/extensions/builtin/moved-path-guard/resolve.ts";
 import type { SessionStartEvent } from "../../core/extensions/types.ts";
 import { assertValidSessionId, SessionManager } from "../../core/session-manager.ts";
 import { SESSION_PATH_RETRY_AFTER_MS } from "./host-reservations.ts";
@@ -95,8 +96,14 @@ export class RpcSessionRegistry {
 		return this.entries.size;
 	}
 
-	async openSession(profile: RpcSessionLaunchProfile, options?: RpcSessionOpenOptions): Promise<OpenRpcSession> {
-		this.validateProfile(profile);
+	async openSession(requested: RpcSessionLaunchProfile, options?: RpcSessionOpenOptions): Promise<OpenRpcSession> {
+		this.validateProfile(requested);
+		// Before the reservation: an old spelling of a path the desktop moved is the same session (senpi#2898).
+		const profile: RpcSessionLaunchProfile = {
+			...requested,
+			cwd: resolveMovedPath(requested.cwd),
+			...(requested.sessionPath ? { sessionPath: resolveMovedPath(requested.sessionPath) } : {}),
+		};
 		this.syncRuntimeMetadata();
 		const sessionPath = profile.sessionPath ? canonicalSessionPath(profile.sessionPath) : undefined;
 		// Taken SYNCHRONOUSLY, before any await, exactly like the path reservation below: a

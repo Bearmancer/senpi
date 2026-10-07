@@ -1,3 +1,24 @@
+## 2026-10-08 - open_session resolves paths the OmO desktop moved; host capability moved_path_guard (senpi#2898)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/session-registry.ts`: `openSession` maps `cwd` and `sessionPath` through `resolveMovedPath` (builtin `moved-path-guard`) after validation and before the durable-id scan, the path reservation and the cross-generation claim, so an old spelling of a moved session file is the same reservation as its new one and the session runs in the moved working directory.
+- `packages/coding-agent/src/modes/rpc/session-worker.ts`: the worker's `prepare` resolves `sessionPath` the same way before canonicalizing it, so the key the host reserves is the moved file's. The host loop still never inspects caller paths; the in-worker registry resolves `cwd`.
+- `packages/coding-agent/src/modes/rpc/custom-capability.ts`: new host capability `MOVED_PATH_GUARD_CAPABILITY = "moved_path_guard"`.
+- `packages/coding-agent/src/modes/rpc/session-command-router.ts`: `get_protocol_info` advertises `moved_path_guard`.
+
+### Why
+
+The OmO desktop moves its data home (omo-desktop-app#1829) and leaves `omo-desktop-moved.json` at the old root. A thread or CLI resume that still names the old session file or worktree must open the new ones without the session file being rewritten, and an old-path open must never start a second writer on a file already open under its new path. The desktop resumes a moved thread only on a host that advertises the capability.
+
+### Why an extension could not handle it
+
+Session reservation, the holder claim and the worker's reservation key are host-registry behavior that runs before any extension of the session exists.
+
+### Expected merge conflict zones
+
+- LOW: the head of `RpcSessionRegistry.openSession`; the `prepare` case of `session-worker.ts`; the capability set in `SessionCommandRouter.dispatch`.
+
 ## 2026-10-07 - A resent attach repairs a session whose live preset drifted (senpi#2842)
 
 ### What changed

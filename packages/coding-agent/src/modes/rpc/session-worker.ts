@@ -4,6 +4,7 @@ import { parentPort, workerData } from "node:worker_threads";
 import { runWithProviderScope } from "@earendil-works/pi-ai/node/provider-scope";
 import { isBunBinary } from "../../config.ts";
 import { WAKE_SOURCE_STATE_EVENT } from "../../core/extensions/builtin/monitor-state-event.ts";
+import { resolveMovedPath } from "../../core/extensions/builtin/moved-path-guard/resolve.ts";
 import { takeOverStdout } from "../../core/output-guard.ts";
 import { getDefaultSessionDir } from "../../core/session-manager.ts";
 import { liveSessionWritePaths } from "../../core/session-write-reservation.ts";
@@ -130,8 +131,9 @@ async function handle(message: HostToSessionWorker): Promise<void> {
 	switch (message.type) {
 		case "prepare": {
 			if (prepared) throw new Error("Session worker already prepared");
+			// Resolved here, not on the host loop, which never inspects caller paths (senpi#2898).
 			const path =
-				message.profile.sessionPath ??
+				(message.profile.sessionPath && resolveMovedPath(message.profile.sessionPath)) ??
 				join(
 					getDefaultSessionDir(message.profile.cwd, message.configuration.agentDir),
 					`${new Date().toISOString().replace(/[:.]/g, "-")}_${randomUUID()}.jsonl`,

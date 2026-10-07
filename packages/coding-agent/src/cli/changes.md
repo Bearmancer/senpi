@@ -1,3 +1,22 @@
+## 2026-10-08 - Schedule delivery follows paths the OmO desktop moved (senpi#2898)
+
+### What changed
+
+- `packages/coding-agent/src/cli/schedule-delivery.ts`: new `withMovedPaths(job)` maps a job's `sessionFile` and `cwd` through `resolveMovedPath`.
+- `packages/coding-agent/src/cli/schedule-runner.ts`: the defer probe and the delivered `scheduled_prompt` event see the job through `withMovedPaths`. The job file itself, its re-arm and its settlement keep the stored paths.
+
+### Why
+
+A job created in a desktop thread before the desktop moved its data home (omo-desktop-app#1829) stores the old session file and working directory; it must fire against the moved ones instead of failing with "session file no longer exists", and the "session is open elsewhere" probe must look at the moved file's holders.
+
+### Why an extension could not handle it
+
+`senpi schedule run` delivers out of process, with no session or extension loaded.
+
+### Expected merge conflict zones
+
+- Fork-only files. `fireOne` (the defer probe call) and the event built in `deliverClaimed`; the helper block above `deferWhileSessionOpen`.
+
 ## 2026-10-02 - `host handoff --when idle` flags (desktop #1364)
 
 ### What changed

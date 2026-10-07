@@ -146,6 +146,8 @@ export interface HarnessOptions {
 	siblingFreshRuntime?: boolean;
 	/** Session to continue, for example to test a resume. Default: a new in-memory session. */
 	sessionManager?: SessionManager;
+	/** Working directory tools and extensions see as `ctx.cwd`. Default: the harness temp dir. */
+	cwd?: string;
 }
 
 export interface Harness {
@@ -299,7 +301,7 @@ export async function createHarness(options: HarnessOptions = {}): Promise<Harne
 		agent,
 		sessionManager,
 		settingsManager,
-		cwd: tempDir,
+		cwd: options.cwd ?? tempDir,
 		agentDir,
 		modelRuntime: getModelRuntime(modelRegistry),
 		resourceLoader,

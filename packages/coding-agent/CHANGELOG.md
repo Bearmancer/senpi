@@ -6,6 +6,8 @@
 
 ### Added
 
+- Paths the OmO desktop moved with its data home are guarded and resolved. A builtin `moved-path-guard` reads the `omo-desktop-moved.json` breadcrumb the desktop leaves at the old root: `write`, `edit`, `apply_patch`, `generate_image`, and `bash`, `bash_input`, `monitor` and `powershell` commands (and their working directory) that name a moved worktree or session folder are refused with the new location, nested codemode calls included, and a `read`, `ls` or `find` of a moved path that is gone answers with its new location instead of ENOENT. `open_session` (both registries), scheduled-prompt delivery and session-holder claims follow the breadcrumb, so a session or schedule job created before the move opens the new files without either file being rewritten. A later T3 Code worktree that reuses a moved path (it has its own `.git`) and anything the breadcrumb does not list are left alone. RPC hosts advertise `moved_path_guard` in `get_protocol_info` ([#2898](https://github.com/code-yeongyu/senpi/issues/2898)).
+
 - Every model switch records what made it: `model_change` entries, the `model_changed` event and one `session.log` line per switch carry a `source` (`command`, `picker`, `cycle`, `control`, `rpc`, `app-server`, `extension`, `provider-login`, `fallback`, `fallback-revert`, `held-switch`, `restore`, `sdk`) and, where known, an `actor`; a switch that lands while a turn is streaming is marked `duringTurn` and shown as a transcript row naming both models, and the `thinking_level_change` a switch writes names the same source ([#2870](https://github.com/code-yeongyu/senpi/issues/2870)).
 
 ### Changed

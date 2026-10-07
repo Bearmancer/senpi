@@ -11,6 +11,7 @@ import {
 } from "node:fs";
 import { readdir } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { resolveMovedPath } from "./extensions/builtin/moved-path-guard/resolve.ts";
 import {
 	breakStaleLock,
 	errorCode,
@@ -47,8 +48,9 @@ export interface SessionHold {
 	release(): void;
 }
 
+// A claim on an old spelling of a session file the desktop moved is a claim on the moved file (senpi#2898).
 function holdersDir(sessionFile: string, sessionId: string): string {
-	return join(dirname(sessionFile), HOLDERS_DIR, encodedSessionId(sessionId));
+	return join(dirname(resolveMovedPath(sessionFile)), HOLDERS_DIR, encodedSessionId(sessionId));
 }
 
 function identityRecord(cwd?: string): string {
@@ -166,7 +168,7 @@ export function holdSessionFile(
 		release();
 		throw new SessionMovingError(sessionFile, mover.pid);
 	}
-	if (options.expectExisting && !existsSync(sessionFile)) {
+	if (options.expectExisting && !existsSync(resolveMovedPath(sessionFile))) {
 		release();
 		throw new SessionMovedError(sessionFile);
 	}

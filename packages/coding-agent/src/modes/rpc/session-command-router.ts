@@ -12,6 +12,7 @@ import {
 	CONTINUE_FROM_LEAF_CAPABILITY,
 	DURABLE_SESSION_ID_CAPABILITY,
 	MEDIA_PLACEHOLDERS_CAPABILITY,
+	MOVED_PATH_GUARD_CAPABILITY,
 	PROMPT_SURFACE_CAPABILITY,
 	PROMPT_SURFACE_CHAT_CAPABILITY,
 	RETAIN_ON_DISCONNECT_CAPABILITY,
@@ -331,6 +332,8 @@ export class SessionCommandRouter {
 				// Only a multi-session host can refuse a duplicate durable id, because only it
 				// sees every live session's identity.
 				DURABLE_SESSION_ID_CAPABILITY,
+				// Every session's open, schedule delivery and holder claim resolve paths the desktop moved.
+				MOVED_PATH_GUARD_CAPABILITY,
 				// Every session's prompt is built from its own launch profile, so one host serves both surfaces.
 				PROMPT_SURFACE_CAPABILITY,
 				PROMPT_SURFACE_CHAT_CAPABILITY,

@@ -5,6 +5,7 @@
 
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
+import { resolveMovedPath } from "../core/extensions/builtin/moved-path-guard/resolve.ts";
 import type { ScheduledJob } from "../core/extensions/builtin/schedule/types.ts";
 import { liveSessionHolders } from "../core/session-holders.ts";
 import { killWindowsProcessTree } from "../utils/shell.ts";
@@ -35,6 +36,15 @@ export interface DeliveryContext {
 export type Delivery = (event: ScheduledPromptEvent, context?: DeliveryContext) => Promise<DeliveryResult>;
 /** Returns a reason to leave a due job pending for now (for example: its session is open elsewhere). */
 export type DeferProbe = (job: ScheduledJob) => Promise<string | undefined>;
+
+// A job written before the desktop moved its data home fires against the moved files; its own file keeps the old paths (senpi#2898).
+export function withMovedPaths(job: ScheduledJob): ScheduledJob {
+	return {
+		...job,
+		sessionFile: job.sessionFile === null ? null : resolveMovedPath(job.sessionFile),
+		cwd: resolveMovedPath(job.cwd),
+	};
+}
 
 /** Default-delivery guard: do not start a second writer on a session another process has open. */
 export async function deferWhileSessionOpen(job: ScheduledJob): Promise<string | undefined> {

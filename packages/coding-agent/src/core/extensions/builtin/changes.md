@@ -1,3 +1,22 @@
+## 2026-10-08 - moved-path-guard: guard and resolve paths the OmO desktop moved (senpi#2898)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/moved-path-guard/` (new): `breadcrumb.ts` vendors the `omo-desktop-moved.json` contract (writer: omo-desktop-app `packages/shared/src/appHomePrepare.ts`; a higher `schemaVersion` is ignored and logged); `path-match.ts` matches prefixes on a segment boundary, case-folded on darwin and win32, `/`/`\` equal and `\\?\` stripped on win32; `resolve.ts` exports `findMovedPath`/`resolveMovedPath` (realpath of the deepest existing ancestor, ancestor walk to `$HOME`'s parent or the root, up to three moves, a listed `worktrees/...` prefix that holds its own `.git` is not moved); `tool-classes.ts` classifies every builtin tool; `command-paths.ts` extracts path tokens from shell text; `index.ts` registers a filesystem policy (deny writes into a moved prefix; deny a read/enumerate of a moved path that is gone, with the new location) and a blocking `tool_call` handler for `apply_patch`, the shell tools and path-field tools.
+- `packages/coding-agent/src/core/extensions/builtin/index.ts`: registers `moved-path-guard` right after `loop-guard`, ahead of hooks and the permission system.
+
+### Why
+
+After the OmO desktop moves its data home (omo-desktop-app#1829), session history still names absolute paths under the old root; `write` creates parents and `bash` can `mkdir -p`, so an agent reusing one silently re-creates the old worktree and writes outside the real one.
+
+### Why an extension could not handle it
+
+It is an extension; it is builtin so the guard runs in every session, CLI and desktop alike, without configuration.
+
+### Expected merge conflict zones
+
+- Fork-only directory. The `builtinExtensions` order in `index.ts`.
+
 ## 2026-10-06 — html-render writes its offline policy first in every page (#2846)
 
 **What:** `html-render/bootstrap.ts` starts every written page with a UTF-8 byte order mark, `<!doctype html>` and the policy meta, and drops a page's own leading doctype only when it is printable ASCII. Tests: comment forms `<!-->`, `<!--->`, `--!>` and plain comments ahead of a doctype, and an ISO-2022-JP escape inside a doctype.

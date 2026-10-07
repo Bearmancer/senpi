@@ -61,6 +61,7 @@ describe("multi-session RPC routing", () => {
 					"session_kind",
 					"auto_title_per_session",
 					"durable_session_id",
+					"moved_path_guard",
 					"prompt_surface",
 					"prompt_surface_chat",
 					"browser_engine",
