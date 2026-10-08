@@ -136,20 +136,11 @@ function fitOneLine(icon: string, headline: string, rest: string, width: number,
 		const candidate = `${cellPrefixText(headline, floor - 1)}…`;
 		if (visibleWidth(`${lead}${candidate}${middle}${keptRest}${tail}`) <= width) cutHeadline = candidate;
 	}
-	// 3) Then drop the remaining rest segments, elapsed still appended.
-	let finalRest = keptRest;
-	while (finalRest.includes(middle)) {
-		const cut = finalRest.lastIndexOf(middle);
-		const candidate = finalRest.slice(0, cut);
-		if (visibleWidth(`${lead}${cutHeadline}${middle}${candidate}${tail}`) <= width) {
-			finalRest = candidate;
-			continue;
-		}
-		break;
-	}
+	// Step 1 already left only the base label in keptRest, so nothing else can drop before elapsed.
+	const finalRest = keptRest;
 	if (visibleWidth(`${lead}${cutHeadline}${middle}${finalRest}${tail}`) <= width)
 		return `${lead}${cutHeadline}${middle}${finalRest}${tail}`;
-	// 4) Drop elapsed, then cut the headline to whatever the base label leaves (review MEDIUM-3).
+	// 3) Drop elapsed, then cut the headline to whatever the base label leaves (review MEDIUM-3).
 	if (visibleWidth(`${lead}${cutHeadline}${middle}${finalRest}`) <= width)
 		return `${lead}${cutHeadline}${middle}${finalRest}`;
 	const budget = Math.max(4, width - visibleWidth(`${lead}${middle}${finalRest}`) - 1);

@@ -69,8 +69,8 @@ export function cellStatusSection(cell: EvalCellResult, environment: RenderEnvir
 	}
 	// Budget in visual ROWS, not events (review HIGH-C). The tail keeps the NEWEST rows (review
 	// NEW-2): whole events fold from the front into the exact marker when their rows overflow,
-	// and a single event that alone overflows keeps its newest rows, its oldest visible row
-	// ending in an ANSI-safe ellipsis (review NEW-3).
+	// and a single event that alone overflows keeps its newest rows while the marker counts the
+	// rows cut from its head. Rows are kept or dropped whole, never re-styled (review r4 HIGH-1).
 	const first = statusEvents[0];
 	const omittedByBound = first?.op === "status-events-omitted" && typeof first.count === "number" ? first.count : 0;
 	const visible = omittedByBound > 0 ? statusEvents.slice(1) : statusEvents;
@@ -105,86 +105,33 @@ export function cellStatusSection(cell: EvalCellResult, environment: RenderEnvir
 	const skipped = firstShown + omittedByBound;
 	const eventRows: string[] = [];
 	for (const rows of keptEvents) appendLines(eventRows, rows);
-	// A still-overflowing tail is a single event taller than its share: keep its newest rows
-	// and mark the oldest visible row with an ellipsis (review NEW-2, NEW-3).
-	const shownBudget = bodyRows - (skipped > 0 ? 1 : 0);
-	const overflow = eventRows.length - shownBudget;
-	const keptRows = overflow > 0 ? eventRows.slice(overflow) : eventRows;
-	if (overflow > 0 && keptRows.length > 0) {
-		keptRows[0] = ellipsisRow(keptRows[0] ?? "", environment);
-	}
+	// A still-overflowing tail is a single event taller than its share: keep its newest rows and
+	// count the rows cut from its head in the marker, which then always takes one body row.
+	const needsMarker = skipped > 0 || eventRows.length > bodyRows;
+	const shownBudget = Math.max(0, bodyRows - (needsMarker ? 1 : 0));
+	const cutRows = Math.max(0, eventRows.length - shownBudget);
 	const body: string[] = [];
-	if (skipped > 0)
-		appendLines(
-			body,
-			renderPrefixed(`├ … ${skipped} earlier status events`, environment, {
-				prefix: "│ ",
-				continuation: "│ ",
-				color: "dim",
-			}),
-		);
-	appendLines(body, keptRows);
-	const keptBody = body.slice(-(rowBudget - 1));
-	const rows = [...renderPrefixed("status", environment, FRAME_SECTION_PREFIX), ...keptBody];
+	if (needsMarker) body.push(statusMarker(skipped, cutRows, environment));
+	appendLines(body, eventRows.slice(cutRows));
+	const rows = [...renderPrefixed("status", environment, FRAME_SECTION_PREFIX), ...body.slice(0, bodyRows)];
 	while (rows.length < rowBudget) rows.push(style(environment.theme, "borderMuted", "│ "));
 	return rows;
 }
 
-const SGR_PATTERN = /\u001b\[[0-9;]*m/g;
-
-// Append the clip ellipsis to the row's oldest visible row, ANSI-safely (review NEW-3): the
-// plain text is cut by display cells to leave one cell for the ellipsis, then re-styled, so
-// the row stays inside the width and no escape sequence is split.
-function ellipsisRow(row: string, environment: RenderEnvironment): string {
-	const prefix = FRAME_INNER_PREFIX.prefix;
-	const styledBody = row.startsWith(prefix) ? row.slice(prefix.length) : row;
-	const plain = styledBody.replace(SGR_PATTERN, "").replace(/\s+$/u, "");
-	// The content budget is the row width minus the prefix and the one cell the ellipsis needs.
-	const contentBudget = Math.max(1, environment.width - visibleWidth(prefix) - 1);
-	const cut = visibleWidth(plain) > contentBudget ? cellPrefixByWidth(plain, contentBudget) : plain;
-	return `${style(environment.theme, FRAME_INNER_PREFIX.color, prefix)}${restyle(styledBody, cut, environment)}…`;
-}
-
-function cellPrefixByWidth(text: string, cells: number): string {
-	let kept = "";
-	let used = 0;
-	for (const { segment } of new Intl.Segmenter(undefined, { granularity: "grapheme" }).segment(text)) {
-		const width = visibleWidth(segment);
-		if (used + width > cells) break;
-		kept += segment;
-		used += width;
-	}
-	return kept;
-}
-
-// Rebuild the styling the cut row carried: walk the styled row's SGR color runs, wrap the
-// matching slice of the cut text in the same run, and close each with one reset. A color whose
-// text was fully cut away disappears with it, and no escape sequence is ever split.
-function restyle(styledBody: string, cut: string, environment: RenderEnvironment): string {
-	const theme = environment.theme;
-	if (theme === undefined) return cut;
-	const runs: { readonly ansi: string; readonly text: string }[] = [];
-	let activeAnsi: string | undefined;
-	let cursor = 0;
-	for (const match of styledBody.matchAll(SGR_PATTERN)) {
-		const index = match.index;
-		if (activeAnsi !== undefined && index > cursor)
-			runs.push({ ansi: activeAnsi, text: styledBody.slice(cursor, index) });
-		const sequence = match[0];
-		activeAnsi = sequence === "\u001b[39m" || sequence === "\u001b[22;39m" ? undefined : sequence;
-		cursor = index + sequence.length;
-	}
-	if (activeAnsi !== undefined && styledBody.length > cursor)
-		runs.push({ ansi: activeAnsi, text: styledBody.slice(cursor) });
-	if (runs.length === 0) return cut;
-	const out: string[] = [];
-	let used = 0;
-	for (const run of runs) {
-		if (used >= cut.length) break;
-		const slice = cut.slice(used, used + run.text.length);
-		if (slice.length > 0) out.push(`${run.ansi}${slice}\u001b[39m`);
-		used += run.text.length;
-	}
-	if (used < cut.length) out.push(cut.slice(used));
-	return out.join("");
+// The fold marker is always exactly one row: the longest wording that fits the width wins, so
+// both counts survive narrow terminals (review r4 HIGH-1, MEDIUM-1).
+function statusMarker(skippedEvents: number, cutRows: number, environment: RenderEnvironment): string {
+	const candidates =
+		cutRows === 0
+			? [`├ … ${skippedEvents} earlier status events`, `├ … ${skippedEvents} earlier`]
+			: skippedEvents === 0
+				? [`├ … ${cutRows} earlier rows of this event`, `├ … ${cutRows} earlier rows`]
+				: [
+						`├ … ${skippedEvents} earlier status events, ${cutRows} rows`,
+						`├ … ${skippedEvents} events, ${cutRows} rows`,
+					];
+	const innerWidth = Math.max(1, environment.width - visibleWidth(FRAME_INNER_PREFIX.prefix));
+	const text = candidates.find((candidate) => visibleWidth(candidate) <= innerWidth) ?? candidates.at(-1) ?? "";
+	const [row] = renderPrefixed(text, environment, { prefix: "│ ", continuation: "│ ", color: "dim" });
+	return row ?? "";
 }
