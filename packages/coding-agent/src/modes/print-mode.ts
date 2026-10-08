@@ -11,6 +11,7 @@ import {
 	type ImageContent,
 	stripTurnRetrySuppressionPrefix,
 } from "@earendil-works/pi-ai";
+import { REQUIRED_COMPACTION_ERROR_MESSAGE } from "../core/agent-session.ts";
 import type { AgentSessionRuntime } from "../core/agent-session-runtime.ts";
 import { flushRawStdout, waitForRawStdoutBackpressure, writeRawStdout } from "../core/output-guard.ts";
 import { usageLimitCause } from "../core/retry-fallback/usage-limit.ts";
@@ -170,6 +171,19 @@ export async function runPrintMode(runtimeHost: AgentSessionRuntime, options: Pr
 		}
 
 		await session.waitForSettledSessionWork();
+
+		if (mode === "json") {
+			// A JSON consumer reads the events, but a parent agent that only checks the exit code must not take a
+			// run that ran out of context for an empty success (senpi#2925). Other error stops keep exit 0 here.
+			const lastMessage = session.state.messages.findLast((message) => message.role === "assistant");
+			if (
+				lastMessage?.role === "assistant" &&
+				lastMessage.stopReason === "error" &&
+				lastMessage.errorMessage === REQUIRED_COMPACTION_ERROR_MESSAGE
+			) {
+				exitCode = 1;
+			}
+		}
 
 		if (mode === "text") {
 			const state = session.state;
