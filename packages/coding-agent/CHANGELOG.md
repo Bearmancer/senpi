@@ -12,6 +12,8 @@
 
 ### Fixed
 
+- A multi-session RPC host refuses open/attach and every new session-writing RPC when another live process outside its daemon family holds the file, with typed `session_held` and pid/cwd data. Both guarded host runtimes advertise the exact `session_held` protocol capability; classic bindings do not. Open rechecks after holder publication and rolls back raced admission; stale holders clear automatically. Own workers and predecessor generations preserve existing reservation retry/reclaim semantics. Already-admitted turns finish if a holder arrives mid-turn. Interactive startup and `/resume` warn, including advisory lookup failures, without aborting ([#2951](https://github.com/code-yeongyu/senpi/issues/2951)).
+
 ### Removed
 
 ## [2026.10.10-8] - 2026-10-08
@@ -39,8 +41,6 @@
 - A model picked in the terminal (Enter in `/model` or the favorites picker, a typed `/model <id>`, the favorites cycle key, or a terminal control endpoint's `set_model`) now applies to that session only, instead of silently rewriting the default model every later session starts on. To also make it the default, press Ctrl+S (`app.models.save`) in the model picker or type `/model <id> --default`; the status line then says so ([#2870](https://github.com/code-yeongyu/senpi/issues/2870)).
 
 ### Fixed
-
-- A multi-session RPC host refuses open/attach and every new session-writing RPC when another live process outside its daemon family holds the file, with typed `session_held` and pid/cwd data. Both guarded host runtimes advertise the exact `session_held` protocol capability; classic bindings do not. Open rechecks after holder publication and rolls back raced admission; stale holders clear automatically. Own workers and predecessor generations preserve existing reservation retry/reclaim semantics. Already-admitted turns finish if a holder arrives mid-turn. Interactive startup and `/resume` warn, including advisory lookup failures, without aborting ([#2951](https://github.com/code-yeongyu/senpi/issues/2951)).
 
 - `senpi --list-models`, `--version`, `--help`, `--list-tips` and `--export` no longer lose output when stdout is a pipe that is read slowly, under Node or Bun: they wait until the output is delivered (at most 30 s, and at once when the reader closes the pipe) instead of exiting 0 with rows missing. Package and `schedule` commands get the same wait under Node ([#2937](https://github.com/code-yeongyu/senpi/issues/2937)).
 - Children that senpi starts from a script (the app-server daemon, the schedule runner, the update worker and the experimental Mini launchers) no longer inherit the caller's `-e`/`-p` entry mode, so a caller that embeds senpi from `node -e` or `bun -e` is no longer run a second time ([#2599](https://github.com/code-yeongyu/senpi/issues/2599)).
