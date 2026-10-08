@@ -1,8 +1,9 @@
 import { access } from "node:fs/promises";
 import { RESOLUTION_TIMED_OUT, withResolutionDeadline } from "../../../tools/bounded-realpath.ts";
 import { canonicalizeFilesystemPath } from "../../../tools/filesystem-policy.ts";
+import type { MovedBreadcrumb } from "./breadcrumb.ts";
 import { type MovedPath, readJsonFileAsync } from "./breadcrumb-trust.ts";
-import { knownPrefixKey, prefixKey } from "./known-moves.ts";
+import { knownPrefixKeys, prefixKey } from "./known-moves.ts";
 import { currentPathPlatform, type PathPlatform } from "./path-match.ts";
 import { failedReply, movedPathWalk, type ResolverStep } from "./walk.ts";
 
@@ -55,7 +56,8 @@ export function createMovedPathProbe(platform: PathPlatform = currentPathPlatfor
 	let timedOut = false;
 	let stopped = false;
 	const reused = new Set<string>();
-	const onReused = (oldRoot: string, prefix: readonly string[]) => reused.add(prefixKey(oldRoot, prefix));
+	const onReused = (oldRoot: string, breadcrumb: MovedBreadcrumb, prefix: readonly string[]) =>
+		reused.add(prefixKey(oldRoot, breadcrumb, prefix));
 	const onTimeout = () => {
 		timedOut = true;
 	};
@@ -70,8 +72,7 @@ export function createMovedPathProbe(platform: PathPlatform = currentPathPlatfor
 			stopped = true;
 		},
 		cleared(path) {
-			const key = knownPrefixKey(path, platform);
-			return key !== undefined && reused.has(key);
+			return knownPrefixKeys(path, platform).some((key) => reused.has(key));
 		},
 		async resolve(path) {
 			const walk = movedPathWalk(path, platform, onReused);

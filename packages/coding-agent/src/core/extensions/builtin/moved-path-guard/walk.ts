@@ -1,5 +1,6 @@
 import { homedir } from "node:os";
 import { dirname, resolve } from "node:path";
+import type { MovedBreadcrumb } from "./breadcrumb.ts";
 import {
 	breadcrumbFile,
 	gitEntryOf,
@@ -30,7 +31,7 @@ export function failedReply(step: ResolverStep): unknown {
 
 type Walk<T> = Generator<ResolverStep, T, unknown>;
 
-type OnReused = (oldRoot: string, prefix: readonly string[]) => void;
+type OnReused = (oldRoot: string, breadcrumb: MovedBreadcrumb, prefix: readonly string[]) => void;
 
 function* movedOnce(path: string, platform: PathPlatform, onReused?: OnReused): Walk<MovedPath | undefined> {
 	const canonical = ((yield { op: "canonical", path }) as string | undefined) ?? resolve(path);
@@ -49,7 +50,7 @@ function* movedOnce(path: string, platform: PathPlatform, onReused?: OnReused): 
 			// refuse a prefix the walk just found live again.
 			const gitEntry = gitEntryOf(dir, match.prefix);
 			const reused = gitEntry !== undefined && (yield { op: "exists", path: gitEntry }) === true;
-			if (reused) onReused?.(dir, match.prefix);
+			if (reused) onReused?.(dir, breadcrumb, match.prefix);
 			rememberTrustedBreadcrumb(dir, breadcrumb);
 			if (!reused) return match.moved;
 		}

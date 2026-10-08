@@ -1,5 +1,5 @@
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import type { MovedBreadcrumb } from "./breadcrumb.ts";
 import type { MovedPath } from "./breadcrumb-trust.ts";
 import { currentPathPlatform, matchMovedPrefix, type PathPlatform } from "./path-match.ts";
@@ -9,15 +9,19 @@ export const legacyRoots = (): string[] => [join(homedir(), ".t3"), join(homedir
 
 const known = new Map<string, MovedBreadcrumb>();
 
-export const prefixKey = (oldRoot: string, prefix: readonly string[]): string => `${oldRoot}\0${prefix.join("/")}`;
+/**
+ * One (old root, listed prefix) of a trusted breadcrumb, keyed by what the breadcrumb says rather than by how the old
+ * root was spelled, so a symlinked or `/var` vs `/private/var` spelling of one root shares one decision.
+ */
+export const prefixKey = (oldRoot: string, breadcrumb: MovedBreadcrumb, prefix: readonly string[]): string =>
+	[basename(oldRoot).toLowerCase(), breadcrumb.homeId, breadcrumb.movedTo, prefix.join("/")].join("\0");
 
-/** The (old root, listed prefix) a path lies under, by text, among breadcrumbs trusted so far. */
-export function knownPrefixKey(path: string, platform: PathPlatform = currentPathPlatform()): string | undefined {
-	for (const [oldRoot, breadcrumb] of known) {
+/** The (old root, listed prefix) keys a path lies under, by text, among breadcrumbs trusted so far. */
+export function knownPrefixKeys(path: string, platform: PathPlatform = currentPathPlatform()): string[] {
+	return [...known].flatMap(([oldRoot, breadcrumb]) => {
 		const match = matchMovedPrefix(path, oldRoot, breadcrumb.moved, platform);
-		if (match) return prefixKey(oldRoot, match.prefix);
-	}
-	return undefined;
+		return match ? [prefixKey(oldRoot, breadcrumb, match.prefix)] : [];
+	});
 }
 
 export function rememberTrustedBreadcrumb(oldRoot: string, breadcrumb: MovedBreadcrumb): void {

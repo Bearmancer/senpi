@@ -1,4 +1,4 @@
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -101,6 +101,31 @@ describe("moved-path-guard step deadline (#2898)", () => {
 		await new Promise((resolve) => setTimeout(resolve, STEP_DEADLINE_MS + 200));
 
 		expect(slowStarts.count).toBe(startedByDeadline);
+	});
+
+	// The re-used decision holds whatever spelling names the worktree, even after a timed-out lookup made the guard
+	// remember the breadcrumb under a non-canonical spelling (a symlinked home, macOS /var vs /private/var).
+	it("allows a re-used worktree named through another spelling of the home", async () => {
+		const { layout, harness } = await setup();
+		mkdirSync(join(layout.oldWorktree, "src"), { recursive: true });
+		writeFileSync(join(layout.oldWorktree, ".git"), "gitdir: /elsewhere/.git/worktrees/w1\n");
+		const alias = `${layout.home}-alias`;
+		symlinkSync(layout.home, alias);
+		const aliasRoot = join(alias, ".t3");
+		try {
+			const slow = await runTool(harness, "bash", {
+				command: `touch ${join(aliasRoot, "userdata", "omo-sessions", "SLOW")}`,
+			});
+			const files = Array.from({ length: 70 }, (_, index) =>
+				join(aliasRoot, "worktrees", "app", "w1", `f${index}.ts`),
+			);
+			const reused = await runTool(harness, "bash", { command: `touch ${files.join(" ")}` });
+
+			expect(slow.outcome).toBe("blocked");
+			expect(reused.outcome).toBe("ok");
+		} finally {
+			rmSync(alias, { force: true });
+		}
 	});
 
 	it("still allows an unrelated path whose lookup times out", async () => {
