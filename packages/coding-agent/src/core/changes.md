@@ -1,3 +1,21 @@
+## 2026-10-08 - Foreign session-holder admission evidence (senpi#2951)
+
+### What changed
+
+- `packages/coding-agent/src/core/foreign-session-holders.ts`: asynchronously reads only the JSONL header when an id is not known, resolves moved paths and queries `liveSessionHolders` afresh. Excludes this process PID, shared by its session-worker threads; formats terminal-safe, one-line warnings.
+
+### Why
+
+Daemon path reservations do not describe interactive CLI holders. Live holder leases already provide dead-pid, boot and process-start checks.
+
+### Why an extension could not handle it
+
+Host admission happens before runtime and extension creation.
+
+### Expected merge conflict zones
+
+- Fork-only file; holder queries and header reading.
+
 ## 2026-10-08 - A required compaction inside one long turn splits that turn instead of ending it (senpi#2925)
 
 ### What changed

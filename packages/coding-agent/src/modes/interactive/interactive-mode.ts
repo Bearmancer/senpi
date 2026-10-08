@@ -277,6 +277,7 @@ import {
 } from "./provider-error-presentation.ts";
 import { replayAssistantTools } from "./replay-assistant-tools.ts";
 import { allScopeSessions, chooseResumePath, currentScopeSessions } from "./resume-rebind.ts";
+import { resumeInteractiveSession } from "./resume-session.ts";
 import { isRiskyMainModel, RISKY_MAIN_MODEL_WARNING } from "./risky-main-model-warning.ts";
 import { maybeShowRuntimeNotice } from "./runtime-notice-presenter.ts";
 import { type SubmissionTicket, TuiSessionControlHost } from "./session-control-host.ts";
@@ -8765,39 +8766,18 @@ export class InteractiveMode {
 		options?: Parameters<ExtensionCommandContext["switchSession"]>[1],
 	): Promise<{ cancelled: boolean }> {
 		this.clearStatusIndicator();
-		try {
-			const result = await this.runtimeHost.switchSession(sessionPath, {
-				withSession: options?.withSession,
-				projectTrustContextFactory: (cwd) => this.createProjectTrustContext(cwd),
-			});
-			if (result.cancelled) {
-				return result;
-			}
-			const switchTimings = formatTimings("switch");
-			this.showStatus(
-				switchTimings === undefined ? "Resumed session" : `Resumed session | switch timings: ${switchTimings}`,
-			);
-			return result;
-		} catch (error: unknown) {
-			if (error instanceof MissingSessionCwdError) {
-				const selectedCwd = await this.promptForMissingSessionCwd(error);
-				if (!selectedCwd) {
-					this.showStatus("Resume cancelled");
-					return { cancelled: true };
-				}
-				const result = await this.runtimeHost.switchSession(sessionPath, {
-					cwdOverride: selectedCwd,
-					withSession: options?.withSession,
-					projectTrustContextFactory: (cwd) => this.createProjectTrustContext(cwd),
-				});
-				if (result.cancelled) {
-					return result;
-				}
-				this.showStatus("Resumed session in current cwd");
-				return result;
-			}
-			return this.handleFatalRuntimeError("Failed to resume session", error);
-		}
+		return resumeInteractiveSession(
+			{
+				runtime: this.runtimeHost,
+				trust: (cwd) => this.createProjectTrustContext(cwd),
+				missingCwd: (error) => this.promptForMissingSessionCwd(error),
+				status: (message) => this.showStatus(message),
+				warning: (message) => this.showWarning(message),
+				fatal: (message, cause) => this.handleFatalRuntimeError(message, cause),
+			},
+			sessionPath,
+			options,
+		);
 	}
 
 	private getLoginProviderOptions(authType?: "oauth" | "api_key"): AuthSelectorProvider[] {

@@ -1,3 +1,24 @@
+## 2026-10-08 - Live foreign holders refuse host admission (senpi#2951)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/session-command-router.ts`: checks a requested path before open or attach and delegates session-binding delivery to `session-held.ts`; propagates typed error detail for prompt/steer as well as open.
+- `packages/coding-agent/src/modes/rpc/session-held.ts`: refuses foreign live holders before prompt acknowledgment or delivery, using current runtime/worker path and durable id.
+- `packages/coding-agent/src/modes/rpc/session-registry-types.ts`: adds `session_held` to `RpcSessionRegistryError`.
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: declares `RPC_ERROR_SESSION_HELD` and includes it in `RpcErrorCode`.
+
+### Why
+
+Host reservations omit CLI holders, allowing concurrent JSONL writers. Fresh lease checks clear naturally after exit and exclude this host's own worker-thread PID.
+
+### Why an extension could not handle it
+
+Open admission and host routing run outside the session's extension lifecycle.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/session-command-router.ts`: open and session dispatch. `packages/coding-agent/src/modes/rpc/session-registry-types.ts` and `packages/coding-agent/src/modes/rpc/rpc-types.ts`: typed error lists. The admission helper is fork-only.
+
 ## 2026-10-08 - open_session runs on the model it names, or fails (senpi#2906)
 
 ### What changed

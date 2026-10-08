@@ -25,6 +25,7 @@ import { runWithSessionAttribution } from "./session-attribution.ts";
 import { createRpcSessionBinding, type RpcSessionBinding } from "./session-binding.ts";
 import { readDrainVerdicts } from "./session-drain.ts";
 import type { SessionEventWriter } from "./session-event-writer.ts";
+import { assertSessionNotHeld, dispatchSessionBinding } from "./session-held.ts";
 import type { OpenRpcSession, RpcSessionLaunchProfile, RpcSessionRegistry } from "./session-registry.ts";
 import { RpcSessionRegistryError } from "./session-registry.ts";
 import { releaseSession } from "./session-release.ts";
@@ -357,17 +358,15 @@ export class SessionCommandRouter {
 			return { id: command.id, type: "response", command: "set_client_info", success: true } as RpcResponse;
 		}
 		if (!command.sessionId) return error(command.id, command.type, RPC_ERROR_MISSING_SESSION_ID);
+		const sessionId = command.sessionId;
 		try {
-			this.registry.getForCommand(command.sessionId, command.type);
-			const binding = this.bindings.get(command.sessionId);
-			if (!binding) return error(command.id, command.type, RPC_ERROR_UNKNOWN_SESSION);
-			// A prompt's preflight runs on the session's loop and can outlive the client's request deadline on a
-			// starved host; acknowledging receipt first lets the client wait it out (senpi#2871).
-			if (command.type === "prompt") this.acknowledgePrompt(command.id, command.sessionId);
-			await binding.handle(command);
+			const entry = this.registry.getForCommand(sessionId, command.type);
+			await dispatchSessionBinding(command, entry, this.bindings.get(sessionId), () =>
+				this.acknowledgePrompt(command.id, sessionId),
+			);
 			return undefined;
 		} catch (cause) {
-			return error(command.id, command.type, this.code(cause));
+			return error(command.id, command.type, this.code(cause), this.detail(cause));
 		}
 	}
 
@@ -604,6 +603,7 @@ export class SessionCommandRouter {
 			return error(command.id, "open_session", `${RPC_ERROR_INVALID_LAUNCH_PROFILE}: ${retryFallbackError}`);
 		let opened: OpenRpcSession | undefined;
 		try {
+			await assertSessionNotHeld(command.sessionPath);
 			opened = await this.registry.openSession(
 				{
 					cwd: command.cwd ?? this.defaults.cwd,

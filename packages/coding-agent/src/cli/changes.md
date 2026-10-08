@@ -1,3 +1,21 @@
+## 2026-10-08 - Selected-session startup warning (senpi#2951)
+
+### What changed
+
+- `packages/coding-agent/src/cli/session-opening.ts`: owns startup's existing name validation/persistence and warns interactive users about live foreign session holders before any name write.
+
+### Why
+
+A resumed session was opened silently even when another process already held its JSONL.
+
+### Why an extension could not handle it
+
+Session selection and startup naming precede extension loading.
+
+### Expected merge conflict zones
+
+- Fork-only file; the startup warning and name validation.
+
 ## 2026-10-08 - Schedule delivery follows paths the OmO desktop moved (senpi#2898)
 
 ### What changed

@@ -1,3 +1,22 @@
+## 2026-10-08 - In-session resume warns about foreign holders (senpi#2951)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: delegates `handleResumeSession` to `resume-session.ts`, supplying existing status, trust, missing-cwd and fatal-error callbacks.
+- `packages/coding-agent/src/modes/interactive/resume-session.ts`: preserves the existing switch and missing-cwd retry, warning with holder pid/cwd before resuming a file held by another live process.
+
+### Why
+
+An in-session `/resume` previously opened a held JSONL silently.
+
+### Why an extension could not handle it
+
+The resume selector and runtime switch are owned by interactive mode.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: imports and `handleResumeSession`. The extracted resume helper is fork-only.
+
 ## 2026-10-07 - A terminal model pick no longer rewrites the default model (senpi#2870)
 
 ### What changed

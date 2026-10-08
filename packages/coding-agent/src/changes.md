@@ -1,3 +1,21 @@
+## 2026-10-08 - Interactive startup warns about live session holders (senpi#2951)
+
+### What changed
+
+- `packages/coding-agent/src/main.ts`: delegates post-selection warning and session naming to `cli/session-opening.ts` before runtime creation or a naming write. Interactive opens print a one-line warning naming each foreign holder's pid and optional cwd.
+
+### Why
+
+Opening the same JSONL in a CLI and a host silently admitted two writers.
+
+### Why an extension could not handle it
+
+Startup selection and naming happen before extensions load.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/main.ts`: imports and the block after missing-cwd recovery.
+
 ## 2026-10-08 - JSON print mode exits non-zero when the run ran out of context (senpi#2925)
 
 ### What changed

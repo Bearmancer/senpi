@@ -26,6 +26,8 @@
 
 ### Fixed
 
+- A multi-session RPC host refuses to open, attach, prompt or steer a session held by another live process with `session_held` and the holder pid/cwd. Stale holders and the host's own session workers do not block it, and retry works after the other process exits without restarting the host. Interactive CLI startup and `/resume` warn when another process holds the session ([#2951](https://github.com/code-yeongyu/senpi/issues/2951)).
+
 - An Anthropic Subscription account blocked by an authentication error now recovers on its own when its saved refresh token is still accepted: the next request redeems that token once and clears the block, instead of every request failing with "blocked until re-login". A rejected token stays blocked and is not retried until a new login ([#2926](https://github.com/code-yeongyu/senpi/issues/2926)).
 
 - MCP sign-in no longer risks sending a saved refresh token to a different authorization server: the bundled MCP SDK moves to 1.32.1 (GHSA-6qxp-vccf-f47h), and senpi now records which authorization server issued each saved sign-in and refreshes only there. If an MCP server's authorization server changes, senpi asks you to sign in again instead of refreshing. MCP servers signed in with very old senpi versions may ask you to sign in again once their access token expires ([#2940](https://github.com/code-yeongyu/senpi/issues/2940)).
