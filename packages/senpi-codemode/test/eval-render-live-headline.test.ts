@@ -95,10 +95,10 @@ describe("live eval rows lead with the cell's summary (senpi#2802)", () => {
 		expect(renderCall({ code: "const sh = 1;" }, undefined)).toBeDefined();
 	});
 
-	it("Given a complete call before its result arrives when it renders then it leads with the summary above the code window (senpi#2933)", () => {
+	it("Given a complete call before its result arrives when it renders then the header says streaming (senpi#2933)", () => {
 		const lines = renderCall({ language: "js", code, summary });
 		expect(lines).toHaveLength(8);
-		expect(lines[0]).toMatch(/^╭─ . Listing the repo with a shell helper · eval js running/u);
+		expect(lines[0]).toMatch(/^╭─ . Listing the repo with a shell helper · eval js streaming/u);
 		expect(lines.at(-1)).toBe("╰─");
 	});
 });

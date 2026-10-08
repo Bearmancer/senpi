@@ -95,18 +95,20 @@ export function renderEvalCall(
 				};
 				const summary = displaySummary(args.summary);
 				if (language === undefined) return streamingCallLines(summary, code, environment);
+				const streaming = context.spinnerFrame !== undefined;
 				const cell: EvalCellResult = {
 					index: 0,
 					...(summary === undefined ? {} : { summary }),
 					code,
 					language,
 					output: "",
-					status: context.spinnerFrame === undefined ? "pending" : "running",
+					status: streaming ? "running" : "pending",
 				};
 				return renderCell(cell, environment, {
 					reset: args.reset === true,
 					timeout: args.timeout,
 					throughput: undefined,
+					streaming,
 				});
 			},
 		},

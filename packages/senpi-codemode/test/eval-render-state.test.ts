@@ -318,7 +318,7 @@ describe("eval renderer state", () => {
 			.join("\n");
 
 		// Then
-		expect.soft(callText).toContain("eval py running");
+		expect.soft(callText).toContain("eval py streaming");
 		expect.soft(callText).toContain("resettable");
 		expect.soft(callText).toContain("reset");
 		expect.soft(callText).toContain("timeout 3s");

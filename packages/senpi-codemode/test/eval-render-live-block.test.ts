@@ -215,6 +215,30 @@ describe("eval live block: one-line terminal rows (senpi#2933)", () => {
 	});
 });
 
+describe("eval live block: streaming header names the state (senpi#2933)", () => {
+	it("Given a call still streaming when rendered then the header says streaming with the spinner and no elapsed", () => {
+		const lines = renderCallStreaming(
+			{ language: "js", code: "const a = 1;\nconst b = 2;", summary: "stream two lines" },
+			{ width: 80, spinnerFrame: 2, now: STARTED_AT + 5_000 },
+		);
+		expect(lines[0]).toContain("streaming");
+		expect(lines[0]).toContain("⠹");
+		expect(lines[0]).not.toContain("running");
+		expect(lines[0]).not.toMatch(/· \d+s/u);
+	});
+
+	it("Given a running cell when rendered then the header says running with elapsed", () => {
+		const lines = renderResult(cellResult({ status: "running", code: "work();", startedAt: STARTED_AT }), {
+			width: 80,
+			now: STARTED_AT + 3_000,
+			spinnerFrame: 2,
+		});
+		expect(lines[0]).toContain("running");
+		expect(lines[0]).toContain("3s");
+		expect(lines[0]).not.toContain("streaming");
+	});
+});
+
 describe("eval live block: partial-arg totality (senpi#2933)", () => {
 	it("Given empty args when rendered then it never throws and never falls back to key=value", () => {
 		expect(() => renderCallStreaming({}, { width: 80, spinnerFrame: 0 })).not.toThrow();

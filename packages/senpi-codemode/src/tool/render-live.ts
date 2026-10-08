@@ -24,6 +24,8 @@ export type CellBadges = {
 	readonly reset: boolean;
 	readonly timeout: number | undefined;
 	readonly throughput: CellThroughput | undefined;
+	/** The call lane still streaming its arguments: the header names the state instead of "running". */
+	readonly streaming?: boolean;
 };
 
 export const LIVE_LINE_PREFIX: PrefixStyle = { prefix: "╶─ ", continuation: "   ", color: "borderAccent" };
@@ -86,10 +88,12 @@ export function headlined(
 }
 
 export function cellHeader(cell: EvalCellResult, environment: RenderEnvironment, badges: CellBadges): string {
-	const presentation = cellPresentation(
-		cell.status,
-		environment.spinnerFrame ?? Math.floor((cellElapsedMs(cell, environment) ?? 0) / LIVE_RENDER_TICK_MS),
-	);
+	const spinnerFrame =
+		environment.spinnerFrame ?? Math.floor((cellElapsedMs(cell, environment) ?? 0) / LIVE_RENDER_TICK_MS);
+	const presentation =
+		badges.streaming === true
+			? { label: "streaming", icon: spinner(spinnerFrame), color: "warning" as const }
+			: cellPresentation(cell.status, spinnerFrame);
 	const runtimeBadge = cell.runtime === undefined ? "" : ` (${formatRuntimeBadge(cell.language, cell.runtime)})`;
 	let header = leadsWithHeadline(cell.status)
 		? `eval ${cell.language}${runtimeBadge} ${presentation.label}`

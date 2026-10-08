@@ -76,7 +76,7 @@ describe("eval ToolExecutionComponent lifecycle", () => {
 		);
 		component.setArgsComplete();
 
-		// When it is pending (no result yet), the call lane owns the single frame
+		// When it is pending (no result yet, no animation yet), the call lane owns the single frame
 		const pending = component.render(80);
 		expect.soft(countBoxes(pending)).toBe(1);
 		expect.soft(stripAnsi(pending.join("\n"))).toContain("pending");
