@@ -92,7 +92,7 @@ describe("planCiEvidence (senpi#2943)", () => {
 	});
 });
 
-function world({ heads = ["c1"], runs = {}, timeline = [] } = {}) {
+function world({ heads = ["c1"], runs = {}, timeline = [], mainTip, mainAncestors } = {}) {
 	let now = 0;
 	let head = heads[0];
 	const calls = { merges: [], sleeps: 0 };
@@ -109,9 +109,10 @@ function world({ heads = ["c1"], runs = {}, timeline = [] } = {}) {
 			},
 			now: () => now,
 			headSha: () => head,
-			newerMainContaining: (sha) => {
-				const index = heads.indexOf(sha);
-				return index >= 0 && index < heads.length - 1 ? heads[heads.length - 1] : undefined;
+			remoteMain: () => {
+				const tip = mainTip ?? heads[heads.length - 1];
+				const ancestors = mainAncestors ?? heads;
+				return { tip, contains: (sha) => ancestors.includes(sha) };
 			},
 			fastForwardTo: (sha) => {
 				calls.merges.push(sha);
@@ -146,13 +147,55 @@ describe("awaitCiEvidence (senpi#2943)", () => {
 		assert.throws(() => awaitCiEvidence({ timeoutMs: 600_000, pollMs: 30_000 }, deps), /CI failed on c1/);
 	});
 
-	it("follows main forward when a newer push superseded the run, and uses the newer sha's CI", () => {
+	it("follows main forward when a newer push superseded the run, and the release continues on the commit it tested", () => {
+		// The catalog commit c1 was pushed; another push (c2, on top of c1) cancelled c1's CI.
 		const { deps, calls } = world({
 			heads: ["c1", "c2"],
 			runs: { c1: [checkRun("c1", "completed", "cancelled")], c2: [checkRun("c2", "completed", "success")] },
 		});
 		assert.equal(awaitCiEvidence({ timeoutMs: 600_000, pollMs: 30_000 }, deps), "c2");
 		assert.deepEqual(calls.merges, ["c2"]);
+		// The release tags on top of HEAD, which is now exactly the commit whose CI is green.
+		assert.equal(deps.headSha(), "c2");
+	});
+
+	it("never follows a moved main that does not contain the catalog commit", () => {
+		// main moved to x9, a history that lacks c1 (rewritten or reset), and c1's CI was cancelled.
+		const { deps, calls } = world({
+			heads: ["c1"],
+			mainTip: "x9",
+			mainAncestors: ["x9"],
+			runs: { c1: [checkRun("c1", "completed", "cancelled")], x9: [checkRun("x9", "completed", "success")] },
+		});
+		assert.throws(
+			() => awaitCiEvidence({ timeoutMs: 600_000, pollMs: 30_000 }, deps),
+			/main moved to x9, which does not contain c1/,
+		);
+		assert.deepEqual(calls.merges, []);
+	});
+
+	it("follows a moved main only through commits whose own CI is green", () => {
+		// c2 superseded c1, then c3 superseded c2; c3 is red, so the release stops rather than tagging c3 or c1.
+		const { deps, calls } = world({
+			heads: ["c1", "c2", "c3"],
+			runs: {
+				c1: [checkRun("c1", "completed", "cancelled")],
+				c3: [checkRun("c3", "completed", "failure")],
+			},
+		});
+		assert.throws(() => awaitCiEvidence({ timeoutMs: 600_000, pollMs: 30_000 }, deps), /CI failed on c3/);
+		assert.deepEqual(calls.merges, ["c3"]);
+	});
+
+	it("keeps waiting on a cancelled run while main has not moved, so a CI rerun can still prove the commit", () => {
+		const { deps, calls } = world({
+			timeline: [
+				{ sha: "c1", at: 0, until: 60_000, runs: [checkRun("c1", "completed", "cancelled")] },
+				{ sha: "c1", at: 60_000, runs: [{ ...checkRun("c1", "completed", "success"), id: 2 }] },
+			],
+		});
+		assert.equal(awaitCiEvidence({ timeoutMs: 600_000, pollMs: 30_000 }, deps), "c1");
+		assert.deepEqual(calls.merges, []);
 	});
 
 	it("fails with a clear message instead of running the suite serially when no evidence arrives in time", () => {

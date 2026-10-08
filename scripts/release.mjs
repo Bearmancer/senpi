@@ -285,16 +285,20 @@ function sleepSync(ms) {
 	Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
 
-function newerMainContaining(sha) {
+function remoteMain() {
 	runCommand("git", ["fetch", "origin", "main"]);
 	const tip = captureCommand("git", ["rev-parse", "origin/main"]).trim();
-	if (tip === sha) return undefined;
-	try {
-		runCommand("git", ["merge-base", "--is-ancestor", sha, tip]);
-		return tip;
-	} catch {
-		return undefined;
-	}
+	return {
+		tip,
+		contains: (sha) => {
+			try {
+				runCommand("git", ["merge-base", "--is-ancestor", sha, tip]);
+				return true;
+			} catch {
+				return false;
+			}
+		},
+	};
 }
 
 /**
@@ -331,7 +335,7 @@ function secureCiEvidence(version, dryRun, forceTests) {
 			sleep: sleepSync,
 			now: Date.now,
 			headSha: () => captureCommand("git", ["rev-parse", "HEAD"]).trim(),
-			newerMainContaining,
+			remoteMain,
 			fastForwardTo: (sha) => runCommand("git", ["merge", "--ff-only", sha]),
 			log,
 		},

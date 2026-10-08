@@ -85,7 +85,7 @@ export function planCiEvidence({ sha, checkRuns }) {
  *   sleep: (ms: number) => void,
  *   now: () => number,
  *   headSha: () => string,
- *   newerMainContaining: (sha: string) => string|undefined,
+ *   remoteMain: () => {tip: string, contains: (sha: string) => boolean},
  *   fastForwardTo: (sha: string) => void,
  *   log: (message: string) => void,
  * }} deps
@@ -100,11 +100,18 @@ export function awaitCiEvidence({ timeoutMs, pollMs }, deps) {
 		if (plan.action === "reuse") return sha;
 		if (plan.action === "stop") throw new Error(`CI failed on ${sha.slice(0, 12)}: ${plan.reason}; fix main before releasing`);
 		if (plan.action === "superseded") {
-			const newer = deps.newerMainContaining(sha);
-			if (newer) {
-				deps.log(`test gate: main moved to ${newer.slice(0, 12)}; releasing that commit once its CI is green`);
-				deps.fastForwardTo(newer);
-				sha = newer;
+			// A newer main push cancels this commit's CI. The release then moves onto that newer commit, so the
+			// commit it tags is always one whose own CI is green. It never tags on top of a main that dropped it.
+			const main = deps.remoteMain();
+			if (main.tip !== sha) {
+				if (!main.contains(sha)) {
+					throw new Error(
+						`main moved to ${main.tip.slice(0, 12)}, which does not contain ${sha.slice(0, 12)}; restart the release from the new main`,
+					);
+				}
+				deps.log(`test gate: main moved to ${main.tip.slice(0, 12)}; releasing that commit once its CI is green`);
+				deps.fastForwardTo(main.tip);
+				sha = main.tip;
 				continue;
 			}
 		}
