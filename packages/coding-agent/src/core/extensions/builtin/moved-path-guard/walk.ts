@@ -22,7 +22,7 @@ export type ResolverStep =
 	| { readonly op: "canonical"; readonly path: string }
 	| { readonly op: "json"; readonly file: string }
 	| { readonly op: "exists"; readonly path: string }
-	| { readonly op: "folder"; readonly path: string }
+	| { readonly op: "folder"; readonly path: string; readonly follow: boolean }
 	| { readonly op: "home" };
 
 /**
@@ -80,7 +80,10 @@ function* movedOnce(path: string, platform: PathPlatform, onReused?: OnReused): 
 		if (
 			match &&
 			movedToInHome(dir, breadcrumb, homes, platform) &&
-			trustedFolder(dir, (yield { op: "folder", path: dir }) as Stats | undefined) &&
+			trustedFolder(
+				dir,
+				(yield { op: "folder", path: dir, follow: isLegacyRoot(dir, homes, platform) }) as Stats | undefined,
+			) &&
 			trustedBreadcrumb(dir, breadcrumb, yield { op: "json", file: homeMarkerFile(breadcrumb.movedTo) }, platform)
 		) {
 			// The re-used decision is recorded before the breadcrumb is remembered, so no text fallback in this call can

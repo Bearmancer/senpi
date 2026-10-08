@@ -1,4 +1,4 @@
-import { accessSync, existsSync, realpathSync, statSync } from "node:fs";
+import { accessSync, existsSync, lstatSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { type MovedPath, readJsonFileSync } from "./breadcrumb-trust.ts";
@@ -39,7 +39,7 @@ function answer(step: ResolverStep): unknown {
 		if (step.op === "canonical") return canonicalPath(step.path);
 		if (step.op === "json") return readJsonFileSync(step.file);
 		if (step.op === "home") return realpathSync(homedir());
-		if (step.op === "folder") return statSync(step.path);
+		if (step.op === "folder") return (step.follow ? statSync : lstatSync)(step.path);
 		return pathExistsSync(step.path);
 	} catch {
 		return failedReply(step);

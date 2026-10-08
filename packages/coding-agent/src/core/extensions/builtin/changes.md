@@ -1,3 +1,21 @@
+## 2026-10-08 - moved-path-guard: folder check follows only a legacy-root symlink (senpi#2898)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/moved-path-guard/walk.ts`, `resolve.ts`, `resolve-async.ts`, `breadcrumb-trust.ts`: the breadcrumb folder step follows a symlink (`stat`) only when the folder is, by text, a legacy data root directly under a home spelling; anywhere else it uses `lstat`, so a symlinked folder is untrusted.
+
+### Why
+
+The seventh-review delta check reproduced a race on the `stat` fix: another local user could repoint a symlink of theirs between the breadcrumb read (through a shared folder) and the folder check (now naming a folder the user owns), so a planted breadcrumb was trusted. A link inside the user's own home cannot be repointed by anyone else, so following only there keeps the LOW-B fix for a symlinked `~/.t3`.
+
+### Why an extension could not handle it
+
+It is an extension.
+
+### Expected merge conflict zones
+
+- Fork-only directory.
+
 ## 2026-10-08 - moved-path-guard: seventh review fixes (senpi#2898)
 
 ### What changed

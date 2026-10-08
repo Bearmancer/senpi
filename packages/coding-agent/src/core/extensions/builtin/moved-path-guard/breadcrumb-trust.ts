@@ -136,10 +136,11 @@ export function movedToInHome(
  * Whether the folder holding a matched breadcrumb may hold one (sixth review LOW-1): on POSIX a directory this user owns
  * that nobody else can write, so a breadcrumb linked or written into a shared folder such as `/tmp` is ignored, while
  * the owner's own breadcrumb keeps working with extra hard links (backups made with `cp -al` or `rsync --link-dest`).
- * `stats` is the folder's `stat`, following a symlink: when the path's canonicalization fails the walk meets a
- * symlinked old root (`~/.t3`) by its own spelling, and the owner and mode of the folder it names are what decide
- * (seventh review LOW-B); a symlink grants nobody write access to its target. A folder that could not be examined is
- * untrusted. Windows has no uid/mode to check.
+ * `stats` follows a symlink only at a legacy root directly under the home: when the path's canonicalization fails the
+ * walk meets a symlinked old root (`~/.t3`) by its own spelling, and the owner and mode of the folder it names decide
+ * (seventh review LOW-B); nobody else can repoint a link inside the user's own home. Anywhere else `stats` is the
+ * link's own `lstat`, so a symlink is refused: another user could repoint it between the breadcrumb read and this
+ * check. A folder that could not be examined is untrusted. Windows has no uid/mode to check.
  */
 export function trustedFolder(dir: string, stats: Stats | undefined): boolean {
 	if (stats === undefined) return false;

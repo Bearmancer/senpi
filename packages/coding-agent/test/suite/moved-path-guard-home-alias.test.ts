@@ -168,4 +168,25 @@ describe("moved-path-guard called spelling of an old root (#2898)", () => {
 
 		expect(result.outcome).toBe("ok");
 	});
+
+	// Seventh-review delta check: the folder step follows a symlink only at a legacy root under the home. Anywhere else
+	// another user could repoint the link between the breadcrumb read and the folder check, so a breadcrumb read through
+	// a shared folder would be judged by the owner and mode of a folder the user owns.
+	it("does not follow a symlink that is not a legacy root to judge the breadcrumb's folder", async () => {
+		if (!guard) throw new Error("moved-path-guard is not registered");
+		const layout = createMovedLayout();
+		layouts.push(layout);
+		symlinkSync(layout.oldRoot, join(layout.home, "elsewhere"));
+		const harness = await createHarness({
+			cwd: layout.home,
+			extensionFactories: [guard.factory],
+			initialActiveToolNames: ["bash"],
+		});
+		harnesses.push(harness);
+		await harness.session.bindExtensions({});
+
+		const result = await runTool(harness, "bash", { command: `touch ~/elsewhere/${MOVED_WORKTREE}/SLOW` });
+
+		expect(result.outcome).toBe("ok");
+	});
 });
