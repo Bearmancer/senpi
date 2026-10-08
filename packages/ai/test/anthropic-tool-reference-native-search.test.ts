@@ -120,6 +120,56 @@ describe("Anthropic native tool-search reference integrity", () => {
 		expect(messages.at(-1)).toEqual(marker);
 	});
 
+	it("drops the search call but keeps the text of an earlier [text, server_tool_use] message whose split result stopped resolving", async () => {
+		const useId = "srvtoolu_split_text";
+		const assistantBase = { ...nativeSearchTurn([], useId) };
+		const callMessage = {
+			...assistantBase,
+			content: [{ type: "text" as const, text: "Let me look for a tool." }, assistantBase.content[0]!],
+			stopReason: "toolUse" as const,
+		};
+		const resultMessage = {
+			...assistantBase,
+			content: [
+				{
+					type: "providerNative" as const,
+					subtype: "tool_search_tool_result",
+					raw: {
+						type: "tool_search_tool_result",
+						tool_use_id: useId,
+						content: {
+							type: "tool_search_tool_search_result",
+							tool_references: [{ type: "tool_reference", tool_name: "mcp__925c__gone" }],
+						},
+					},
+				},
+				{ type: "text" as const, text: "Nothing usable." },
+			],
+		};
+		const context: Context = {
+			messages: [userMessage("find a tool"), callMessage, resultMessage, userMessage("done")],
+			tools: [makeTool("tool_search"), makeTool("memory")],
+		};
+
+		const params = await captureParams(context, undefined, "claude-sonnet-4-6");
+		const messages = messagesOf(params);
+
+		// No unpaired call survives, and the call's message keeps its text.
+		expect(allBlocks(params).some((block) => block.type === "server_tool_use")).toBe(false);
+		expect(nativeSearchResultBlocks(params)).toHaveLength(0);
+		expect(JSON.stringify(params)).toContain("Let me look for a tool.");
+		expect(JSON.stringify(params)).toContain("Tool reference unavailable: mcp__925c__gone");
+		// A valid Messages request: every message has content, it alternates into a user turn last, and the
+		// two assistant messages that may now sit side by side carry only text (Anthropic combines them).
+		expect(messages.every((message) => (Array.isArray(message.content) ? message.content.length > 0 : true))).toBe(
+			true,
+		);
+		expect(messages.at(-1)?.role).toBe("user");
+		for (const message of messages.filter((entry) => entry.role === "assistant")) {
+			expect(blocksOf(message).every((block) => block.type === "text")).toBe(true);
+		}
+	});
+
 	it("folds a recased gateway-namespaced native search reference onto the request's tool name", async () => {
 		// Live 2026-09-08 (session 01a08016): the search result came back as
 		// mcp__a4e6__Memory / mcp__a4e6__LspSymbols / mcp__a4e6__XSearch for the
