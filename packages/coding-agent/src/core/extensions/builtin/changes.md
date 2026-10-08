@@ -1,3 +1,25 @@
+## 2026-10-08 - moved-path-guard: re-review fixes (senpi#2898)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/moved-path-guard/walk.ts` (new): the one decision both resolvers drive; every filesystem step is yielded, and a failed or timed-out step answers "not moved". The listed-prefix match runs before the marker at `movedTo` is read. `resolve.ts` and `resolve-async.ts` only answer the steps.
+- `breadcrumb-trust.ts`: a breadcrumb or marker counts only as a regular file (lstat, never followed) of at most 64 KiB, owned by the current uid and not group/world-writable on POSIX. `home-marker.ts`: a newer marker schema is untrusted and logged at warn level.
+- `guard-log.ts` (new): asynchronous, ordered JSON-line log at `<agentDir>/logs/moved-path-guard.log`; no synchronous write on the tool-call path.
+- `known-moves.ts` (new), `index.ts`: legacy-root and known-prefix targets are probed first; at most 64 paths get filesystem work within 2 s (500 ms per step); paths past either bound are refused by text against breadcrumbs trusted earlier in this process, and reaching a bound is logged.
+- `command-paths.ts`: clustered short flags (`-xf/path`) and `@/path` are scanned; the mention-in-text over-block is documented.
+
+### Why
+
+Re-review of PR #2900: realpath errors escaped into tool calls and failed ordinary commands; a planted shared-folder breadcrumb was trusted; the call bounds failed open.
+
+### Why an extension could not handle it
+
+It is an extension.
+
+### Expected merge conflict zones
+
+- Fork-only directory.
+
 ## 2026-10-08 - moved-path-guard: review fixes (senpi#2898)
 
 ### What changed

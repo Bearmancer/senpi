@@ -1,3 +1,23 @@
+## 2026-10-08 - Moved-path open: one shared step and the same typed refusal from a worker (senpi#2898 re-review)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/session-registry-moved-path.ts`: `resolveMovedProfile` no longer re-validates (a resolved path is always absolute); `session-worker.ts` uses it too.
+- `packages/coding-agent/src/modes/rpc/session-worker-protocol.ts`: `typedWorkerRefusal` rebuilds a worker's `open_failed: <reason>` text as `RpcSessionRegistryError("open_failed", <reason>)`.
+- `packages/coding-agent/src/modes/rpc/worker-session-registry.ts`: `prepare` failures pass through `typedWorkerRefusal`, so the wire answer matches the in-process registry instead of `open_failed: open_failed: ...`.
+
+### Why
+
+A worker host answered a missing moved session file with a doubled code; the re-validation was unreachable code.
+
+### Why an extension could not handle it
+
+Session open is host-registry behavior that runs before any extension of the session exists.
+
+### Expected merge conflict zones
+
+- LOW: the `worker.prepare` call in `WorkerSessionRegistry.openSession`; the `prepare` case of `session-worker.ts`.
+
 ## 2026-10-08 - open_session re-validates moved paths and refuses a moved file that is gone (senpi#2898 review)
 
 ### What changed
