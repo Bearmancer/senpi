@@ -1,3 +1,23 @@
+## 2026-10-08 - Resolve and spawn each session's MCP servers with its own trust, env and agent dir (senpi#2986)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/service.ts`: each session binding now keeps the `McpSessionOptions` it attached with (trust, env, agent dir) beside its config, and the process-wide `#sessionOptions`, `#authAgentDir` and `#authEnv` are gone. `attachSkillMcpServers` resolves a skill's `${VAR}` values with the declaring session's own trust (`options.projectTrusted`, else its context's) and env.
+- `service.ts`: `#syncFromConfig` spawns each server with the options and cwd of a session that declares it with the same config hash. The attaching session is used when it declares the server; otherwise the live binding the effective config took the server from. The catalog cache for a server is read from that session's agent dir.
+- `service.ts`, `service-types.ts` and `service-connection.ts`: a connection entry records the env it spawned with, next to its agent dir. `getAuthTarget` (re-auth), `getServerAuthStatus` and the wire and lifecycle auth status resolve credentials with the connection's own agent dir and env. They fall back to a live declaring session's options when the server has no connection.
+
+### Why
+
+- Every attach overwrote one process-wide options record, and skill-server expansion, connection spawns and auth all read it. A trusted session attaching after an untrusted one therefore expanded the untrusted project's skill servers as trusted, with the trusted session's environment. Spawns and re-auth likewise used the last attach's credentials for servers that session never declared.
+
+### Why an extension could not handle it
+
+- The options record, the per-session bindings and the connection spawn path are private state of the MCP builtin's shared service; no extension can see or replace them.
+
+### Expected merge conflict zones
+
+- `McpSessionBinding`, `attachSession`, `#bind`, `attachSkillMcpServers`, `#syncFromConfig`, `#serverSnapshot`, `getAuthTarget`, `getServerAuthStatus` and `wireAuthStatus` in `packages/coding-agent/src/core/extensions/builtin/mcp/service.ts`; `McpConnectionEntry` in `service-types.ts`; the entry literal in `createMcpSessionConnection` in `service-connection.ts`.
+
 ## 2026-10-08 - Fence each session's MCP tools with its own config, not the last attach's (senpi#2597)
 
 ### What changed

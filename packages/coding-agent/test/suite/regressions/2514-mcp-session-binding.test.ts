@@ -2,7 +2,7 @@
 // connections, yet each session must keep its own binding: its own session ref and tool-search
 // service, never the binding of whichever session attached last.
 
-import { writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import { ProviderScope, runWithProviderScope } from "@earendil-works/pi-ai/node/provider-scope";
@@ -10,6 +10,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ENV_AGENT_DIR } from "../../../src/config.ts";
 import mcpExtension from "../../../src/core/extensions/builtin/mcp/index.ts";
 import { getMcpService, resetMcpServiceForTests } from "../../../src/core/extensions/builtin/mcp/service.ts";
+import { parseSkillMcpDeclarations, type SkillLike } from "../../../src/core/extensions/builtin/mcp/skills.ts";
 import { MCP_STARTUP_TIMEOUT_ENV } from "../../../src/core/extensions/builtin/mcp/startup-race.ts";
 import toolSearchExtension from "../../../src/core/extensions/builtin/tool-search/index.ts";
 import { getToolSearchService } from "../../../src/core/extensions/builtin/tool-search/service.ts";
@@ -524,6 +525,55 @@ describe("senpi#2514: the shared service keeps sessions apart under concurrency 
 		await refreshed;
 		expect(bravoPi.registeredTools).toContain("mcp_fx_late");
 		expect(alphaPi.registeredTools).not.toContain("mcp_fx_late");
+	});
+});
+
+const SECRET_EXPR = "$" + "{SENPI_2986_SECRET}";
+
+/** A skill whose sidecar declares `server` with a `${VAR}` in its stdio env. */
+function skillDeclaring(name: string, scope: "user" | "project", server: string): SkillLike {
+	const baseDir = join(root.cwd, "skills", name);
+	mkdirSync(baseDir, { recursive: true });
+	const filePath = join(baseDir, "SKILL.md");
+	writeFileSync(filePath, `---\nname: ${name}\ndescription: test skill\n---\n\nBody.\n`);
+	const raw = { ...stdioServer(["--tools", "1"]), env: { SENPI_2986_SECRET: SECRET_EXPR } };
+	writeFileSync(join(baseDir, "mcp.json"), JSON.stringify({ [server]: raw }));
+	return { baseDir, filePath, name, sourceInfo: { scope } };
+}
+
+async function attachAs(pi: CapturingPi, session: TestRoot, trusted: boolean, secret: string): Promise<void> {
+	await getMcpService().attachSession(
+		{ type: "session_start", reason: "startup" },
+		{ cwd: session.cwd, isProjectTrusted: () => trusted },
+		pi,
+		{ agentDir: session.agentDir, env: { SENPI_2986_SECRET: secret } },
+	);
+}
+
+describe("senpi#2986: a session's skill servers follow its own trust, env and agent dir", () => {
+	it("keeps an untrusted session's project skill server literal after a trusted peer attaches", async () => {
+		// Given: an untrusted session, then a trusted peer with its own environment and agent dir attaching after it.
+		setConfig(root, {});
+		const peerRoot = makeRoot("2986-trusted-peer", cleanupTasks);
+		setConfig(peerRoot, {});
+		const alphaPi = capturingPi();
+		await attachAs(alphaPi, root, false, "alpha-secret");
+		await attachAs(capturingPi(), peerRoot, true, "peer-secret");
+
+		// When: the untrusted session's skills declare a project-scoped and a user-scoped server.
+		const skills = [skillDeclaring("cloned", "project", "fxp"), skillDeclaring("own", "user", "fxu")];
+		const warnings = await getMcpService().attachSkillMcpServers(parseSkillMcpDeclarations(skills).servers, alphaPi);
+
+		// Then: the project skill stays literal under the declaring session's trust, the user skill expands from that
+		// session's env, and the servers' credentials resolve in its agent dir, never the trusted peer's.
+		const service = getMcpService();
+		expect(warnings).toEqual([expect.stringContaining("trust the project")]);
+		expect(service.getAuthTarget("fxp")?.config.env).toEqual({ SENPI_2986_SECRET: SECRET_EXPR });
+		expect(service.getAuthTarget("fxu")?.config.env).toEqual({ SENPI_2986_SECRET: "alpha-secret" });
+		expect(service.getAuthTarget("fxu")).toMatchObject({
+			agentDir: root.agentDir,
+			env: { SENPI_2986_SECRET: "alpha-secret" },
+		});
 	});
 });
 

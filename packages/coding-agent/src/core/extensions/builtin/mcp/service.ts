@@ -9,7 +9,12 @@ import {
 } from "../tool-search/service.ts";
 import { mcpCredentialIdentity } from "./auth/catalog-identity.ts";
 import { resolveAuthMode } from "./auth/context.ts";
-import { cachedCatalogNeedsRefresh, getValidCachedServer, readMcpCatalogCache } from "./catalog-cache.ts";
+import {
+	cachedCatalogNeedsRefresh,
+	getValidCachedServer,
+	type McpCatalogCacheFile,
+	readMcpCatalogCache,
+} from "./catalog-cache.ts";
 import { loadMcpConfig, mergeExtensionMcpServers, visitSpawnableMcpServers } from "./config.ts";
 import type { McpServerConfig, ResolvedMcpConfig, ResolvedMcpServer } from "./config-schema.ts";
 import type { ServerConnection } from "./connection.ts";
@@ -73,9 +78,14 @@ interface McpSessionBinding {
 	readonly context: McpSessionContext;
 	/** The config this session resolved at attach: its tools register and are fenced against it alone (senpi#2597). */
 	readonly config: ResolvedMcpConfig;
+	/** This session's trust, env and agent dir: they resolve and spawn the servers it declares (senpi#2986). */
+	readonly options: McpSessionOptions;
 	readonly registeredIdentities: Map<string, string>;
 	registration: McpSessionRegistration | undefined;
 }
+
+/** A session's resolved config with the context and options that declared it; a binding is one. */
+type McpConfigOwner = Pick<McpSessionBinding, "config" | "options" | "context">;
 
 export { registerToolsPreservingActiveSet } from "./active-set.ts";
 
@@ -87,8 +97,6 @@ export class McpService {
 	#sessionStartCount = 0;
 	#lastSessionStartReason: SessionStartEvent["reason"] | null = null;
 	#config: ResolvedMcpConfig | null = null;
-	#authAgentDir: string | undefined;
-	#authEnv: Record<string, string | undefined> | undefined;
 	#elicitationUiProvider: (() => McpElicitationUi | undefined) | undefined;
 	#mcpInstructions = "";
 	readonly #pendingAuth = new Map<string, import("./auth/oauth-provider.ts").McpOAuthProvider>();
@@ -105,7 +113,6 @@ export class McpService {
 	#deferredDisposeReason: McpDisposeReason | undefined;
 	// Releases waiting for the attaches that deferred their dispose: they settle once the last one does.
 	readonly #deferredDisposeWaiters: Array<() => void> = [];
-	#sessionOptions: McpSessionOptions = {};
 	readonly #skillServerWarnings = new Set<string>();
 	#attachQueue: Promise<void> = Promise.resolve();
 	readonly #deferredAttach = new McpDeferredAttach();
@@ -156,8 +163,8 @@ export class McpService {
 				projectTrusted: sessionOptions.projectTrusted ?? ctx.isProjectTrusted(),
 			});
 			mergeExtensionMcpServers(config, ctx.getRegisteredMcpServers?.() ?? []);
-			const binding =
-				_pi === undefined || this.#releasedSessions.has(_pi) ? undefined : this.#bind(_pi, ctx, config);
+			const owner: McpConfigOwner = { config, options: sessionOptions, context: ctx };
+			const binding = _pi === undefined || this.#releasedSessions.has(_pi) ? undefined : this.#bind(_pi, owner);
 			// An equivalent effective config keeps its identity, so credential refreshes it scheduled stay current.
 			const effective = this.#effectiveConfig(config);
 			const current =
@@ -165,10 +172,7 @@ export class McpService {
 					? this.#config
 					: effective;
 			this.#config = current;
-			this.#authAgentDir = sessionOptions.agentDir;
-			this.#authEnv = sessionOptions.env;
-			this.#sessionOptions = sessionOptions;
-			await this.#syncFromConfig(current, sessionOptions, event.reason !== "reload", binding);
+			await this.#syncFromConfig(current, binding ?? owner, event.reason !== "reload", binding);
 			if (binding !== undefined) await this.#registerDirectTools(binding);
 			// Replay promotion markers from the (possibly resumed) session history
 			// BEFORE the first turn: the request tool snapshot is taken before the
@@ -213,7 +217,7 @@ export class McpService {
 		return { ...preferred, servers };
 	}
 
-	#bind(pi: McpToolRegistrar, ctx: McpSessionContext, config: ResolvedMcpConfig): McpSessionBinding {
+	#bind(pi: McpToolRegistrar, owner: McpConfigOwner): McpSessionBinding {
 		const activationRuntime = {
 			getActiveTools: () => pi.getActiveTools(),
 			setActiveTools: (names: readonly string[]) => pi.setActiveTools([...names]),
@@ -243,8 +247,7 @@ export class McpService {
 			pi,
 			fallbackToolSearch,
 			holdsProcessFallback,
-			context: ctx,
-			config,
+			...owner,
 			registeredIdentities: previous?.registeredIdentities ?? new Map(),
 			registration: previous?.registration,
 		};
@@ -332,7 +335,8 @@ export class McpService {
 		if (this.#config === null || binding === undefined) return [];
 		const config = binding.config;
 		const warnings: string[] = [];
-		const projectTrusted = this.#sessionOptions.projectTrusted ?? this.#sessionContext?.isProjectTrusted() ?? false;
+		// The declaring session's own trust and env, never those of whichever session attached last (senpi#2986).
+		const projectTrusted = binding.options.projectTrusted ?? binding.context.isProjectTrusted();
 		let added = 0;
 		for (const [name, decl] of declared) {
 			const existing = config.servers[name];
@@ -343,7 +347,7 @@ export class McpService {
 				continue;
 			}
 			const { server: resolved, warning } = resolveSkillMcpServer(name, decl.raw, decl.sourcePath, {
-				env: this.#sessionOptions.env,
+				env: binding.options.env,
 				skillName: decl.skillName,
 				trusted: decl.scope === "project" || decl.scope === undefined ? projectTrusted : true,
 			});
@@ -358,10 +362,10 @@ export class McpService {
 		}
 		if (added > 0) {
 			this.#config = this.#effectiveConfig(config);
-			await this.#syncFromConfig(this.#config, this.#sessionOptions, false, binding);
+			await this.#syncFromConfig(this.#config, binding, false, binding);
 			await this.#registerDirectTools(binding);
-			if (this.#sessionContext !== null && shouldCaptureWireStatus(this.#sessionContext)) {
-				await this.refreshWireStatusSnapshot(this.#sessionContext.sessionManager?.getSessionId?.());
+			if (shouldCaptureWireStatus(binding.context)) {
+				await this.refreshWireStatusSnapshot(binding.context.sessionManager?.getSessionId?.());
 			}
 		}
 		return warnings;
@@ -528,23 +532,35 @@ export class McpService {
 			: (this.#wireStatusBySession.get(sessionId) ?? { servers: [] });
 	}
 
+	/**
+	 * Bring the connections in line with `config`. Each server spawns with the options and cwd of a session that
+	 * declares it: `owner` (the attaching session) when it does, otherwise the live binding whose config
+	 * `#effectiveConfig` took it from, so one session's trust, env and credentials never decide another's (senpi#2986).
+	 */
 	async #syncFromConfig(
 		config: ResolvedMcpConfig,
-		options: McpSessionOptions,
+		owner: McpConfigOwner,
 		useCache: boolean,
 		binding: McpSessionBinding | undefined,
 	): Promise<void> {
-		const cache = await readMcpCatalogCache(options.agentDir);
 		const hadConnectionsBeforeSync = this.#connections.size > 0;
 		this.#refreshActiveSetWhenNoTools = Object.keys(config.servers).length > 0 || hadConnectionsBeforeSync;
 		const wanted = new Map<string, ResolvedMcpServer>();
 		const credentialIdentities = new Map<string, string | undefined>();
+		const candidates = [owner, ...this.#liveBindings()];
+		const declarers = new Map<string, McpConfigOwner>();
 		visitSpawnableMcpServers(config, (name, server) => {
 			wanted.set(name, server);
+			const declarer = candidates.find((candidate) => declares(candidate.config, name, server.configHash)) ?? owner;
+			declarers.set(name, declarer);
 			if (server.config !== undefined) {
-				credentialIdentities.set(name, mcpCredentialIdentity(server.config, name, options.agentDir, options.env));
+				const { agentDir, env } = declarer.options;
+				credentialIdentities.set(name, mcpCredentialIdentity(server.config, name, agentDir, env));
 			}
 		});
+		const agentDirs = new Set([owner, ...declarers.values()].map((declarer) => declarer.options.agentDir));
+		const caches = new Map<string | undefined, McpCatalogCacheFile>();
+		for (const agentDir of agentDirs) caches.set(agentDir, await readMcpCatalogCache(agentDir));
 		const disposals: Promise<void>[] = [];
 		for (const entry of this.#connections.values()) {
 			const server = wanted.get(entry.name);
@@ -563,6 +579,9 @@ export class McpService {
 		for (const [name, server] of wanted) {
 			if (server.config === undefined || server.configHash === undefined) continue;
 			const serverConfig = server.config;
+			const declarer = declarers.get(name) ?? owner;
+			const options = declarer.options;
+			const cache = caches.get(options.agentDir);
 			const credentialIdentity = credentialIdentities.get(name);
 			const key = `${name}\0${server.configHash}\0${credentialIdentity ?? "unknown"}`;
 			if (this.#connections.has(key)) continue;
@@ -579,11 +598,11 @@ export class McpService {
 					mcpCredentialIdentity(serverConfig, name, options.agentDir, options.env) === credentialIdentity,
 				onCredentialsChanged: async () => {
 					if (this.#disposed || this.#config !== config || this.#entryForName(name) !== entry) return;
-					await this.#syncFromConfig(config, options, true, binding);
+					await this.#syncFromConfig(config, owner, true, binding);
 					for (const live of this.#liveBindings()) await this.#registerDirectTools(live);
 				},
 				session: options,
-				cwd: this.#sessionContext?.cwd ?? process.cwd(),
+				cwd: declarer.context.cwd,
 				ui: () => this.getMcpElicitationUi(),
 				artifacts: this.#outputArtifacts,
 				shouldReconnect: (current) =>
@@ -593,7 +612,7 @@ export class McpService {
 					this.#config.servers[name]?.configHash === current.configHash,
 			});
 			const cachedCatalog =
-				useCache && credentialIdentity !== undefined
+				useCache && credentialIdentity !== undefined && cache !== undefined
 					? getValidCachedServer(cache, name, server.configHash, credentialIdentity)
 					: undefined;
 			entry.cachedCatalog = cachedCatalog;
@@ -743,7 +762,7 @@ export class McpService {
 		if (
 			config !== undefined &&
 			entry?.connection.state === "needs_auth" &&
-			mcpCredentialIdentity(config, name, entry.agentDir, this.#authEnv) === undefined
+			mcpCredentialIdentity(config, name, entry.agentDir, entry.env) === undefined
 		) {
 			return { ...snapshot, lifecycleState: "needs_auth", lastError: entry.connection.lastError?.message ?? null };
 		}
@@ -789,7 +808,7 @@ export class McpService {
 			tools: tools.map(mapWireTool),
 			resources: resources.map(mapWireResource),
 			resourceTemplates: resourceTemplates.map(mapWireResourceTemplate),
-			authStatus: wireAuthStatus(entry, server, this.#authEnv),
+			authStatus: wireAuthStatus(entry, server, this.#credentialOptions(name)),
 			...(connection?.state === undefined && server?.state === undefined
 				? {}
 				: {
@@ -805,6 +824,17 @@ export class McpService {
 	#entryForName(name: string): McpConnectionEntry | undefined {
 		const key = this.#connectionKeysByName.get(name);
 		return key === undefined ? undefined : this.#connections.get(key);
+	}
+
+	/**
+	 * The agent dir and env a server's credentials resolve with: those its connection spawned with, else those of a
+	 * live session that declares it, never the last attach's (senpi#2986).
+	 */
+	#credentialOptions(name: string): Pick<McpSessionOptions, "agentDir" | "env"> | undefined {
+		const entry = this.#entryForName(name);
+		if (entry !== undefined) return { agentDir: entry.agentDir, env: entry.env };
+		const configHash = this.#config?.servers[name]?.configHash;
+		return this.#liveBindings().find((binding) => declares(binding.config, name, configHash))?.options;
 	}
 
 	setMcpInstructions(instructions: string): void {
@@ -855,17 +885,18 @@ export class McpService {
 		| undefined {
 		const server = this.#config?.servers[name];
 		if (server?.config === undefined) return undefined;
+		const credentials = this.#credentialOptions(name);
 		return {
 			config: server.config,
-			agentDir: this.#authAgentDir,
-			env: this.#authEnv,
+			agentDir: credentials?.agentDir,
+			env: credentials?.env,
 			callbackUrl: this.#config?.settings.oauthCallbackUrl,
 		};
 	}
 
 	/** Live auth status without fetching catalogs or exposing credentials. */
 	getServerAuthStatus(name: string): McpWireAuthStatus {
-		return wireAuthStatus(this.#entryForName(name), this.#config?.servers[name], this.#authEnv);
+		return wireAuthStatus(this.#entryForName(name), this.#config?.servers[name], this.#credentialOptions(name));
 	}
 
 	getCachedInstructions(name: string): string | undefined {
@@ -880,10 +911,16 @@ export class McpService {
 	}
 }
 
+/** Whether `config` declares `name` as the same server, by config hash. */
+function declares(config: ResolvedMcpConfig, name: string, configHash: string | undefined): boolean {
+	const server = config.servers[name];
+	return server !== undefined && server.configHash === configHash;
+}
+
 function wireAuthStatus(
 	entry: McpConnectionEntry | undefined,
 	server: ResolvedMcpServer | undefined,
-	env: Record<string, string | undefined> | undefined,
+	credentials: Pick<McpSessionOptions, "agentDir" | "env"> | undefined,
 ): McpWireAuthStatus {
 	const mode = entry?.authPlan?.mode ?? (server?.config === undefined ? "none" : resolveAuthMode(server.config));
 	switch (mode) {
@@ -893,7 +930,7 @@ function wireAuthStatus(
 			return entry?.connection.state === "needs_auth" ? "notLoggedIn" : "bearerToken";
 		case "oauth":
 			return server?.config === undefined ||
-				mcpCredentialIdentity(server.config, server.name, entry?.agentDir, env) === undefined
+				mcpCredentialIdentity(server.config, server.name, credentials?.agentDir, credentials?.env) === undefined
 				? "notLoggedIn"
 				: "oAuth";
 		default:
