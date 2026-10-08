@@ -308,24 +308,24 @@ describe("eval live block: streaming header names the state (senpi#2933)", () =>
 		expect(lines[0]).toContain("3s");
 		expect(lines[0]).not.toContain("streaming");
 	});
-});
 
-it("Given a streaming call when the host gives no spinner frame then the call lane arms its own ticker (review MEDIUM-5)", () => {
-	// The streaming block's spinner advances only if the call lane repaints itself; removing
-	// the call-lane syncLiveTicker arm (mutation M5) must fail this contract.
-	vi.useFakeTimers();
-	try {
-		const invalidate = vi.fn();
-		renderEvalCall(
-			{ language: "js", code: "const a = 1;", summary: "stream" } as EvalToolInput,
-			plainTheme as never,
-			{ ...callContext({ invalidate, now: STARTED_AT }), spinnerFrame: undefined } as never,
-		);
-		vi.advanceTimersByTime(1_000);
-		expect(invalidate).toHaveBeenCalled();
-	} finally {
-		vi.useRealTimers();
-	}
+	it("Given a streaming call when the host gives no spinner frame then the call lane arms its own ticker (review MEDIUM-5)", () => {
+		// The streaming block's spinner advances only if the call lane repaints itself; removing
+		// the call-lane syncLiveTicker arm (mutation M5) must fail this contract.
+		vi.useFakeTimers();
+		try {
+			const invalidate = vi.fn();
+			renderEvalCall(
+				{ language: "js", code: "const a = 1;", summary: "stream" } as EvalToolInput,
+				plainTheme as never,
+				{ ...callContext({ invalidate, now: STARTED_AT }), spinnerFrame: undefined } as never,
+			);
+			vi.advanceTimersByTime(1_000);
+			expect(invalidate).toHaveBeenCalled();
+		} finally {
+			vi.useRealTimers();
+		}
+	});
 });
 
 describe("eval live block: partial-arg totality (senpi#2933)", () => {
