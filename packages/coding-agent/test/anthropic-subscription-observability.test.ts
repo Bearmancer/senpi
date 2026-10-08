@@ -278,7 +278,7 @@ describe("Claude SDK OAuth continuity observations", () => {
 			delete process.env.SENPI_CLAUDE_SDK_OAUTH_RESUME;
 		}
 
-		expect(sink.observations).toEqual([{ kind: "disabled", reason: "resume_mode_off" }]);
+		expect(sink.observations).toEqual([{ kind: "disabled", reason: "resume_mode_off", settingSource: "env" }]);
 	});
 
 	it("emits one terminal error observation when every attempt fails", async () => {

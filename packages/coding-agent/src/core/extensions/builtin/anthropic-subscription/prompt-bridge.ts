@@ -26,10 +26,34 @@ function appendContentBlocks(blocks: ContentBlockParam[], content: string | read
 	return appendSdkContentBlocks(blocks, content);
 }
 
+/**
+ * Text that closes the replayed history. Everything after it (recovered tool results, the
+ * response instruction, the final user message) changes every turn, so it stays after the
+ * cache breakpoint.
+ */
+export const CONVERSATION_HISTORY_CLOSER = "\n</conversation_history>";
+
+export type PromptBlockOptions = {
+	/**
+	 * Mark the last history block as a prompt-cache breakpoint. History only grows by appending,
+	 * so the next rebuilt prompt starts with the same bytes up to here and reads them from cache
+	 * (senpi#2982). Only for one-shot queries: a resident session keeps this user message in its
+	 * transcript, where Claude Code adds its own breakpoints.
+	 */
+	cacheBreakpoint?: boolean;
+};
+
+function markCacheBreakpoint(blocks: ContentBlockParam[]): void {
+	const last = blocks.at(-1);
+	if (last?.type !== "text" && last?.type !== "image") return;
+	blocks[blocks.length - 1] = { ...last, cache_control: { type: "ephemeral" } };
+}
+
 export function buildPromptBlocks(
 	context: Context,
 	customToolNameToSdk?: ReadonlyMap<string, string>,
 	toolWatchNote?: string,
+	options: PromptBlockOptions = {},
 ): ContentBlockParam[] {
 	const blocks: ContentBlockParam[] = [];
 	const pushText = (text: string): void => {
@@ -68,7 +92,8 @@ export function buildPromptBlocks(
 			if (!appendContentBlocks(blocks, replayedImages.get(index) ?? message.content))
 				pushText("(see attached image)");
 		}
-		pushText("\n</conversation_history>");
+		if (options.cacheBreakpoint) markCacheBreakpoint(blocks);
+		pushText(CONVERSATION_HISTORY_CLOSER);
 	}
 
 	if (toolWatchNote?.trim()) {

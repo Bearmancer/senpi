@@ -12,8 +12,11 @@
 
 ### Fixed
 
+- Anthropic Subscription with `resumeMode: "off"` no longer re-writes the whole conversation to the prompt cache every turn: the rebuilt history ends at a cache breakpoint, so each turn reads the earlier conversation from cache and writes only what is new. A repeated ultrawork directive no longer changes earlier history, and the "continuity disabled" notice says whether the environment variable, project settings or global settings turned resume off ([#2982](https://github.com/code-yeongyu/senpi/issues/2982)).
+
 - With several Anthropic Subscription accounts, a session no longer switches accounts on a transient error (overload, network, server error) and switches back on the next turn, each switch re-sending the whole conversation on the config-dir lane. It retries the same account twice with a short backoff, then stays on whichever account now holds its transcript; usage limits and sign-in failures still move it at once ([#2891](https://github.com/code-yeongyu/senpi/issues/2891)).
 
+||||||| parent of 04adc210bd (fix(anthropic-subscription): make a rebuilt prompt a cacheable prefix of the next)
 - When several processes share one agent directory (the desktop engine, the CLI), a log rotation race no longer switches off a process's config-reload or MCP log for the rest of its life or drops session and fallback log lines; a log that failed to write tries again after a few seconds ([#2976](https://github.com/code-yeongyu/senpi/issues/2976)).
 
 - On the Anthropic Subscription lane, a long streamed tool call (for example a large `write` or a `team_create` with long member prompts) no longer fails with "session stream queue exceeded 256 messages" and loses the tool call: the stream now waits for the reader instead of overflowing ([#2822](https://github.com/code-yeongyu/senpi/issues/2822)).

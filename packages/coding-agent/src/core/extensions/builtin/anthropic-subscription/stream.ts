@@ -21,7 +21,11 @@ import { getSdkBoundary, loadClaudeAgentSdk, type SdkQueryHandle } from "./sdk-b
 import { type ContinuityObservation, emitContinuityObservation } from "./session-observability.ts";
 import { forgetBinding } from "./session-reattach.ts";
 import { residentSessionMessages } from "./session-stream.ts";
-import { loadAnthropicSubscriptionProviderSettingsFromDisk, resolveCompactionOwner } from "./settings.ts";
+import {
+	loadAnthropicSubscriptionProviderSettingsFromDisk,
+	resolveCompactionOwner,
+	resumeModeSource,
+} from "./settings.ts";
 import { applyStreamEvent } from "./stream-events.ts";
 import { withAuthGuidance } from "./stream-guidance.ts";
 import { emptyOutput, errorMessage, mapStopReason, type StreamBlock, updateUsage } from "./stream-protocol.ts";
@@ -124,6 +128,9 @@ export function streamAnthropicSubscription(
 					{
 						kind: "disabled",
 						reason: providerSettings.resumeMode === "off" ? "resume_mode_off" : "registry_miss",
+						...(providerSettings.resumeMode === "off"
+							? { settingSource: resumeModeSource(providerSettings) }
+							: {}),
 					},
 					options.sessionId,
 					recordContinuity,
@@ -153,8 +160,11 @@ export function streamAnthropicSubscription(
 					})
 				: queryWithAuthLane({
 						prompt: buildPromptStream(
-							dedupeUltraworkBlocks(buildPromptBlocks(context, resolvedTools.customToolNameToSdk, toolWatchNote))
-								.blocks,
+							dedupeUltraworkBlocks(
+								buildPromptBlocks(context, resolvedTools.customToolNameToSdk, toolWatchNote, {
+									cacheBreakpoint: true,
+								}),
+							).blocks,
 						),
 						query: getSdkBoundary().query,
 						providerSettings,

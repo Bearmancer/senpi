@@ -19,6 +19,28 @@
 
 - LOW: `auth-lane.ts` `queryWithAuthLane` (before `runFailover`), `accounts.ts` `AccountSlot` and `upsertAccount`.
 
+## 2026-10-09 - A rebuilt Anthropic Subscription prompt is a cacheable prefix of the next one (senpi#2982, senpi#2891)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/prompt-bridge.ts`: `buildPromptBlocks` takes `{ cacheBreakpoint }`; when set, the last replayed-history block carries `cache_control: { type: "ephemeral" }`, right before `CONVERSATION_HISTORY_CLOSER` (now exported). The closer, recovered tool results, the instruction and the current message stay after it.
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/prompt-directive-dedupe.ts`: `dedupeUltraworkBlocks` keeps the FIRST copy of each distinct `<ultrawork-mode>` directive inside the history and collapses later identical copies to a placeholder; it never collapses after the closer (the current message keeps its directive), and it preserves other block fields (`cache_control`). It used to keep only the LAST copy.
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/stream.ts`: the one-shot path (resume off, or no session) builds with `cacheBreakpoint: true`, and the `disabled`/`resume_mode_off` observation carries `settingSource`.
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/settings.ts`: `resumeModeSource(settings)` reports which layer set `resumeMode` (`env`, `project`, `global`).
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/session-observability.ts`: `ContinuityObservation.settingSource`, also written to the session log.
+
+### Why
+
+- With resume off every turn is a fresh query whose prompt replays the whole conversation, and Claude Code's own breakpoints sit after the per-turn tail, so no earlier request ever wrote a cache entry that the next one starts with: a community session wrote ~330K cache tokens on each of 136 turns. The history itself only grows by appending, so a breakpoint at its end makes request k a cache-readable prefix of request k+1. Keeping the last directive copy broke that prefix whenever a new ultrawork prompt arrived, and rebuilding text blocks dropped the breakpoint. Claude Code 2.1.284 forwards a `cache_control` set on our user-message block (captured against a local endpoint: system, ours and its trailing breakpoint, three of the four allowed). Resume off is only ever set by the user, so the existing once-per-session notice now names where.
+
+### Why an extension could not handle it
+
+- The prompt is assembled inside this builtin lane.
+
+### Expected merge conflict zones
+
+- LOW: `buildPromptBlocks`, `dedupeUltraworkBlocks`, the one-shot `queryWithAuthLane` call and the `disabled` observation in `stream.ts`, `loadAnthropicSubscriptionProviderSettings`.
+
 ## 2026-10-09 - A session keeps its account through transient errors (senpi#2891)
 
 ### What changed
@@ -41,6 +63,7 @@
 
 - LOW: `runFailover`'s catch block, `selectUnblocked`, `queryWithAuthLane`'s `selectFn`, `residentAuthLaneMessages`, and the head of `decideFromState`.
 
+||||||| parent of 04adc210bd (fix(anthropic-subscription): make a rebuilt prompt a cacheable prefix of the next)
 ## 2026-10-09 - The session stream applies backpressure instead of overflowing (senpi#2822)
 
 ### What changed
