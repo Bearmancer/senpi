@@ -292,6 +292,12 @@ function decideFromState(input: ContinuityDecisionInput): ContinuityDecision {
 		return withoutUnconfirmedResume(decideFromBinding(input, binding), binding);
 	}
 
+	// The live session's transcript lives under another account's config-dir root: a reattach or
+	// fork there fails with "No conversation found" after a wasted round trip (senpi#2891).
+	if (!input.crossAccountResumeSupported && entry.accountName !== input.accountName) {
+		return { kind: "flatten", reason: "cross_root_unsupported" };
+	}
+
 	const divergence = entry.pendingForkReason ?? entry.taintedReason;
 	// Forking retains the old SDK prefix: it cannot apply senpi's summary or
 	// remove the messages compaction discarded. Seed a fresh transcript instead.
