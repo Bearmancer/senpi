@@ -7,6 +7,7 @@ import {
 	MAX_HOPS,
 	type MovedPath,
 	movedMatch,
+	movedToInHome,
 	parsedBreadcrumb,
 	trustedBreadcrumb,
 } from "./breadcrumb-trust.ts";
@@ -41,6 +42,7 @@ function* movedOnce(path: string, platform: PathPlatform, onReused?: OnReused): 
 		const match = breadcrumb && movedMatch(dir, breadcrumb, canonical, platform);
 		if (
 			match &&
+			movedToInHome(dir, breadcrumb, platform) &&
 			trustedBreadcrumb(dir, breadcrumb, yield { op: "json", file: homeMarkerFile(breadcrumb.movedTo) }, platform)
 		) {
 			// The re-used decision is recorded before the breadcrumb is remembered, so no text fallback in this call can

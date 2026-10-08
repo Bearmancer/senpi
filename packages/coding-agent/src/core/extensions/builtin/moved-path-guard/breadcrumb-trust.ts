@@ -1,5 +1,6 @@
 import { closeSync, constants, fstatSync, openSync, readSync, type Stats } from "node:fs";
 import { open } from "node:fs/promises";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import { MOVED_BREADCRUMB_FILE, type MovedBreadcrumb, parseMovedBreadcrumb } from "./breadcrumb.ts";
 import { logGuardEvent } from "./guard-log.ts";
@@ -96,6 +97,17 @@ export const homeMarkerFile = (movedTo: string): string => join(movedTo, DESKTOP
 function ignoreBreadcrumb(file: string, reason: string): undefined {
 	logGuardEvent("debug", "breadcrumb_ignored", { file, reason });
 	return undefined;
+}
+
+/**
+ * Every OmO desktop data home lives under the user's home (`~/.omo/desktop`, `~/.omo-app`; plan 1.1), so a
+ * breadcrumb naming anywhere else is ignored before the walk touches that folder: a committed or planted breadcrumb
+ * can never make the guard open a network or automount path.
+ */
+export function movedToInHome(dir: string, breadcrumb: MovedBreadcrumb, platform: PathPlatform): boolean {
+	if (matchMovedPrefix(breadcrumb.movedTo, homedir(), [[]], platform)) return true;
+	ignoreBreadcrumb(breadcrumbFile(dir), "movedTo is outside the user's home");
+	return false;
 }
 
 export function parsedBreadcrumb(dir: string, raw: unknown): MovedBreadcrumb | undefined {

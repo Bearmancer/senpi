@@ -33,6 +33,10 @@ function answer(step: ResolverStep): unknown {
  * Synchronous resolution, only for callers that are synchronous themselves and hold one session path: the registry
  * open, session-holder claims and schedule delivery (senpi#2898). Tool calls use `createMovedPathProbe`, which never
  * blocks the session loop. Both drive the same walk (`walk.ts`).
+ *
+ * Bound, per hop (at most `MAX_HOPS`): canonicalizing the one path; one O_NOFOLLOW open of at most 64 KiB per
+ * ancestor directory's breadcrumb; and, only for a breadcrumb listing this path whose `movedTo` lies under the user's
+ * home, one such open of that home's marker and one `.git` existence check.
  */
 export function findMovedPath(path: string, platform: PathPlatform = currentPathPlatform()): MovedPath | undefined {
 	const walk = movedPathWalk(path, platform);

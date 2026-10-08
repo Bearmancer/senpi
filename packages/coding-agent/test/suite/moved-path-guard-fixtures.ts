@@ -71,6 +71,10 @@ export function createMovedLayout(
 	options: { breadcrumb?: boolean; schemaVersion?: number; marker?: "valid" | "missing" | "other-home" } = {},
 ): MovedLayout {
 	const home = realpathSync(mkdtempSync(join(tmpdir(), "senpi-moved-home-")));
+	// The layout is the user's home for the test: every desktop data home lives under it (plan 1.1).
+	const saved = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE };
+	process.env.HOME = home;
+	process.env.USERPROFILE = home;
 	const oldRoot = join(home, ".t3");
 	const newRoot = join(home, ".omo", "desktop");
 	const newWorktree = join(newRoot, MOVED_WORKTREE);
@@ -91,7 +95,13 @@ export function createMovedLayout(
 		newWorktree,
 		oldSessions: join(oldRoot, MOVED_SESSIONS),
 		newSessions,
-		cleanup: () => rmSync(home, { recursive: true, force: true }),
+		cleanup: () => {
+			for (const [key, value] of Object.entries(saved)) {
+				if (value === undefined) delete process.env[key];
+				else process.env[key] = value;
+			}
+			rmSync(home, { recursive: true, force: true });
+		},
 	};
 }
 
