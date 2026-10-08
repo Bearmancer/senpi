@@ -2,7 +2,7 @@
 
 ### What changed
 
-- `packages/coding-agent/src/main.ts`: delegates post-selection warning and session naming to `cli/session-opening.ts` before runtime creation or a naming write. Interactive opens print a one-line warning naming each foreign holder's pid and optional cwd.
+- `packages/coding-agent/src/main.ts`: prints the interactive holder warning after runtime creation publishes the CLI's own hold. Existing `--name` validation and persistence stay at their original post-selection location.
 
 ### Why
 
@@ -10,11 +10,11 @@ Opening the same JSONL in a CLI and a host silently admitted two writers.
 
 ### Why an extension could not handle it
 
-Startup selection and naming happen before extensions load.
+The warning belongs to CLI startup and must work with extensions disabled.
 
 ### Expected merge conflict zones
 
-- `packages/coding-agent/src/main.ts`: imports and the block after missing-cwd recovery.
+- `packages/coding-agent/src/main.ts`: imports and the block after runtime creation.
 
 ## 2026-10-08 - JSON print mode exits non-zero when the run ran out of context (senpi#2925)
 

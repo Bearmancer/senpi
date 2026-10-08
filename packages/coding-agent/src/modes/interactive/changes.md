@@ -2,8 +2,7 @@
 
 ### What changed
 
-- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: delegates `handleResumeSession` to `resume-session.ts`, supplying existing status, trust, missing-cwd and fatal-error callbacks.
-- `packages/coding-agent/src/modes/interactive/resume-session.ts`: preserves the existing switch and missing-cwd retry, warning with holder pid/cwd before resuming a file held by another live process.
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: keeps the existing `handleResumeSession` and missing-cwd retry inline; after a successful switch publishes the CLI hold, warns with the foreign holder pid/cwd. A holder lookup filesystem error warns without turning a successful resume into a fatal error.
 
 ### Why
 
@@ -15,7 +14,7 @@ The resume selector and runtime switch are owned by interactive mode.
 
 ### Expected merge conflict zones
 
-- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: imports and `handleResumeSession`. The extracted resume helper is fork-only.
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: imports and the successful-switch paths in `handleResumeSession`.
 
 ## 2026-10-07 - A terminal model pick no longer rewrites the default model (senpi#2870)
 

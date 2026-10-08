@@ -12,7 +12,7 @@ import { createInterface } from "node:readline";
 import { type ImageContent, modelsAreEqual } from "@earendil-works/pi-ai";
 import { setCapabilityOverrides } from "@earendil-works/pi-tui";
 import chalk from "chalk";
-import { type Args, type Mode, parseArgs, printHelp, resolveSessionRuntime } from "./cli/args.ts";
+import { type Args, type Mode, normalizeSessionName, parseArgs, printHelp, resolveSessionRuntime } from "./cli/args.ts";
 import {
 	type AuthCheckResult,
 	checkProviderAuth,
@@ -1360,7 +1360,14 @@ export async function main(args: string[], options?: MainOptions) {
 			process.exit(1);
 		}
 	}
-	await prepareSessionOpening(sessionManager, appMode, parsed.name);
+	if (parsed.name !== undefined) {
+		const name = normalizeSessionName(parsed.name);
+		if (name === undefined) {
+			console.error(chalk.red("Error: --name requires a non-empty value"));
+			process.exit(1);
+		}
+		sessionManager.appendSessionInfo(name);
+	}
 	time("createSessionManager");
 
 	const sessionCwd = sessionManager.getCwd();
@@ -1401,6 +1408,7 @@ export async function main(args: string[], options?: MainOptions) {
 		startupLoadingIndicator.stop();
 	});
 	time("createAgentSessionRuntime");
+	await prepareSessionOpening(sessionManager, appMode);
 	const { services, session, modelFallbackMessage } = runtime;
 	const { settingsManager, modelRuntime, resourceLoader } = services;
 	setCapabilityOverrides(settingsManager.getTerminalCapabilityOverrides());

@@ -2,14 +2,19 @@
 
 ### What changed
 
-- `packages/coding-agent/src/modes/rpc/session-command-router.ts`: checks a requested path before open or attach and delegates session-binding delivery to `session-held.ts`; propagates typed error detail for prompt/steer as well as open.
-- `packages/coding-agent/src/modes/rpc/session-held.ts`: refuses foreign live holders before prompt acknowledgment or delivery, using current runtime/worker path and durable id.
+- `packages/coding-agent/src/modes/rpc/session-command-router.ts`: checks a requested path before open or attach and again after the runtime publishes its hold, rolling back a raced open before attachment or success. Delegates all session-binding delivery to the shared guard and propagates typed refusal data.
+- `packages/coding-agent/src/modes/rpc/session-held.ts`: guards every command except an explicit read/control allowlist, before acknowledgment or binding delivery, using the current runtime or authoritative worker snapshot. Also checks a command's target session path when present.
+- `packages/coding-agent/src/modes/rpc/host-reservations.ts` and `packages/coding-agent/src/modes/rpc/session-registry.ts`: derive live same-daemon PID identities from endpoint claims and generation child records, validating their process start times through the existing claim liveness rules. The holder guard excludes these identities so legacy `session_path_in_use` retries and superseded-claim reclamation remain authoritative.
+- `packages/coding-agent/src/modes/rpc/multi-session-host.ts`, `packages/coding-agent/src/modes/rpc/worker-session-registry.ts` and `packages/coding-agent/src/modes/rpc/session-worker-client.ts`: share endpoint reservations across runtime selections; worker exit waits for its claim release before freeing the entry.
 - `packages/coding-agent/src/modes/rpc/session-registry-types.ts`: adds `session_held` to `RpcSessionRegistryError`.
 - `packages/coding-agent/src/modes/rpc/rpc-types.ts`: declares `RPC_ERROR_SESSION_HELD` and includes it in `RpcErrorCode`.
+- `packages/coding-agent/src/modes/rpc/rpc-mode.ts`: documents the typed holder refusal and its safe data shape.
+- `packages/coding-agent/src/modes/rpc/custom-capability.ts` and `packages/coding-agent/src/modes/rpc/host-capabilities.ts`: declare and advertise the host capability `session_held` from the shared router's inventory in both runtimes.
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: prevents classic client flags from advertising `session_held`, because that binding does not run the shared holder guard.
 
 ### Why
 
-Host reservations omit CLI holders, allowing concurrent JSONL writers. Fresh lease checks clear naturally after exit and exclude this host's own worker-thread PID.
+Host reservations omit CLI holders. Fresh lease checks clear naturally after exit and exclude this host's own worker-thread PID and its live daemon family. Already-admitted turns finish and persist their results if a holder arrives mid-turn; new writing RPCs are refused. SessionManager's append API is synchronous, whereas fresh PID/start-time checks are asynchronous; turning every append into asynchronous admission would change that SDK contract and risk losing results of already-executed tools.
 
 ### Why an extension could not handle it
 
@@ -17,7 +22,7 @@ Open admission and host routing run outside the session's extension lifecycle.
 
 ### Expected merge conflict zones
 
-- `packages/coding-agent/src/modes/rpc/session-command-router.ts`: open and session dispatch. `packages/coding-agent/src/modes/rpc/session-registry-types.ts` and `packages/coding-agent/src/modes/rpc/rpc-types.ts`: typed error lists. The admission helper is fork-only.
+- `packages/coding-agent/src/modes/rpc/session-command-router.ts`: open and session dispatch. `packages/coding-agent/src/modes/rpc/session-registry-types.ts` and `packages/coding-agent/src/modes/rpc/rpc-types.ts`: typed error lists. `packages/coding-agent/src/modes/rpc/rpc-mode.ts`: error-code comment. `packages/coding-agent/src/modes/rpc/connection-handler.ts`: classic protocol capabilities. The reservation, worker, capability and admission helpers are fork-only.
 
 ## 2026-10-08 - open_session runs on the model it names, or fails (senpi#2906)
 

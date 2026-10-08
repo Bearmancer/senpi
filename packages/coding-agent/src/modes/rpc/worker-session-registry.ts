@@ -2,6 +2,10 @@ import { isAbsolute } from "node:path";
 import { ProviderScope } from "@earendil-works/pi-ai/node/provider-scope";
 import { assertValidSessionId } from "../../core/session-manager.ts";
 import type { CliRuntimeConfiguration } from "../../main.ts";
+import {
+	type SessionPathReservations as DaemonPathReservations,
+	SESSION_PATH_RETRY_AFTER_MS,
+} from "./host-reservations.ts";
 import { refreshesSessionActivity } from "./session-command-activity.ts";
 import {
 	type LiveWorkerPaths,
@@ -29,6 +33,7 @@ export interface WorkerSessionRegistryOptions {
 	readonly now: () => number;
 	/** Production builds the real worker; a caller may supply one to drive a lifecycle path deterministically. */
 	readonly createWorker?: (callbacks: SessionWorkerCallbacks) => SessionWorkerClient;
+	readonly pathReservations?: DaemonPathReservations;
 }
 
 /** Transport-side lifecycle owner. Caller paths are never inspected on this event loop. */
@@ -51,6 +56,10 @@ export class WorkerSessionRegistry {
 
 	get size(): number {
 		return this.entries.size;
+	}
+
+	holderPids(): Promise<readonly number[]> {
+		return this.options.pathReservations?.holderPids?.() ?? Promise.resolve([]);
 	}
 
 	async openSession(profile: RpcSessionLaunchProfile, options?: RpcSessionOpenOptions): Promise<OpenRpcSession> {
@@ -106,10 +115,16 @@ export class WorkerSessionRegistry {
 			reconcile: (livePaths) => this.reconcile(handle, livePaths),
 			exit: () => {
 				if (this.entries.get(handle) !== entry) return;
-				entry.state = "closed";
-				this.entries.delete(handle);
-				this.reservations.releaseAll(handle);
-				entry.closeResolve?.();
+				const finish = (): void => {
+					if (this.entries.get(handle) !== entry) return;
+					entry.state = "closed";
+					this.entries.delete(handle);
+					this.reservations.releaseAll(handle);
+					entry.closeResolve?.();
+				};
+				return entry.reservationKey && this.options.pathReservations
+					? this.options.pathReservations.release(entry.reservationKey).then(finish)
+					: finish();
 			},
 			failure: (error) => {
 				// The open below only learns that its entry left `opening`, never why. Without this the
@@ -131,6 +146,14 @@ export class WorkerSessionRegistry {
 				worker.quarantine();
 				return attached;
 			}
+			const predecessor = this.options.pathReservations
+				? await this.options.pathReservations.claim(path)
+				: undefined;
+			if (predecessor)
+				throw new RpcSessionRegistryError("session_path_in_use", undefined, {
+					owner: predecessor,
+					retry_after_ms: SESSION_PATH_RETRY_AFTER_MS,
+				});
 			const grant = this.reserve(handle, path);
 			if (grant !== "granted") throw new RpcSessionRegistryError(RESERVATION_DENIAL_CODES[grant]);
 			entry.reservationKey = path;
@@ -282,6 +305,7 @@ export class WorkerSessionRegistry {
 		}
 		const result = this.openResult(owner, entry);
 		entry.attachments++;
+		this.options.pathReservations?.setAttached(path, true);
 		// Retention is a property of the live session: any attach may ask for it, and
 		// no attach may revoke it for the clients that already rely on it.
 		if (options?.retainOnDisconnect) entry.retainOnDisconnect = true;

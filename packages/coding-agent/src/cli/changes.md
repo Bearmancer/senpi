@@ -2,7 +2,7 @@
 
 ### What changed
 
-- `packages/coding-agent/src/cli/session-opening.ts`: owns startup's existing name validation/persistence and warns interactive users about live foreign session holders before any name write.
+- `packages/coding-agent/src/cli/session-opening.ts`: warns interactive users about live foreign session holders after the runtime publishes its own hold; lookup errors warn and continue. Naming remains in `main.ts`.
 
 ### Why
 
@@ -10,11 +10,11 @@ A resumed session was opened silently even when another process already held its
 
 ### Why an extension could not handle it
 
-Session selection and startup naming precede extension loading.
+The warning belongs to CLI startup and must work with extensions disabled.
 
 ### Expected merge conflict zones
 
-- Fork-only file; the startup warning and name validation.
+- Fork-only file; the startup warning.
 
 ## 2026-10-08 - Schedule delivery follows paths the OmO desktop moved (senpi#2898)
 

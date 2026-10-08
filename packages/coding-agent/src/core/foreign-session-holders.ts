@@ -1,4 +1,5 @@
 import { createReadStream } from "node:fs";
+import { stat } from "node:fs/promises";
 import { createInterface } from "node:readline";
 import { resolveMovedPath } from "./extensions/builtin/moved-path-guard/resolve.ts";
 import { errorCode } from "./extensions/builtin/terminal/lease-file.ts";
@@ -7,22 +8,26 @@ import { parseEntryLine } from "./session-record.ts";
 
 /** Read only the header, asynchronously: checking admission must not load or mutate a transcript. */
 async function sessionIdFromFile(sessionFile: string): Promise<string | undefined> {
-	const stream = createReadStream(sessionFile, { encoding: "utf8" });
-	const lines = createInterface({ input: stream, crlfDelay: Number.POSITIVE_INFINITY });
 	try {
-		for await (const line of lines) {
-			const entry = parseEntryLine(line);
-			if (entry === null) continue;
-			return entry.type === "session" && typeof entry.id === "string" ? entry.id : undefined;
+		// Admission must not consume a pipe: its reader belongs to the session runtime.
+		if (!(await stat(sessionFile)).isFile()) return undefined;
+		const stream = createReadStream(sessionFile, { encoding: "utf8" });
+		const lines = createInterface({ input: stream, crlfDelay: Number.POSITIVE_INFINITY });
+		try {
+			for await (const line of lines) {
+				const entry = parseEntryLine(line);
+				if (entry === null) continue;
+				return entry.type === "session" && typeof entry.id === "string" ? entry.id : undefined;
+			}
+			return undefined;
+		} finally {
+			lines.close();
+			stream.destroy();
 		}
-		return undefined;
 	} catch (cause) {
 		// A path that does not yet exist is a new session, not a held resume.
 		if (errorCode(cause) === "ENOENT") return undefined;
 		throw cause;
-	} finally {
-		lines.close();
-		stream.destroy();
 	}
 }
 
@@ -45,7 +50,12 @@ export async function sessionHolderWarning(
 	sessionFile: string | undefined,
 	sessionId?: string,
 ): Promise<string | undefined> {
-	const holders = await foreignSessionHolders(sessionFile, sessionId);
+	let holders: SessionHolder[];
+	try {
+		holders = await foreignSessionHolders(sessionFile, sessionId);
+	} catch {
+		return "Unable to inspect session holders; continuing without holder information.";
+	}
 	if (holders.length === 0) return undefined;
 	const who = holders.map(({ pid, cwd }) => `pid ${pid}${cwd === undefined ? "" : ` in ${JSON.stringify(cwd)}`}`);
 	return `This session is also open in another process (${who.join("; ")}). Concurrent writes may corrupt its history; quit the other process before continuing.`;

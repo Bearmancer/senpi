@@ -24,7 +24,7 @@ export interface SessionWorkerCallbacks {
 	reserve: (path: string) => SessionWriteGrant;
 	/** Every snapshot republishes which paths this worker still writes. */
 	reconcile: (livePaths: readonly string[]) => void;
-	exit: () => void;
+	exit: () => void | Promise<void>;
 	failure: (error: string) => void;
 }
 
@@ -68,7 +68,7 @@ export class SessionWorkerClient {
 
 	constructor(callbacks: SessionWorkerCallbacks) {
 		this.callbacks = callbacks;
-		this.exited = new Promise((resolve) => {
+		this.exited = new Promise((resolve, reject) => {
 			this.worker.once("exit", () => {
 				if (!this.stopped && !this.closeTimer) this.fail("session_worker_exited");
 				this.stopped = true;
@@ -76,9 +76,10 @@ export class SessionWorkerClient {
 				this.requests.close(new Error("session_worker_exited"));
 				void this.webviewBroker?.dispose();
 				this.listeners.clear();
-				callbacks.exit();
+				const released = callbacks.exit();
 				this.publishTerminalFailure();
-				resolve();
+				if (released) void released.then(resolve, reject);
+				else resolve();
 			});
 		});
 		this.worker.on("message", (message: SessionWorkerToHost) => this.receive(message));

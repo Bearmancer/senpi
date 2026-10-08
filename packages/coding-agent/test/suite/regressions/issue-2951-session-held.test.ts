@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { once } from "node:events";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -135,7 +135,13 @@ it("warns interactive startup with the holder pid/cwd and clears after exit", as
 
 it("opens when a crashed holder leaves a dead-pid record", async () => {
 	await using holder = await startHolder();
+	expect(holder.pid).not.toBe(process.pid);
 	await holder.stop(true);
+	const record = JSON.parse(
+		await readFile(join(dirname(sessionFile), "session-holders", SESSION_ID, `${holder.pid}.json`), "utf8"),
+	);
+	expect(record.pid).toBe(holder.pid);
+	expect(record.processStartedAtMs).toEqual(expect.any(Number));
 	await using rig = createInProcessRig(root);
 	expect(await rig.open("client", { sessionPath: sessionFile })).toMatchObject({ success: true });
 });
@@ -164,10 +170,23 @@ it("does not block a holder in its own worker runtime", async () => {
 	}
 });
 
-it("ignores a stale holder from a previous boot", async () => {
-	const dir = join(dirname(sessionFile), "session-holders", SESSION_ID);
-	await mkdir(dir, { recursive: true });
-	await writeFile(join(dir, `${process.pid}.json`), JSON.stringify({ pid: process.pid, bootAtMs: 1, cwd: root }));
+it.each(["bootAtMs", "processStartedAtMs"])("ignores a complete live foreign holder with stale %s", async (field) => {
+	await using holder = await startHolder();
+	expect(holder.pid).not.toBe(process.pid);
+	const recordFile = join(dirname(sessionFile), "session-holders", SESSION_ID, `${holder.pid}.json`);
+	const record = JSON.parse(await readFile(recordFile, "utf8"));
+	expect(record.bootAtMs).toEqual(expect.any(Number));
+	expect(record.processStartedAtMs).toEqual(expect.any(Number));
+	record[field] -= 600_000;
+	await writeFile(recordFile, JSON.stringify(record));
 	await using rig = createInProcessRig(root);
 	expect(await rig.open("client", { sessionPath: sessionFile })).toMatchObject({ success: true });
+});
+
+it("keeps interactive startup advisory when the holder lookup has a filesystem error", async () => {
+	await mkdir(join(root, "session-holders"));
+	await writeFile(join(root, "session-holders", SESSION_ID), "not a directory");
+	const warning = vi.spyOn(console, "error").mockImplementation(() => {});
+	await expect(prepareSessionOpening(SessionManager.open(sessionFile), "interactive")).resolves.toBeUndefined();
+	expect(warning).toHaveBeenCalledTimes(1);
 });

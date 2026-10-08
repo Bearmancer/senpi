@@ -41,6 +41,8 @@ export interface SessionPathOwner {
 }
 
 export interface SessionPathReservations {
+	/** Live processes registered to this daemon, never inferred from a holder's own labels. */
+	holderPids?(): Promise<readonly number[]>;
 	/** Records this host as the holder of `sessionPath`, or reports the holder whose claim stands. */
 	claim(sessionPath: string, attached?: boolean): Promise<SessionPathOwner | undefined>;
 	/** Drops this host's claim. A claim made by another generation is never touched. */
@@ -126,6 +128,27 @@ export function createSessionPathReservations(options: {
 		await rename(staging, file);
 	};
 	return {
+		async holderPids(): Promise<readonly number[]> {
+			const candidates = (await readSessionPathClaims(dir)).map(({ owner }) => owner);
+			const generations = await readdir(paths.generationsDir, { withFileTypes: true }).catch(() => []);
+			for (const generation of generations) {
+				if (!generation.isDirectory()) continue;
+				const record = parseJson(
+					await readFileOrUndefined(join(paths.generationsDir, generation.name, "host-child.pid")),
+				);
+				if (typeof record?.pid !== "number") continue;
+				candidates.push({
+					pid: record.pid,
+					processStartTime: typeof record.processStartTime === "string" ? record.processStartTime : null,
+					instanceId: generation.name,
+					sessionPath: "",
+				});
+			}
+			const live = await Promise.all(
+				candidates.map(async (owner) => ((await claimOwnerIsLive(owner)) ? owner.pid : undefined)),
+			);
+			return [...new Set(live.filter((value): value is number => value !== undefined))];
+		},
 		async claim(sessionPath: string, attached = true): Promise<SessionPathOwner | undefined> {
 			const existing = await readOwner(reservationFile(dir, sessionPath));
 			if (existing && existing.pid !== pid) {
