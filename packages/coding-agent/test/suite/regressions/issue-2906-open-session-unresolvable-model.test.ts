@@ -5,7 +5,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { parseArgs } from "../../../src/cli/args.ts";
 import { SettingsManager } from "../../../src/core/settings-manager.ts";
 import { createCliRuntimeFactory } from "../../../src/main.ts";
+import { SessionCommandRouter } from "../../../src/modes/rpc/session-command-router.ts";
+import { SessionEventWriter } from "../../../src/modes/rpc/session-event-writer.ts";
 import { RpcSessionRegistry, RpcSessionRegistryError } from "../../../src/modes/rpc/session-registry.ts";
+import type { SessionWorkerClient } from "../../../src/modes/rpc/session-worker-client.ts";
+import { WorkerSessionRegistry } from "../../../src/modes/rpc/worker-session-registry.ts";
 
 /**
  * #2906: an RPC host `open_session` whose requested model cannot be resolved used to open
@@ -82,4 +86,66 @@ describe("open_session with an unresolvable creationModel (#2906)", () => {
 		},
 		30_000,
 	);
+
+	it("relays a worker's model_unavailable failure with one open_failed prefix", async () => {
+		const reason = 'open_failed: model_unavailable: Unknown provider "no-such-provider-2906".';
+		const registry = new WorkerSessionRegistry({
+			configuration: {
+				parsed: parseArgs(["--mode", "rpc", "--no-extensions", "--no-skills"]),
+				cwd,
+				agentDir,
+				appMode: "rpc",
+			},
+			closeGraceMs: 100,
+			now: Date.now,
+			createWorker: (callbacks: { failure: (error: string) => void }): SessionWorkerClient =>
+				({
+					prepare: async () => join(scratch, "worker.jsonl"),
+					commit: async () => {
+						callbacks.failure(reason);
+						return { state: { sessionId: "unused", cwd } };
+					},
+					quarantine: () => {},
+				}) as unknown as SessionWorkerClient,
+		});
+
+		const failure = await registry.openSession({ cwd }).then(
+			() => undefined,
+			(error: unknown) => error,
+		);
+		expect(failure).toBeInstanceOf(RpcSessionRegistryError);
+		expect((failure as RpcSessionRegistryError).message).toBe(reason);
+	});
+
+	it("answers open_session with one open_failed prefix when the worker's commit rejects", async () => {
+		const reason = 'open_failed: model_unavailable: Unknown provider "no-such-provider-2906".';
+		const registry = new WorkerSessionRegistry({
+			configuration: {
+				parsed: parseArgs(["--mode", "rpc", "--no-extensions", "--no-skills"]),
+				cwd,
+				agentDir,
+				appMode: "rpc",
+			},
+			closeGraceMs: 100,
+			now: Date.now,
+			createWorker: (): SessionWorkerClient =>
+				({
+					prepare: async () => join(scratch, "worker-reject.jsonl"),
+					commit: async () => {
+						throw new Error(reason);
+					},
+					quarantine: () => {},
+				}) as unknown as SessionWorkerClient,
+		});
+		const router = new SessionCommandRouter(registry, new SessionEventWriter(() => {}), { cwd });
+
+		const response = await router.handle({
+			id: "open",
+			type: "open_session",
+			cwd,
+			provider: "no-such-provider-2906",
+			modelId: "some-model",
+		});
+		expect(response).toMatchObject({ success: false, error: reason });
+	});
 });
