@@ -31,7 +31,7 @@ export async function pathExists(path: string): Promise<boolean | undefined> {
 		await access(path);
 		return true;
 	} catch (error) {
-		const code = error instanceof Error && "code" in error ? error.code : undefined;
+		const code = (error as NodeJS.ErrnoException)?.code;
 		return code === "ENOENT" || code === "ENOTDIR" ? false : undefined;
 	}
 }

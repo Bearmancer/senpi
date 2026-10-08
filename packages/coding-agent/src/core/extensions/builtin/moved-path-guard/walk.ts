@@ -81,7 +81,10 @@ function* movedOnce(path: string, platform: PathPlatform, onReused?: OnReused): 
 				const key = prefixKey(dir, breadcrumb, match.prefix);
 				const answer = yield { op: "exists", path: gitEntry };
 				// A .git check that cannot answer keeps this process's last answer for the prefix; with none, the prefix is
-				// treated as the text fallback treats it: not re-used.
+				// treated as the text fallback treats it: not re-used. Accepted (sixth review LOW-2): a remembered "re-used"
+				// does not expire by itself. If that worktree's .git is removed and the next calls' breadcrumb steps time out
+				// before any probe of the prefix answers, those calls still allow it; the first call whose walk reaches the
+				// .git check corrects the answer. Any other default would refuse a live worktree again (fifth review M-1).
 				if (typeof answer === "boolean") rememberReused(key, answer);
 				reused = typeof answer === "boolean" ? answer : (rememberedReused(key) ?? false);
 			}
