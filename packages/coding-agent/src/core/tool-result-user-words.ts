@@ -1,4 +1,11 @@
-import type { Message, TextContent, ToolResultMessage } from "@earendil-works/pi-ai";
+import {
+	CONTEXT_PROVENANCE_FIELD,
+	contextProvenanceFingerprint,
+	getContextProvenance,
+	type Message,
+	type TextContent,
+	type ToolResultMessage,
+} from "@earendil-works/pi-ai";
 
 /**
  * Words the user typed that a tool result carries in `details.userWords` instead of its content.
@@ -48,11 +55,11 @@ export function appendToolResultUserWords(messages: Message[]): Message[] {
 	}
 	const result: Message[] = [];
 	let pending: TextContent[] = [];
-	let timestamp = 0;
+	let source: ToolResultMessage | undefined;
 	const flush = (next: Message | undefined) => {
-		if (pending.length > 0 && !startsWithBlocks(next, pending))
-			result.push({ role: "user", content: pending, timestamp });
+		if (source && !startsWithBlocks(next, pending)) result.push(wordMessage(pending, source));
 		pending = [];
+		source = undefined;
 	};
 	for (const message of messages) {
 		if (message.role !== "toolResult") flush(message);
@@ -61,10 +68,28 @@ export function appendToolResultUserWords(messages: Message[]): Message[] {
 		const blocks = userWordBlocks(toolResultUserWords(message));
 		if (blocks.length === 0) continue;
 		pending.push(...blocks);
-		timestamp = message.timestamp;
+		source = message;
 	}
 	flush(undefined);
 	return result;
+}
+
+/**
+ * The word message belongs to its tool result: it carries its own copy of that result's
+ * request-local provenance, so a context producer that marks the result (OpenAI remote-compaction
+ * replay) owns the word message too and replaces both together. A sealed result passes its seal on
+ * only while the result still matches it; the copy is then sealed with the word message's own
+ * fingerprint, since it is rebuilt on every conversion and cannot keep a seal from an earlier one.
+ */
+function wordMessage(content: TextContent[], source: ToolResultMessage): Message {
+	const message: Message = { role: "user", content, timestamp: source.timestamp };
+	const provenance = getContextProvenance(source);
+	if (!provenance) return message;
+	const { integrity, ...owned } = provenance;
+	const proven = integrity === undefined || integrity === contextProvenanceFingerprint(source);
+	if (!proven) return message;
+	const sealed = integrity === undefined ? owned : { ...owned, integrity: contextProvenanceFingerprint(message) };
+	return Object.assign(message, { [CONTEXT_PROVENANCE_FIELD]: sealed });
 }
 
 /** Already converted output carries the word message right after the run; converting again keeps one. */

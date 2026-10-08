@@ -7,6 +7,7 @@
 
 import { type Context, fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai/compat";
 import { afterEach, describe, expect, it } from "vitest";
+import { clearOldToolResults } from "../../../src/core/extensions/builtin/compaction/context-reduction.ts";
 import type { ExtensionAPI, QuestionResponse } from "../../../src/core/extensions/types.ts";
 import { convertToLlm } from "../../../src/core/messages.ts";
 import { SessionManager } from "../../../src/core/session-manager.ts";
@@ -40,6 +41,7 @@ function target(name: string): WireTarget {
 }
 const anthropic = target("anthropic-messages");
 const chat = target("openai-completions");
+const mistral = target("mistral-conversations");
 
 /** Runs one blocking question; `onAnswered` runs once the answer's tool result is persisted. */
 async function blockingRun(
@@ -115,6 +117,35 @@ describe("senpi#2920 an answer's words survive every queue operation", () => {
 		const firstWord = items.findIndex((item) => item.kind === "userText" && item.text === commentLabel(CALL_ID));
 		expect(tools).toHaveLength(2);
 		expect(firstWord).toBeGreaterThan(Math.max(...tools));
+	});
+});
+
+describe("senpi#2920 the word message next to other user turns", () => {
+	it("mistral-conversations: the words and the next prompt share one user message", async () => {
+		const { next } = await blockingRun(async () => ANSWER);
+		if (!next) throw new Error("no request followed the answer");
+		const prompt = {
+			role: "user" as const,
+			content: [{ type: "text" as const, text: STEER }],
+			timestamp: Date.now(),
+		};
+		const { items } = await wireItemsFor(mistral, { ...next, messages: [...next.messages, prompt] });
+		const { result, following } = afterLastToolResult(items);
+		expect(textsOf(following)).toEqual([...answerWordBlocks(), STEER]);
+		expect(new Set(following.map((item) => item.message)).size).toBe(1);
+		expect(following[0]?.message).toBe(result.message + 1);
+	});
+
+	it("clearing an old ask-user result keeps its words for the model", async () => {
+		const { next, harness } = await blockingRun(async () => ANSWER);
+		if (!next) throw new Error("no request followed the answer");
+		const cleared = clearOldToolResults(harness.session.messages, {
+			clearableToolNames: ["ask_user_question"],
+			keepRecent: 0,
+		});
+		expect(cleared.toolResultsCleared).toBe(1);
+		const words = await wordsAfterResults(anthropic, { ...next, messages: convertToLlm(cleared.messages) });
+		expect(words.slice(0, 4)).toEqual(answerWordBlocks());
 	});
 });
 

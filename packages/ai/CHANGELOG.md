@@ -12,6 +12,7 @@
 
 ### Fixed
 
+- Mistral requests send consecutive user turns as one user message instead of two in a row ([#2920](https://github.com/code-yeongyu/senpi/issues/2920)).
 - Transient OAuth token refresh failures retain structured transport and HTTP facts, preserve stored credentials, and mark failed requests for same-model retry rather than ending the turn ([#2893](https://github.com/code-yeongyu/senpi/issues/2893)).
 
 ### Removed
