@@ -39,7 +39,6 @@ import {
 	dispatchPackageCommand,
 	dispatchScheduleCommand,
 } from "./cli/deferred-commands.ts";
-import { exitAfterOutput } from "./cli/exit-after-output.ts";
 import { processFileArguments } from "./cli/file-processor.ts";
 import { resolveHelpExtensionFlags } from "./cli/help-extension-flags.ts";
 import { helpFlagsScope, isPlainHelpRequest, resolveHelpProjectTrust } from "./cli/help-fast-path.ts";
@@ -47,6 +46,7 @@ import { writeHelpFlagsCache } from "./cli/help-flags-cache.ts";
 import { buildInitialMessage } from "./cli/initial-message.ts";
 import { listModels } from "./cli/list-models.ts";
 import { isModelsDiscoverCommand, runModelsDiscoverCommand } from "./cli/models-command.ts";
+import { exitAfterOutput, printThenExit } from "./cli/print-then-exit.ts";
 import { createProjectTrustContext } from "./cli/project-trust.ts";
 import {
 	createStartupLoadingIndicator,
@@ -1128,8 +1128,7 @@ export async function main(args: string[], options?: MainOptions) {
 			// https://github.com/nodejs/node/issues/56645
 			return;
 		}
-		process.exit(exitCode);
-		return;
+		await exitAfterOutput("", exitCode);
 	}
 
 	if (await dispatchConfigCommand(args, { extensionFactories })) {
@@ -1144,13 +1143,13 @@ export async function main(args: string[], options?: MainOptions) {
 	// exits here rather than falling through into argument parsing and the interactive path.
 	const hostExitCode = await dispatchHostCommand(args);
 	if (hostExitCode !== undefined) {
-		process.exit(hostExitCode);
+		await exitAfterOutput("", hostExitCode);
 	}
 
 	// Durable scheduled prompts: fired out of process, so a job scheduled by an exited --print run still runs.
 	const scheduleExitCode = await dispatchScheduleCommand(args);
 	if (scheduleExitCode !== undefined) {
-		process.exit(scheduleExitCode);
+		await exitAfterOutput("", scheduleExitCode);
 	}
 
 	const parsed = parseArgs(args);
@@ -1166,8 +1165,7 @@ export async function main(args: string[], options?: MainOptions) {
 	time("parseArgs");
 
 	if (parsed.version) {
-		console.log(DISPLAY_VERSION);
-		await exitAfterOutput(0);
+		await printThenExit(() => console.log(DISPLAY_VERSION), 0);
 	}
 
 	if (parsed.export) {
@@ -1180,8 +1178,7 @@ export async function main(args: string[], options?: MainOptions) {
 			console.error(chalk.red(`Error: ${message}`));
 			process.exit(1);
 		}
-		console.log(`Exported to: ${result}`);
-		await exitAfterOutput(0);
+		await printThenExit(() => console.log(`Exported to: ${result}`), 0);
 	}
 
 	let appMode = resolveAppMode(parsed, process.stdin.isTTY, process.stdout.isTTY);
@@ -1232,16 +1229,16 @@ export async function main(args: string[], options?: MainOptions) {
 			noExtensions: parsed.noExtensions === true,
 			...(extensionFactories ? { extensionFactories } : {}),
 		});
-		printHelp(flags);
 		writeHelpFlagsCache({ scope, flags, extensionPaths });
-		printTimings();
-		await exitAfterOutput(0);
+		await printThenExit(() => {
+			printHelp(flags);
+			printTimings();
+		}, 0);
 	}
 
 	if (parsed.listTips) {
 		const { listTips } = await import("./cli/list-tips.ts");
-		listTips();
-		await exitAfterOutput(0);
+		await printThenExit(listTips, 0);
 	}
 
 	if (parsed.listModels !== undefined) {
@@ -1269,8 +1266,7 @@ export async function main(args: string[], options?: MainOptions) {
 			...collectAuthDiagnostics(services.authStorage, "model listing"),
 		]);
 		const searchPattern = typeof parsed.listModels === "string" ? parsed.listModels : undefined;
-		await listModels(services.modelRuntime, searchPattern);
-		await exitAfterOutput(0);
+		await printThenExit(() => listModels(services.modelRuntime, searchPattern), 0);
 	}
 
 	// Experimental first-time setup: theme choice and analytics opt-in.
@@ -1419,8 +1415,7 @@ export async function main(args: string[], options?: MainOptions) {
 	const loadedExtensions = resourceLoader.getExtensions().extensions;
 	const extensionFlags = loadedExtensions.flatMap((extension) => Array.from(extension.flags.values()));
 	if (parsed.help) {
-		printHelp(extensionFlags);
-		process.exit(0);
+		await printThenExit(() => printHelp(extensionFlags), 0);
 	}
 	time("extensionFlags");
 	// Every full launch refreshes what `--help` reads, so the fast path stays warm without a help

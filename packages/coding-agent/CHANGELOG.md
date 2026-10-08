@@ -26,7 +26,7 @@
 
 ### Fixed
 
-- `senpi --list-models`, `--version`, `--help`, `--list-tips` and `--export` no longer lose output when their stdout is a pipe read slowly under Node: they wait for the output to be delivered before exiting, instead of exiting 0 with rows missing ([#2937](https://github.com/code-yeongyu/senpi/issues/2937)).
+- `senpi --list-models`, `--version`, `--help`, `--list-tips` and `--export`, and the package, host and schedule commands, no longer lose output when stdout is a pipe that is read slowly, under Node or Bun: they wait until the output is delivered (at most 30 s, and at once when the reader closes the pipe) instead of exiting 0 with rows missing ([#2937](https://github.com/code-yeongyu/senpi/issues/2937)).
 - An Anthropic Subscription account blocked by an authentication error now recovers on its own when its saved refresh token is still accepted: the next request redeems that token once and clears the block, instead of every request failing with "blocked until re-login". A rejected token stays blocked and is not retried until a new login ([#2926](https://github.com/code-yeongyu/senpi/issues/2926)).
 - A config hot reload no longer re-triggers itself when an extension watches a file it registers after the session starts (omo's `omo.jsonc`): the untouched file is compared once the extension re-registers it, and a reload chain caused only by that comparison stops after three reloads with a `reload_loop_stopped` warning. A reload vetoed by running subagents is rechecked with backoff instead of every second ([#2878](https://github.com/code-yeongyu/senpi/issues/2878)).
 
