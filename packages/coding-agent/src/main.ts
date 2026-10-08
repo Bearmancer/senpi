@@ -39,6 +39,7 @@ import {
 	dispatchPackageCommand,
 	dispatchScheduleCommand,
 } from "./cli/deferred-commands.ts";
+import { exitAfterOutput } from "./cli/exit-after-output.ts";
 import { processFileArguments } from "./cli/file-processor.ts";
 import { resolveHelpExtensionFlags } from "./cli/help-extension-flags.ts";
 import { helpFlagsScope, isPlainHelpRequest, resolveHelpProjectTrust } from "./cli/help-fast-path.ts";
@@ -1166,7 +1167,7 @@ export async function main(args: string[], options?: MainOptions) {
 
 	if (parsed.version) {
 		console.log(DISPLAY_VERSION);
-		process.exit(0);
+		await exitAfterOutput(0);
 	}
 
 	if (parsed.export) {
@@ -1180,7 +1181,7 @@ export async function main(args: string[], options?: MainOptions) {
 			process.exit(1);
 		}
 		console.log(`Exported to: ${result}`);
-		process.exit(0);
+		await exitAfterOutput(0);
 	}
 
 	let appMode = resolveAppMode(parsed, process.stdin.isTTY, process.stdout.isTTY);
@@ -1234,13 +1235,13 @@ export async function main(args: string[], options?: MainOptions) {
 		printHelp(flags);
 		writeHelpFlagsCache({ scope, flags, extensionPaths });
 		printTimings();
-		process.exit(0);
+		await exitAfterOutput(0);
 	}
 
 	if (parsed.listTips) {
 		const { listTips } = await import("./cli/list-tips.ts");
 		listTips();
-		process.exit(0);
+		await exitAfterOutput(0);
 	}
 
 	if (parsed.listModels !== undefined) {
@@ -1269,7 +1270,7 @@ export async function main(args: string[], options?: MainOptions) {
 		]);
 		const searchPattern = typeof parsed.listModels === "string" ? parsed.listModels : undefined;
 		await listModels(services.modelRuntime, searchPattern);
-		process.exit(0);
+		await exitAfterOutput(0);
 	}
 
 	// Experimental first-time setup: theme choice and analytics opt-in.
