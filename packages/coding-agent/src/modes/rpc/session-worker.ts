@@ -17,6 +17,7 @@ import { createRpcSessionBinding, type RpcSessionBinding } from "./session-bindi
 import { SessionEventWriter } from "./session-event-writer.ts";
 import { canonicalSessionPath } from "./session-path-key.ts";
 import { type RpcSessionEntry, RpcSessionRegistry } from "./session-registry.ts";
+import { resolveMovedProfile } from "./session-registry-moved-path.ts";
 import { createWorkerCredit } from "./session-worker-credit.ts";
 import {
 	type HostToSessionWorker,
@@ -130,13 +131,15 @@ async function handle(message: HostToSessionWorker): Promise<void> {
 	switch (message.type) {
 		case "prepare": {
 			if (prepared) throw new Error("Session worker already prepared");
+			// Resolved here, not on the host loop, which never inspects caller paths (senpi#2898).
+			const profile = resolveMovedProfile(message.profile);
 			const path =
-				message.profile.sessionPath ??
+				profile.sessionPath ??
 				join(
-					getDefaultSessionDir(message.profile.cwd, message.configuration.agentDir),
+					getDefaultSessionDir(profile.cwd, message.configuration.agentDir),
 					`${new Date().toISOString().replace(/[:.]/g, "-")}_${randomUUID()}.jsonl`,
 				);
-			prepared = { ...message, profile: { ...message.profile, sessionPath: canonicalSessionPath(path) } };
+			prepared = { ...message, profile: { ...profile, sessionPath: canonicalSessionPath(path) } };
 			send({ type: "prepared", request: message.request, sessionPath: canonicalSessionPath(path) });
 			return;
 		}

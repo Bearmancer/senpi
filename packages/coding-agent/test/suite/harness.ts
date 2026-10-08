@@ -22,8 +22,7 @@ import type { ExtensionRunner, ExtensionUIContext } from "../../src/core/extensi
 import { convertToLlmForTransport } from "../../src/core/messages.ts";
 import type { ModelRegistry } from "../../src/core/model-registry.ts";
 import { SessionManager } from "../../src/core/session-manager.ts";
-import type { Settings } from "../../src/core/settings-manager.ts";
-import { SettingsManager } from "../../src/core/settings-manager.ts";
+import { type Settings, SettingsManager } from "../../src/core/settings-manager.ts";
 import type { InlineExtension, ResourceLoader } from "../../src/index.ts";
 import { theme } from "../../src/modes/interactive/theme/theme.ts";
 import {
@@ -146,6 +145,8 @@ export interface HarnessOptions {
 	siblingFreshRuntime?: boolean;
 	/** Session to continue, for example to test a resume. Default: a new in-memory session. */
 	sessionManager?: SessionManager;
+	/** Working directory tools and extensions see as `ctx.cwd`. Default: the harness temp dir. */
+	cwd?: string;
 }
 
 export interface Harness {
@@ -299,7 +300,7 @@ export async function createHarness(options: HarnessOptions = {}): Promise<Harne
 		agent,
 		sessionManager,
 		settingsManager,
-		cwd: tempDir,
+		cwd: options.cwd ?? tempDir,
 		agentDir,
 		modelRuntime: getModelRuntime(modelRegistry),
 		resourceLoader,
