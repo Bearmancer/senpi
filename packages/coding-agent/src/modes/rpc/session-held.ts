@@ -1,4 +1,4 @@
-import { readProcessStartMs } from "../../core/extensions/builtin/terminal/process-start-probe.ts";
+import { execFile } from "node:child_process";
 import { foreignSessionHolders } from "../../core/foreign-session-holders.ts";
 import type { RpcInboundRecord } from "./rpc-types.ts";
 import { RPC_ERROR_SESSION_HELD } from "./rpc-types.ts";
@@ -42,25 +42,49 @@ const READ_ONLY_OR_CONTROL = new Set<RpcInboundRecord["type"]>([
 	"extension_ui_progress",
 ]);
 
+/** One bounded identity snapshot for all foreign PIDs, never one subprocess per lease. */
+function readProcessStarts(): Promise<ReadonlyMap<number, number>> {
+	const windows = process.platform === "win32";
+	const command = windows ? "powershell.exe" : "ps";
+	const args = windows
+		? [
+				"-NoProfile",
+				"-NonInteractive",
+				"-Command",
+				'Get-CimInstance Win32_Process -ErrorAction Stop | ForEach-Object { if ($null -ne $_.CreationDate) { "{0} {1}" -f $_.ProcessId, $_.CreationDate.ToUniversalTime().ToString("o") } }',
+			]
+		: ["-axo", "pid=,lstart="];
+	return new Promise((resolve) => {
+		execFile(command, args, { timeout: 1_000, maxBuffer: 4 * 1024 * 1024, windowsHide: true }, (error, stdout) => {
+			const starts = new Map<number, number>();
+			if (!error)
+				for (const line of stdout.split("\n")) {
+					const row = /^\s*(\d+)\s+(.+)$/.exec(line);
+					if (!row) continue;
+					const start = Date.parse(row[2]);
+					if (Number.isFinite(start)) starts.set(Number(row[1]), start);
+				}
+			resolve(starts);
+		});
+	});
+}
+
 /** Fresh leases at each boundary; daemon identity resolution is lazy and scoped to one command. */
 export function sessionHeldCheck(
 	resolveDaemonPids?: (observedStarts: ReadonlyMap<number, number | undefined>) => Promise<readonly number[]>,
 ): (sessionFile: string | undefined, sessionId?: string) => Promise<void> {
 	let daemonPids: Promise<readonly number[]> | undefined;
-	const probes = new Map<number, Promise<number | undefined>>();
+	let processStarts: Promise<ReadonlyMap<number, number>> | undefined;
 	const observedStarts = new Map<number, number | undefined>();
 	return async (sessionFile, sessionId) => {
 		const holders = await foreignSessionHolders(sessionFile, sessionId, {
 			readProcessStartMs: (pid) => {
-				let probe = probes.get(pid);
-				if (!probe) {
-					probe = readProcessStartMs(pid).then((start) => {
-						observedStarts.set(pid, start);
-						return start;
-					});
-					probes.set(pid, probe);
-				}
-				return probe;
+				processStarts ??= readProcessStarts();
+				return processStarts.then((starts) => {
+					const start = starts.get(pid);
+					observedStarts.set(pid, start);
+					return start;
+				});
 			},
 		});
 		if (holders.length === 0) return;
