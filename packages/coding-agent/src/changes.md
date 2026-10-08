@@ -1,3 +1,21 @@
+## 2026-10-08 - JSON print mode exits non-zero when the run ran out of context (senpi#2925)
+
+### What changed
+
+- `packages/coding-agent/src/modes/print-mode.ts`: in `--mode json`, a run whose last assistant message stopped with `REQUIRED_COMPACTION_ERROR_MESSAGE` returns exit code 1. Text mode already exited 1 on any error stop. JSON mode keeps exit 0 for other error stops, because a JSON consumer reads them from the event stream.
+
+### Why
+
+A parent agent that delegates through `-p --mode json` and only checks the exit code took a run that could not fit its context for an empty success.
+
+### Why an extension could not handle it
+
+The exit code is decided by print mode itself after the session settles.
+
+### Expected merge conflict zones
+
+- LOW: the block after `waitForSettledSessionWork()` in `runPrintMode`.
+
 ## 2026-10-08 - An unresolvable session model is a tagged diagnostic (senpi#2906)
 
 ### What changed

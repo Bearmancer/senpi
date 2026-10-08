@@ -841,9 +841,13 @@ class ModelNotReadyError extends Error {
 	}
 }
 
+/** The error a turn ends with when a required compaction could not bring the context back under the window. */
+export const REQUIRED_COMPACTION_ERROR_MESSAGE =
+	"Context remains above the compaction threshold because compaction did not complete";
+
 class RequiredCompactionError extends Error {
 	constructor() {
-		super("Context remains above the compaction threshold because compaction did not complete");
+		super(REQUIRED_COMPACTION_ERROR_MESSAGE);
 		this.name = "RequiredCompactionError";
 	}
 }
@@ -8261,11 +8265,25 @@ export class AgentSession {
 		}
 		if (shouldCompact(contextTokens, contextWindow, settings)) {
 			if (inlineReason) {
+				const compacted = await this._runPrePromptCompaction(
+					assistantMessage,
+					skipAbortedCheck,
+					inlineReason,
+					retryAfterCompaction,
+				);
+				if (compacted || !this._compactionSkippedTooSmall) return compacted;
+				// Everything compactable sits inside the recent window, typically one long tool-heavy turn on a
+				// small window whose system prompt and tool schemas already fill most of it (senpi#2925). Split
+				// the current turn: summarize its earlier steps and keep only the latest one, as the overflow
+				// path's second rung does.
+				this._compactionSkippedTooSmall = false;
 				return await this._runPrePromptCompaction(
 					assistantMessage,
 					skipAbortedCheck,
 					inlineReason,
 					retryAfterCompaction,
+					false,
+					0,
 				);
 			} else {
 				const compacted = await this._runAutoCompaction("threshold", retryAfterCompaction);
