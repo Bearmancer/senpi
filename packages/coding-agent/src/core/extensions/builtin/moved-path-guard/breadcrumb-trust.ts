@@ -1,5 +1,5 @@
-import { closeSync, constants, fstatSync, openSync, readSync, type Stats } from "node:fs";
-import { open } from "node:fs/promises";
+import { closeSync, constants, fstatSync, lstatSync, openSync, readSync, type Stats } from "node:fs";
+import { lstat, open } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { MOVED_BREADCRUMB_FILE, type MovedBreadcrumb, parseMovedBreadcrumb } from "./breadcrumb.ts";
@@ -43,7 +43,14 @@ function trustStamp(stats: Stats): string | undefined {
 	return `${stats.mtimeMs}:${stats.size}:${stats.ino}`;
 }
 
-const OPEN_FLAGS = constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0);
+/**
+ * `O_NONBLOCK` makes opening a FIFO return at once instead of waiting for a writer (a planted
+ * `mkfifo /tmp/omo-desktop-moved.json` would otherwise hang every walk through `/tmp`); `fstat` then rejects it. It has
+ * no effect on regular files. Where the platform has no `O_NONBLOCK` (Windows), an `lstat` refuses non-regular files
+ * before the open.
+ */
+const OPEN_FLAGS = constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0);
+const NEEDS_LSTAT_FIRST = constants.O_NONBLOCK === undefined;
 
 function remembered(file: string, stamp: string, read: () => Buffer): unknown {
 	const cached = jsonByFile.get(file);
@@ -57,6 +64,7 @@ function remembered(file: string, stamp: string, read: () => Buffer): unknown {
 export function readJsonFileSync(file: string): unknown {
 	let fd: number;
 	try {
+		if (NEEDS_LSTAT_FIRST && !lstatSync(file).isFile()) return undefined;
 		fd = openSync(file, OPEN_FLAGS);
 	} catch {
 		return undefined;
@@ -75,6 +83,14 @@ export function readJsonFileSync(file: string): unknown {
 }
 
 export async function readJsonFileAsync(file: string): Promise<unknown> {
+	if (
+		NEEDS_LSTAT_FIRST &&
+		!(await lstat(file).then(
+			(stats) => stats.isFile(),
+			() => false,
+		))
+	)
+		return undefined;
 	const handle = await open(file, OPEN_FLAGS).catch(() => undefined);
 	if (!handle) return undefined;
 	try {
