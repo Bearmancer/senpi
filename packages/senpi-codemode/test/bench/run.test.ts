@@ -1,7 +1,7 @@
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { decide } from "../../scripts/bench-compare.ts";
-import { type RunPlan, runBlocks } from "../../scripts/bench-run.ts";
+import { type RunPlan, runBlocks, SPIKE_RETRIES } from "../../scripts/bench-run.ts";
 
 const host = vi.hoisted(() => ({ calls: 0, cores: 8, loadAfter: (_call: number): number => 0 }));
 
@@ -89,6 +89,13 @@ describe("paired runtime scheduling", () => {
 			expect(
 				Math.max(...block.measurements.map(({ loadStart, loadEnd }) => Math.max(loadStart, loadEnd))),
 			).toBeLessThanOrEqual(80);
+		// And the kept retry of block 2 keeps the alternation keyed on its block index, not on the attempt.
+		const retried = run.blocks[1];
+		if (!retried) throw new Error("block 2 missing");
+		for (let rep = 0; rep < plan.reps; rep += 1) {
+			const first = retried.measurements.find((entry) => entry.rep === rep && entry.role === "comparison");
+			expect(first?.side).toBe((1 + rep) % 2 === 0 ? "base" : "head");
+		}
 		const blockTwoReports = (run.reports["js-bun"] ?? []).filter((entry) => entry.block === 1);
 		expect(blockTwoReports).toHaveLength(4);
 		expect(run.retriedBlocks.map(({ block }) => block)).toEqual([1]);
@@ -107,7 +114,7 @@ describe("paired runtime scheduling", () => {
 		// Then block 1 is labelled after its retries, blocks 2 and 3 are kept, and the run is inconclusive, not refused.
 		const labelled = run.failures.filter((line) => line.startsWith("host load spike in block 1"));
 		expect(labelled).toHaveLength(1);
-		expect(labelled[0]).toContain("4 attempts");
+		expect(labelled[0]).toContain(`${SPIKE_RETRIES + 1} attempts`);
 		expect(run.blocks.map((block) => block.index)).toEqual([1, 2]);
 		expect((run.reports["js-bun"] ?? []).some((entry) => entry.block === 0)).toBe(false);
 		expect(decide({ ...run, blockLoads: run.admissionLoads }).exitCode).toBe(3);

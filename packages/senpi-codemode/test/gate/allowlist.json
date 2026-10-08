@@ -1240,15 +1240,16 @@
 				"legacyContracts/test/bench/block-spike.test.ts/a block attempt's spike checks (senpi#2909) discards the attempt when the block's start load is over 80",
 				"legacyContracts/test/bench/block-spike.test.ts/a block attempt's spike checks (senpi#2909) discards the attempt when only the closing host sample is over 80",
 				"legacyContracts/test/bench/block-spike.test.ts/a block attempt's spike checks (senpi#2909) discards the attempt when a runtime's own report saw load over 80",
-				"legacyContracts/test/bench/settle-process.test.ts/waitForLoadBelow keeps its process alive (senpi#2909) finishes the wait in a process that has nothing else to do"
+				"legacyContracts/test/bench/settle-process.test.ts/waitForLoadBelow keeps its process alive (senpi#2909) finishes the wait in a process that has nothing else to do",
+				"legacyContracts/test/bench/run-retry.test.ts/per-block spike retry (senpi#2909) waits for the load from before a spike that was already under way when the block started"
 			],
 			"changes": [
 				{
 					"key": "legacyContracts/test/bench/run.test.ts/paired runtime scheduling refuses the run end to end when host load crosses 80 between measurements",
-					"reason": "senpi#2909: a host-load spike over 80 no longer refuses the whole run; only the affected block is discarded and re-run (up to 3 retries, each after the load falls under 70), and a block that spikes every time is labelled so the run is INCONCLUSIVE. The same coverage moves to the renamed contracts listed under additions ('re-runs only the block a host-load spike over 80 hits' and 'labels a block that spikes over 80 on every attempt instead of refusing the run'). The pre-run admission refusal is unchanged."
+					"reason": "senpi#2909: a host-load spike over 80 no longer refuses the whole run; only the affected block is discarded and re-run (up to 3 retries, each after the load falls back to its last pre-spike level, or the core count if higher), and a block that spikes every time is labelled so the run is INCONCLUSIVE. The same coverage moves to the renamed contracts listed under additions ('re-runs only the block a host-load spike over 80 hits' and 'labels a block that spikes over 80 on every attempt instead of refusing the run'). The pre-run admission refusal is unchanged."
 				}
 			],
-			"reason": "senpi#2909: per-block bench spike guard. A load spike over 80 discards and re-runs only the affected block after the load settles, never discards a worker failure, and labels a block that keeps spiking; new contracts in run.test.ts, run-retry.test.ts and settle.test.ts."
+			"reason": "senpi#2909: per-block bench spike guard. A load spike over 80 discards and re-runs only the affected block after the load settles, never discards a worker failure, and labels a block that keeps spiking; new contracts in run.test.ts, run-retry.test.ts, block-spike.test.ts, settle.test.ts and settle-process.test.ts."
 		}
 	}
 }

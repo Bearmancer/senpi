@@ -72,7 +72,7 @@ const plan = (settle: (target: number) => Promise<void>): RunPlan => ({
 
 describe("per-block spike retry (senpi#2909)", () => {
 	it("keeps nothing from a discarded attempt that had already collected data", async () => {
-		// Given a first attempt that started at load 40, measured and reported before its spike, then a clean one.
+		// Given a first attempt that measured and reported before its spike, then a clean one.
 		attempts.queue = [attempt(0, 40, { spikePeak: 95 }), attempt(0, 3)];
 		const settle = vi.fn(async (_target: number) => {});
 		// When the block runs.
@@ -82,9 +82,19 @@ describe("per-block spike retry (senpi#2909)", () => {
 		expect(run.admissionLoads).toEqual([3, 3]);
 		expect((run.reports["js-bun"] ?? []).map((entry) => entry.report.loadavg[0])).toEqual([3]);
 		expect(run.retriedBlocks).toEqual([{ block: 0, attempts: 2 }]);
-		// And the retry waited for the load to return to where the discarded attempt started (40 + 5), not the core count.
+		// And the retry waited once.
 		expect(settle).toHaveBeenCalledTimes(1);
-		expect(settle).toHaveBeenCalledWith(Math.max(availableParallelism(), 45));
+	});
+
+	it("waits for the load from before a spike that was already under way when the block started", async () => {
+		// Given block 1 kept at start load 30, and block 2 whose first attempt began inside a spike (start load 95).
+		attempts.queue = [attempt(0, 30), attempt(1, 95, { spikePeak: 95 }), attempt(1, 31)];
+		const settle = vi.fn(async (_target: number) => {});
+		// When both blocks run.
+		const run = await runBlocks({ ...plan(settle), blocks: 2 });
+		// Then the retry waited for block 1's calm start load (30 + 5), not the spiking start load (95 + 5).
+		expect(settle).toHaveBeenCalledWith(Math.max(availableParallelism(), 35));
+		expect(run.blocks.map((block) => block.loadavg[0])).toEqual([30, 31]);
 	});
 
 	it("never discards a worker failure together with a spike", async () => {
