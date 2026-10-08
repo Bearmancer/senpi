@@ -702,7 +702,7 @@ function buildSessionOptions(
 			diagnostics.push({ type: "warning", message: resolved.warning });
 		}
 		if (resolved.error) {
-			diagnostics.push({ type: "error", message: resolved.error });
+			diagnostics.push({ type: "error", message: resolved.error, code: "model_unresolved" });
 		}
 		if (resolved.model) {
 			options.model = resolved.model;

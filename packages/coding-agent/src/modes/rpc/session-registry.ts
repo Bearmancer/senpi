@@ -6,6 +6,7 @@ import type { SessionStartEvent } from "../../core/extensions/types.ts";
 import { assertValidSessionId, SessionManager } from "../../core/session-manager.ts";
 import { SESSION_PATH_RETRY_AFTER_MS } from "./host-reservations.ts";
 import { createRegistryWarm, type HostWarm } from "./host-warm.ts";
+import { assertRequestedModelResolved } from "./open-session-model.ts";
 import { refreshesSessionActivity } from "./session-command-activity.ts";
 import { canonicalSessionPath } from "./session-path-key.ts";
 import { attachToOpenSession } from "./session-registry-attach.ts";
@@ -200,6 +201,7 @@ export class RpcSessionRegistry {
 					launchProfile: runtimeProfile,
 				}),
 			);
+			assertRequestedModelResolved(runtimeProfile, entry.runtime.diagnostics);
 			entry.durableSessionId = manager.getSessionId();
 			entry.sessionPath ??= manager.getSessionFile();
 			entry.state = "open";

@@ -638,6 +638,12 @@ export class SessionCommandRouter {
 		const browserEngineError = sessionBrowserEngineError(command.browserEngine);
 		if (browserEngineError)
 			return error(command.id, "open_session", `${RPC_ERROR_INVALID_LAUNCH_PROFILE}: ${browserEngineError}`);
+		if (!command.provider !== !command.modelId)
+			return error(
+				command.id,
+				"open_session",
+				`${RPC_ERROR_INVALID_LAUNCH_PROFILE}: provider and modelId must be given together`,
+			);
 		const retryFallbackError = sessionRetryFallbackError(command.retryFallback);
 		if (retryFallbackError)
 			return error(command.id, "open_session", `${RPC_ERROR_INVALID_LAUNCH_PROFILE}: ${retryFallbackError}`);
@@ -1018,8 +1024,10 @@ export class SessionCommandRouter {
 		if (cause instanceof Error && [RPC_ERROR_UNKNOWN_SESSION, RPC_ERROR_SESSION_CLOSING].includes(cause.message)) {
 			return cause.message;
 		}
-		return cause instanceof Error && cause.message
-			? `${RPC_ERROR_OPEN_FAILED}: ${cause.message}`
-			: RPC_ERROR_UNKNOWN_SESSION;
+		if (!(cause instanceof Error) || !cause.message) return RPC_ERROR_UNKNOWN_SESSION;
+		// A worker relays its own registry's refusal as text that already names the code.
+		return cause.message.startsWith(`${RPC_ERROR_OPEN_FAILED}: `)
+			? cause.message
+			: `${RPC_ERROR_OPEN_FAILED}: ${cause.message}`;
 	}
 }

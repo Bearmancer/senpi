@@ -1,3 +1,21 @@
+## 2026-10-08 - Runtime diagnostics carry an optional machine code (senpi#2906)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session-services.ts`: `AgentSessionRuntimeDiagnostic` gains an optional `code`; the only value is `"model_unresolved"`, set by `buildSessionOptions` when a requested model cannot be resolved.
+
+### Why
+
+The RPC host fails an `open_session` whose requested model did not resolve (it used to open on the default model). It must recognise that one diagnostic without matching message text.
+
+### Why an extension could not handle it
+
+The diagnostic type is part of the core runtime contract that `main.ts` and the RPC registry share.
+
+### Expected merge conflict zones
+
+- LOW: the `AgentSessionRuntimeDiagnostic` interface body (additive optional field).
+
 ## 2026-10-07 - The session mirror shares a persisted message's content (senpi#2537)
 
 ### What changed

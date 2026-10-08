@@ -31,6 +31,8 @@ import { joinStartupBranches } from "./startup-branch-join.ts";
 export interface AgentSessionRuntimeDiagnostic {
 	type: "info" | "warning" | "error";
 	message: string;
+	/** Machine-readable cause, for callers that act on one specific failure (senpi#2906). */
+	code?: "model_unresolved";
 }
 
 /**
