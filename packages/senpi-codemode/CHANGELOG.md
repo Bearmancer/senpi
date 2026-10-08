@@ -12,6 +12,8 @@
 
 ### Changed
 
+- A streaming, queued or running eval row now shows the cell's code in a fixed-height block: six visual lines at any terminal width, scrolling upward as lines arrive with the newest kept visible and older ones folded into an "N earlier code lines" row counted inside the block, so the row never grows the transcript. The header keeps the live spinner and render-clock elapsed time (a queued cell keeps its queued badge). Once a cell finishes, errs or is cancelled, the collapsed row is one line — icon, summary, status and duration — and expanding it shows the full code, output and status events. ([#2933](https://github.com/code-yeongyu/senpi/issues/2933))
+
 ### Fixed
 
 - The eval timing benchmark's spike retry no longer waits for a load at or above its own refusal ceiling: the settle target is capped at 70, so a run whose calm load was near 80 cannot start its retries straight into another spike and burn them all in seconds. On a host whose normal load is above 70, each retry now waits the full 15 minutes and then retries anyway; the attempt's own spike checks still decide what is kept. ([#2922](https://github.com/code-yeongyu/senpi/issues/2922))
