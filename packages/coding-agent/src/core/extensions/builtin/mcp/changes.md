@@ -1019,3 +1019,26 @@ The token store is the fork's credential-persistence layer; no extension hook si
 ### Expected merge conflict zones
 
 Upstream edits to `token-store.ts` legacy migration at the next sync.
+
+
+## 2026-10-08 - Bind stored OAuth credentials to their authorization server; legible cross-origin redirect refusal (senpi#2940)
+
+### What changed
+
+- `packages/coding-agent/package.json`: `@modelcontextprotocol/sdk` 1.30.0 -> 1.32.1 (GHSA-6qxp-vccf-f47h: the OAuth client could send credentials to an authorization server chosen by the MCP server). `proxy-addr` resolves 2.0.8 (GHSA-jqcg-44mw-7w3h) in the lockfiles.
+- `auth/token-store.ts`, `auth/oauth-provider.ts`: `McpStoredAuth.issuer` records the authorization server that issued the tokens. `mergeTokensIntoStoredAuth` keeps the SDK's `issuer` stamp (it was dropped before, so the SDK's binding never applied to refresh tokens), and `storedAuthToTokens` hands it back. `storedGrantIssuer` falls back to the sign-in's `discoveryState.authorizationServerUrl` for a record saved before the stamp existed; a record with neither cannot be attributed, and its refresh token is withheld.
+- `auth/oauth-refresh.ts`: `McpRefreshManager` refreshes only at the authorization server that issued the grant. An unattributed grant or one bound to a different authorization server is a continuity break: the credentials are cleared and `needs_auth` asks for a fresh sign-in, naming both servers.
+- `auth/oauth.ts`: client-credentials tokens are stamped with the discovered authorization server.
+- `transport.ts`: the SDK (1.32+) follows HTTP redirects only within the endpoint's origin; senpi keeps that default. A connect that fails on a cross-origin redirect now names the endpoint origin, the redirect origin, the same-origin rule and the URL to configure.
+
+### Why
+
+A refresh token is a long-lived credential; presenting it to an authorization server other than its issuer leaks it. The SDK fixed this by stamping what it saves, which only works if the provider persists the stamp.
+
+### Why an extension could not handle it
+
+The token store and refresh manager are this builtin's credential layer.
+
+### Expected merge conflict zones
+
+`auth/oauth-provider.ts` token mapping and `auth/oauth-refresh.ts` `#doRefresh` at the next SDK or upstream sync.
