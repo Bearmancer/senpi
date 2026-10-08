@@ -14,6 +14,7 @@ import {
 	style,
 } from "./render-blocks.ts";
 import { formatThroughputBadge, renderStatusEvents } from "./render-status.ts";
+import { cellOutputSection, cellStatusSection } from "./render-tail.ts";
 import { formatRuntimeBadge } from "./runtime-label.ts";
 import { formatDuration } from "./tool-widgets.ts";
 import type { EvalCellResult, EvalToolDetails } from "./types.ts";
@@ -78,9 +79,10 @@ export function cellElapsedMs(cell: EvalCellResult, environment: RenderEnvironme
 }
 
 // An in-progress row leads with what the cell is doing (senpi#2802). Collapsed, the whole row
-// (icon, headline and every badge) always fits one visual line: lower-priority segments are
-// dropped first and the headline is cut last, never below its floor (senpi#2933 review HIGH-1).
-// The budget is width - 3 because the frame renders the header through renderPrefixed's "╭─ ".
+// (icon, headline and every badge) always fits one visual line (senpi#2933 review HIGH-1).
+// Drop order: reset/timeout, then queued-behind/throughput, then the runtime badge, then the
+// headline is cut to its floor (never emptied), and elapsed/duration is dropped last of all,
+// because it is the live signal the user most wants (review MEDIUM-2/3).
 export function headlined(
 	icon: string,
 	summary: string | undefined,
@@ -92,17 +94,32 @@ export function headlined(
 	return fitOneLine(icon, liveHeadline(summary, code, undefined), rest, Math.max(1, environment.width - 3));
 }
 
+const HEADLINE_FLOOR_CELLS = 12;
+
 function fitOneLine(icon: string, headline: string, rest: string, width: number): string {
 	const lead = `${icon} `;
 	const middle = " · ";
-	const line = (text: string) => `${lead}${text}${middle}${rest}`;
-	if (visibleWidth(line(headline)) <= width) return line(headline);
-	// Drop the lowest-priority tail segments of rest (reset/timeout, then elapsed, then badges)
-	// until the headline's floor fits; the headline itself is shortened last, never emptied.
+	const full = `${lead}${headline}${middle}${rest}`;
+	if (visibleWidth(full) <= width) return full;
+	// 1) Drop the lowest-priority tail segments (reset/timeout are last in the array).
 	let keptRest = rest;
 	for (;;) {
 		const cut = keptRest.lastIndexOf(middle);
 		if (cut <= 0) break;
+		const candidate = keptRest.slice(0, cut);
+		if (visibleWidth(`${lead}${headline}${middle}${candidate}`) <= width)
+			return `${lead}${headline}${middle}${candidate}`;
+		keptRest = candidate;
+	}
+	// 2) Cut the headline to its floor before dropping elapsed (review MEDIUM-3).
+	const floorBudget = Math.max(4, width - visibleWidth(`${lead}${middle}${keptRest}`) - 1);
+	if (visibleWidth(headline) > Math.max(HEADLINE_FLOOR_CELLS, floorBudget)) {
+		const cut = cellPrefixText(headline, Math.max(HEADLINE_FLOOR_CELLS, floorBudget) - 1);
+		if (visibleWidth(`${lead}${cut}…${middle}${keptRest}`) <= width) return `${lead}${cut}…${middle}${keptRest}`;
+	}
+	// 3) Only then drop remaining segments (elapsed, then the runtime badge).
+	while (keptRest.includes(middle)) {
+		const cut = keptRest.lastIndexOf(middle);
 		keptRest = keptRest.slice(0, cut);
 		if (visibleWidth(`${lead}${headline}${middle}${keptRest}`) <= width)
 			return `${lead}${headline}${middle}${keptRest}`;
@@ -133,15 +150,19 @@ export function cellHeader(cell: EvalCellResult, environment: RenderEnvironment,
 			: cellPresentation(cell.status, spinnerFrame);
 	const runtimeBadge = cell.runtime === undefined ? "" : ` (${formatRuntimeBadge(cell.language, cell.runtime)})`;
 	const base = leadsWithHeadline(cell.status)
-		? `eval ${cell.language}${runtimeBadge} ${presentation.label}`
-		: `eval ${cell.language}${runtimeBadge} ${presentation.label} ${presentation.icon}`;
+		? `eval ${cell.language} ${presentation.label}`
+		: `eval ${cell.language} ${presentation.label} ${presentation.icon}`;
 	const segments: string[] = [];
+	// The runtime badge is droppable like any badge (review MEDIUM-2): it sits after
+	// queued-behind/throughput so those drop first, and the elapsed segment is last so it is
+	// dropped only after the headline is cut (review MEDIUM-3).
 	if (cell.queuedBehind !== undefined && cell.queuedBehind.length > 0)
 		segments.push(`queued behind ${cell.queuedBehind.map(sanitizeTerminalLabel).join(", ")}`);
 	else if (cell.queuedBehind !== undefined && cell.status === "queued")
 		segments.push(`waiting for the ${cell.language} kernel to be ready`);
 	const throughputBadge = badges.throughput === undefined ? undefined : formatThroughputBadge(badges.throughput);
 	if (throughputBadge !== undefined) segments.push(throughputBadge);
+	if (runtimeBadge !== "") segments.push(runtimeBadge.trimStart());
 	const elapsedMs = badges.throughput?.wallDurationMs ?? cellElapsedMs(cell, environment);
 	if (elapsedMs !== undefined) segments.push(formatDuration(elapsedMs));
 	if (badges.reset) segments.push("reset");
@@ -241,124 +262,6 @@ function sanitizeCellCode(code: string): string {
 		.split("\n")
 		.map((line) => line.replace(TERMINAL_ESCAPE_SEQUENCE, "").replace(TERMINAL_CONTROL_RUN, "").replace(/\t/g, "  "))
 		.join("\n");
-}
-
-export function cellOutputSection(
-	cell: EvalCellResult,
-	environment: RenderEnvironment,
-	maxLinesOrBudget: number,
-	rowBudget?: number,
-): string[] {
-	const output = cell.output.trimEnd();
-	if (output.length === 0) return [];
-	const lines = renderPrefixed("output", environment, FRAME_SECTION_PREFIX);
-	const outputColor = cell.status === "error" ? "error" : "toolOutput";
-	const styledOutput = output
-		.split("\n")
-		.map((line) => style(environment.theme, outputColor, line))
-		.join("\n");
-	const innerWidth = Math.max(1, environment.width - 2);
-	if (rowBudget !== undefined) {
-		// Fit and pad inside the row budget (review HIGH-C): header + body never exceed the
-		// budget, the marker consumes one body row when anything is hidden, and a short section
-		// is padded so the block's total height never changes.
-		const bodyRows = rowBudget - 1;
-		const preview = previewText(styledOutput, bodyRows, innerWidth);
-		const body: string[] = [];
-		if (preview.skipped > 0) {
-			appendLines(
-				body,
-				renderPrefixed(`${preview.skipped} earlier output lines`, environment, {
-					prefix: "│ ",
-					continuation: "│ ",
-					color: "muted",
-				}),
-			);
-			for (const line of preview.lines.slice(-(bodyRows - 1)))
-				appendLines(body, renderPrefixed(line, environment, FRAME_INNER_PREFIX));
-		} else {
-			for (const line of preview.lines) appendLines(body, renderPrefixed(line, environment, FRAME_INNER_PREFIX));
-		}
-		const rows = [...lines, ...body];
-		while (rows.length < rowBudget) rows.push(style(environment.theme, "borderMuted", "│ "));
-		return rows.slice(0, rowBudget);
-	}
-	const preview = previewText(styledOutput, maxLinesOrBudget, innerWidth);
-	if (preview.skipped > 0)
-		appendLines(
-			lines,
-			renderPrefixed(`${preview.skipped} earlier output lines`, environment, {
-				prefix: "│ ",
-				continuation: "│ ",
-				color: "muted",
-			}),
-		);
-	for (const line of preview.lines) appendLines(lines, renderPrefixed(line, environment, FRAME_INNER_PREFIX));
-	return lines;
-}
-
-export function cellStatusSection(cell: EvalCellResult, environment: RenderEnvironment, rowBudget?: number): string[] {
-	const statusEvents = (cell.statusEvents ?? []).filter((event) => event.op !== "agent");
-	if (statusEvents.length === 0) return [];
-	const lines = renderPrefixed("status", environment, FRAME_SECTION_PREFIX);
-	if (rowBudget === undefined) {
-		for (const line of renderStatusEvents(statusEvents, environment))
-			appendLines(lines, renderPrefixed(line, environment, FRAME_INNER_PREFIX));
-		return lines;
-	}
-	// Budget in visual ROWS, not events (review HIGH-C): over-long or multi-line events wrap
-	// inside the budget, and the newest event truncates with an ellipsis rather than wrap past it.
-	const innerWidth = Math.max(1, environment.width - 2);
-	const first = statusEvents[0];
-	const omittedByBound = first?.op === "status-events-omitted" && typeof first.count === "number" ? first.count : 0;
-	const visible = omittedByBound > 0 ? statusEvents.slice(1) : statusEvents;
-	// An over-long or multi-line event truncates with an ellipsis instead of wrapping past the
-	// tail budget (review HIGH-C): the shown event rows never exceed the section's body rows.
-	const bodyRows = rowBudget - 1;
-	// When anything is hidden, the fold marker takes one body row, so the shown events are
-	// bodyRows - 1; the marker counts exactly the events not shown plus the stored bound
-	// (review HIGH-2, HIGH-C).
-	const willOverflow = visible.length > bodyRows;
-	const retained = willOverflow ? visible.slice(-Math.max(0, bodyRows - 1)) : visible;
-	const skipped = visible.length - retained.length + omittedByBound;
-	const shownEventRows = bodyRows - (skipped > 0 ? 1 : 0);
-	const rendered = renderStatusEvents(retained, { ...environment, expanded: true });
-	const eventRows: string[] = [];
-	let clipped = false;
-	for (const line of rendered) {
-		const wrapped = renderPrefixed(line, environment, FRAME_INNER_PREFIX);
-		for (const row of wrapped) {
-			if (eventRows.length >= shownEventRows) {
-				clipped = true;
-				break;
-			}
-			eventRows.push(row);
-		}
-		if (clipped) break;
-	}
-	// An over-long or multi-line event truncates with an ellipsis instead of wrapping past the
-	// budget (review HIGH-C): the last shown row carries the cut.
-	if (clipped && eventRows.length > 0) {
-		const last = eventRows[eventRows.length - 1] ?? "";
-		const trimmed = last.replace(/\s*$/u, "");
-		eventRows[eventRows.length - 1] = `${trimmed.slice(0, Math.max(0, trimmed.length - 1))}…`;
-	}
-	const headerRow = renderPrefixed("status", environment, FRAME_SECTION_PREFIX);
-	const body: string[] = [];
-	if (skipped > 0)
-		appendLines(
-			body,
-			renderPrefixed(`├ … ${skipped} earlier status events`, environment, {
-				prefix: "│ ",
-				continuation: "│ ",
-				color: "dim",
-			}),
-		);
-	appendLines(body, eventRows);
-	const keptBody = body.slice(-(rowBudget - 1));
-	const rows = [...headerRow, ...keptBody];
-	while (rows.length < rowBudget) rows.push(style(environment.theme, "borderMuted", "│ "));
-	return rows;
 }
 
 export { FRAME_HEADER_PREFIX, FRAME_INNER_PREFIX, FRAME_SECTION_PREFIX };

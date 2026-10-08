@@ -77,11 +77,12 @@ describe("eval live header is always one row (senpi#2933 review HIGH-1)", () => 
 			now: STARTED_AT + 5_000,
 			args: { timeout: 600 },
 		});
+		// A wrapped header would still satisfy visibleWidth(lines[0]) and start row 2 with '│';
+		// assert the rendered header ROW COUNT instead (review MEDIUM-4): the block is exactly
+		// header + 6 body + border, so any wrap shows up as a longer array.
+		expect(lines).toHaveLength(8);
 		expect(lines[0]).toContain("running");
-		expect(visibleWidth(lines[0] ?? "")).toBeLessThanOrEqual(width);
 		expect(lines.at(-1)).toBe("╰─");
-		// The header is one row: the frame body follows immediately on the next row.
-		expect(lines[1]).toMatch(/^│/u);
 	});
 
 	it.each(WIDTHS)(
@@ -92,10 +93,11 @@ describe("eval live header is always one row (senpi#2933 review HIGH-1)", () => 
 					cellResult({ status: "running", startedAt: STARTED_AT, summary: "bounded run" }),
 					{ width, now: STARTED_AT + elapsed, args: { reset: true, timeout: 30 } },
 				);
-				expect(visibleWidth(lines[0] ?? "")).toBeLessThanOrEqual(width);
 				return lines.length;
 			});
-			expect(new Set(heights).size).toBe(1);
+			// Assert the rendered row count (review MEDIUM-4): the block is exactly 8 rows, so a
+			// wrapped header (or any growth) shows up here, at every elapsed value.
+			expect(new Set(heights)).toEqual(new Set([8]));
 		},
 	);
 

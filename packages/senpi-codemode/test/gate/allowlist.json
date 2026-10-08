@@ -1337,7 +1337,9 @@
         "legacyContracts/test/eval-render-header-width.test.ts/eval live header is always one row (senpi#2933 review HIGH-1) Given a very long summary at 40 cols then the summary keeps a readable remainder",
         "legacyContracts/test/eval-render-header-width.test.ts/eval live header is always one row (senpi#2933 review HIGH-1) Given a running cell with a bounded status history when its live block renders then the stored omission count survives (senpi#2933 review HIGH-2)",
         "legacyContracts/test/eval-render-live-block.test.ts/eval live block: streaming header names the state (senpi#2933) Given a call still streaming when the host gives no spinner frame then the header still says streaming (review MEDIUM-1)",
-        "legacyContracts/test/eval-render-live-block.test.ts/eval live block: constant total height with output and events (senpi#2933 review MEDIUM-2) Given streaming through running with output and status events then the total height is identical"
+        "legacyContracts/test/eval-render-live-block.test.ts/eval live block: constant total height with output and events (senpi#2933 review MEDIUM-2) Given streaming through running with output and status events then the total height is identical",
+        "legacyContracts/test/eval-render-live-block.test.ts/eval live block: streaming header names the state (senpi#2933) Given a call still streaming when rendered then the header says streaming with the spinner and no elapsed",
+        "legacyContracts/test/eval-render-live-headline.test.ts/live eval rows lead with the cell's summary (senpi#2802) Given a running cell when its row renders collapsed then the header leads with the summary and the code window follows (senpi#2933)"
       ],
       "changes": [
         {
@@ -1365,20 +1367,12 @@
           "reason": "senpi#2933 changes the collapsed eval row to the fixed-height live block while streaming/running and one line when done, so this contract's old layout leaves the baseline; its honest rename 'eval summary in transcript frames Given a six-line cell with a summary when collapsed and expanded then the one-line row and the full code render (senpi#2933)' is listed under additions."
         },
         {
-          "key": "legacyContracts/test/eval-render-live-block.test.ts/eval live block: streaming header names the state (senpi#2933) Given a call still streaming when rendered then the header says streaming with the spinner and no elapsed",
-          "reason": "senpi#2933 review: renamed — contract renamed by the review fixes."
-        },
-        {
-          "key": "legacyContracts/test/eval-render-live-headline.test.ts/live eval rows lead with the cell's summary (senpi#2802) Given a running cell when its row renders collapsed then the header leads with the summary and the fixed code window follows (senpi#2933)",
-          "reason": "senpi#2933 review: renamed — the code-window content assertion dropped when the tail took a share of the constant block (MEDIUM-2)."
-        },
-        {
           "key": "legacyContracts/test/eval-tool-execution-render.test.ts/eval ToolExecutionComponent lifecycle Given the pending -> running -> done lifecycle then exactly one framed box renders at every state",
-          "reason": "senpi#2933 review: renamed — pre-result lane reads 'streaming' (MEDIUM-1); done reads as one line."
+          "reason": "senpi#2933: same title, subject updated — the pre-result call lane reads 'streaming' (MEDIUM-1); the terminal row renders as one line."
         },
         {
           "key": "legacyContracts/test/eval-render-theme.test.ts/eval renderer theme hierarchy Given a themed JavaScript call when rendered then the framed code uses syntax highlighting",
-          "reason": "senpi#2933 review: renamed — the streaming call header reads 'streaming' (MEDIUM-1)."
+          "reason": "senpi#2933: same title, subject updated — the pre-result call lane reads 'streaming' (MEDIUM-1); the terminal row renders as one line."
         }
       ],
       "reason": "senpi#2933 (Q): render.ts is split by responsibility into render-*.ts modules (pure move, new import-census entries for the extension and first kernel), and the eval row gains a fixed-height live code window while streaming/queued/running plus a one-line collapsed row for done/error/cancelled; new contracts in eval-render-live-block.test.ts, and the live-row contracts whose layout changed are renamed (see changes). No prompt cell changes."

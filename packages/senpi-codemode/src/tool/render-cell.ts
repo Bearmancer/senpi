@@ -18,9 +18,7 @@ import {
 	type CellBadges,
 	cellElapsedMs,
 	cellHeader,
-	cellOutputSection,
 	cellPresentation,
-	cellStatusSection,
 	FRAME_HEADER_PREFIX,
 	FRAME_INNER_PREFIX,
 	headlined,
@@ -28,6 +26,7 @@ import {
 	renderLiveCellFrame,
 } from "./render-live.ts";
 import { formatThroughputBadge } from "./render-status.ts";
+import { cellOutputSection, cellStatusSection } from "./render-tail.ts";
 import { formatRuntimeBadge } from "./runtime-label.ts";
 import { formatDuration } from "./tool-widgets.ts";
 import type { EvalCellResult } from "./types.ts";
