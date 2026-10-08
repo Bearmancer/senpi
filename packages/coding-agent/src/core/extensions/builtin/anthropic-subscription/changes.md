@@ -1,3 +1,23 @@
+## 2026-10-08 - An auth-blocked account recovers once through its saved grant (senpi#2926)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/auth-block-recovery.ts` (new): before account selection, each stored slot blocked with `auth_error` that still holds refresh material redeems that grant once under the auth.json lock. Success stores the new token and clears the block; a grant the token endpoint rejects stays blocked. Either way the slot records `authRecoveryGrant`, a digest of the grant it must not redeem again (the rejected one, or the one the recovery produced), so one auth block gets at most one recovery. A throttled or unavailable token endpoint records nothing and is retried on the next request.
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/auth-lane.ts`: `queryWithAuthLane` runs that recovery before `runFailover`, re-reads the pool, and, when the recovery failed only transiently and no account is usable, fails the request with the classified refresh error (retryable) instead of "blocked until re-login".
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/accounts.ts`: `AccountSlot.authRecoveryGrant`, `authGrantDigest`; `upsertAccount` (re-login) clears the recovery marker with the block stamps.
+
+### Why
+
+- An `auth_error` block was kept until re-login (`affinity.ts` `isAccountBlocked` / `clearExpiredBlocks`), and `selectAccount` excluded the slot before `prepareSlot` could refresh it. A slot whose access token failed while its saved refresh token was still accepted therefore dead-ended every request with "All Claude accounts ... are currently blocked (authentication error)" although redeeming its own grant recovered it (senpi#2926).
+
+### Why an extension could not handle it
+
+- Account selection, block state and the refresh lane are owned by this builtin; there is no hook between the stored pool and account selection.
+
+### Expected merge conflict zones
+
+- LOW: `auth-lane.ts` `queryWithAuthLane` (before `runFailover`), `accounts.ts` `AccountSlot` and `upsertAccount`.
+
 ## 2026-10-07 - A restored binding with no recorded assistant turn is never resumed unchecked (senpi#2858)
 
 ### What changed

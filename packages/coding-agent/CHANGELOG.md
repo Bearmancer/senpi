@@ -24,6 +24,7 @@
 
 ### Fixed
 
+- An Anthropic Subscription account blocked by an authentication error now recovers on its own when its saved refresh token is still accepted: the next request redeems that token once and clears the block, instead of every request failing with "blocked until re-login". A rejected token stays blocked and is not retried until a new login ([#2926](https://github.com/code-yeongyu/senpi/issues/2926)).
 - A config hot reload no longer re-triggers itself when an extension watches a file it registers after the session starts (omo's `omo.jsonc`): the untouched file is compared once the extension re-registers it, and a reload chain caused only by that comparison stops after three reloads with a `reload_loop_stopped` warning. A reload vetoed by running subagents is rechecked with backoff instead of every second ([#2878](https://github.com/code-yeongyu/senpi/issues/2878)).
 
 - An RPC host `open_session` that names a model it cannot resolve (for example an unknown provider) now fails with `open_failed: model_unavailable: <reason>` instead of opening on the default model and reporting success, so a caller that pins a model never gets work from a different one. An `open_session` that names only `provider` or only `modelId` is now refused as `invalid_launch_profile` instead of silently opening on the default model. A failure relayed from a worker-runtime session no longer reads `open_failed: open_failed: ...` ([#2906](https://github.com/code-yeongyu/senpi/issues/2906)).

@@ -15,8 +15,9 @@ import {
 	refreshSlot,
 	type SlotRefresher,
 } from "./accounts.ts";
-import { selectAccount } from "./affinity.ts";
+import { isBlockedFor, selectAccount } from "./affinity.ts";
 import { type AuthenticatedAttemptInput, createAttemptMessages, type RetainableAttempt } from "./auth-attempt.ts";
+import { recoverAuthBlockedSlots } from "./auth-block-recovery.ts";
 import { hasRequestOauthToken, mergeRequestAuthEnvironment, stripManagedAuthEnvironment } from "./auth-environment.ts";
 import { writeConfigDirCredential } from "./config-dir-credentials.ts";
 import { classifySdkError, sdkAssistantFailure, sdkResultFailure } from "./errors.ts";
@@ -236,6 +237,29 @@ export async function* queryWithAuthLane(input: AuthenticatedQueryInput): AsyncG
 			options,
 		});
 		return;
+	}
+	const recovery = await recoverAuthBlockedSlots({
+		store: pool.store,
+		providerId: ANTHROPIC_SUBSCRIPTION_PROVIDER_ID,
+		accounts: pool.accounts,
+		refresher: activeBoundary.refresher,
+		signal,
+		isGrantRejected: (error) => refreshFailure(error).message.startsWith("authentication_failed:"),
+		reload: async () =>
+			listAccounts(
+				((await pool.store.read(ANTHROPIC_SUBSCRIPTION_PROVIDER_ID)) as
+					| AnthropicSubscriptionCredential
+					| undefined) ?? emptyCredential(),
+				(name) => pool.environment[name],
+			),
+	});
+	pool.accounts = recovery.accounts;
+	if (
+		recovery.transientFailure !== undefined &&
+		pool.accounts.every((account) => isBlockedFor(account, activeBoundary.now(), input.model))
+	) {
+		const failure = recovery.transientFailure;
+		throw failure instanceof CredentialStoreBusyError ? failure : refreshFailure(failure);
 	}
 	yield* runFailover({
 		accounts: pool.accounts,
