@@ -134,6 +134,19 @@ describe("eval live header is always one row (senpi#2933 review HIGH-1)", () => 
 		expect(lines[0]).toContain("✓");
 	});
 
+	it("Given a running cell with a bounded status history when its live block renders then the stored omission count survives (senpi#2933 review HIGH-2)", () => {
+		const statusEvents = [
+			{ op: "status-events-omitted", count: 19_901 },
+			...Array.from({ length: 5 }, (_, index) => ({ op: "log", message: `status-${index + 1}` })),
+		];
+		const lines = renderResult(
+			cellResult({ status: "running", startedAt: STARTED_AT, summary: "bounded", statusEvents }),
+			{ width: 80, now: STARTED_AT + 1_000 },
+		);
+		const text = lines.join("\n");
+		expect(text).toContain("19904 earlier status events");
+	});
+
 	it("Given a very long summary at 40 cols then the summary keeps a readable remainder", () => {
 		const summary = "a".repeat(120);
 		const lines = renderResult(cellResult({ status: "running", startedAt: STARTED_AT, summary }), {

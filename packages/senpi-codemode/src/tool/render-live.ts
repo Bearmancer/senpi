@@ -238,8 +238,13 @@ export function cellStatusSection(
 			appendLines(lines, renderPrefixed(line, environment, FRAME_INNER_PREFIX));
 		return lines;
 	}
-	const retained = statusEvents.slice(-previewCount);
-	const skipped = statusEvents.length - retained.length;
+	// The bounded history stores its exact omission count in a leading marker event; fold that
+	// count into the preview's omission line so slicing can never understate it (review HIGH-2).
+	const first = statusEvents[0];
+	const omittedByBound = first?.op === "status-events-omitted" && typeof first.count === "number" ? first.count : 0;
+	const visible = omittedByBound > 0 ? statusEvents.slice(1) : statusEvents;
+	const retained = visible.slice(-previewCount);
+	const skipped = visible.length - retained.length + omittedByBound;
 	if (skipped > 0)
 		appendLines(
 			lines,
