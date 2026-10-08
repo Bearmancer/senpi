@@ -9,6 +9,17 @@ export const legacyRoots = (): string[] => [join(homedir(), ".t3"), join(homedir
 
 const known = new Map<string, MovedBreadcrumb>();
 
+export const prefixKey = (oldRoot: string, prefix: readonly string[]): string => `${oldRoot}\0${prefix.join("/")}`;
+
+/** The (old root, listed prefix) a path lies under, by text, among breadcrumbs trusted so far. */
+export function knownPrefixKey(path: string, platform: PathPlatform = currentPathPlatform()): string | undefined {
+	for (const [oldRoot, breadcrumb] of known) {
+		const match = matchMovedPrefix(path, oldRoot, breadcrumb.moved, platform);
+		if (match) return prefixKey(oldRoot, match.prefix);
+	}
+	return undefined;
+}
+
 export function rememberTrustedBreadcrumb(oldRoot: string, breadcrumb: MovedBreadcrumb): void {
 	known.set(oldRoot, breadcrumb);
 }
@@ -22,8 +33,8 @@ export function looksMoved(path: string, platform: PathPlatform = currentPathPla
 
 /**
  * The moved location of `path` by text alone, from breadcrumbs trusted earlier in this process (senpi#2898 re-review
- * M3): used only for paths past a call's probe budget or deadline, so it does no filesystem work. A listed worktree a
- * later T3 Code checkout reused (its own `.git`) cannot be told apart this way and is refused too.
+ * M3): used only for paths past a call's probe budget or deadline, so it does no filesystem work. The caller skips
+ * prefixes its probe found re-used (their own `.git`), so a re-used worktree is never refused this way.
  */
 export function knownMove(path: string, platform: PathPlatform = currentPathPlatform()): MovedPath | undefined {
 	for (const [oldRoot, breadcrumb] of known) {

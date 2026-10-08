@@ -2,6 +2,7 @@ import { access } from "node:fs/promises";
 import { RESOLUTION_TIMED_OUT, withResolutionDeadline } from "../../../tools/bounded-realpath.ts";
 import { canonicalizeFilesystemPath } from "../../../tools/filesystem-policy.ts";
 import { type MovedPath, readJsonFileAsync } from "./breadcrumb-trust.ts";
+import { knownPrefixKey, prefixKey } from "./known-moves.ts";
 import { currentPathPlatform, type PathPlatform } from "./path-match.ts";
 import { failedReply, movedPathWalk, type ResolverStep } from "./walk.ts";
 
@@ -12,6 +13,8 @@ export interface MovedPathProbe {
 	resolve(path: string): Promise<MovedPath | undefined>;
 	/** Whether any filesystem step of this probe hit `STEP_DEADLINE_MS`. */
 	readonly timedOut: boolean;
+	/** Whether `path` lies under a listed prefix this probe found re-used (its own `.git`): never moved. */
+	cleared(path: string): boolean;
 }
 
 export async function pathExists(path: string): Promise<boolean> {
@@ -47,6 +50,8 @@ async function answer(step: ResolverStep, onTimeout: () => void): Promise<unknow
  */
 export function createMovedPathProbe(platform: PathPlatform = currentPathPlatform()): MovedPathProbe {
 	let timedOut = false;
+	const reused = new Set<string>();
+	const onReused = (oldRoot: string, prefix: readonly string[]) => reused.add(prefixKey(oldRoot, prefix));
 	const onTimeout = () => {
 		timedOut = true;
 	};
@@ -54,8 +59,12 @@ export function createMovedPathProbe(platform: PathPlatform = currentPathPlatfor
 		get timedOut() {
 			return timedOut;
 		},
+		cleared(path) {
+			const key = knownPrefixKey(path, platform);
+			return key !== undefined && reused.has(key);
+		},
 		async resolve(path) {
-			const walk = movedPathWalk(path, platform);
+			const walk = movedPathWalk(path, platform, onReused);
 			let step = walk.next();
 			while (!step.done) step = walk.next(await answer(step.value, onTimeout));
 			return step.value;

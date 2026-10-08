@@ -6,7 +6,7 @@ import { type MovedPath, movedPathReason } from "./breadcrumb-trust.ts";
 import { commandPaths } from "./command-paths.ts";
 import { logGuardEvent } from "./guard-log.ts";
 import { knownMove, looksMoved } from "./known-moves.ts";
-import { createMovedPathProbe, pathExists, STEP_DEADLINE_MS } from "./resolve-async.ts";
+import { createMovedPathProbe, type MovedPathProbe, pathExists, STEP_DEADLINE_MS } from "./resolve-async.ts";
 import { MOVED_PATH_TOOL_CLASSES } from "./tool-classes.ts";
 
 /**
@@ -64,8 +64,9 @@ function targets(toolName: string, input: Record<string, unknown>, cwd: string):
 	}
 }
 
-function firstKnownMove(list: readonly Target[]): MovedPath | undefined {
+function firstKnownMove(list: readonly Target[], probe: MovedPathProbe): MovedPath | undefined {
 	for (const target of list) {
+		if (probe.cleared(target.path)) continue;
 		const moved = knownMove(target.path);
 		if (moved) return moved;
 	}
@@ -74,12 +75,18 @@ function firstKnownMove(list: readonly Target[]): MovedPath | undefined {
 
 async function checkTargets(list: readonly Target[]): Promise<MovedPath | undefined> {
 	const ordered = [...list.filter((target) => looksMoved(target.path)), ...list.filter((t) => !looksMoved(t.path))];
-	const probed = ordered.slice(0, MAX_PROBED_PATHS);
-	const rest = ordered.slice(MAX_PROBED_PATHS);
-	if (rest.length > 0) logGuardEvent("debug", "call_bound_reached", { bound: "paths", count: String(ordered.length) });
 	const probe = createMovedPathProbe();
+	const unprobed: Target[] = [];
+	let probes = 0;
 	const probing = (async () => {
-		for (const target of probed) {
+		for (const target of ordered) {
+			// One decision per listed prefix: a prefix found re-used clears every later target under it, at no cost.
+			if (probe.cleared(target.path)) continue;
+			if (probes >= MAX_PROBED_PATHS) {
+				unprobed.push(target);
+				continue;
+			}
+			probes++;
 			if (target.onlyIfMissing && (await pathExists(target.path))) continue;
 			const moved = await probe.resolve(target.path);
 			if (moved) return moved;
@@ -88,9 +95,11 @@ async function checkTargets(list: readonly Target[]): Promise<MovedPath | undefi
 	})();
 	const result = await withResolutionDeadline(probing, CALL_DEADLINE_MS);
 	if (probe.timedOut) logGuardEvent("debug", "call_bound_reached", { bound: "step", count: String(ordered.length) });
-	if (result !== RESOLUTION_TIMED_OUT) return result ?? firstKnownMove(rest);
+	if (unprobed.length > 0)
+		logGuardEvent("debug", "call_bound_reached", { bound: "paths", count: String(ordered.length) });
+	if (result !== RESOLUTION_TIMED_OUT) return result ?? firstKnownMove(unprobed, probe);
 	logGuardEvent("debug", "call_bound_reached", { bound: "deadline", count: String(ordered.length) });
-	return firstKnownMove(ordered);
+	return firstKnownMove(ordered, probe);
 }
 
 /**

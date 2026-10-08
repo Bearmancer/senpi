@@ -29,7 +29,9 @@ export function failedReply(step: ResolverStep): unknown {
 
 type Walk<T> = Generator<ResolverStep, T, unknown>;
 
-function* movedOnce(path: string, platform: PathPlatform): Walk<MovedPath | undefined> {
+type OnReused = (oldRoot: string, prefix: readonly string[]) => void;
+
+function* movedOnce(path: string, platform: PathPlatform, onReused?: OnReused): Walk<MovedPath | undefined> {
 	const canonical = ((yield { op: "canonical", path }) as string | undefined) ?? resolve(path);
 	const stop = dirname(homedir());
 	for (let dir = dirname(canonical); ; dir = dirname(dir)) {
@@ -41,9 +43,13 @@ function* movedOnce(path: string, platform: PathPlatform): Walk<MovedPath | unde
 			match &&
 			trustedBreadcrumb(dir, breadcrumb, yield { op: "json", file: homeMarkerFile(breadcrumb.movedTo) }, platform)
 		) {
-			rememberTrustedBreadcrumb(dir, breadcrumb);
+			// The re-used decision is recorded before the breadcrumb is remembered, so no text fallback in this call can
+			// refuse a prefix the walk just found live again.
 			const gitEntry = gitEntryOf(dir, match.prefix);
-			if (!(gitEntry && (yield { op: "exists", path: gitEntry }))) return match.moved;
+			const reused = gitEntry !== undefined && (yield { op: "exists", path: gitEntry }) === true;
+			if (reused) onReused?.(dir, match.prefix);
+			rememberTrustedBreadcrumb(dir, breadcrumb);
+			if (!reused) return match.moved;
 		}
 		if (dir === stop || dirname(dir) === dir) return undefined;
 	}
@@ -54,10 +60,10 @@ function* movedOnce(path: string, platform: PathPlatform): Walk<MovedPath | unde
  * listing it, trust that breadcrumb only when its home's marker matches, and follow up to `MAX_HOPS` moves. Every I/O
  * is a yielded step, so the sync and async resolvers cannot disagree on order or on what a failure means.
  */
-export function* movedPathWalk(path: string, platform: PathPlatform): Walk<MovedPath | undefined> {
+export function* movedPathWalk(path: string, platform: PathPlatform, onReused?: OnReused): Walk<MovedPath | undefined> {
 	let found: MovedPath | undefined;
 	for (let hop = 0; hop < MAX_HOPS; hop++) {
-		const next = yield* movedOnce(found?.mappedPath ?? path, platform);
+		const next = yield* movedOnce(found?.mappedPath ?? path, platform, onReused);
 		if (!next) break;
 		found = found ? { ...next, oldRoot: found.oldRoot } : next;
 	}

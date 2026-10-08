@@ -1,3 +1,4 @@
+import { mkdirSync, writeFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -35,6 +36,7 @@ describe("moved-path-guard step deadline (#2898)", () => {
 	const harnesses: Harness[] = [];
 
 	afterEach(() => {
+		vi.unstubAllEnvs();
 		while (harnesses.length > 0) harnesses.pop()?.cleanup();
 		while (layouts.length > 0) layouts.pop()?.cleanup();
 	});
@@ -62,6 +64,23 @@ describe("moved-path-guard step deadline (#2898)", () => {
 		expect(result.text).toContain(join(layout.newWorktree, "SLOWdir", "a.txt"));
 		expect(await guardLogEvents()).toContainEqual(
 			expect.objectContaining({ event: "call_bound_reached", bound: "step" }),
+		);
+	});
+
+	// Third review M-b: past the call deadline, a re-used worktree the probe already cleared is not refused by text.
+	it("allows a re-used worktree's paths past the call deadline", async () => {
+		const { layout, harness } = await setup();
+		vi.stubEnv("HOME", layout.home);
+		mkdirSync(join(layout.oldWorktree, "src"), { recursive: true });
+		writeFileSync(join(layout.oldWorktree, ".git"), "gitdir: /elsewhere/.git/worktrees/w1\n");
+		const slow = Array.from({ length: 6 }, (_, index) => join(layout.oldRoot, "other", `SLOW${index}`)).join(" ");
+		const files = Array.from({ length: 5 }, (_, index) => join(layout.oldWorktree, "src", `f${index}.ts`)).join(" ");
+
+		const result = await runTool(harness, "bash", { command: `cd ${layout.oldWorktree} && touch ${slow} ${files}` });
+
+		expect(result.outcome).toBe("ok");
+		expect(await guardLogEvents()).toContainEqual(
+			expect.objectContaining({ event: "call_bound_reached", bound: "deadline" }),
 		);
 	});
 
