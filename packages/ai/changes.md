@@ -1,3 +1,44 @@
+## 2026-10-08 - Claude Haiku 5.5 catalog rows (senpi#2892)
+
+### What changed
+
+- `packages/ai/scripts/generate-models.ts`:
+  - An explicit `claude-haiku-5-5` anthropic row, kept only when models.dev omits it: limits 1M/128000, text + image input, effort low..max, and the 100K tier over the 0.1 / 0.5 / 0.01 / 0.125 base.
+  - `isAnthropicAdaptiveOnlyModel`, `isAnthropicAdaptiveThinkingModel`, `isAnthropicTemperatureUnsupportedModel`, `supportsAnthropicMidConvoEffort` and `supportsAnthropicMidConvoSystemMessages` match `haiku-5-5` / `haiku-5.5` the way they match Sonnet 5.5, and the effort-metadata merge covers `claude-haiku-5-5`.
+  - The adaptive-only comment records that Haiku 5.5 accepts `thinking: {type: "disabled"}` at effort `high` or below (its effort docs), and that a real thinking-off waits on marker handling (senpi#2927).
+  - `withClaudeHaiku55LongContextPricing`, run in the temporary-overrides pass, gives every Haiku 5.5 row that has no tier `inputTokensAbove: 100000` at five times each of its own base rates. Anthropic's long-context rates are exactly 5x the base. This covers regional Bedrock rows, OpenRouter's batch variant and gateway markups, and models.dev-tiered rows keep their tiers.
+  - The explicit Sonnet 5.5 fallback row's cache read is 0.1.
+  - The same pass caps every Haiku 5.5 row at `contextWindow: 100000` (the threshold of the 5x band) and, unconditionally, `maxTokens: 32000`, so compaction runs before a prompt crosses into long-context billing (upstream oh-my-pi #14903 caps the same way). The documented 1M / 128K is a `models.json` `modelOverrides` opt-in until senpi#2916 adds a first-class setting. Output drops with the window because compaction reserves min(maxTokens, half the window) for output: at 100K / 128K, emergency pruning would start at 47.5K, below the 60K adaptive threshold.
+- Regenerated with `--strict --providers anthropic,amazon-bedrock,opencode,opencode-go`:
+  - `anthropic.json` `claude-haiku-5-5`.
+  - `amazon-bedrock.json` `anthropic.`, `global.`, `us.`, `eu.`, `jp.`, `au.anthropic.claude-haiku-5-5`.
+  - `opencode.json` and `opencode-go.json` `claude-haiku-5-5`.
+  - Drift that rode along in `anthropic.json` from models.dev:
+    - `claude-sonnet-5-5` cache read 0.2 -> 0.1.
+    - `claude-sonnet-4-5` / `claude-sonnet-4-5-20250929` context 1M -> 200K with 100 images per request (https://platform.claude.com/docs/en/build-with-claude/context-windows).
+- `openrouter.json` (`anthropic/claude-haiku-5.5`, `anthropic/claude-haiku-5.5:batch`), `vercel-ai-gateway.json` (`anthropic/claude-haiku-5.5`) and `venice.json` (`claude-haiku-5-5`):
+  - Each row is the generator's own output from a `--strict --providers openrouter,venice,vercel-ai-gateway` run, inserted alone into the committed file.
+  - The manifest is rebuilt with `createModelDataManifest` and `check:model-data` passes.
+  - The rest of that run, unrelated upstream drift, was left out: about 25 OpenRouter metadata refreshes, 3 Vercel removals, and Venice price changes.
+- No `ANTHROPIC_ALLOWED_FALLBACK_MODELS` entry: Haiku 5.5 has no server-side refusal fallback.
+
+### Why
+
+Claude Haiku 5.5 shipped on 2026-10-07 (https://platform.claude.com/docs/en/models/haiku-5-5/overview):
+- adaptive thinking only (`budget_tokens` is a 400);
+- no sampling parameters;
+- signed thinking bound to the preceding conversation, like Sonnet 5.5;
+- forced `tool_choice` accepted;
+- request-wide long-context pricing above 100K input tokens.
+
+### Why an extension could not handle it
+
+Generated catalog data and the generator's model-family rules.
+
+### Expected merge conflict zones
+
+- LOW: the Anthropic family helpers, the explicit Opus/Sonnet/Haiku 5.5 rows and the temporary-overrides loop (Haiku 5.5 tier and window cap) in `generate-models.ts`. Generated JSON regenerates. A full regeneration of openrouter, vercel-ai-gateway or venice also brings the drift left out here.
+
 ## 2026-10-02 - OpenGateway catalog stays current: shared OpenAI input cap (senpi#2552)
 
 ### What changed

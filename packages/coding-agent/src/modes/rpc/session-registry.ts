@@ -11,6 +11,7 @@ import { refreshesSessionActivity } from "./session-command-activity.ts";
 import { canonicalSessionPath } from "./session-path-key.ts";
 import { attachToOpenSession } from "./session-registry-attach.ts";
 import { settleClosingReservation, syncRuntimeMetadata } from "./session-registry-claims.ts";
+import { resolveMovedProfile } from "./session-registry-moved-path.ts";
 import { createEntrySwitchSession } from "./session-registry-switch.ts";
 import {
 	frozenProfile,
@@ -96,8 +97,9 @@ export class RpcSessionRegistry {
 		return this.entries.size;
 	}
 
-	async openSession(profile: RpcSessionLaunchProfile, options?: RpcSessionOpenOptions): Promise<OpenRpcSession> {
-		this.validateProfile(profile);
+	async openSession(requested: RpcSessionLaunchProfile, options?: RpcSessionOpenOptions): Promise<OpenRpcSession> {
+		this.validateProfile(requested);
+		const profile = resolveMovedProfile(requested);
 		this.syncRuntimeMetadata();
 		const sessionPath = profile.sessionPath ? canonicalSessionPath(profile.sessionPath) : undefined;
 		// Taken SYNCHRONOUSLY, before any await, exactly like the path reservation below: a

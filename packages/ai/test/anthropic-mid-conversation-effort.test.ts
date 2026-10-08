@@ -84,6 +84,37 @@ async function capture(
 
 const user = (text: string, timestamp: number) => ({ role: "user" as const, content: text, timestamp });
 
+const SSE_OK = [
+	{ type: "message_start", message: { id: "msg_test", usage: { input_tokens: 1, output_tokens: 0 } } },
+	{ type: "message_delta", delta: { stop_reason: "end_turn" }, usage: { input_tokens: 1, output_tokens: 1 } },
+	{ type: "message_stop" },
+]
+	.map((event) => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`)
+	.join("");
+
+async function captureWire(
+	model: Model<"anthropic-messages">,
+	context: Context,
+	effort: "low" | "medium" | "high" | "xhigh" | "max" | undefined,
+	thinkingEnabled = true,
+): Promise<{ wire: CapturedPayload; message: AssistantMessage }> {
+	let wire: CapturedPayload | undefined;
+	const fetchImpl: typeof fetch = async (input, init) => {
+		const request = input instanceof Request ? input : new Request(input, init);
+		wire = (await request.json()) as CapturedPayload;
+		return new Response(SSE_OK, { status: 200, headers: { "content-type": "text/event-stream" } });
+	};
+	const message = await stream({ ...model, baseUrl: "http://127.0.0.1:9" }, normalizeContext(context), {
+		apiKey: "test-key",
+		cacheRetention: "none",
+		thinkingEnabled,
+		effort,
+		fetch: fetchImpl,
+	}).result();
+	if (!wire) throw new Error("Expected the request body to reach fetch");
+	return { wire, message };
+}
+
 function effortMessages(payload: CapturedPayload): WireMessage[] {
 	return payload.messages.filter((message) => message.role === "system");
 }
@@ -191,6 +222,56 @@ describe("Anthropic mid-conversation effort", () => {
 		expect(result.stopReason).toBe("stop");
 		expect(betaHeader).toContain("mid-conversation-output-config-2026-07-01");
 		expect(betaHeader).toContain("thinking-binding-controls-2026-08-01");
+	});
+
+	// senpi#2912: the content-less effort markers must survive every pre-send pass and reach the HTTP body.
+	it.each(["claude-sonnet-5-5", "claude-opus-5-5", "claude-fable-5-1"] as const)(
+		"puts the chosen effort marker on the wire for %s",
+		async (id) => {
+			const model = getModel("anthropic", id) as Model<"anthropic-messages">;
+			expect(model.compat?.supportsMidConvoEffort).toBe(true);
+			const { wire } = await captureWire(
+				model,
+				{ messages: [user("one", 1), assistant(model, "low"), user("two", 2)] },
+				"medium",
+			);
+			expect(effortMessages(wire)).toEqual([
+				{ role: "system", content: [], output_config: { effort: "low" } },
+				{ role: "system", content: [], output_config: { effort: "medium" } },
+			]);
+			expect(wire.messages.at(-1)).toEqual({ role: "system", content: [], output_config: { effort: "medium" } });
+		},
+	);
+
+	it.each(["claude-sonnet-5-5", "claude-opus-5-5"] as const)(
+		"runs a thinking-off turn on %s at low effort on the wire and records low",
+		async (id) => {
+			const model = getModel("anthropic", id) as Model<"anthropic-messages">;
+			const { wire, message } = await captureWire(
+				model,
+				{ messages: [user("one", 1), assistant(model, "xhigh"), user("two", 2)] },
+				undefined,
+				false,
+			);
+			expect(wire.thinking).toBeUndefined();
+			expect(wire.output_config).toEqual({ effort: "low" });
+			expect(wire.messages.at(-1)).toEqual({ role: "system", content: [], output_config: { effort: "low" } });
+			expect(message.providerThinkingLevel).toBe("low");
+		},
+	);
+
+	it("sends no effort marker beside disabled thinking on a family that can disable it", async () => {
+		const model = getModel("anthropic", "claude-opus-5") as Model<"anthropic-messages">;
+		const { wire, message } = await captureWire(
+			model,
+			{ messages: [user("one", 1), assistant(model, "xhigh"), user("two", 2)] },
+			undefined,
+			false,
+		);
+		expect(wire.thinking).toEqual({ type: "disabled" });
+		expect(effortMessages(wire)).toEqual([]);
+		expect(wire.output_config).toBeUndefined();
+		expect(message.providerThinkingLevel).toBeUndefined();
 	});
 
 	it("generates exact model and transport gates", () => {

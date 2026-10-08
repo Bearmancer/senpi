@@ -1250,6 +1250,19 @@
 				}
 			],
 			"reason": "senpi#2909: per-block bench spike guard. A load spike over 80 discards and re-runs only the affected block after the load settles, never discards a worker failure, and labels a block that keeps spiking; new contracts in run.test.ts, run-retry.test.ts, block-spike.test.ts, settle.test.ts and settle-process.test.ts."
+		},
+		"senpi#2922": {
+			"additions": [
+				"legacyContracts/test/bench/run-retry.test.ts/per-block spike retry (senpi#2909) never waits for a load at or above the refusal ceiling (senpi#2922)",
+				"legacyContracts/test/bench/run-retry.test.ts/per-block spike retry (senpi#2909) caps the target even when the host has more cores than the cap (senpi#2922)"
+			],
+			"reason": "senpi#2922: the spike-retry settle target is capped 10 under the refusal ceiling, so a calm level near 80 cannot set a target a retry would start into; two new contracts in run-retry.test.ts (the cap, and the cap on a host with more cores than the cap)."
+		},
+		"senpi#2921": {
+			"additions": [
+				"legacyContracts/test/js-kernel-stop-keeps-state.test.ts/JavaScriptKernel stop on a free event loop Given a first cell whose import of node:net is built from a string at run time when stopped then its server closes"
+			],
+			"reason": "senpi#2921 review: a new stop contract pins that a server the first cell opens through a string-built import (new Function) is closed by a stop, so a future cold-start deferral of the socket and server builtins cannot reopen that gap. Test-only; no prompt cell changes."
 		}
 	}
 }

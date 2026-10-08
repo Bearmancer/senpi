@@ -1,3 +1,23 @@
+## 2026-10-08 - Claude Haiku 5.5 preset (senpi#2917)
+
+### What changed
+
+- `claude-haiku-5-5.ts` (new): the `claude-sonnet-5-5` core with the Haiku 5.5 guide's deltas applied where each rule lives, one home per rule (prompt-engineering A/B/C pass): `## Style` replaces the three Sonnet-documented early stops with the one the Haiku guide documents (in a long coding-agent prompt at low effort it stops early and hands the task back) and the guide's counter; `## Working the Task` gains one search-grounding sentence, rendered only when `web_search` is active, that points at the environment-context date and carries the guide's training-data nudge (no date enters the system prompt, senpi#2093). Scope's mention-at-the-end remedy and Verification's real-check paragraph are kept: the Haiku guide documents the same text.
+- `presets.ts`: `CLAUDE_HAIKU_55_MARKERS` (`haiku-5-5`, `haiku-5.5`) resolve to `claude-haiku-5-5` after the Sonnet matcher; Haiku 4.5 and older keep the default dynamic prompt. `settings.ts`: the name joins `PromptPresetName` and `VALID_PRESETS`.
+- `test/suite/prompt-presets-claude-haiku-5-5.test.ts` (new): id shapes, non-matches, forced preset, the replaced early-stop sentence, the tool-gated search line, no date in the prompt, and a catalog sweep that runs once the catalog carries Haiku 5.5 (#2911).
+
+### Why
+
+- Anthropic's Haiku 5.5 prompting guide (https://platform.claude.com/docs/en/build-with-claude/prompt-engineering/prompting-claude-haiku-5-5) documents early stopping in long agent prompts, unverified "done" reports, and missed searches for facts that changed after training. The first two map onto sentences the Sonnet 5.5 core already has; the third is new context the default prompt lacks.
+
+### Why an extension could not handle it
+
+- Preset dispatch lives in this builtin.
+
+### Expected merge conflict zones
+
+- LOW: the Claude matcher block and the `buildPreset` switch in `presets.ts`; `claude-haiku-5-5.ts` is fork-only.
+
 # prompt-preset Extension Changes
 
 ## 2026-10-04 - Routing and handoff format examples are no longer markdown quote lines (senpi#2714)

@@ -3,6 +3,7 @@ import type { PromptSurface } from "../../core/dynamic-prompt/types.ts";
 import type { CliRuntimeConfiguration } from "../../main.ts";
 import type { RpcSessionState } from "./rpc-types.ts";
 import type { RpcSessionLaunchProfile } from "./session-registry.ts";
+import { RpcSessionRegistryError } from "./session-registry-types.ts";
 
 export const SESSION_WORKER_LIMITS = {
 	workers: 20,
@@ -63,3 +64,13 @@ export type SessionWorkerToHost =
 	| { type: "capabilities"; connection?: string; capabilities: readonly string[]; signal: SharedArrayBuffer }
 	| { type: "request_close" }
 	| { type: "failure"; error: string };
+
+/**
+ * A worker's refusal crosses the thread boundary as text. An `open_failed: <reason>` refusal is rebuilt as the typed
+ * registry error, so a worker host answers `open_session` exactly as the in-process registry does (senpi#2898).
+ */
+export function typedWorkerRefusal(cause: unknown): never {
+	const message = cause instanceof Error ? cause.message : String(cause);
+	if (message.startsWith("open_failed: ")) throw new RpcSessionRegistryError("open_failed", message.slice(13));
+	throw cause;
+}
