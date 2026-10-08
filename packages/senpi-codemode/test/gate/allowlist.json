@@ -1395,6 +1395,18 @@
         {
           "key": "legacyContracts/test/js-kernel-stop-keeps-state.test.ts/JavaScriptKernel stop on a free event loop Given a first cell whose import of node:net is built from a string at run time when stopped then its server closes removed",
           "reason": "senpi#2933: renamed — NOT a render title — investigate whether this title was renamed on main or removed by this PR."
+        },
+        {
+          "key": "legacyContracts/test/eval-render-live-headline.test.ts/live eval rows stay one clean line (senpi#2831) Given a wide-character summary when its live row renders in a narrow terminal then the row fits the width in screen cells",
+          "reason": "senpi#2933: renamed — the live row is now the fixed block; the wide-character header assertion moved to the block header."
+        },
+        {
+          "key": "legacyContracts/test/eval-render-live-headline.test.ts/live eval rows stay one clean line (senpi#2831) Given a peek or stop call still streaming without its cell id when it renders then the title has no undefined",
+          "reason": "senpi#2933: renamed — the peek/stop streaming title contract is unchanged; the row shape changed to the block."
+        },
+        {
+          "key": "legacyContracts/test/eval-render-live-headline.test.ts/live eval rows stay one clean line (senpi#2831) Given a cell without a summary whose first code line carries escape and control characters when its live row renders then the row is one clean line (senpi#2839)",
+          "reason": "senpi#2933: renamed — the live row is now the fixed block; the headline and window stay control-free."
         }
       ],
       "reason": "senpi#2933 (Q): render.ts is split by responsibility into render-*.ts modules (pure move, new import-census entries for the extension and first kernel), and the eval row gains a fixed-height live code window while streaming/queued/running plus a one-line collapsed row for done/error/cancelled; new contracts in eval-render-live-block.test.ts, and the live-row contracts whose layout changed are renamed (see changes). No prompt cell changes."
