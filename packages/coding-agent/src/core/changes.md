@@ -9322,3 +9322,22 @@ The `promptSurface` plumbing in `agent-session.ts`, `agent-session-services.ts` 
 ### Expected merge conflict zones
 
 - LOW: the `projectCodemodeNamesExecutable` helpers after `LEGACY_PROJECT_CONFIG_DIR_NAME`, the `bundled-resources.ts` import, and the one-line call after the config-dir check at the top of `hasTrustRequiringProjectResources` in `packages/coding-agent/src/core/trust-manager.ts`.
+
+## 2026-10-08 - A tool's answer words reach the model as a user turn after its tool results (senpi#2920)
+
+### What changed
+
+- `packages/coding-agent/src/core/messages.ts`: `convertToLlm` ends by passing its output through `appendToolResultUserWords` (`core/tool-result-user-words.ts`): after each contiguous run of tool results, one user message holds, for every result whose `details.userWords` lists `{ label, text }` words, a `[label]` text block followed by the word as its own text block. It is skipped when the next message already starts with those blocks (converting twice adds it once), and it carries its own copy of the last word-carrying result's request-local context provenance (sealed with its own fingerprint only while that result still matches its seal), so OpenAI remote-compaction replay treats it as part of the same checkpoint.
+- `packages/coding-agent/src/core/agent-session.ts`: `sendUserMessage` with a content array of more than one text part passes the parts to `prompt()` as the internal `PromptOptions.textBlocks`. The started prompt (`userContent`) and a queued steer or follow-up (`_enqueuePreparedInput`) build the user message's text through `userTextContent` (`core/user-text-blocks.ts`), which keeps the parts as separate text blocks while they still spell the final text joined by a newline, and falls back to one block when a template expansion rewrote it. An `input` handler's rewrite is not applied to a built-in later ask-user answer (`keepsTextBlocksVerbatim`). `getUserMessagesForForking` shows such an answer with its words in place (`askUserAnswerDisplayText`).
+
+### Why
+
+- Anthropic's Claude Haiku 5.5 guide ("Mid-turn user messages") says user text inside a `tool_result` may be treated as untrusted, and that a harness notice and the user's words must not share a block. The ask-user builtin keeps a blocking answer's words in the persisted tool result instead of the tool content; building the user message from that result on every request means no queue operation (Esc, `clear_queue`, an abort, a session release) can drop or delay them, and live requests, resumed sessions and compaction all see the same messages. A later answer arrives as a frame block plus labelled word blocks, which the joined-text paths used to merge.
+
+### Why an extension could not handle it
+
+- The message-to-LLM conversion and the prompt/queue paths that build the user message are the host's own; an extension can only hand content to `pi.sendUserMessage` or return a tool result.
+
+### Expected merge conflict zones
+
+- LOW: the final `return` of `convertToLlm` and its import in `messages.ts`; in `agent-session.ts`, `PromptOptions` (new `textBlocks`), the `inputResult.action === "transform"` branch and the `userContent` line in `prompt()`, the `_queueSteer` / `_queueFollowUp` / `_enqueuePreparedInput` signatures and content line, the text-part loop plus `prompt()` call in `sendUserMessage`, and the `text` line of `getUserMessagesForForking`.

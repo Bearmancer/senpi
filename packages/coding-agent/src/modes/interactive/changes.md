@@ -16,6 +16,24 @@ The resume selector and runtime switch are owned by interactive mode.
 
 - `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: imports and the successful-switch paths in `handleResumeSession`.
 
+## 2026-10-08 - `/answer skip` keeps a required question's refusal (senpi#2949)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: `/answer skip` passes the question's `required` flag to `formatUserMessage`, so a dismissed required question reaches the model as "do not take the action it gates" instead of only "The user dismissed the question."
+
+### Why
+
+- `/answer skip` is the only path that sends a dismissed-question message to the model; without the flag, the ask-user builtin's required-question text never reached it (senpi#2949).
+
+### Why an extension could not handle it
+
+- The `/answer` command and its message are owned by interactive mode.
+
+### Expected merge conflict zones
+
+- LOW: `interactive-mode.ts` `/answer skip` branch, the `formatUserMessage` call.
+
 ## 2026-10-07 - A terminal model pick no longer rewrites the default model (senpi#2870)
 
 ### What changed
@@ -2558,3 +2576,22 @@ Upstream edits to `showLoadedResources` or the startup-warning block in interact
 ### Expected merge conflict zones
 
 - LOW: `openEndpoint` in `session-control-endpoint.ts`, `watchInbox` in `session-control-wake.ts`, and the `writeHostRegistration` call in `registerTuiEndpoint`. All three files are fork-only.
+
+## 2026-10-08 - A later ask-user answer is shown with the user's words in place (senpi#2920)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: a user message whose first text block is an `[Answer to question <id>]` frame followed by labelled word blocks renders through `askUserAnswerDisplayText`, which puts each word back where the frame refers to it by label, so the answer chip and its expanded body read as before.
+- `packages/coding-agent/src/modes/interactive/components/tree-selector.ts`: the `/tree` row of such a user message shows the same resolved text instead of the blocks run together.
+
+### Why
+
+- The ask-user builtin now sends the user's words as text blocks of their own after the frame (Claude Haiku 5.5 may ignore user text that sits beside a harness label). Without this the chat joined the blocks with no separator and the chip lost the comment.
+
+### Why an extension could not handle it
+
+- The chat's user-message rendering is the interactive mode's own code; an extension cannot replace how a user message is drawn.
+
+### Expected merge conflict zones
+
+- LOW: the `case "user"` branch of the message renderer (the `textContent` line) and the ask-user `format.ts` import in `interactive-mode.ts`; the `role === "user"` branch of the tree selector's entry label and its import.

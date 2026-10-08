@@ -81,7 +81,10 @@ describe("Mistral thinking-off wire audit", () => {
 	});
 
 	it("explicit runtime off omits reasoning controls for prompt-mode models", async () => {
-		const payload = await captureMistralPayload(getModel("mistral", "magistral-medium-latest"), {
+		// A prompt-mode model is a reasoning model without an effort map. The catalog's Magistral entries now
+		// carry one, so drop it to keep this adapter path covered (custom models.json entries still take it).
+		const { thinkingLevelMap: _effortMap, ...promptModeModel } = getModel("mistral", "magistral-medium-latest");
+		const payload = await captureMistralPayload(promptModeModel, {
 			reasoning: RUNTIME_OFF,
 		});
 

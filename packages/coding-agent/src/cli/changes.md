@@ -16,6 +16,24 @@ The warning belongs to CLI startup and must work with extensions disabled.
 
 - Fork-only file; the startup warning.
 
+## 2026-10-08 - Scheduled session delivery does not replay an eval caller (senpi#2599)
+
+### What changed
+
+- `packages/coding-agent/src/cli/schedule-watch.ts`: default session delivery applies `runtimeExecArgv()` before the CLI entry. Operator `--exec` delivery is unchanged.
+
+### Why
+
+An embedding `node -p` or `node -e` process must resume the scheduled session instead of executing its embedding code in the child.
+
+### Why an extension could not handle it
+
+The schedule runner constructs the child command before the child's extension dispatch.
+
+### Expected merge conflict zones
+
+- LOW: the default `sessionResumeDelivery()` launch in `resolveDelivery()`.
+
 ## 2026-10-08 - Schedule delivery follows paths the OmO desktop moved (senpi#2898)
 
 ### What changed

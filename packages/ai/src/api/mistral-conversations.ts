@@ -802,6 +802,23 @@ function stripSymbolKeys(value: unknown): unknown {
 	return value;
 }
 
+/**
+ * Consecutive user turns become one user message, as the OpenAI Chat converter does for
+ * non-OpenAI endpoints: a word message rebuilt after tool results (senpi#2920) is often followed
+ * by a steer or the next prompt, and Mistral's role-order validation is not documented to accept
+ * two user messages in a row.
+ */
+function appendUserMessage(result: MistralChatMessage[], content: string | MistralContentChunk[]): void {
+	const previous = result[result.length - 1];
+	if (previous?.role !== "user") {
+		result.push({ role: "user", content });
+		return;
+	}
+	const chunks = (value: string | MistralContentChunk[] | undefined): MistralContentChunk[] =>
+		typeof value === "string" ? [{ type: "text", text: value }] : (value ?? []);
+	previous.content = [...chunks(previous.content), ...chunks(content)];
+}
+
 function toChatMessages(messages: Message[], supportsImages: boolean): MistralChatMessage[] {
 	const result: MistralChatMessage[] = [];
 
@@ -815,7 +832,7 @@ function toChatMessages(messages: Message[], supportsImages: boolean): MistralCh
 
 		if (msg.role === "user") {
 			if (typeof msg.content === "string") {
-				result.push({ role: "user", content: sanitizeSurrogates(msg.content) });
+				appendUserMessage(result, sanitizeSurrogates(msg.content));
 				continue;
 			}
 			const hadImages = msg.content.some((item) => item.type === "image");
@@ -826,11 +843,11 @@ function toChatMessages(messages: Message[], supportsImages: boolean): MistralCh
 					return { type: "image_url", imageUrl: `data:${item.mimeType};base64,${item.data}` };
 				});
 			if (content.length > 0) {
-				result.push({ role: "user", content });
+				appendUserMessage(result, content);
 				continue;
 			}
 			if (hadImages && !supportsImages) {
-				result.push({ role: "user", content: "(image omitted: model does not support images)" });
+				appendUserMessage(result, "(image omitted: model does not support images)");
 			}
 			continue;
 		}
