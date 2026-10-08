@@ -2,6 +2,8 @@ import { basename, dirname, join } from "node:path";
 import { afterEach, expect, it } from "vitest";
 import { parseArgs } from "../../src/cli/args.ts";
 import { getDefaultSessionDir } from "../../src/core/session-manager.ts";
+import { SessionCommandRouter } from "../../src/modes/rpc/session-command-router.ts";
+import { SessionEventWriter } from "../../src/modes/rpc/session-event-writer.ts";
 import { WorkerSessionRegistry } from "../../src/modes/rpc/worker-session-registry.ts";
 import { createMovedLayout, type MovedLayout, writeSessionHeader } from "./moved-path-guard-fixtures.ts";
 import { startWorkerHost } from "./rpc-worker-host-support.ts";
@@ -96,9 +98,33 @@ it("worker refuses an old session path whose moved file is missing", async () =>
 	const { layout, host, registry } = await movedWorkerHost();
 	const gone = join(layout.oldSessions, "gone.jsonl");
 	try {
-		await expect(registry.openSession({ cwd: layout.oldWorktree, sessionPath: gone })).rejects.toThrow(
-			join(layout.newSessions, "gone.jsonl"),
-		);
+		// Re-review L2: the same typed refusal the in-process registry gives, so the wire answer is identical.
+		await expect(registry.openSession({ cwd: layout.oldWorktree, sessionPath: gone })).rejects.toMatchObject({
+			name: "RpcSessionRegistryError",
+			code: "open_failed",
+			message: expect.stringContaining(join(layout.newSessions, "gone.jsonl")),
+		});
+	} finally {
+		await host.dispose();
+	}
+}, 60_000);
+
+// Re-review L2, on the wire: the worker host answers open_session with the in-process registry's error text.
+it("worker host answers a missing moved session file with the registry's open_failed text", async () => {
+	const { layout, host, registry } = await movedWorkerHost();
+	const router = new SessionCommandRouter(registry, new SessionEventWriter(() => {}), { cwd: host.cwd });
+	try {
+		const response = await router.handle({
+			id: "open",
+			type: "open_session",
+			cwd: layout.oldWorktree,
+			sessionPath: join(layout.oldSessions, "gone.jsonl"),
+		});
+
+		expect(response).toMatchObject({
+			success: false,
+			error: `open_failed: moved session file does not exist: ${join(layout.newSessions, "gone.jsonl")}`,
+		});
 	} finally {
 		await host.dispose();
 	}

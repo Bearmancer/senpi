@@ -19,7 +19,7 @@ import {
 	sessionIdentity,
 } from "./session-registry.ts";
 import { SessionWorkerClient } from "./session-worker-client.ts";
-import { SESSION_WORKER_LIMITS, type SessionWriteGrant } from "./session-worker-protocol.ts";
+import { SESSION_WORKER_LIMITS, type SessionWriteGrant, typedWorkerRefusal } from "./session-worker-protocol.ts";
 
 type SessionWorkerCallbacks = ConstructorParameters<typeof SessionWorkerClient>[0];
 
@@ -123,7 +123,7 @@ export class WorkerSessionRegistry {
 		entry.worker = worker;
 		this.entries.set(handle, entry);
 		try {
-			const path = await worker.prepare(this.options.configuration, profile);
+			const path = await worker.prepare(this.options.configuration, profile).catch(typedWorkerRefusal);
 			const owner = this.reservations.owner(path);
 			if (owner) {
 				const attached = await this.attach(owner, path, options, profile);
