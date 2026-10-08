@@ -666,20 +666,21 @@ priority tier, which keeps `service_tier` off the wire. Under a `:priority` pin 
 effect, because the pin outranks it. `ultrafast` is not a remembered value: a stored `ultrafast` is
 ignored. Select Ultrafast with a decorator, a `models.json` `serviceTier`, or `openai.serviceTier`.
 
-#### GPT-6 Astra Ultrafast
+#### Ultrafast (GPT-6 Astra and GPT-6.1 Sol)
 
 Select Ultrafast independently of reasoning effort on either first-party lane:
 
 ```bash
 senpi --model chatgpt-subscription/gpt-6-astra:xhigh:ultrafast
-senpi --model openai/gpt-6-astra:ultrafast:max
+senpi --model openai/gpt-6.1-sol:ultrafast:max
+senpi --model chatgpt-subscription/gpt-6.1-sol-ultrafast
 ```
 
-Astra supports `low`, `medium`, `high`, `xhigh`, and `max` with Ultrafast. The two decorators can appear in either order and work in `favoriteModels` and `--models` patterns too. A custom model entry can instead set `serviceTier: "ultrafast"` in `models.json`; keep its cost at Standard rates, since the adapter applies the Ultrafast multiplier. Astra Ultrafast costs 6x Standard, including cached input and long-context rates.
+Both models support `low`, `medium`, `high`, `xhigh`, and `max` with Ultrafast. `chatgpt-subscription/gpt-6.1-sol-ultrafast` is a catalog model that always sends GPT-6.1 Sol at Ultrafast, with `xhigh` as its default effort; any other effort you select still applies. The two decorators can appear in either order and work in `favoriteModels` and `--models` patterns too. A custom model entry can instead set `serviceTier: "ultrafast"` in `models.json`; keep its cost at Standard rates, since the adapter applies the Ultrafast multiplier. Ultrafast costs 6x Standard for both models, including cached input and long-context rates.
 
-This is an explicit request preference; availability is determined by the provider and account. Use it with GPT-6 Astra on OpenAI or ChatGPT Subscription. Senpi sends it only to the `openai` and `chatgpt-subscription` providers: selecting it on any other provider, including a gateway that serves GPT-6 Astra, prints a warning and the request goes out at that provider's default tier. On OpenAI or ChatGPT Subscription, selecting it for a model other than GPT-6 Astra prints a warning and still sends it, because the provider may accept it; other models keep their Standard price. `/fast` remains the Priority toggle. Switching between Ultrafast and another tier starts a fresh WebSocket response chain while retaining the conversation.
+This is an explicit request preference; availability is determined by the provider and account. Use it with GPT-6 Astra or GPT-6.1 Sol on OpenAI or ChatGPT Subscription. Senpi sends it only to the `openai` and `chatgpt-subscription` providers: selecting it on any other provider, including a gateway that serves one of these models, prints a warning and the request goes out at that provider's default tier. On OpenAI or ChatGPT Subscription, selecting it for any other model prints a warning and still sends it, because the provider may accept it; those models keep their Standard price. `/fast` remains the Priority toggle. Switching between Ultrafast and another tier starts a fresh WebSocket response chain while retaining the conversation.
 
-See OpenAI's [Ultrafast guide](https://developers.openai.com/api/docs/guides/ultrafast-mode) and [Astra model page](https://developers.openai.com/api/docs/models/gpt-6-astra).
+See OpenAI's [Ultrafast guide](https://developers.openai.com/api/docs/guides/ultrafast-mode) and [pricing](https://developers.openai.com/api/docs/pricing).
 
 ### Markdown
 

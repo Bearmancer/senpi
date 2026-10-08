@@ -84,7 +84,7 @@ describe("service-tier decorators", () => {
 			expect(result.serviceTier).toBe(tier);
 			if (tier === "ultrafast") {
 				expect(result.warning).toBe(
-					"Ultrafast is documented for GPT-6 Astra only; openai/gpt-5.5 may reject or ignore it",
+					"Ultrafast is documented for GPT-6 Astra and GPT-6.1 Sol; openai/gpt-5.5 may reject or ignore it",
 				);
 			} else {
 				expect(result.warning).toBeUndefined();
@@ -92,7 +92,7 @@ describe("service-tier decorators", () => {
 		}
 	});
 
-	test("ultrafast on a non-Astra first-party model warns and still selects", () => {
+	test("ultrafast on GPT-6.1 Sol selects without an undocumented-tier warning", () => {
 		const sol = model("chatgpt-subscription", "gpt-6.1-sol", "GPT-6.1 Sol");
 		for (const pattern of [
 			"chatgpt-subscription/gpt-6.1-sol:ultrafast:xhigh",
@@ -102,9 +102,7 @@ describe("service-tier decorators", () => {
 			expect(result.model?.id).toBe("gpt-6.1-sol");
 			expect(result.serviceTier).toBe("ultrafast");
 			expect(result.thinkingLevel).toBe("xhigh");
-			expect(result.warning).toBe(
-				"Ultrafast is documented for GPT-6 Astra only; chatgpt-subscription/gpt-6.1-sol may reject or ignore it",
-			);
+			expect(result.warning).toBeUndefined();
 		}
 	});
 

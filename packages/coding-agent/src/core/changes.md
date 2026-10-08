@@ -34,6 +34,44 @@ The threshold decision, the cut point and the `RequiredCompactionError` throw al
 
 - LOW: the `if (inlineReason)` branch of the threshold block in `_checkCompaction`, and the `RequiredCompactionError` class header.
 
+## 2026-10-09 - Concurrent log rotation never disables a log sink (senpi#2976)
+
+### What changed
+
+- `packages/coding-agent/src/core/log-file-rotation.ts` (new): `rotateLogIfNeeded(filePath, incomingBytes, maxBytes)` rotates under a `<file>.rotate-lock` created with `wx`, re-checks the size under the lock, treats a lost rename (ENOENT) as done, clears a lock older than 10 s, and exports `LOG_SINK_RETRY_MS`.
+- `packages/coding-agent/src/core/session-log.ts`: `writeLine` rotates through it and sets the mode on the open descriptor.
+- `packages/coding-agent/src/core/retry-fallback/log.ts`: `writeLine` rotates through it and sets the mode on the open descriptor.
+
+### Why
+
+- Several processes share one agent dir (engine host, CLI, desktop host). Rotation was a non-atomic stat, remove `.1`, rename: when two crossed the cap together, the loser's rename threw ENOENT and its sink was disabled for the whole process (config-reload, MCP) or the line was lost (session, fallback), and the remove step could delete a generation another process had just rotated. A two-to-four-process burst dropped hundreds of lines per losing process. Rotation now runs under an exclusive lock file and re-checks the size while holding it, a lost race keeps appending, and a failed sink retries after `LOG_SINK_RETRY_MS` (5 s) instead of staying off. The `chmod` after each append moved onto the open descriptor (`fchmodSync`), since the path may already name a newer file another process created.
+
+### Why an extension could not handle it
+
+- These are the engine's own log writers.
+
+### Expected merge conflict zones
+
+- LOW: the `writeLine` helpers in `session-log.ts` and `retry-fallback/log.ts`.
+
+## 2026-10-09 - The engine-turn pause stays visible when the session file refuses writes (senpi#2967 follow-up)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `_stopEngineTurn` records its `engine-turn-limit` entry best effort (a refused write is logged as `engine_turn_record_write_failed`), so `engine:turn-limit` and the "Paused" notice still fire, and a refused message's cross-session delivery is still settled. A delivery whose own entry the file refuses is also taken out of the context, since its sender redelivers it. The `engine-turn-start` write logs its refusal instead of dropping it. A user message edited in `/tree` (written directly, not through `message_end`) clears the in-process engine-turn record like a new user message.
+
+### Why
+
+- After #2969 a session file that refuses writes reaches the pause through the in-process count; the unguarded limit-entry write then threw before the event, the notice and the delivery settlement, so the cap held silently and a delivery arriving at it stayed pending, keeping `release_session` busy.
+
+### Why an extension could not handle it
+
+- The pause and its bookkeeping live in the session's `sendCustomMessage` path.
+
+### Expected merge conflict zones
+
+- LOW: `agent-session.ts` `_stopEngineTurn`, `_recordEngineTurnStart`, `_recordRefusedEngineTurnMessage`, and the edited-message write in `_navigateTree`.
+
 ## 2026-10-08 - Engine-originated turns are bounded per user message and per minute (senpi#2967)
 
 ### What changed
@@ -9363,3 +9401,21 @@ The `promptSurface` plumbing in `agent-session.ts`, `agent-session-services.ts` 
 ### Expected merge conflict zones
 
 - LOW: the final `return` of `convertToLlm` and its import in `messages.ts`; in `agent-session.ts`, `PromptOptions` (new `textBlocks`), the `inputResult.action === "transform"` branch and the `userContent` line in `prompt()`, the `_queueSteer` / `_queueFollowUp` / `_enqueuePreparedInput` signatures and content line, the text-part loop plus `prompt()` call in `sendUserMessage`, and the `text` line of `getUserMessagesForForking`.
+
+## 2026-10-08 - Recognize GPT-6.1 Sol as a documented Ultrafast model (senpi#2975)
+
+### What changed
+
+- `packages/coding-agent/src/core/ultrafast-lanes.ts`: the documented model set includes `gpt-6-astra` and `gpt-6.1-sol`, so the native Sol Ultrafast alias does not emit an unsupported-tier warning after the service-tier extension resolves its upstream id. Other models and non-first-party providers retain their warnings.
+
+### Why
+
+- The current subscription catalog advertises Ultrafast for both models; the previous Astra-only notice was misleading for Sol.
+
+### Why an extension could not handle it
+
+- Model resolution and the builtin service-tier extension share this core warning policy.
+
+### Expected merge conflict zones
+
+- LOW: the documented model set and warning text in `packages/coding-agent/src/core/ultrafast-lanes.ts`.

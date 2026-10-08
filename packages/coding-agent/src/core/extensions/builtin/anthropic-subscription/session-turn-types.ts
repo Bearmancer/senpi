@@ -17,6 +17,8 @@ export interface ActiveTurn {
 	aborted: boolean;
 	interruptReceipt?: unknown;
 	onMessage?: (message: SDKMessage) => void;
+	/** Awaited before the pump reads the next SDK message: the turn's consumer applies backpressure here. */
+	writable?: () => Promise<void>;
 	signal?: AbortSignal;
 	onAbort: () => void;
 	cancelAbort?: () => void;

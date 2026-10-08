@@ -1,6 +1,7 @@
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { zstdDecompressSync } from "node:zlib";
 import {
 	type Api,
 	type AssistantMessage,
@@ -166,6 +167,78 @@ describe("createAgentSession request service tier without extensions", () => {
 			// then
 			expect(tier).toBe("priority");
 		});
+	});
+
+	it("sends the native Sol Ultrafast alias as Sol with its default tier and effort without extensions", async () => {
+		// Given: the builtin catalog, no models.json alias or service-tier extension.
+		const authStorage = AuthStorage.create(join(agentDir, "auth.json"));
+		const token = `test.${Buffer.from(JSON.stringify({ "https://api.openai.com/auth": { chatgpt_account_id: "test" } })).toString("base64url")}.test`;
+		await authStorage.modify("chatgpt-subscription", async () => ({
+			type: "oauth",
+			access: token,
+			refresh: "test-refresh",
+			expires: Number.MAX_SAFE_INTEGER,
+		}));
+		const modelRegistry = await createModelRegistry(authStorage, join(agentDir, "models.json"));
+		const model = modelRegistry.find("chatgpt-subscription", "gpt-6.1-sol-ultrafast");
+		if (!model) throw new Error("Missing native Sol Ultrafast model");
+		const { session } = await createAgentSession({
+			cwd,
+			agentDir,
+			model,
+			modelRuntime: getModelRuntime(modelRegistry),
+			settingsManager: SettingsManager.inMemory({}),
+			sessionManager: SessionManager.inMemory(cwd),
+			resourceLoader: createTestResourceLoader(),
+		});
+		let payload: unknown;
+		let headers: Headers | undefined;
+		try {
+			// When: the session's real stream function reaches the subscription adapter.
+			const stream = await session.agent.streamFunction(
+				model,
+				normalizeContext({ messages: [{ role: "user", content: "Hello", timestamp: 0 }] }),
+				{
+					transport: "sse",
+					reasoning: session.thinkingLevel === "off" ? undefined : session.thinkingLevel,
+					fetch: async (input, init) => {
+						const request = new Request(input, init);
+						headers = request.headers;
+						const bytes = Buffer.from(await request.arrayBuffer());
+						const body = headers.get("content-encoding") === "zstd" ? zstdDecompressSync(bytes) : bytes;
+						payload = JSON.parse(body.toString("utf8"));
+						return new Response(
+							`data: ${JSON.stringify({
+								type: "response.completed",
+								response: {
+									status: "completed",
+									service_tier: "default",
+									output: [],
+									usage: { input_tokens: 100_000, output_tokens: 1000 },
+								},
+							})}\n\n`,
+							{ headers: { "content-type": "text/event-stream" } },
+						);
+					},
+				},
+			);
+			const result = await stream.result();
+
+			// Then: the catalog ID never leaks onto the wire, and Sol uses the published 6x multiplier.
+			expect(result.stopReason, result.errorMessage).toBe("stop");
+			expect(session.serviceTier).toBe("ultrafast");
+			expect(session.thinkingLevel).toBe("xhigh");
+			expect(payload).toMatchObject({
+				model: "gpt-6.1-sol",
+				service_tier: "ultrafast",
+				reasoning: { effort: "xhigh" },
+			});
+			expect(headers?.get("x-codex-routing-hint")).toBe("model=gpt-6.1-sol;tier=ultrafast");
+			expect(result.usage.cost.input).toBeCloseTo(1.2);
+			expect(result.usage.cost.output).toBeCloseTo(0.06);
+		} finally {
+			session.dispose();
+		}
 	});
 
 	it("sends priority once session fast mode is turned on for a Codex base model", async () => {

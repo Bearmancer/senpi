@@ -1,5 +1,23 @@
 # config-reload Extension Changes
 
+## 2026-10-09 - Concurrent log rotation never disables a log sink (senpi#2976)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/config-reload/log.ts`: rotates through `rotateLogIfNeeded`; a failed write returns `{ written: false, disabled: true }` and retries after `LOG_SINK_RETRY_MS` instead of disabling the logger for the process lifetime.
+
+### Why
+
+- Several processes share one agent dir (engine host, CLI, desktop host). Rotation was a non-atomic stat, remove `.1`, rename: when two crossed the cap together, the loser's rename threw ENOENT and its sink stayed disabled for the rest of the process, and the remove step could delete a generation another process had just rotated. A four-process burst dropped hundreds of lines per losing process. Rotation now goes through `core/log-file-rotation.ts` (an exclusive lock file and a size re-check under it), a lost race keeps appending, a failed sink retries after `LOG_SINK_RETRY_MS` (5 s), and the mode is set on the open descriptor.
+
+### Why an extension could not handle it
+
+- This is the builtin extension's own log writer.
+
+### Expected merge conflict zones
+
+- LOW: `createConfigReloadLogger` and `writeLine` in `config-reload/log.ts`.
+
 ## 2026-10-08 - Stop the post-reload handoff from re-triggering reloads (#2878)
 
 ### What changed

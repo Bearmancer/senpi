@@ -6,11 +6,17 @@
 
 ### Added
 
+- Select `chatgpt-subscription/gpt-6.1-sol-ultrafast` without a local extension to use Sol with the Ultrafast service tier and default `xhigh` reasoning. Usage estimates include its published 6x Standard pricing ([#2975](https://github.com/code-yeongyu/senpi/pull/2975) by [@audreyt](https://github.com/audreyt)).
+
 ### Changed
 
 ### Fixed
 
 - A multi-session RPC host refuses open/attach and every new session-writing RPC when another live process outside its daemon family holds the file, with typed `session_held` and pid/cwd data. Both guarded host runtimes advertise the exact `session_held` protocol capability; classic bindings do not. Open rechecks after holder publication and rolls back raced admission; stale holders clear automatically. Own workers and predecessor generations preserve existing reservation retry/reclaim semantics. Already-admitted turns finish if a holder arrives mid-turn. Interactive startup and `/resume` warn, including advisory lookup failures, without aborting ([#2951](https://github.com/code-yeongyu/senpi/issues/2951)).
+
+- When several processes share one agent directory (the desktop engine, the CLI), a log rotation race no longer switches off a process's config-reload or MCP log for the rest of its life or drops session and fallback log lines; a log that failed to write tries again after a few seconds ([#2976](https://github.com/code-yeongyu/senpi/issues/2976)).
+
+- On the Anthropic Subscription lane, a long streamed tool call (for example a large `write` or a `team_create` with long member prompts) no longer fails with "session stream queue exceeded 256 messages" and loses the tool call: the stream now waits for the reader instead of overflowing ([#2822](https://github.com/code-yeongyu/senpi/issues/2822)).
 
 ### Removed
 
@@ -25,6 +31,8 @@
 ### Changed
 
 ### Fixed
+
+- When the session file refuses writes, an automatic-turn pause is still announced, a message from another session that arrives at the limit is settled instead of staying pending, and editing your message in `/tree` lifts a pause like sending a new one ([#2967](https://github.com/code-yeongyu/senpi/issues/2967)).
 
 - The engine no longer starts turns on its own without bound. After one user message, automatic turns (stream-rule nudges, goal continuations and any other extension follow-up) pause after 150, or as soon as 12 automatic turns within a minute did no work (called no tool); each stream rule sends at most one correction per message. When it pauses, the session says so, and any message you send continues right away. Both numbers are settings (`engineTurns.maxPerUserInput`, `engineTurns.maxToolFreePerMinute`; `0` turns one off). One message had produced 66 turns, and another 93 requests in 3 s, until Stop ([#2967](https://github.com/code-yeongyu/senpi/issues/2967)).
 

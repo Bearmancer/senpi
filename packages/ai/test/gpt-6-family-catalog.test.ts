@@ -1,7 +1,7 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { getModel, getSupportedThinkingLevels, supportsMax, supportsXhigh } from "../src/compat.ts";
+import { getModel, getModels, getSupportedThinkingLevels, supportsMax, supportsXhigh } from "../src/compat.ts";
 import type { Api, Model } from "../src/types.ts";
 
 /**
@@ -131,6 +131,24 @@ for (const provider of ["openai", "chatgpt-subscription"] as const) {
 		});
 	}
 }
+
+describe("ChatGPT Subscription GPT-6.1 Sol Ultrafast", () => {
+	it("ships a subscription-only alias with Sol capabilities and unchanged cost metadata", () => {
+		const base = getModel("chatgpt-subscription", "gpt-6.1-sol");
+		const ultrafast = getModel("chatgpt-subscription", "gpt-6.1-sol-ultrafast");
+		expect(ultrafast).toEqual({
+			...base,
+			id: "gpt-6.1-sol-ultrafast",
+			name: "GPT-6.1 Sol Ultrafast",
+			upstreamModelId: "gpt-6.1-sol",
+			serviceTier: "ultrafast",
+			defaultThinkingLevel: "xhigh",
+		});
+		expect(ultrafast?.cost).toEqual(EXPECTED["gpt-6.1-sol"].cost);
+		expect(ultrafast && getSupportedThinkingLevels(ultrafast)).toEqual(["low", "medium", "high", "xhigh", "max"]);
+		expect(getModels("openai").some((model) => model.id === "gpt-6.1-sol-ultrafast")).toBe(false);
+	});
+});
 
 // A map-less model exercises the id-based inference in models.ts
 // (XHIGH_MODEL_IDS / OPENAI_MAX_MODEL_IDS / OPENAI_MAX_APIS) directly, so a
