@@ -1,3 +1,21 @@
+## 2026-10-08 - A required compaction inside one long turn splits that turn instead of ending it (senpi#2925)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: when the inline threshold path's required compaction finds nothing older than the recent window ("Nothing to compact (session too small)"), `_checkCompaction` runs it once more with `keepRecentTokens` 0. That summarizes the earlier steps of the current turn and keeps only its latest step, as the overflow path's second rung already does. It only throws `RequiredCompactionError` if that also fails. `REQUIRED_COMPACTION_ERROR_MESSAGE` is exported so callers can recognise the terminal error without copying its text.
+
+### Why
+
+On a small context window the system prompt and tool schemas already fill most of the window. A single tool-heavy turn then crosses the threshold after two or three large tool results, while the transcript holds nothing older than that turn. The threshold counts provider usage, which includes that overhead, but the cut point only counts messages and found nothing to cut. The turn ended with "Context remains above the compaction threshold because compaction did not complete", and print-mode children returned an empty result. This was reproduced on a 100K-window model (sessions: one compaction attempt, `Nothing to compact`, no compaction entry).
+
+### Why an extension could not handle it
+
+The threshold decision, the cut point and the `RequiredCompactionError` throw all happen inside `AgentSession`'s pre-provider enforcement, before any extension hook can intervene.
+
+### Expected merge conflict zones
+
+- LOW: the `if (inlineReason)` branch of the threshold block in `_checkCompaction`, and the `RequiredCompactionError` class header.
+
 ## 2026-10-08 - Runtime diagnostics carry an optional machine code (senpi#2906)
 
 ### What changed
