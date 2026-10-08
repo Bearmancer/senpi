@@ -12,6 +12,8 @@
 
 ### Fixed
 
+- A provider or route that sets its own `anthropic-beta` header no longer drops the betas a request needs: the configured betas are merged with them. Claude Haiku, Opus and Sonnet 5.5 through such a route no longer fail the first call with `400 messages.1.output_config: Extra inputs are not permitted`, and a request with server-side fallbacks keeps its fallback beta. `anthropic-beta: null` now sends a request that needs no beta (current tool list, top-level effort, no fallbacks) instead of an invalid one ([#2957](https://github.com/code-yeongyu/senpi/issues/2957)).
+
 ### Removed
 
 ## [2026.10.10-8] - 2026-10-08
