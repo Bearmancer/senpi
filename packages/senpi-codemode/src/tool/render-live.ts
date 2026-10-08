@@ -74,8 +74,10 @@ export function cellElapsedMs(cell: EvalCellResult, environment: RenderEnvironme
 	return Math.max(0, environment.now - cell.startedAt);
 }
 
-// An in-progress row leads with what the cell is doing (senpi#2802); collapsed, the headline is cut so the whole
-// header stays on one line, and the code moves behind expand.
+// An in-progress row leads with what the cell is doing (senpi#2802). Collapsed, the whole row
+// (icon, headline and every badge) always fits one visual line: lower-priority segments are
+// dropped first and the headline is cut last, never below its floor (senpi#2933 review HIGH-1).
+// The budget is width - 3 because the frame renders the header through renderPrefixed's "╭─ ".
 export function headlined(
 	icon: string,
 	summary: string | undefined,
@@ -83,8 +85,40 @@ export function headlined(
 	rest: string,
 	environment: RenderEnvironment,
 ): string {
-	const budget = environment.expanded ? undefined : environment.width - 3 - visibleWidth(`${icon}  · ${rest}`);
-	return `${icon} ${liveHeadline(summary, code, budget)} · ${rest}`;
+	if (environment.expanded) return `${icon} ${liveHeadline(summary, code, undefined)} · ${rest}`;
+	return fitOneLine(icon, liveHeadline(summary, code, undefined), rest, Math.max(1, environment.width - 3));
+}
+
+function fitOneLine(icon: string, headline: string, rest: string, width: number): string {
+	const lead = `${icon} `;
+	const middle = " · ";
+	const line = (text: string) => `${lead}${text}${middle}${rest}`;
+	if (visibleWidth(line(headline)) <= width) return line(headline);
+	// Drop the lowest-priority tail segments of rest (reset/timeout, then elapsed, then badges)
+	// until the headline's floor fits; the headline itself is shortened last, never emptied.
+	let keptRest = rest;
+	for (;;) {
+		const cut = keptRest.lastIndexOf(middle);
+		if (cut <= 0) break;
+		keptRest = keptRest.slice(0, cut);
+		if (visibleWidth(`${lead}${headline}${middle}${keptRest}`) <= width)
+			return `${lead}${headline}${middle}${keptRest}`;
+	}
+	const budget = Math.max(4, width - visibleWidth(`${lead}${middle}${keptRest}`) - 1);
+	const shortened = visibleWidth(headline) <= budget ? headline : `${cellPrefixText(headline, budget - 1)}…`;
+	return `${lead}${shortened}${middle}${keptRest}`;
+}
+
+function cellPrefixText(text: string, cells: number): string {
+	let kept = "";
+	let used = 0;
+	for (const { segment } of new Intl.Segmenter(undefined, { granularity: "grapheme" }).segment(text)) {
+		const width = visibleWidth(segment);
+		if (used + width > cells) break;
+		kept += segment;
+		used += width;
+	}
+	return kept;
 }
 
 export function cellHeader(cell: EvalCellResult, environment: RenderEnvironment, badges: CellBadges): string {
@@ -95,22 +129,28 @@ export function cellHeader(cell: EvalCellResult, environment: RenderEnvironment,
 			? { label: "streaming", icon: spinner(spinnerFrame), color: "warning" as const }
 			: cellPresentation(cell.status, spinnerFrame);
 	const runtimeBadge = cell.runtime === undefined ? "" : ` (${formatRuntimeBadge(cell.language, cell.runtime)})`;
-	let header = leadsWithHeadline(cell.status)
+	const base = leadsWithHeadline(cell.status)
 		? `eval ${cell.language}${runtimeBadge} ${presentation.label}`
 		: `eval ${cell.language}${runtimeBadge} ${presentation.label} ${presentation.icon}`;
+	const segments: string[] = [];
 	if (cell.queuedBehind !== undefined && cell.queuedBehind.length > 0)
-		header += ` · queued behind ${cell.queuedBehind.map(sanitizeTerminalLabel).join(", ")}`;
+		segments.push(`queued behind ${cell.queuedBehind.map(sanitizeTerminalLabel).join(", ")}`);
 	else if (cell.queuedBehind !== undefined && cell.status === "queued")
-		header += ` · waiting for the ${cell.language} kernel to be ready`;
+		segments.push(`waiting for the ${cell.language} kernel to be ready`);
 	const throughputBadge = badges.throughput === undefined ? undefined : formatThroughputBadge(badges.throughput);
-	if (throughputBadge !== undefined) header += ` · ${throughputBadge}`;
+	if (throughputBadge !== undefined) segments.push(throughputBadge);
 	const elapsedMs = badges.throughput?.wallDurationMs ?? cellElapsedMs(cell, environment);
-	if (elapsedMs !== undefined) header += ` · ${formatDuration(elapsedMs)}`;
-	if (badges.reset) header += " · reset";
-	if (badges.timeout !== undefined) header += ` · timeout ${badges.timeout}s`;
-	if (leadsWithHeadline(cell.status))
-		header = headlined(presentation.icon, cell.summary, cell.code, header, environment);
+	if (elapsedMs !== undefined) segments.push(formatDuration(elapsedMs));
+	if (badges.reset) segments.push("reset");
+	if (badges.timeout !== undefined) segments.push(`timeout ${badges.timeout}s`);
+	const header = leadsWithHeadline(cell.status)
+		? headlined(presentation.icon, cell.summary, cell.code, joinSegments(base, segments), environment)
+		: joinSegments(base, segments);
 	return style(environment.theme, presentation.color, header);
+}
+
+function joinSegments(base: string, segments: readonly string[]): string {
+	return segments.length === 0 ? base : `${base} · ${segments.join(" · ")}`;
 }
 
 // A live row is a framed block of constant height: the header plus a fixed code window of
