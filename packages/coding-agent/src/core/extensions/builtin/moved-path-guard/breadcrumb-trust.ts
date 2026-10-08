@@ -1,9 +1,9 @@
 import { lstatSync, readFileSync, type Stats } from "node:fs";
 import { lstat, readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { appendDebugLogEntry } from "../../../hidden-stdout-log.ts";
 import { MOVED_BREADCRUMB_FILE, type MovedBreadcrumb, parseMovedBreadcrumb } from "./breadcrumb.ts";
-import { DESKTOP_HOME_MARKER_FILE, parseDesktopHomeId } from "./home-marker.ts";
+import { logGuardEvent } from "./guard-log.ts";
+import { DESKTOP_HOME_MARKER_FILE, parseDesktopHomeMarker } from "./home-marker.ts";
 import { matchMovedPrefix, type PathPlatform } from "./path-match.ts";
 
 export interface MovedPath {
@@ -65,17 +65,8 @@ export async function readJsonFileAsync(file: string): Promise<unknown> {
 export const breadcrumbFile = (dir: string): string => join(dir, MOVED_BREADCRUMB_FILE);
 export const homeMarkerFile = (movedTo: string): string => join(movedTo, DESKTOP_HOME_MARKER_FILE);
 
-const reported = new Set<string>();
 function ignoreBreadcrumb(file: string, reason: string): undefined {
-	const key = `${file}\0${reason}`;
-	if (!reported.has(key)) {
-		reported.add(key);
-		try {
-			appendDebugLogEntry("moved-path-guard: ignoring a breadcrumb", `${file}: ${reason}`);
-		} catch {
-			// The debug log is diagnostics only; a full disk must not change the guard's answer.
-		}
-	}
+	logGuardEvent("debug", "breadcrumb_ignored", { file, reason });
 	return undefined;
 }
 
@@ -98,7 +89,15 @@ export function trustedBreadcrumb(
 ): MovedBreadcrumb | undefined {
 	if (matchMovedPrefix(breadcrumb.movedTo, dir, [[]], platform))
 		return ignoreBreadcrumb(breadcrumbFile(dir), "movedTo is the breadcrumb's own folder or inside it");
-	if (parseDesktopHomeId(markerRaw) !== breadcrumb.homeId)
+	const marker = parseDesktopHomeMarker(markerRaw);
+	if (marker.kind === "newer") {
+		logGuardEvent("warn", "marker_newer", {
+			file: homeMarkerFile(breadcrumb.movedTo),
+			schemaVersion: String(marker.schemaVersion),
+		});
+		return undefined;
+	}
+	if (marker.kind !== "valid" || marker.homeId !== breadcrumb.homeId)
 		return ignoreBreadcrumb(breadcrumbFile(dir), "movedTo holds no desktop home marker with this homeId");
 	return breadcrumb;
 }

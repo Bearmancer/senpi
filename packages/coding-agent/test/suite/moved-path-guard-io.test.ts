@@ -2,7 +2,6 @@ import * as fs from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { builtinExtensions } from "../../src/core/extensions/builtin/index.ts";
-import { commandPaths, MAX_PATHS_PER_CALL } from "../../src/core/extensions/builtin/moved-path-guard/command-paths.ts";
 import { createHarness, type Harness } from "./harness.ts";
 import { createMovedLayout, type MovedLayout, runTool } from "./moved-path-guard-fixtures.ts";
 
@@ -16,6 +15,7 @@ vi.mock("node:fs", async (importOriginal) => {
 		existsSync: vi.fn(actual.existsSync),
 		statSync: vi.fn(actual.statSync),
 		readFileSync: vi.fn(actual.readFileSync),
+		appendFileSync: vi.fn(actual.appendFileSync),
 		realpathSync: Object.assign(vi.fn(actual.realpathSync), { native: actual.realpathSync.native }),
 	};
 });
@@ -61,13 +61,24 @@ describe("moved-path-guard I/O on the session loop (#2898)", () => {
 		expect(syncCallsUnder(layout.home)).toEqual([]);
 	});
 
-	it("examines a bounded number of paths per call, anchored ones first", () => {
-		const relative = Array.from({ length: 300 }, (_, index) => `rel/${index}`).join(" ");
-		const anchored = "/first/anchored ~/second";
+	// Re-review L7: reporting an ignored breadcrumb from a tool call writes nothing synchronously.
+	it("reports an ignored breadcrumb without a synchronous log write", async () => {
+		const guard = builtinExtensions.find((entry) => entry.id === "moved-path-guard");
+		if (!guard) throw new Error("moved-path-guard is not registered");
+		const layout = createMovedLayout({ schemaVersion: 2 });
+		layouts.push(layout);
+		const harness = await createHarness({
+			cwd: layout.home,
+			extensionFactories: [guard.factory],
+			initialActiveToolNames: ["bash"],
+		});
+		harnesses.push(harness);
+		await harness.session.bindExtensions({});
+		vi.mocked(fs.appendFileSync).mockClear();
 
-		const paths = commandPaths(`touch ${relative} ${anchored}`, "/cwd");
+		const result = await runTool(harness, "bash", { command: `mkdir -p ${layout.oldWorktree}/x` });
 
-		expect(paths).toHaveLength(MAX_PATHS_PER_CALL);
-		expect(paths.slice(0, 2)).toEqual(["/first/anchored", expect.stringMatching(/second$/)]);
+		expect(result.outcome).toBe("ok");
+		expect(vi.mocked(fs.appendFileSync)).not.toHaveBeenCalled();
 	});
 });

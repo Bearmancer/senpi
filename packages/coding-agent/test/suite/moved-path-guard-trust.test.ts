@@ -1,16 +1,19 @@
-import { chmodSync, mkdirSync, renameSync, symlinkSync } from "node:fs";
+import { chmodSync, mkdirSync, renameSync, symlinkSync, writeFileSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type {
 	CreateAgentSessionRuntimeFactory,
 	CreateAgentSessionRuntimeResult,
 } from "../../src/core/agent-session-runtime.ts";
+import { flushGuardLog, guardLogPath } from "../../src/core/extensions/builtin/moved-path-guard/guard-log.ts";
 import { findMovedPath, resolveMovedPath } from "../../src/core/extensions/builtin/moved-path-guard/resolve.ts";
 import { ProjectTrustStore } from "../../src/core/trust-manager.ts";
 import { RpcSessionRegistry } from "../../src/modes/rpc/session-registry.ts";
 import {
 	breadcrumbBody,
 	createMovedLayout,
+	HOME_ID,
 	MOVED_SESSIONS,
 	MOVED_WORKTREE,
 	type MovedLayout,
@@ -20,6 +23,15 @@ import {
 
 // code-yeongyu/senpi#2898 review H1: a breadcrumb is trusted only when it points at a real, normalized desktop
 // home outside itself that holds the desktop's ownership marker with the breadcrumb's homeId.
+
+async function readGuardLog(): Promise<Array<Record<string, unknown>>> {
+	await flushGuardLog();
+	const text = await readFile(guardLogPath(), "utf8").catch(() => "");
+	return text
+		.split("\n")
+		.filter((line) => line.length > 0)
+		.map((line) => JSON.parse(line) as Record<string, unknown>);
+}
 
 describe("moved-path-guard breadcrumb trust (#2898)", () => {
 	const layouts: MovedLayout[] = [];
@@ -124,6 +136,25 @@ describe("moved-path-guard breadcrumb trust (#2898)", () => {
 
 			expect(findMovedPath(join(moved.oldWorktree, "a.ts"))).toBeUndefined();
 		});
+	});
+
+	// Re-review L6: a marker from a newer desktop is untrusted, and that is logged at warn level, not silent.
+	it("ignores a newer marker schema and logs it at warn level", async () => {
+		const moved = layout();
+		writeFileSync(
+			join(moved.newRoot, "omo-desktop-home.json"),
+			JSON.stringify({ kind: "omo-desktop-data-home", appId: "com.omo.desktop", schemaVersion: 2, homeId: HOME_ID }),
+		);
+
+		expect(findMovedPath(join(moved.oldWorktree, "a.ts"))).toBeUndefined();
+		const entries = await readGuardLog();
+		expect(entries).toContainEqual(
+			expect.objectContaining({
+				level: "warn",
+				event: "marker_newer",
+				file: join(moved.newRoot, "omo-desktop-home.json"),
+			}),
+		);
 	});
 
 	// Review L5: an ignored breadcrumb is recorded in the debug log, never printed into the terminal a TUI owns.
