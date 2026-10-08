@@ -165,7 +165,7 @@ export async function clientCredentialsGrant(
 		resource: new URL(provider.serverUrl),
 		fetchFn: oauthFetch(options.fetchFn),
 	});
-	await provider.saveTokens(tokens);
+	await provider.saveTokens({ ...tokens, issuer: String(info.authorizationServerUrl) });
 }
 
 export async function logout(provider: McpOAuthProvider): Promise<void> {

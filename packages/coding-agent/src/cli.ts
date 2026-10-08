@@ -5,6 +5,7 @@ import { existsSync, realpathSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { processBunRuntimeOptions, resolveBunReexec } from "./bun-runtime.ts";
+import { captureStdout, exitAfterOutput, printThenExit } from "./cli/print-then-exit.ts";
 import { enableStartupCompileCache } from "./compile-cache.ts";
 import {
 	APP_NAME,
@@ -149,8 +150,7 @@ async function spawnFullCli(): Promise<number> {
 }
 
 if (isRootCommand(args) && (args.includes("--version") || args.includes("-v"))) {
-	console.log(DISPLAY_VERSION);
-	process.exit();
+	await printThenExit(() => console.log(DISPLAY_VERSION));
 }
 
 // Help is static text plus the flags extensions registered, so a launch that already knows those
@@ -158,9 +158,11 @@ if (isRootCommand(args) && (args.includes("--version") || args.includes("-v"))) 
 // reason `cli-main` is: a static one would evaluate that graph before this answer.
 if (isRootCommand(args) && args.some((arg) => arg === "--help" || arg === "-h")) {
 	const { tryPrintHelpWithoutEngine } = await import("./cli/help-fast-path.ts");
-	if (tryPrintHelpWithoutEngine(args)) {
-		process.exit();
+	const help = await captureStdout(() => tryPrintHelpWithoutEngine(args));
+	if (help.result) {
+		await exitAfterOutput(help.output);
 	}
+	process.stdout.write(help.output);
 }
 
 if (isMissingBundledWorkspaceDependencies(getInstallPackageDir())) {

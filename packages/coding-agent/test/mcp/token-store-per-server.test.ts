@@ -67,10 +67,10 @@ describe("MCP OAuth credentials per server name and URL", () => {
 		const agentDir = await makeAgentDir();
 		const legacyPath = writeLegacyCredentials(agentDir, "legacy-token");
 
-		expect(provider(agentDir, "work").tokens()).toMatchObject({
-			access_token: "legacy-token",
-			refresh_token: "legacy-rt",
-		});
+		// The access token moves with the record. Its refresh token is withheld: a URL-keyed record this old names no
+		// authorization server (no issuer, no discovery record), so it is never presented anywhere (senpi#2940).
+		expect(provider(agentDir, "work").tokens()).toMatchObject({ access_token: "legacy-token" });
+		expect(provider(agentDir, "work").tokens()?.refresh_token).toBeUndefined();
 		// Another server with the same URL signs in again instead of reusing the account.
 		expect(provider(agentDir, "personal").tokens()).toBeUndefined();
 		expect(existsSync(legacyPath)).toBe(false);
