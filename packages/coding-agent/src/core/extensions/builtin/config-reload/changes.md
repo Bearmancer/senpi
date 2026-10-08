@@ -5,7 +5,7 @@
 ### What changed
 
 - `packages/coding-agent/src/core/extensions/builtin/config-reload/index.ts`: the post-reload handoff comparison (`compareHandoffSnapshots`) no longer counts a path that is missing from the new watcher baseline but still on disk as changed. Such a path belongs to an extension whose watch registration arrives after `session_start`; it is held in `awaitingRegistration` and compared against its pre-reload hash once that registration rebuilds the watchers (`settleAwaitingRegistration`). A deleted path still counts as changed.
-- Reloads triggered only by the handoff comparison carry a chain counter; after `MAX_HANDOFF_RELOADS` (3) such reloads within `HANDOFF_CHAIN_WINDOW_MS` (60 s) the chain stops, logs `reload_loop_stopped` at warn level and shows a notice instead of reloading again. A watcher-detected change resets the chain.
+- Reloads triggered only by the handoff comparison carry a chain counter; after `MAX_HANDOFF_RELOADS` (3) consecutive such reloads the chain stops, with no time window, so a slow cycle (for example one held back by running subagents) cannot restart it, logs `reload_loop_stopped` at warn level and shows a notice instead of reloading again. A watcher-detected change resets the chain.
 - The extension-veto recheck keeps its 1 s cadence for the first five attempts, then backs off exponentially to at most 30 s; `agent_end` and `agent_settled` still flush immediately. `reload_deferred` is logged once per veto reason instead of on every recheck.
 - `packages/coding-agent/src/core/extensions/builtin/config-reload/log.ts`: new `reload_loop_stopped` event with `paths` and `reloads`.
 

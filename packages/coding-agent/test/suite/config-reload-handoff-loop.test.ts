@@ -121,7 +121,7 @@ async function settle(ms = 200): Promise<void> {
 function reloadChain(options: {
 	readonly agentDir: string;
 	readonly registration?: () => unknown;
-	readonly beforeRestart?: (reloadIndex: number) => void;
+	readonly beforeRestart?: (reloadIndex: number) => void | Promise<void>;
 	readonly hashFile?: (path: string) => string;
 	readonly maxGenerations: number;
 }): { readonly reloads: number[]; readonly logs: LoggedEvent[]; start(): Promise<void>; bus: EventBus } {
@@ -148,7 +148,7 @@ function reloadChain(options: {
 				ctx,
 			);
 			if (reloads.length >= options.maxGenerations) return;
-			options.beforeRestart?.(index);
+			await options.beforeRestart?.(index);
 			await startGeneration("reload");
 		});
 		await invoke(current, "session_start", { type: "session_start", reason } satisfies SessionStartEvent, ctx);
@@ -245,6 +245,29 @@ describe("config-reload post-reload handoff (#2878)", () => {
 		expect(requestReload).not.toHaveBeenCalled();
 		expect(checkReloadVeto.mock.calls.length).toBeLessThanOrEqual(12);
 		expect(logs.filter((entry) => entry.event === "reload_deferred")).toHaveLength(1);
+	});
+
+	it("stops a handoff-only reload chain even when each reload takes longer than a minute", async () => {
+		// given a watched file whose hash differs on every read and reloads that each take 70 s
+		vi.useFakeTimers();
+		const agentDir = tempDir("senpi-2878-slow-");
+		writeJson(join(agentDir, "settings.json"), { theme: "dark" });
+		let reads = 0;
+		const chain = reloadChain({
+			agentDir,
+			hashFile: (path) => (path.endsWith("settings.json") ? `flip-${reads++}` : `stable-${path}`),
+			beforeRestart: () => {
+				vi.setSystemTime(Date.now() + 70_000);
+			},
+			maxGenerations: 10,
+		});
+
+		// when the session starts reloading
+		await chain.start();
+
+		// then slow cycles still stop the chain and say why
+		expect(chain.reloads.length).toBeLessThanOrEqual(4);
+		expect(chain.logs.some((entry) => entry.level === "warn" && entry.event === "reload_loop_stopped")).toBe(true);
 	});
 
 	it("stops a handoff-only reload chain and logs reload_loop_stopped", async () => {

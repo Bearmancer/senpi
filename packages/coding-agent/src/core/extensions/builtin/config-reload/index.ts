@@ -52,7 +52,6 @@ const VETO_RECHECK_FAST_ATTEMPTS = 5;
 const VETO_RECHECK_MAX_MS = 30_000;
 // A reload that only ever re-triggers itself from the post-reload comparison stops here (#2878).
 const MAX_HANDOFF_RELOADS = 3;
-const HANDOFF_CHAIN_WINDOW_MS = 60_000;
 const CONFIG_FILE_NAMES = ["settings.jsonc", "settings.json", "models.json", "keybindings.json"] as const;
 
 /**
@@ -102,7 +101,6 @@ type PendingChange = {
 type HandoffChain = {
 	/** Consecutive reloads requested only by a post-reload comparison; 0 for a watcher-detected change. */
 	readonly count: number;
-	readonly startedAt: number;
 };
 
 type ReloadHandoff = {
@@ -414,7 +412,7 @@ export function configReloadExtension(pi: ExtensionAPI, options: ConfigReloadExt
 		const paths = uniquePaths(changes.flatMap((change) => change.paths));
 		reloadInFlight = true;
 		reloadHandoffs.set(handoffKey(ctx), {
-			chain: nextReloadChain ?? { count: 0, startedAt: Date.now() },
+			chain: nextReloadChain ?? { count: 0 },
 			hashesAtRequest: engine?.getBaselineSnapshot() ?? new Map<string, string>(),
 			settingsContentsAtRequest: new Map(settingsContents),
 			requestedAt: Date.now(),
@@ -461,7 +459,7 @@ export function configReloadExtension(pi: ExtensionAPI, options: ConfigReloadExt
 	/**
 	 * Queue a change the post-reload comparison found. A comparison-only chain (each reload
 	 * triggered solely by the previous reload's comparison) stops after MAX_HANDOFF_RELOADS
-	 * within HANDOFF_CHAIN_WINDOW_MS, so a path that always looks changed cannot loop forever.
+	 * consecutive reloads however slow each one is, so a path that always looks changed cannot loop forever.
 	 */
 	const enqueueHandoffChange = async (
 		handoff: ReloadHandoff,
@@ -469,10 +467,7 @@ export function configReloadExtension(pi: ExtensionAPI, options: ConfigReloadExt
 		ctx: ExtensionContext,
 	): Promise<void> => {
 		if (changedPaths.length === 0) return;
-		const freshChain = handoff.chain.count === 0 || Date.now() - handoff.chain.startedAt > HANDOFF_CHAIN_WINDOW_MS;
-		const chain: HandoffChain = freshChain
-			? { count: 1, startedAt: handoff.requestedAt }
-			: { count: handoff.chain.count + 1, startedAt: handoff.chain.startedAt };
+		const chain: HandoffChain = { count: handoff.chain.count + 1 };
 		if (chain.count > MAX_HANDOFF_RELOADS) {
 			logger.warn("reload_loop_stopped", { paths: changedPaths, reloads: handoff.chain.count });
 			ctx.ui.notify(
