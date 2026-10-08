@@ -171,8 +171,16 @@ describe("senpi#2967 engine-originated turns are bounded for every source", () =
 			// given a source that keeps starting tool-free turns, and a session file that refuses every write once the
 			// user's message is in
 			let lockSessionFile = (): void => undefined;
+			let limitEvents = 0;
 			harness = await createHarness({
-				extensionFactories: [armedByInput("ttsr-injection", "go", AUTO_TURN_ATTEMPTS, () => lockSessionFile())],
+				extensionFactories: [
+					armedByInput("ttsr-injection", "go", AUTO_TURN_ATTEMPTS, () => lockSessionFile()),
+					(pi) => {
+						pi.events.on("engine:turn-limit", () => {
+							limitEvents += 1;
+						});
+					},
+				],
 				persistSession: true,
 			});
 			harness.setResponses(
@@ -189,12 +197,59 @@ describe("senpi#2967 engine-originated turns are bounded for every source", () =
 			try {
 				await expect(harness.session.prompt("go")).rejects.toThrow(/EACCES/);
 				await drain(harness);
+				harness.session.externalAdmission.admit({ delivery_id: "dx", text: "DELIVERY dx", deliverAs: "followUp" });
+				await drain(harness);
 			} finally {
 				chmodSync(sessionFile, 0o644);
 			}
 
-			// then the in-process record still stops it at the per-minute cap
+			// then the in-process record still stops it at the per-minute cap, the pause is announced, and a delivery
+			// arriving at the cap is settled as refused instead of staying pending
 			expect(harness.faux.getCallLog().length - callsBefore).toBeLessThanOrEqual(1 + 12);
+			expect(limitEvents).toBeGreaterThanOrEqual(1);
+			const deliveries = harness.session.externalAdmission.list();
+			expect(deliveries.pending).toEqual([]);
+			expect(deliveries.failed?.map((failure) => failure.delivery_id)).toEqual(["dx"]);
+			expect(
+				harness.session.messages.filter(
+					(message) => message.role === "custom" && message.content === "DELIVERY dx",
+				),
+			).toEqual([]);
 		},
 	);
+
+	it("lets an edited user message lift a pause, like a new one", async () => {
+		// given a source that already hit the per-minute breaker
+		let api: ExtensionAPI | undefined;
+		harness = await createHarness({
+			extensionFactories: [
+				selfContinuing("goal-continuation", AUTO_TURN_ATTEMPTS),
+				(pi) => {
+					api = pi;
+				},
+			],
+		});
+		harness.setResponses(
+			Array.from({ length: AUTO_TURN_ATTEMPTS + 6 }, (_, index) =>
+				fauxAssistantMessage([fauxText(`status ${index}`)]),
+			),
+		);
+		await harness.session.prompt("start");
+		await drain(harness);
+		expect(limitEntries(harness)).toHaveLength(1);
+		const userEntry = harness.sessionManager
+			.getEntries()
+			.find((entry) => entry.type === "message" && entry.message.role === "user");
+		if (userEntry === undefined || api === undefined)
+			throw new Error("expected the user entry and the extension api");
+		const callsAtStop = harness.faux.getCallLog().length;
+
+		// when the user edits their message and an automatic turn is requested
+		await harness.session.editUserMessage(userEntry.id, "start again");
+		api.sendMessage({ customType: "goal-continuation", content: "continue", display: false }, { triggerTurn: true });
+		await drain(harness);
+
+		// then the edit counts as the user's latest message and the turn runs
+		expect(harness.faux.getCallLog().length).toBeGreaterThan(callsAtStop);
+	});
 });

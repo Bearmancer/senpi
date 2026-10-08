@@ -5701,11 +5701,6 @@ export class AgentSession {
 	}
 
 	/**
-	 * An engine-originated turn (an extension's `sendMessage` with `triggerTurn`, from any source) that would
-	 * exceed the engine-wide bound is not started: the message is still recorded, and the stop is recorded,
-	 * emitted and shown (senpi#2967).
-	 */
-	/**
 	 * The engine-turn bound's bookkeeping must never stop a turn: a session file that refuses the write (read-only,
 	 * full disk) only loses the count, as the turn's own persistence reports the failure (senpi#2967).
 	 */
@@ -5713,17 +5708,27 @@ export class AgentSession {
 		this._engineTurnStarts.push({ at: Date.now(), toolUsed: false });
 		try {
 			this._emitEntryAppended(this.sessionManager.appendCustomEntry(ENGINE_TURN_START_ENTRY_TYPE, { customType }));
-		} catch {
-			return;
+		} catch (error) {
+			this._sessionLogger.warn("engine_turn_record_write_failed", {
+				entry: ENGINE_TURN_START_ENTRY_TYPE,
+				error: error instanceof Error ? error.message : String(error),
+			});
 		}
 	}
 
-	/** A refused engine turn still records its message and settles a cross-session delivery it carries. */
+	/**
+	 * A refused engine turn still records its message and settles a cross-session delivery it carries. A delivery
+	 * whose entry the file refuses leaves the context too: its sender redelivers it, and it must not appear twice.
+	 */
 	private _recordRefusedEngineTurnMessage(appMessage: CustomMessage): void {
 		try {
 			this._appendCustomMessage(appMessage);
 			this.externalAdmission.observePersisted(appMessage);
 		} catch (error) {
+			if (deliveryIdOf(appMessage) !== undefined) {
+				const index = this.agent.state.messages.lastIndexOf(appMessage);
+				if (index >= 0) this.agent.state.messages.splice(index, 1);
+			}
 			this.externalAdmission.observeRefused(appMessage, error instanceof Error ? error.message : String(error));
 		}
 	}
@@ -5744,6 +5749,11 @@ export class AgentSession {
 		}
 	}
 
+	/**
+	 * An engine-originated turn (an extension's `sendMessage` with `triggerTurn`, from any source) that would
+	 * exceed the engine-wide bound is not started: the message is still recorded, and the stop is recorded (best
+	 * effort), emitted and shown, so a session file that refuses writes still pauses visibly (senpi#2967).
+	 */
 	private _stopEngineTurn(customType: string): boolean {
 		if (isUserDirectedTurn(customType)) return false;
 		const stop = engineTurnStop(
@@ -5754,7 +5764,14 @@ export class AgentSession {
 		);
 		if (stop === null) return false;
 		const details = { customType, ...stop, at: Date.now() };
-		this._emitEntryAppended(this.sessionManager.appendCustomEntry(ENGINE_TURN_LIMIT_ENTRY_TYPE, details));
+		try {
+			this._emitEntryAppended(this.sessionManager.appendCustomEntry(ENGINE_TURN_LIMIT_ENTRY_TYPE, details));
+		} catch (error) {
+			this._sessionLogger.warn("engine_turn_record_write_failed", {
+				entry: ENGINE_TURN_LIMIT_ENTRY_TYPE,
+				error: error instanceof Error ? error.message : String(error),
+			});
+		}
 		this._extensionRunner.emitBusEvent(ENGINE_TURN_LIMIT_EVENT, details);
 		this._extensionRunner.getUIContext().notify(engineTurnLimitNotice(stop), "warning");
 		return true;
@@ -10984,6 +11001,7 @@ export class AgentSession {
 			}
 
 			const editedEntryId = replacement ? this.sessionManager.appendMessage(replacement) : undefined;
+			if (replacement) this._observeEngineTurnMessage(replacement);
 
 			// Attach label to target entry when not summarizing (no summary entry to label)
 			if (label && !summaryText) {
