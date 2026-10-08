@@ -12,12 +12,13 @@ import { CHANGELOGS } from "./release-changelog.mjs";
 const ciCheckRuns = (conclusion) =>
 	JSON.stringify([{ check_runs: [{ id: 1, name: "Check and test", status: "completed", conclusion, head_sha: "fixture-sha" }] }]);
 
-for (const { mergeStatus, ci } of [
+for (const { mergeStatus, ci, catalogDirty = false } of [
 	{ mergeStatus: 0, ci: "success" },
 	{ mergeStatus: 1, ci: "success" },
 	{ mergeStatus: 0, ci: "failure" },
+	{ mergeStatus: 0, ci: "success", catalogDirty: true },
 ]) {
-	it(`release CLI with CI ${ci} recovers concurrent main advancement and respects merge exit ${mergeStatus}`, () => {
+	it(`release CLI with CI ${ci}${catalogDirty ? " and a changed catalog" : ""} recovers concurrent main advancement and respects merge exit ${mergeStatus}`, () => {
 		const root = mkdtempSync(join(tmpdir(), "senpi-release-cli-"));
 		try {
 			for (const file of WORKSPACE_PACKAGES) {
@@ -37,6 +38,9 @@ const args = process.argv.slice(2);
 appendFileSync(${JSON.stringify(calls)}, JSON.stringify([${JSON.stringify(name)}, ...args]) + "\\n");
 if (${JSON.stringify(name)} === "git") {
 	if (args[0] === "branch") process.stdout.write("main\\n");
+	if (args[0] === "status" && ${catalogDirty} && args.includes("packages/ai/src/providers")) {
+		process.stdout.write(" M packages/ai/src/providers/data/nvidia.json\\n");
+	}
 	if (args[0] === "rev-parse") process.stdout.write("fixture-sha\\n");
 	if (args[0] === "merge-base") process.exit(1);
 	if (args[0] === "merge") process.exit(${mergeStatus});
@@ -68,6 +72,26 @@ if (${JSON.stringify(name)} === "gh") process.stdout.write(${JSON.stringify(ciCh
 				return;
 			}
 			assert.equal(commands.some((args) => args[0] === "npm" && args[1] === "test"), false);
+			if (catalogDirty) {
+				// senpi#2943: the changed catalog is committed alone and pushed to main, after the remote sync,
+				// before the gate reads CI, so CI tests exactly the tree the release tags.
+				const index = (predicate) => commands.findIndex(predicate);
+				const addCatalog = index(
+					(args) => args[1] === "add" && args.includes("packages/ai/src/models.generated.ts") && args.includes("packages/ai/src/providers"),
+				);
+				const catalogCommit = index((args) => args[1] === "commit" && /regenerate the model catalog/.test(args.at(-1)));
+				const firstSync = index((args) => args[1] === "fetch");
+				const catalogPush = index((args) => args[1] === "push" && args[3] === "main");
+				const ciLookup = index((args) => args[0] === "gh" && String(args[2]).includes("/check-runs"));
+				assert.deepEqual(commands[addCatalog], ["git", "add", "--", "packages/ai/src/models.generated.ts", "packages/ai/src/providers"]);
+				assert.ok(addCatalog < catalogCommit && catalogCommit < firstSync && firstSync < catalogPush && catalogPush < ciLookup, JSON.stringify(commands));
+				assert.deepEqual(commands.filter((args) => args[1] === "push"), [
+					["git", "push", "origin", "main"],
+					["git", "push", "origin", "main"],
+					["git", "push", "origin", "v2026.9.12-3"],
+				]);
+				return;
+			}
 			assert.ok(commands.some((args) => args[0] === "git" && args[1] === "merge"), result.stderr);
 			assert.equal(result.status, mergeStatus, result.stderr);
 			assert.deepEqual(commands.filter((args) => args[1] === "push"), mergeStatus === 0 ? [

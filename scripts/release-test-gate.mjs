@@ -1,15 +1,17 @@
 #!/usr/bin/env node
 /**
- * Decide whether the release test gate must run the full suite locally.
+ * The release's test evidence (senpi#2943).
  *
- * The canonical release flow already requires CI green on `main` before a release
- * commit is cut, so re-running `CI=1 npm test` locally duplicates a gate GitHub
- * already ran for the exact same tree. This module answers one question: does HEAD
- * already carry a green "Check and test" check run? Pure decision logic lives here
- * (unit-testable without network); `release.mjs` owns the `gh` lookup.
+ * A release never re-runs the test suite: it reuses the green "Check and test" run CI reported for the exact
+ * commit it tags, the fan-in that succeeds only when every CI shard and required job passed. This module holds the
+ * pure decisions (unit-testable without network): whether the regenerated catalog differs from HEAD, what to do
+ * with the check runs CI reported, and the wait loop. `release.mjs` owns the `gh` and `git` calls.
  */
 
 import { execFileSync } from "node:child_process";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { isDeepStrictEqual } from "node:util";
 
 export const REQUIRED_CHECK_NAME = "Check and test";
 
@@ -29,18 +31,40 @@ export function catalogChangedSinceHead(cwd) {
 	return status.trim().length > 0;
 }
 
+export const CATALOG_MANIFEST = "packages/ai/src/providers/data/.manifest.json";
+
 /**
- * @param {Array<{name: string, status: string, conclusion: string|null, head_sha: string}>} checkRuns
- * @param {string} sha
+ * True when two catalog manifests differ only in `generatedAt`, the timestamp every regeneration stamps.
+ * @param {string} before manifest text at HEAD
+ * @param {string} after regenerated manifest text
  */
-export function isCiCheckGreen(checkRuns, sha) {
-	return checkRuns.some(
-		(run) =>
-			run.name === REQUIRED_CHECK_NAME &&
-			run.status === "completed" &&
-			run.conclusion === "success" &&
-			run.head_sha === sha,
-	);
+export function isTimestampOnlyManifestChange(before, after) {
+	const { generatedAt: _before, ...beforeRest } = JSON.parse(before);
+	const { generatedAt: _after, ...afterRest } = JSON.parse(after);
+	return isDeepStrictEqual(beforeRest, afterRest);
+}
+
+/**
+ * Restore the catalog manifest when the regeneration changed nothing but its `generatedAt` stamp, so an unchanged
+ * catalog reads as unchanged. Without this every regeneration looked like drift.
+ * @param {string} cwd repository root
+ * @returns {boolean} whether the stamp-only change was discarded
+ */
+export function discardTimestampOnlyCatalogChange(cwd) {
+	const status = execFileSync("git", ["status", "--porcelain", "--untracked-files=all", "--", ...REGENERATED_CATALOG_PATHS], {
+		cwd,
+		encoding: "utf8",
+	});
+	const changed = status
+		.split("\n")
+		.map((line) => line.slice(3).trim())
+		.filter(Boolean);
+	if (changed.length !== 1 || changed[0] !== CATALOG_MANIFEST) return false;
+	const before = execFileSync("git", ["show", `HEAD:${CATALOG_MANIFEST}`], { cwd, encoding: "utf8" });
+	const after = readFileSync(join(cwd, CATALOG_MANIFEST), "utf8");
+	if (!isTimestampOnlyManifestChange(before, after)) return false;
+	execFileSync("git", ["checkout", "--", CATALOG_MANIFEST], { cwd });
+	return true;
 }
 
 const SUPERSEDED_CONCLUSIONS = new Set(["cancelled", "stale", "skipped"]);
@@ -49,7 +73,10 @@ const SUPERSEDED_CONCLUSIONS = new Set(["cancelled", "stale", "skipped"]);
  * What the release does with the "Check and test" runs CI reported for `sha` (senpi#2943). That fan-in check
  * succeeds only when every CI shard and required job passed, so a green one is the release's test evidence and
  * the release never re-runs the suite itself.
- * @param {{sha: string, checkRuns: Array<{name: string, status: string, conclusion: string|null, head_sha: string, id?: number}>|null}} input
+ * The fan-in runs `if: always()`, so when a newer push cancels the workflow run the fan-in still runs and reports
+ * `failure`. The lookup therefore attaches the workflow run's own status and conclusion to a failed fan-in, and a
+ * failure inside a cancelled workflow run is "superseded", not a red CI.
+ * @param {{sha: string, checkRuns: Array<{name: string, status: string, conclusion: string|null, head_sha: string, id?: number, workflowStatus?: string, workflowConclusion?: string|null}>|null}} input
  *   checkRuns === null means the lookup failed (offline, gh missing, API error).
  * @returns {{action: "reuse"|"wait"|"stop"|"superseded", reason: string}}
  */
@@ -68,6 +95,12 @@ export function planCiEvidence({ sha, checkRuns }) {
 	}
 	if (latest.conclusion === "success") {
 		return { action: "reuse", reason: `${short} has a green "${REQUIRED_CHECK_NAME}" run; it is the release's test evidence` };
+	}
+	if (latest.conclusion === "failure" && latest.workflowConclusion === "cancelled") {
+		return { action: "superseded", reason: `the CI run for ${short} was cancelled, most likely by a newer push` };
+	}
+	if (latest.conclusion === "failure" && latest.workflowStatus !== undefined && latest.workflowStatus !== "completed") {
+		return { action: "wait", reason: `"${REQUIRED_CHECK_NAME}" for ${short} failed; waiting for its workflow run to finish to tell a cancellation from a red CI` };
 	}
 	if (SUPERSEDED_CONCLUSIONS.has(latest.conclusion ?? "")) {
 		return { action: "superseded", reason: `"${REQUIRED_CHECK_NAME}" for ${short} was ${latest.conclusion}` };
@@ -117,7 +150,7 @@ export function awaitCiEvidence({ timeoutMs, pollMs }, deps) {
 		}
 		if (deps.now() - startedAt >= timeoutMs) {
 			throw new Error(
-				`no ${REQUIRED_CHECK_NAME} result for ${sha.slice(0, 12)} within ${Math.round(timeoutMs / 60_000)} min; rerun CI on it, or pass --force-tests to run the suite in this job`,
+				`no ${REQUIRED_CHECK_NAME} result for ${sha.slice(0, 12)} within ${Math.round(timeoutMs / 60_000)} min; rerun CI on that commit and dispatch the release again (a local release can pass --force-tests instead)`,
 			);
 		}
 		deps.sleep(pollMs);

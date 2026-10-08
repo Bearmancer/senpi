@@ -48,8 +48,10 @@ import { reAddUnreleasedSections, stampChangelogs } from "./release-changelog.mj
 import {
 	awaitCiEvidence,
 	catalogChangedSinceHead,
+	discardTimestampOnlyCatalogChange,
 	planCiEvidence,
 	REGENERATED_CATALOG_PATHS,
+	REQUIRED_CHECK_NAME,
 } from "./release-test-gate.mjs";
 import { applyWorkspaceVersions, runSyncVersions } from "./release-packages.mjs";
 
@@ -266,16 +268,33 @@ function lookupCiCheckRuns(sha) {
 			: Array.isArray(pages.check_runs)
 				? pages.check_runs
 				: [];
-		return runs.map((run) => ({
-			id: run.id,
-			name: run.name,
-			status: run.status,
-			conclusion: run.conclusion,
-			head_sha: run.head_sha,
-		}));
+		return runs.map((run) => {
+			const checkRun = {
+				id: run.id,
+				name: run.name,
+				status: run.status,
+				conclusion: run.conclusion,
+				head_sha: run.head_sha,
+			};
+			// A newer push cancels the workflow run, but the `always()` fan-in still reports `failure`: read the
+			// workflow run's own outcome so the gate can tell a cancellation from a red CI.
+			if (run.name === REQUIRED_CHECK_NAME && run.conclusion === "failure" && run.check_suite?.id) {
+				Object.assign(checkRun, lookupWorkflowRun(run.check_suite.id));
+			}
+			return checkRun;
+		});
 	} catch {
 		return null;
 	}
+}
+
+function lookupWorkflowRun(checkSuiteId) {
+	const raw = execFileSync("gh", ["api", `repos/{owner}/{repo}/actions/runs?check_suite_id=${checkSuiteId}&per_page=1`], {
+		encoding: "utf-8",
+		stdio: ["ignore", "pipe", "pipe"],
+	});
+	const workflowRun = JSON.parse(raw).workflow_runs?.[0];
+	return workflowRun ? { workflowStatus: workflowRun.status, workflowConclusion: workflowRun.conclusion } : {};
 }
 
 const CI_EVIDENCE_TIMEOUT_MS = 40 * 60_000;
@@ -316,6 +335,9 @@ function secureCiEvidence(version, dryRun, forceTests) {
 		dryRunLog(`test gate (preview, HEAD): ${plan.reason}`);
 		dryRunLog(forceTests ? "CI=1 npm test (--force-tests)" : 'wait for the release commit\'s green "Check and test"');
 		return;
+	}
+	if (discardTimestampOnlyCatalogChange(process.cwd())) {
+		log("the regeneration changed only the catalog manifest's generatedAt stamp; keeping HEAD's catalog");
 	}
 	if (catalogChangedSinceHead(process.cwd())) {
 		log("the regeneration changed the model catalog; committing it to main so CI tests the tree this release ships");

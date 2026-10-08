@@ -62,7 +62,10 @@ describe("release main synchronization", () => {
 		const pushMain = releaseSource.indexOf('gitPush("main", args.dryRun');
 		const pushTag = releaseSource.indexOf("gitPush(`v${version}`");
 
-		assert.ok(nextCycleCommit > 0 && synchronize > 0 && pushMain > 0 && pushTag > 0);
+		const tag = releaseSource.indexOf("gitTag(version, args.dryRun)");
+		assert.ok(nextCycleCommit > 0 && synchronize > 0 && pushMain > 0 && pushTag > 0 && tag > 0);
+		// The tag is cut before main is synchronized, so a late main merge never reaches the tagged commit (senpi#2943).
+		assert.ok(tag < synchronize);
 		assert.ok(nextCycleCommit < synchronize);
 		assert.ok(synchronize < pushMain);
 		assert.ok(pushMain < pushTag);
