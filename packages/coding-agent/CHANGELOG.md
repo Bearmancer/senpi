@@ -12,6 +12,8 @@
 
 ### Fixed
 
+- When several processes share one agent directory (the desktop engine, the CLI), a log rotation race no longer switches off a process's config-reload or MCP log for the rest of its life or drops session and fallback log lines; a log that failed to write tries again after a few seconds ([#2976](https://github.com/code-yeongyu/senpi/issues/2976)).
+
 - On the Anthropic Subscription lane, a long streamed tool call (for example a large `write` or a `team_create` with long member prompts) no longer fails with "session stream queue exceeded 256 messages" and loses the tool call: the stream now waits for the reader instead of overflowing ([#2822](https://github.com/code-yeongyu/senpi/issues/2822)).
 
 ### Removed

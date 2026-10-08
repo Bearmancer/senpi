@@ -32,6 +32,24 @@
 - Single-flight attachment and `before_agent_start` in `packages/coding-agent/src/core/extensions/builtin/mcp/index.ts`.
 - Startup synchronization and wire inventory in `packages/coding-agent/src/core/extensions/builtin/mcp/service.ts`; collection and normalization in `packages/coding-agent/src/core/extensions/builtin/mcp/catalog-cache.ts`.
 
+## 2026-10-09 - Concurrent log rotation never disables a log sink (senpi#2976)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/log.ts`: `FileMcpLogger` rotates through `rotateLogIfNeeded` (its private `#rotateIfNeeded` is gone) and its file sink retries after `LOG_SINK_RETRY_MS` instead of staying disabled for the process lifetime; the ring buffer still records the failure.
+
+### Why
+
+- Several processes share one agent dir (engine host, CLI, desktop host). Rotation was a non-atomic stat, remove `.1`, rename: when two crossed the cap together, the loser's rename threw ENOENT and its sink stayed disabled for the rest of the process, and the remove step could delete a generation another process had just rotated. A four-process burst dropped hundreds of lines per losing process. Rotation now goes through `core/log-file-rotation.ts` (an exclusive lock file and a size re-check under it), a lost race keeps appending, a failed sink retries after `LOG_SINK_RETRY_MS` (5 s), and the mode is set on the open descriptor.
+
+### Why an extension could not handle it
+
+- This is the builtin extension's own log writer.
+
+### Expected merge conflict zones
+
+- LOW: `FileMcpLogger.#writeFile` in `mcp/log.ts`.
+
 ## 2026-10-04 - Interactive MCP server manager (senpi#2716)
 
 ### What changed
