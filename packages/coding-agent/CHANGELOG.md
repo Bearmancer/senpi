@@ -7,6 +7,19 @@
 ### Added
 
 - `ask_user_question` and `request_user_input` accept an optional `required: true` for a question that gates an action (an approval before an irreversible step). If such a question times out, is dismissed, is lost in a restart, or cannot be shown, the model is told not to take that action and to end the turn, instead of being told to continue on its best judgment. Questions without the flag behave as before ([#2949](https://github.com/code-yeongyu/senpi/issues/2949)).
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.10-8] - 2026-10-08
+
+### Breaking Changes
+
+### Added
+
 - Claude Haiku 5.5 gets its own system prompt preset, `claude-haiku-5-5`, selected automatically for every Haiku 5.5 id and available as `promptPreset: "claude-haiku-5-5"`. It is the Sonnet 5.5 core with the deltas Anthropic's Haiku 5.5 prompting guide documents for coding agents: it keeps working instead of handing an unfinished task back, and when web search is available it searches for facts that may have changed since its training data ends. Haiku 4.5 and older keep the default prompt ([#2917](https://github.com/code-yeongyu/senpi/issues/2917)).
 
 - `context` and `context_with_system` extension handlers accept a `{ mutatesMessages: false }` registration option, an opt-in performance declaration that the handler never edits a received message object in place ([#2525](https://github.com/code-yeongyu/senpi/issues/2525)).

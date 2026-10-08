@@ -7,10 +7,13 @@ on:
   # (senpi#2759).
   pull_request:
 
-# One run per pull request (its ref is refs/pull/<n>/merge): a push or restack cancels the run it supersedes.
+# A pull request has one run group (its ref is refs/pull/<n>/merge): a push or restack cancels the run it
+# supersedes. A main push gets its own group per commit, so its run never waits behind another main run and is
+# never cancelled or replaced by a later merge: every main commit ends with its own "Check and test" result, which
+# the release reuses as its test evidence (senpi#2960).
 concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  group: ci-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   codemode-gate:
