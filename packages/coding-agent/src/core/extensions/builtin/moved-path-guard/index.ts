@@ -81,12 +81,13 @@ async function checkTargets(list: readonly Target[]): Promise<MovedPath | undefi
 	const probing = (async () => {
 		for (const target of probed) {
 			if (target.onlyIfMissing && (await pathExists(target.path))) continue;
-			const moved = await probe(target.path);
+			const moved = await probe.resolve(target.path);
 			if (moved) return moved;
 		}
 		return undefined;
 	})();
 	const result = await withResolutionDeadline(probing, CALL_DEADLINE_MS);
+	if (probe.timedOut) logGuardEvent("debug", "call_bound_reached", { bound: "step", count: String(ordered.length) });
 	if (result !== RESOLUTION_TIMED_OUT) return result ?? firstKnownMove(rest);
 	logGuardEvent("debug", "call_bound_reached", { bound: "deadline", count: String(ordered.length) });
 	return firstKnownMove(ordered);

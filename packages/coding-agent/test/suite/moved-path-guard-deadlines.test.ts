@@ -1,0 +1,75 @@
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { builtinExtensions } from "../../src/core/extensions/builtin/index.ts";
+import { flushGuardLog, guardLogPath } from "../../src/core/extensions/builtin/moved-path-guard/guard-log.ts";
+import { createHarness, type Harness } from "./harness.ts";
+import { createMovedLayout, type MovedLayout, runTool } from "./moved-path-guard-fixtures.ts";
+
+// code-yeongyu/senpi#2898 third review M-a: a path whose own lookup times out is not silently "not moved". A path
+// spelled with SLOW never finishes canonicalizing here, standing in for a wedged mount; the guard's own deadline,
+// not filesystem speed, decides when it gives up.
+
+vi.mock("../../src/core/tools/filesystem-policy.ts", async (importOriginal) => {
+	const actual = await importOriginal<typeof import("../../src/core/tools/filesystem-policy.ts")>();
+	return {
+		...actual,
+		canonicalizeFilesystemPath: (path: string) =>
+			path.includes("SLOW") ? new Promise<string>(() => {}) : actual.canonicalizeFilesystemPath(path),
+	};
+});
+
+const guard = builtinExtensions.find((entry) => entry.id === "moved-path-guard");
+
+async function guardLogEvents(): Promise<Array<Record<string, unknown>>> {
+	await flushGuardLog();
+	const text = await readFile(guardLogPath(), "utf8").catch(() => "");
+	return text
+		.split("\n")
+		.filter((line) => line.length > 0)
+		.map((line) => JSON.parse(line) as Record<string, unknown>);
+}
+
+describe("moved-path-guard step deadline (#2898)", () => {
+	const layouts: MovedLayout[] = [];
+	const harnesses: Harness[] = [];
+
+	afterEach(() => {
+		while (harnesses.length > 0) harnesses.pop()?.cleanup();
+		while (layouts.length > 0) layouts.pop()?.cleanup();
+	});
+
+	async function setup() {
+		if (!guard) throw new Error("moved-path-guard is not registered");
+		const layout = createMovedLayout();
+		layouts.push(layout);
+		const harness = await createHarness({
+			cwd: layout.home,
+			extensionFactories: [guard.factory],
+			initialActiveToolNames: ["bash"],
+		});
+		harnesses.push(harness);
+		await harness.session.bindExtensions({});
+		return { layout, harness };
+	}
+
+	it("refuses a moved path whose own lookup times out, and logs the step bound", async () => {
+		const { layout, harness } = await setup();
+
+		const result = await runTool(harness, "bash", { command: `touch ${layout.oldWorktree}/SLOWdir/a.txt` });
+
+		expect(result.outcome).toBe("blocked");
+		expect(result.text).toContain(join(layout.newWorktree, "SLOWdir", "a.txt"));
+		expect(await guardLogEvents()).toContainEqual(
+			expect.objectContaining({ event: "call_bound_reached", bound: "step" }),
+		);
+	});
+
+	it("still allows an unrelated path whose lookup times out", async () => {
+		const { layout, harness } = await setup();
+
+		const result = await runTool(harness, "bash", { command: `touch ${layout.home}/elsewhere/SLOW/a.txt; echo ran` });
+
+		expect(result.outcome).toBe("ok");
+	});
+});

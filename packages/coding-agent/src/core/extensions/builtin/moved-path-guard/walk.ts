@@ -1,5 +1,5 @@
 import { homedir } from "node:os";
-import { dirname } from "node:path";
+import { dirname, resolve } from "node:path";
 import {
 	breadcrumbFile,
 	gitEntryOf,
@@ -19,7 +19,10 @@ export type ResolverStep =
 	| { readonly op: "json"; readonly file: string }
 	| { readonly op: "exists"; readonly path: string };
 
-/** The answer to a step whose I/O failed or timed out: a path that cannot be resolved is not moved. */
+/**
+ * The answer to a step whose I/O failed or timed out. A path whose own canonicalization fails is walked by its
+ * spelling instead, so a moved prefix is still recognized through its breadcrumb and an unrelated path still is not.
+ */
 export function failedReply(step: ResolverStep): unknown {
 	return step.op === "exists" ? false : undefined;
 }
@@ -27,8 +30,7 @@ export function failedReply(step: ResolverStep): unknown {
 type Walk<T> = Generator<ResolverStep, T, unknown>;
 
 function* movedOnce(path: string, platform: PathPlatform): Walk<MovedPath | undefined> {
-	const canonical = (yield { op: "canonical", path }) as string | undefined;
-	if (canonical === undefined) return undefined;
+	const canonical = ((yield { op: "canonical", path }) as string | undefined) ?? resolve(path);
 	const stop = dirname(homedir());
 	for (let dir = dirname(canonical); ; dir = dirname(dir)) {
 		const breadcrumb = parsedBreadcrumb(dir, yield { op: "json", file: breadcrumbFile(dir) });
