@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
 import type { NativeWebViewClass } from "./native-webview.ts";
+import { bunChromeTree, parseWindowsProcessRows, WINDOWS_PROCESS_ROWS } from "./windows-chrome-tree.ts";
 
 // Bun launches its Chrome with exactly this default flag run (see `Bun.WebView` backend docs);
 // together with the parent pid it tells Bun's browser apart from any other Chrome we spawned.
@@ -19,17 +20,11 @@ function positivePids(texts: readonly string[]): number[] {
 	return texts.map(Number).filter((pid) => Number.isInteger(pid) && pid > 0);
 }
 
-// Bun's Chrome browsers (direct children with Bun's flags) and every process under them, in one
-// CIM listing; the listing's own PowerShell is excluded because its command line names the flag.
-const WINDOWS_CHROME_TREE = `$all = Get-CimInstance Win32_Process | Select-Object ProcessId, ParentProcessId, CommandLine
-$tree = [System.Collections.Generic.HashSet[int]]::new()
-foreach ($p in $all) { if ($p.ParentProcessId -eq ${process.pid} -and $p.ProcessId -ne $PID -and $p.CommandLine -like '*--remote-debugging-pipe*') { [void]$tree.Add([int]$p.ProcessId) } }
-do { $grew = $false; foreach ($p in $all) { if ($tree.Contains([int]$p.ParentProcessId) -and $tree.Add([int]$p.ProcessId)) { $grew = $true } } } while ($grew)
-$tree`;
-
+// Bun's Chrome browsers and every process under them, from one CIM listing (see windows-chrome-tree.ts
+// for why a recorded parent pid alone is not proof of parentage).
 async function windowsBunChromeTree(): Promise<number[]> {
-	const stdout = await run("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", WINDOWS_CHROME_TREE]);
-	return positivePids(stdout.split(/\r?\n/u).map((line) => line.trim()));
+	const stdout = await run("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", WINDOWS_PROCESS_ROWS]);
+	return bunChromeTree(parseWindowsProcessRows(stdout), process.pid);
 }
 
 async function windowsListedPids(): Promise<Set<number>> {
