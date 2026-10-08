@@ -22,6 +22,24 @@
 
 - LOW: `ask-user/format.ts` `formatBody` and its two exports, `ask-user/params.ts` both parameter objects, `ask-user/tool.ts` `result`/`deliverAnswer`/re-ask guard, `types.ts` `QuestionRequest`.
 
+## 2026-10-08 - ExtensionRunner.emitBusEvent (senpi#2967)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/runner.ts`: `emitBusEvent(channel, data)` publishes on the shared extension event bus, the counterpart of `onBusEvent`. The session uses it to announce `engine:turn-limit` when it refuses an engine-originated turn.
+
+### Why
+
+- The engine-wide turn bound (`src/core/engine-turn-limit.ts`) lives in the session, not in an extension, and hosts/extensions need an observable signal when it trips.
+
+### Why an extension could not handle it
+
+- The session owns the runner's bus; extensions emit through `pi.events`, which the session cannot reach.
+
+### Expected merge conflict zones
+
+- LOW: `runner.ts` next to `onBusEvent`.
+
 ## 2026-10-07 - Opt-in shared transcript for non-mutating context hooks (senpi#2525)
 
 ### What changed
