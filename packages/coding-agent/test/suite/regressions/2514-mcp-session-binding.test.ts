@@ -597,6 +597,51 @@ describe("senpi#2986: a session's skill servers follow its own trust, env and ag
 			env: { SENPI_2986_SECRET: "alpha-secret" },
 		});
 	});
+
+	it("never offers a session a shared connection that carries a peer's credentials", async () => {
+		// Given: an http server whose bearer token comes from each session's own env, and a session holding the
+		// connection made with its token.
+		const fixture = await sharingHttpFixture();
+		cleanupTasks.push(() => fixture.close());
+		setConfig(root, {
+			fx: { type: "http", url: fixture.url, auth: "bearer", bearerTokenEnv: "SENPI_2986_TOKEN", lifecycle: "eager" },
+		});
+		const alphaPi = capturingPi();
+		const bravoPi = capturingPi();
+		const attachWithToken = (pi: CapturingPi, token: string) =>
+			getMcpService().attachSession(
+				{ type: "session_start", reason: "startup" },
+				{ cwd: root.cwd, isProjectTrusted: () => true },
+				pi,
+				{ agentDir: root.agentDir, env: { SENPI_2986_TOKEN: token } },
+			);
+		await attachWithToken(alphaPi, "alpha-token");
+		await untilFakeRegistered(alphaPi, "mcp_fx_echo");
+
+		// When: a peer declaring the same server with the same config but its own token attaches, and both call it.
+		await attachWithToken(bravoPi, "bravo-token");
+		await getMcpService().whenAttachSettled(REGISTRATION_TIMEOUT_MS);
+		await untilFakeRegistered(bravoPi, "mcp_fx_echo");
+		const alphaTool = registeredTool(alphaPi, "mcp_fx_echo");
+		const bravoTool = registeredTool(bravoPi, "mcp_fx_echo");
+		const alphaResult = await Reflect.apply(alphaTool.execute, alphaTool, [
+			"a",
+			{ value: "a" },
+			undefined,
+			undefined,
+		]);
+		const bravoResult = await Reflect.apply(bravoTool.execute, bravoTool, [
+			"b",
+			{ value: "b" },
+			undefined,
+			undefined,
+		]);
+
+		// Then: the first session is refused instead of riding on the peer's token; the peer's own call goes through.
+		expect(alphaResult).toMatchObject({ details: { error: { kind: "unavailable", server: "fx", tool: "echo" } } });
+		expect(bravoResult).toMatchObject({ content: [{ type: "text", text: JSON.stringify({ value: "b" }) }] });
+		expect(fixture.callAuthorizations).toEqual(["Bearer bravo-token"]);
+	});
 });
 
 async function attachFakeTo(service: ReturnType<typeof getMcpService>, pi: CapturingPi): Promise<void> {

@@ -736,7 +736,7 @@ export class McpService {
 		// refresh is still listing tools must receive the refreshed catalog too.
 		const targets = () =>
 			this.#liveBindings()
-				.filter((binding) => binding.config.servers[entry.name]?.configHash === entry.configHash)
+				.filter((binding) => offersConnection(binding, entry))
 				.map((binding) => ({
 					pi: binding.pi,
 					registeredIdentity: () => binding.registeredIdentities.get(entry.key),
@@ -753,8 +753,9 @@ export class McpService {
 		binding.registration = await registerMcpServiceDirectTools(
 			binding.pi,
 			config,
-			// Only the connections this session's own config declares; a peer's config never decides its tools.
-			[...this.#connections.values()].filter((entry) => config.servers[entry.name]?.configHash === entry.configHash),
+			// Only the connections this session's own config declares and its own credentials match; a peer's config or
+			// credentials never decide its tools.
+			[...this.#connections.values()].filter((entry) => offersConnection(binding, entry)),
 			toolSearchService,
 			{
 				refreshActiveSetWhenEmpty: this.#refreshActiveSetWhenNoTools,
@@ -947,6 +948,19 @@ export class McpService {
 	getNativeToolSearchSetting(): "auto" | boolean | undefined {
 		return this.#config?.settings.nativeToolSearch;
 	}
+}
+
+/**
+ * Whether `binding` may use `entry`: its own config declares the server with the connection's config hash, and its
+ * own agent dir and env resolve the credential identity the connection spawned with (senpi#2986). An undefined
+ * identity (no bearer token, no stored OAuth tokens) matches only another undefined one, as in the connection key,
+ * so a connection holding no credentials is shared and one holding credentials never reaches a session without them.
+ */
+function offersConnection(binding: McpSessionBinding, entry: McpConnectionEntry): boolean {
+	const server = binding.config.servers[entry.name];
+	if (server?.config === undefined || server.configHash !== entry.configHash) return false;
+	const { agentDir, env } = binding.options;
+	return mcpCredentialIdentity(server.config, entry.name, agentDir, env) === entry.credentialIdentity;
 }
 
 /** Whether `config` declares `name` as the same server, by config hash. */

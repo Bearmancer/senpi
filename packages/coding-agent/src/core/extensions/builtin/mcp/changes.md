@@ -5,10 +5,12 @@
 - `packages/coding-agent/src/core/extensions/builtin/mcp/service.ts`: each session binding now keeps the `McpSessionOptions` it attached with (trust, env, agent dir) beside its config, and the process-wide `#sessionOptions`, `#authAgentDir` and `#authEnv` are gone. `attachSkillMcpServers` resolves a skill's `${VAR}` values with the declaring session's own trust (`options.projectTrusted`, else its context's) and env.
 - `service.ts`: `#syncFromConfig` spawns each server with the options and cwd of a session that declares it with the same config hash. The attaching session is used when it declares the server; otherwise the live binding the effective config took the server from. The catalog cache for a server is read from that session's agent dir.
 - `service.ts`, `service-types.ts` and `service-connection.ts`: a connection entry records the env it spawned with, next to its agent dir. `getAuthTarget` (re-auth), `getServerAuthStatus` and the wire and lifecycle auth status resolve credentials with the connection's own agent dir and env. They fall back to a live declaring session's options when the server has no connection.
+- `service.ts`: a session is offered a connection only when its own config declares the server with the connection's config hash and its own agent dir and env resolve the credential identity (`mcpCredentialIdentity`) the connection spawned with. `#registerDirectTools` and the `#handleServerToolsChanged` refresh targets share this check (`offersConnection`), so republishes, credential-change resyncs and list_changed tombstones follow it too. A session whose credentials differ gets none of that server's tools, and its earlier offers are refused once the connection is replaced. An undefined identity (no bearer token, no stored OAuth tokens) matches only another undefined one, as the connection key's `?? "unknown"` does, so a connection holding no credentials stays shared.
 
 ### Why
 
 - Every attach overwrote one process-wide options record, and skill-server expansion, connection spawns and auth all read it. A trusted session attaching after an untrusted one therefore expanded the untrusted project's skill servers as trusted, with the trusted session's environment. Spawns and re-auth likewise used the last attach's credentials for servers that session never declared.
+- Connections are one per server name, and offers compared only the config hash. Two sessions declaring the same server with the same config but different agent dirs or envs therefore shared the connection, so one session's calls ran with the other's bearer token or OAuth login.
 
 ### Why an extension could not handle it
 
@@ -16,7 +18,7 @@
 
 ### Expected merge conflict zones
 
-- `McpSessionBinding`, `attachSession`, `#bind`, `attachSkillMcpServers`, `#syncFromConfig`, `#serverSnapshot`, `getAuthTarget`, `getServerAuthStatus` and `wireAuthStatus` in `packages/coding-agent/src/core/extensions/builtin/mcp/service.ts`; `McpConnectionEntry` in `service-types.ts`; the entry literal in `createMcpSessionConnection` in `service-connection.ts`.
+- `McpSessionBinding`, `attachSession`, `#bind`, `attachSkillMcpServers`, `#syncFromConfig`, `#serverSnapshot`, `#handleServerToolsChanged`, `#registerDirectTools`, `getAuthTarget`, `getServerAuthStatus`, `wireAuthStatus` and `offersConnection` in `packages/coding-agent/src/core/extensions/builtin/mcp/service.ts`; `McpConnectionEntry` in `service-types.ts`; the entry literal in `createMcpSessionConnection` in `service-connection.ts`.
 
 ## 2026-10-08 - Fence each session's MCP tools with its own config, not the last attach's (senpi#2597)
 
