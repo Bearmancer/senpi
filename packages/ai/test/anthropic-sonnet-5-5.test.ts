@@ -8,7 +8,8 @@ import { getAnthropicCompat } from "../src/utils/prompt-cache-ttl.ts";
 // (`GET /v1/models/claude-sonnet-5-5`, `anthropic-beta: server-side-fallback-2026-07-01`)
 // and live Messages requests on 2026-09-29: thinking `enabled: unsupported` /
 // `adaptive: supported`, effort low..max, 1M in / 128k out, `allowed_fallback_models:
-// ["claude-sonnet-5"]`, price 2/10 with 0.2 cache reads; `thinking.type=disabled` and
+// ["claude-sonnet-5"]`, price 2/10 with 0.1 cache reads (0.05x input, per
+// https://platform.claude.com/docs/en/about-claude/pricing); `thinking.type=disabled` and
 // `tool_choice` `tool`/`any` are 400s, exactly like Claude Opus 5.5.
 
 interface AnthropicPayload {
@@ -58,7 +59,7 @@ describe("Claude Sonnet 5.5 catalog row (anthropic)", () => {
 		const model = sonnet55();
 		expect(model.contextWindow).toBe(1_000_000);
 		expect(model.maxTokens).toBe(128_000);
-		expect(model.cost).toEqual({ input: 2, output: 10, cacheRead: 0.2, cacheWrite: 2.5 });
+		expect(model.cost).toEqual({ input: 2, output: 10, cacheRead: 0.1, cacheWrite: 2.5 });
 		expect(model.reasoning).toBe(true);
 		expect(getSupportedThinkingLevels(model)).toContain("xhigh");
 		expect(getSupportedThinkingLevels(model)).toContain("max");

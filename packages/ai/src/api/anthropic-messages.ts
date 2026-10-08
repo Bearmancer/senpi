@@ -297,6 +297,7 @@ const ADAPTIVE_THINKING_MODEL_MARKERS = [
 	"opus-5",
 	"sonnet-4-6",
 	"sonnet-5",
+	"haiku-5-5",
 	"fable-5",
 	"mythos-5",
 ] as const;
@@ -309,6 +310,7 @@ const NATIVE_XHIGH_EFFORT_MODEL_MARKERS = [
 	"opus-4-8",
 	"opus-5",
 	"sonnet-5",
+	"haiku-5-5",
 	"fable-5",
 	"mythos-5",
 ] as const;
@@ -325,6 +327,8 @@ const DISABLED_THINKING_REJECTING_MODEL_MARKERS = [
 	"opus-5.5",
 	"sonnet-5-5",
 	"sonnet-5.5",
+	"haiku-5-5",
+	"haiku-5.5",
 ] as const;
 const UNSUPPORTED_NATIVE_COMPUTER_TOOL_MODEL_MARKERS = [
 	"opus-4-6",

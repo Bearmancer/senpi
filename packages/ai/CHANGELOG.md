@@ -6,12 +6,15 @@
 
 ### Added
 
+- Claude Haiku 5.5 (`claude-haiku-5-5`) on Anthropic, Amazon Bedrock (on-demand plus global/us/eu/jp/au inference profiles), OpenCode and OpenCode Go: 1M context, 128K output, text and image input, adaptive thinking with effort low through max, forced tool choice kept, and prices that bill a prompt over 100K input tokens entirely at the long-context rate ([#2892](https://github.com/code-yeongyu/senpi/issues/2892)).
+
 ### Changed
 
 - The advertised Claude Code fingerprint floor follows the bundled Claude Agent SDK to Claude Code 2.1.292 ([#2545](https://github.com/code-yeongyu/senpi/issues/2545)).
 
 ### Fixed
 
+- Claude Sonnet 5.5 cache reads are priced at $0.10 per MTok (0.05x input) as Anthropic documents, and the deprecated Claude Sonnet 4.5 reports its 200K context window ([#2892](https://github.com/code-yeongyu/senpi/issues/2892)).
 - Transient OAuth token refresh failures retain structured transport and HTTP facts, preserve stored credentials, and mark failed requests for same-model retry rather than ending the turn ([#2893](https://github.com/code-yeongyu/senpi/issues/2893)).
 
 ### Removed

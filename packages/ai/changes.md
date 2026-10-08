@@ -1,3 +1,22 @@
+## 2026-10-08 - Claude Haiku 5.5 catalog rows (senpi#2892)
+
+### What changed
+
+- `packages/ai/scripts/generate-models.ts`: an explicit `claude-haiku-5-5` anthropic row (kept only when models.dev omits it) with limits 1M/128000, text + image input, effort low..max, and `cost.tiers` `[{ inputTokensAbove: 100000, input: 0.5, output: 2.5, cacheRead: 0.05, cacheWrite: 0.625 }]` over the 0.1 / 0.5 / 0.01 / 0.125 base. `isAnthropicAdaptiveOnlyModel`, `isAnthropicAdaptiveThinkingModel`, `isAnthropicTemperatureUnsupportedModel`, `supportsAnthropicMidConvoEffort` and `supportsAnthropicMidConvoSystemMessages` match `haiku-5-5` / `haiku-5.5` the way they match Sonnet 5.5, and the effort-metadata merge covers `claude-haiku-5-5`. The models.dev anthropic block now keeps models.dev cost `tiers` (`getModelsDevCost`), and the Bedrock and OpenCode blocks keep them for Haiku 5.5 ids (`isClaudeHaiku55ModelId`), so every Haiku 5.5 row bills a prompt over 100K input tokens at the long-context rate. The explicit Sonnet 5.5 fallback row's cache read is 0.1 (0.05x input), matching Anthropic's pricing page and the models.dev row the regeneration picked up.
+- Regenerated with `--strict --providers anthropic,amazon-bedrock,opencode,opencode-go`: `anthropic.json` `claude-haiku-5-5`; `amazon-bedrock.json` `anthropic.`, `global.`, `us.`, `eu.`, `jp.`, `au.anthropic.claude-haiku-5-5`; `opencode.json` and `opencode-go.json` `claude-haiku-5-5`. Drift that rode along in `anthropic.json` from models.dev: `claude-sonnet-5-5` cache read 0.2 -> 0.1, and `claude-sonnet-4-5` / `claude-sonnet-4-5-20250929` context 1M -> 200K with 100 images per request (Anthropic's context-window docs list Sonnet 4.5 at 200k; https://platform.claude.com/docs/en/build-with-claude/context-windows). No ANTHROPIC_ALLOWED_FALLBACK_MODELS entry: Haiku 5.5 has no server-side refusal fallback.
+
+### Why
+
+Claude Haiku 5.5 shipped on 2026-10-07 (https://platform.claude.com/docs/en/models/haiku-5-5/overview): adaptive thinking only (`budget_tokens` is a 400), no sampling parameters, signed thinking bound to the preceding conversation like Sonnet 5.5, forced `tool_choice` accepted, and request-wide long-context pricing above 100K input tokens.
+
+### Why an extension could not handle it
+
+Generated catalog data and the generator's model-family rules.
+
+### Expected merge conflict zones
+
+- LOW: the Anthropic family helpers and the explicit Opus/Sonnet/Haiku 5.5 rows in `generate-models.ts`; the models.dev anthropic/Bedrock/OpenCode cost blocks. Generated JSON regenerates.
+
 ## 2026-10-02 - OpenGateway catalog stays current: shared OpenAI input cap (senpi#2552)
 
 ### What changed
