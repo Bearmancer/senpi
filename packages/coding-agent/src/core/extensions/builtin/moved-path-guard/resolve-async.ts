@@ -22,12 +22,17 @@ export interface MovedPathProbe {
 	readonly stopped: boolean;
 }
 
-export async function pathExists(path: string): Promise<boolean> {
+/**
+ * Whether `path` exists: `false` only for a real absence (ENOENT, ENOTDIR), `undefined` when `access` fails any
+ * other way (EACCES, EIO, ...), so an unreadable `.git` keeps this process's last re-used answer (fifth review nit).
+ */
+export async function pathExists(path: string): Promise<boolean | undefined> {
 	try {
 		await access(path);
 		return true;
-	} catch {
-		return false;
+	} catch (error) {
+		const code = error instanceof Error && "code" in error ? error.code : undefined;
+		return code === "ENOENT" || code === "ENOTDIR" ? false : undefined;
 	}
 }
 
