@@ -16,6 +16,24 @@ The threshold decision, the cut point and the `RequiredCompactionError` throw al
 
 - LOW: the `if (inlineReason)` branch of the threshold block in `_checkCompaction`, and the `RequiredCompactionError` class header.
 
+## 2026-10-09 - The engine-turn pause stays visible when the session file refuses writes (senpi#2967 follow-up)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `_stopEngineTurn` records its `engine-turn-limit` entry best effort (a refused write is logged as `engine_turn_record_write_failed`), so `engine:turn-limit` and the "Paused" notice still fire, and a refused message's cross-session delivery is still settled. A delivery whose own entry the file refuses is also taken out of the context, since its sender redelivers it. The `engine-turn-start` write logs its refusal instead of dropping it. A user message edited in `/tree` (written directly, not through `message_end`) clears the in-process engine-turn record like a new user message.
+
+### Why
+
+- After #2969 a session file that refuses writes reaches the pause through the in-process count; the unguarded limit-entry write then threw before the event, the notice and the delivery settlement, so the cap held silently and a delivery arriving at it stayed pending, keeping `release_session` busy.
+
+### Why an extension could not handle it
+
+- The pause and its bookkeeping live in the session's `sendCustomMessage` path.
+
+### Expected merge conflict zones
+
+- LOW: `agent-session.ts` `_stopEngineTurn`, `_recordEngineTurnStart`, `_recordRefusedEngineTurnMessage`, and the edited-message write in `_navigateTree`.
+
 ## 2026-10-08 - Engine-originated turns are bounded per user message and per minute (senpi#2967)
 
 ### What changed
