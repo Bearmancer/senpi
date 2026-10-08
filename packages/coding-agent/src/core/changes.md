@@ -16,6 +16,28 @@ The threshold decision, the cut point and the `RequiredCompactionError` throw al
 
 - LOW: the `if (inlineReason)` branch of the threshold block in `_checkCompaction`, and the `RequiredCompactionError` class header.
 
+## 2026-10-08 - Engine-originated turns are bounded per user message and per minute (senpi#2967)
+
+### What changed
+
+- `packages/coding-agent/src/core/engine-turn-limit.ts` (new): `engineTurnStop(entries, now, limits)` reads the session entries and returns a stop when the next engine-originated turn (any extension's `sendMessage` with `triggerTurn`) would exceed `maxPerUserInput` turns since the last user message (default 150, every engine turn counts) or `maxToolFreePerMinute` engine turns in 60 s whose reply called no tool (default 12).
+- `packages/coding-agent/src/core/agent-session.ts`: `sendCustomMessage` checks it before starting a `triggerTurn` turn; on a stop the message is still recorded but no turn starts, an `engine-turn-limit` entry is appended, `engine:turn-limit` is emitted on the extension bus and the user sees "Paused: ... Send any message to continue." The next user message resets the per-message count.
+- `packages/coding-agent/src/core/settings-manager.ts`: `engineTurns.maxPerUserInput` and `engineTurns.maxToolFreePerMinute` settings with those defaults (`getEngineTurnSettings`).
+- `packages/coding-agent/src/core/extensions/runner.ts`: `emitBusEvent(channel, data)` beside `onBusEvent`.
+
+### Why
+
+- One user message drove 66 turns in about 66 s through the ttsr `repetitive-turns` nudge, and 93 requests in 3 s through goal continuation, until the user pressed Stop (senpi#2967). The desktop's server-hosted session reopens the session around every turn, so in-memory guards in the extensions reset; the bound is read from the session itself.
+- The per-minute breaker counts only tool-free engine turns because of measured data: across 604 local sessions with goals (27,650 goal continuations), continuations that called a tool were never closer than 36.8 s apart at p1, and every window with 8 or more tool-free continuations per minute (30 sessions, maximum 14) consisted entirely of `stopReason: error` turns, i.e. runaways.
+
+### Why an extension could not handle it
+
+- Each extension only sees its own turns; the bound has to cover every source and survive extension rebuilds, so it sits where `triggerTurn` starts a turn.
+
+### Expected merge conflict zones
+
+- MEDIUM: `agent-session.ts` `sendCustomMessage` `triggerTurn` branch and its imports; LOW: `settings-manager.ts` `Settings` fields, `runner.ts` bus methods.
+
 ## 2026-10-08 - Runtime diagnostics carry an optional machine code (senpi#2906)
 
 ### What changed

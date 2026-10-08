@@ -896,6 +896,11 @@ export class ExtensionRunner {
 		return this.eventBus.on(channel, handler);
 	}
 
+	/** Publish a session-originated signal on the shared bus, for extensions and hosts that observe it. */
+	emitBusEvent(channel: string, data: unknown): void {
+		this.eventBus.emit(channel, data);
+	}
+
 	/** Get extension-declared MCP servers (first declaration per name wins). */
 	getRegisteredMcpServers(): readonly RegisteredMcpServerDeclaration[] {
 		const serversByName = new Map<string, RegisteredMcpServerDeclaration>();

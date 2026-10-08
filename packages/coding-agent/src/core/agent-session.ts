@@ -156,6 +156,12 @@ import {
 	userTextEquals,
 } from "./edited-user-message.ts";
 import {
+	ENGINE_TURN_LIMIT_ENTRY_TYPE,
+	ENGINE_TURN_LIMIT_EVENT,
+	engineTurnLimitNotice,
+	engineTurnStop,
+} from "./engine-turn-limit.ts";
+import {
 	type EnvironmentContext,
 	environmentContextMessageIfChanged,
 	resolveEnvironmentContext,
@@ -5628,6 +5634,8 @@ export class AgentSession {
 				} else {
 					this.agent.steer(appMessage);
 				}
+			} else if (options?.triggerTurn && this._stopEngineTurn(message.customType)) {
+				this._appendCustomMessage(appMessage);
 			} else if (options?.triggerTurn) {
 				finishSessionWork ??= this._sessionWorkBarrier.begin();
 				const environmentContext = this._pendingEnvironmentContextMessage();
@@ -5684,6 +5692,25 @@ export class AgentSession {
 			deferredTurnClaim?.resolve("finished-without-start");
 			finishSessionWork?.();
 		}
+	}
+
+	/**
+	 * An engine-originated turn (an extension's `sendMessage` with `triggerTurn`, from any source) that would
+	 * exceed the engine-wide bound is not started: the message is still recorded, and the stop is recorded,
+	 * emitted and shown (senpi#2967).
+	 */
+	private _stopEngineTurn(customType: string): boolean {
+		const stop = engineTurnStop(
+			this.sessionManager.getEntries(),
+			Date.now(),
+			this.settingsManager.getEngineTurnSettings(),
+		);
+		if (stop === null) return false;
+		const details = { customType, ...stop, at: Date.now() };
+		this.sessionManager.appendCustomEntry(ENGINE_TURN_LIMIT_ENTRY_TYPE, details);
+		this._extensionRunner.emitBusEvent(ENGINE_TURN_LIMIT_EVENT, details);
+		this._extensionRunner.getUIContext().notify(engineTurnLimitNotice(stop), "warning");
+		return true;
 	}
 
 	/** Environment context a new turn must carry: set when cwd or date differs from the latest one visible (senpi#2093). */

@@ -1,0 +1,118 @@
+import { fauxAssistantMessage, fauxText, fauxToolCall } from "@earendil-works/pi-ai";
+import { Type } from "typebox";
+import { afterEach, describe, expect, it } from "vitest";
+
+import { ENGINE_TURN_LIMIT_ENTRY_TYPE } from "../../../src/core/engine-turn-limit.ts";
+import type { ExtensionAPI } from "../../../src/core/extensions/types.ts";
+import { createHarness, type Harness } from "../harness.ts";
+
+const AUTO_TURN_ATTEMPTS = 20;
+
+function selfContinuing(customType: string, attempts: number, registerWork = false) {
+	return (pi: ExtensionAPI): void => {
+		let sent = 0;
+		if (registerWork) {
+			pi.registerTool({
+				name: "do_work",
+				label: "Do work",
+				description: "One unit of real work",
+				parameters: Type.Object({}),
+				execute: async () => ({ content: [{ type: "text", text: "done" }], details: {} }),
+			});
+		}
+		pi.on("agent_settled", () => {
+			if (sent >= attempts) return;
+			sent += 1;
+			pi.sendMessage({ customType, content: "continue", display: false }, { triggerTurn: true });
+		});
+	};
+}
+
+function engineTurns(harness: Harness, customType: string): number {
+	return harness.session.messages.filter((message) => message.role === "custom" && message.customType === customType)
+		.length;
+}
+
+function limitEntries(harness: Harness): unknown[] {
+	return harness.sessionManager
+		.getEntries()
+		.filter((entry) => entry.type === "custom" && entry.customType === ENGINE_TURN_LIMIT_ENTRY_TYPE);
+}
+
+async function drain(harness: Harness): Promise<void> {
+	for (let pass = 0; pass < AUTO_TURN_ATTEMPTS * 6; pass++) {
+		await harness.session.waitForIdle();
+		await Promise.resolve();
+	}
+}
+
+describe("senpi#2967 engine-originated turns are bounded for every source", () => {
+	let harness: Harness;
+
+	afterEach(() => {
+		harness.cleanup();
+	});
+
+	it.each(["ttsr-injection", "goal-continuation"])(
+		"stops a %s source that keeps starting tool-free turns after 12 in a minute",
+		async (customType) => {
+			// given a source that starts a new turn after every reply, and a model that never calls a tool
+			harness = await createHarness({ extensionFactories: [selfContinuing(customType, AUTO_TURN_ATTEMPTS)] });
+			harness.setResponses(
+				Array.from({ length: AUTO_TURN_ATTEMPTS + 2 }, (_, index) =>
+					fauxAssistantMessage([fauxText(`status update ${index}`)]),
+				),
+			);
+
+			// when one user message arrives
+			await harness.session.prompt("start");
+			await drain(harness);
+
+			// then the engine started no more than 12 turns on its own, and said why it stopped
+			expect(harness.faux.getCallLog().length).toBe(1 + 12);
+			expect(limitEntries(harness)).toHaveLength(1);
+			expect(engineTurns(harness, customType)).toBe(13);
+		},
+	);
+
+	it("lets a goal run that does real work in every turn continue past the per-minute breaker", async () => {
+		// given a goal-like source whose every turn calls a tool before answering
+		harness = await createHarness({
+			extensionFactories: [selfContinuing("goal-continuation", AUTO_TURN_ATTEMPTS, true)],
+		});
+		harness.setResponses(
+			Array.from({ length: AUTO_TURN_ATTEMPTS + 1 }, (_, index) => [
+				fauxAssistantMessage([fauxToolCall("do_work", {})], { stopReason: "toolUse" }),
+				fauxAssistantMessage([fauxText(`progress ${index}`)]),
+			]).flat(),
+		);
+
+		// when one user message starts it
+		await harness.session.prompt("start");
+		await drain(harness);
+
+		// then every continuation ran and the limit never tripped
+		expect(engineTurns(harness, "goal-continuation")).toBe(AUTO_TURN_ATTEMPTS);
+		expect(limitEntries(harness)).toEqual([]);
+	});
+
+	it("resets after the next user message", async () => {
+		// given a source that already hit the breaker
+		harness = await createHarness({ extensionFactories: [selfContinuing("goal-continuation", AUTO_TURN_ATTEMPTS)] });
+		harness.setResponses(
+			Array.from({ length: AUTO_TURN_ATTEMPTS + 6 }, (_, index) =>
+				fauxAssistantMessage([fauxText(`status ${index}`)]),
+			),
+		);
+		await harness.session.prompt("start");
+		await drain(harness);
+		const callsAtStop = harness.faux.getCallLog().length;
+
+		// when the user sends any message
+		await harness.session.prompt("keep going");
+		await drain(harness);
+
+		// then the user's own turn runs
+		expect(harness.faux.getCallLog().length).toBeGreaterThan(callsAtStop);
+	});
+});
