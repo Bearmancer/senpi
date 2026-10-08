@@ -158,6 +158,7 @@ import {
 import {
 	ENGINE_TURN_LIMIT_ENTRY_TYPE,
 	ENGINE_TURN_LIMIT_EVENT,
+	ENGINE_TURN_START_ENTRY_TYPE,
 	engineTurnLimitNotice,
 	engineTurnStop,
 } from "./engine-turn-limit.ts";
@@ -5635,9 +5636,12 @@ export class AgentSession {
 					this.agent.steer(appMessage);
 				}
 			} else if (options?.triggerTurn && this._stopEngineTurn(message.customType)) {
-				this._appendCustomMessage(appMessage);
+				// Refused: no turn, and the message stays out of the context the next user turn sends.
 			} else if (options?.triggerTurn) {
 				finishSessionWork ??= this._sessionWorkBarrier.begin();
+				this._emitEntryAppended(
+					this.sessionManager.appendCustomEntry(ENGINE_TURN_START_ENTRY_TYPE, { customType: message.customType }),
+				);
 				const environmentContext = this._pendingEnvironmentContextMessage();
 				const messages: AgentMessage[] = environmentContext ? [environmentContext, appMessage] : [appMessage];
 				const queueTriggerForLater = (): void => {
@@ -5707,7 +5711,7 @@ export class AgentSession {
 		);
 		if (stop === null) return false;
 		const details = { customType, ...stop, at: Date.now() };
-		this.sessionManager.appendCustomEntry(ENGINE_TURN_LIMIT_ENTRY_TYPE, details);
+		this._emitEntryAppended(this.sessionManager.appendCustomEntry(ENGINE_TURN_LIMIT_ENTRY_TYPE, details));
 		this._extensionRunner.emitBusEvent(ENGINE_TURN_LIMIT_EVENT, details);
 		this._extensionRunner.getUIContext().notify(engineTurnLimitNotice(stop), "warning");
 		return true;

@@ -1,12 +1,17 @@
+import type { SessionEntry } from "./session-manager.ts";
+
 export const MAX_ENGINE_TURNS_PER_USER_INPUT = 150;
 export const MAX_TOOL_FREE_ENGINE_TURNS_PER_WINDOW = 12;
 export const ENGINE_TURN_WINDOW_MS = 60_000;
 
+/** Appended when the engine starts a turn no user message asked for; the limits count these. */
+export const ENGINE_TURN_START_ENTRY_TYPE = "engine-turn-start";
 export const ENGINE_TURN_LIMIT_ENTRY_TYPE = "engine-turn-limit";
 export const ENGINE_TURN_LIMIT_EVENT = "engine:turn-limit";
 
 export type EngineTurnStopReason = "per-user-input" | "tool-free-rate";
 
+/** A limit of 0 turns that limit off. */
 export interface EngineTurnLimits {
 	readonly maxPerUserInput: number;
 	readonly maxToolFreePerMinute: number;
@@ -24,64 +29,45 @@ export function engineTurnLimitNotice(stop: EngineTurnStop): string {
 		: `Paused: the agent started ${stop.toolFreeInWindow} turns on its own in the last minute without doing any work. Send any message to continue.`;
 }
 
-function messageOf(entry: unknown): Record<string, unknown> | undefined {
-	if (typeof entry !== "object" || entry === null || Reflect.get(entry, "type") !== "message") return undefined;
-	const message: unknown = Reflect.get(entry, "message");
-	return typeof message === "object" && message !== null ? (message as Record<string, unknown>) : undefined;
+function isUserMessage(entry: SessionEntry): boolean {
+	return entry.type === "message" && entry.message.role === "user";
 }
 
-function isUserMessage(entry: unknown): boolean {
-	return messageOf(entry)?.role === "user";
+function isEngineTurnStart(entry: SessionEntry): boolean {
+	return entry.type === "custom" && entry.customType === ENGINE_TURN_START_ENTRY_TYPE;
 }
 
-function isEngineTurnStart(entry: unknown): boolean {
-	return typeof entry === "object" && entry !== null && Reflect.get(entry, "type") === "custom_message";
-}
-
-function callsATool(entry: unknown): boolean {
-	const message = messageOf(entry);
-	if (message?.role !== "assistant" || !Array.isArray(message.content)) return false;
-	return message.content.some(
-		(block) => typeof block === "object" && block !== null && Reflect.get(block, "type") === "toolCall",
+function callsATool(entry: SessionEntry): boolean {
+	return (
+		entry.type === "message" &&
+		entry.message.role === "assistant" &&
+		entry.message.content.some((block) => block.type === "toolCall")
 	);
 }
 
-function entryTime(entry: unknown): number | undefined {
-	if (typeof entry !== "object" || entry === null) return undefined;
-	const timestamp: unknown = Reflect.get(entry, "timestamp");
-	if (typeof timestamp === "number") return timestamp;
-	if (typeof timestamp !== "string") return undefined;
-	const parsed = Date.parse(timestamp);
-	return Number.isNaN(parsed) ? undefined : parsed;
-}
-
 /**
- * Whether one more engine-originated turn (an extension's `sendMessage` with `triggerTurn`, from any source:
- * a stream-rule nudge, a goal continuation, ...) may start without a new user message. Read from the session
- * entries so a host that rebuilds extensions or reopens the session between turns is bounded too. The rate
- * breaker counts only engine turns whose reply called no tool: measured goal runs never exceed it, while every
- * observed runaway is that shape (senpi#2967).
+ * Whether one more engine-started turn may begin. Only turns since the user's last message count, so any
+ * message the user sends lifts a pause at once. Read from the session entries, so a host that rebuilds
+ * extensions or reopens the session between turns is bounded too (senpi#2967). The per-minute breaker counts
+ * only engine turns whose reply called no tool: measured goal runs never exceed it, while every observed
+ * runaway has that shape.
  */
 export function engineTurnStop(
-	entries: readonly unknown[],
+	entries: readonly SessionEntry[],
 	now: number,
 	limits: EngineTurnLimits,
 ): EngineTurnStop | null {
+	let start = entries.length;
+	while (start > 0 && !isUserMessage(entries[start - 1])) start -= 1;
 	let sinceUserInput = 0;
-	for (let index = entries.length - 1; index >= 0; index--) {
-		const entry = entries[index];
-		if (isUserMessage(entry)) break;
-		if (isEngineTurnStart(entry)) sinceUserInput += 1;
-	}
 	let toolFreeInWindow = 0;
-	for (let index = 0; index < entries.length; index++) {
+	for (let index = start; index < entries.length; index++) {
 		const entry = entries[index];
 		if (!isEngineTurnStart(entry)) continue;
-		const at = entryTime(entry);
-		if (at === undefined || now - at >= ENGINE_TURN_WINDOW_MS) continue;
+		sinceUserInput += 1;
+		if (now - Date.parse(entry.timestamp) >= ENGINE_TURN_WINDOW_MS) continue;
 		let toolUsed = false;
-		for (let next = index + 1; next < entries.length; next++) {
-			if (isEngineTurnStart(entries[next]) || isUserMessage(entries[next])) break;
+		for (let next = index + 1; next < entries.length && !isEngineTurnStart(entries[next]); next++) {
 			if (callsATool(entries[next])) {
 				toolUsed = true;
 				break;
@@ -89,8 +75,11 @@ export function engineTurnStop(
 		}
 		if (!toolUsed) toolFreeInWindow += 1;
 	}
-	if (sinceUserInput >= limits.maxPerUserInput) return { reason: "per-user-input", sinceUserInput, toolFreeInWindow };
-	if (toolFreeInWindow >= limits.maxToolFreePerMinute)
+	if (limits.maxPerUserInput > 0 && sinceUserInput >= limits.maxPerUserInput) {
+		return { reason: "per-user-input", sinceUserInput, toolFreeInWindow };
+	}
+	if (limits.maxToolFreePerMinute > 0 && toolFreeInWindow >= limits.maxToolFreePerMinute) {
 		return { reason: "tool-free-rate", sinceUserInput, toolFreeInWindow };
+	}
 	return null;
 }

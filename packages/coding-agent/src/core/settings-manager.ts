@@ -1035,11 +1035,11 @@ export class SettingsManager {
 
 	getEngineTurnSettings(): { maxPerUserInput: number; maxToolFreePerMinute: number } {
 		const configured = this.settings.engineTurns;
-		const positive = (value: unknown, fallback: number): number =>
-			typeof value === "number" && Number.isInteger(value) && value > 0 ? value : fallback;
+		const limit = (value: unknown, fallback: number): number =>
+			typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : fallback;
 		return {
-			maxPerUserInput: positive(configured?.maxPerUserInput, MAX_ENGINE_TURNS_PER_USER_INPUT),
-			maxToolFreePerMinute: positive(configured?.maxToolFreePerMinute, MAX_TOOL_FREE_ENGINE_TURNS_PER_WINDOW),
+			maxPerUserInput: limit(configured?.maxPerUserInput, MAX_ENGINE_TURNS_PER_USER_INPUT),
+			maxToolFreePerMinute: limit(configured?.maxToolFreePerMinute, MAX_TOOL_FREE_ENGINE_TURNS_PER_WINDOW),
 		};
 	}
 

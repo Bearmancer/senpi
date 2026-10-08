@@ -32,13 +32,9 @@ function freshInstance(entries: Entry[], sent: unknown[]) {
 			getFlag: () => undefined,
 			events: { emit: () => undefined, on: () => () => undefined },
 			appendEntry: (customType: string, data: unknown) => entries.push({ type: "custom", customType, data }),
-			sendMessage: (message: { customType?: string }, options?: { triggerTurn?: boolean }) => {
+			sendMessage: (message: { customType?: string; details?: unknown }, options?: { triggerTurn?: boolean }) => {
 				if (options?.triggerTurn === true) sent.push(message);
-				entries.push({
-					type: "custom_message",
-					customType: message.customType,
-					timestamp: new Date().toISOString(),
-				});
+				entries.push({ type: "custom_message", customType: message.customType, details: message.details });
 			},
 		},
 		{ get: (target, key) => Reflect.get(target, key) ?? (() => undefined) },
@@ -99,46 +95,5 @@ describe("senpi#2967 a host that rebuilds the ttsr extension every turn", () => 
 
 		// then the rule triggered at most one follow-up turn for that single user message
 		expect(sent.length).toBeLessThanOrEqual(1);
-	});
-
-	it("stops rule-triggered follow-ups after three within a minute, across user messages", async () => {
-		// given a model that repeats itself after every one of six quick user messages
-		const cwd = mkdtempSync(join(tmpdir(), "senpi-2967-rate-"));
-		directories.push(cwd);
-		const entries: Entry[] = [
-			{ type: "message", message: { role: "user", content: "first message" } },
-			assistantEntry(reply(0)),
-		];
-		const sent: unknown[] = [];
-		const stamped = (entry: Entry): Entry => ({ ...entry, timestamp: new Date().toISOString() });
-
-		// when each user message is followed by a repeating reply on a fresh instance
-		for (let turn = 1; turn <= 6; turn++) {
-			entries.push(stamped({ type: "message", message: { role: "user", content: `message ${turn}` } }));
-			const handlers = freshInstance(entries, sent);
-			const ctx = context(cwd, entries);
-			await emit(handlers, "session_start", { type: "session_start", reason: "resume" }, ctx);
-			await emit(handlers, "input", { type: "input", text: `message ${turn}`, source: "rpc" }, ctx);
-			await emit(handlers, "turn_start", { type: "turn_start" }, ctx);
-			const text = reply(turn);
-			await emit(
-				handlers,
-				"message_update",
-				{ type: "message_update", assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: text } },
-				ctx,
-			);
-			await emit(
-				handlers,
-				"message_end",
-				{ type: "message_end", message: { role: "assistant", content: [{ type: "text", text }] } },
-				ctx,
-			);
-			entries.push(assistantEntry(text));
-			await emit(handlers, "agent_end", { type: "agent_end", messages: [], abortSource: "system" }, ctx);
-			await emit(handlers, "agent_settled", { type: "agent_settled" }, ctx);
-		}
-
-		// then no more than three follow-ups ran in that minute
-		expect(sent.length).toBeLessThanOrEqual(3);
 	});
 });

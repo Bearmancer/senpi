@@ -71,7 +71,7 @@ describe("senpi#2967 engine-originated turns are bounded for every source", () =
 			// then the engine started no more than 12 turns on its own, and said why it stopped
 			expect(harness.faux.getCallLog().length).toBe(1 + 12);
 			expect(limitEntries(harness)).toHaveLength(1);
-			expect(engineTurns(harness, customType)).toBe(13);
+			expect(engineTurns(harness, customType)).toBe(12);
 		},
 	);
 
@@ -96,8 +96,8 @@ describe("senpi#2967 engine-originated turns are bounded for every source", () =
 		expect(limitEntries(harness)).toEqual([]);
 	});
 
-	it("resets after the next user message", async () => {
-		// given a source that already hit the breaker
+	it("lets the next user message lift a pause at once", async () => {
+		// given a source that already hit the per-minute breaker and keeps continuing after every reply
 		harness = await createHarness({ extensionFactories: [selfContinuing("goal-continuation", AUTO_TURN_ATTEMPTS)] });
 		harness.setResponses(
 			Array.from({ length: AUTO_TURN_ATTEMPTS + 6 }, (_, index) =>
@@ -106,13 +106,14 @@ describe("senpi#2967 engine-originated turns are bounded for every source", () =
 		);
 		await harness.session.prompt("start");
 		await drain(harness);
+		expect(limitEntries(harness)).toHaveLength(1);
 		const callsAtStop = harness.faux.getCallLog().length;
 
-		// when the user sends any message
+		// when the user sends any message within the same minute
 		await harness.session.prompt("keep going");
 		await drain(harness);
 
-		// then the user's own turn runs
-		expect(harness.faux.getCallLog().length).toBeGreaterThan(callsAtStop);
+		// then the user's turn and the source's next automatic turns run again
+		expect(harness.faux.getCallLog().length - callsAtStop).toBeGreaterThanOrEqual(3);
 	});
 });

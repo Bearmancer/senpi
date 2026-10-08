@@ -12,7 +12,7 @@
 
 ### Fixed
 
-- The engine no longer starts turns on its own without bound. After one user message, automatic turns (stream-rule nudges, goal continuations and any other extension follow-up) stop after 150, and a session pauses once 12 automatic turns in a minute did no work (called no tool); a `repetitive-turns` nudge itself triggers at most one follow-up per message. When it pauses, the session says so and the next message you send continues. Both numbers are settings (`engineTurns.maxPerUserInput`, `engineTurns.maxToolFreePerMinute`). One message had produced 66 turns, and another 93 requests in 3 s, until Stop ([#2967](https://github.com/code-yeongyu/senpi/issues/2967)).
+- The engine no longer starts turns on its own without bound. After one user message, automatic turns (stream-rule nudges, goal continuations and any other extension follow-up) pause after 150, or as soon as 12 automatic turns within a minute did no work (called no tool); each stream rule sends at most one correction per message. When it pauses, the session says so, and any message you send continues right away. Both numbers are settings (`engineTurns.maxPerUserInput`, `engineTurns.maxToolFreePerMinute`; `0` turns one off). One message had produced 66 turns, and another 93 requests in 3 s, until Stop ([#2967](https://github.com/code-yeongyu/senpi/issues/2967)).
 
 ### Removed
 

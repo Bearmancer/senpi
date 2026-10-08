@@ -20,9 +20,9 @@ The threshold decision, the cut point and the `RequiredCompactionError` throw al
 
 ### What changed
 
-- `packages/coding-agent/src/core/engine-turn-limit.ts` (new): `engineTurnStop(entries, now, limits)` reads the session entries and returns a stop when the next engine-originated turn (any extension's `sendMessage` with `triggerTurn`) would exceed `maxPerUserInput` turns since the last user message (default 150, every engine turn counts) or `maxToolFreePerMinute` engine turns in 60 s whose reply called no tool (default 12).
-- `packages/coding-agent/src/core/agent-session.ts`: `sendCustomMessage` checks it before starting a `triggerTurn` turn; on a stop the message is still recorded but no turn starts, an `engine-turn-limit` entry is appended, `engine:turn-limit` is emitted on the extension bus and the user sees "Paused: ... Send any message to continue." The next user message resets the per-message count.
-- `packages/coding-agent/src/core/settings-manager.ts`: `engineTurns.maxPerUserInput` and `engineTurns.maxToolFreePerMinute` settings with those defaults (`getEngineTurnSettings`).
+- `packages/coding-agent/src/core/engine-turn-limit.ts` (new): `engineTurnStop(entries, now, limits)` counts the `engine-turn-start` entries since the user's last message and returns a stop when the next engine-originated turn (any extension's `sendMessage` with `triggerTurn` that starts a turn while idle) would exceed `maxPerUserInput` (default 150) or `maxToolFreePerMinute` engine turns in the last 60 s whose reply called no tool (default 12). Only turns after the last user message count, so any user message lifts a pause; `0` turns a limit off.
+- `packages/coding-agent/src/core/agent-session.ts`: `sendCustomMessage` checks it before starting a `triggerTurn` turn and records an `engine-turn-start` entry for each turn it starts. On a stop no turn starts and the message is not added to the context; an `engine-turn-limit` entry is appended (and published as `entry_appended`), `engine:turn-limit` is emitted on the extension bus and the user sees "Paused: ... Send any message to continue." Messages queued while a turn is streaming or a compaction is pending join that running turn and start none.
+- `packages/coding-agent/src/core/settings-manager.ts`: `engineTurns.maxPerUserInput` and `engineTurns.maxToolFreePerMinute` settings with those defaults; `0` disables (`getEngineTurnSettings`). Documented in `docs/settings.md`.
 - `packages/coding-agent/src/core/extensions/runner.ts`: `emitBusEvent(channel, data)` beside `onBusEvent`.
 
 ### Why

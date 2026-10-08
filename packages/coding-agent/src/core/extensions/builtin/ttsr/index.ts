@@ -9,10 +9,10 @@ import { claimAbort, createGenerationState, markUserCancelled } from "./coordina
 import { REPETITIVE_TURNS_RULE_NAME } from "./detectors/repetitive-turns.ts";
 import { discoverTtsrRulesSync } from "./discovery.ts";
 import {
-	followUpStopReason,
+	ruleAlreadyCorrected,
 	TTSR_LOOP_STOPPED_ENTRY_TYPE,
 	TTSR_LOOP_STOPPED_EVENT,
-	TTSR_LOOP_STOPPED_NOTICE,
+	ttsrLoopStoppedNotice,
 } from "./follow-up-limit.ts";
 import { TtsrManager } from "./manager.ts";
 import { getTtsrStreamDelta } from "./message-update.ts";
@@ -170,7 +170,6 @@ export default function ttsrExtension(pi: ExtensionAPI): void {
 
 	pi.on("input", () => {
 		cancelRemediation();
-		repetitiveTurns.resetForUserInput();
 	});
 
 	pi.on("agent_end", (event) => {
@@ -279,11 +278,11 @@ export default function ttsrExtension(pi: ExtensionAPI): void {
 		}
 		const nudge = pendingNudge;
 		pendingNudge = null;
-		const stop = followUpStopReason(ctx.sessionManager.getEntries(), Date.now());
-		if (stop !== null) {
-			pi.appendEntry(TTSR_LOOP_STOPPED_ENTRY_TYPE, { rules: nudge.details.rules, reason: stop, at: Date.now() });
-			pi.events.emit(TTSR_LOOP_STOPPED_EVENT, { rules: nudge.details.rules, reason: stop });
-			ctx.ui.notify(TTSR_LOOP_STOPPED_NOTICE, "warning");
+		const rule = nudge.details.rules[0] ?? "";
+		if (ruleAlreadyCorrected(ctx.sessionManager.getEntries(), rule)) {
+			pi.appendEntry(TTSR_LOOP_STOPPED_ENTRY_TYPE, { rules: nudge.details.rules, at: Date.now() });
+			pi.events.emit(TTSR_LOOP_STOPPED_EVENT, { rules: nudge.details.rules });
+			ctx.ui.notify(ttsrLoopStoppedNotice(rule), "warning");
 			return;
 		}
 		pi.sendMessage(nudge, { triggerTurn: true });
