@@ -227,6 +227,18 @@ describe("eval live block: streaming header names the state (senpi#2933)", () =>
 		expect(lines[0]).not.toMatch(/· \d+s/u);
 	});
 
+	it("Given a call still streaming when the host gives no spinner frame then the header still says streaming (review MEDIUM-1)", () => {
+		// The host never supplies spinnerFrame for an eval call (no edit/write/task/progress
+		// card), so the real CLI used to render 'pending'. The label comes from the call lane
+		// itself: args complete, no result yet.
+		const lines = renderCallStreaming(
+			{ language: "js", code: "const a = 1;", summary: "stream one line" },
+			{ width: 80, now: STARTED_AT },
+		);
+		expect(lines[0]).toContain("streaming");
+		expect(lines[0]).not.toContain("pending");
+	});
+
 	it("Given a running cell when rendered then the header says running with elapsed", () => {
 		const lines = renderResult(cellResult({ status: "running", code: "work();", startedAt: STARTED_AT }), {
 			width: 80,

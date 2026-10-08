@@ -38,12 +38,14 @@ export function renderEvalCall(
 	if (context.hasResult === true) {
 		// The result renderer owns the full pending -> running -> done frame once a result exists.
 		// Rendering the call frame too would stack a duplicate box, so yield to it here.
+		component.syncLiveTicker(false, context.invalidate);
 		component.setBlocks([]);
 		return component;
 	}
 	if (!isEvalRunInput(args)) {
 		// While a peek/stop call streams in, `cell_id` can still be missing; the title is the action alone until it arrives.
 		const title = args.action === "list" ? "eval list" : `eval ${args.action}${cellIdSuffix(args.cell_id)}`;
+		component.syncLiveTicker(false, context.invalidate);
 		component.setBlocks([{ kind: "text", text: style(theme, "toolTitle", title) }]);
 		return component;
 	}
@@ -51,6 +53,7 @@ export function renderEvalCall(
 	// renders (the host would otherwise fall back to a raw key=value row).
 	const code = typeof args.code === "string" ? args.code : "";
 	const language = knownLanguage(args.language);
+	component.syncLiveTicker(theme !== undefined, context.invalidate);
 	if (theme === undefined && context.spinnerFrame === undefined) {
 		const reset = args.reset === true ? " reset" : "";
 		const timeout = args.timeout === undefined ? "" : ` timeout ${args.timeout}s`;
@@ -95,7 +98,10 @@ export function renderEvalCall(
 				};
 				const summary = displaySummary(args.summary);
 				if (language === undefined) return streamingCallLines(summary, code, environment);
-				const streaming = context.spinnerFrame !== undefined;
+				// The host never supplies a spinner frame for an eval call, so the state comes from
+				// the call lane itself: run args are present and no result exists yet (review MEDIUM-1).
+				// The ticker (armed in renderEvalCall) repaints the block, so the spinner advances.
+				const streaming = context.hasResult !== true;
 				const cell: EvalCellResult = {
 					index: 0,
 					...(summary === undefined ? {} : { summary }),
