@@ -166,18 +166,19 @@ export function renderLiveCellFrame(
 	badges: CellBadges,
 ): string[] {
 	const lines = renderPrefixed(cellHeader(cell, environment, badges), environment, FRAME_HEADER_PREFIX);
-	const tail = liveTailSection(cell, environment);
-	const codeRows = tail.length === 0 ? LIVE_BODY_ROWS : LIVE_BODY_ROWS - LIVE_TAIL_ROWS;
+	const hasOutput = cell.output.trimEnd().length > 0;
+	const hasStatus = (cell.statusEvents ?? []).some((event) => event.op !== "agent");
+	const tail: string[] = [];
+	if (hasOutput) appendLines(tail, cellOutputSection(cell, environment, LIVE_TAIL_ROWS - 1));
+	else if (hasStatus) appendLines(tail, cellStatusSection(cell, environment, LIVE_TAIL_ROWS - 1));
+	// The tail's own rows (section header and omission marker) are counted in its budget here.
+	// The status fold is exact (review HIGH-2), so the frame never re-counts it.
+	const keptTail = tail.slice(0, LIVE_TAIL_ROWS);
+	const codeRows = keptTail.length === 0 ? LIVE_BODY_ROWS : LIVE_BODY_ROWS - LIVE_TAIL_ROWS;
 	appendLines(lines, liveCodeWindow(cell, environment, codeRows));
-	appendLines(lines, tail);
+	appendLines(lines, keptTail);
 	lines.push(style(environment.theme, "borderMuted", "╰─"));
 	return lines;
-}
-
-function liveTailSection(cell: EvalCellResult, environment: RenderEnvironment): string[] {
-	const output = cellOutputSection(cell, environment, LIVE_TAIL_ROWS - 1);
-	const status = output.length === 0 ? cellStatusSection(cell, environment, LIVE_TAIL_ROWS - 1) : [];
-	return [...output, ...status].slice(0, LIVE_TAIL_ROWS);
 }
 
 function liveCodeWindow(cell: EvalCellResult, environment: RenderEnvironment, windowRows: number): string[] {
@@ -253,8 +254,8 @@ export function cellStatusSection(
 			appendLines(lines, renderPrefixed(line, environment, FRAME_INNER_PREFIX));
 		return lines;
 	}
-	// The bounded history stores its exact omission count in a leading marker event; fold that
-	// count into the preview's omission line so slicing can never understate it (review HIGH-2).
+	// Fold the stored bound marker and the sliced events into one omission count (review HIGH-2):
+	// the marker is never a row of its own here, so previewCount is the number of event rows kept.
 	const first = statusEvents[0];
 	const omittedByBound = first?.op === "status-events-omitted" && typeof first.count === "number" ? first.count : 0;
 	const visible = omittedByBound > 0 ? statusEvents.slice(1) : statusEvents;
