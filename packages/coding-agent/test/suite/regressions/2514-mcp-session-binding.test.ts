@@ -21,6 +21,7 @@ import {
 	cleanupRoots,
 	makeRoot,
 	readCounter,
+	requiredPid,
 	setConfig,
 	stdioServer,
 	type TestRoot,
@@ -60,6 +61,18 @@ function configureGatedServer(): void {
 
 function releaseCatalog(): void {
 	writeFileSync(catalogGate, "");
+}
+
+/** Declare the `extra` server from a session's own extensions, so only that session's config has it. */
+function registerExtraServer(pi: ExtensionAPI): void {
+	const fixture = stdioFixtureCommand();
+	pi.registerMcpServer("extra", {
+		type: "stdio",
+		command: fixture.command,
+		args: [...fixture.args, "--tools", "1"],
+		exposure: "search",
+		lifecycle: "eager",
+	});
 }
 
 function mcpExtensions(onLoad: (pi: ExtensionAPI) => void = () => {}): Promise<LoadExtensionsResult> {
@@ -243,18 +256,7 @@ describe("senpi#2514: each session binds its own view of the shared MCP service"
 		// Given: the first session's extensions declare an extra MCP server, so its resolved config differs from a
 		// peer that loads without them (an OmO memory sidecar beside the main session), and both declare `fx`.
 		configureServer();
-		const fixture = stdioFixtureCommand();
-		const alpha = await openSession(
-			await mcpExtensions((pi) => {
-				pi.registerMcpServer("extra", {
-					type: "stdio",
-					command: fixture.command,
-					args: [...fixture.args, "--tools", "1"],
-					exposure: "search",
-					lifecycle: "eager",
-				});
-			}),
-		);
+		const alpha = await openSession(await mcpExtensions(registerExtraServer));
 		await untilToolRegistered(alpha, TOOL);
 		await untilToolRegistered(alpha, EXTRA_TOOL);
 
@@ -269,6 +271,26 @@ describe("senpi#2514: each session binds its own view of the shared MCP service"
 		expect(extra).toContain("fixture tool_1 value=extra-after-peer");
 		expect(registeredNames(bravo)).not.toContain(EXTRA_TOOL);
 		expect(await callMcpTool(bravo, "from-bravo")).toContain("fixture tool_1 value=from-bravo");
+		expect(await readCounter(spawnCounter)).toBe(1);
+	});
+
+	it("stops a server only a released session declared, while the peer keeps its shared server (senpi#2597)", async () => {
+		// Given: the first session alone declares `extra`, and a peer that declares only `fx` attaches after it.
+		configureServer();
+		const alpha = await openSession(await mcpExtensions(registerExtraServer));
+		await untilToolRegistered(alpha, EXTRA_TOOL);
+		const bravo = await openSession();
+		await untilToolRegistered(bravo, TOOL);
+		const service = getMcpService();
+		const extraPid = requiredPid(service, "extra");
+
+		// When: the session that declared `extra` quits while the peer stays live.
+		await shutDown(alpha, "quit");
+
+		// Then: the server no live session declares is stopped, and the peer's shared server serves on, unrestarted.
+		await assertProcessDead(extraPid);
+		expect(service.getConnection("extra")).toBeUndefined();
+		expect(await callMcpTool(bravo, "after-release")).toContain("fixture tool_1 value=after-release");
 		expect(await readCounter(spawnCounter)).toBe(1);
 	});
 

@@ -165,12 +165,7 @@ export class McpService {
 			mergeExtensionMcpServers(config, ctx.getRegisteredMcpServers?.() ?? []);
 			const owner: McpConfigOwner = { config, options: sessionOptions, context: ctx };
 			const binding = _pi === undefined || this.#releasedSessions.has(_pi) ? undefined : this.#bind(_pi, owner);
-			// An equivalent effective config keeps its identity, so credential refreshes it scheduled stay current.
-			const effective = this.#effectiveConfig(config);
-			const current =
-				this.#config !== null && JSON.stringify(this.#config) === JSON.stringify(effective)
-					? this.#config
-					: effective;
+			const current = this.#adoptEffectiveConfig(config);
 			this.#config = current;
 			await this.#syncFromConfig(current, binding ?? owner, event.reason !== "reload", binding);
 			if (binding !== undefined) await this.#registerDirectTools(binding);
@@ -215,6 +210,14 @@ export class McpService {
 			for (const [name, server] of Object.entries(binding.config.servers)) servers[name] ??= server;
 		}
 		return { ...preferred, servers };
+	}
+
+	/** `#effectiveConfig(preferred)`, keeping the current object when equivalent so credential refreshes it scheduled stay current. */
+	#adoptEffectiveConfig(preferred: ResolvedMcpConfig): ResolvedMcpConfig {
+		const effective = this.#effectiveConfig(preferred);
+		return this.#config !== null && JSON.stringify(this.#config) === JSON.stringify(effective)
+			? this.#config
+			: effective;
 	}
 
 	#bind(pi: McpToolRegistrar, owner: McpConfigOwner): McpSessionBinding {
@@ -286,7 +289,9 @@ export class McpService {
 		const live = this.#liveBindings();
 		const latest = live.at(-1);
 		if (latest !== undefined) {
-			if (released !== undefined && this.#sessionContext === released.context) this.#sessionContext = latest.context;
+			if (released === undefined) return;
+			if (this.#sessionContext === released.context) this.#sessionContext = latest.context;
+			await this.#resyncToLiveSessions();
 			return;
 		}
 		// A session whose attach is still queued has not bound yet but will use this service.
@@ -320,6 +325,39 @@ export class McpService {
 		});
 		if (this.#liveBindings().length === 0) await this.dispose(disposeReason);
 		for (const settle of this.#deferredDisposeWaiters.splice(0)) settle();
+	}
+
+	/**
+	 * After a release, bring the shared connections in line with the sessions still live (senpi#2597): the effective
+	 * config of the most recent live binding, with its options, so a server no live session declares is stopped
+	 * instead of outliving its session. It runs on the attach queue, never interleaved with an attach's own sync; the
+	 * release awaits it only when no attach is pending, because a hung attach must not hold a quit.
+	 */
+	async #resyncToLiveSessions(): Promise<void> {
+		const resync = this.#attachQueue.then(async () => {
+			const latest = this.#liveBindings().at(-1);
+			if (this.#disposed || latest === undefined) return;
+			const before = [...this.#connections.keys()].join("\n");
+			this.#config = this.#adoptEffectiveConfig(latest.config);
+			await this.#syncFromConfig(this.#config, latest, true, latest);
+			if ([...this.#connections.keys()].join("\n") === before) return;
+			// A replaced connection retires the offers made against it; republish them in every live session.
+			for (const live of this.#liveBindings()) await this.#registerDirectTools(live);
+			if (shouldCaptureWireStatus(latest.context)) {
+				await this.refreshWireStatusSnapshot(latest.context.sessionManager?.getSessionId?.());
+			}
+		});
+		this.#attachQueue = resync.then(
+			() => undefined,
+			() => undefined,
+		);
+		if (this.#pendingAttaches === 0) {
+			await resync;
+			return;
+		}
+		resync.catch((error: unknown) => {
+			createMcpLogger("service").error("Failed to re-sync MCP servers after a session release", error);
+		});
 	}
 
 	/**

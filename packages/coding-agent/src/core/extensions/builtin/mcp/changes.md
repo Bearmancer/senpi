@@ -25,10 +25,12 @@
 - `packages/coding-agent/src/core/extensions/builtin/mcp/service.ts`: each session binding now records the `ResolvedMcpConfig` it attached with. `#registerDirectTools` registers a session's tools from that config and only for the connections whose `configHash` it declares. The invocation fence no longer compares the process-wide `#config` identity. A session's offers stay current while its own binding and the connection entry they were made against are current. A new attach by the same session replaces its binding and retires its old offers; a peer's attach does not.
 - `service.ts`: the shared connections follow an effective config. That config is the attaching session's config plus every server another live binding declares that it does not. A peer whose config lacks a server, such as an OmO memory sidecar loaded without extension-registered servers, no longer tears down a connection a live session still declares. On a name collision the attaching config wins, as before, because connections are one per server name. The effective config keeps its object identity when it is JSON-equal to the previous one, so credential-change resyncs keep running across subset-peer attaches. This supersedes the identical-config preservation bullet in the senpi#2843 entry.
 - `service.ts`: skill-declared servers (`attachSkillMcpServers`) merge into the declaring session's own config, then into the effective config. A list_changed refresh re-registers and tombstones only in sessions that declare that server with the refreshed connection's hash.
+- `service.ts`: `releaseSession` now re-syncs the connections when live sessions remain. The effective config of the most recent live binding is used, with that binding's options, so a server only the released session declared is stopped instead of keeping its process and credentials alive. The resync runs on the attach queue so it never interleaves with an attach's sync. The release awaits it only when no attach is pending, so a hung attach still cannot hold a quit. When the connection set changes, every live session re-registers its tools, and the wire status refreshes. When no live session remains, the existing dispose and deferred-dispose path is unchanged. Attach and release share `#adoptEffectiveConfig`, which keeps the current config object when the effective config is equivalent.
 
 ### Why
 
 - The fence compared one process-wide `#config` object, and any attach with a different resolved config replaced it. On a multi-session host, the main session (with extension-registered servers) and sidecar sessions (without them) share one service. Each sidecar attach therefore refused every MCP tool in the main session with "MCP session or server configuration was replaced.". The refusal was permanent, because no later attach restored the identity and the main session's binding was never republished. The same last-attach config also decided which connections lived, so a sidecar attach disposed the main session's extension-registered servers.
+- Once connections followed every live session's config, nothing recomputed them when a session left. A server only the released session declared therefore kept running with that session's credentials until the whole service was disposed.
 
 ### Why an extension could not handle it
 
@@ -36,7 +38,7 @@
 
 ### Expected merge conflict zones
 
-- `McpSessionBinding`, `attachSession`, `#bind`, `attachSkillMcpServers`, `#handleServerToolsChanged` and `#registerDirectTools` in `packages/coding-agent/src/core/extensions/builtin/mcp/service.ts`.
+- `McpSessionBinding`, `attachSession`, `#bind`, `releaseSession`, `#resyncToLiveSessions`, `#adoptEffectiveConfig`, `attachSkillMcpServers`, `#handleServerToolsChanged` and `#registerDirectTools` in `packages/coding-agent/src/core/extensions/builtin/mcp/service.ts`.
 
 ## 2026-10-06 - Nonblocking first-turn MCP admission (senpi#2843)
 
