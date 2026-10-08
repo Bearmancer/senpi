@@ -22,7 +22,6 @@
 import { createHash } from "node:crypto";
 import { mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { sameProcessStart } from "../../core/extensions/builtin/terminal/process-identity.ts";
 import { processIsLive, readProcessStartTime } from "../app-server/daemon/process.ts";
 import { createHostDaemonPaths, HOST_DAEMON_DIR_ENV, hostDaemonDirectoryPaths } from "./host-daemon-paths.ts";
 import { parseJson, readFileOrUndefined } from "./host-daemon-state.ts";
@@ -165,7 +164,8 @@ export function createSessionPathReservations(options: {
 							const start = /^\d+$/.test(owner.processStartTime)
 								? Number((BigInt(owner.processStartTime) - 116444736000000000n) / 10000n)
 								: Date.parse(owner.processStartTime);
-							return sameProcessStart(start, observed);
+							// Match lease validation's 3 s tolerance without expanding the supervisor graph.
+							return Math.abs(start - observed) <= 3_000;
 						})
 							? pid
 							: undefined;

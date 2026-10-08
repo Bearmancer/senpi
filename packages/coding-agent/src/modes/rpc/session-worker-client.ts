@@ -77,9 +77,15 @@ export class SessionWorkerClient {
 				void this.webviewBroker?.dispose();
 				this.listeners.clear();
 				const released = callbacks.exit();
-				this.publishTerminalFailure();
-				if (released) void released.then(resolve, reject);
-				else resolve();
+				if (released)
+					void released.then(() => {
+						this.publishTerminalFailure();
+						resolve();
+					}, reject);
+				else {
+					this.publishTerminalFailure();
+					resolve();
+				}
 			});
 		});
 		this.worker.on("message", (message: SessionWorkerToHost) => this.receive(message));
