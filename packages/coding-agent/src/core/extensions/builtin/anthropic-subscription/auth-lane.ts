@@ -82,6 +82,8 @@ export type AuthenticatedQueryInput = {
 	model?: string;
 	/** Request-scoped CLI pin; takes precedence over persistent settings and account pins. */
 	pinnedAccount?: string;
+	/** The account this session's SDK transcript lives under; preferred while it can serve (senpi#2891). */
+	preferredAccount?: string;
 	onQuery?: (query: ReturnType<SdkQuery>) => void;
 	createAttempt?: (
 		input: AuthenticatedAttemptInput,
@@ -245,6 +247,7 @@ export async function* queryWithAuthLane(input: AuthenticatedQueryInput): AsyncG
 			selectAccount(accounts, {
 				sessionId: input.sessionId,
 				pinnedAccount: input.pinnedAccount ?? pool.pinnedAccount,
+				...(input.preferredAccount === undefined ? {} : { preferredAccount: input.preferredAccount }),
 				now: activeBoundary.now(),
 				...(input.model === undefined ? {} : { model: input.model }),
 			}),
@@ -268,6 +271,7 @@ export async function* queryWithAuthLane(input: AuthenticatedQueryInput): AsyncG
 		now: activeBoundary.now,
 		errorFromEvent: sdkFailure,
 		isVisibleDelta: visibleSdkMessage,
+		signal,
 		onFailover: ({ account, nextAccount, classification }) => {
 			emitProviderAccountsChanged(ANTHROPIC_SUBSCRIPTION_PROVIDER_ID);
 			if (nextAccount) {
