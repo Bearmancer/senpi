@@ -64,7 +64,6 @@
 
 - LOW: `runFailover`'s catch block, `selectUnblocked`, `queryWithAuthLane`'s `selectFn`, `residentAuthLaneMessages`, and the head of `decideFromState`.
 
-||||||| parent of 04adc210bd (fix(anthropic-subscription): make a rebuilt prompt a cacheable prefix of the next)
 ## 2026-10-09 - The session stream applies backpressure instead of overflowing (senpi#2822)
 
 ### What changed
