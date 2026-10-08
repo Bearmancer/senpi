@@ -9,7 +9,11 @@ import type { QuestionRequest, QuestionResponse } from "./schema.ts";
  * may ignore user text there (senpi#2920). The steering queue drains after the tool batch, so
  * every provider serializes the words after the batch's tool results, as it does typed steering.
  */
-export function steerUserText(pi: Pick<ExtensionAPI, "sendMessage">, response: QuestionResponse, request: QuestionRequest) {
+export function steerUserText(
+	pi: Pick<ExtensionAPI, "sendMessage">,
+	response: QuestionResponse,
+	request: QuestionRequest,
+) {
 	const { userText } = formatModelAnswer(response, request.questions);
 	if (userText.length === 0) return;
 	pi.sendMessage(

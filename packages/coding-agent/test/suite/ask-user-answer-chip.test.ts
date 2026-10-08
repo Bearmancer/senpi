@@ -133,13 +133,9 @@ describe("ask-user answer chips", () => {
 		"renders %s with the retained header and no invented answer",
 		(status) => {
 			const response: QuestionResponse = { status, answers: {}, unanswered: ["q1"] };
-			const component = new UserMessageComponent(
-				formatUserMessage(response, "chip-request", questions),
-				undefined,
-				1,
-				[],
-				["Auth"],
-			);
+			const frame = formatUserMessage(response, "chip-request", questions);
+			if (typeof frame !== "string") throw new Error("an answer without typed words is one framed string");
+			const component = new UserMessageComponent(frame, undefined, 1, [], ["Auth"]);
 			expect(plain(component)).toEqual(["↳ Auth: (no answer)"]);
 		},
 	);
@@ -219,7 +215,11 @@ describe("ask-user answer chips", () => {
 			const host = replayHost(loaded);
 			host.renderSessionEntries(loaded.getBranch());
 			const lines = host.chatContainer.render(80).map((line) => stripAnsi(line).trimEnd());
-			const chip = { answered: "↳ Auth: OAuth", timed_out: "↳ Auth: (no answer)", "comment-submitted": '↳ Auth: "Use the existing flow"' };
+			const chip = {
+				answered: "↳ Auth: OAuth",
+				timed_out: "↳ Auth: (no answer)",
+				"comment-submitted": '↳ Auth: "Use the existing flow"',
+			};
 			expect(lines).toContain(chip[status]);
 			expect(lines.some((line) => line.includes("[Answer to question"))).toBe(false);
 		},

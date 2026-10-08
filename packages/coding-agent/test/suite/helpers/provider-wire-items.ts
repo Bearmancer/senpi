@@ -60,8 +60,9 @@ function chatItems(payload: Json): WireItem[] {
 		if (message.role === "tool") return [{ kind: "toolResult", text: textOf(message.content), message: index }];
 		if (message.role !== "user") return [other(index)];
 		if (typeof message.content === "string") return [{ kind: "userText", text: message.content, message: index }];
-		return asRecords(message.content).map((part): WireItem =>
-			part.type === "text" ? { kind: "userText", text: String(part.text), message: index } : other(index),
+		return asRecords(message.content).map(
+			(part): WireItem =>
+				part.type === "text" ? { kind: "userText", text: String(part.text), message: index } : other(index),
 		);
 	});
 }
@@ -69,13 +70,19 @@ function chatItems(payload: Json): WireItem[] {
 /** Responses: function_call_output items, then user message items with input_text parts. */
 function responsesItems(payload: Json): WireItem[] {
 	return asRecords(payload.input).flatMap((item, index): WireItem[] => {
-		if (item.type === "function_call_output") return [{ kind: "toolResult", text: textOf(item.output), message: index }];
+		if (item.type === "function_call_output")
+			return [{ kind: "toolResult", text: textOf(item.output), message: index }];
 		if (item.role !== "user") return [other(index)];
 		if (typeof item.content === "string") return [{ kind: "userText", text: item.content, message: index }];
-		return asRecords(item.content).map((part): WireItem =>
-			part.type === "input_text" ? { kind: "userText", text: String(part.text), message: index } : other(index),
+		return asRecords(item.content).map(
+			(part): WireItem =>
+				part.type === "input_text" ? { kind: "userText", text: String(part.text), message: index } : other(index),
 		);
 	});
+}
+
+function withBaseUrl<M extends { baseUrl: string }>(model: M, baseUrl: string): M {
+	return { ...model, baseUrl };
 }
 
 export interface WireTarget {
@@ -87,18 +94,48 @@ export interface WireTarget {
 }
 
 export const WIRE_TARGETS: WireTarget[] = [
-	{ name: "anthropic-messages", model: () => getModel("anthropic", "claude-haiku-4-5"), items: anthropicItems, sameMessage: true },
+	{
+		name: "anthropic-messages",
+		model: () => getModel("anthropic", "claude-haiku-4-5"),
+		items: anthropicItems,
+		sameMessage: true,
+	},
 	{
 		name: "bedrock-converse-stream",
 		model: () => getModel("amazon-bedrock", "anthropic.claude-haiku-4-5-20251001-v1:0"),
 		items: bedrockItems,
 		sameMessage: true,
 	},
-	{ name: "google-generative-ai", model: () => getModel("google", "gemini-2.5-flash"), items: googleItems, sameMessage: true },
-	{ name: "google-vertex", model: () => getModel("google-vertex", "gemini-2.5-flash"), items: googleItems, sameMessage: true },
-	{ name: "openai-completions", model: () => getModel("deepseek", "deepseek-v4-pro"), items: chatItems, sameMessage: false },
-	{ name: "mistral-conversations", model: () => getModel("mistral", "mistral-large-2512"), items: chatItems, sameMessage: false },
-	{ name: "openai-responses", model: () => getModel("openai", "gpt-5-mini"), items: responsesItems, sameMessage: false },
+	{
+		name: "google-generative-ai",
+		model: () => getModel("google", "gemini-2.5-flash"),
+		items: googleItems,
+		sameMessage: true,
+	},
+	{
+		name: "google-vertex",
+		model: () => getModel("google-vertex", "gemini-2.5-flash"),
+		items: googleItems,
+		sameMessage: true,
+	},
+	{
+		name: "openai-completions",
+		model: () => getModel("deepseek", "deepseek-v4-pro"),
+		items: chatItems,
+		sameMessage: false,
+	},
+	{
+		name: "mistral-conversations",
+		model: () => getModel("mistral", "mistral-large-2512"),
+		items: chatItems,
+		sameMessage: false,
+	},
+	{
+		name: "openai-responses",
+		model: () => getModel("openai", "gpt-5-mini"),
+		items: responsesItems,
+		sameMessage: false,
+	},
 	{
 		name: "openai-codex-responses",
 		model: () => getModel("chatgpt-subscription", "gpt-5.5"),
@@ -107,10 +144,8 @@ export const WIRE_TARGETS: WireTarget[] = [
 	},
 	{
 		name: "azure-openai-responses",
-		model: () => ({
-			...getModel("azure-openai-responses", "gpt-4.1"),
-			baseUrl: "https://example.openai.azure.com/openai/v1",
-		}),
+		model: () =>
+			withBaseUrl(getModel("azure-openai-responses", "gpt-4.1"), "https://example.openai.azure.com/openai/v1"),
 		items: responsesItems,
 		sameMessage: false,
 	},

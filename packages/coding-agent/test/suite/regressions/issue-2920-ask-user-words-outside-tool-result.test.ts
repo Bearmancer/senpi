@@ -27,8 +27,18 @@ const COMMENT = "Please keep the migration reversible";
 const TYPED = "ship it behind a feature flag first";
 const STEER = "also update the changelog";
 const QUESTIONS = [
-	{ header: "Auth", question: "Which auth flow?", multiSelect: false, options: [{ label: "OAuth" }, { label: "API key" }] },
-	{ header: "Plan", question: "Which rollout?", multiSelect: false, options: [{ label: "Canary" }, { label: "Big bang" }] },
+	{
+		header: "Auth",
+		question: "Which auth flow?",
+		multiSelect: false,
+		options: [{ label: "OAuth" }, { label: "API key" }],
+	},
+	{
+		header: "Plan",
+		question: "Which rollout?",
+		multiSelect: false,
+		options: [{ label: "Canary" }, { label: "Big bang" }],
+	},
 ];
 // OAuth was offered by the model; the comment and the typed rollout plan are the user's own words.
 const ANSWER: QuestionResponse = {
@@ -159,21 +169,24 @@ describe("senpi#2920 ask-user answers keep the user's words out of tool_result",
 		expect([occurrences(body, COMMENT), occurrences(body, TYPED)]).toEqual([1, 1]);
 	});
 
-	it.each(WIRE_TARGETS)("$name: a later answer keeps its label and the user's words in separate blocks", async (target) => {
-		later ??= asyncAnswerContext();
-		const { items, body } = await wireItemsFor(target, await later);
-		const label = items.findIndex(
-			(item) => item.kind === "userText" && item.text.startsWith(`[Answer to question ${CALL_ID}]`),
-		);
-		const labelItem = items[label];
-		if (labelItem?.kind !== "userText") throw new Error("no answer frame on the wire");
-		expect(labelItem.text).not.toContain(COMMENT);
-		expect(labelItem.text).not.toContain(TYPED);
-		const words = items.slice(label + 1, label + 3);
-		expect(textsOf(words)).toEqual([COMMENT, TYPED]);
-		expect(words.every((item) => item.message === labelItem.message)).toBe(true);
-		expect([occurrences(body, COMMENT), occurrences(body, TYPED)]).toEqual([1, 1]);
-	});
+	it.each(WIRE_TARGETS)(
+		"$name: a later answer keeps its label and the user's words in separate blocks",
+		async (target) => {
+			later ??= asyncAnswerContext();
+			const { items, body } = await wireItemsFor(target, await later);
+			const label = items.findIndex(
+				(item) => item.kind === "userText" && item.text.startsWith(`[Answer to question ${CALL_ID}]`),
+			);
+			const labelItem = items[label];
+			if (labelItem?.kind !== "userText") throw new Error("no answer frame on the wire");
+			expect(labelItem.text).not.toContain(COMMENT);
+			expect(labelItem.text).not.toContain(TYPED);
+			const words = items.slice(label + 1, label + 3);
+			expect(textsOf(words)).toEqual([COMMENT, TYPED]);
+			expect(words.every((item) => item.message === labelItem.message)).toBe(true);
+			expect([occurrences(body, COMMENT), occurrences(body, TYPED)]).toEqual([1, 1]);
+		},
+	);
 
 	it.each(WIRE_TARGETS)("$name: a steered message stays a user text after the tool result", async (target) => {
 		const { items } = await wireItemsFor(target, steeredContext());
@@ -198,7 +211,12 @@ describe("senpi#2920 ask-user answers keep the user's words out of tool_result",
 		const tool = harness.session.getToolDefinition("ask_user_question");
 		const result = harness.session.messages.findLast((message) => message.role === "toolResult");
 		if (!tool?.renderResult || result?.role !== "toolResult") throw new Error("no ask-user result");
-		const rendered = tool.renderResult(result, { expanded: true, isPartial: false }, {} as never, {} as never);
+		const rendered = tool.renderResult(
+			{ content: result.content, details: result.details },
+			{ expanded: true, isPartial: false },
+			{} as never,
+			{} as never,
+		);
 		expect(rendered).toBeInstanceOf(Text);
 		const inline = formatResultText("claude", ANSWER, CANONICAL);
 		const lines = (rendered as Text).render(400).map((line) => line.trimEnd());

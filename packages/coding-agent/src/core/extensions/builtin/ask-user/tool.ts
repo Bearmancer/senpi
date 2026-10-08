@@ -19,7 +19,6 @@ import {
 	registerPendingQuestion,
 } from "./registry.ts";
 import { renderCall, renderResult } from "./render.ts";
-import { steerUserText } from "./user-words.ts";
 import {
 	AskUserSchemaError,
 	type AskUserVariant,
@@ -29,6 +28,7 @@ import {
 	type QuestionResponse,
 	toCanonical,
 } from "./schema.ts";
+import { steerUserText } from "./user-words.ts";
 
 export interface AskUserState {
 	timedOut: boolean;

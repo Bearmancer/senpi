@@ -32,7 +32,10 @@ export const renderResult: NonNullable<ToolDefinition["renderResult"]> = (result
 			summary += `; ${details.unanswered.length} unanswered`;
 	}
 	return new Text(
-		[summary, ...result.content.flatMap((c) => (c.type === "text" ? [resolveUserTextReferences(c.text, userText)] : []))]
+		[
+			summary,
+			...result.content.flatMap((c) => (c.type === "text" ? [resolveUserTextReferences(c.text, userText)] : [])),
+		]
 			.filter(Boolean)
 			.join("\n"),
 		0,

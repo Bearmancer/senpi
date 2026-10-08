@@ -96,7 +96,6 @@ import { resolvePath } from "../utils/paths.ts";
 import { sleep } from "../utils/sleep.ts";
 import { normalizeToolResultImages } from "../utils/tool-result-images.ts";
 import { AgentAbortProvenance, type AgentAbortSource } from "./agent-abort-provenance.ts";
-import { userTextContent } from "./user-text-blocks.ts";
 import { AgentSettledDelivery, type DeferredAgentSettledAction, DeferredTurnClaim } from "./agent-settled-delivery.ts";
 import { resolveAssistantUsageScope } from "./assistant-usage-scope.ts";
 import { formatNoApiKeyFoundMessage, formatNoModelSelectedMessage } from "./auth-guidance.ts";
@@ -344,6 +343,7 @@ import { createToolDefinitionFromAgentTool } from "./tools/tool-definition-wrapp
 import { TranscriptWriteFailures } from "./transcript-write-failures.ts";
 import { commandShapedName, findUnknownCommand } from "./unknown-command.ts";
 import { addUsageToTotals, combineUsage, createUsageTotals } from "./usage-totals.ts";
+import { userTextContent } from "./user-text-blocks.ts";
 import {
 	findLatestResponse,
 	getBranchSelection,

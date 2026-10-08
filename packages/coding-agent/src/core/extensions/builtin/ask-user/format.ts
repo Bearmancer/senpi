@@ -12,6 +12,7 @@ export type CodexResultDetails = {
 	comment?: string;
 	unanswered: string[];
 	status: QuestionResponse["status"];
+	userText?: string[];
 };
 
 export type ClaudeResultDetails = {
