@@ -1129,6 +1129,7 @@ export async function main(args: string[], options?: MainOptions) {
 			return;
 		}
 		await exitAfterOutput("", exitCode);
+		return;
 	}
 
 	if (await dispatchConfigCommand(args, { extensionFactories })) {
