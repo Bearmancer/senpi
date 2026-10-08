@@ -25,9 +25,10 @@ let width = 80;
 for (let index = 2; index < process.argv.length; index += 1) {
 	const argument = process.argv[index];
 	if (argument === "--state") {
-		const value = process.argv[index + 1] as State;
-		if (!STATES.includes(value)) throw new TypeError(`--state must be one of ${STATES.join(", ")}`);
-		state = value;
+		const value = process.argv[index + 1];
+		const parsed = STATES.find((candidate) => candidate === value);
+		if (parsed === undefined) throw new TypeError(`--state must be one of ${STATES.join(", ")}`);
+		state = parsed;
 		index += 1;
 		continue;
 	}

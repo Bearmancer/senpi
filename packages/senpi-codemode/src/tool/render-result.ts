@@ -10,6 +10,7 @@ import {
 	type EvalRenderComponent,
 	OUTPUT_PREVIEW_LINES,
 	type RenderBlock,
+	type RenderEnvironment,
 	type ResultRenderContext,
 	renderNow,
 	style,
@@ -160,23 +161,17 @@ export function renderEvalResult(
 			{
 				kind: "dynamic",
 				render: (width) => {
+					const environment: RenderEnvironment = {
+						expanded,
+						theme,
+						spinnerFrame: context.spinnerFrame,
+						width,
+						meta: details?.meta,
+						now: renderNow(context),
+					};
 					return [
-						...renderStatusEvents(nonAgentEvents, {
-							expanded,
-							theme,
-							spinnerFrame: context.spinnerFrame,
-							width,
-							meta: details?.meta,
-							now: renderNow(context),
-						}),
-						...renderAgentProgressEvents(agentEvents, {
-							expanded,
-							theme,
-							spinnerFrame: context.spinnerFrame,
-							width,
-							meta: details?.meta,
-							now: renderNow(context),
-						}),
+						...renderStatusEvents(nonAgentEvents, environment),
+						...renderAgentProgressEvents(agentEvents, environment),
 					];
 				},
 			},

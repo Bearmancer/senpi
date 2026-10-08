@@ -1,4 +1,4 @@
-import { sanitizeTerminalLabel, truncateToVisualLines, visibleWidth } from "@code-yeongyu/senpi";
+import { sanitizeTerminalLabel, visibleWidth } from "@code-yeongyu/senpi";
 import { highlightedCode } from "./code-preview.ts";
 import { leadsWithHeadline, liveHeadline } from "./live-headline.ts";
 import {
@@ -185,15 +185,17 @@ function liveCodeWindow(cell: EvalCellResult, environment: RenderEnvironment, wi
 	// Streamed code is not yet trusted input: a hostile or half-arrived chunk can carry escape and
 	// control characters, and the collapsed row must stay inert in the terminal (senpi#2839).
 	const code = highlightedCode(sanitizeCellCode(cell.code), cell.language, environment.theme, environment.repaint);
-	const total = truncateToVisualLines(code, Number.POSITIVE_INFINITY, innerWidth).visualLines.length;
-	const skipped = Math.max(0, total - windowRows);
-	const budget = skipped > 0 ? windowRows - 1 : windowRows;
+	// The marker counts SOURCE lines (LOW-4); the shown rows stay visual lines so wrapping never
+	// changes the height. When the source overflows, the marker takes one of the window's rows.
+	const sourceLines = code.split("\n").length;
+	const budget = sourceLines > windowRows ? windowRows - 1 : windowRows;
 	const preview = previewText(code, budget, innerWidth);
+	const skippedSources = Math.max(0, sourceLines - preview.lines.length);
 	const windowLines: string[] = [];
 	if (preview.skipped > 0)
 		appendLines(
 			windowLines,
-			renderPrefixed(`${preview.skipped} earlier code lines`, environment, {
+			renderPrefixed(`${skippedSources} earlier code lines`, environment, {
 				prefix: "│ ",
 				continuation: "│ ",
 				color: "muted",
@@ -206,10 +208,13 @@ function liveCodeWindow(cell: EvalCellResult, environment: RenderEnvironment, wi
 
 function sanitizeCellCode(code: string): string {
 	return code
-		.replace(/\u001b\[[0-9;]*m/gu, "")
-		.replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]+/gu, " ")
-		.replace(/\t/g, "  ");
+		.split("\n")
+		.map((line) => sanitizeTerminalLabel(line))
+		.join("\n");
 }
+
+// The window's "N earlier code lines" marker counts SOURCE lines (LOW-4), while the shown rows
+// stay visual lines so wrapping never changes the height.
 
 export function cellOutputSection(cell: EvalCellResult, environment: RenderEnvironment, maxLines: number): string[] {
 	const output = cell.output.trimEnd();
