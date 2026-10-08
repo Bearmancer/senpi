@@ -34,6 +34,28 @@ Session options are built before any extension loads, and the RPC host's open pa
 
 - LOW: the `resolved.error` push in `buildSessionOptions`'s `--model` branch.
 
+## 2026-10-08 - Print-then-exit CLI paths deliver all of their output before exiting (senpi#2937)
+
+### What changed
+
+- `packages/coding-agent/src/cli/print-then-exit.ts` (new): `printThenExit(print, code)` runs the printing function with stdout collected (`console.log` and `process.stdout.write`), writes the collected text as one chunk, waits for that write's own callback and for stderr, then exits. `exitAfterOutput(output, code)` is the same wait for a command that already printed. The wait is bounded (`OUTPUT_DELIVERY_LIMIT_MS`, 30 s, unref'd timer) and an EPIPE from a reader that closed the pipe ends it at once. Output that is already redirected (json mode routes `console.log` to stderr) is not collected.
+- `packages/coding-agent/src/main.ts`: `--list-models`, `--version`, `--export`, `--list-tips` and both `--help` branches (plain and the one reached with `--mode`/`-p`) use `printThenExit`; the package, host and schedule commands, which stream their own output, end with `exitAfterOutput`. `host` writes its one line with `writeSync`, so it is complete on both runtimes; package and `schedule` output still streams through `process.stdout`, so under Bun output past the pipe buffer can still be dropped for a reader that falls behind (senpi#2947).
+- `packages/coding-agent/src/cli.ts`: the `--version` and help fast paths use the same helper.
+
+### Why
+
+- Under Node a write to a pipe is asynchronous: `process.exit()` right after printing dropped what a slow reader had not taken (0 of 20,000 lines to a reader 1.5 s late) and still exited 0; a consumer of `--list-models` received 541 of 1,843 rows.
+- Under Bun `console.log` output queued behind an earlier `process.stdout` write is discarded at exit, and neither a write callback, `Bun.stdout` flush, nor a natural exit recovers it: `senpi --list-models` delivered 0 to 138 KB of 224,697 bytes, exit 0. A single write whose callback is awaited is the shape both runtimes deliver in full (senpi#2937).
+- A `drain`-based wait would hang when the queued tail never crossed the high-water mark; the write callback does not depend on it.
+
+### Why an extension could not handle it
+
+- These are CLI entry paths that run before or without any extension.
+
+### Expected merge conflict zones
+
+- LOW: `main.ts` and `cli.ts` at each early-exit branch named above, and their import blocks.
+
 ## 2026-10-08 - Brand-dir copy-forward reserved-entry match folds case on darwin and win32 (senpi#2898 review L6)
 
 ### What changed

@@ -26,6 +26,7 @@
 
 ### Fixed
 
+- `senpi --list-models`, `--version`, `--help`, `--list-tips` and `--export` no longer lose output when stdout is a pipe that is read slowly, under Node or Bun: they wait until the output is delivered (at most 30 s, and at once when the reader closes the pipe) instead of exiting 0 with rows missing. Package and `schedule` commands get the same wait under Node ([#2937](https://github.com/code-yeongyu/senpi/issues/2937)).
 - An Anthropic Subscription account blocked by an authentication error now recovers on its own when its saved refresh token is still accepted: the next request redeems that token once and clears the block, instead of every request failing with "blocked until re-login". A rejected token stays blocked and is not retried until a new login ([#2926](https://github.com/code-yeongyu/senpi/issues/2926)).
 
 - MCP sign-in no longer risks sending a saved refresh token to a different authorization server: the bundled MCP SDK moves to 1.32.1 (GHSA-6qxp-vccf-f47h), and senpi now records which authorization server issued each saved sign-in and refreshes only there. If an MCP server's authorization server changes, senpi asks you to sign in again instead of refreshing. MCP servers signed in with very old senpi versions may ask you to sign in again once their access token expires ([#2940](https://github.com/code-yeongyu/senpi/issues/2940)).

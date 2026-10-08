@@ -13,6 +13,7 @@ import { existsSync, realpathSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { processBunRuntimeOptions, resolveBunReexec } from "./bun-runtime.js";
+import { captureStdout, exitAfterOutput, printThenExit } from "./cli/print-then-exit.js";
 import { enableStartupCompileCache } from "./compile-cache.js";
 import { APP_NAME, DISPLAY_VERSION, findNodePackageDir, getAgentDir, getInstallPackageDir, isBundledNode, } from "./config.js";
 import { hasInheritedInspectorOption, releaseInheritedInspectorForChild } from "./inspector-policy.js";
@@ -139,17 +140,18 @@ async function spawnFullCli() {
     });
 }
 if (isRootCommand(args) && (args.includes("--version") || args.includes("-v"))) {
-    console.log(DISPLAY_VERSION);
-    process.exit();
+    await printThenExit(() => console.log(DISPLAY_VERSION));
 }
 // Help is static text plus the flags extensions registered, so a launch that already knows those
 // flags must not import the engine graph to print them. The import stays dynamic for the same
 // reason `cli-main` is: a static one would evaluate that graph before this answer.
 if (isRootCommand(args) && args.some((arg) => arg === "--help" || arg === "-h")) {
     const { tryPrintHelpWithoutEngine } = await import("./cli/help-fast-path.js");
-    if (tryPrintHelpWithoutEngine(args)) {
-        process.exit();
+    const help = await captureStdout(() => tryPrintHelpWithoutEngine(args));
+    if (help.result) {
+        await exitAfterOutput(help.output);
     }
+    process.stdout.write(help.output);
 }
 if (isMissingBundledWorkspaceDependencies(getInstallPackageDir())) {
     if (await handleBootstrapSelfUpdate(args)) {
