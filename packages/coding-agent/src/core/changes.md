@@ -9268,3 +9268,21 @@ The `promptSurface` plumbing in `agent-session.ts`, `agent-session-services.ts` 
 ### Expected merge conflict zones
 
 - LOW: the `projectCodemodeNamesExecutable` helpers after `LEGACY_PROJECT_CONFIG_DIR_NAME`, the `bundled-resources.ts` import, and the one-line call after the config-dir check at the top of `hasTrustRequiringProjectResources` in `packages/coding-agent/src/core/trust-manager.ts`.
+
+## 2026-10-08 - An extension's user message keeps its text parts as separate blocks (senpi#2920)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `sendUserMessage` with a content array of more than one text part passes the parts to `prompt()` as the internal `PromptOptions.textBlocks`. The started prompt (`userContent`) and a queued steer or follow-up (`_enqueuePreparedInput`) build the user message's text through `userTextContent` (`core/user-text-blocks.ts`), which keeps the parts as separate text blocks while they still spell the final text joined by a newline, and falls back to one block when an `input` handler or a template expansion rewrote it. Everything text-keyed (input handlers, queue bookkeeping, restore) still sees the joined text.
+
+### Why
+
+- The ask-user builtin delivers a later answer as one user message whose `[Answer to question <id>]` label and the user's own words must be separate blocks: Anthropic's Claude Haiku 5.5 guide asks never to put a harness notice and the user's words in one block. The parts used to be joined into one string.
+
+### Why an extension could not handle it
+
+- The user message is built by the host's prompt and queue paths; an extension only hands content to `pi.sendUserMessage`.
+
+### Expected merge conflict zones
+
+- LOW: `PromptOptions` (new `textBlocks`), the `userContent` line in `prompt()`, the `_queueSteer` / `_queueFollowUp` / `_enqueuePreparedInput` signatures and content line, and the text-part loop plus `prompt()` call in `sendUserMessage`.

@@ -1,7 +1,7 @@
 import type { ExtensionAPI, ExtensionContext, ToolDefinition } from "../../types.ts";
 import { WAKE_SOURCE_STATE_EVENT, type WakeSourceStateEvent } from "../monitor-state-event.ts";
 import { TOOL_NAMES } from "./family.ts";
-import { formatResultDetails, formatResultText, formatUserMessage } from "./format.ts";
+import { formatModelAnswer, formatResultDetails, formatUserMessage } from "./format.ts";
 import {
 	ASK_USER_ASKED_EVENT,
 	ASK_USER_QUESTION_ENTRY,
@@ -19,6 +19,7 @@ import {
 	registerPendingQuestion,
 } from "./registry.ts";
 import { renderCall, renderResult } from "./render.ts";
+import { steerUserText } from "./user-words.ts";
 import {
 	AskUserSchemaError,
 	type AskUserVariant,
@@ -41,7 +42,7 @@ function result(
 	text?: string,
 ): Awaited<ReturnType<ToolDefinition["execute"]>> {
 	return {
-		content: [{ type: "text", text: text ?? formatResultText(variant, response, request.questions) }],
+		content: [{ type: "text", text: text ?? formatModelAnswer(response, request.questions).text }],
 		details: formatResultDetails(variant, response, request.questions),
 	};
 }
@@ -340,6 +341,7 @@ export function createAskUserTool(variant: AskUserVariant, pi: ExtensionAPI, sta
 			if (response.status !== "cancelled") {
 				void emitAskUserNotification(pi, ctx, request, response, variant);
 			}
+			steerUserText(pi, response, request);
 			return result(
 				variant,
 				response,

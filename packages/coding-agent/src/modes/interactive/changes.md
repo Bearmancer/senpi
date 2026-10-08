@@ -2540,3 +2540,21 @@ Upstream edits to `showLoadedResources` or the startup-warning block in interact
 ### Expected merge conflict zones
 
 - LOW: `openEndpoint` in `session-control-endpoint.ts`, `watchInbox` in `session-control-wake.ts`, and the `writeHostRegistration` call in `registerTuiEndpoint`. All three files are fork-only.
+
+## 2026-10-08 - A later ask-user answer is shown with the user's words in place (senpi#2920)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: a user message whose first text block is an `[Answer to question <id>]` frame and whose later text blocks are the user's own words renders through `askUserAnswerDisplayText`, which puts each word back where the frame refers to it, so the answer chip and its expanded body read as before.
+
+### Why
+
+- The ask-user builtin now sends the user's words as text blocks of their own after the frame (Claude Haiku 5.5 may ignore user text that sits beside a harness label). Without this the chat joined the blocks with no separator and the chip lost the comment.
+
+### Why an extension could not handle it
+
+- The chat's user-message rendering is the interactive mode's own code; an extension cannot replace how a user message is drawn.
+
+### Expected merge conflict zones
+
+- LOW: the `case "user"` branch of the message renderer (the `textContent` line) and the ask-user `format.ts` import.

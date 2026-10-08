@@ -92,7 +92,7 @@ import { resolveChangelogSource } from "../../core/changelog-source.ts";
 import { collectEntriesForBranchSummary } from "../../core/compaction/branch-summarization.ts";
 import { findExtensionStackMatches } from "../../core/crash-log.ts";
 import { AssistantEditError, assistantTextEquals } from "../../core/edited-assistant-message.ts";
-import { formatUserMessage } from "../../core/extensions/builtin/ask-user/format.ts";
+import { askUserAnswerDisplayText, formatUserMessage } from "../../core/extensions/builtin/ask-user/format.ts";
 import { askUserRenderers } from "../../core/extensions/builtin/ask-user/render.ts";
 import type {
 	AutocompleteProviderFactory,
@@ -6093,7 +6093,7 @@ export class InteractiveMode {
 			case "system":
 				break;
 			case "user": {
-				const textContent = this.getUserMessageText(message);
+				const textContent = askUserAnswerDisplayText(message.content) ?? this.getUserMessageText(message);
 				if (textContent) {
 					if (this.chatContainer.children.length > 0) {
 						this.chatContainer.addChild(new Spacer(1));

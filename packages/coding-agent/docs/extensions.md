@@ -780,7 +780,7 @@ These additive events use `pi.events.on(...)`, not `pi.on(...)`:
 
 Track blocked IDs as a set, not a boolean: requests can overlap. Each question registration emits one active/inactive pair, including cancellation, timeout, abort and orphaned restart recovery. A dangling disk call recovered after restart gets one new runtime registration; its persisted recovery marker prevents registering it again. Reconnect replay and UI hydration reuse an existing registration and do not repeat arrival events or the terminal bell. The builtin owns question events, so UI integrations must not emit a second pair when resolving the question.
 
-Question registration also retains an `ask-user:question` custom session entry containing `{ requestId, headers }`. This is display-only metadata, excluded from model context, for labeling compact answer chips during replay; it is not another bus event. The model-facing `[Answer to question ...]` message stays unchanged.
+Question registration also retains an `ask-user:question` custom session entry containing `{ requestId, headers }`. This is display-only metadata, excluded from model context, for labeling compact answer chips during replay; it is not another bus event. The model-facing `[Answer to question ...]` message keeps the label and the answer's structure in its first text block; the user's own words (a comment, a typed answer) follow as text blocks of their own, and a blocking answer's words follow its tool result as a user turn instead of riding inside it.
 
 `resolvedBy` is `local_ui` for a terminal answer, `rpc_connection` for an RPC client answer, and
 `control_endpoint` for an answer through the terminal control endpoint. It is absent for a question
@@ -2007,6 +2007,8 @@ pi.sendUserMessage("/review src/index.ts", { expandPromptTemplates: true });
   - `"steer"` - Queues the message for delivery after the current assistant turn finishes executing its tool calls
   - `"followUp"` - Waits for agent to finish all tools
 - `expandPromptTemplates` - Dispatch extension commands and expand skill commands and prompt templates. Defaults to `false`.
+
+A content array with several text parts becomes one user message whose text parts stay separate text blocks; `input` handlers see them joined by a newline, and a handler that rewrites the text turns them into one block.
 
 When not streaming, the message is sent immediately and triggers a new turn; from a `session_start` handler, that turn starts once every extension's `session_start` handler has returned. When streaming without `deliverAs`, throws an error.
 

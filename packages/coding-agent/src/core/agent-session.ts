@@ -96,6 +96,7 @@ import { resolvePath } from "../utils/paths.ts";
 import { sleep } from "../utils/sleep.ts";
 import { normalizeToolResultImages } from "../utils/tool-result-images.ts";
 import { AgentAbortProvenance, type AgentAbortSource } from "./agent-abort-provenance.ts";
+import { userTextContent } from "./user-text-blocks.ts";
 import { AgentSettledDelivery, type DeferredAgentSettledAction, DeferredTurnClaim } from "./agent-settled-delivery.ts";
 import { resolveAssistantUsageScope } from "./assistant-usage-scope.ts";
 import { formatNoApiKeyFoundMessage, formatNoModelSelectedMessage } from "./auth-guidance.ts";
@@ -925,6 +926,8 @@ export interface PromptOptions extends ClientMessageIdentity {
 	expandPromptTemplates?: boolean;
 	/** Image attachments */
 	images?: ImageContent[];
+	/** Internal: the text blocks an extension sent `text` as; kept as separate blocks while they still spell it. */
+	textBlocks?: readonly string[];
 	/** When streaming, how to queue the message: "steer" (interrupt) or "followUp" (wait). Required if streaming. */
 	streamingBehavior?: "steer" | "followUp";
 	/** Session-only thinking level applied before starting this prompt. */
@@ -5042,7 +5045,7 @@ export class AgentSession {
 			if (environmentContext) messages.push(environmentContext);
 
 			// Add user message
-			const userContent: (TextContent | ImageContent)[] = [{ type: "text", text: expandedText }];
+			const userContent: (TextContent | ImageContent)[] = userTextContent(expandedText, options?.textBlocks);
 			if (currentImages) {
 				userContent.push(...currentImages);
 			}
@@ -5450,14 +5453,22 @@ export class AgentSession {
 	/**
 	 * Internal: Queue a steering message (already expanded, no extension command check).
 	 */
-	private async _queueSteer(text: string, images?: ImageContent[], options?: QueuedInputOptions): Promise<void> {
+	private async _queueSteer(
+		text: string,
+		images?: ImageContent[],
+		options?: QueuedInputOptions & Pick<PromptOptions, "textBlocks">,
+	): Promise<void> {
 		this._enqueuePreparedInput({ ...options, text, images, mode: "steer" });
 	}
 
 	/**
 	 * Internal: Queue a follow-up message (already expanded, no extension command check).
 	 */
-	private async _queueFollowUp(text: string, images?: ImageContent[], options?: QueuedInputOptions): Promise<void> {
+	private async _queueFollowUp(
+		text: string,
+		images?: ImageContent[],
+		options?: QueuedInputOptions & Pick<PromptOptions, "textBlocks">,
+	): Promise<void> {
 		this._enqueuePreparedInput({ ...options, text, images, mode: "followUp" });
 	}
 
@@ -5466,7 +5477,9 @@ export class AgentSession {
 		this._enqueuePreparedInput(input);
 	}
 
-	private _enqueuePreparedInput(input: QueuedInputOptions & Omit<PreparedClientInput, "enqueueOrder">): void {
+	private _enqueuePreparedInput(
+		input: QueuedInputOptions & Omit<PreparedClientInput, "enqueueOrder"> & Pick<PromptOptions, "textBlocks">,
+	): void {
 		const enqueueOrder = input.enqueueOrder ?? this.reserveQueuedInputOrder();
 		const prepared = {
 			...clientMessageIdentity(input),
@@ -5484,7 +5497,10 @@ export class AgentSession {
 			count: queue.length,
 		});
 		this._emitQueueUpdate();
-		const content: (TextContent | ImageContent)[] = [{ type: "text", text: input.text }, ...(input.images ?? [])];
+		const content: (TextContent | ImageContent)[] = [
+			...userTextContent(input.text, input.textBlocks),
+			...(input.images ?? []),
+		];
 		const message: AgentMessage = {
 			role: "user",
 			content,
@@ -5724,6 +5740,7 @@ export class AgentSession {
 		// try below, so resolve the deferred-turn claim first to keep agent_idle reachable.
 		let text: string;
 		let images: ImageContent[] | undefined;
+		let textBlocks: string[] | undefined;
 
 		try {
 			if (typeof content === "string") {
@@ -5739,6 +5756,7 @@ export class AgentSession {
 					}
 				}
 				text = textParts.join("\n");
+				if (textParts.length > 1) textBlocks = textParts;
 				if (images.length === 0) images = undefined;
 			}
 		} catch (error) {
@@ -5758,6 +5776,7 @@ export class AgentSession {
 				expandPromptTemplates: options?.expandPromptTemplates ?? false,
 				streamingBehavior: options?.deliverAs,
 				images,
+				textBlocks,
 				source: "extension",
 				promptDisposition: (nextDisposition) => {
 					disposition = nextDisposition;
@@ -5777,9 +5796,9 @@ export class AgentSession {
 			// before prompt() accepted the message must not silently drop it.
 			if (disposition === undefined) {
 				if (options?.deliverAs === "steer") {
-					await this._queueSteer(text, images);
+					await this._queueSteer(text, images, { textBlocks });
 				} else {
-					await this._queueFollowUp(text, images);
+					await this._queueFollowUp(text, images, { textBlocks });
 				}
 			}
 			throw error;

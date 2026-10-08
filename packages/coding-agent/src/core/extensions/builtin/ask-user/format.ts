@@ -1,3 +1,4 @@
+import type { ImageContent, TextContent } from "@earendil-works/pi-ai";
 import {
 	type AskUserVariant,
 	DEFAULT_ASK_USER_TIMEOUT_MS,
@@ -20,9 +21,34 @@ export type ClaudeResultDetails = {
 	freeText?: string;
 	unanswered: string[];
 	status: QuestionResponse["status"];
+	userText?: string[];
 };
 
 type Questions = QuestionRequest["questions"];
+type Question = Questions[number];
+
+/**
+ * Where the user's own words go: inline for people (hooks, the transcript card), or out of the
+ * model-facing text with a numbered reference, so they reach the model as a user turn and never
+ * inside a tool result or beside a harness label (senpi#2920).
+ */
+interface UserWords {
+	place(text: string): string;
+}
+
+const INLINE_WORDS: UserWords = { place: (text) => text };
+const USER_TEXT_REFERENCE = /\(see the user's text (\d+) below\)/g;
+
+function separateWords(): UserWords & { texts: string[] } {
+	const texts: string[] = [];
+	return {
+		texts,
+		place(text) {
+			texts.push(text);
+			return `(see the user's text ${texts.length} below)`;
+		},
+	};
+}
 
 function headerFor(id: string, questions: Questions): string {
 	return questions.find((question) => question.id === id)?.header ?? id;
@@ -32,18 +58,30 @@ function questionTextFor(id: string, questions: Questions): string {
 	return questions.find((question) => question.id === id)?.question ?? id;
 }
 
-function answerBody(answer: { selected: string[]; text?: string } | undefined): string | undefined {
-	if (!answer) return undefined;
-	if (answer.selected.length > 0) return answer.selected.join(", ");
+function typedText(answer: { selected: string[]; text?: string }): string | undefined {
+	if (answer.selected.length > 0) return undefined;
 	const text = answer.text?.trim();
 	return text === undefined || text.length === 0 ? undefined : text;
 }
 
-function answeredLines(response: QuestionResponse, questions: Questions): string[] {
+/** A typed text that repeats an offered label (clients that report picks as text) is not the user's own words. */
+function answerBody(
+	answer: { selected: string[]; text?: string } | undefined,
+	words: UserWords = INLINE_WORDS,
+	offered: Question["options"] = [],
+): string | undefined {
+	if (!answer) return undefined;
+	if (answer.selected.length > 0) return answer.selected.join(", ");
+	const text = typedText(answer);
+	if (text === undefined) return undefined;
+	return offered.some((option) => option.label === text) ? text : words.place(text);
+}
+
+function answeredLines(response: QuestionResponse, questions: Questions, words: UserWords): string[] {
 	const lines: string[] = [];
 	const seen = new Set<string>();
 	for (const question of questions) {
-		const body = answerBody(response.answers[question.id]);
+		const body = answerBody(response.answers[question.id], words, question.options);
 		if (body !== undefined) {
 			lines.push(`${question.header}: ${body}`);
 			seen.add(question.id);
@@ -51,22 +89,26 @@ function answeredLines(response: QuestionResponse, questions: Questions): string
 	}
 	for (const [id, answer] of Object.entries(response.answers)) {
 		if (seen.has(id)) continue;
-		const body = answerBody(answer);
+		const body = answerBody(answer, words);
 		if (body !== undefined) lines.push(`${headerFor(id, questions)}: ${body}`);
 	}
 	return lines;
 }
 
-function formatBody(response: QuestionResponse, questions: Questions): string {
+function formatBody(response: QuestionResponse, questions: Questions, words: UserWords): string {
 	switch (response.status) {
 		case "answered": {
-			const lines = answeredLines(response, questions);
+			const lines = answeredLines(response, questions, words);
 			const unanswered = response.unanswered.map((id) => headerFor(id, questions));
 			if (unanswered.length > 0) lines.push(`Unanswered: ${unanswered.join(", ")}`);
 			return lines.join("\n");
 		}
 		case "comment-submitted": {
-			const lines = [`The user responded: ${response.comment?.trim() ?? ""}`, ...answeredLines(response, questions)];
+			const comment = response.comment?.trim() ?? "";
+			const lines = [
+				`The user responded: ${comment.length > 0 ? words.place(comment) : ""}`,
+				...answeredLines(response, questions, words),
+			];
 			const unanswered = response.unanswered.map((id) => headerFor(id, questions));
 			if (unanswered.length > 0) lines.push(`Unanswered: ${unanswered.join(", ")}`);
 			return lines.join("\n");
@@ -76,7 +118,7 @@ function formatBody(response: QuestionResponse, questions: Questions): string {
 			const lines = [
 				`The user did not answer within ${minutes} minutes. (사용자가 답변을 안하고 timeout 으로 종료됨)`,
 			];
-			const selected = answeredLines(response, questions);
+			const selected = answeredLines(response, questions, words);
 			if (selected.length > 0) {
 				lines.push(`Before going idle the user had selected: ${selected.join("; ")}`);
 			}
@@ -92,16 +134,56 @@ function formatBody(response: QuestionResponse, questions: Questions): string {
 	}
 }
 
+/** The answer as a person reads it, with the user's words inline (hooks, the transcript card). */
 export function formatResultText(
 	_variant: AskUserVariant,
 	response: QuestionResponse,
 	questions: Questions = [],
 ): string {
-	return formatBody(response, questions);
+	return formatBody(response, questions, INLINE_WORDS);
 }
 
-export function formatUserMessage(response: QuestionResponse, requestId: string, questions: Questions = []): string {
-	return `[Answer to question ${requestId}]\n${formatBody(response, questions)}`;
+/**
+ * The answer as the model receives it: `text` holds only the structure and the options the model
+ * offered, and each of the user's own words (comment, typed answers) is a `userText` entry that
+ * `text` refers to by number and that travels as its own user text block.
+ */
+export function formatModelAnswer(
+	response: QuestionResponse,
+	questions: Questions = [],
+): { text: string; userText: string[] } {
+	const words = separateWords();
+	const text = formatBody(response, questions, words);
+	return { text, userText: words.texts };
+}
+
+/** Restores the user's words in place of their numbered references, for display. */
+export function resolveUserTextReferences(text: string, userText: readonly string[]): string {
+	return text.replace(USER_TEXT_REFERENCE, (reference, index: string) => userText[Number(index) - 1] ?? reference);
+}
+
+/**
+ * The framed user message for a later answer. The `[Answer to question <id>]` label and the
+ * structure share the first block; each of the user's words is a block of its own after it. An
+ * answer with no typed words stays the single framed string it always was.
+ */
+export function formatUserMessage(
+	response: QuestionResponse,
+	requestId: string,
+	questions: Questions = [],
+): string | TextContent[] {
+	const answer = formatModelAnswer(response, questions);
+	const frame = `[Answer to question ${requestId}]\n${answer.text}`;
+	if (answer.userText.length === 0) return frame;
+	return [frame, ...answer.userText].map((text) => ({ type: "text" as const, text }));
+}
+
+/** Display text of a framed answer whose words travel as separate blocks; undefined otherwise. */
+export function askUserAnswerDisplayText(content: string | (TextContent | ImageContent)[]): string | undefined {
+	if (typeof content === "string") return undefined;
+	const [frame, ...words] = content.flatMap((block) => (block.type === "text" ? [block.text] : []));
+	if (frame === undefined || words.length === 0 || !parseAskUserAnswerFrame(frame)) return undefined;
+	return resolveUserTextReferences(frame, words);
 }
 
 export interface AskUserAnswerFrame {
@@ -125,6 +207,7 @@ export function formatResultDetails(
 	response: QuestionResponse,
 	questions: Questions = [],
 ): CodexResultDetails | ClaudeResultDetails {
+	const { userText } = formatModelAnswer(response, questions);
 	if (variant === "codex") {
 		const answers: CodexResultDetails["answers"] = {};
 		for (const [id, answer] of Object.entries(response.answers)) {
@@ -137,6 +220,7 @@ export function formatResultDetails(
 			status: response.status,
 		};
 		if (response.comment !== undefined) details.comment = response.comment;
+		if (userText.length > 0) details.userText = userText;
 		return details;
 	}
 	const answers: Record<string, string> = {};
@@ -152,5 +236,6 @@ export function formatResultDetails(
 		status: response.status,
 	};
 	if (response.comment !== undefined) details.freeText = response.comment;
+	if (userText.length > 0) details.userText = userText;
 	return details;
 }
