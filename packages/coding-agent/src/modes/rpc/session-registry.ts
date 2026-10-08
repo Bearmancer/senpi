@@ -98,7 +98,7 @@ export class RpcSessionRegistry {
 
 	async openSession(requested: RpcSessionLaunchProfile, options?: RpcSessionOpenOptions): Promise<OpenRpcSession> {
 		this.validateProfile(requested);
-		const profile = resolveMovedProfile(requested, (resolved) => this.validateProfile(resolved));
+		const profile = resolveMovedProfile(requested);
 		this.syncRuntimeMetadata();
 		const sessionPath = profile.sessionPath ? canonicalSessionPath(profile.sessionPath) : undefined;
 		// Taken SYNCHRONOUSLY, before any await, exactly like the path reservation below: a

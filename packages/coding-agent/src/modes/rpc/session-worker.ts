@@ -1,11 +1,9 @@
 import { randomUUID } from "node:crypto";
-import { existsSync } from "node:fs";
-import { isAbsolute, join } from "node:path";
+import { join } from "node:path";
 import { parentPort, workerData } from "node:worker_threads";
 import { runWithProviderScope } from "@earendil-works/pi-ai/node/provider-scope";
 import { isBunBinary } from "../../config.ts";
 import { WAKE_SOURCE_STATE_EVENT } from "../../core/extensions/builtin/monitor-state-event.ts";
-import { resolveMovedPath } from "../../core/extensions/builtin/moved-path-guard/resolve.ts";
 import { takeOverStdout } from "../../core/output-guard.ts";
 import { getDefaultSessionDir } from "../../core/session-manager.ts";
 import { liveSessionWritePaths } from "../../core/session-write-reservation.ts";
@@ -19,6 +17,7 @@ import { createRpcSessionBinding, type RpcSessionBinding } from "./session-bindi
 import { SessionEventWriter } from "./session-event-writer.ts";
 import { canonicalSessionPath } from "./session-path-key.ts";
 import { type RpcSessionEntry, RpcSessionRegistry } from "./session-registry.ts";
+import { resolveMovedProfile } from "./session-registry-moved-path.ts";
 import { createWorkerCredit } from "./session-worker-credit.ts";
 import {
 	type HostToSessionWorker,
@@ -133,19 +132,14 @@ async function handle(message: HostToSessionWorker): Promise<void> {
 		case "prepare": {
 			if (prepared) throw new Error("Session worker already prepared");
 			// Resolved here, not on the host loop, which never inspects caller paths (senpi#2898).
-			const cwd = resolveMovedPath(message.profile.cwd);
-			const requestedPath = message.profile.sessionPath;
-			const movedPath = requestedPath && resolveMovedPath(requestedPath);
-			if (movedPath && movedPath !== requestedPath && !existsSync(movedPath))
-				throw new Error(`open_failed: moved session file does not exist: ${movedPath}`);
+			const profile = resolveMovedProfile(message.profile);
 			const path =
-				movedPath ??
+				profile.sessionPath ??
 				join(
-					getDefaultSessionDir(cwd, message.configuration.agentDir),
+					getDefaultSessionDir(profile.cwd, message.configuration.agentDir),
 					`${new Date().toISOString().replace(/[:.]/g, "-")}_${randomUUID()}.jsonl`,
 				);
-			if (!isAbsolute(path)) throw new Error("invalid_path");
-			prepared = { ...message, profile: { ...message.profile, cwd, sessionPath: canonicalSessionPath(path) } };
+			prepared = { ...message, profile: { ...profile, sessionPath: canonicalSessionPath(path) } };
 			send({ type: "prepared", request: message.request, sessionPath: canonicalSessionPath(path) });
 			return;
 		}
