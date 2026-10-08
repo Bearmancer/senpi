@@ -8,8 +8,6 @@ export const ASK_USER_ASKED_EVENT = "ask-user:asked";
 export const ASK_USER_QUESTION_ENTRY = "ask-user:question";
 /** Durable terminal outcome, including silent cancellation, for restart recovery. */
 export const ASK_USER_SETTLEMENT_ENTRY = "ask-user:settlement";
-/** Hidden custom message carrying a blocking answer's own words to the model as a user turn. */
-export const ASK_USER_ANSWER_MESSAGE = "ask-user:answer";
 export interface AskUserQuestionEntry {
 	readonly requestId: string;
 	readonly headers: readonly string[];

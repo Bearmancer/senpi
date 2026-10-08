@@ -198,8 +198,9 @@ describe("async ask-user question in the interactive TUI", () => {
 				content: [
 					{
 						type: "text",
-						text: "[Answer to question tc-async]\nThe user responded: (see the user's text 1 below)\nUnanswered: Library",
+						text: "[Answer to question tc-async]\nThe user responded: (see [The user's comment for question tc-async] below)\nUnanswered: Library",
 					},
+					{ type: "text", text: "[The user's comment for question tc-async]" },
 					{ type: "text", text: "just use bun" },
 				],
 				options: { deliverAs: "steer" },

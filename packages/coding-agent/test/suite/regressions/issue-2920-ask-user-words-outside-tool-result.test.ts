@@ -8,7 +8,7 @@
  * answer is then serialized by every first-party adapter that maps tool results.
  */
 
-import { type Context, fauxAssistantMessage, fauxToolCall, type Message } from "@earendil-works/pi-ai/compat";
+import { type Context, fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai/compat";
 import { Text } from "@earendil-works/pi-tui";
 import { afterEach, describe, expect, it } from "vitest";
 import {
@@ -16,66 +16,35 @@ import {
 	formatResultText,
 	formatUserMessage,
 } from "../../../src/core/extensions/builtin/ask-user/format.ts";
-import askUserExtension from "../../../src/core/extensions/builtin/ask-user/index.ts";
 import type { QuestionResponse } from "../../../src/core/extensions/types.ts";
-import { convertToLlm } from "../../../src/core/messages.ts";
-import { createHarness, createTestUiContext, type Harness } from "../harness.ts";
-import { WIRE_TARGETS, type WireItem, wireItemsFor } from "../helpers/provider-wire-items.ts";
-
-const CALL_ID = "toolu_ask_2920";
-const COMMENT = "Please keep the migration reversible";
-const TYPED = "ship it behind a feature flag first";
-const STEER = "also update the changelog";
-const QUESTIONS = [
-	{
-		header: "Auth",
-		question: "Which auth flow?",
-		multiSelect: false,
-		options: [{ label: "OAuth" }, { label: "API key" }],
-	},
-	{
-		header: "Plan",
-		question: "Which rollout?",
-		multiSelect: false,
-		options: [{ label: "Canary" }, { label: "Big bang" }],
-	},
-];
-// OAuth was offered by the model; the comment and the typed rollout plan are the user's own words.
-const ANSWER: QuestionResponse = {
-	status: "comment-submitted",
-	comment: COMMENT,
-	answers: { q1: { selected: ["OAuth"] }, q2: { selected: [], text: TYPED } },
-	unanswered: [],
-};
-const CANONICAL = QUESTIONS.map((question, index) => ({ ...question, id: `q${index + 1}` }));
+import type { Harness } from "../harness.ts";
+import {
+	ANSWER,
+	afterLastToolResult,
+	answerWordBlocks,
+	askCall,
+	askUserHarness,
+	assistantCalls,
+	CALL_ID,
+	CANONICAL,
+	COMMENT,
+	expectReferencesResolve,
+	STEER,
+	TYPED,
+	textsOf,
+} from "../helpers/ask-user-words-fixture.ts";
+import { WIRE_TARGETS, wireItemsFor } from "../helpers/provider-wire-items.ts";
 
 const harnesses: Harness[] = [];
 afterEach(() => {
 	for (const harness of harnesses.splice(0)) harness.cleanup();
 });
 
-async function askUserHarness(question: () => Promise<QuestionResponse>): Promise<Harness> {
-	const harness = await createHarness({
-		extensionFactories: [{ factory: askUserExtension }],
-		settings: { askUser: { enabled: true } },
-	});
-	harnesses.push(harness);
-	await harness.session.bindExtensions({ uiContext: createTestUiContext({ question }), mode: "tui" });
-	return harness;
-}
-
-function askCall(waitForAnswer: boolean) {
-	return fauxAssistantMessage(
-		[fauxToolCall("ask_user_question", { questions: QUESTIONS, waitForAnswer }, { id: CALL_ID })],
-		{ stopReason: "toolUse" },
-	);
-}
-
 async function syncAnswerRun(): Promise<{ harness: Harness; next: Context }> {
-	const harness = await askUserHarness(async () => ANSWER);
+	const harness = await askUserHarness(harnesses, async () => ANSWER);
 	let next: Context | undefined;
 	harness.setResponses([
-		askCall(true),
+		assistantCalls(askCall(true)),
 		(context) => {
 			next = context as Context;
 			return fauxAssistantMessage("Thanks");
@@ -88,10 +57,10 @@ async function syncAnswerRun(): Promise<{ harness: Harness; next: Context }> {
 
 async function asyncAnswerContext(): Promise<Context> {
 	const answer = Promise.withResolvers<QuestionResponse>();
-	const harness = await askUserHarness(() => answer.promise);
+	const harness = await askUserHarness(harnesses, () => answer.promise);
 	let next: Context | undefined;
 	harness.setResponses([
-		askCall(false),
+		assistantCalls(askCall(false)),
 		fauxAssistantMessage("I will keep going while you decide."),
 		(context) => {
 			next = context as Context;
@@ -135,19 +104,7 @@ function steeredContext(): Context {
 	};
 }
 
-function afterLastToolResult(items: WireItem[]): { result: WireItem & { kind: "toolResult" }; following: WireItem[] } {
-	const index = items.findLastIndex((item) => item.kind === "toolResult");
-	const result = items[index];
-	if (result?.kind !== "toolResult") throw new Error("no tool result on the wire");
-	return { result, following: items.slice(index + 1) };
-}
-
-const textsOf = (items: WireItem[]) => items.map((item) => (item.kind === "userText" ? item.text : item.kind));
 const occurrences = (body: string, text: string) => body.split(text).length - 1;
-const answerTurn = (messages: readonly Message[]) => {
-	const index = messages.findIndex((message) => message.role === "toolResult" && message.toolCallId === CALL_ID);
-	return messages.slice(index, index + 2).map((message) => ({ role: message.role, content: message.content }));
-};
 
 describe("senpi#2920 ask-user answers keep the user's words out of tool_result", () => {
 	let sync: ReturnType<typeof syncAnswerRun> | undefined;
@@ -160,8 +117,9 @@ describe("senpi#2920 ask-user answers keep the user's words out of tool_result",
 		expect(result.text).toContain("OAuth");
 		expect(result.text).not.toContain(COMMENT);
 		expect(result.text).not.toContain(TYPED);
-		const words = following.slice(0, 2);
-		expect(textsOf(words)).toEqual([COMMENT, TYPED]);
+		const words = following.slice(0, 4);
+		expect(textsOf(words)).toEqual(answerWordBlocks());
+		expectReferencesResolve(result.text, words);
 		for (const item of words) {
 			if (target.sameMessage) expect(item.message).toBe(result.message);
 			else expect(item.message).toBeGreaterThan(result.message);
@@ -181,8 +139,9 @@ describe("senpi#2920 ask-user answers keep the user's words out of tool_result",
 			if (labelItem?.kind !== "userText") throw new Error("no answer frame on the wire");
 			expect(labelItem.text).not.toContain(COMMENT);
 			expect(labelItem.text).not.toContain(TYPED);
-			const words = items.slice(label + 1, label + 3);
-			expect(textsOf(words)).toEqual([COMMENT, TYPED]);
+			const words = items.slice(label + 1, label + 5);
+			expect(textsOf(words)).toEqual(answerWordBlocks());
+			expectReferencesResolve(labelItem.text, words);
 			expect(words.every((item) => item.message === labelItem.message)).toBe(true);
 			expect([occurrences(body, COMMENT), occurrences(body, TYPED)]).toEqual([1, 1]);
 		},
@@ -195,14 +154,6 @@ describe("senpi#2920 ask-user answers keep the user's words out of tool_result",
 		const first = following.find((item) => item.kind !== "other");
 		expect(first).toMatchObject({ kind: "userText", text: STEER });
 		if (target.sameMessage) expect(first?.message).toBe(result.message);
-	});
-
-	it("a resumed session rebuilds the same tool result and user words", async () => {
-		sync ??= syncAnswerRun();
-		const { harness, next } = await sync;
-		const replayed = convertToLlm(harness.sessionManager.buildSessionContext().messages);
-		expect(answerTurn(replayed)).toEqual(answerTurn(next.messages));
-		expect(answerTurn(replayed).map((message) => message.role)).toEqual(["toolResult", "user"]);
 	});
 
 	it("the transcript still shows the words where the user gave them", async () => {

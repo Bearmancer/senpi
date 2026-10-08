@@ -1,10 +1,18 @@
 import type { ImageContent, TextContent } from "@earendil-works/pi-ai";
+import { type ToolResultUserWord, userWordBlocks } from "../../../tool-result-user-words.ts";
 import {
 	type AskUserVariant,
 	DEFAULT_ASK_USER_TIMEOUT_MS,
 	type QuestionRequest,
 	type QuestionResponse,
 } from "./schema.ts";
+import {
+	INLINE_WORDS,
+	readUserWordBlocks,
+	resolveUserWordReferences,
+	separatedWords,
+	type WordPlacement,
+} from "./user-words.ts";
 
 export type CodexResultDetails = {
 	resolvedBy?: QuestionResponse["resolvedBy"];
@@ -12,7 +20,7 @@ export type CodexResultDetails = {
 	comment?: string;
 	unanswered: string[];
 	status: QuestionResponse["status"];
-	userText?: string[];
+	userWords?: ToolResultUserWord[];
 };
 
 export type ClaudeResultDetails = {
@@ -22,34 +30,11 @@ export type ClaudeResultDetails = {
 	freeText?: string;
 	unanswered: string[];
 	status: QuestionResponse["status"];
-	userText?: string[];
+	userWords?: ToolResultUserWord[];
 };
 
 type Questions = QuestionRequest["questions"];
 type Question = Questions[number];
-
-/**
- * Where the user's own words go: inline for people (hooks, the transcript card), or out of the
- * model-facing text with a numbered reference, so they reach the model as a user turn and never
- * inside a tool result or beside a harness label (senpi#2920).
- */
-interface UserWords {
-	place(text: string): string;
-}
-
-const INLINE_WORDS: UserWords = { place: (text) => text };
-const USER_TEXT_REFERENCE = /\(see the user's text (\d+) below\)/g;
-
-function separateWords(): UserWords & { texts: string[] } {
-	const texts: string[] = [];
-	return {
-		texts,
-		place(text) {
-			texts.push(text);
-			return `(see the user's text ${texts.length} below)`;
-		},
-	};
-}
 
 function headerFor(id: string, questions: Questions): string {
 	return questions.find((question) => question.id === id)?.header ?? id;
@@ -68,21 +53,22 @@ function typedText(answer: { selected: string[]; text?: string }): string | unde
 /** A typed text that repeats an offered label (clients that report picks as text) is not the user's own words. */
 function answerBody(
 	answer: { selected: string[]; text?: string } | undefined,
-	words: UserWords = INLINE_WORDS,
+	header: string,
+	words: WordPlacement = INLINE_WORDS,
 	offered: Question["options"] = [],
 ): string | undefined {
 	if (!answer) return undefined;
 	if (answer.selected.length > 0) return answer.selected.join(", ");
 	const text = typedText(answer);
 	if (text === undefined) return undefined;
-	return offered.some((option) => option.label === text) ? text : words.place(text);
+	return offered.some((option) => option.label === text) ? text : words.typed(header, text);
 }
 
-function answeredLines(response: QuestionResponse, questions: Questions, words: UserWords): string[] {
+function answeredLines(response: QuestionResponse, questions: Questions, words: WordPlacement): string[] {
 	const lines: string[] = [];
 	const seen = new Set<string>();
 	for (const question of questions) {
-		const body = answerBody(response.answers[question.id], words, question.options);
+		const body = answerBody(response.answers[question.id], question.header, words, question.options);
 		if (body !== undefined) {
 			lines.push(`${question.header}: ${body}`);
 			seen.add(question.id);
@@ -90,13 +76,14 @@ function answeredLines(response: QuestionResponse, questions: Questions, words: 
 	}
 	for (const [id, answer] of Object.entries(response.answers)) {
 		if (seen.has(id)) continue;
-		const body = answerBody(answer, words);
-		if (body !== undefined) lines.push(`${headerFor(id, questions)}: ${body}`);
+		const header = headerFor(id, questions);
+		const body = answerBody(answer, header, words);
+		if (body !== undefined) lines.push(`${header}: ${body}`);
 	}
 	return lines;
 }
 
-function formatBody(response: QuestionResponse, questions: Questions, words: UserWords): string {
+function formatBody(response: QuestionResponse, questions: Questions, words: WordPlacement): string {
 	switch (response.status) {
 		case "answered": {
 			const lines = answeredLines(response, questions, words);
@@ -107,7 +94,7 @@ function formatBody(response: QuestionResponse, questions: Questions, words: Use
 		case "comment-submitted": {
 			const comment = response.comment?.trim() ?? "";
 			const lines = [
-				`The user responded: ${comment.length > 0 ? words.place(comment) : ""}`,
+				`The user responded: ${comment.length > 0 ? words.comment(comment) : ""}`,
 				...answeredLines(response, questions, words),
 			];
 			const unanswered = response.unanswered.map((id) => headerFor(id, questions));
@@ -146,45 +133,40 @@ export function formatResultText(
 
 /**
  * The answer as the model receives it: `text` holds only the structure and the options the model
- * offered, and each of the user's own words (comment, typed answers) is a `userText` entry that
- * `text` refers to by number and that travels as its own user text block.
+ * offered; each of the user's own words is a `words` entry that `text` names by its label.
  */
 export function formatModelAnswer(
 	response: QuestionResponse,
+	requestId: string,
 	questions: Questions = [],
-): { text: string; userText: string[] } {
-	const words = separateWords();
-	const text = formatBody(response, questions, words);
-	return { text, userText: words.texts };
-}
-
-/** Restores the user's words in place of their numbered references, for display. */
-export function resolveUserTextReferences(text: string, userText: readonly string[]): string {
-	return text.replace(USER_TEXT_REFERENCE, (reference, index: string) => userText[Number(index) - 1] ?? reference);
+): { text: string; words: ToolResultUserWord[] } {
+	const placement = separatedWords(requestId);
+	return { text: formatBody(response, questions, placement), words: placement.words };
 }
 
 /**
- * The framed user message for a later answer. The `[Answer to question <id>]` label and the
- * structure share the first block; each of the user's words is a block of its own after it. An
- * answer with no typed words stays the single framed string it always was.
+ * The framed user message for a later answer: the `[Answer to question <id>]` frame with the
+ * structure, then each of the user's words after its own label block. An answer with no typed
+ * words stays the single framed string it always was.
  */
 export function formatUserMessage(
 	response: QuestionResponse,
 	requestId: string,
 	questions: Questions = [],
 ): string | TextContent[] {
-	const answer = formatModelAnswer(response, questions);
+	const answer = formatModelAnswer(response, requestId, questions);
 	const frame = `[Answer to question ${requestId}]\n${answer.text}`;
-	if (answer.userText.length === 0) return frame;
-	return [frame, ...answer.userText].map((text) => ({ type: "text" as const, text }));
+	if (answer.words.length === 0) return frame;
+	return [{ type: "text", text: frame }, ...userWordBlocks(answer.words)];
 }
 
-/** Display text of a framed answer whose words travel as separate blocks; undefined otherwise. */
+/** Display text of a framed answer whose words travel as labelled blocks; undefined otherwise. */
 export function askUserAnswerDisplayText(content: string | (TextContent | ImageContent)[]): string | undefined {
 	if (typeof content === "string") return undefined;
-	const [frame, ...words] = content.flatMap((block) => (block.type === "text" ? [block.text] : []));
-	if (frame === undefined || words.length === 0 || !parseAskUserAnswerFrame(frame)) return undefined;
-	return resolveUserTextReferences(frame, words);
+	const [first, ...rest] = content;
+	if (first?.type !== "text" || rest.length === 0 || !parseAskUserAnswerFrame(first.text)) return undefined;
+	const words = readUserWordBlocks(rest);
+	return words ? resolveUserWordReferences(first.text, words) : undefined;
 }
 
 export interface AskUserAnswerFrame {
@@ -206,9 +188,10 @@ function selectedAnswers(answer: { selected: string[]; text?: string }): string[
 export function formatResultDetails(
 	variant: AskUserVariant,
 	response: QuestionResponse,
+	requestId: string,
 	questions: Questions = [],
 ): CodexResultDetails | ClaudeResultDetails {
-	const { userText } = formatModelAnswer(response, questions);
+	const { words } = formatModelAnswer(response, requestId, questions);
 	if (variant === "codex") {
 		const answers: CodexResultDetails["answers"] = {};
 		for (const [id, answer] of Object.entries(response.answers)) {
@@ -221,12 +204,12 @@ export function formatResultDetails(
 			status: response.status,
 		};
 		if (response.comment !== undefined) details.comment = response.comment;
-		if (userText.length > 0) details.userText = userText;
+		if (words.length > 0) details.userWords = words;
 		return details;
 	}
 	const answers: Record<string, string> = {};
 	for (const [id, answer] of Object.entries(response.answers)) {
-		const body = answerBody(answer);
+		const body = answerBody(answer, headerFor(id, questions));
 		if (body !== undefined) answers[questionTextFor(id, questions)] = body;
 	}
 	const details: ClaudeResultDetails = {
@@ -237,6 +220,6 @@ export function formatResultDetails(
 		status: response.status,
 	};
 	if (response.comment !== undefined) details.freeText = response.comment;
-	if (userText.length > 0) details.userText = userText;
+	if (words.length > 0) details.userWords = words;
 	return details;
 }

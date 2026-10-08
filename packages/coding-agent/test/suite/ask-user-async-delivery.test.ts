@@ -105,8 +105,9 @@ describe("async ask-user delivery over the RPC bridge", () => {
 				content: [
 					{
 						type: "text",
-						text: "[Answer to question rpc-steer]\nThe user responded: (see the user's text 1 below)\nUnanswered: Library",
+						text: "[Answer to question rpc-steer]\nThe user responded: (see [The user's comment for question rpc-steer] below)\nUnanswered: Library",
 					},
+					{ type: "text", text: "[The user's comment for question rpc-steer]" },
 					{ type: "text", text: "use bun" },
 				],
 				options: { deliverAs: "steer" },
@@ -161,7 +162,11 @@ describe("async ask-user delivery over the app-server bridge", () => {
 		expect(delivery.deliveries).toEqual([
 			{
 				content: [
-					{ type: "text", text: "[Answer to question app-answer]\nLibrary: (see the user's text 1 below)" },
+					{
+						type: "text",
+						text: "[Answer to question app-answer]\nLibrary: (see [The user's answer to Library for question app-answer] below)",
+					},
+					{ type: "text", text: "[The user's answer to Library for question app-answer]" },
 					{ type: "text", text: "OAuth" },
 				],
 				options: { deliverAs: "followUp" },

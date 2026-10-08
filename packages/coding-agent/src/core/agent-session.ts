@@ -164,6 +164,7 @@ import { areExperimentalFeaturesEnabled } from "./experimental.ts";
 import { exportSessionToHtml, type ToolHtmlRenderer } from "./export-html/index.ts";
 import { createToolHtmlRenderer } from "./export-html/tool-renderer.ts";
 import { ANTHROPIC_SUBSCRIPTION_PROVIDER_ID } from "./extensions/builtin/anthropic-subscription/account-management.ts";
+import { askUserAnswerDisplayText } from "./extensions/builtin/ask-user/format.ts";
 import { getPromptCachePrewarmUsage } from "./extensions/builtin/cache-keepalive/prewarm-entry.ts";
 import {
 	type ModelUsabilityAdmission,
@@ -343,7 +344,7 @@ import { createToolDefinitionFromAgentTool } from "./tools/tool-definition-wrapp
 import { TranscriptWriteFailures } from "./transcript-write-failures.ts";
 import { commandShapedName, findUnknownCommand } from "./unknown-command.ts";
 import { addUsageToTotals, combineUsage, createUsageTotals } from "./usage-totals.ts";
-import { userTextContent } from "./user-text-blocks.ts";
+import { keepsTextBlocksVerbatim, userTextContent } from "./user-text-blocks.ts";
 import {
 	findLatestResponse,
 	getBranchSelection,
@@ -4886,7 +4887,7 @@ export class AgentSession {
 					preflightResult?.(true);
 					return;
 				}
-				if (inputResult.action === "transform") {
+				if (inputResult.action === "transform" && !keepsTextBlocksVerbatim(options?.textBlocks)) {
 					currentText = inputResult.text;
 					currentImages = inputResult.images ?? currentImages;
 				}
@@ -10937,7 +10938,7 @@ export class AgentSession {
 			if (entry.type !== "message") continue;
 			if (entry.message.role !== "user") continue;
 
-			const text = contentText(entry.message.content, "");
+			const text = askUserAnswerDisplayText(entry.message.content) ?? contentText(entry.message.content, "");
 			if (text) {
 				result.push({ entryId: entry.id, text });
 			}

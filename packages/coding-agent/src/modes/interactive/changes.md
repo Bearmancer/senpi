@@ -2545,7 +2545,8 @@ Upstream edits to `showLoadedResources` or the startup-warning block in interact
 
 ### What changed
 
-- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: a user message whose first text block is an `[Answer to question <id>]` frame and whose later text blocks are the user's own words renders through `askUserAnswerDisplayText`, which puts each word back where the frame refers to it, so the answer chip and its expanded body read as before.
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: a user message whose first text block is an `[Answer to question <id>]` frame followed by labelled word blocks renders through `askUserAnswerDisplayText`, which puts each word back where the frame refers to it by label, so the answer chip and its expanded body read as before.
+- `packages/coding-agent/src/modes/interactive/components/tree-selector.ts`: the `/tree` row of such a user message shows the same resolved text instead of the blocks run together.
 
 ### Why
 
@@ -2557,4 +2558,4 @@ Upstream edits to `showLoadedResources` or the startup-warning block in interact
 
 ### Expected merge conflict zones
 
-- LOW: the `case "user"` branch of the message renderer (the `textContent` line) and the ask-user `format.ts` import.
+- LOW: the `case "user"` branch of the message renderer (the `textContent` line) and the ask-user `format.ts` import in `interactive-mode.ts`; the `role === "user"` branch of the tree selector's entry label and its import.

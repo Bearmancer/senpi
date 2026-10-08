@@ -206,12 +206,12 @@ describe("ask-user formatters", () => {
 			answers: { q1: { selected: ["OAuth", "API keys"] } },
 			unanswered: [],
 		};
-		const claude = formatResultDetails("claude", response, questions);
+		const claude = formatResultDetails("claude", response, "req-f", questions);
 		expect("questions" in claude).toBe(true);
 		if ("questions" in claude) {
 			expect(claude.answers["Which features do you want to enable?"]).toBe("OAuth, API keys");
 		}
-		const codex = formatResultDetails("codex", response, questions);
+		const codex = formatResultDetails("codex", response, "req-f", questions);
 		expect("questions" in codex).toBe(false);
 		if (!("questions" in codex)) {
 			expect(codex.answers.q1).toEqual({ answers: ["OAuth", "API keys"] });

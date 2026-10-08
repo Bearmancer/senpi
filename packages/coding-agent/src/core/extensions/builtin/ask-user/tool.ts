@@ -28,7 +28,6 @@ import {
 	type QuestionResponse,
 	toCanonical,
 } from "./schema.ts";
-import { steerUserText } from "./user-words.ts";
 
 export interface AskUserState {
 	timedOut: boolean;
@@ -42,8 +41,8 @@ function result(
 	text?: string,
 ): Awaited<ReturnType<ToolDefinition["execute"]>> {
 	return {
-		content: [{ type: "text", text: text ?? formatModelAnswer(response, request.questions).text }],
-		details: formatResultDetails(variant, response, request.questions),
+		content: [{ type: "text", text: text ?? formatModelAnswer(response, request.requestId, request.questions).text }],
+		details: formatResultDetails(variant, response, request.requestId, request.questions),
 	};
 }
 /**
@@ -341,7 +340,6 @@ export function createAskUserTool(variant: AskUserVariant, pi: ExtensionAPI, sta
 			if (response.status !== "cancelled") {
 				void emitAskUserNotification(pi, ctx, request, response, variant);
 			}
-			steerUserText(pi, response, request);
 			return result(
 				variant,
 				response,
