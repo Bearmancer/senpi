@@ -1,0 +1,209 @@
+import type { AgentToolResult } from "@code-yeongyu/senpi";
+import { visibleWidth } from "@code-yeongyu/senpi";
+import { describe, expect, it } from "vitest";
+import { renderEvalCall, renderEvalResult } from "../src/tool/render.ts";
+import type { EvalCellResult, EvalToolDetails, EvalToolInput } from "../src/tool/types.ts";
+import { callContext, resultContext, stripAnsi } from "./eval-render-fixtures.ts";
+
+const STARTED_AT = 1_700_000_000_000;
+const plainTheme = {
+	fg: (_color: string, text: string) => text,
+	bold: (text: string) => text,
+	bg: (_color: string, text: string) => text,
+	italic: (text: string) => text,
+};
+
+function cellResult(cell: Partial<EvalCellResult>): AgentToolResult<EvalToolDetails> {
+	return {
+		content: [{ type: "text", text: "" }],
+		details: {
+			language: "js",
+			durationMs: cell.durationMs ?? 0,
+			toolCalls: [],
+			truncated: false,
+			cells: [
+				{
+					index: 0,
+					code: "work();",
+					language: "js",
+					output: "",
+					status: "running",
+					...cell,
+				},
+			],
+		},
+	};
+}
+
+function renderResult(
+	result: AgentToolResult<EvalToolDetails>,
+	options: { width: number; now?: number; args?: Partial<EvalToolInput> },
+): string[] {
+	return renderEvalResult(
+		result,
+		{ expanded: false, isPartial: true },
+		plainTheme as never,
+		{
+			...resultContext({
+				args: { language: "js", code: "work();", summary: "fixture", ...options.args },
+				...(options.now === undefined ? {} : { now: options.now }),
+			}),
+			spinnerFrame: 2,
+		} as never,
+	)
+		.render(options.width)
+		.map(stripAnsi);
+}
+
+function renderStreamingCall(args: Partial<EvalToolInput>, width: number): string[] {
+	return renderEvalCall(
+		args as EvalToolInput,
+		plainTheme as never,
+		{
+			...callContext({ now: STARTED_AT }),
+			spinnerFrame: 2,
+		} as never,
+	)
+		.render(width)
+		.map(stripAnsi);
+}
+
+const PY_INDENTED = ["for i in range(3):", "    if i % 2:", "        print(i)", "    else:", "        pass"].join("\n");
+
+describe("eval live window keeps indentation (senpi#2933 review HIGH-A)", () => {
+	it("Given an indented Python cell when streaming then the window keeps leading whitespace", () => {
+		const lines = renderStreamingCall({ language: "py", code: PY_INDENTED, summary: "indented" }, 80);
+		const text = lines.join("\n");
+		expect(text).toContain("    if i % 2:");
+		expect(text).toContain("        print(i)");
+		expect(text).toContain("    else:");
+		expect(text).toContain("        pass");
+	});
+
+	it("Given an indented Python cell when running then the window keeps inner spacing and indentation", () => {
+		const lines = renderResult(
+			cellResult({ status: "running", language: "py", code: PY_INDENTED, startedAt: STARTED_AT }),
+			{ width: 80, now: STARTED_AT + 1_000 },
+		);
+		const text = lines.join("\n");
+		expect(text).toContain("    if i % 2:");
+		expect(text).toContain("        print(i)");
+	});
+
+	it("Given code with tabs then the window expands them without collapsing indentation", () => {
+		const code = "def f():\n\treturn 1";
+		const lines = renderStreamingCall({ language: "py", code, summary: "tabs" }, 80);
+		expect(lines.join("\n")).toContain("  return 1");
+	});
+});
+
+const LONG_SQL = [
+	'const q = "SELECT u.id, u.name, u.email, o.total, o.created_at FROM users u JOIN orders o ON o.user_id = u.id WHERE o.total > 100 ORDER BY o.created_at DESC LIMIT 50";',
+	"const rows = await db.query(q);",
+	"for (const row of rows) {",
+	"  print(row.name);",
+	"}",
+	'print("done");',
+].join("\n");
+
+describe("eval live window always shows the newest line (senpi#2933 review HIGH-B)", () => {
+	it("Given a 5-line JS cell with one long SQL line at 100 cols then the newest line is visible and the marker is exact", () => {
+		const lines = renderStreamingCall({ language: "js", code: LONG_SQL, summary: "long sql" }, 100);
+		const text = lines.join("\n");
+		expect(text).toContain('print("done");');
+		expect(text).not.toContain("0 earlier code lines");
+	});
+
+	it("Given a 5-line JS cell with one long SQL line at 40 cols then the newest line is visible", () => {
+		const lines = renderStreamingCall({ language: "js", code: LONG_SQL, summary: "long sql" }, 40);
+		const text = lines.join("\n");
+		expect(text).toContain('print("done");');
+		expect(text).not.toContain("0 earlier code lines");
+	});
+
+	it("Given 3 source lines with one 150-char line at 40 cols then the newest line stays visible", () => {
+		const code = `a();\nconst x = "${"y".repeat(150)}";\nc();`;
+		const lines = renderStreamingCall({ language: "js", code, summary: "wrapped" }, 40);
+		expect(lines.join("\n")).toContain("c();");
+	});
+
+	it("Given 20 wrapped source lines at 40 cols then the marker counts hidden source lines", () => {
+		const code = Array.from({ length: 20 }, (_, i) => `const line${i + 1} = "${"z".repeat(60)}";`).join("\n");
+		const lines = renderStreamingCall({ language: "js", code, summary: "wrapped twenty" }, 40);
+		const text = lines.join("\n");
+		const marker = lines.find((line) => line.includes("earlier code lines"));
+		expect(marker).toBeDefined();
+		const count = Number(/(\d+) earlier code lines/u.exec(marker ?? "")?.[1]);
+		expect(count).toBeGreaterThanOrEqual(15);
+		expect(text).toContain("line20");
+	});
+
+	it("Given a single source line taller than the window then its last rows show with the marker", () => {
+		const code = `const big = "${"w".repeat(500)}";`;
+		const lines = renderStreamingCall({ language: "js", code, summary: "tall" }, 40);
+		const text = lines.join("\n");
+		expect(text).toContain("earlier code lines");
+		expect(text).toContain("w".repeat(20));
+	});
+});
+
+describe("eval live block: truly constant total height (senpi#2933 review HIGH-C)", () => {
+	const HEIGHTS_WIDTHS = [40, 80, 200] as const;
+	it.each(HEIGHTS_WIDTHS)("Given every tail shape at %i cols then the total height is identical", (width) => {
+		const heights: Array<[string, number]> = [];
+		const push = (label: string, cell: Partial<EvalCellResult>) => {
+			heights.push([
+				label,
+				renderResult(cellResult({ status: "running", startedAt: STARTED_AT, ...cell }), {
+					width,
+					now: STARTED_AT + 1_000,
+				}).length,
+			]);
+		};
+		push("no-tail", { code: "a();" });
+		push("1-output", { code: "a();", output: "one line" });
+		push("2-output", { code: "a();", output: "one\ntwo" });
+		push("10-output", { code: "a();", output: Array.from({ length: 10 }, (_, i) => `out-${i + 1}`).join("\n") });
+		push("1-event", { code: "a();", statusEvents: [{ op: "log", message: "one" }] });
+		push("200-char-event", { code: "a();", statusEvents: [{ op: "log", message: "x".repeat(200) }] });
+		push("4-line-event", { code: "a();", statusEvents: [{ op: "log", message: "line1\nline2\nline3\nline4" }] });
+		push("2x100-events", {
+			code: "a();",
+			statusEvents: [
+				{ op: "log", message: "a".repeat(100) },
+				{ op: "log", message: "b".repeat(100) },
+			],
+		});
+		push("3-events", {
+			code: "a();",
+			statusEvents: Array.from({ length: 3 }, (_, i) => ({ op: "log", message: `event-${i + 1}` })),
+		});
+		push("output+event", { code: "a();", output: "chunk", statusEvents: [{ op: "log", message: "one" }] });
+		expect(new Set(heights.map(([, h]) => h)).size, JSON.stringify(heights)).toBe(1);
+	});
+
+	it("Given a long status event at 40 cols then the event truncates with an ellipsis rather than wrapping past the budget", () => {
+		const lines = renderResult(
+			cellResult({
+				status: "running",
+				startedAt: STARTED_AT,
+				statusEvents: [{ op: "log", message: "x".repeat(200) }],
+			}),
+			{ width: 40, now: STARTED_AT + 1_000 },
+		);
+		for (const line of lines) expect(visibleWidth(line)).toBeLessThanOrEqual(40);
+		expect(lines.join("\n")).toContain("…");
+	});
+
+	it("Given one output line when rendered then the block keeps the full height (no flicker)", () => {
+		const one = renderResult(cellResult({ status: "running", startedAt: STARTED_AT, output: "one line" }), {
+			width: 80,
+			now: STARTED_AT + 1_000,
+		});
+		const none = renderResult(cellResult({ status: "running", startedAt: STARTED_AT }), {
+			width: 80,
+			now: STARTED_AT + 1_000,
+		});
+		expect(one).toHaveLength(none.length);
+	});
+});

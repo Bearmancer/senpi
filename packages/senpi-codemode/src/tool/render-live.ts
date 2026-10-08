@@ -1,4 +1,4 @@
-import { sanitizeTerminalLabel, visibleWidth } from "@code-yeongyu/senpi";
+import { sanitizeTerminalLabel, truncateToVisualLines, visibleWidth } from "@code-yeongyu/senpi";
 import { highlightedCode } from "./code-preview.ts";
 import { leadsWithHeadline, liveHeadline } from "./live-headline.ts";
 import {
@@ -168,11 +168,11 @@ export function renderLiveCellFrame(
 	const lines = renderPrefixed(cellHeader(cell, environment, badges), environment, FRAME_HEADER_PREFIX);
 	const hasOutput = cell.output.trimEnd().length > 0;
 	const hasStatus = (cell.statusEvents ?? []).some((event) => event.op !== "agent");
+	// The tail always keeps its full row count (review HIGH-C): a short section is padded, and
+	// each section fits itself inside the budget in visual rows with exact omission markers.
 	const tail: string[] = [];
-	if (hasOutput) appendLines(tail, cellOutputSection(cell, environment, 0, LIVE_TAIL_ROWS));
+	if (hasOutput) appendLines(tail, cellOutputSection(cell, environment, LIVE_TAIL_ROWS, LIVE_TAIL_ROWS));
 	else if (hasStatus) appendLines(tail, cellStatusSection(cell, environment, LIVE_TAIL_ROWS));
-	// The sections fit themselves inside the tail budget with exact omission markers, so the
-	// block's total never changes and no count is understated (review MEDIUM-2, HIGH-2).
 	const codeRows = tail.length === 0 ? LIVE_BODY_ROWS : LIVE_BODY_ROWS - LIVE_TAIL_ROWS;
 	appendLines(lines, liveCodeWindow(cell, environment, codeRows));
 	appendLines(lines, tail);
@@ -185,41 +185,68 @@ function liveCodeWindow(cell: EvalCellResult, environment: RenderEnvironment, wi
 	// Streamed code is not yet trusted input: a hostile or half-arrived chunk can carry escape and
 	// control characters, and the collapsed row must stay inert in the terminal (senpi#2839).
 	const code = highlightedCode(sanitizeCellCode(cell.code), cell.language, environment.theme, environment.repaint);
-	// The marker counts SOURCE lines (LOW-4); the shown rows stay visual lines so wrapping never
-	// changes the height. When the source overflows, the marker takes one of the window's rows.
-	const sourceLines = code.split("\n").length;
-	const budget = sourceLines > windowRows ? windowRows - 1 : windowRows;
-	const preview = previewText(code, budget, innerWidth);
-	const skippedSources = Math.max(0, sourceLines - preview.lines.length);
+	// Fill from the bottom by VISUAL rows so the newest source line is always fully visible
+	// (review HIGH-B); the marker counts hidden SOURCE lines. When the source overflows, the
+	// marker takes one of the window's rows.
+	const allRows = visualLines(code, innerWidth);
+	const totalRows = allRows.length;
+	const fits = totalRows <= windowRows;
+	const budget = fits ? windowRows : windowRows - 1;
+	const kept = allRows.slice(Math.max(0, totalRows - budget));
+	const skippedVisual = totalRows - kept.length;
+	const hiddenSourceLines = countHiddenSourceLines(code, innerWidth, skippedVisual);
 	const windowLines: string[] = [];
-	if (preview.skipped > 0)
+	if (!fits)
 		appendLines(
 			windowLines,
-			renderPrefixed(`${skippedSources} earlier code lines`, environment, {
+			renderPrefixed(`${hiddenSourceLines} earlier code lines`, environment, {
 				prefix: "│ ",
 				continuation: "│ ",
 				color: "muted",
 			}),
 		);
-	for (const line of preview.lines) appendLines(windowLines, renderPrefixed(line, environment, FRAME_INNER_PREFIX));
+	for (const line of kept) appendLines(windowLines, renderPrefixed(line, environment, FRAME_INNER_PREFIX));
 	while (windowLines.length < windowRows) windowLines.push(style(environment.theme, "borderMuted", "│ "));
-	return windowLines.slice(0, windowRows);
+	return windowLines;
+}
+
+// The source lines whose start lies above the first shown row: walk the code's own lines,
+// wrapping each, and count the lines whose visual rows are entirely hidden (review HIGH-B).
+function countHiddenSourceLines(code: string, innerWidth: number, skippedVisual: number): number {
+	if (skippedVisual <= 0) return 0;
+	let consumed = 0;
+	let hidden = 0;
+	for (const sourceLine of code.split("\n")) {
+		const rows = Math.max(1, visualLines(sourceLine, innerWidth).length);
+		if (consumed + rows > skippedVisual) break;
+		consumed += rows;
+		hidden += 1;
+	}
+	return hidden;
+}
+
+const TERMINAL_ESCAPE_SEQUENCE =
+	/(?:\u001B\][\s\S]*?(?:\u0007|\u001B\\|\u009C))|[\u001B\u009B][[\]()#;?]*(?:\d{1,4}(?:[;:]\d{0,4})*)?[\dA-PR-TZcf-nq-uy=><~]/g;
+const TERMINAL_CONTROL_RUN = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f]+/g;
+
+// The window strips escape sequences and control characters (senpi#2839) but never collapses
+// whitespace: indentation and inner spacing carry meaning in every language (review HIGH-A),
+// and tabs expand to two spaces.
+function visualLines(text: string, width: number): string[] {
+	return truncateToVisualLines(text, Number.POSITIVE_INFINITY, width).visualLines.map((line) => line.trimEnd());
 }
 
 function sanitizeCellCode(code: string): string {
 	return code
 		.split("\n")
-		.map((line) => sanitizeTerminalLabel(line))
+		.map((line) => line.replace(TERMINAL_ESCAPE_SEQUENCE, "").replace(TERMINAL_CONTROL_RUN, "").replace(/\t/g, "  "))
 		.join("\n");
 }
-
-// The window's "N earlier code lines" marker counts SOURCE lines (LOW-4), while the shown rows
-// stay visual lines so wrapping never changes the height.
 
 export function cellOutputSection(
 	cell: EvalCellResult,
 	environment: RenderEnvironment,
-	maxLines: number,
+	maxLinesOrBudget: number,
 	rowBudget?: number,
 ): string[] {
 	const output = cell.output.trimEnd();
@@ -232,37 +259,41 @@ export function cellOutputSection(
 		.join("\n");
 	const innerWidth = Math.max(1, environment.width - 2);
 	if (rowBudget !== undefined) {
-		// Fit the whole section (header, omission marker, lines) inside the row budget; the
-		// marker counts every line not shown, exactly (review MEDIUM-2).
-		const preview = previewText(styledOutput, Math.max(1, rowBudget - 1), innerWidth);
-		if (preview.skipped === 0) {
-			for (const line of preview.lines) appendLines(lines, renderPrefixed(line, environment, FRAME_INNER_PREFIX));
-			return lines;
+		// Fit and pad inside the row budget (review HIGH-C): header + body never exceed the
+		// budget, the marker consumes one body row when anything is hidden, and a short section
+		// is padded so the block's total height never changes.
+		const bodyRows = rowBudget - 1;
+		const preview = previewText(styledOutput, bodyRows, innerWidth);
+		const body: string[] = [];
+		if (preview.skipped > 0) {
+			appendLines(
+				body,
+				renderPrefixed(`${preview.skipped} earlier output lines`, environment, {
+					prefix: "│ ",
+					continuation: "│ ",
+					color: "muted",
+				}),
+			);
+			for (const line of preview.lines.slice(-(bodyRows - 1)))
+				appendLines(body, renderPrefixed(line, environment, FRAME_INNER_PREFIX));
+		} else {
+			for (const line of preview.lines) appendLines(body, renderPrefixed(line, environment, FRAME_INNER_PREFIX));
 		}
-		const kept = preview.lines.slice(-Math.max(0, rowBudget - 2));
-		const omitted = preview.skipped + preview.lines.length - kept.length;
-		appendLines(
-			lines,
-			renderPrefixed(`${omitted} earlier output lines`, environment, {
-				prefix: "│ ",
-				continuation: "│ ",
-				color: "muted",
-			}),
-		);
-		for (const line of kept) appendLines(lines, renderPrefixed(line, environment, FRAME_INNER_PREFIX));
-		return lines;
+		const rows = [...lines, ...body];
+		while (rows.length < rowBudget) rows.push(style(environment.theme, "borderMuted", "│ "));
+		return rows.slice(0, rowBudget);
 	}
-	const outputPreview = previewText(styledOutput, maxLines, innerWidth);
-	if (outputPreview.skipped > 0)
+	const preview = previewText(styledOutput, maxLinesOrBudget, innerWidth);
+	if (preview.skipped > 0)
 		appendLines(
 			lines,
-			renderPrefixed(`${outputPreview.skipped} earlier output lines`, environment, {
+			renderPrefixed(`${preview.skipped} earlier output lines`, environment, {
 				prefix: "│ ",
 				continuation: "│ ",
 				color: "muted",
 			}),
 		);
-	for (const line of outputPreview.lines) appendLines(lines, renderPrefixed(line, environment, FRAME_INNER_PREFIX));
+	for (const line of preview.lines) appendLines(lines, renderPrefixed(line, environment, FRAME_INNER_PREFIX));
 	return lines;
 }
 
@@ -275,29 +306,59 @@ export function cellStatusSection(cell: EvalCellResult, environment: RenderEnvir
 			appendLines(lines, renderPrefixed(line, environment, FRAME_INNER_PREFIX));
 		return lines;
 	}
-	// Fit the whole section (header, omission marker, event rows) inside the row budget, folding
-	// the stored bound marker and the sliced events into one exact omission count (review HIGH-2).
+	// Budget in visual ROWS, not events (review HIGH-C): over-long or multi-line events wrap
+	// inside the budget, and the newest event truncates with an ellipsis rather than wrap past it.
+	const innerWidth = Math.max(1, environment.width - 2);
 	const first = statusEvents[0];
 	const omittedByBound = first?.op === "status-events-omitted" && typeof first.count === "number" ? first.count : 0;
 	const visible = omittedByBound > 0 ? statusEvents.slice(1) : statusEvents;
-	let retained = visible.slice(-Math.max(0, rowBudget - 1));
-	let skipped = visible.length - retained.length + omittedByBound;
-	if (skipped > 0) {
-		retained = visible.slice(-Math.max(0, rowBudget - 2));
-		skipped = visible.length - retained.length + omittedByBound;
+	// An over-long or multi-line event truncates with an ellipsis instead of wrapping past the
+	// tail budget (review HIGH-C): the shown event rows never exceed the section's body rows.
+	const bodyRows = rowBudget - 1;
+	// When anything is hidden, the fold marker takes one body row, so the shown events are
+	// bodyRows - 1; the marker counts exactly the events not shown plus the stored bound
+	// (review HIGH-2, HIGH-C).
+	const willOverflow = visible.length > bodyRows;
+	const retained = willOverflow ? visible.slice(-Math.max(0, bodyRows - 1)) : visible;
+	const skipped = visible.length - retained.length + omittedByBound;
+	const shownEventRows = bodyRows - (skipped > 0 ? 1 : 0);
+	const rendered = renderStatusEvents(retained, { ...environment, expanded: true });
+	const eventRows: string[] = [];
+	let clipped = false;
+	for (const line of rendered) {
+		const wrapped = renderPrefixed(line, environment, FRAME_INNER_PREFIX);
+		for (const row of wrapped) {
+			if (eventRows.length >= shownEventRows) {
+				clipped = true;
+				break;
+			}
+			eventRows.push(row);
+		}
+		if (clipped) break;
 	}
+	// An over-long or multi-line event truncates with an ellipsis instead of wrapping past the
+	// budget (review HIGH-C): the last shown row carries the cut.
+	if (clipped && eventRows.length > 0) {
+		const last = eventRows[eventRows.length - 1] ?? "";
+		const trimmed = last.replace(/\s*$/u, "");
+		eventRows[eventRows.length - 1] = `${trimmed.slice(0, Math.max(0, trimmed.length - 1))}…`;
+	}
+	const headerRow = renderPrefixed("status", environment, FRAME_SECTION_PREFIX);
+	const body: string[] = [];
 	if (skipped > 0)
 		appendLines(
-			lines,
+			body,
 			renderPrefixed(`├ … ${skipped} earlier status events`, environment, {
 				prefix: "│ ",
 				continuation: "│ ",
 				color: "dim",
 			}),
 		);
-	for (const line of renderStatusEvents(retained, { ...environment, expanded: true }))
-		appendLines(lines, renderPrefixed(line, environment, FRAME_INNER_PREFIX));
-	return lines;
+	appendLines(body, eventRows);
+	const keptBody = body.slice(-(rowBudget - 1));
+	const rows = [...headerRow, ...keptBody];
+	while (rows.length < rowBudget) rows.push(style(environment.theme, "borderMuted", "│ "));
+	return rows;
 }
 
 export { FRAME_HEADER_PREFIX, FRAME_INNER_PREFIX, FRAME_SECTION_PREFIX };
