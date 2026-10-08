@@ -15,6 +15,9 @@ export interface MovedPathProbe {
 	readonly timedOut: boolean;
 	/** Whether `path` lies under a listed prefix this probe found re-used (its own `.git`): never moved. */
 	cleared(path: string): boolean;
+	/** After this, every remaining step answers `failedReply` without filesystem work (the call's deadline passed). */
+	stop(): void;
+	readonly stopped: boolean;
 }
 
 export async function pathExists(path: string): Promise<boolean> {
@@ -50,6 +53,7 @@ async function answer(step: ResolverStep, onTimeout: () => void): Promise<unknow
  */
 export function createMovedPathProbe(platform: PathPlatform = currentPathPlatform()): MovedPathProbe {
 	let timedOut = false;
+	let stopped = false;
 	const reused = new Set<string>();
 	const onReused = (oldRoot: string, prefix: readonly string[]) => reused.add(prefixKey(oldRoot, prefix));
 	const onTimeout = () => {
@@ -59,6 +63,12 @@ export function createMovedPathProbe(platform: PathPlatform = currentPathPlatfor
 		get timedOut() {
 			return timedOut;
 		},
+		get stopped() {
+			return stopped;
+		},
+		stop() {
+			stopped = true;
+		},
 		cleared(path) {
 			const key = knownPrefixKey(path, platform);
 			return key !== undefined && reused.has(key);
@@ -66,7 +76,7 @@ export function createMovedPathProbe(platform: PathPlatform = currentPathPlatfor
 		async resolve(path) {
 			const walk = movedPathWalk(path, platform, onReused);
 			let step = walk.next();
-			while (!step.done) step = walk.next(await answer(step.value, onTimeout));
+			while (!step.done) step = walk.next(stopped ? failedReply(step.value) : await answer(step.value, onTimeout));
 			return step.value;
 		},
 	};

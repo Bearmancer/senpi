@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { builtinExtensions } from "../../src/core/extensions/builtin/index.ts";
 import { flushGuardLog, guardLogPath } from "../../src/core/extensions/builtin/moved-path-guard/guard-log.ts";
+import { STEP_DEADLINE_MS } from "../../src/core/extensions/builtin/moved-path-guard/resolve-async.ts";
 import { createHarness, type Harness } from "./harness.ts";
 import { createMovedLayout, type MovedLayout, runTool } from "./moved-path-guard-fixtures.ts";
 
@@ -11,12 +12,17 @@ import { createMovedLayout, type MovedLayout, runTool } from "./moved-path-guard
 // spelled with SLOW never finishes canonicalizing here, standing in for a wedged mount; the guard's own deadline,
 // not filesystem speed, decides when it gives up.
 
+const slowStarts = vi.hoisted(() => ({ count: 0 }));
+
 vi.mock("../../src/core/tools/filesystem-policy.ts", async (importOriginal) => {
 	const actual = await importOriginal<typeof import("../../src/core/tools/filesystem-policy.ts")>();
 	return {
 		...actual,
-		canonicalizeFilesystemPath: (path: string) =>
-			path.includes("SLOW") ? new Promise<string>(() => {}) : actual.canonicalizeFilesystemPath(path),
+		canonicalizeFilesystemPath: (path: string) => {
+			if (!path.includes("SLOW")) return actual.canonicalizeFilesystemPath(path);
+			slowStarts.count++;
+			return new Promise<string>(() => {});
+		},
 	};
 });
 
@@ -82,6 +88,19 @@ describe("moved-path-guard step deadline (#2898)", () => {
 		expect(await guardLogEvents()).toContainEqual(
 			expect.objectContaining({ event: "call_bound_reached", bound: "deadline" }),
 		);
+	});
+
+	// Third review L-c: once the call deadline passes, the probe loop starts no further filesystem work.
+	it("starts no filesystem step after the call deadline", async () => {
+		const { layout, harness } = await setup();
+		const slow = Array.from({ length: 20 }, (_, index) => join(layout.home, "elsewhere", `SLOW${index}`)).join(" ");
+
+		expect(await runTool(harness, "bash", { command: `touch ${slow}` })).toMatchObject({ outcome: "ok" });
+		const startedByDeadline = slowStarts.count;
+		// Time is the behavior here: a loop still running would start its next step within one step deadline.
+		await new Promise((resolve) => setTimeout(resolve, STEP_DEADLINE_MS + 200));
+
+		expect(slowStarts.count).toBe(startedByDeadline);
 	});
 
 	it("still allows an unrelated path whose lookup times out", async () => {

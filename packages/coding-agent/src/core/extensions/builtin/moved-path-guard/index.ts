@@ -80,6 +80,7 @@ async function checkTargets(list: readonly Target[]): Promise<MovedPath | undefi
 	let probes = 0;
 	const probing = (async () => {
 		for (const target of ordered) {
+			if (probe.stopped) return undefined;
 			// One decision per listed prefix: a prefix found re-used clears every later target under it, at no cost.
 			if (probe.cleared(target.path)) continue;
 			if (probes >= MAX_PROBED_PATHS) {
@@ -94,6 +95,7 @@ async function checkTargets(list: readonly Target[]): Promise<MovedPath | undefi
 		return undefined;
 	})();
 	const result = await withResolutionDeadline(probing, CALL_DEADLINE_MS);
+	if (result === RESOLUTION_TIMED_OUT) probe.stop();
 	if (probe.timedOut) logGuardEvent("debug", "call_bound_reached", { bound: "step", count: String(ordered.length) });
 	if (unprobed.length > 0)
 		logGuardEvent("debug", "call_bound_reached", { bound: "paths", count: String(ordered.length) });
