@@ -10,7 +10,7 @@
 //   node .agents/skills/senpi-qa/scripts/moved-path-guard-qa.mjs --self-test
 //   node .agents/skills/senpi-qa/scripts/moved-path-guard-qa.mjs --self-test --evidence moved-path-guard
 import { execFileSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createChecks, evidenceDir, guardRealAuth, installCleanupHooks, makeSandbox, runCli } from "./lib/common.mjs";
 import { startFakeModelServer } from "./lib/fake-model-server.mjs";
@@ -77,6 +77,42 @@ function toolResultTexts(requests) {
 		}
 	}
 	return [...new Set(texts)];
+}
+
+// Fifth review M-2: HOME is a symlink to the real home, and the desktop wrote movedTo realpath'd. After one refusal has
+// trusted the breadcrumb, 70 unlisted ~/.t3 paths ahead of a moved target must not push it past the probe budget.
+async function aliasedHomeCase(checks, preset) {
+	const box = makeSandbox("moved-path-guard-qa-alias");
+	const realHome = realpathSync(box.dir);
+	const link = `${realHome}-homelink`;
+	symlinkSync(realHome, link);
+	const { oldHome, newHome } = seedMovedHome(realHome);
+	const unlisted = Array.from({ length: 70 }, (_, index) => `~/.t3/unlisted/d${index}`).join(" ");
+	const server = await startFakeModelServer({
+		turns: [
+			{ toolCalls: [shellInEval(`touch ~/.t3/${WORKTREE}/trust.txt`)] },
+			{ toolCalls: [shellInEval(`mkdir -p ~/.t3/unlisted && touch ${unlisted} ~/.t3/${WORKTREE}/alias.txt`)] },
+			{ text: "done" },
+		],
+	});
+	writeMockModelsJson(box.agentDir, server, API);
+	const result = await runCli(
+		["--provider", preset.provider, "--model", preset.modelId, "--no-context-files", "--no-extensions", "--approve", "--print", "Run the scripted tools, then reply done."],
+		{ env: hermeticEnv({ ...box.env, HOME: link, USERPROFILE: link }), cwd: box.cwd, timeoutMs: 180000 },
+	);
+	const results = toolResultTexts(server.requests);
+	const refused = results.find((text) => /moved/i.test(text) && text.includes(join(newHome, WORKTREE, "alias.txt")));
+	checks.ok("aliased HOME: run completed", result.code === 0, `code=${result.code}`);
+	checks.ok(
+		"M-2: with a symlinked HOME a moved target behind 70 unlisted ~/.t3 paths is refused",
+		refused !== undefined && !existsSync(join(oldHome, WORKTREE, "alias.txt")),
+		refused?.slice(0, 160) ?? results.at(-1)?.slice(0, 160) ?? "no refusal",
+	);
+	await server.stop();
+	chmodSync(join(oldHome, "worktrees", "slow-project"), 0o700);
+	rmSync(link, { force: true });
+	box.cleanup();
+	return results.map((text) => text.replaceAll(realHome, "<HOME>"));
 }
 
 async function selfTest() {
@@ -170,17 +206,18 @@ async function selfTest() {
 	checks.ok("H-fifo: a FIFO named as a breadcrumb never blocks a call", fifoOk !== undefined, fifoOk?.slice(0, 120) ?? "call blocked or failed");
 	checks.ok("the moved home's existing file is untouched", readFileSync(join(newWorktree, "notes.txt"), "utf8") === "moved content\n", "");
 
-	if (evidenceSlug !== undefined) {
-		writeFileSync(
-			join(evidenceDir(evidenceSlug), "moved-path-guard.json"),
-			JSON.stringify({ exitCode: result.code, requestCount: server.requests.length, toolResults: results.map((text) => text.replaceAll(box.dir, "<HOME>")) }, null, 2),
-		);
-	}
 	if (result.code !== 0) process.stderr.write(`\n--- stderr tail ---\n${result.stderr.slice(-800)}\n`);
 	await server.stop();
 	chmodSync(join(box.dir, "locked"), 0o700);
 	chmodSync(join(oldHome, "worktrees", "slow-project"), 0o700);
 	box.cleanup();
+	const aliasedResults = await aliasedHomeCase(checks, preset);
+	if (evidenceSlug !== undefined) {
+		writeFileSync(
+			join(evidenceDir(evidenceSlug), "moved-path-guard.json"),
+			JSON.stringify({ exitCode: result.code, requestCount: server.requests.length, toolResults: results.map((text) => text.replaceAll(box.dir, "<HOME>")), aliasedHomeToolResults: aliasedResults }, null, 2),
+		);
+	}
 	checkRealAuthUnchanged(checks, guard);
 	process.exit(checks.finish() ? 0 : 1);
 }
