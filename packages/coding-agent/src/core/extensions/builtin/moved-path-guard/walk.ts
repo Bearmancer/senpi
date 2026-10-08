@@ -14,7 +14,7 @@ import {
 	trustedBreadcrumb,
 	trustedFolder,
 } from "./breadcrumb-trust.ts";
-import { prefixKey, rememberedReused, rememberReused, rememberTrustedBreadcrumb } from "./known-moves.ts";
+import { isLegacyRoot, prefixKey, rememberedReused, rememberReused, rememberTrustedBreadcrumb } from "./known-moves.ts";
 import { type PathPlatform, sameSegment } from "./path-match.ts";
 
 /** One filesystem question the walk asks; the sync and async resolvers answer it with their own I/O. */
@@ -43,17 +43,27 @@ function* homeSpellings(): Walk<string[]> {
 type Walk<T> = Generator<ResolverStep, T, unknown>;
 
 /**
- * The old root `dir` as the walk's caller spelled it: `path` without the segments `canonical` has below `dir`, when
- * `path` ends in the same segments (a symlink above the old root, such as `~/.t3` or `$HOME`, changes only what lies
- * above them). `undefined` when they differ, as when a symlink sits below the old root.
+ * The old root `dir` as the walk's caller spelled it, for the text fallback (sixth review MEDIUM-1): `path` without the
+ * segments `canonical` has below `dir`, when `path` ends in the same segment names, and only when that is a legacy
+ * data root under one of the user's home spellings (`~/.t3`, `~/.omo-app`), the one place a symlink (`~/.t3` itself
+ * or `$HOME`) makes commands name the root differently from the walk. Matching names alone are not proof: a
+ * same-named symlink elsewhere (`~/code/worktrees -> ~/.t3/worktrees`, or `C:\worktrees` on Windows) would make its
+ * parent an old-root spelling and refuse live paths there on a step timeout (seventh review LOW-A). The check is by
+ * text, so it adds no filesystem work. `undefined` otherwise.
  */
-function calledSpelling(path: string, canonical: string, dir: string, platform: PathPlatform): string | undefined {
+function calledSpelling(
+	path: string,
+	canonical: string,
+	dir: string,
+	homes: readonly string[],
+	platform: PathPlatform,
+): string | undefined {
 	let called = resolve(path);
 	for (let below = canonical; below !== dir; below = dirname(below)) {
 		if (dirname(called) === called || !sameSegment(basename(called), basename(below), platform)) return undefined;
 		called = dirname(called);
 	}
-	return called;
+	return isLegacyRoot(called, homes, platform) ? called : undefined;
 }
 
 type OnReused = (oldRoot: string, breadcrumb: MovedBreadcrumb, prefix: readonly string[]) => void;
@@ -89,7 +99,13 @@ function* movedOnce(path: string, platform: PathPlatform, onReused?: OnReused): 
 				reused = typeof answer === "boolean" ? answer : (rememberedReused(key) ?? false);
 			}
 			if (reused) onReused?.(dir, breadcrumb, match.prefix);
-			rememberTrustedBreadcrumb(dir, calledSpelling(path, canonical, dir, platform), breadcrumb, homes, platform);
+			rememberTrustedBreadcrumb(
+				dir,
+				calledSpelling(path, canonical, dir, homes, platform),
+				breadcrumb,
+				homes,
+				platform,
+			);
 			if (!reused) return match.moved;
 		}
 		if (dir === stop || dirname(dir) === dir) return undefined;

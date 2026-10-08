@@ -4,8 +4,18 @@ import type { MovedBreadcrumb } from "./breadcrumb.ts";
 import type { MovedPath } from "./breadcrumb-trust.ts";
 import { currentPathPlatform, matchMovedPrefix, type PathPlatform } from "./path-match.ts";
 
+const LEGACY_ROOT_NAMES = [".t3", ".omo-app"] as const;
+
 /** The OmO desktop's legacy data roots (omo-desktop-app#1829), checked before any other path a call names. */
-export const legacyRoots = (): string[] => [join(homedir(), ".t3"), join(homedir(), ".omo-app")];
+export const legacyRoots = (): string[] => LEGACY_ROOT_NAMES.map((name) => join(homedir(), name));
+
+/** Whether `path` is, by text, a legacy data root directly under one of the user's home spellings. */
+export const isLegacyRoot = (path: string, homes: readonly string[], platform: PathPlatform): boolean =>
+	homes.some((home) =>
+		LEGACY_ROOT_NAMES.some(
+			(name) => matchMovedPrefix(path, join(home, name), [[]], platform)?.remainder.length === 0,
+		),
+	);
 
 /** A trusted breadcrumb and the old root it was walked at (realpath'd), under every spelling the text checks match. */
 interface KnownRoot {

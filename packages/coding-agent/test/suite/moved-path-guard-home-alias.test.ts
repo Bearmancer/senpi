@@ -128,3 +128,44 @@ describe.each([
 		expect(result.outcome).toBe("ok");
 	});
 });
+
+// Seventh review LOW-A: a same-named symlink elsewhere (~/code/worktrees -> ~/.t3/worktrees) must not make ~/code an
+// old-root spelling, or a live ~/code/userdata/omo-sessions path is refused when a step times out.
+describe("moved-path-guard called spelling of an old root (#2898)", () => {
+	const layouts: MovedLayout[] = [];
+	const harnesses: Harness[] = [];
+
+	afterEach(() => {
+		stall.breadcrumb = "";
+		while (harnesses.length > 0) harnesses.pop()?.cleanup();
+		while (layouts.length > 0) layouts.pop()?.cleanup();
+	});
+
+	it("does not take a same-named symlink's parent for the old root", async () => {
+		if (!guard) throw new Error("moved-path-guard is not registered");
+		const layout = createMovedLayout();
+		layouts.push(layout);
+		const code = join(layout.home, "code");
+		mkdirSync(join(layout.oldRoot, "worktrees", "app"), { recursive: true });
+		mkdirSync(join(layout.oldRoot, "unlisted"), { recursive: true });
+		mkdirSync(join(code, "userdata", "omo-sessions"), { recursive: true });
+		symlinkSync(join(layout.oldRoot, "worktrees"), join(code, "worktrees"));
+		const harness = await createHarness({
+			cwd: layout.home,
+			extensionFactories: [guard.factory],
+			initialActiveToolNames: ["bash"],
+		});
+		harnesses.push(harness);
+		await harness.session.bindExtensions({});
+		expect(await runTool(harness, "bash", { command: "touch ~/code/worktrees/app/w1/a" })).toMatchObject({
+			outcome: "blocked",
+		});
+		stall.breadcrumb = join(layout.oldRoot, "omo-desktop-moved.json");
+
+		const result = await runTool(harness, "bash", {
+			command: "touch ~/.t3/unlisted/q ~/code/userdata/omo-sessions/x",
+		});
+
+		expect(result.outcome).toBe("ok");
+	});
+});
