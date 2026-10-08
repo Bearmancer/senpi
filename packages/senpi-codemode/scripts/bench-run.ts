@@ -78,11 +78,15 @@ export const SPIKE_RETRIES = 3;
  * block's start load) plus the 1-minute average's jitter, or the contamination ceiling if that is higher. The
  * discarded attempt's own start load is not used: a spike already under way when the block began would set the
  * target above the spike and end the wait at once. The ceiling alone never settles on a host whose normal load is
- * above it (senpi#2909).
+ * above it (senpi#2909). The target is capped 10 under the refusal ceiling, so a calm level near 80 cannot set a target
+ * a retry would start into (senpi#2922).
  */
 export function settleTarget(calmLoad: number): number {
-	return Math.max(contaminationCeiling(availableParallelism()), calmLoad + SETTLE_JITTER);
+	return Math.min(SETTLE_CAP, Math.max(contaminationCeiling(availableParallelism()), calmLoad + SETTLE_JITTER));
 }
+
+/** A retry never starts at or near the refusal ceiling it would immediately cross again (senpi#2922). */
+const SETTLE_CAP = LOAD_REFUSAL - 10;
 
 const SETTLE_JITTER = 5;
 
