@@ -1,7 +1,7 @@
 import type { ExtensionAPI, ExtensionContext, ToolDefinition } from "../../types.ts";
 import { WAKE_SOURCE_STATE_EVENT, type WakeSourceStateEvent } from "../monitor-state-event.ts";
 import { TOOL_NAMES } from "./family.ts";
-import { formatResultDetails, formatResultText, formatUserMessage } from "./format.ts";
+import { formatModelAnswer, formatResultDetails, formatUserMessage } from "./format.ts";
 import {
 	ASK_USER_ASKED_EVENT,
 	ASK_USER_QUESTION_ENTRY,
@@ -41,8 +41,8 @@ function result(
 	text?: string,
 ): Awaited<ReturnType<ToolDefinition["execute"]>> {
 	return {
-		content: [{ type: "text", text: text ?? formatResultText(variant, response, request.questions) }],
-		details: formatResultDetails(variant, response, request.questions),
+		content: [{ type: "text", text: text ?? formatModelAnswer(response, request.requestId, request.questions).text }],
+		details: formatResultDetails(variant, response, request.requestId, request.questions),
 	};
 }
 /**

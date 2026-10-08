@@ -3839,7 +3839,8 @@ A multi-session host and a terminal control endpoint settle a `question` answer 
 
 - `cancelled: true` dismisses the question.
 - Otherwise `answers` and `comment` are read; a `value` or `confirmed` in the same frame belongs to the other dialog methods and is ignored.
-- A non-blank `comment` settles it `comment-submitted`: the model receives `The user responded: <comment>`, then any answered questions and the headers of the unanswered ones (`Unanswered: <header>, ...`). A frame that carries its text only as `comment` with `answers: {}` is a complete answer.
+- A non-blank `comment` settles it `comment-submitted`: the model receives `The user responded: (see [The user's comment for question <id>] below)`, then any answered questions and the headers of the unanswered ones (`Unanswered: <header>, ...`), and the comment itself as a text block of its own after that. A frame that carries its text only as `comment` with `answers: {}` is a complete answer.
+- The user's own words - the comment and any typed answer that is not one of the offered labels - never reach the model inside the tool result or beside the `[Answer to question <id>]` label: the text refers to each by its label (`(see [The user's comment for question <id>] below)`, `(see [The user's answer to <header> for question <id>] below)`), and each word follows as a text block after a block holding that label - after the batch's tool results for a blocking call (rebuilt from the persisted result's `details.userWords` on every request), or after the frame block of a later answer.
 - Without a comment, any entry in `answers` settles it `answered`.
 - Neither a non-blank comment nor an answer is refused `question_incomplete`, and the question stays pending.
 

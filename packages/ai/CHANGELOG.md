@@ -18,6 +18,7 @@
 
 - The reasoning effort you pick for Claude Opus 5 / 5.5, Sonnet 5.5 and Fable 5.1 now reaches Anthropic: it was always sent as `high`. On a thinking-off turn, Opus 5.5, Sonnet 5.5 and Fable 5.1 (which cannot disable thinking) send and record effort `low`, and Opus 5 sends `thinking: disabled` with no effort ([#2912](https://github.com/code-yeongyu/senpi/issues/2912)).
 - Claude Sonnet 5.5 cache reads are priced at $0.10 per MTok (0.05x input) as Anthropic documents, and the deprecated Claude Sonnet 4.5 reports its 200K context window ([#2892](https://github.com/code-yeongyu/senpi/issues/2892)).
+- Mistral requests send consecutive user turns as one user message instead of two in a row ([#2920](https://github.com/code-yeongyu/senpi/issues/2920)).
 - Transient OAuth token refresh failures retain structured transport and HTTP facts, preserve stored credentials, and mark failed requests for same-model retry rather than ending the turn ([#2893](https://github.com/code-yeongyu/senpi/issues/2893)).
 
 ### Removed
