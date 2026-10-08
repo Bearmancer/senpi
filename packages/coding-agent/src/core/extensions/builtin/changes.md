@@ -1,3 +1,24 @@
+## 2026-10-08 - moved-path-guard: fifth review fixes (senpi#2898)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/moved-path-guard/known-moves.ts`: `knownMove` skips a listed prefix whose last `.git` answer in this process was "re-used"; a trusted old root is registered under every spelling of the user's home the walk resolved (`os.homedir()` and its realpath).
+- `walk.ts`: passes the home spellings to `rememberTrustedBreadcrumb`.
+- `breadcrumb-trust.ts`: on POSIX a trust file must have exactly one link (`nlink === 1`).
+- `resolve-async.ts`: `pathExists` returns `false` only for ENOENT/ENOTDIR and `undefined` (unknown) for any other `access` error.
+
+### Why
+
+Fifth review of PR #2900: a timed-out breadcrumb read sent a re-used worktree to a text fallback that ignored the remembered re-used decision; with a symlinked `$HOME` the text fallback and the probe ranking compared `~` spellings against the realpath'd old root and allowed moved targets; a hard link of the user's breadcrumb passed the uid/mode checks; an unreadable `.git` overwrote a remembered "re-used".
+
+### Why an extension could not handle it
+
+It is an extension.
+
+### Expected merge conflict zones
+
+- Fork-only directory.
+
 ## 2026-10-08 - moved-path-guard: fourth review fixes (senpi#2898)
 
 ### What changed
