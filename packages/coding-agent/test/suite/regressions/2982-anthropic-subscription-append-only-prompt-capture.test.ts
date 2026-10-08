@@ -3,17 +3,23 @@ import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { query } from "@anthropic-ai/claude-agent-sdk";
-import type { AssistantMessage, Message } from "@earendil-works/pi-ai";
+import { createSdkMcpServer, query, tool } from "@anthropic-ai/claude-agent-sdk";
+import type { Api, AssistantMessage, Message, Model } from "@earendil-works/pi-ai";
 import { describe, expect, it } from "vitest";
+import { buildAnthropicSubscriptionQueryOptions } from "../../../src/core/extensions/builtin/anthropic-subscription/options.ts";
 import {
 	buildPromptBlocks,
 	buildPromptStream,
 } from "../../../src/core/extensions/builtin/anthropic-subscription/prompt-bridge.ts";
+import {
+	type PromptCacheTtl,
+	pinOneShotPromptCacheTtl,
+} from "../../../src/core/extensions/builtin/anthropic-subscription/prompt-cache-ttl.ts";
 import { dedupeUltraworkBlocks } from "../../../src/core/extensions/builtin/anthropic-subscription/prompt-directive-dedupe.ts";
 
-type CapturedBlock = { type: string; text?: string; cache_control?: unknown };
+type CapturedBlock = { type: string; text?: string; cache_control?: { ttl?: string } };
 type CapturedRequest = {
+	tools?: CapturedBlock[];
 	system?: CapturedBlock[];
 	messages: { role: string; content: string | CapturedBlock[] }[];
 };
@@ -89,12 +95,27 @@ function toolLoop(rounds: number): Message[] {
 	return messages;
 }
 
-function breakpoints(request: CapturedRequest): number {
+const MODEL: Model<Api> = {
+	id: "claude-opus-5-5",
+	name: "claude-opus-5-5",
+	api: "claude-sdk-oauth",
+	provider: "anthropic-subscription",
+	baseUrl: "claude-sdk-oauth",
+	reasoning: true,
+	input: ["text"],
+	cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+	contextWindow: 200_000,
+	maxTokens: 8_192,
+};
+
+/** Cache lifetimes in request order: tools, then system, then messages. 5m is the API default. */
+function breakpointTtls(request: CapturedRequest): string[] {
 	const blocks = [
+		...(request.tools ?? []),
 		...(request.system ?? []),
 		...request.messages.flatMap((message) => (Array.isArray(message.content) ? message.content : [])),
 	];
-	return blocks.filter((block) => block.cache_control !== undefined).length;
+	return blocks.flatMap((block) => (block.cache_control === undefined ? [] : [block.cache_control.ttl ?? "5m"]));
 }
 
 function firstUserBlocks(request: CapturedRequest): CapturedBlock[] {
@@ -107,7 +128,7 @@ function stripped(block: CapturedBlock): CapturedBlock {
 	return rest;
 }
 
-async function captureTurns(turns: Message[][]): Promise<CapturedRequest[]> {
+async function captureTurns(turns: Message[][], explicitTtl?: PromptCacheTtl): Promise<CapturedRequest[]> {
 	const bodies: string[] = [];
 	const server = createServer((request, response) => {
 		let body = "";
@@ -132,28 +153,44 @@ async function captureTurns(turns: Message[][]): Promise<CapturedRequest[]> {
 		await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
 		const { port } = server.address() as AddressInfo;
 		for (const messages of turns) {
-			const blocks = dedupeUltraworkBlocks(
-				buildPromptBlocks({ messages }, undefined, undefined, { cacheBreakpoint: true }),
-			).blocks;
-			const stream = query({
-				prompt: buildPromptStream(blocks),
-				options: {
-					cwd: directory,
-					model: "opus",
-					permissionMode: "dontAsk",
-					settingSources: [],
-					maxTurns: 1,
-					env: {
-						PATH: process.env.PATH ?? "",
-						TMPDIR: directory,
-						HOME: join(directory, "home"),
-						CLAUDE_CONFIG_DIR: join(directory, "claude-config"),
-						ANTHROPIC_BASE_URL: `http://127.0.0.1:${port}`,
-						ANTHROPIC_API_KEY: "capture-probe-key",
-						CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1",
-					},
-				},
+			// The options senpi ships on a managed subscription lane, with a custom tool as senpi exposes them.
+			const options = buildAnthropicSubscriptionQueryOptions({
+				model: MODEL,
+				context: { messages, systemPrompt: "You are senpi, a coding agent.\n".repeat(80) },
+				cwd: directory,
+				providerSettings: {},
+				authLane: "oauth-slots",
 			});
+			options.mcpServers = {
+				"custom-tools": createSdkMcpServer({
+					name: "custom-tools",
+					tools: [
+						tool("eval", "capture probe tool", {}, async () => ({
+							content: [{ type: "text" as const, text: "ok" }],
+						})),
+					],
+				}),
+			};
+			options.maxTurns = 1;
+			const ttl = pinOneShotPromptCacheTtl(
+				options,
+				"oauth-slots",
+				explicitTtl === undefined ? {} : { CLAUDE_CODE_PROMPT_CACHE_TTL: explicitTtl },
+			);
+			const blocks = dedupeUltraworkBlocks(
+				buildPromptBlocks({ messages }, undefined, undefined, ttl === undefined ? {} : { cacheBreakpoint: ttl }),
+			).blocks;
+			options.env = {
+				PATH: process.env.PATH ?? "",
+				TMPDIR: directory,
+				HOME: join(directory, "home"),
+				CLAUDE_CONFIG_DIR: join(directory, "claude-config"),
+				ANTHROPIC_BASE_URL: `http://127.0.0.1:${port}`,
+				CLAUDE_CODE_OAUTH_TOKEN: "sk-ant-oat01-capture-probe",
+				CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1",
+				...options.env,
+			};
+			const stream = query({ prompt: buildPromptStream(blocks), options });
 			for await (const message of stream) {
 				if (message.type === "result") break;
 			}
@@ -165,26 +202,36 @@ async function captureTurns(turns: Message[][]): Promise<CapturedRequest[]> {
 	}
 }
 
-describe("senpi#2982 the installed Claude Code sends a rebuilt prompt as a cacheable prefix", () => {
-	it("forwards the history breakpoint and repeats the previous turn's bytes up to it", async () => {
-		// given two consecutive turns of a tool loop rebuilt the way resumeMode off sends them
-		// when the installed Claude Code sends both to a local endpoint
-		const [first, second] = await captureTurns([toolLoop(1), toolLoop(2)]);
-		if (first === undefined || second === undefined) throw new Error("expected two provider requests");
+describe("senpi#2982 the installed Claude Code sends a rebuilt subscription prompt as a cacheable prefix", () => {
+	it.each([
+		["Claude Code's subscription default", undefined, "1h"],
+		["an explicit 5-minute lifetime", "5m", "5m"],
+	] as const)(
+		"with %s, keeps every breakpoint in lifetime order and within the API's four",
+		async (_label, explicit, expected) => {
+			// given two consecutive turns of a tool loop rebuilt the way resumeMode off sends them, on a subscription lane
+			// when the installed Claude Code sends both to a local endpoint
+			const [first, second] = await captureTurns([toolLoop(1), toolLoop(2)], explicit);
+			if (first === undefined || second === undefined) throw new Error("expected two provider requests");
 
-		// then each request carries our breakpoint without exceeding the API's four
-		const firstBlocks = firstUserBlocks(first);
-		const firstBreakpoint = firstBlocks.findIndex((block) => block.cache_control !== undefined);
-		expect(firstBreakpoint).toBeGreaterThan(0);
-		expect(firstBlocks[firstBreakpoint + 1]?.text).toBe("\n</conversation_history>");
-		expect(breakpoints(first)).toBeLessThanOrEqual(4);
-		expect(breakpoints(second)).toBeLessThanOrEqual(4);
+			// then no request exceeds four breakpoints, and no longer lifetime follows a shorter one
+			for (const request of [first, second]) {
+				const ttls = breakpointTtls(request);
+				expect(ttls.length).toBeLessThanOrEqual(4);
+				expect(ttls).toEqual(ttls.map(() => expected));
+			}
 
-		// and the second request starts with the first one's bytes through that breakpoint
-		expect(
-			firstUserBlocks(second)
-				.slice(0, firstBreakpoint + 1)
-				.map(stripped),
-		).toEqual(firstBlocks.slice(0, firstBreakpoint + 1).map(stripped));
-	}, 60_000);
+			// and our breakpoint sits right before the history closer, with the second request repeating the first through it
+			const firstBlocks = firstUserBlocks(first);
+			const firstBreakpoint = firstBlocks.findIndex((block) => block.cache_control !== undefined);
+			expect(firstBreakpoint).toBeGreaterThan(0);
+			expect(firstBlocks[firstBreakpoint + 1]?.text).toBe("\n</conversation_history>");
+			expect(
+				firstUserBlocks(second)
+					.slice(0, firstBreakpoint + 1)
+					.map(stripped),
+			).toEqual(firstBlocks.slice(0, firstBreakpoint + 1).map(stripped));
+		},
+		60_000,
+	);
 });

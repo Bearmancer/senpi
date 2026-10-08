@@ -3,7 +3,7 @@ import { CONVERSATION_HISTORY_CLOSER } from "./prompt-bridge.ts";
 
 const ULTRAWORK_MODE_OPEN_TAG = "<ultrawork-mode>";
 const ULTRAWORK_MODE_CLOSE_TAG = "</ultrawork-mode>";
-const REPEATED_PLACEHOLDER = "[ultrawork directive repeated; identical to the earlier ultrawork directive above]";
+const REPEATED_PLACEHOLDER = "[ultrawork directive repeated; identical to the ultrawork directive just above]";
 
 function escapeRegExp(value: string): string {
 	return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -81,11 +81,12 @@ export function serializedPayloadBytes(blocks: readonly ContentBlockParam[]): nu
  * Invariants (load-bearing):
  * - Spans match WITHIN a single text block; a lone open tag in one block and a close tag in
  *   another never form a span.
- * - Inside the replayed history (before `CONVERSATION_HISTORY_CLOSER`), the FIRST copy of each
- *   distinct directive is kept and later identical copies become a placeholder. Each decision
+ * - Inside the replayed history (before `CONVERSATION_HISTORY_CLOSER`), a directive identical to the
+ *   directive just before it becomes a placeholder; a directive whose text differs is kept in full,
+ *   so the newest wording is always present and an A, B, A sequence keeps all three. Each decision
  *   depends only on earlier blocks, so a rebuilt prompt stays a byte prefix of the next one and
- *   reads its history from the prompt cache (senpi#2982). Keeping the last copy instead
- *   rewrote an earlier block every time a new directive arrived.
+ *   reads its history from the prompt cache (senpi#2982). Keeping the last copy instead rewrote an
+ *   earlier block every time a new directive arrived.
  * - After the closer (the current turn), nothing is collapsed: the active directive stays in full.
  * - Other block fields (`cache_control`) are preserved, and the input array is never mutated, so
  *   continuity hashes (derived from `context.messages` in `session-sync.ts`) are unaffected.
@@ -93,14 +94,14 @@ export function serializedPayloadBytes(blocks: readonly ContentBlockParam[]): nu
 export function dedupeUltraworkBlocks(blocks: readonly ContentBlockParam[]): DedupeResult {
 	if (hasNestedDirective(blocks)) return { blocks: [...blocks], collapsedDirectives: 0 };
 	const closerIndex = blocks.findIndex((block) => block.type === "text" && block.text === CONVERSATION_HISTORY_CLOSER);
-	const seen = new Set<string>();
+	let previous: string | undefined;
 	let collapsedDirectives = 0;
 	const next = blocks.map((block, index): ContentBlockParam => {
 		if (block.type !== "text" || index >= closerIndex) return block;
 		if (countSpans(block.text) === 0) return block;
 		const text = block.text.replace(ULTRAWORK_SPAN_PATTERN, (match) => {
-			if (!seen.has(match)) {
-				seen.add(match);
+			if (match !== previous) {
+				previous = match;
 				return match;
 			}
 			collapsedDirectives += 1;

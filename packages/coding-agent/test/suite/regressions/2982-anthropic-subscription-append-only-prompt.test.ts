@@ -56,7 +56,7 @@ function toolLoop(rounds: number, firstPrompt = `${DIRECTIVE} fix the bug`): Mes
 
 function rebuilt(messages: Message[]): ContentBlockParam[] {
 	const context: Context = { messages };
-	return dedupeUltraworkBlocks(buildPromptBlocks(context, undefined, undefined, { cacheBreakpoint: true })).blocks;
+	return dedupeUltraworkBlocks(buildPromptBlocks(context, undefined, undefined, { cacheBreakpoint: "1h" })).blocks;
 }
 
 function withoutBreakpoint(block: ContentBlockParam): unknown {
@@ -165,6 +165,30 @@ describe("senpi#2982 a rebuilt Anthropic Subscription prompt is append-only up t
 			.join("");
 		expect(history.indexOf(DIRECTIVE)).toBeGreaterThanOrEqual(0);
 		expect(history.indexOf(updated)).toBeGreaterThan(history.indexOf(DIRECTIVE));
+		expect(history).not.toContain("[ultrawork directive repeated");
+	});
+
+	it("keeps every copy of an A, B, A directive sequence, so the latest wording is the one just above", () => {
+		// given directive A, then a different directive B, then A again in history
+		const directiveB = "<ultrawork-mode>review before merging</ultrawork-mode>";
+		const messages: Message[] = [
+			{ role: "user", content: `${DIRECTIVE} one`, timestamp: 1 },
+			assistant([{ type: "text", text: "ok" }], 2),
+			{ role: "user", content: `${directiveB} two`, timestamp: 3 },
+			assistant([{ type: "text", text: "ok" }], 4),
+			{ role: "user", content: `${DIRECTIVE} three`, timestamp: 5 },
+			assistant([{ type: "text", text: "ok" }], 6),
+			{ role: "user", content: "current", timestamp: 7 },
+		];
+
+		// when the turn is rebuilt
+		const history = rebuilt(messages)
+			.map((block) => (block.type === "text" ? block.text : ""))
+			.join("");
+
+		// then nothing collapses, because no directive repeats the one just before it
+		expect(history.split(DIRECTIVE)).toHaveLength(3);
+		expect(history).toContain(directiveB);
 		expect(history).not.toContain("[ultrawork directive repeated");
 	});
 

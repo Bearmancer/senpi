@@ -1,6 +1,7 @@
 import type { AssistantMessage, Context } from "@earendil-works/pi-ai";
 import { replayHistoryImages } from "./cold-seed-images.ts";
 import { appendSdkContentBlocks } from "./content-blocks.ts";
+import type { PromptCacheTtl } from "./prompt-cache-ttl.ts";
 import type { ContentBlockParam, SDKUserMessage } from "./sdk-boundary.ts";
 import { mapPiToolNameToSdk } from "./tools.ts";
 
@@ -35,18 +36,22 @@ export const CONVERSATION_HISTORY_CLOSER = "\n</conversation_history>";
 
 export type PromptBlockOptions = {
 	/**
-	 * Mark the last history block as a prompt-cache breakpoint. History only grows by appending,
-	 * so the next rebuilt prompt starts with the same bytes up to here and reads them from cache
-	 * (senpi#2982). Only for one-shot queries: a resident session keeps this user message in its
-	 * transcript, where Claude Code adds its own breakpoints.
+	 * Mark the last history text block as a prompt-cache breakpoint with this lifetime. History only grows by
+	 * appending, so the next rebuilt prompt starts with the same bytes up to here and reads them from cache
+	 * (senpi#2982). The lifetime must equal the one Claude Code is pinned to (see prompt-cache-ttl.ts). Only for
+	 * one-shot queries: a resident session keeps this user message in its transcript, where Claude Code adds its own.
 	 */
-	cacheBreakpoint?: boolean;
+	cacheBreakpoint?: PromptCacheTtl;
 };
 
-function markCacheBreakpoint(blocks: ContentBlockParam[]): void {
-	const last = blocks.at(-1);
-	if (last?.type !== "text" && last?.type !== "image") return;
-	blocks[blocks.length - 1] = { ...last, cache_control: { type: "ephemeral" } };
+/** Claude Code drops a breakpoint set on an image, so the last text block of the history carries it. */
+function markCacheBreakpoint(blocks: ContentBlockParam[], historyStart: number, ttl: PromptCacheTtl): void {
+	for (let index = blocks.length - 1; index >= historyStart; index--) {
+		const block = blocks[index];
+		if (block?.type !== "text") continue;
+		blocks[index] = { ...block, cache_control: { type: "ephemeral", ttl } };
+		return;
+	}
 }
 
 export function buildPromptBlocks(
@@ -64,6 +69,7 @@ export function buildPromptBlocks(
 	const history = finalUserMessage ? context.messages.slice(0, -1) : context.messages;
 
 	if (history.length > 0) {
+		const historyStart = blocks.length;
 		pushText("<conversation_history>\n");
 		let hasPreviousTurn = false;
 		const pushPrefix = (label: string): void => {
@@ -92,7 +98,7 @@ export function buildPromptBlocks(
 			if (!appendContentBlocks(blocks, replayedImages.get(index) ?? message.content))
 				pushText("(see attached image)");
 		}
-		if (options.cacheBreakpoint) markCacheBreakpoint(blocks);
+		if (options.cacheBreakpoint !== undefined) markCacheBreakpoint(blocks, historyStart, options.cacheBreakpoint);
 		pushText(CONVERSATION_HISTORY_CLOSER);
 	}
 
@@ -106,6 +112,15 @@ export function buildPromptBlocks(
 	);
 	if (finalUserMessage && !appendContentBlocks(blocks, finalUserMessage.content)) pushText("(see attached image)");
 	return blocks;
+}
+
+/**
+ * A prompt that builds its blocks each time it is iterated. A failover retry hands the same prompt to a fresh query,
+ * and an async generator would be exhausted by then; building late also lets the blocks follow the auth lane the
+ * attempt resolved (its pinned cache lifetime).
+ */
+export function buildDeferredPromptStream(build: () => ContentBlockParam[]): AsyncIterable<SDKUserMessage> {
+	return { [Symbol.asyncIterator]: () => buildPromptStream(build())[Symbol.asyncIterator]() };
 }
 
 export function buildPromptStream(promptBlocks: ContentBlockParam[]): AsyncIterable<SDKUserMessage> {
