@@ -1339,7 +1339,21 @@
         "legacyContracts/test/eval-render-live-block.test.ts/eval live block: streaming header names the state (senpi#2933) Given a call still streaming when the host gives no spinner frame then the header still says streaming (review MEDIUM-1)",
         "legacyContracts/test/eval-render-live-block.test.ts/eval live block: constant total height with output and events (senpi#2933 review MEDIUM-2) Given streaming through running with output and status events then the total height is identical",
         "legacyContracts/test/eval-render-live-block.test.ts/eval live block: streaming header names the state (senpi#2933) Given a call still streaming when rendered then the header says streaming with the spinner and no elapsed",
-        "legacyContracts/test/eval-render-live-headline.test.ts/live eval rows lead with the cell's summary (senpi#2802) Given a running cell when its row renders collapsed then the header leads with the summary and the code window follows (senpi#2933)"
+        "legacyContracts/test/eval-render-live-headline.test.ts/live eval rows lead with the cell's summary (senpi#2802) Given a running cell when its row renders collapsed then the header leads with the summary and the code window follows (senpi#2933)",
+        "legacyContracts/test/eval-render-window-content.test.ts/eval live window keeps indentation (senpi#2933 review HIGH-A) Given an indented Python cell when streaming then the window keeps leading whitespace",
+        "legacyContracts/test/eval-render-window-content.test.ts/eval live window keeps indentation (senpi#2933 review HIGH-A) Given an indented Python cell when running then the window keeps inner spacing and indentation",
+        "legacyContracts/test/eval-render-window-content.test.ts/eval live window keeps indentation (senpi#2933 review HIGH-A) Given code with tabs then the window expands them without collapsing indentation",
+        "legacyContracts/test/eval-render-window-content.test.ts/eval live window always shows the newest line (senpi#2933 review HIGH-B) Given a 5-line JS cell with one long SQL line at 100 cols then the newest line is visible and the marker is exact",
+        "legacyContracts/test/eval-render-window-content.test.ts/eval live window always shows the newest line (senpi#2933 review HIGH-B) Given a 5-line JS cell with one long SQL line at 40 cols then the newest line is visible",
+        "legacyContracts/test/eval-render-window-content.test.ts/eval live window always shows the newest line (senpi#2933 review HIGH-B) Given 3 source lines with one 150-char line at 40 cols then the newest line stays visible",
+        "legacyContracts/test/eval-render-window-content.test.ts/eval live window always shows the newest line (senpi#2933 review HIGH-B) Given 20 wrapped source lines at 40 cols then the marker counts hidden source lines",
+        "legacyContracts/test/eval-render-window-content.test.ts/eval live window always shows the newest line (senpi#2933 review HIGH-B) Given a single source line taller than the window then its last rows show with the marker",
+        "legacyContracts/test/eval-render-window-content.test.ts/eval live block: truly constant total height (senpi#2933 review HIGH-C) Given every tail shape at 40 cols then the total height is identical",
+        "legacyContracts/test/eval-render-window-content.test.ts/eval live block: truly constant total height (senpi#2933 review HIGH-C) Given every tail shape at 80 cols then the total height is identical",
+        "legacyContracts/test/eval-render-window-content.test.ts/eval live block: truly constant total height (senpi#2933 review HIGH-C) Given every tail shape at 200 cols then the total height is identical",
+        "legacyContracts/test/eval-render-window-content.test.ts/eval live block: truly constant total height (senpi#2933 review HIGH-C) Given a long status event at 40 cols then the event truncates with an ellipsis rather than wrapping past the budget",
+        "legacyContracts/test/eval-render-window-content.test.ts/eval live block: truly constant total height (senpi#2933 review HIGH-C) Given one output line when rendered then the block keeps the full height (no flicker)",
+        "legacyContracts/test/eval-render-live-block.test.ts/eval live block: streaming header names the state (senpi#2933) Given a streaming call when the host gives no spinner frame then the call lane arms its own ticker (review MEDIUM-5)"
       ],
       "changes": [
         {
