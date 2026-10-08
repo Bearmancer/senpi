@@ -8,6 +8,11 @@ export type AffinityOptions = {
 	affinityKey?: string;
 	sessionId?: string;
 	pinnedAccount?: string;
+	/**
+	 * The account this session's SDK transcript lives under. It is kept while it can serve, so the
+	 * session does not move accounts and re-send its whole conversation (senpi#2891).
+	 */
+	preferredAccount?: string;
 	now?: number;
 	/** The requested model; an account blocked only for another model stays eligible for it. */
 	model?: string;
@@ -97,6 +102,11 @@ function selectUnblocked(
 			? undefined
 			: accounts.find((account) => account.name === options.pinnedAccount);
 	if (pinned && !isBlockedFor(pinned, now, options.model)) return pinned;
+	const preferred =
+		options.preferredAccount === undefined
+			? undefined
+			: accounts.find((account) => account.name === options.preferredAccount);
+	if (preferred && !isBlockedFor(preferred, now, options.model)) return preferred;
 	return rendezvousOrder(getAffinityKey(options), accounts).find(
 		(account) => !isBlockedFor(account, now, options.model),
 	);

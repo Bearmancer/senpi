@@ -231,6 +231,9 @@ export async function* residentSessionMessages(input: ResidentSessionStreamInput
 }
 
 function residentAuthLaneMessages(input: ResidentSessionStreamInput): AsyncIterable<SDKMessage> {
+	const sessionId = input.streamOptions.sessionId;
+	const preferredAccount =
+		sessionId === undefined ? undefined : (getSession(sessionId)?.accountName ?? getBinding(sessionId)?.accountName);
 	return queryWithAuthLane({
 		prompt: "",
 		query: getSdkBoundary().query,
@@ -240,6 +243,7 @@ function residentAuthLaneMessages(input: ResidentSessionStreamInput): AsyncItera
 		sessionId: input.streamOptions.affinitySessionId ?? input.streamOptions.sessionId,
 		model: input.model.id,
 		pinnedAccount: input.pinnedAccount,
+		...(preferredAccount === undefined ? {} : { preferredAccount }),
 		buildOptions: input.buildOptions,
 		createAttempt: (auth) => createResidentAttempt(input, auth),
 	});

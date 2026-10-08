@@ -19,6 +19,28 @@
 
 - LOW: `auth-lane.ts` `queryWithAuthLane` (before `runFailover`), `accounts.ts` `AccountSlot` and `upsertAccount`.
 
+## 2026-10-09 - A session keeps its account through transient errors (senpi#2891)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/failover.ts`: `runFailover` retries a transient failure (`overloaded`, or a retryable `other`: network errors, `server_error`) on the SAME account with a budget of `TRANSIENT_RETRIES_PER_TURN` (2) per turn, not per account, and a doubling delay from `TRANSIENT_RETRY_DELAY_MS` (1 s, abortable), before blocking it and rotating. Usage limits, rate limits, auth and billing failures still rotate at once. New options: `sleep` (injectable wait) and `signal`.
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/affinity.ts`: `selectAccount` takes `preferredAccount`, the account the session's SDK transcript lives under; it is chosen after a valid pin and before HRW order while it can serve the model.
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/auth-lane.ts`: `AuthenticatedQueryInput.preferredAccount` is passed to selection, and the request signal to `runFailover`.
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/session-stream.ts`: the resident path prefers the live session's or restored binding's account.
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/session-continuity.ts`: on the config-dir lane, a live session whose account differs from the serving account flattens (`cross_root_unsupported`) instead of attempting a reattach that fails with "No conversation found".
+
+### Why
+
+- On the config-dir lane every change of serving account re-sends the whole conversation, because each account has its own `CLAUDE_CONFIG_DIR` transcript root. One transient error rotated the session away (blocking the account for 60 s) and HRW order moved it back on the next turn: two full re-sends per blip. A reporter measured 137-196 such re-seeds per day after one pinned account was hard-limited. A replayed day of 200 turns with 10 overloads and one limit moved accounts 22 times before this change and once after it.
+
+### Why an extension could not handle it
+
+- Account selection, failover and continuity decisions are internal to this builtin lane.
+
+### Expected merge conflict zones
+
+- LOW: `runFailover`'s catch block, `selectUnblocked`, `queryWithAuthLane`'s `selectFn`, `residentAuthLaneMessages`, and the head of `decideFromState`.
+
 ## 2026-10-09 - The session stream applies backpressure instead of overflowing (senpi#2822)
 
 ### What changed
