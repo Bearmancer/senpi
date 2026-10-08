@@ -26,6 +26,7 @@
 
 ### Fixed
 
+- An Anthropic Subscription account blocked by an authentication error now recovers on its own when its saved refresh token is still accepted: the next request redeems that token once and clears the block, instead of every request failing with "blocked until re-login". A rejected token stays blocked and is not retried until a new login ([#2926](https://github.com/code-yeongyu/senpi/issues/2926)).
 
 - MCP sign-in no longer risks sending a saved refresh token to a different authorization server: the bundled MCP SDK moves to 1.32.1 (GHSA-6qxp-vccf-f47h), and senpi now records which authorization server issued each saved sign-in and refreshes only there. If an MCP server's authorization server changes, senpi asks you to sign in again instead of refreshing. MCP servers signed in with very old senpi versions may ask you to sign in again once their access token expires ([#2940](https://github.com/code-yeongyu/senpi/issues/2940)).
 - An MCP HTTP endpoint that redirects to a different origin is no longer followed, and the connect error now says so: it names both origins and the URL to put in the server's config ([#2940](https://github.com/code-yeongyu/senpi/issues/2940)).
