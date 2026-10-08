@@ -11,10 +11,7 @@ import {
 	buildPromptBlocks,
 	buildPromptStream,
 } from "../../../src/core/extensions/builtin/anthropic-subscription/prompt-bridge.ts";
-import {
-	type PromptCacheTtl,
-	pinOneShotPromptCacheTtl,
-} from "../../../src/core/extensions/builtin/anthropic-subscription/prompt-cache-ttl.ts";
+import { pinOneShotPromptCacheTtl } from "../../../src/core/extensions/builtin/anthropic-subscription/prompt-cache-ttl.ts";
 import { dedupeUltraworkBlocks } from "../../../src/core/extensions/builtin/anthropic-subscription/prompt-directive-dedupe.ts";
 
 type CapturedBlock = { type: string; text?: string; cache_control?: { ttl?: string } };
@@ -128,7 +125,10 @@ function stripped(block: CapturedBlock): CapturedBlock {
 	return rest;
 }
 
-async function captureTurns(turns: Message[][], explicitTtl?: PromptCacheTtl): Promise<CapturedRequest[]> {
+async function captureTurns(
+	turns: Message[][],
+	hostEnvironment: Record<string, string> = {},
+): Promise<CapturedRequest[]> {
 	const bodies: string[] = [];
 	const server = createServer((request, response) => {
 		let body = "";
@@ -172,11 +172,7 @@ async function captureTurns(turns: Message[][], explicitTtl?: PromptCacheTtl): P
 				}),
 			};
 			options.maxTurns = 1;
-			const ttl = pinOneShotPromptCacheTtl(
-				options,
-				"oauth-slots",
-				explicitTtl === undefined ? {} : { CLAUDE_CODE_PROMPT_CACHE_TTL: explicitTtl },
-			);
+			const ttl = pinOneShotPromptCacheTtl(options, "oauth-slots", hostEnvironment);
 			const blocks = dedupeUltraworkBlocks(
 				buildPromptBlocks({ messages }, undefined, undefined, ttl === undefined ? {} : { cacheBreakpoint: ttl }),
 			).blocks;
@@ -188,6 +184,8 @@ async function captureTurns(turns: Message[][], explicitTtl?: PromptCacheTtl): P
 				ANTHROPIC_BASE_URL: `http://127.0.0.1:${port}`,
 				CLAUDE_CODE_OAUTH_TOKEN: "sk-ant-oat01-capture-probe",
 				CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1",
+				// The managed lanes pass the host environment through to Claude Code, with senpi's options on top.
+				...hostEnvironment,
 				...options.env,
 			};
 			const stream = query({ prompt: buildPromptStream(blocks), options });
@@ -204,8 +202,9 @@ async function captureTurns(turns: Message[][], explicitTtl?: PromptCacheTtl): P
 
 describe("senpi#2982 the installed Claude Code sends a rebuilt subscription prompt as a cacheable prefix", () => {
 	it.each([
-		["Claude Code's subscription default", undefined, "1h"],
-		["an explicit 5-minute lifetime", "5m", "5m"],
+		["Claude Code's subscription default", {}, "1h"],
+		["an explicit 5-minute lifetime", { CLAUDE_CODE_PROMPT_CACHE_TTL: "5m" }, "5m"],
+		["FORCE_PROMPT_CACHING_5M set by the user", { FORCE_PROMPT_CACHING_5M: "1" }, "5m"],
 	] as const)(
 		"with %s, keeps every breakpoint in lifetime order and within the API's four",
 		async (_label, explicit, expected) => {

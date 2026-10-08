@@ -45,6 +45,9 @@ describe("senpi#2982 the one-shot cache breakpoint matches Claude Code's pinned 
 		["config-dir", {}, "1h"],
 		["oauth-slots", { CLAUDE_CODE_PROMPT_CACHE_TTL: "5m" }, "5m"],
 		["ambient", { CLAUDE_CODE_PROMPT_CACHE_TTL: "1h" }, "1h"],
+		["oauth-slots", { FORCE_PROMPT_CACHING_5M: "1" }, "5m"],
+		["config-dir", { FORCE_PROMPT_CACHING_5M: "true", CLAUDE_CODE_PROMPT_CACHE_TTL: "1h" }, "5m"],
+		["ambient", { FORCE_PROMPT_CACHING_5M: "1" }, "5m"],
 	] as const)("pins %s with %j to %s for both Claude Code and the breakpoint", (lane, environment, expected) => {
 		// given the query options of a one-shot attempt on that lane
 		const options: { env?: Record<string, string | undefined> } = {
