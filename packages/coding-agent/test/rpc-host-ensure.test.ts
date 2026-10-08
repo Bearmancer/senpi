@@ -263,7 +263,7 @@ describe("ensureHost", () => {
 
 	it("escalates to SIGKILL when our own dead host ignores SIGTERM", async () => {
 		const qa = await scratch("sigkill");
-		const writerStartTime = "sigkill-test-self";
+		const writerStartTime = "2026-10-08T12:00:00.000Z";
 		const old = await startManagedProcess(qa, {
 			writer: "self",
 			ignoreTerm: true,
