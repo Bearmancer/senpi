@@ -1,3 +1,27 @@
+## 2026-10-08 - The release reuses the release commit's sharded CI instead of re-running the suite (senpi#2943)
+
+### What changed
+
+- `scripts/release.mjs`: the release regenerates the model catalog and checks the provider defaults first. A manifest change that is only the `generatedAt` stamp is restored. If the catalog really changed, it is committed alone and pushed to `main`. The release then waits (`awaitCiEvidence`) for that commit's green "Check and test" run, CI's fan-in of every shard and required job, instead of running `CI=1 npm test` in the job:
+  - red stops the release before it commits, tags or pushes;
+  - a run cancelled by a newer `main` push follows `main` forward, but only when the new tip contains the commit;
+  - no result within 40 minutes fails with the reason.
+  A failed fan-in's workflow run is looked up (`lookupWorkflowRun`), so a cancellation is not mistaken for red CI. `CI=1 npm test` runs only with `--force-tests`.
+- `scripts/release-test-gate.mjs` holds the pure decisions: `planCiEvidence`, `awaitCiEvidence`, `isTimestampOnlyManifestChange`, `discardTimestampOnlyCatalogChange`. `decideTestGate` and `isCiCheckGreen` are gone.
+- `.github/workflows/publish-npm.yml`: `timeout-minutes` 90 to 60.
+
+### Why
+
+The catalog was regenerated inside the release job, after `main`'s CI, so a changed catalog was a tree CI never tested. Since senpi#2645 that forced a serial in-job suite, which outgrew 50 minutes. Every regeneration also re-stamped the manifest, so every release looked like catalog drift.
+
+### Why an extension could not handle it
+
+Release orchestration is repository tooling.
+
+### Expected merge conflict zones
+
+- `main()` and the test-gate section of `scripts/release.mjs`; the `release` job comment and timeout in `publish-npm.yml`.
+
 ## 2026-10-07 - The ./models entry graph allows one more file (senpi#2893)
 
 ### What changed
