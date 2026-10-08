@@ -12,7 +12,6 @@ import {
 	createAgentSessionRuntime,
 	createAgentSessionServices,
 } from "../../../src/core/agent-session-runtime.ts";
-import { AuthStorage } from "../../../src/core/auth-storage.ts";
 import * as sessionHolders from "../../../src/core/session-holders.ts";
 import { SessionManager } from "../../../src/core/session-manager.ts";
 import { InteractiveMode } from "../../../src/modes/interactive/interactive-mode.ts";
@@ -30,14 +29,10 @@ it.each(["holder", "lookup-error"] as const)("resumes through the public control
 		`${JSON.stringify({ type: "session", version: 3, id, cwd: root, timestamp: new Date(0).toISOString() })}\n`,
 	);
 	const faux = registerFauxProvider({ models: [{ id: "faux-resume", reasoning: false }] });
-	const authStorage = AuthStorage.inMemory();
-	await authStorage.modify(faux.getModel().provider, async () => ({ type: "api_key", key: "faux-key" }));
 	const createRuntime: CreateAgentSessionRuntimeFactory = async ({ cwd, sessionManager, sessionStartEvent }) => {
 		const services = await createAgentSessionServices({
 			cwd,
 			agentDir: root,
-			authStorage,
-			model: faux.getModel(),
 			resourceLoaderOptions: {
 				noSkills: true,
 				noPromptTemplates: true,
