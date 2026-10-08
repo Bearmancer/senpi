@@ -14,6 +14,8 @@
 
 ### Fixed
 
+- The eval timing benchmark's spike retry no longer waits for a load at or above its own refusal ceiling: the settle target is capped at 70, so a run whose calm load was near 80 cannot start its retries straight into another spike and burn them all in seconds. ([#2922](https://github.com/code-yeongyu/senpi/issues/2922))
+
 - The eval timing benchmark no longer throws away a whole multi-block run when the host's 1-minute load goes over 80 partway through: only the block that saw the spike is discarded and re-run (up to 3 retries, each after the load has fallen back under 70). A runtime failure in the same block is never discarded with the spike. A block that spikes on every attempt is labelled, making the run inconclusive rather than refused, and the other blocks still report. Re-run blocks are listed in the JSON report's `retriedBlocks`. ([#2909](https://github.com/code-yeongyu/senpi/issues/2909))
 
 ### Removed

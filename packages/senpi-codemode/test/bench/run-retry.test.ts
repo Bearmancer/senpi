@@ -2,7 +2,7 @@ import { availableParallelism } from "node:os";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { BlockAttempt } from "../../scripts/bench-block.ts";
 import { decide } from "../../scripts/bench-compare.ts";
-import { type RunPlan, runBlocks, SPIKE_RETRIES } from "../../scripts/bench-run.ts";
+import { type RunPlan, runBlocks, SPIKE_RETRIES, settleTarget } from "../../scripts/bench-run.ts";
 import type { RuntimeReport } from "../../scripts/bench-worker.ts";
 
 const attempts = vi.hoisted(() => ({ queue: [] as BlockAttempt[] }));
@@ -122,5 +122,14 @@ describe("per-block spike retry (senpi#2909)", () => {
 		expect(run.failures).toEqual([
 			`host load spike in block 1: discarded after ${SPIKE_RETRIES + 1} attempts (peaks 95.00, 94.00, 93.00, 92.00 > 80)`,
 		]);
+	});
+
+	it("never waits for a load at or above the refusal ceiling (senpi#2922)", () => {
+		// Given a calm level near the ceiling (a kept block that started at load 76.6).
+		// Then the retry waits for a load under 80 with margin, not 76.6 + 5 = 81.6, which a retry would start into.
+		expect(settleTarget(76.6)).toBe(70);
+		expect(settleTarget(120)).toBe(70);
+		// And a calm level well under the cap keeps its own target.
+		expect(settleTarget(30)).toBe(Math.max(availableParallelism(), 35));
 	});
 });
