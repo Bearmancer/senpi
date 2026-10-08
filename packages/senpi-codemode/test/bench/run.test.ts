@@ -67,15 +67,51 @@ describe("paired runtime scheduling", () => {
 		}
 	}, 30_000);
 
-	it("refuses the run end to end when host load crosses 80 between measurements", async () => {
-		// Given a host whose load jumps past the absolute ceiling partway through the first block.
-		host.loadAfter = (call) => (call > 40 ? 81 : 1);
+	it("re-runs only the block a host-load spike over 80 hits, keeping the others (senpi#2909)", async () => {
+		// Given a host whose load jumps past 80 for a short stretch inside block 2 only.
+		let spikeCalls = 0;
+		let blockTwoStarted = false;
+		const log = (line: string) => {
+			if (line.startsWith("block 2/3 start")) blockTwoStarted = true;
+		};
+		host.loadAfter = () => {
+			if (!blockTwoStarted || spikeCalls >= 3) return 1;
+			spikeCalls += 1;
+			return 81;
+		};
 		// When the scheduler measures.
-		const run = await runBlocks(plan);
-		// Then measurement stops and the decision refuses the host.
-		expect(run.failures.some((line) => line.includes("host load exceeded 80"))).toBe(true);
-		expect(decide({ ...run, blockLoads: run.admissionLoads }).exitCode).toBe(2);
-	}, 30_000);
+		const run = await runBlocks({ ...plan, log });
+		// Then all three blocks complete, block 2 once, and nothing from the discarded attempt survives.
+		expect(run.failures).toEqual([]);
+		expect(run.blocks.map((block) => block.index)).toEqual([0, 1, 2]);
+		expect(Math.max(...run.admissionLoads)).toBeLessThanOrEqual(80);
+		for (const block of run.blocks)
+			expect(
+				Math.max(...block.measurements.map(({ loadStart, loadEnd }) => Math.max(loadStart, loadEnd))),
+			).toBeLessThanOrEqual(80);
+		const blockTwoReports = (run.reports["js-bun"] ?? []).filter((entry) => entry.block === 1);
+		expect(blockTwoReports).toHaveLength(4);
+		expect(run.retriedBlocks).toEqual([{ block: 1, attempts: 2 }]);
+		expect(decide({ ...run, blockLoads: run.admissionLoads }).exitCode).toBe(0);
+	}, 60_000);
+
+	it("labels a block that spikes over 80 on every attempt instead of refusing the run (senpi#2909)", async () => {
+		// Given a host whose load stays past 80 while block 1 runs, then calms.
+		let blockTwoStarted = false;
+		const log = (line: string) => {
+			if (line.startsWith("block 2/3 start")) blockTwoStarted = true;
+		};
+		host.loadAfter = () => (blockTwoStarted ? 1 : 81);
+		// When the scheduler measures.
+		const run = await runBlocks({ ...plan, log });
+		// Then block 1 is labelled after its retries, blocks 2 and 3 are kept, and the run is inconclusive, not refused.
+		const labelled = run.failures.filter((line) => line.startsWith("host load spike in block 1"));
+		expect(labelled).toHaveLength(1);
+		expect(labelled[0]).toContain("4 attempts");
+		expect(run.blocks.map((block) => block.index)).toEqual([1, 2]);
+		expect((run.reports["js-bun"] ?? []).some((entry) => entry.block === 0)).toBe(false);
+		expect(decide({ ...run, blockLoads: run.admissionLoads }).exitCode).toBe(3);
+	}, 60_000);
 
 	it("marks a block contaminated when load exceeds the core count during measurement", async () => {
 		// Given an eight-core host whose load reads 9 for a short stretch inside the first block, far below 80.

@@ -1,12 +1,12 @@
-import { availableParallelism, loadavg } from "node:os";
+import { availableParallelism } from "node:os";
 import { type Static, Type } from "typebox";
-import type { PairedBlock, RuntimeStatus, Series } from "./bench-compare.ts";
+import { type BlockAttempt, runBlockAttempt } from "./bench-block.ts";
+import { LOAD_REFUSAL, type PairedBlock, type RuntimeStatus, type Series } from "./bench-compare.ts";
 import { contaminationCeiling, contaminationFailures } from "./bench-contamination.ts";
-import { hostIdleSeconds, powerSource } from "./bench-host.ts";
-import { type HostSample, sampleHost, startHostSampler, summarizeSamples } from "./bench-sampler.ts";
+import { type HostSample, summarizeSamples } from "./bench-sampler.ts";
 import { implementedScenarios, plannedScenarios } from "./bench-scenarios.ts";
 import { runProcess } from "./bench-target.ts";
-import { BenchWorkerError, type RuntimeReport, startWorker } from "./bench-worker.ts";
+import type { RuntimeReport } from "./bench-worker.ts";
 
 export const runtimesSchema = Type.Object({
 	version: Type.Literal(1),
@@ -63,7 +63,12 @@ export interface RunResult {
 		Record<string, readonly { block: number; role: string; side: Side; report: RuntimeReport }[]>
 	>;
 	readonly failures: readonly string[];
+	/** Blocks re-run after a host-load spike over the refusal ceiling, with the attempt that was kept (senpi#2909). */
+	readonly retriedBlocks: readonly { readonly block: number; readonly attempts: number }[];
 }
+
+/** Re-runs of one block after a load spike before it is labelled instead of kept (senpi#2909). */
+const SPIKE_RETRIES = 3;
 
 const interpreterCommand = { js: "bun", py: "python3", rb: "ruby", jl: "julia" } as const;
 
@@ -82,6 +87,7 @@ export async function runBlocks(plan: RunPlan): Promise<RunResult> {
 	const collected: Collected = {};
 	const blocks: BlockRecord[] = [];
 	const admissionLoads: number[] = [];
+	const retriedBlocks: { block: number; attempts: number }[] = [];
 	if ([...available.values()].some((present) => !present))
 		return {
 			reps: plan.reps,
@@ -89,110 +95,36 @@ export async function runBlocks(plan: RunPlan): Promise<RunResult> {
 			admissionLoads,
 			failures,
 			reports: collected,
+			retriedBlocks,
 			...assemble(plan, available, collected),
 		};
-	blocksLoop: for (let index = 0; index < plan.blocks; index += 1) {
-		const startedAt = new Date().toISOString();
-		const sampler = startHostSampler(sampleHost);
-		const startLoad = loadavg();
-		const power = await powerSource();
-		const idleSeconds = await hostIdleSeconds();
-		plan.log(`block ${index + 1}/${plan.blocks} start ${startedAt}: load ${startLoad.map((value) => value.toFixed(2)).join(" ")}, idle ${idleSeconds ?? "n/a"} s, ${power}`);
-		const measurements: Array<BlockRecord["measurements"][number]> = [];
-		for (const runtime of plan.runtimes) {
-			if (available.get(runtime.id) !== true) continue;
-			const runs: { role: string; side: Side }[] = [
-				{ role: "comparison", side: "base" },
-				{ role: "comparison", side: "head" },
-				{ role: "calibration-1", side: "base" },
-				{ role: "calibration-2", side: "base" },
-			];
-			const workers = runs.map((run) => ({ ...run, worker: startWorker(plan, runtime, plan.targets[run.side]) }));
-			const reports = new Map<(typeof workers)[number], RuntimeReport>();
-			try {
-				for (const scenario of implementedScenarios) {
-					plan.log(`block ${index + 1}/${plan.blocks} ${runtime.id} ${scenario.name}`);
-					for (let rep = -1; rep < plan.reps; rep += 1) {
-						const order = (index + rep) % 2 === 0 ? workers : [...workers].reverse();
-						for (const run of order) {
-							const loadStart = loadavg()[0] ?? 0;
-							admissionLoads.push(loadStart);
-							if (loadStart > 80)
-								throw new BenchWorkerError("host load exceeded 80 before the next measurement");
-							const outcome = await run.worker.next();
-							const loadEnd = loadavg()[0] ?? 0;
-							admissionLoads.push(loadEnd);
-							measurements.push({
-								runtimeId: runtime.id,
-								scenario: scenario.name,
-								rep,
-								role: run.role,
-								side: run.side,
-								loadStart,
-								loadEnd,
-							});
-							if (outcome.scenarios[scenario.name]?.length !== (rep < 0 ? 0 : 1))
-								throw new BenchWorkerError(`unexpected repetition for ${scenario.name}`);
-							const previous = reports.get(run);
-							if (
-								previous &&
-								(previous.runtimeVersion !== outcome.runtimeVersion ||
-									previous.hostRuntime !== outcome.hostRuntime ||
-									previous.hostVersion !== outcome.hostVersion)
-							)
-								throw new BenchWorkerError("runtime version changed during measurement");
-							const scenarios = previous?.scenarios ?? {};
-							for (const [name, samples] of Object.entries(outcome.scenarios))
-								(scenarios[name] ??= []).push(...samples);
-							reports.set(run, { ...outcome, scenarios });
-						}
-					}
-				}
-				for (const [run, report] of reports)
-					(collected[runtime.id] ??= []).push({ block: index, role: run.role, side: run.side, report });
-			} catch (error) {
-				if (!(error instanceof BenchWorkerError)) throw error;
-				failures.push(`${runtime.id} block ${index + 1}: ${error.message}`);
-			} finally {
-				await Promise.all(
-					workers.map(({ worker }) =>
-						worker.close().catch((error: unknown) => {
-							if (!(error instanceof Error)) throw error;
-							failures.push(`${runtime.id} cleanup: ${error.message}`);
-						}),
-					),
-				);
+	for (let index = 0; index < plan.blocks; index += 1) {
+		const peaks: number[] = [];
+		let kept: BlockAttempt | undefined;
+		for (let attempt = 0; attempt <= SPIKE_RETRIES; attempt += 1) {
+			const tried = await runBlockAttempt(plan, index, available);
+			if (tried.spikePeak === undefined) {
+				kept = tried;
+				break;
 			}
-			if (failures.length > 0) {
-				blocks.push({
-					index,
-					loadavg: startLoad,
-					loadavgEnd: loadavg(),
-					power,
-					idleSeconds,
-					startedAt,
-					endedAt: new Date().toISOString(),
-					hostSamples: await sampler.stop(),
-					measurements,
-				});
-				break blocksLoop;
-			}
+			peaks.push(tried.spikePeak);
+			plan.log(`block ${index + 1}/${plan.blocks} discarded: host load spike ${tried.spikePeak.toFixed(2)} > ${LOAD_REFUSAL}`);
 		}
-		const endedAt = new Date().toISOString();
-		const hostSamples = await sampler.stop();
-		const loadavgEnd = loadavg();
-		blocks.push({
-			index,
-			loadavg: startLoad,
-			loadavgEnd,
-			power,
-			idleSeconds,
-			startedAt,
-			endedAt,
-			hostSamples,
-			measurements,
-		});
-		plan.log(`block ${index + 1} host: ${startedAt} -> ${endedAt}, ${summarizeSamples(hostSamples)}`);
+		if (peaks.length > 0 && kept) retriedBlocks.push({ block: index, attempts: peaks.length + 1 });
+		if (!kept) {
+			failures.push(
+				`host load spike in block ${index + 1}: discarded after ${peaks.length} attempts (peaks ${peaks.map((peak) => peak.toFixed(2)).join(", ")} > ${LOAD_REFUSAL})`,
+			);
+			continue;
+		}
+		admissionLoads.push(...kept.loads);
+		for (const { runtimeId, ...entry } of kept.reports) (collected[runtimeId] ??= []).push(entry);
+		blocks.push(kept.record);
+		if (kept.failures.length > 0) {
+			failures.push(...kept.failures);
+			break;
+		}
+		plan.log(`block ${index + 1} host: ${kept.record.startedAt} -> ${kept.record.endedAt}, ${summarizeSamples(kept.record.hostSamples)}`);
 	}
 	failures.push(...contaminationFailures(blocks, contaminationCeiling(availableParallelism())));
 	return {
@@ -201,6 +133,7 @@ export async function runBlocks(plan: RunPlan): Promise<RunResult> {
 		admissionLoads,
 		failures,
 		reports: collected,
+		retriedBlocks,
 		...assemble(plan, available, collected),
 	};
 }
