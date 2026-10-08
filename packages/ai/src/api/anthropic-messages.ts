@@ -1313,7 +1313,7 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 	const currentTools = getCurrentTools(normalizedContext.messages);
 
 	(async () => {
-		const providerThinkingLevel = model.compat?.supportsMidConvoEffort ? (options?.effort ?? "high") : undefined;
+		const providerThinkingLevel = managedEffortForRequest(model, options);
 		const output: AssistantMessage = {
 			role: "assistant",
 			content: [],
@@ -1888,6 +1888,31 @@ function cannotDisableThinking(
 	return matchesModelMarker(model, DISABLED_THINKING_REJECTING_MODEL_MARKERS);
 }
 
+/**
+ * Effort a per-message-effort request runs at, which is also the active marker and the level recorded
+ * on the reply: the caller's effort with thinking on, `low` for a thinking-off turn on a family that
+ * cannot disable thinking, and none when thinking is actually disabled (senpi#2912).
+ */
+function managedEffortForRequest(
+	model: Model<"anthropic-messages">,
+	options: AnthropicOptions | undefined,
+): AnthropicEffort | undefined {
+	if (model.compat?.supportsMidConvoEffort !== true) return undefined;
+	if (options?.thinkingEnabled === false) {
+		return cannotDisableThinking(model, getAnthropicCompat(model)) ? "low" : undefined;
+	}
+	return options?.effort ?? "high";
+}
+
+function isEffortMarker(message: MessageParam): boolean {
+	return (
+		message.role === "system" &&
+		Array.isArray(message.content) &&
+		message.content.length === 0 &&
+		(message as { output_config?: { effort?: unknown } }).output_config?.effort !== undefined
+	);
+}
+
 function disableThinkingForRequest(
 	params: MessageCreateParamsStreaming,
 	model: Model<"anthropic-messages">,
@@ -1903,6 +1928,8 @@ function disableThinkingForRequest(
 		return;
 	}
 	params.thinking = { type: "disabled" };
+	// Per-message effort is rejected alongside disabled thinking (senpi#1399).
+	params.messages = params.messages.filter((message) => !isEffortMarker(message));
 }
 
 function supportsAdaptiveThinking(model: Model<"anthropic-messages">): boolean {
@@ -2280,7 +2307,7 @@ function buildParams(
 		deferredTools = [];
 	}
 	const deferredToolNames = new Set(deferredTools.map((tool) => normalizeToolName(tool.name)));
-	const activeEffort = options?.effort ?? "high";
+	const activeEffort = managedEffortForRequest(model, options) ?? "high";
 	const betaFeatures = getBetaFeatures(model, context, isOAuthToken, nativeToolChanges, options);
 	const convertedMessages = convertMessages(
 		conversationMessages,

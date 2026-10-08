@@ -180,7 +180,9 @@ export function demoteUnavailableToolReferences(params: MessageCreateParamsStrea
 			}
 			content.push(block);
 		}
-		if (content.length === 0) {
+		// Only a message this pass emptied is dropped; a message that arrived empty (a per-message
+		// effort marker carries `content: []` by design) passes through untouched (senpi#2912).
+		if (messageChanged && content.length === 0) {
 			changed = true;
 			continue;
 		}

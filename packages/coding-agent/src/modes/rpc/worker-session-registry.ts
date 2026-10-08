@@ -140,7 +140,7 @@ export class WorkerSessionRegistry {
 			if (entry.state !== "opening")
 				throw workerFailure === undefined
 					? new RpcSessionRegistryError("session_closing")
-					: new RpcSessionRegistryError("open_failed", workerFailure);
+					: new RpcSessionRegistryError("open_failed", workerFailure.replace(/^open_failed: /, ""));
 			entry.durableSessionId = snapshot.state.sessionId;
 			entry.cwd = snapshot.state.cwd;
 			entry.state = "open";

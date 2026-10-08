@@ -1,3 +1,21 @@
+## 2026-10-08 - An unresolvable session model is a tagged diagnostic (senpi#2906)
+
+### What changed
+
+- `packages/coding-agent/src/main.ts`: `buildSessionOptions` tags the error diagnostic it records when `--model` (or an `open_session` `creationModel`) cannot be resolved with `code: "model_unresolved"`. Message, severity and the standalone CLI's exit are unchanged.
+
+### Why
+
+An RPC host `open_session` whose requested model did not resolve opened anyway on the default model and reported success, because the host never read the diagnostics. The host now fails that open; it needs to tell this one diagnostic apart from every other startup error (extension load failures, auth notes) without matching message text.
+
+### Why an extension could not handle it
+
+Session options are built before any extension loads, and the RPC host's open path is core.
+
+### Expected merge conflict zones
+
+- LOW: the `resolved.error` push in `buildSessionOptions`'s `--model` branch.
+
 ## 2026-10-06 - visibleWidth export for extensions that lay out their own rows (senpi#2831)
 
 ### What changed
