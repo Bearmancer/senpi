@@ -72,6 +72,11 @@ export class RepetitiveTurnsLane {
 		this.#currentTurnText = "";
 	}
 
+	/** A user message ends the recovery window opened by a nudge (senpi#2967). */
+	resetForUserInput(): void {
+		this.#recovering = false;
+	}
+
 	disarm(): void {
 		this.#armed = false;
 	}
@@ -107,10 +112,7 @@ export class RepetitiveTurnsLane {
 		this.#lastCompletedTurnText = normalized;
 		if (!this.#enabled) return;
 		const match = recordTurnText(this.#state, turnText);
-		if (match === null) {
-			if (this.#recovering) this.#recovering = false;
-			return;
-		}
+		if (match === null || this.#recovering) return;
 		this.#armed = true;
 	}
 }

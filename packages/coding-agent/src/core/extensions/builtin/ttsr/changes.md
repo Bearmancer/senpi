@@ -1,5 +1,25 @@
 # TTSR Fork Tracker
 
+## 2026-10-08 - Rule-triggered follow-up turns are bounded (senpi#2967)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/ttsr/follow-up-limit.ts` (new): `followUpStopReason(entries, now)` counts the `ttsr-injection` custom messages already in the session: at most 1 rule-triggered follow-up after a user message, and at most 3 per session in 60 s.
+- `packages/coding-agent/src/core/extensions/builtin/ttsr/index.ts`: `agent_settled` checks the limit before `sendMessage(nudge, { triggerTurn: true })`; when it stops, it appends a `ttsr-loop-stopped` entry, emits `ttsr:loop-stopped` and notifies the user instead of starting another turn. `input` ends the lane's recovery window.
+- `packages/coding-agent/src/core/extensions/builtin/ttsr/repetitive-turns-lane.ts`: recovery after a nudge stays set until the next user input (`resetForUserInput`), so a reply to the nudge can no longer re-arm the rule within the same user turn.
+
+### Why
+
+- One user message drove 66 model turns in about 66 s until the user pressed Stop (senpi#2967). The desktop's server-hosted session reopens the session around every turn, and each `open_session` on an existing file fires `session_start` (resume), so the ttsr extension started every automatic turn with fresh state and re-armed; the in-memory recovery flag could not bound it. The limit is read from the session itself, so it holds however often the extension is rebuilt.
+
+### Why an extension could not handle it
+
+- The follow-up turn is started by this builtin's own `agent_settled` handler.
+
+### Expected merge conflict zones
+
+- LOW: `ttsr/index.ts` `agent_settled` and `input` handlers; `repetitive-turns-lane.ts` `recordCompletedTurn`.
+
 ## 2026-10-07 - Code-shaped lines are left out of near-duplicate scoring (senpi#2865)
 
 ### What changed

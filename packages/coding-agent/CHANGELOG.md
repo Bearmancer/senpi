@@ -12,6 +12,8 @@
 
 ### Fixed
 
+- A stream rule can no longer start model turns on its own without bound: after one user message, a rule such as `repetitive-turns` triggers at most one follow-up turn, a session allows at most three such turns per minute, and when the limit is reached the session stops with a notice instead of looping (one message had produced 66 turns until Stop) ([#2967](https://github.com/code-yeongyu/senpi/issues/2967)).
+
 ### Removed
 
 ## [2026.10.10-8] - 2026-10-08
