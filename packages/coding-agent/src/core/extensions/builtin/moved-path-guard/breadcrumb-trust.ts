@@ -1,5 +1,5 @@
-import { readFileSync, statSync } from "node:fs";
-import { readFile, stat } from "node:fs/promises";
+import { lstatSync, readFileSync, type Stats } from "node:fs";
+import { lstat, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { appendDebugLogEntry } from "../../../hidden-stdout-log.ts";
 import { MOVED_BREADCRUMB_FILE, type MovedBreadcrumb, parseMovedBreadcrumb } from "./breadcrumb.ts";
@@ -15,6 +15,9 @@ export interface MovedPath {
 
 export const MAX_HOPS = 3;
 
+/** A breadcrumb or marker is a few hundred bytes; anything larger is not one and is never read. */
+export const MAX_TRUST_FILE_BYTES = 64 * 1024;
+
 const jsonByFile = new Map<string, { readonly stamp: string; readonly value: unknown }>();
 
 function parseJson(text: string): unknown {
@@ -25,45 +28,36 @@ function parseJson(text: string): unknown {
 	}
 }
 
-/** One small JSON file, re-read only when its mtime or size changed; `undefined` when absent or unreadable. */
-export function readJsonFileSync(file: string): unknown {
-	let stamp: string;
-	try {
-		const stats = statSync(file);
-		if (!stats.isFile()) return undefined;
-		stamp = `${stats.mtimeMs}:${stats.size}`;
-	} catch {
+/**
+ * Whether a breadcrumb or marker may be believed, from its own lstat (a symlink is never followed): a regular file of
+ * at most `MAX_TRUST_FILE_BYTES`, and on POSIX owned by this user and writable by nobody else, so another local user
+ * cannot plant one in a shared folder such as `/tmp` (senpi#2898). Windows has no uid/mode to check; there the
+ * marker's homeId binding is the only guard.
+ */
+function trustStamp(stats: Stats | undefined): string | undefined {
+	if (!stats?.isFile() || stats.size > MAX_TRUST_FILE_BYTES) return undefined;
+	if (process.platform !== "win32" && (stats.uid !== process.getuid?.() || (stats.mode & 0o022) !== 0))
 		return undefined;
-	}
+	return `${stats.mtimeMs}:${stats.size}:${stats.ino}`;
+}
+
+/** One small JSON file the guard may trust, re-read only when it changed; `undefined` when absent, unreadable or untrusted. */
+export function readJsonFileSync(file: string): unknown {
+	const stamp = trustStamp(lstatSync(file, { throwIfNoEntry: false }));
+	if (stamp === undefined) return undefined;
 	const cached = jsonByFile.get(file);
 	if (cached?.stamp === stamp) return cached.value;
-	let value: unknown;
-	try {
-		value = parseJson(readFileSync(file, "utf8"));
-	} catch {
-		value = undefined;
-	}
+	const value = parseJson(readFileSync(file, "utf8"));
 	jsonByFile.set(file, { stamp, value });
 	return value;
 }
 
 export async function readJsonFileAsync(file: string): Promise<unknown> {
-	let stamp: string;
-	try {
-		const stats = await stat(file);
-		if (!stats.isFile()) return undefined;
-		stamp = `${stats.mtimeMs}:${stats.size}`;
-	} catch {
-		return undefined;
-	}
+	const stamp = trustStamp(await lstat(file).catch(() => undefined));
+	if (stamp === undefined) return undefined;
 	const cached = jsonByFile.get(file);
 	if (cached?.stamp === stamp) return cached.value;
-	let value: unknown;
-	try {
-		value = parseJson(await readFile(file, "utf8"));
-	} catch {
-		value = undefined;
-	}
+	const value = parseJson(await readFile(file, "utf8"));
 	jsonByFile.set(file, { stamp, value });
 	return value;
 }

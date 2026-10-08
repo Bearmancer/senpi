@@ -1,4 +1,4 @@
-import { mkdirSync } from "node:fs";
+import { chmodSync, mkdirSync, renameSync, symlinkSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type {
@@ -79,6 +79,51 @@ describe("moved-path-guard breadcrumb trust (#2898)", () => {
 			writeBreadcrumb(moved.oldRoot, breadcrumbBody(movedTo, [MOVED_SESSIONS]));
 			expect(findMovedPath(join(moved.oldSessions, "s.jsonl"))).toBeUndefined();
 		}
+	});
+
+	// Re-review M1/M2: on POSIX a breadcrumb and a marker count only when they are this user's own regular files,
+	// not writable by group or others, and small.
+	describe.runIf(process.platform !== "win32")("file ownership and size", () => {
+		it("follows a 0600 breadcrumb and marker", () => {
+			const moved = layout();
+			chmodSync(join(moved.oldRoot, "omo-desktop-moved.json"), 0o600);
+			chmodSync(join(moved.newRoot, "omo-desktop-home.json"), 0o600);
+
+			expect(findMovedPath(join(moved.oldWorktree, "a.ts"))?.mappedPath).toBe(join(moved.newWorktree, "a.ts"));
+		});
+
+		it.each([
+			["a world-writable breadcrumb", "breadcrumb", 0o666],
+			["a group-writable breadcrumb", "breadcrumb", 0o620],
+			["a world-writable marker", "marker", 0o666],
+		] as const)("ignores %s, even in a world-writable folder", (_label, which, mode) => {
+			const moved = layout();
+			chmodSync(moved.oldRoot, 0o777);
+			const file =
+				which === "breadcrumb"
+					? join(moved.oldRoot, "omo-desktop-moved.json")
+					: join(moved.newRoot, "omo-desktop-home.json");
+			chmodSync(file, mode);
+
+			expect(findMovedPath(join(moved.oldWorktree, "a.ts"))).toBeUndefined();
+		});
+
+		it("ignores a breadcrumb that is a symlink to a real one", () => {
+			const moved = layout();
+			const real = join(moved.home, "real-breadcrumb.json");
+			renameSync(join(moved.oldRoot, "omo-desktop-moved.json"), real);
+			symlinkSync(real, join(moved.oldRoot, "omo-desktop-moved.json"));
+
+			expect(findMovedPath(join(moved.oldWorktree, "a.ts"))).toBeUndefined();
+		});
+
+		it("ignores an oversized breadcrumb without parsing it", () => {
+			const moved = layout();
+			const body = { ...breadcrumbBody(moved.newRoot, [MOVED_WORKTREE]), padding: "x".repeat(70 * 1024) };
+			writeBreadcrumb(moved.oldRoot, body);
+
+			expect(findMovedPath(join(moved.oldWorktree, "a.ts"))).toBeUndefined();
+		});
 	});
 
 	// Review L5: an ignored breadcrumb is recorded in the debug log, never printed into the terminal a TUI owns.
