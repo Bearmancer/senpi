@@ -6459,7 +6459,6 @@
       "test/bench/rescore.test.ts/rescoring a saved measurement scores the same samples with one global band through the scope knob": "passed",
       "test/bench/rescore.test.ts/rescoring a saved measurement refuses to rescore a report that already carries injected samples": "passed",
       "test/bench/run.test.ts/paired runtime scheduling keeps each paired repetition adjacent when runtime processes are retained": "passed",
-      "test/bench/run.test.ts/paired runtime scheduling refuses the run end to end when host load crosses 80 between measurements": "passed",
       "test/bench/run.test.ts/paired runtime scheduling marks a block contaminated when load exceeds the core count during measurement": "passed",
       "test/bench/run.test.ts/paired runtime scheduling keeps a block clean when load stays at the core count": "passed",
       "test/bench/run.test.ts/paired runtime scheduling invalidates a run when a runtime exits before its requested sample": "passed",

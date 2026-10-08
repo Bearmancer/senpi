@@ -5,7 +5,7 @@ import { LOAD_REFUSAL, type PairedBlock, type RuntimeStatus, type Series } from 
 import { contaminationCeiling, contaminationFailures } from "./bench-contamination.ts";
 import { type HostSample, summarizeSamples } from "./bench-sampler.ts";
 import { implementedScenarios, plannedScenarios } from "./bench-scenarios.ts";
-import { SETTLE_LOAD, waitForLoadBelow } from "./bench-settle.ts";
+import { waitForLoadBelow } from "./bench-settle.ts";
 import { runProcess } from "./bench-target.ts";
 import type { RuntimeReport } from "./bench-worker.ts";
 
@@ -31,8 +31,8 @@ export interface RunPlan {
 	readonly scriptRoot: string;
 	readonly env: NodeJS.ProcessEnv;
 	readonly log: (line: string) => void;
-	/** Runs before a spiked block is retried; defaults to waiting for the load to fall (senpi#2909). */
-	readonly settle?: () => Promise<void>;
+	/** Runs before a spiked block is retried, given the load to wait for; defaults to `waitForLoadBelow` (senpi#2909). */
+	readonly settle?: (target: number) => Promise<void>;
 }
 
 /** `measurements` is the actual measurement order; the scheduler alternates which side goes first per repetition. */
@@ -71,7 +71,18 @@ export interface RunResult {
 }
 
 /** Re-runs of one block after a load spike before it is labelled instead of kept (senpi#2909). */
-const SPIKE_RETRIES = 3;
+export const SPIKE_RETRIES = 3;
+
+/**
+ * The load a retry waits for: back to where the discarded attempt started (plus the 1-minute average's jitter), or the
+ * contamination ceiling if that is higher. Waiting for the ceiling alone never ends on a host whose normal load is
+ * above it, while starting earlier than the attempt's own start meets the same spike again (senpi#2909).
+ */
+export function settleTarget(attemptStartLoad: number): number {
+	return Math.max(contaminationCeiling(availableParallelism()), attemptStartLoad + SETTLE_JITTER);
+}
+
+const SETTLE_JITTER = 5;
 
 const interpreterCommand = { js: "bun", py: "python3", rb: "ruby", jl: "julia" } as const;
 
@@ -93,8 +104,8 @@ export async function runBlocks(plan: RunPlan): Promise<RunResult> {
 	const retriedBlocks: { block: number; attempts: number }[] = [];
 	const settle =
 		plan.settle ??
-		(async () => {
-			await waitForLoadBelow(SETTLE_LOAD, { log: plan.log });
+		(async (target: number) => {
+			await waitForLoadBelow(target, { log: plan.log });
 		});
 	if ([...available.values()].some((present) => !present))
 		return {
@@ -111,14 +122,15 @@ export async function runBlocks(plan: RunPlan): Promise<RunResult> {
 		let kept: BlockAttempt | undefined;
 		for (let attempt = 0; attempt <= SPIKE_RETRIES; attempt += 1) {
 			const tried = await runBlockAttempt(plan, index, available);
-			if (classifyAttempt(tried) !== "spiked") {
+			const outcome = classifyAttempt(tried);
+			if (outcome.kind !== "spiked") {
 				kept = tried;
 				break;
 			}
-			const peak = tried.spikePeak ?? LOAD_REFUSAL;
+			const { peak } = outcome;
 			peaks.push(peak);
 			plan.log(`block ${index + 1}/${plan.blocks} discarded: host load spike ${peak.toFixed(2)} > ${LOAD_REFUSAL}`);
-			if (attempt < SPIKE_RETRIES) await settle();
+			if (attempt < SPIKE_RETRIES) await settle(settleTarget(tried.record.loadavg[0] ?? 0));
 		}
 		if (peaks.length > 0 && kept) retriedBlocks.push({ block: index, attempts: peaks.length + 1 });
 		if (!kept) {

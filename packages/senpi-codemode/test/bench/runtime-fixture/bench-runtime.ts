@@ -20,7 +20,7 @@ for await (const _request of requests) {
 			hostRuntime: "bun",
 			hostVersion: "fixture",
 			runtimeVersion: "fixture",
-			loadavg: [0, 0, 0],
+			loadavg: [Number(process.env.BENCH_FIXTURE_REPORT_LOAD ?? 0), 0, 0],
 			scenarios: { [step.name]: step.rep < 0 ? [] : [sample] },
 		})}`,
 	);

@@ -1,9 +1,4 @@
 import { loadavg } from "node:os";
-import { LOAD_REFUSAL } from "./bench-compare.ts";
-
-/** A retry starts only once the 1-minute load is this far under the refusal ceiling (senpi#2909). */
-export const SETTLE_LOAD = LOAD_REFUSAL - 10;
-
 export interface SettleOptions {
 	readonly read?: () => number;
 	readonly sleep?: (ms: number) => Promise<void>;
@@ -12,9 +7,10 @@ export interface SettleOptions {
 	readonly log?: (line: string) => void;
 }
 
+// A referenced timer: while a discarded block waits, nothing else may be keeping the process alive.
 const realSleep = (ms: number) =>
 	new Promise<void>((resolve) => {
-		setTimeout(resolve, ms).unref?.();
+		setTimeout(resolve, ms);
 	});
 
 /**

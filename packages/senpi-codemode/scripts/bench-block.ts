@@ -30,9 +30,11 @@ export interface BlockAttempt {
  * A worker failure outranks a spike: the attempt ends the run with its failures kept, so a runtime crash can never be
  * discarded together with a spike and turn into a passing run (senpi#2909).
  */
-export function classifyAttempt(attempt: Pick<BlockAttempt, "failures" | "spikePeak">): "failed" | "spiked" | "kept" {
-	if (attempt.failures.length > 0) return "failed";
-	return attempt.spikePeak === undefined ? "kept" : "spiked";
+export type AttemptOutcome = { readonly kind: "failed" | "kept" } | { readonly kind: "spiked"; readonly peak: number };
+
+export function classifyAttempt(attempt: Pick<BlockAttempt, "failures" | "spikePeak">): AttemptOutcome {
+	if (attempt.failures.length > 0) return { kind: "failed" };
+	return attempt.spikePeak === undefined ? { kind: "kept" } : { kind: "spiked", peak: attempt.spikePeak };
 }
 
 class HostLoadSpike extends Error {

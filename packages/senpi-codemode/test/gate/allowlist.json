@@ -1226,6 +1226,29 @@
 				"legacyContracts/test/environments/py-environment.test.ts/Given a Python environment root When packages.install() passes a requirement list, then each item reaches pip as one argument: a path with a space and a marker stay intact"
 			],
 			"reason": "Plan row 38 (F4 shortfall, IS-6): the packages.install() cell helper, a module the extension and first kernel load, and its contract tests. The helper is reached through a reserved bridge tool and documented on demand; no prompt cell changes."
+		},
+		"senpi#2909": {
+			"additions": [
+				"legacyContracts/test/bench/run-retry.test.ts/per-block spike retry (senpi#2909) keeps nothing from a discarded attempt that had already collected data",
+				"legacyContracts/test/bench/run-retry.test.ts/per-block spike retry (senpi#2909) never discards a worker failure together with a spike",
+				"legacyContracts/test/bench/run-retry.test.ts/per-block spike retry (senpi#2909) settles between every retry and labels the block once retries run out",
+				"legacyContracts/test/bench/run.test.ts/paired runtime scheduling discards a first runtime's reports when a later runtime in the same attempt spikes (senpi#2909)",
+				"legacyContracts/test/bench/run.test.ts/paired runtime scheduling labels a block that spikes over 80 on every attempt instead of refusing the run (senpi#2909)",
+				"legacyContracts/test/bench/run.test.ts/paired runtime scheduling re-runs only the block a host-load spike over 80 hits, keeping the others (senpi#2909)",
+				"legacyContracts/test/bench/settle.test.ts/waitForLoadBelow (senpi#2909) gives up after its timeout and says so",
+				"legacyContracts/test/bench/settle.test.ts/waitForLoadBelow (senpi#2909) waits while a decaying 1-minute load is over the ceiling",
+				"legacyContracts/test/bench/block-spike.test.ts/a block attempt's spike checks (senpi#2909) discards the attempt when the block's start load is over 80",
+				"legacyContracts/test/bench/block-spike.test.ts/a block attempt's spike checks (senpi#2909) discards the attempt when only the closing host sample is over 80",
+				"legacyContracts/test/bench/block-spike.test.ts/a block attempt's spike checks (senpi#2909) discards the attempt when a runtime's own report saw load over 80",
+				"legacyContracts/test/bench/settle-process.test.ts/waitForLoadBelow keeps its process alive (senpi#2909) finishes the wait in a process that has nothing else to do"
+			],
+			"changes": [
+				{
+					"key": "legacyContracts/test/bench/run.test.ts/paired runtime scheduling refuses the run end to end when host load crosses 80 between measurements",
+					"reason": "senpi#2909: a host-load spike over 80 no longer refuses the whole run; only the affected block is discarded and re-run (up to 3 retries, each after the load falls under 70), and a block that spikes every time is labelled so the run is INCONCLUSIVE. The same coverage moves to the renamed contracts listed under additions ('re-runs only the block a host-load spike over 80 hits' and 'labels a block that spikes over 80 on every attempt instead of refusing the run'). The pre-run admission refusal is unchanged."
+				}
+			],
+			"reason": "senpi#2909: per-block bench spike guard. A load spike over 80 discards and re-runs only the affected block after the load settles, never discards a worker failure, and labels a block that keeps spiking; new contracts in run.test.ts, run-retry.test.ts and settle.test.ts."
 		}
 	}
 }
