@@ -8,12 +8,16 @@ const QUOTED = /"([^"]*)"|'([^']*)'/g;
 const BARE_WORD = /[^\s"'`;|&<>()]+/g;
 
 /**
- * An anchored path anywhere in the text (senpi#2898 review H2): it starts after a shell or quote boundary, optionally
- * glued to a one-letter flag (`-C/path`), with `/`, a drive (`C:\`), or a home spelling followed by a separator, quote
+ * An anchored path anywhere in the text (senpi#2898 review H2, re-review L5): it starts after a shell or quote
+ * boundary, optionally glued to clustered short flags (`-C/path`, `-xf/path`) or an `@` file reference
+ * (`curl -d @/path`), with `/`, a drive (`C:\`), or a home spelling followed by a separator, quote
  * or the end; it runs to the next shell metacharacter. Quotes inside it are dropped, as the shell drops them.
+ *
+ * Accepted over-block: an old moved path merely mentioned in text (an `echo`, a commit message) is refused like a
+ * real target. Telling a mention from a use would need a shell interpreter; the refusal names the new location.
  */
 const EMBEDDED_PATH =
-	/(?<=^|[\s"'`=(),;|&<>:[{])(?:-[A-Za-z])?((?:~|\$HOME|\$\{HOME\}|%USERPROFILE%|\$env:USERPROFILE)(?=$|[\\/"'])|[A-Za-z]:[\\/]|\/)([^\s;|&<>()`,{}]*)/g;
+	/(?<=^|[\s"'`=(),;|&<>:[{])(?:-[A-Za-z]+|@)?((?:~|\$HOME|\$\{HOME\}|%USERPROFILE%|\$env:USERPROFILE)(?=$|[\\/"'])|[A-Za-z]:[\\/]|\/)([^\s;|&<>()`,{}]*)/g;
 
 function withPlatformSeparators(path: string): string {
 	return sep === "/" ? path.replaceAll("\\", "/") : path.replaceAll("/", "\\");

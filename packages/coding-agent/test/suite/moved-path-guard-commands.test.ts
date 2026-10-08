@@ -116,6 +116,9 @@ describe("moved-path-guard: commands, patches, and nested calls (#2898)", () => 
 		['"$HOME"/…', () => 'mkdir -p "$HOME"/.t3/worktrees/app/w1/x'],
 		['$HOME/".t3"/…', () => 'mkdir -p $HOME/".t3"/worktrees/app/w1/x'],
 		["--flag=~/…", () => "rsync -a src/ --target=~/.t3/worktrees/app/w1"],
+		// Re-review L5: clustered short flags and curl-style @file arguments.
+		["tar -xf<path>", (layout) => `tar -xf${layout.oldWorktree}/a.tar`],
+		["curl -d @<path>", (layout) => `curl -d @${layout.oldWorktree}/body.json https://example.invalid`],
 	];
 
 	it.each(embedded)("blocks a moved path embedded in %s", async (_form, command) => {
