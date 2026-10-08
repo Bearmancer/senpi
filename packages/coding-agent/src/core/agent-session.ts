@@ -164,6 +164,7 @@ import { areExperimentalFeaturesEnabled } from "./experimental.ts";
 import { exportSessionToHtml, type ToolHtmlRenderer } from "./export-html/index.ts";
 import { createToolHtmlRenderer } from "./export-html/tool-renderer.ts";
 import { ANTHROPIC_SUBSCRIPTION_PROVIDER_ID } from "./extensions/builtin/anthropic-subscription/account-management.ts";
+import { askUserAnswerDisplayText } from "./extensions/builtin/ask-user/format.ts";
 import { getPromptCachePrewarmUsage } from "./extensions/builtin/cache-keepalive/prewarm-entry.ts";
 import {
 	type ModelUsabilityAdmission,
@@ -343,6 +344,7 @@ import { createToolDefinitionFromAgentTool } from "./tools/tool-definition-wrapp
 import { TranscriptWriteFailures } from "./transcript-write-failures.ts";
 import { commandShapedName, findUnknownCommand } from "./unknown-command.ts";
 import { addUsageToTotals, combineUsage, createUsageTotals } from "./usage-totals.ts";
+import { keepsTextBlocksVerbatim, userTextContent } from "./user-text-blocks.ts";
 import {
 	findLatestResponse,
 	getBranchSelection,
@@ -929,6 +931,8 @@ export interface PromptOptions extends ClientMessageIdentity {
 	expandPromptTemplates?: boolean;
 	/** Image attachments */
 	images?: ImageContent[];
+	/** Internal: the text blocks an extension sent `text` as; kept as separate blocks while they still spell it. */
+	textBlocks?: readonly string[];
 	/** When streaming, how to queue the message: "steer" (interrupt) or "followUp" (wait). Required if streaming. */
 	streamingBehavior?: "steer" | "followUp";
 	/** Session-only thinking level applied before starting this prompt. */
@@ -4887,7 +4891,7 @@ export class AgentSession {
 					preflightResult?.(true);
 					return;
 				}
-				if (inputResult.action === "transform") {
+				if (inputResult.action === "transform" && !keepsTextBlocksVerbatim(options?.textBlocks)) {
 					currentText = inputResult.text;
 					currentImages = inputResult.images ?? currentImages;
 				}
@@ -5046,7 +5050,7 @@ export class AgentSession {
 			if (environmentContext) messages.push(environmentContext);
 
 			// Add user message
-			const userContent: (TextContent | ImageContent)[] = [{ type: "text", text: expandedText }];
+			const userContent: (TextContent | ImageContent)[] = userTextContent(expandedText, options?.textBlocks);
 			if (currentImages) {
 				userContent.push(...currentImages);
 			}
@@ -5454,14 +5458,22 @@ export class AgentSession {
 	/**
 	 * Internal: Queue a steering message (already expanded, no extension command check).
 	 */
-	private async _queueSteer(text: string, images?: ImageContent[], options?: QueuedInputOptions): Promise<void> {
+	private async _queueSteer(
+		text: string,
+		images?: ImageContent[],
+		options?: QueuedInputOptions & Pick<PromptOptions, "textBlocks">,
+	): Promise<void> {
 		this._enqueuePreparedInput({ ...options, text, images, mode: "steer" });
 	}
 
 	/**
 	 * Internal: Queue a follow-up message (already expanded, no extension command check).
 	 */
-	private async _queueFollowUp(text: string, images?: ImageContent[], options?: QueuedInputOptions): Promise<void> {
+	private async _queueFollowUp(
+		text: string,
+		images?: ImageContent[],
+		options?: QueuedInputOptions & Pick<PromptOptions, "textBlocks">,
+	): Promise<void> {
 		this._enqueuePreparedInput({ ...options, text, images, mode: "followUp" });
 	}
 
@@ -5470,7 +5482,9 @@ export class AgentSession {
 		this._enqueuePreparedInput(input);
 	}
 
-	private _enqueuePreparedInput(input: QueuedInputOptions & Omit<PreparedClientInput, "enqueueOrder">): void {
+	private _enqueuePreparedInput(
+		input: QueuedInputOptions & Omit<PreparedClientInput, "enqueueOrder"> & Pick<PromptOptions, "textBlocks">,
+	): void {
 		const enqueueOrder = input.enqueueOrder ?? this.reserveQueuedInputOrder();
 		const prepared = {
 			...clientMessageIdentity(input),
@@ -5488,7 +5502,10 @@ export class AgentSession {
 			count: queue.length,
 		});
 		this._emitQueueUpdate();
-		const content: (TextContent | ImageContent)[] = [{ type: "text", text: input.text }, ...(input.images ?? [])];
+		const content: (TextContent | ImageContent)[] = [
+			...userTextContent(input.text, input.textBlocks),
+			...(input.images ?? []),
+		];
 		const message: AgentMessage = {
 			role: "user",
 			content,
@@ -5728,6 +5745,7 @@ export class AgentSession {
 		// try below, so resolve the deferred-turn claim first to keep agent_idle reachable.
 		let text: string;
 		let images: ImageContent[] | undefined;
+		let textBlocks: string[] | undefined;
 
 		try {
 			if (typeof content === "string") {
@@ -5743,6 +5761,7 @@ export class AgentSession {
 					}
 				}
 				text = textParts.join("\n");
+				if (textParts.length > 1) textBlocks = textParts;
 				if (images.length === 0) images = undefined;
 			}
 		} catch (error) {
@@ -5762,6 +5781,7 @@ export class AgentSession {
 				expandPromptTemplates: options?.expandPromptTemplates ?? false,
 				streamingBehavior: options?.deliverAs,
 				images,
+				textBlocks,
 				source: "extension",
 				promptDisposition: (nextDisposition) => {
 					disposition = nextDisposition;
@@ -5781,9 +5801,9 @@ export class AgentSession {
 			// before prompt() accepted the message must not silently drop it.
 			if (disposition === undefined) {
 				if (options?.deliverAs === "steer") {
-					await this._queueSteer(text, images);
+					await this._queueSteer(text, images, { textBlocks });
 				} else {
-					await this._queueFollowUp(text, images);
+					await this._queueFollowUp(text, images, { textBlocks });
 				}
 			}
 			throw error;
@@ -10939,7 +10959,7 @@ export class AgentSession {
 			if (entry.type !== "message") continue;
 			if (entry.message.role !== "user") continue;
 
-			const text = contentText(entry.message.content, "");
+			const text = askUserAnswerDisplayText(entry.message.content) ?? contentText(entry.message.content, "");
 			if (text) {
 				result.push({ entryId: entry.id, text });
 			}

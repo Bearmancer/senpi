@@ -7,6 +7,7 @@ import { mkdir } from "node:fs/promises";
 import { extname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { getAgentDir } from "../../../config.ts";
+import { runtimeExecArgv } from "../../../utils/runtime-exec-argv.ts";
 import { socketTransport, type Transport } from "../shared/transport.ts";
 import { connect, listSessions } from "./session.ts";
 import { runView } from "./view.ts";
@@ -28,7 +29,7 @@ async function ensureServer(transport: Transport, socketPath: string, sessionsRo
 		// No server yet; start one.
 	}
 	// execArgv is forwarded so a parent running under a TypeScript loader produces children that do too.
-	const child = spawn(process.execPath, [...process.execArgv, SERVER_ENTRY, socketPath, sessionsRoot], {
+	const child = spawn(process.execPath, [...runtimeExecArgv(), SERVER_ENTRY, socketPath, sessionsRoot], {
 		detached: true,
 		stdio: "ignore",
 	});

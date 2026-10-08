@@ -1,9 +1,9 @@
 /**
- * Re-enter a host script with the caller's runtime options, not its entry mode.
+ * Re-enter a script with the caller's runtime options, not its entry mode.
  * Forwarding eval/print code can execute the embedding caller again and recursively
  * spawn hosts; input-type is only valid for eval/stdin, and interactive keeps a REPL alive.
  */
-export function rpcHostExecArgv(
+export function runtimeExecArgv(
 	execArgv: readonly string[] = process.execArgv,
 	bun: boolean = process.versions.bun !== undefined,
 ): string[] {

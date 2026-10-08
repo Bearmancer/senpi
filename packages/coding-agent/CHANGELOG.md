@@ -6,6 +6,20 @@
 
 ### Added
 
+- `ask_user_question` and `request_user_input` accept an optional `required: true` for a question that gates an action (an approval before an irreversible step). If such a question times out, is dismissed, is lost in a restart, or cannot be shown, the model is told not to take that action and to end the turn, instead of being told to continue on its best judgment. Questions without the flag behave as before ([#2949](https://github.com/code-yeongyu/senpi/issues/2949)).
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.10-8] - 2026-10-08
+
+### Breaking Changes
+
+### Added
+
 - Claude Haiku 5.5 gets its own system prompt preset, `claude-haiku-5-5`, selected automatically for every Haiku 5.5 id and available as `promptPreset: "claude-haiku-5-5"`. It is the Sonnet 5.5 core with the deltas Anthropic's Haiku 5.5 prompting guide documents for coding agents: it keeps working instead of handing an unfinished task back, and when web search is available it searches for facts that may have changed since its training data ends. Haiku 4.5 and older keep the default prompt ([#2917](https://github.com/code-yeongyu/senpi/issues/2917)).
 
 - `context` and `context_with_system` extension handlers accept a `{ mutatesMessages: false }` registration option, an opt-in performance declaration that the handler never edits a received message object in place ([#2525](https://github.com/code-yeongyu/senpi/issues/2525)).
@@ -27,12 +41,14 @@
 ### Fixed
 
 - `senpi --list-models`, `--version`, `--help`, `--list-tips` and `--export` no longer lose output when stdout is a pipe that is read slowly, under Node or Bun: they wait until the output is delivered (at most 30 s, and at once when the reader closes the pipe) instead of exiting 0 with rows missing. Package and `schedule` commands get the same wait under Node ([#2937](https://github.com/code-yeongyu/senpi/issues/2937)).
+- Children that senpi starts from a script (the app-server daemon, the schedule runner, the update worker and the experimental Mini launchers) no longer inherit the caller's `-e`/`-p` entry mode, so a caller that embeds senpi from `node -e` or `bun -e` is no longer run a second time ([#2599](https://github.com/code-yeongyu/senpi/issues/2599)).
 - An Anthropic Subscription account blocked by an authentication error now recovers on its own when its saved refresh token is still accepted: the next request redeems that token once and clears the block, instead of every request failing with "blocked until re-login". A rejected token stays blocked and is not retried until a new login ([#2926](https://github.com/code-yeongyu/senpi/issues/2926)).
 
 - MCP sign-in no longer risks sending a saved refresh token to a different authorization server: the bundled MCP SDK moves to 1.32.1 (GHSA-6qxp-vccf-f47h), and senpi now records which authorization server issued each saved sign-in and refreshes only there. If an MCP server's authorization server changes, senpi asks you to sign in again instead of refreshing. MCP servers signed in with very old senpi versions may ask you to sign in again once their access token expires ([#2940](https://github.com/code-yeongyu/senpi/issues/2940)).
 - An MCP HTTP endpoint that redirects to a different origin is no longer followed, and the connect error now says so: it names both origins and the URL to put in the server's config ([#2940](https://github.com/code-yeongyu/senpi/issues/2940)).
 - A config hot reload no longer re-triggers itself when an extension watches a file it registers after the session starts (omo's `omo.jsonc`): the untouched file is compared once the extension re-registers it, and a reload chain caused only by that comparison stops after three reloads with a `reload_loop_stopped` warning. A reload vetoed by running subagents is rechecked with backoff instead of every second ([#2878](https://github.com/code-yeongyu/senpi/issues/2878)).
 - A long tool-heavy turn on a small context window no longer ends with "compaction did not complete" when the threshold trips before the turn has anything older to compact: the earlier steps of the turn are summarized and the latest one is kept. `-p --mode json` now exits 1 when a run still ends that way ([#2925](https://github.com/code-yeongyu/senpi/issues/2925)).
+- An `ask_user_question` / `request_user_input` answer no longer puts the user's own words inside the tool result, where a model trained to treat tool results as untrusted (Claude Haiku 5.5) may ignore them. A blocking answer's tool result keeps only the structure and the options the model offered, and refers to each of the user's words by a label such as `[The user's comment for question <id>]`; the words are kept in the persisted result and every request rebuilds them as a user message right after that batch's tool results, each word after its own label block, so an abort, a cleared queue or a resumed session cannot lose or reorder them. A later (`waitForAnswer: false`) answer keeps the `[Answer to question <id>]` frame in its own block, followed by the same labelled word blocks, and an `input` handler no longer fuses those blocks. The terminal, the tree view and the fork list show both answers as before ([#2920](https://github.com/code-yeongyu/senpi/issues/2920)).
 - An RPC host `open_session` that names a model it cannot resolve (for example an unknown provider) now fails with `open_failed: model_unavailable: <reason>` instead of opening on the default model and reporting success, so a caller that pins a model never gets work from a different one. An `open_session` that names only `provider` or only `modelId` is now refused as `invalid_launch_profile` instead of silently opening on the default model. A failure relayed from a worker-runtime session no longer reads `open_failed: open_failed: ...` ([#2906](https://github.com/code-yeongyu/senpi/issues/2906)).
 
 - Transient OAuth refresh retries the same credential slot without blocking it, and summary/compaction authentication uses bounded same-model backoff instead of losing the failure as a missing API key ([#2893](https://github.com/code-yeongyu/senpi/issues/2893)).
