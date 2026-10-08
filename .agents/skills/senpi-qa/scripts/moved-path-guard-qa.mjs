@@ -9,6 +9,7 @@
 //
 //   node .agents/skills/senpi-qa/scripts/moved-path-guard-qa.mjs --self-test
 //   node .agents/skills/senpi-qa/scripts/moved-path-guard-qa.mjs --self-test --evidence moved-path-guard
+import { execFileSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createChecks, evidenceDir, guardRealAuth, installCleanupHooks, makeSandbox, runCli } from "./lib/common.mjs";
@@ -92,6 +93,9 @@ async function selfTest() {
 	const elsewhere = join(box.dir, "elsewhere");
 	mkdirSync(join(repo, "src"), { recursive: true });
 	mkdirSync(join(box.dir, "locked", "inner"), { recursive: true });
+	// Fourth review H-fifo: a FIFO named as a breadcrumb in an ancestor of a guarded path must never block the guard.
+	mkdirSync(join(box.dir, "fifo-repo", "sub"), { recursive: true });
+	execFileSync("mkfifo", [join(box.dir, "fifo-repo", "omo-desktop-moved.json")]);
 	chmodSync(join(box.dir, "locked"), 0o000);
 	mkdirSync(elsewhere, { recursive: true });
 	writeFileSync(
@@ -122,6 +126,7 @@ async function selfTest() {
 				),
 			],
 		},
+		{ toolCalls: [shellInEval(`touch ${join(box.dir, "fifo-repo", "sub", "x")} && echo fifo-ok`)] },
 		// Re-review H-new: a path the guard cannot resolve (not searchable here) never fails the call.
 		{ toolCalls: [shellInEval(`ls ${join(box.dir, "locked", "inner", "foo")} 2>/dev/null; echo ran-after-unreadable`)] },
 		{ text: "done" },
@@ -161,6 +166,8 @@ async function selfTest() {
 		reusedOk !== undefined && existsSync(join(oldHome, REUSED, "f69.ts")),
 		reusedOk?.slice(0, 120) ?? results.find((text) => text.includes(REUSED))?.slice(0, 160) ?? "call refused",
 	);
+	const fifoOk = results.find((text) => text.includes("fifo-ok"));
+	checks.ok("H-fifo: a FIFO named as a breadcrumb never blocks a call", fifoOk !== undefined, fifoOk?.slice(0, 120) ?? "call blocked or failed");
 	checks.ok("the moved home's existing file is untouched", readFileSync(join(newWorktree, "notes.txt"), "utf8") === "moved content\n", "");
 
 	if (evidenceSlug !== undefined) {
