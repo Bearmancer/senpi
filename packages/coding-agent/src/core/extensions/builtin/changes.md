@@ -1,3 +1,23 @@
+## 2026-10-08 - moved-path-guard: sixth review fixes (senpi#2898)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/moved-path-guard/known-moves.ts`, `walk.ts`, `path-match.ts`: a trusted old root is also registered as the walk's caller spelled it (the called path minus the segments the canonical path has below the root), and every registered spelling is re-spelled under each home spelling; all spellings key their decisions by the realpath'd root. The walk documents that a remembered "re-used" answer does not expire by itself (accepted).
+- `breadcrumb-trust.ts`, `walk.ts`, `resolve.ts`, `resolve-async.ts`: the fifth review's `nlink === 1` rule is removed; once a breadcrumb lists the path, the walk `lstat`s its folder and, on POSIX, trusts it only when this user owns the folder and nobody else can write it.
+- `resolve.ts`: the `.git` step uses `accessSync`, `false` only for ENOENT/ENOTDIR and unknown otherwise, as the async probe does. `resolve-async.ts` reads the error code without `instanceof Error`.
+
+### Why
+
+Sixth review of PR #2900: a symlinked `~/.t3` still made the text fallback and ranking fail open; the nlink rule let a second hard link (another user, or a `cp -al`/`rsync --link-dest` backup) turn the guard off for its owner; the sync resolver still overwrote a remembered "re-used" on EACCES/ELOOP.
+
+### Why an extension could not handle it
+
+It is an extension.
+
+### Expected merge conflict zones
+
+- Fork-only directory.
+
 ## 2026-10-08 - moved-path-guard: fifth review fixes (senpi#2898)
 
 ### What changed
