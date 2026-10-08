@@ -1,4 +1,5 @@
 import { existsSync, realpathSync } from "node:fs";
+import { homedir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { type MovedPath, readJsonFileSync } from "./breadcrumb-trust.ts";
 import { currentPathPlatform, type PathPlatform } from "./path-match.ts";
@@ -23,6 +24,7 @@ function answer(step: ResolverStep): unknown {
 	try {
 		if (step.op === "canonical") return canonicalPath(step.path);
 		if (step.op === "json") return readJsonFileSync(step.file);
+		if (step.op === "home") return realpathSync(homedir());
 		return existsSync(step.path);
 	} catch {
 		return failedReply(step);

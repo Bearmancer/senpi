@@ -19,7 +19,8 @@ import type { PathPlatform } from "./path-match.ts";
 export type ResolverStep =
 	| { readonly op: "canonical"; readonly path: string }
 	| { readonly op: "json"; readonly file: string }
-	| { readonly op: "exists"; readonly path: string };
+	| { readonly op: "exists"; readonly path: string }
+	| { readonly op: "home" };
 
 /**
  * The answer to a step whose I/O failed or timed out. A path whose own canonicalization fails is walked by its
@@ -27,6 +28,13 @@ export type ResolverStep =
  */
 export function failedReply(step: ResolverStep): unknown {
 	return step.op === "exists" ? false : undefined;
+}
+
+/** The user's home as `os.homedir()` spells it, plus its realpath when a resolver could answer the `home` step. */
+function* homeSpellings(): Walk<string[]> {
+	const home = homedir();
+	const real = (yield { op: "home" }) as string | undefined;
+	return real !== undefined && real !== home ? [home, real] : [home];
 }
 
 type Walk<T> = Generator<ResolverStep, T, unknown>;
@@ -43,7 +51,7 @@ function* movedOnce(path: string, platform: PathPlatform, onReused?: OnReused): 
 		const match = breadcrumb && movedMatch(dir, breadcrumb, canonical, platform);
 		if (
 			match &&
-			movedToInHome(dir, breadcrumb, platform) &&
+			movedToInHome(dir, breadcrumb, yield* homeSpellings(), platform) &&
 			trustedBreadcrumb(dir, breadcrumb, yield { op: "json", file: homeMarkerFile(breadcrumb.movedTo) }, platform)
 		) {
 			// The re-used decision is recorded before the breadcrumb is remembered, so no text fallback in this call can

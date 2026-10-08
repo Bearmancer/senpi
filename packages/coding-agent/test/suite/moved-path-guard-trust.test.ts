@@ -1,4 +1,4 @@
-import { chmodSync, mkdirSync, renameSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -137,6 +137,27 @@ describe("moved-path-guard breadcrumb trust (#2898)", () => {
 			expect(findMovedPath(join(moved.oldWorktree, "a.ts"))).toBeUndefined();
 		});
 	});
+
+	// Fourth review M-c: the desktop may write movedTo realpath'd while HOME is a symlink (or /tmp vs /private/tmp);
+	// that home is still the user's.
+	it.runIf(process.platform !== "win32")(
+		"follows a breadcrumb whose movedTo is the realpath of a symlinked home",
+		() => {
+			const moved = layout();
+			const alias = `${moved.home}-alias`;
+			symlinkSync(moved.home, alias);
+			const saved = process.env.HOME;
+			process.env.HOME = alias;
+			try {
+				expect(findMovedPath(join(alias, ".t3", MOVED_WORKTREE, "a.ts"))?.mappedPath).toBe(
+					join(moved.newWorktree, "a.ts"),
+				);
+			} finally {
+				process.env.HOME = saved;
+				rmSync(alias, { force: true });
+			}
+		},
+	);
 
 	// Re-review L6: a marker from a newer desktop is untrusted, and that is logged at warn level, not silent.
 	it("ignores a newer marker schema and logs it at warn level", async () => {

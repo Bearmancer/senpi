@@ -1,4 +1,5 @@
-import { access } from "node:fs/promises";
+import { access, realpath } from "node:fs/promises";
+import { homedir } from "node:os";
 import { RESOLUTION_TIMED_OUT, withResolutionDeadline } from "../../../tools/bounded-realpath.ts";
 import { canonicalizeFilesystemPath } from "../../../tools/filesystem-policy.ts";
 import type { MovedBreadcrumb } from "./breadcrumb.ts";
@@ -30,13 +31,28 @@ export async function pathExists(path: string): Promise<boolean> {
 	}
 }
 
+const realHomes = new Map<string, Promise<string | undefined>>();
+
+/** The realpath of the user's home, once per spelling per process (`os.homedir()` follows `$HOME`). */
+function realHome(): Promise<string | undefined> {
+	const home = homedir();
+	let real = realHomes.get(home);
+	if (!real) {
+		real = realpath(home).catch(() => undefined);
+		realHomes.set(home, real);
+	}
+	return real;
+}
+
 async function answer(step: ResolverStep, onTimeout: () => void): Promise<unknown> {
 	const io =
 		step.op === "canonical"
 			? canonicalizeFilesystemPath(step.path)
 			: step.op === "json"
 				? readJsonFileAsync(step.file)
-				: pathExists(step.path);
+				: step.op === "home"
+					? realHome()
+					: pathExists(step.path);
 	try {
 		const reply = await withResolutionDeadline(io, STEP_DEADLINE_MS);
 		if (reply !== RESOLUTION_TIMED_OUT) return reply;
