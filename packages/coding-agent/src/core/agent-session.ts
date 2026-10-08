@@ -161,6 +161,7 @@ import {
 	ENGINE_TURN_START_ENTRY_TYPE,
 	engineTurnLimitNotice,
 	engineTurnStop,
+	isUserDirectedTurn,
 } from "./engine-turn-limit.ts";
 import {
 	type EnvironmentContext,
@@ -5636,12 +5637,9 @@ export class AgentSession {
 					this.agent.steer(appMessage);
 				}
 			} else if (options?.triggerTurn && this._stopEngineTurn(message.customType)) {
-				// Refused: no turn, and the message stays out of the context the next user turn sends.
+				this._appendCustomMessage(appMessage);
 			} else if (options?.triggerTurn) {
 				finishSessionWork ??= this._sessionWorkBarrier.begin();
-				this._emitEntryAppended(
-					this.sessionManager.appendCustomEntry(ENGINE_TURN_START_ENTRY_TYPE, { customType: message.customType }),
-				);
 				const environmentContext = this._pendingEnvironmentContextMessage();
 				const messages: AgentMessage[] = environmentContext ? [environmentContext, appMessage] : [appMessage];
 				const queueTriggerForLater = (): void => {
@@ -5686,6 +5684,13 @@ export class AgentSession {
 				} finally {
 					this._triggerTurnAdmissionAbortGeneration = undefined;
 				}
+				if (!isUserDirectedTurn(message.customType)) {
+					this._emitEntryAppended(
+						this.sessionManager.appendCustomEntry(ENGINE_TURN_START_ENTRY_TYPE, {
+							customType: message.customType,
+						}),
+					);
+				}
 				await this._promptAgent(messages, deferredTurnClaim);
 			} else if (this.isStreaming) {
 				this._pendingCustomMessages.push(appMessage);
@@ -5704,6 +5709,7 @@ export class AgentSession {
 	 * emitted and shown (senpi#2967).
 	 */
 	private _stopEngineTurn(customType: string): boolean {
+		if (isUserDirectedTurn(customType)) return false;
 		const stop = engineTurnStop(
 			this.sessionManager.getEntries(),
 			Date.now(),

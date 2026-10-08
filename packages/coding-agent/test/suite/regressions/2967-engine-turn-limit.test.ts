@@ -68,10 +68,15 @@ describe("senpi#2967 engine-originated turns are bounded for every source", () =
 			await harness.session.prompt("start");
 			await drain(harness);
 
-			// then the engine started no more than 12 turns on its own, and said why it stopped
+			// then the engine started no more than 12 turns on its own, said why it stopped, and kept the refused message
 			expect(harness.faux.getCallLog().length).toBe(1 + 12);
 			expect(limitEntries(harness)).toHaveLength(1);
-			expect(engineTurns(harness, customType)).toBe(12);
+			expect(engineTurns(harness, customType)).toBe(13);
+			expect(
+				harness.sessionManager
+					.getEntries()
+					.filter((entry) => entry.type === "custom" && entry.customType === "engine-turn-start"),
+			).toHaveLength(12);
 		},
 	);
 
@@ -115,5 +120,26 @@ describe("senpi#2967 engine-originated turns are bounded for every source", () =
 
 		// then the user's turn and the source's next automatic turns run again
 		expect(harness.faux.getCallLog().length - callsAtStop).toBeGreaterThanOrEqual(3);
+	});
+
+	it("lets a manual continue run after a pause", async () => {
+		// given a source that already hit the per-minute breaker
+		harness = await createHarness({ extensionFactories: [selfContinuing("goal-continuation", AUTO_TURN_ATTEMPTS)] });
+		harness.setResponses(
+			Array.from({ length: AUTO_TURN_ATTEMPTS + 6 }, (_, index) =>
+				fauxAssistantMessage([fauxText(`status ${index}`)]),
+			),
+		);
+		await harness.session.prompt("start");
+		await drain(harness);
+		const callsAtStop = harness.faux.getCallLog().length;
+
+		// when the user asks to continue with a bare "."
+		await harness.session.prompt(".");
+		await drain(harness);
+
+		// then the continue runs instead of being refused as an automatic turn
+		expect(harness.faux.getCallLog().length).toBeGreaterThan(callsAtStop);
+		expect(limitEntries(harness)).toHaveLength(1);
 	});
 });

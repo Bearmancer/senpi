@@ -1,3 +1,5 @@
+import { CONTINUE_FROM_LEAF_CUSTOM_TYPE } from "./continue-from-leaf.ts";
+import { MANUAL_CONTINUE_CUSTOM_TYPE } from "./manual-continue.ts";
 import type { SessionEntry } from "./session-manager.ts";
 
 export const MAX_ENGINE_TURNS_PER_USER_INPUT = 150;
@@ -29,7 +31,13 @@ export function engineTurnLimitNotice(stop: EngineTurnStop): string {
 		: `Paused: the agent started ${stop.toolFreeInWindow} turns on its own in the last minute without doing any work. Send any message to continue.`;
 }
 
+/** A `.` manual continue or a continue-from-leaf is the user's own request, not an automatic turn. */
+export function isUserDirectedTurn(customType: string): boolean {
+	return customType === MANUAL_CONTINUE_CUSTOM_TYPE || customType === CONTINUE_FROM_LEAF_CUSTOM_TYPE;
+}
+
 function isUserMessage(entry: SessionEntry): boolean {
+	if (entry.type === "custom_message") return isUserDirectedTurn(entry.customType);
 	return entry.type === "message" && entry.message.role === "user";
 }
 

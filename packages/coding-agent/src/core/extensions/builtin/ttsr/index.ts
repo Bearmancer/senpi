@@ -278,8 +278,8 @@ export default function ttsrExtension(pi: ExtensionAPI): void {
 		}
 		const nudge = pendingNudge;
 		pendingNudge = null;
-		const rule = nudge.details.rules[0] ?? "";
-		if (ruleAlreadyCorrected(ctx.sessionManager.getEntries(), rule)) {
+		const [rule] = nudge.details.rules;
+		if (rule !== undefined && ruleAlreadyCorrected(ctx.sessionManager.getEntries(), rule)) {
 			pi.appendEntry(TTSR_LOOP_STOPPED_ENTRY_TYPE, { rules: nudge.details.rules, at: Date.now() });
 			pi.events.emit(TTSR_LOOP_STOPPED_EVENT, { rules: nudge.details.rules });
 			ctx.ui.notify(ttsrLoopStoppedNotice(rule), "warning");
