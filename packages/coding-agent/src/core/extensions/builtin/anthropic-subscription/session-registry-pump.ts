@@ -37,6 +37,7 @@ export interface SessionTurnRequest {
 	message: SDKUserMessage["message"];
 	signal?: AbortSignal;
 	onMessage?: (message: SDKMessage) => void;
+	writable?: () => Promise<void>;
 	scheduleAbort?: (callback: () => void, delayMs: number) => () => void;
 }
 
@@ -194,6 +195,7 @@ async function runPump(
 				return;
 			}
 			if (handleMessage(registry, entry, value)) return;
+			await currentTurn(entry)?.writable?.();
 		}
 	} catch (error) {
 		failTurn(registry, entry, error instanceof Error ? error : new Error(String(error)));
@@ -243,6 +245,7 @@ export function submitSessionTurn(
 			claimed: false,
 			aborted: false,
 			onMessage: request.onMessage,
+			writable: request.writable,
 			signal: request.signal,
 			onAbort,
 			resolve,
