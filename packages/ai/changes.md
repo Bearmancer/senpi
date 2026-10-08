@@ -7,6 +7,7 @@
 ### Why
 
 - Make the working subscription alias selectable from the native catalog without a local extension. Preserve Sol's existing base and long-context cost metadata; subscription availability does not establish API pricing.
+- The `xhigh` default deliberately preserves the existing local alias's high-reasoning preset while requesting faster serving; it is not the backend's default effort or a minimum-latency preset, and users can select a lower effort.
 
 ### Why an extension could not handle it
 
