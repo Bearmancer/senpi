@@ -61,16 +61,18 @@ const FORCED_TOOL_CHOICE_REJECTING_MODEL_ID = /^claude-(?:(?:fable|mythos)(?:-|$
 
 /**
  * Default for `supportsToolReferences`: first-party Anthropic models except
- * Haiku (rejects client-side tool_reference blocks) and models that predate
- * tool search (Claude 3.x, Opus/Sonnet 4.0, Opus 4.1).
+ * Haiku before 5.5 (Haiku 4.5 rejects client-side tool_reference blocks) and
+ * models that predate tool search (Claude 3.x, Opus/Sonnet 4.0, Opus 4.1).
+ * Anthropic's tool-search compatibility table lists Claude Haiku 5.5.
  */
 function defaultSupportsToolReferences(model: Model<"anthropic-messages">): boolean {
-	if (model.provider !== "anthropic" || model.id.includes("haiku")) return false;
-	const version = model.id.match(/^claude-(?:opus|sonnet|fable)-(\d+)(?:-(\d+))?(?:-|$)/);
+	if (model.provider !== "anthropic") return false;
+	const version = model.id.match(/^claude-(opus|sonnet|fable|haiku)-(\d+)(?:-(\d+))?(?:-|$)/);
 	if (!version) return false;
-	const major = Number(version[1]);
-	const minor = version[2] && version[2].length < 8 ? Number(version[2]) : 0;
-	return major > 4 || (major === 4 && minor >= 5);
+	const major = Number(version[2]);
+	const minor = version[3] && version[3].length < 8 ? Number(version[3]) : 0;
+	const [floorMajor, floorMinor] = version[1] === "haiku" ? [5, 5] : [4, 5];
+	return major > floorMajor || (major === floorMajor && minor >= floorMinor);
 }
 
 export function getAnthropicCompat(

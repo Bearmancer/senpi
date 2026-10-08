@@ -33,11 +33,28 @@ interface AnthropicPayload {
 	top_k?: number;
 }
 
-class PayloadCaptured extends Error {
-	constructor() {
-		super("payload captured");
-		this.name = "PayloadCaptured";
-	}
+const SSE_OK = [
+	{ type: "message_start", message: { id: "msg_test", usage: { input_tokens: 1, output_tokens: 0 } } },
+	{ type: "message_delta", delta: { stop_reason: "end_turn" }, usage: { input_tokens: 1, output_tokens: 1 } },
+	{ type: "message_stop" },
+]
+	.map((event) => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`)
+	.join("");
+
+/** Records the JSON body that actually reaches `fetch`, i.e. what Anthropic receives. */
+function wireRecorder(): { fetch: typeof fetch; body: () => AnthropicPayload } {
+	let captured: AnthropicPayload | undefined;
+	return {
+		fetch: async (input, init) => {
+			const request = input instanceof Request ? input : new Request(input, init);
+			captured = (await request.json()) as AnthropicPayload;
+			return new Response(SSE_OK, { status: 200, headers: { "content-type": "text/event-stream" } });
+		},
+		body: () => {
+			if (!captured) throw new Error("Expected the request body to reach fetch");
+			return captured;
+		},
+	};
 }
 
 function makeContext(withTool = false): Context {
@@ -61,18 +78,14 @@ async function capturePayload(
 	model: Model<"anthropic-messages">,
 	options?: SimpleStreamOptions,
 ): Promise<AnthropicPayload> {
-	let captured: AnthropicPayload | undefined;
-	const s = streamSimple({ ...model, baseUrl: "http://127.0.0.1:9" }, makeContext(), {
+	const wire = wireRecorder();
+	await streamSimple({ ...model, baseUrl: "http://127.0.0.1:9" }, makeContext(), {
 		...options,
 		apiKey: "fake-key",
-		onPayload: (payload) => {
-			captured = payload as AnthropicPayload;
-			throw new PayloadCaptured();
-		},
-	});
-	await s.result();
-	if (!captured) throw new Error("Expected payload to be captured before request failure");
-	return captured;
+		cacheRetention: "none",
+		fetch: wire.fetch,
+	}).result();
+	return wire.body();
 }
 
 function haiku55(): Model<"anthropic-messages"> {
@@ -128,6 +141,8 @@ describe("Claude Haiku 5.5 catalog row (anthropic)", () => {
 		expect(model.compat?.supportsMidConvoSystemMessages).toBe(true);
 		expect(model.compat?.allowedFallbackModels).toBeUndefined();
 		expect(getAnthropicCompat(model).supportsForcedToolChoice).toBe(true);
+		// Anthropic's tool-search compatibility table lists Claude Haiku 5.5 for both server tool variants.
+		expect(getAnthropicCompat(model).supportsToolReferences).toBe(true);
 	});
 
 	it("bills a prompt over 100,000 input tokens entirely at the long-context rate", () => {
@@ -139,6 +154,31 @@ describe("Claude Haiku 5.5 catalog row (anthropic)", () => {
 		const atThreshold = calculateCost(model, usage(100_000, 2_000));
 		expect(atThreshold.input).toBeCloseTo(0.01, 10);
 		expect(atThreshold.output).toBeCloseTo(0.001, 10);
+	});
+});
+
+describe("Claude Haiku 5.5 catalog rows (every route)", () => {
+	it("bills every Haiku 5.5 row at five times its base rates above 100,000 input tokens", () => {
+		const rows = [
+			"anthropic",
+			"amazon-bedrock",
+			"opencode",
+			"opencode-go",
+			"openrouter",
+			"vercel-ai-gateway",
+			"venice",
+		] as const;
+		const found = rows.flatMap((provider) => getModels(provider).filter((model) => /haiku-5[.-]5/.test(model.id)));
+		expect(new Set(found.map((model) => model.provider))).toEqual(new Set(rows));
+		for (const model of found) {
+			const { tiers, ...base } = model.cost;
+			expect(tiers, `${model.provider}/${model.id}`).toHaveLength(1);
+			const tier = tiers?.[0];
+			expect(tier?.inputTokensAbove).toBe(100_000);
+			for (const key of ["input", "output", "cacheRead", "cacheWrite"] as const) {
+				expect(tier?.[key], `${model.provider}/${model.id} ${key}`).toBeCloseTo(base[key] * 5, 6);
+			}
+		}
 	});
 });
 
@@ -206,23 +246,21 @@ describe("Claude Haiku 5.5 request shape (anthropic-messages)", () => {
 		const payload = await capturePayload(haiku55(), { temperature: 0.2 });
 		expect(payload.thinking).toBeUndefined();
 		expect(payload.output_config).toEqual({ effort: "low" });
+		expect(payload.messages.at(-1)).toMatchObject({ role: "system", output_config: { effort: "low" } });
 		expect(payload).not.toHaveProperty("temperature");
 	});
 
 	it("keeps a forced tool_choice, which Haiku 5.5 accepts", async () => {
-		let captured: AnthropicPayload | undefined;
-		const s = streamAnthropic({ ...haiku55(), baseUrl: "http://127.0.0.1:9" }, normalizeContext(makeContext(true)), {
+		const wire = wireRecorder();
+		await streamAnthropic({ ...haiku55(), baseUrl: "http://127.0.0.1:9" }, normalizeContext(makeContext(true)), {
 			apiKey: "fake-key",
+			cacheRetention: "none",
 			thinkingEnabled: true,
 			effort: "medium",
 			toolChoice: { type: "tool", name: "lookup" },
-			onPayload: (payload) => {
-				captured = payload as AnthropicPayload;
-				throw new PayloadCaptured();
-			},
-		});
-		await s.result();
-		expect(captured?.tool_choice).toEqual({ type: "tool", name: "lookup" });
+			fetch: wire.fetch,
+		}).result();
+		expect(wire.body().tool_choice).toEqual({ type: "tool", name: "lookup" });
 	});
 
 	it("pins effort low for a thinking-off turn on a map-less gateway row", async () => {

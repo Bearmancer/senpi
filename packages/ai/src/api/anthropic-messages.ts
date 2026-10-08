@@ -2430,8 +2430,9 @@ function buildParams(
 	}
 
 	// Managed effort models always use adaptive thinking so prefix mismatches can
-	// be dropped instead of surfacing as persistent 400 responses. Thinking-off is
-	// handled before this managed branch because these models accept `disabled`.
+	// be dropped instead of surfacing as persistent 400 responses. A thinking-off turn
+	// skips this branch: `disableThinkingForRequest` sends `disabled` where the family
+	// accepts it and pins effort `low` where it does not (Opus/Sonnet/Haiku 5.5, Fable, Mythos).
 	if (model.compat?.supportsMidConvoEffort === true && options?.thinkingEnabled !== false) {
 		params.thinking = {
 			type: "adaptive",
