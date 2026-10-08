@@ -22,6 +22,8 @@
 
 ### Fixed
 
+- An RPC host `open_session` that names a model it cannot resolve (for example an unknown provider) now fails with `open_failed: model_unavailable: <reason>` instead of opening on the default model and reporting success, so a caller that pins a model never gets work from a different one ([#2906](https://github.com/code-yeongyu/senpi/issues/2906)).
+
 - Transient OAuth refresh retries the same credential slot without blocking it, and summary/compaction authentication uses bounded same-model backoff instead of losing the failure as a missing API key ([#2893](https://github.com/code-yeongyu/senpi/issues/2893)).
 
 - A fallback model whose context window cannot hold the session no longer ends the fallback: when the switch is refused, the next model in the chain is tried in the same turn, and `retry_fallback_exhausted` is emitted when none fits instead of the turn silently ending on the original error ([#2894](https://github.com/code-yeongyu/senpi/issues/2894)).
