@@ -10,6 +10,8 @@ const STARTED_AT = 1_700_000_000_000;
 const STATES = [
 	"streaming-short",
 	"streaming-long",
+	"streaming-python",
+	"streaming-long-sql",
 	"running",
 	"queued",
 	"done",
@@ -89,6 +91,22 @@ initTheme();
 
 const LONG_CODE = Array.from({ length: 20 }, (_, index) => `const step${index + 1} = await phase(${index + 1});`).join("\n");
 const SHORT_CODE = "const answer = 42;\nprint(answer);";
+const PY_INDENTED_CODE = [
+	"for i in range(4):",
+	"    if i % 2:",
+	"        print(f'odd {i}')",
+	"    else:",
+	"        print(f'even {i}')",
+	"print('indented python done')",
+].join("\n");
+const LONG_SQL_CODE = [
+	'const q = "SELECT u.id, u.name, u.email, o.total, o.created_at FROM users u JOIN orders o ON o.user_id = u.id WHERE o.total > 100 ORDER BY o.created_at DESC LIMIT 50";',
+	"const rows = await db.query(q);",
+	"for (const row of rows) {",
+	"  print(row.name);",
+	"}",
+	'print("done");',
+].join("\n");
 const RUN_CODE = Array.from({ length: 8 }, (_, index) => `await tick(${index + 1});`).join("\n");
 
 function cell(overrides: Partial<EvalCellResult>): EvalCellResult {
@@ -142,6 +160,20 @@ switch (state) {
 		break;
 	case "streaming-long":
 		lines = renderEvalCall({ language: "js", code: LONG_CODE, summary: "stream the build log tail" }, theme, context as never).render(width);
+		break;
+	case "streaming-python":
+		lines = renderEvalCall(
+			{ language: "py", code: PY_INDENTED_CODE, summary: "indented python loop" },
+			theme,
+			{ ...context, args: { language: "py", code: PY_INDENTED_CODE, summary: "indented python loop" } } as never,
+		).render(width);
+		break;
+	case "streaming-long-sql":
+		lines = renderEvalCall(
+			{ language: "js", code: LONG_SQL_CODE, summary: "long sql query" },
+			theme,
+			{ ...context, args: { language: "js", code: LONG_SQL_CODE, summary: "long sql query" } } as never,
+		).render(width);
 		break;
 	case "running":
 		lines = renderEvalResult(
