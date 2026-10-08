@@ -1387,6 +1387,14 @@
         {
           "key": "legacyContracts/test/eval-render-theme.test.ts/eval renderer theme hierarchy Given a themed JavaScript call when rendered then the framed code uses syntax highlighting",
           "reason": "senpi#2933: same title, subject updated — the pre-result call lane reads 'streaming' (MEDIUM-1); the terminal row renders as one line."
+        },
+        {
+          "key": "legacyContracts/test/eval-render-live-headline.test.ts/live eval rows stay one clean line (senpi#2831) Given a cell without a summary whose first code line is only escape and control characters when its live row renders then the headline is the next line with content (senpi#2850)",
+          "reason": "senpi#2933: renamed — the live row is now the fixed block, so the headline assertion moved to the block header (╭─) and the 8-row block."
+        },
+        {
+          "key": "legacyContracts/test/js-kernel-stop-keeps-state.test.ts/JavaScriptKernel stop on a free event loop Given a first cell whose import of node:net is built from a string at run time when stopped then its server closes removed",
+          "reason": "senpi#2933: renamed — NOT a render title — investigate whether this title was renamed on main or removed by this PR."
         }
       ],
       "reason": "senpi#2933 (Q): render.ts is split by responsibility into render-*.ts modules (pure move, new import-census entries for the extension and first kernel), and the eval row gains a fixed-height live code window while streaming/queued/running plus a one-line collapsed row for done/error/cancelled; new contracts in eval-render-live-block.test.ts, and the live-row contracts whose layout changed are renamed (see changes). No prompt cell changes."
