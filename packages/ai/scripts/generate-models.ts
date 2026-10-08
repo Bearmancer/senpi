@@ -4291,6 +4291,22 @@ async function generateModels() {
 	}
 	allModels.push(...openAiFastVariants, ...codexFastVariants);
 
+	// Subscription-only alias: preserve Sol's base rates until Ultrafast pricing is published.
+	// Clone after metadata application, just like the Priority variants above.
+	const codexUltrafastVariants: Model<Api>[] = [];
+	for (const model of allModels) {
+		if (model.provider !== "chatgpt-subscription" || model.id !== "gpt-6.1-sol") continue;
+		codexUltrafastVariants.push({
+			...model,
+			id: `${model.id}-ultrafast`,
+			name: `${model.name} Ultrafast`,
+			upstreamModelId: model.id,
+			serviceTier: "ultrafast",
+			defaultThinkingLevel: "xhigh",
+		});
+	}
+	allModels.push(...codexUltrafastVariants);
+
 	// Keep chat and image catalogs separate so one upstream ID can expose both
 	// operations with different API implementations.
 	type ProviderCatalog = {

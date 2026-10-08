@@ -1,3 +1,21 @@
+## 2026-10-08 - Native ChatGPT Subscription Sol Ultrafast catalog variant
+
+### What changed
+
+- `packages/ai/scripts/generate-models.ts`: clones the fully processed ChatGPT Subscription `gpt-6.1-sol` row into `gpt-6.1-sol-ultrafast`, with upstream model `gpt-6.1-sol`, service tier `ultrafast`, and default thinking level `xhigh`. The generated subscription shard and manifest are regenerated with a provider-scoped run.
+
+### Why
+
+- Make the working subscription alias selectable from the native catalog without a local extension. Preserve Sol's existing base and long-context cost metadata; subscription availability does not establish API pricing.
+
+### Why an extension could not handle it
+
+- A local extension can register the alias, but cannot make it part of the shipped catalog for every installation.
+
+### Expected merge conflict zones
+
+- LOW: the variant emission block after metadata application in `packages/ai/scripts/generate-models.ts`. Regenerate catalog JSON and its manifest rather than hand-merging.
+
 ## 2026-10-08 - Claude Haiku 5.5 catalog rows (senpi#2892)
 
 ### What changed
