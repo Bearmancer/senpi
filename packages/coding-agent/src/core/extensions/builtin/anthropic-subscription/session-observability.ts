@@ -1,5 +1,6 @@
 import { getAgentDir } from "../../../../config.ts";
 import { createSessionLogger, type SessionLogger } from "../../../session-log.ts";
+import type { ResumeModeSource } from "./settings.ts";
 
 /**
  * Per-turn continuity observability for the claude-sdk-oauth lane.
@@ -59,6 +60,8 @@ export type ContinuityObservation = {
 	deltaMessages?: number;
 	payloadBytes?: number;
 	collapsedDirectives?: number;
+	/** Where a `disabled`/`resume_mode_off` setting came from, so the notice can name it. */
+	settingSource?: ResumeModeSource;
 };
 
 export type ContinuityObservabilityBoundary = {
@@ -276,6 +279,7 @@ export function emitContinuityObservation(
 		kind: observation.kind,
 		reason: observation.reason,
 		...(observation.deltaMessages === undefined ? {} : { count: observation.deltaMessages }),
+		...(observation.settingSource === undefined ? {} : { settingSource: observation.settingSource }),
 		...(sessionId === undefined ? {} : { sessionId }),
 	});
 }

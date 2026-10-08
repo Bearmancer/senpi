@@ -19,6 +19,29 @@
 
 - LOW: `auth-lane.ts` `queryWithAuthLane` (before `runFailover`), `accounts.ts` `AccountSlot` and `upsertAccount`.
 
+## 2026-10-09 - A rebuilt Anthropic Subscription prompt is a cacheable prefix of the next one (senpi#2982, senpi#2891)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/prompt-bridge.ts`: `buildPromptBlocks` takes `{ cacheBreakpoint: "5m" | "1h" }`; when set, the last replayed-history TEXT block carries `cache_control: { type: "ephemeral", ttl }`, before `CONVERSATION_HISTORY_CLOSER` (now exported). Claude Code drops a breakpoint on an image, so a history ending in a screenshot still gets one. The closer, recovered tool results, the instruction and the current message stay after it. `buildDeferredPromptStream` builds the prompt each time it is iterated, so a failover retry gets a full prompt for its own lane.
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/prompt-cache-ttl.ts` (new): `pinOneShotPromptCacheTtl` sets `CLAUDE_CODE_PROMPT_CACHE_TTL` on a one-shot query and returns it for the breakpoint: `FORCE_PROMPT_CACHING_5M` wins and pins `5m` (Claude Code reads it first), then an explicit `CLAUDE_CODE_PROMPT_CACHE_TTL`; the managed lanes (`oauth-slots`, `config-dir`) otherwise pin `1h` (Claude Code's subscription default), and the ambient lane pins nothing, so it gets no breakpoint. Known limits: the ambient lane (a `claude` CLI login with no managed accounts) still re-sends without a cache read; a turn with 10 or more parallel tool calls can push the next breakpoint past the API's ~20-block lookback; and once a session has more than 8 distinct history images, a new image replaces an older one with a note, which changes earlier history for that turn.
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/prompt-directive-dedupe.ts`: `dedupeUltraworkBlocks` collapses a history directive only when it is byte-identical to the directive just before it, so a changed directive is kept in full and the newest wording is always present; it never collapses after the closer (the current message keeps its directive), and it preserves other block fields (`cache_control`). It used to keep only the LAST copy.
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/stream.ts`: the one-shot path (resume off, or no session) pins the cache lifetime in `buildOptions` for the attempt's lane and builds its prompt with that breakpoint through `buildDeferredPromptStream`; the `disabled`/`resume_mode_off` observation carries `settingSource`.
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/settings.ts`: `resumeModeSource(settings)` reports which layer set `resumeMode` (`env`, `project`, `global`).
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/session-observability.ts`: `ContinuityObservation.settingSource`, also written to the session log.
+
+### Why
+
+- With resume off every turn is a fresh query whose prompt replays the whole conversation, and Claude Code's own breakpoints sit after the per-turn tail, so no earlier request ever wrote a cache entry that the next one starts with: a community session wrote ~330K cache tokens on each of 136 turns. The history itself only grows by appending, so a breakpoint at its end makes request k a cache-readable prefix of request k+1. Keeping the last directive copy broke that prefix whenever a new ultrawork prompt arrived, and rebuilding text blocks dropped the breakpoint. Claude Code forwards a `cache_control` set on our user-message block. On subscription auth it marks its own breakpoints 1 hour, and the API rejects a longer lifetime after a shorter one, so ours must match: Claude Code 2.1.292 captured against a local endpoint with senpi's shipped options (string system prompt, a custom tool) sends exactly four breakpoints (two system, ours, its trailing one), all with the pinned lifetime. Four is the API maximum, which the capture test pins. Resume off is only ever set by the user, so the existing once-per-session notice now names where.
+
+### Why an extension could not handle it
+
+- The prompt is assembled inside this builtin lane.
+
+### Expected merge conflict zones
+
+- LOW: `buildPromptBlocks`, `dedupeUltraworkBlocks`, `buildOptions` and the one-shot `queryWithAuthLane` call and the `disabled` observation in `stream.ts`, `loadAnthropicSubscriptionProviderSettings`.
+
 ## 2026-10-09 - A session keeps its account through transient errors (senpi#2891)
 
 ### What changed
