@@ -12,7 +12,7 @@ import {
 	parsedBreadcrumb,
 	trustedBreadcrumb,
 } from "./breadcrumb-trust.ts";
-import { rememberTrustedBreadcrumb } from "./known-moves.ts";
+import { prefixKey, rememberedReused, rememberReused, rememberTrustedBreadcrumb } from "./known-moves.ts";
 import type { PathPlatform } from "./path-match.ts";
 
 /** One filesystem question the walk asks; the sync and async resolvers answer it with their own I/O. */
@@ -26,8 +26,8 @@ export type ResolverStep =
  * The answer to a step whose I/O failed or timed out. A path whose own canonicalization fails is walked by its
  * spelling instead, so a moved prefix is still recognized through its breadcrumb and an unrelated path still is not.
  */
-export function failedReply(step: ResolverStep): unknown {
-	return step.op === "exists" ? false : undefined;
+export function failedReply(_step: ResolverStep): unknown {
+	return undefined;
 }
 
 /** The user's home as `os.homedir()` spells it, plus its realpath when a resolver could answer the `home` step. */
@@ -57,7 +57,15 @@ function* movedOnce(path: string, platform: PathPlatform, onReused?: OnReused): 
 			// The re-used decision is recorded before the breadcrumb is remembered, so no text fallback in this call can
 			// refuse a prefix the walk just found live again.
 			const gitEntry = gitEntryOf(dir, match.prefix);
-			const reused = gitEntry !== undefined && (yield { op: "exists", path: gitEntry }) === true;
+			let reused = false;
+			if (gitEntry !== undefined) {
+				const key = prefixKey(dir, breadcrumb, match.prefix);
+				const answer = yield { op: "exists", path: gitEntry };
+				// A .git check that cannot answer keeps this process's last answer for the prefix; with none, the prefix is
+				// treated as the text fallback treats it: not re-used.
+				if (typeof answer === "boolean") rememberReused(key, answer);
+				reused = typeof answer === "boolean" ? answer : (rememberedReused(key) ?? false);
+			}
 			if (reused) onReused?.(dir, breadcrumb, match.prefix);
 			rememberTrustedBreadcrumb(dir, breadcrumb);
 			if (!reused) return match.moved;

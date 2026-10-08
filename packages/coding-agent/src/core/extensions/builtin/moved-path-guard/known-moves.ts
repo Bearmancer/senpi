@@ -24,6 +24,17 @@ export function knownPrefixKeys(path: string, platform: PathPlatform = currentPa
 	});
 }
 
+const reusedDecisions = new Map<string, boolean>();
+
+/** The last answer this process got to "does this listed prefix hold its own `.git`", by `prefixKey`. */
+export function rememberReused(key: string, reused: boolean): void {
+	reusedDecisions.set(key, reused);
+}
+
+export function rememberedReused(key: string): boolean | undefined {
+	return reusedDecisions.get(key);
+}
+
 export function rememberTrustedBreadcrumb(oldRoot: string, breadcrumb: MovedBreadcrumb): void {
 	known.set(oldRoot, breadcrumb);
 }

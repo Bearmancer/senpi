@@ -99,7 +99,8 @@ async function checkTargets(list: readonly Target[]): Promise<MovedPath | undefi
 	if (probe.timedOut) logGuardEvent("debug", "call_bound_reached", { bound: "step", count: String(ordered.length) });
 	if (unprobed.length > 0)
 		logGuardEvent("debug", "call_bound_reached", { bound: "paths", count: String(ordered.length) });
-	if (result !== RESOLUTION_TIMED_OUT) return result ?? firstKnownMove(unprobed, probe);
+	// After any step timeout the probed targets' answers are incomplete too, so all of them get the text check.
+	if (result !== RESOLUTION_TIMED_OUT) return result ?? firstKnownMove(probe.timedOut ? ordered : unprobed, probe);
 	logGuardEvent("debug", "call_bound_reached", { bound: "deadline", count: String(ordered.length) });
 	return firstKnownMove(ordered, probe);
 }
