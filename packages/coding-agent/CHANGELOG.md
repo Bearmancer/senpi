@@ -22,7 +22,7 @@
 
 ### Fixed
 
-- An RPC host `open_session` that names a model it cannot resolve (for example an unknown provider) now fails with `open_failed: model_unavailable: <reason>` instead of opening on the default model and reporting success, so a caller that pins a model never gets work from a different one. A failure relayed from a worker-runtime session no longer reads `open_failed: open_failed: ...` ([#2906](https://github.com/code-yeongyu/senpi/issues/2906)).
+- An RPC host `open_session` that names a model it cannot resolve (for example an unknown provider) now fails with `open_failed: model_unavailable: <reason>` instead of opening on the default model and reporting success, so a caller that pins a model never gets work from a different one. An `open_session` that names only `provider` or only `modelId` is now refused as `invalid_launch_profile` instead of silently opening on the default model. A failure relayed from a worker-runtime session no longer reads `open_failed: open_failed: ...` ([#2906](https://github.com/code-yeongyu/senpi/issues/2906)).
 
 - Transient OAuth refresh retries the same credential slot without blocking it, and summary/compaction authentication uses bounded same-model backoff instead of losing the failure as a missing API key ([#2893](https://github.com/code-yeongyu/senpi/issues/2893)).
 

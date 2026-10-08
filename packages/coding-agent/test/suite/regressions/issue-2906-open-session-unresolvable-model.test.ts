@@ -49,8 +49,10 @@ describe("open_session with an unresolvable creationModel (#2906)", () => {
 
 	it("fails the open with model_unavailable and leaves no session behind", async () => {
 		const registry = hostRegistry();
+		const sessionPath = join(scratch, "pinned.jsonl");
 		const opening = registry.openSession({
 			cwd,
+			sessionPath,
 			creationModel: { provider: "no-such-provider-2906", modelId: "some-model" },
 		});
 
@@ -64,6 +66,13 @@ describe("open_session with an unresolvable creationModel (#2906)", () => {
 		expect(typed.message).toMatch(/^open_failed: model_unavailable: /);
 		expect(typed.detail).toEqual({ reason: "model_unavailable", requestedModel: "no-such-provider-2906/some-model" });
 		expect(registry.list()).toEqual([]);
+
+		const reopened = await registry.openSession({
+			cwd,
+			sessionPath,
+			creationModel: { provider: "openai", modelId: "gpt-6-astra" },
+		});
+		await registry.close(reopened.sessionId);
 	}, 30_000);
 
 	it.each([
@@ -87,7 +96,7 @@ describe("open_session with an unresolvable creationModel (#2906)", () => {
 		30_000,
 	);
 
-	it("relays a worker's model_unavailable failure with one open_failed prefix", async () => {
+	it("keeps one open_failed prefix when a worker reports the refusal through its failure callback", async () => {
 		const reason = 'open_failed: model_unavailable: Unknown provider "no-such-provider-2906".';
 		const registry = new WorkerSessionRegistry({
 			configuration: {
@@ -117,7 +126,7 @@ describe("open_session with an unresolvable creationModel (#2906)", () => {
 		expect((failure as RpcSessionRegistryError).message).toBe(reason);
 	});
 
-	it("answers open_session with one open_failed prefix when the worker's commit rejects", async () => {
+	it("answers open_session with one open_failed prefix when the worker's commit rejects (the real worker path)", async () => {
 		const reason = 'open_failed: model_unavailable: Unknown provider "no-such-provider-2906".';
 		const registry = new WorkerSessionRegistry({
 			configuration: {
@@ -147,5 +156,17 @@ describe("open_session with an unresolvable creationModel (#2906)", () => {
 			modelId: "some-model",
 		});
 		expect(response).toMatchObject({ success: false, error: reason });
+	});
+
+	it.each([
+		["provider without modelId", { provider: "openai" }],
+		["modelId without provider", { modelId: "gpt-6-astra" }],
+	] as const)("refuses open_session with %s", async (_name, half) => {
+		const router = new SessionCommandRouter(hostRegistry(), new SessionEventWriter(() => {}), { cwd });
+		const response = await router.handle({ id: "half", type: "open_session", cwd, ...half });
+		expect(response).toMatchObject({
+			success: false,
+			error: "invalid_launch_profile: provider and modelId must be given together",
+		});
 	});
 });

@@ -638,6 +638,12 @@ export class SessionCommandRouter {
 		const browserEngineError = sessionBrowserEngineError(command.browserEngine);
 		if (browserEngineError)
 			return error(command.id, "open_session", `${RPC_ERROR_INVALID_LAUNCH_PROFILE}: ${browserEngineError}`);
+		if ((command.provider === undefined) !== (command.modelId === undefined))
+			return error(
+				command.id,
+				"open_session",
+				`${RPC_ERROR_INVALID_LAUNCH_PROFILE}: provider and modelId must be given together`,
+			);
 		const retryFallbackError = sessionRetryFallbackError(command.retryFallback);
 		if (retryFallbackError)
 			return error(command.id, "open_session", `${RPC_ERROR_INVALID_LAUNCH_PROFILE}: ${retryFallbackError}`);
