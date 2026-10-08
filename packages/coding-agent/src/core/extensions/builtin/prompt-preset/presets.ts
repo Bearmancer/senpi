@@ -2,6 +2,7 @@ import type { Api, Model } from "@earendil-works/pi-ai";
 import type { BuildDynamicSystemPromptOptions } from "../../../dynamic-prompt/build.ts";
 import { buildClaudeFable5Prompt } from "./claude-fable-5.ts";
 import { buildClaudeFable51Prompt } from "./claude-fable-5-1.ts";
+import { buildClaudeHaiku55Prompt } from "./claude-haiku-5-5.ts";
 import { buildClaudeOpus45Prompt } from "./claude-opus-4-5.ts";
 import { buildClaudeOpus46Prompt } from "./claude-opus-4-6.ts";
 import { buildClaudeOpus47Prompt } from "./claude-opus-4-7.ts";
@@ -282,6 +283,14 @@ function isClaudeSonnet55Model(modelId: string): boolean {
 	return CLAUDE_SONNET_55_MARKERS.some((marker) => normalized.includes(marker));
 }
 
+// Haiku 4.5 and older keep the default dynamic prompt; only the 5.5 release has a tuned core.
+const CLAUDE_HAIKU_55_MARKERS = ["haiku-5-5", "haiku-5.5"] as const;
+
+function isClaudeHaiku55Model(modelId: string): boolean {
+	const normalized = normalizeModelId(modelId);
+	return CLAUDE_HAIKU_55_MARKERS.some((marker) => normalized.includes(marker));
+}
+
 type ClaudeOpusVersion = "claude-opus-4-8" | "claude-opus-4-7" | "claude-opus-4-6" | "claude-opus-4-5";
 
 function extractClaudeOpusVersion(modelId: string): ClaudeOpusVersion | undefined {
@@ -349,6 +358,9 @@ export function resolvePresetName(
 	}
 	if (isClaudeSonnet55Model(model.id)) {
 		return "claude-sonnet-5-5";
+	}
+	if (isClaudeHaiku55Model(model.id)) {
+		return "claude-haiku-5-5";
 	}
 	const claudeVersion = extractClaudeOpusVersion(model.id);
 	if (claudeVersion) {
@@ -435,6 +447,8 @@ function buildPreset(name: ResolvedPresetName, options: BuildDynamicSystemPrompt
 			return { name, prompt: buildClaudeOpus55Prompt(options) };
 		case "claude-sonnet-5-5":
 			return { name, prompt: buildClaudeSonnet55Prompt(options) };
+		case "claude-haiku-5-5":
+			return { name, prompt: buildClaudeHaiku55Prompt(options) };
 		case "claude-opus-5":
 			return { name, prompt: buildClaudeOpus5Prompt(options) };
 		case "claude-opus-4-8":

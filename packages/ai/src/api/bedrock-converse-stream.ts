@@ -790,6 +790,7 @@ function supportsAdaptiveThinking(modelId: string, modelName?: string): boolean 
 			s.includes("opus-5") ||
 			s.includes("sonnet-4-6") ||
 			s.includes("sonnet-5") ||
+			s.includes("haiku-5-5") ||
 			s.includes("fable-5") ||
 			s.includes("mythos-5"),
 	);
@@ -803,6 +804,7 @@ function supportsNativeXhighEffort(model: Model<"bedrock-converse-stream">): boo
 			s.includes("opus-4-8") ||
 			s.includes("opus-5") ||
 			s.includes("sonnet-5") ||
+			s.includes("haiku-5-5") ||
 			s.includes("fable-5") ||
 			s.includes("mythos-5"),
 	);
@@ -823,7 +825,9 @@ function rejectsDisabledThinking(model: Model<"bedrock-converse-stream">): boole
 			s.includes("opus-5-5") ||
 			s.includes("opus-5.5") ||
 			s.includes("sonnet-5-5") ||
-			s.includes("sonnet-5.5"),
+			s.includes("sonnet-5.5") ||
+			s.includes("haiku-5-5") ||
+			s.includes("haiku-5.5"),
 	);
 }
 
