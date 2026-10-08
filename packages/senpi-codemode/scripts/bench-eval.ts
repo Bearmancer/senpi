@@ -206,6 +206,7 @@ async function finish(decision: Decision, out: string, context: Readonly<Record<
 			: {
 					blocks: runResult.blocks,
 					admissionLoads: runResult.admissionLoads,
+					retriedBlocks: runResult.retriedBlocks,
 					runtimes: runResult.runtimes,
 					failures: runResult.failures,
 					reports: runResult.reports,
