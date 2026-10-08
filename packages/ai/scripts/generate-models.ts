@@ -4291,7 +4291,7 @@ async function generateModels() {
 	}
 	allModels.push(...openAiFastVariants, ...codexFastVariants);
 
-	// Subscription-only alias: preserve Sol's base rates until Ultrafast pricing is published.
+	// Subscription-only alias: keep Standard rates; adapters apply Ultrafast pricing at request time.
 	// Clone after metadata application, just like the Priority variants above.
 	const codexUltrafastVariants: Model<Api>[] = [];
 	for (const model of allModels) {
