@@ -1,4 +1,4 @@
-import { chmodSync, mkdirSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, linkSync, mkdirSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -50,6 +50,18 @@ describe("moved-path-guard breadcrumb trust (#2898)", () => {
 		const moved = layout();
 
 		expect(resolveMovedPath(join(moved.oldWorktree, "a.ts"))).toBe(join(moved.newWorktree, "a.ts"));
+	});
+
+	// Fifth review L-1: another local user can hard-link a victim's breadcrumb into a shared folder such as /tmp; the
+	// link passes the uid and mode checks, so a breadcrumb with more than one name is not believed anywhere.
+	it.skipIf(process.platform === "win32")("ignores a hard-linked breadcrumb under either of its names", () => {
+		const moved = layout();
+		const shared = join(moved.home, "shared");
+		mkdirSync(shared);
+		linkSync(join(moved.oldRoot, "omo-desktop-moved.json"), join(shared, "omo-desktop-moved.json"));
+
+		expect(findMovedPath(join(shared, MOVED_WORKTREE, "a.ts"))).toBeUndefined();
+		expect(findMovedPath(join(moved.oldWorktree, "a.ts"))).toBeUndefined();
 	});
 
 	it.each([

@@ -31,13 +31,17 @@ function parseJson(text: string): unknown {
 /**
  * Whether a breadcrumb or marker may be believed, from `fstat` of the descriptor it is read through (opened without
  * following a symlink, so the decision and the content are the same file): a regular file of at most
- * `MAX_TRUST_FILE_BYTES`, and on POSIX owned by this user and writable by nobody else, so another local user cannot
- * plant one in a shared folder such as `/tmp` (senpi#2898). Windows has no uid/mode to check; there the marker's
+ * `MAX_TRUST_FILE_BYTES`, and on POSIX owned by this user, writable by nobody else and with exactly one name, so
+ * another local user cannot plant one in a shared folder such as `/tmp`, neither by writing it nor by hard-linking the
+ * user's own breadcrumb there (senpi#2898, fifth review L-1). Windows has no uid/mode to check; there the marker's
  * homeId binding is the only guard.
  */
 function trustStamp(stats: Stats): string | undefined {
 	if (!stats.isFile() || stats.size > MAX_TRUST_FILE_BYTES) return undefined;
-	if (process.platform !== "win32" && (stats.uid !== process.getuid?.() || (stats.mode & 0o022) !== 0))
+	if (
+		process.platform !== "win32" &&
+		(stats.uid !== process.getuid?.() || (stats.mode & 0o022) !== 0 || stats.nlink !== 1)
+	)
 		return undefined;
 	return `${stats.mtimeMs}:${stats.size}:${stats.ino}`;
 }
