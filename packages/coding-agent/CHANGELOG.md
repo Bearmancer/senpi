@@ -10,6 +10,8 @@
 
 ### Fixed
 
+- On the Anthropic Subscription lane, a long streamed tool call (for example a large `write` or a `team_create` with long member prompts) no longer fails with "session stream queue exceeded 256 messages" and loses the tool call: the stream now waits for the reader instead of overflowing ([#2822](https://github.com/code-yeongyu/senpi/issues/2822)).
+
 ### Removed
 
 ## [2026.10.10-9] - 2026-10-08

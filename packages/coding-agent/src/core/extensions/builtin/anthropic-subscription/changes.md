@@ -19,6 +19,27 @@
 
 - LOW: `auth-lane.ts` `queryWithAuthLane` (before `runFailover`), `accounts.ts` `AccountSlot` and `upsertAccount`.
 
+## 2026-10-09 - The session stream applies backpressure instead of overflowing (senpi#2822)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/bounded-queue.ts`: `push` no longer throws at capacity; `writable()` resolves once fewer than `capacity` values wait (or the queue ended), and `next`/`close`/`fail` release waiting producers.
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/session-registry-pump.ts`: the pump awaits the active turn's `writable()` before it reads the next SDK message; `SessionTurnRequest` carries it.
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/session-turn-types.ts`: `ActiveTurn.writable`.
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/session-turn-attempt.ts`: passes the queue's `writable` and closes the queue when the consumer stops reading, so the pump is never left waiting.
+
+### Why
+
+- A long streamed tool call (a `team_create` spec, a large `write`) produced more than 256 SDK events before the consumer pulled; `push` threw inside the SDK message callback, the query failed after visible output, and failover marked it `no-turn-retry` (a failure after a visible delta is never retried, to avoid duplicating output), so the tool call was lost (senpi#2822). With backpressure the buffer holds at most `capacity` plus one pump step (the pre-replay flush, itself capped at 64), and nothing throws.
+
+### Why an extension could not handle it
+
+- This is the builtin anthropic-subscription extension's own pump and queue.
+
+### Expected merge conflict zones
+
+- LOW: `runPump` loop in `session-registry-pump.ts`; the attempt generator in `session-turn-attempt.ts`.
+
 ## 2026-10-07 - A restored binding with no recorded assistant turn is never resumed unchecked (senpi#2858)
 
 ### What changed
