@@ -107,7 +107,8 @@ export class McpService {
 	#wireStatusRefreshQueue: Promise<void> = Promise.resolve();
 	#refreshActiveSetWhenNoTools = false;
 	readonly #bindings = new Map<object, McpSessionBinding>();
-	#pendingAttaches = 0;
+	// Attaches and release re-syncs queued or running: a release defers its dispose until none is left.
+	#pendingSyncs = 0;
 	// Sessions that quit while their own attach was still queued: the attach must not bind them (#2524 review).
 	readonly #releasedSessions = new WeakSet<object>();
 	#deferredDisposeReason: McpDisposeReason | undefined;
@@ -141,7 +142,7 @@ export class McpService {
 	): Promise<void> {
 		// Counted from the moment it queues, so a session's release cannot dispose the service
 		// under an attach that has not bound yet.
-		this.#pendingAttaches += 1;
+		this.#pendingSyncs += 1;
 		const attach = this.#attachQueue.then(async () => {
 			if (this.#disposed) {
 				throw new Error("The MCP service is disposed; attach the session to a live service instead.");
@@ -187,15 +188,15 @@ export class McpService {
 		try {
 			await attach;
 		} finally {
-			this.#pendingAttaches -= 1;
+			this.#pendingSyncs -= 1;
 			await this.#disposeIfDeferredAndIdle();
 		}
 	}
 
-	/** A release that found attaches still pending leaves the dispose to the last of them, once no session is bound. */
+	/** A release that found syncs still pending leaves the dispose to the last of them, once no session is bound. */
 	async #disposeIfDeferredAndIdle(): Promise<void> {
 		const reason = this.#deferredDisposeReason;
-		if (reason === undefined || this.#pendingAttaches > 0) return;
+		if (reason === undefined || this.#pendingSyncs > 0) return;
 		this.#deferredDisposeReason = undefined;
 		// A session that attached meanwhile keeps the service; otherwise the deferred dispose runs now.
 		if (this.#liveBindings().length === 0) await this.dispose(reason);
@@ -299,11 +300,11 @@ export class McpService {
 		}
 		// A session whose attach is still queued has not bound yet but will use this service.
 		if (disposeReason === undefined) return;
-		if (this.#pendingAttaches === 0) {
+		if (this.#pendingSyncs === 0) {
 			await this.dispose(disposeReason);
 			return;
 		}
-		// The release settles only once the pending attaches have, so a caller that awaits it
+		// The release settles only once the pending attaches and re-syncs have, so a caller that awaits it
 		// (session shutdown, builtin removal) sees the service disposed, not a dispose scheduled later.
 		this.#deferredDisposeReason = disposeReason;
 		const settled = new Promise<"settled">((settle) => this.#deferredDisposeWaiters.push(() => settle("settled")));
@@ -322,7 +323,7 @@ export class McpService {
 		// A hung attach must not hold a reload or a quit forever: dispose anyway once the
 		// deadline passes, unless a session bound in the meantime, and say so.
 		this.#deferredDisposeReason = undefined;
-		createMcpLogger("service").warn("MCP attach still pending at the dispose deadline; disposing anyway", {
+		createMcpLogger("service").warn("MCP attach or re-sync still pending at the dispose deadline; disposing anyway", {
 			timeoutMs: deadlineMs,
 			reason: disposeReason,
 		});
@@ -334,18 +335,25 @@ export class McpService {
 	 * After a release, bring the shared connections in line with the sessions still live (senpi#2597): the effective
 	 * config of the most recent live binding, with its options, so a server no live session declares is stopped
 	 * instead of outliving its session. It runs on the attach queue, never interleaved with an attach's own sync; the
-	 * release awaits it only when no attach is pending, because a hung attach must not hold a quit.
+	 * release awaits it only when no attach is pending, because a hung attach must not hold a quit. It counts as a
+	 * pending sync like an attach, so a release that empties the service defers its dispose until the re-sync settles
+	 * instead of disposing under it.
 	 */
 	async #resyncToLiveSessions(): Promise<void> {
+		const awaited = this.#pendingSyncs === 0;
+		this.#pendingSyncs += 1;
 		const resync = this.#attachQueue.then(async () => {
 			const latest = this.#liveBindings().at(-1);
 			if (this.#disposed || latest === undefined) return;
 			const before = [...this.#connections.keys()].join("\n");
 			this.#config = this.#adoptEffectiveConfig(latest.config);
 			await this.#syncFromConfig(this.#config, latest, true, latest);
-			if ([...this.#connections.keys()].join("\n") === before) return;
+			if (this.#disposed || [...this.#connections.keys()].join("\n") === before) return;
 			// A replaced connection retires the offers made against it; republish them in every live session.
-			for (const live of this.#liveBindings()) await this.#registerDirectTools(live);
+			for (const live of this.#liveBindings()) {
+				await this.#registerDirectTools(live);
+				if (this.#disposed) return;
+			}
 			if (shouldCaptureWireStatus(latest.context)) {
 				await this.refreshWireStatusSnapshot(latest.context.sessionManager?.getSessionId?.());
 			}
@@ -354,11 +362,19 @@ export class McpService {
 			() => undefined,
 			() => undefined,
 		);
-		if (this.#pendingAttaches === 0) {
-			await resync;
+		const settled = (async () => {
+			try {
+				await resync;
+			} finally {
+				this.#pendingSyncs -= 1;
+				await this.#disposeIfDeferredAndIdle();
+			}
+		})();
+		if (awaited) {
+			await settled;
 			return;
 		}
-		resync.catch((error: unknown) => {
+		settled.catch((error: unknown) => {
 			createMcpLogger("service").error("Failed to re-sync MCP servers after a session release", error);
 		});
 	}
@@ -611,7 +627,11 @@ export class McpService {
 		});
 		const agentDirs = new Set([owner, ...declarers.values()].map((declarer) => declarer.options.agentDir));
 		const caches = new Map<string | undefined, McpCatalogCacheFile>();
-		for (const agentDir of agentDirs) caches.set(agentDir, await readMcpCatalogCache(agentDir));
+		for (const agentDir of agentDirs) {
+			caches.set(agentDir, await readMcpCatalogCache(agentDir));
+			// A dispose that landed during an await closed every connection; one created now would never be closed.
+			if (this.#disposed) return;
+		}
 		const disposals: Promise<void>[] = [];
 		for (const entry of this.#connections.values()) {
 			const server = wanted.get(entry.name);
@@ -625,6 +645,7 @@ export class McpService {
 			disposals.push(disposeEntryConnection(entry, this.#registry, this));
 		}
 		await Promise.all(disposals);
+		if (this.#disposed) return;
 
 		const connects: Promise<void>[] = [];
 		for (const [name, server] of wanted) {

@@ -689,6 +689,40 @@ describe("senpi#2597: a session's MCP status and the service's teardown follow t
 		expect(bravo.servers.map((server) => server.name)).toEqual(["fx"]);
 		expect(getMcpService().getConnection("extra")).toBeDefined();
 	});
+
+	it("leaves no connection or server process when two sessions quit while a release re-sync is stopping a server", async () => {
+		// Given: the first session alone declares `extra`, both declare `fx`, and both servers are connected.
+		const peer = configureExtraForRootProject();
+		const service = getMcpService();
+		const alphaPi = capturingPi();
+		const bravoPi = capturingPi();
+		await attachInProject(alphaPi, root, "alpha");
+		await untilFakeRegistered(alphaPi, EXTRA_TOOL);
+		await attachInProject(bravoPi, peer, "bravo");
+		await untilFakeRegistered(bravoPi, TOOL);
+		const fxPid = requiredPid(service, "fx");
+		const extraPid = requiredPid(service, "extra");
+		const extra = service.getConnection("extra");
+		const extraStopping = new Promise<void>((resolve) => {
+			const unsubscribe = extra?.onStateChange((event) => {
+				if (event.state !== "disabled") return;
+				unsubscribe?.();
+				resolve();
+			});
+		});
+
+		// When: the first session quits, and the second quits while that release's re-sync is still stopping `extra`.
+		const alphaRelease = service.releaseSession(alphaPi, "quit");
+		await extraStopping;
+		const bravoRelease = service.releaseSession(bravoPi, "quit");
+		await Promise.all([alphaRelease, bravoRelease]);
+
+		// Then: the service is disposed with no connection, both server processes are gone, and `fx` never re-spawned.
+		expect(service.getSnapshot()).toMatchObject({ disposed: true, connectionCount: 0 });
+		await assertProcessDead(fxPid);
+		await assertProcessDead(extraPid);
+		expect(await readCounter(spawnCounter)).toBe(1);
+	});
 });
 
 async function attachFakeTo(service: ReturnType<typeof getMcpService>, pi: CapturingPi): Promise<void> {
