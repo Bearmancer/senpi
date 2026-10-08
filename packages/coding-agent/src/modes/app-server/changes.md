@@ -1,3 +1,21 @@
+## 2026-10-08 - Daemon launches do not replay a Node eval caller (senpi#2599)
+
+### What changed
+
+- `packages/coding-agent/src/modes/app-server/daemon/spawn.ts`: filters Node runtime options before the daemon entry. The existing Bun-to-Node launch path stays unchanged.
+
+### Why
+
+Node eval and print flags belong to the embedding caller, not to the daemon script entry.
+
+### Why an extension could not handle it
+
+Daemon argument construction precedes server startup and extension loading.
+
+### Expected merge conflict zones
+
+- LOW: imports and the child argument array in `daemon/spawn.ts`.
+
 ## 2026-09-29 - turn/start refuses an unknown command with structured data (senpi#2348)
 
 ### What changed
