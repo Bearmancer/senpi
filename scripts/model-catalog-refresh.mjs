@@ -2,20 +2,22 @@
 /**
  * Prepare the daily model-catalog refresh PR (senpi#2943).
  *
- * After `generate-models` regenerated the catalog in a clean checkout of `main`, this script reads which
- * catalog files changed, writes a per-provider summary for the PR body, and records one CHANGELOG entry
- * under `## [Unreleased]` / `### Changed` in `packages/ai/CHANGELOG.md`. It prints `changed=true|false`
- * for `$GITHUB_OUTPUT`. The refresh PR is then merged by GitHub auto-merge once its required CI is green,
- * so a release normally finds no catalog drift and reuses CI instead of waiting for it.
+ * After `generate-models` regenerated the catalog in a clean checkout of `main`, this script drops a manifest change
+ * that is only the `generatedAt` stamp, reads which catalog files changed, writes the PR summary, and keeps exactly
+ * one refresh entry under `## [Unreleased]` / `### Changed` in `packages/ai/CHANGELOG.md`, never touching a released
+ * section (the Changelog gate rejects any edit there). It prints `changed=true|false` for `$GITHUB_OUTPUT`. GitHub
+ * auto-merge then lands the PR once its required checks are green, so a release normally finds no catalog drift.
  */
 
 import { execFileSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
-import { REGENERATED_CATALOG_PATHS } from "./release-test-gate.mjs";
+import { pathToFileURL } from "node:url";
+import { discardTimestampOnlyCatalogChange, REGENERATED_CATALOG_PATHS } from "./release-test-gate.mjs";
 
 export const REFRESH_ENTRY_PREFIX = "- The bundled model catalog is refreshed from models.dev";
 
-const PROVIDERS_DIR = "packages/ai/src/providers/";
+const DATA_FILE = /^packages\/ai\/src\/providers\/data\/([^/.][^/]*)\.json$/;
+const SHARD_FILE = /^packages\/ai\/src\/providers\/([^/]+)\.models\.ts$/;
 
 /**
  * @param {string} porcelain `git status --porcelain --untracked-files=all` output for the catalog paths
@@ -25,15 +27,12 @@ export function changedCatalog(porcelain) {
 	const files = porcelain
 		.split("\n")
 		.map((line) => line.slice(3).trim())
-		.filter((file) => file.length > 0)
-		.map((file) => (file.includes(" -> ") ? file.slice(file.indexOf(" -> ") + 4) : file))
+		.filter(Boolean)
 		.sort();
 	const providers = new Set();
 	for (const file of files) {
-		if (!file.startsWith(PROVIDERS_DIR)) continue;
-		const name = file.slice(PROVIDERS_DIR.length).replace(/^data\//, "");
-		if (name.startsWith(".") || name.includes("/")) continue;
-		providers.add(name.replace(/\.(json|ts)$/, ""));
+		const id = DATA_FILE.exec(file)?.[1] ?? SHARD_FILE.exec(file)?.[1];
+		if (id) providers.add(id);
 	}
 	return { providers: [...providers].sort(), files };
 }
@@ -48,25 +47,33 @@ export function refreshEntry(providers) {
 }
 
 /**
- * Put exactly one refresh entry under `## [Unreleased]` / `### Changed`, replacing an earlier one.
+ * Put exactly one refresh entry under `## [Unreleased]` / `### Changed`. Only the `[Unreleased]` section is edited:
+ * an earlier refresh entry there is replaced; one that already shipped in a released section stays as it is.
  * @param {string} changelog
  * @param {string[]} providers
  * @returns {string}
  */
 export function withRefreshEntry(changelog, providers) {
-	const entry = refreshEntry(providers);
-	const lines = changelog.split("\n").filter((line) => !line.startsWith(REFRESH_ENTRY_PREFIX));
-	const unreleased = lines.findIndex((line) => line.trim() === "## [Unreleased]");
-	if (unreleased < 0) throw new Error("CHANGELOG.md has no ## [Unreleased] section");
-	const nextRelease = lines.findIndex((line, index) => index > unreleased && line.startsWith("## "));
-	const end = nextRelease < 0 ? lines.length : nextRelease;
-	const changed = lines.findIndex((line, index) => index > unreleased && index < end && line.trim() === "### Changed");
-	if (changed >= 0) {
-		lines.splice(changed + 1, 0, "", entry);
-	} else {
-		lines.splice(end, 0, "### Changed", "", entry, "");
+	const lines = changelog.split("\n");
+	const start = lines.findIndex((line) => line.trim() === "## [Unreleased]");
+	if (start < 0) throw new Error("CHANGELOG.md has no ## [Unreleased] section");
+	const next = lines.findIndex((line, index) => index > start && line.startsWith("## "));
+	const end = next < 0 ? lines.length : next;
+	const section = lines.slice(start, end);
+	const previous = section.findIndex((line) => line.startsWith(REFRESH_ENTRY_PREFIX));
+	if (previous >= 0) {
+		const blankAfter = section[previous + 1] === "" && section[previous - 1] === "";
+		section.splice(previous, blankAfter ? 2 : 1);
 	}
-	return lines.join("\n").replace(/\n{3,}/g, "\n\n");
+	const changed = section.findIndex((line) => line.trim() === "### Changed");
+	const entry = refreshEntry(providers);
+	if (changed >= 0) {
+		section.splice(changed + 1, 0, "", entry);
+	} else {
+		while (section.length > 1 && section.at(-1) === "") section.pop();
+		section.push("", "### Changed", "", entry, "");
+	}
+	return [...lines.slice(0, start), ...section, ...lines.slice(end)].join("\n");
 }
 
 /**
@@ -91,11 +98,14 @@ export function summaryMarkdown(change) {
 }
 
 function main(argv) {
-	const changelogPath = argv[argv.indexOf("--changelog") + 1];
-	const summaryPath = argv[argv.indexOf("--summary") + 1];
-	if (!argv.includes("--changelog") || !argv.includes("--summary")) {
+	const changelogIndex = argv.indexOf("--changelog");
+	const summaryIndex = argv.indexOf("--summary");
+	if (changelogIndex < 0 || summaryIndex < 0) {
 		throw new Error("usage: node scripts/model-catalog-refresh.mjs --changelog <CHANGELOG.md> --summary <out.md>");
 	}
+	const changelogPath = argv[changelogIndex + 1];
+	const summaryPath = argv[summaryIndex + 1];
+	discardTimestampOnlyCatalogChange(process.cwd());
 	const porcelain = execFileSync(
 		"git",
 		["status", "--porcelain", "--untracked-files=all", "--", ...REGENERATED_CATALOG_PATHS],
@@ -111,7 +121,7 @@ function main(argv) {
 	process.stdout.write("changed=true\n");
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
 	try {
 		main(process.argv.slice(2));
 	} catch (err) {
