@@ -28,7 +28,9 @@ import {
 	type DaemonPidFile,
 	parseDaemonPidFile,
 	processMatchesPidFile,
+	processStartTimeMs,
 	readProcessStartTime,
+	sameProcessStartMs,
 } from "../app-server/daemon/process.ts";
 import {
 	createGenerationDirectory,
@@ -235,7 +237,10 @@ export async function writtenByThisProcess(
 				() => null,
 			)
 		: await thisProcessStartTime();
-	return writer.startTime === startTime;
+	return sameProcessStartMs(
+		processStartTimeMs(writer.startTime),
+		startTime === null ? undefined : processStartTimeMs(startTime),
+	);
 }
 
 let selfStartTime: Promise<string | null> | undefined;

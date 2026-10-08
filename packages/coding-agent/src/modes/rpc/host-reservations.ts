@@ -277,8 +277,11 @@ async function readOwner(file: string): Promise<SessionPathOwner | undefined> {
 export async function claimOwnerIsLive(owner: SessionPathOwner): Promise<boolean> {
 	if (!processIsLive(owner.pid)) return false;
 	if (owner.processStartTime === null) return true;
+	const recorded = processStartTimeMs(owner.processStartTime);
+	if (recorded === undefined) return true;
 	const current = await readProcessStartTime(owner.pid).catch(() => undefined);
-	return current === undefined || current === owner.processStartTime;
+	const observed = current === undefined ? undefined : processStartTimeMs(current);
+	return observed === undefined || sameProcessStartMs(recorded, observed);
 }
 
 function errorMessage(cause: unknown): string {

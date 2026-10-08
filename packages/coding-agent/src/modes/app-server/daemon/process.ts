@@ -107,9 +107,13 @@ export async function processMatchesPidFile(
 	for (let attempt = 1; attempt <= attempts; attempt++) {
 		try {
 			const current = await readStartTime(pidFile.pid);
-			if (current !== undefined) return current === pidFile.processStartTime;
+			if (current !== undefined) {
+				const recorded = processStartTimeMs(pidFile.processStartTime);
+				const observed = processStartTimeMs(current);
+				if (recorded !== undefined && observed !== undefined) return sameProcessStartMs(recorded, observed);
+			}
 			if (!isLive(pidFile.pid)) return false;
-			lastError = new Error("process identity probe returned no identity for a live process");
+			lastError = new Error("process identity probe returned no usable identity for a live process");
 			if (attempt < attempts) await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
 		} catch (error: unknown) {
 			if (!isLive(pidFile.pid)) return false;

@@ -1000,14 +1000,14 @@ describe("processMatchesPidFile", () => {
 		let failures = 2;
 		let calls = 0;
 		const matches = await processMatchesPidFile(
-			{ pid: process.pid, processStartTime: "self" },
+			{ pid: process.pid, processStartTime: "2026-10-08T12:00:00.000Z" },
 			async () => {
 				calls += 1;
 				if (failures > 0) {
 					failures -= 1;
 					throw new Error("Command failed: powershell.exe -NoProfile");
 				}
-				return "self";
+				return "2026-10-08T12:00:00.000Z";
 			},
 			() => true,
 			{ attempts: 5, delayMs: 5 },

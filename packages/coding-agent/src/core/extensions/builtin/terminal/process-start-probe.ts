@@ -16,7 +16,7 @@ async function linuxProcessStartMs(pid: number): Promise<number | undefined> {
 	return Math.round((bootSeconds + startTicks / LINUX_CLOCK_TICKS_PER_SECOND) * 1000);
 }
 
-function execText(command: string, args: readonly string[]): Promise<string> {
+function execText(command: string, args: readonly string[], env?: NodeJS.ProcessEnv): Promise<string> {
 	return new Promise((resolve, reject) => {
 		execFile(
 			command,
@@ -25,7 +25,7 @@ function execText(command: string, args: readonly string[]): Promise<string> {
 				encoding: "utf8",
 				timeout: 5_000,
 				windowsHide: true,
-				...(command === "ps" ? { env: { ...process.env, LC_ALL: "C", LANG: "C" } } : {}),
+				...(env === undefined ? {} : { env }),
 			},
 			(error, stdout) => {
 				if (error) reject(error);
@@ -36,7 +36,9 @@ function execText(command: string, args: readonly string[]): Promise<string> {
 }
 
 async function darwinProcessStartMs(pid: number): Promise<number | undefined> {
-	const text = (await execText("ps", ["-o", "lstart=", "-p", String(pid)])).trim();
+	const text = (
+		await execText("ps", ["-o", "lstart=", "-p", String(pid)], { ...process.env, LC_ALL: "C", LANG: "C" })
+	).trim();
 	if (text.length === 0) return undefined;
 	return processStartTimeMs(text);
 }
