@@ -1256,7 +1256,7 @@
 				"legacyContracts/test/bench/run-retry.test.ts/per-block spike retry (senpi#2909) never waits for a load at or above the refusal ceiling (senpi#2922)",
 				"legacyContracts/test/bench/run-retry.test.ts/per-block spike retry (senpi#2909) caps the target even when the host has more cores than the cap (senpi#2922)"
 			],
-			"reason": "senpi#2922: the spike-retry settle target is capped 10 under the refusal ceiling, so a calm level near 80 cannot set a target a retry would start into; one new contract in run-retry.test.ts."
+			"reason": "senpi#2922: the spike-retry settle target is capped 10 under the refusal ceiling, so a calm level near 80 cannot set a target a retry would start into; two new contracts in run-retry.test.ts (the cap, and the cap on a host with more cores than the cap)."
 		}
 	}
 }
