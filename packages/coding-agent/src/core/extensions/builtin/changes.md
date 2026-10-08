@@ -1,3 +1,22 @@
+## 2026-10-08 - moved-path-guard: seventh review fixes (senpi#2898)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/moved-path-guard/resolve.ts`, `resolve-async.ts`, `breadcrumb-trust.ts`: the breadcrumb folder check uses `stat` (follows a symlinked old root) instead of `lstat`.
+- `known-moves.ts`, `walk.ts`: an old root's called spelling is registered only when it is, by text, a legacy data root (`.t3`, `.omo-app`) directly under one of the user's home spellings (`isLegacyRoot`).
+
+### Why
+
+Seventh review of PR #2900: with `~/.t3` a symlink and the path's canonicalization failing, `lstat` saw the symlink and the first call failed open; a same-named symlink elsewhere (`~/code/worktrees -> ~/.t3/worktrees`) registered `~/code` as an old-root spelling and refused live paths there on a step timeout.
+
+### Why an extension could not handle it
+
+It is an extension.
+
+### Expected merge conflict zones
+
+- Fork-only directory.
+
 ## 2026-10-08 - moved-path-guard: sixth review fixes (senpi#2898)
 
 ### What changed
