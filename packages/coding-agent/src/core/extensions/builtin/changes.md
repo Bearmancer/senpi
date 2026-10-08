@@ -1,3 +1,24 @@
+## 2026-10-08 - moved-path-guard: fourth review fixes (senpi#2898)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/moved-path-guard/breadcrumb-trust.ts`: trust files are opened with `O_NONBLOCK` (and `O_NOFOLLOW`), so a FIFO named as a breadcrumb opens at once and `fstat` rejects it; without `O_NONBLOCK` (Windows) an `lstat` refuses non-regular files first. `movedTo` may lie under `os.homedir()` or its realpath.
+- `walk.ts`, `resolve.ts`, `resolve-async.ts`: the home's realpath is one more yielded step (sync `realpathSync`, async memoized `realpath`); a `.git` check that cannot answer uses this process's last answer for the prefix, else "not re-used".
+- `known-moves.ts`: remembers `.git` answers by `prefixKey`.
+- `index.ts`: after any step timeout every target gets the text check; targets are probed in three tiers (known listed prefix, legacy root only, rest).
+
+### Why
+
+Fourth review of PR #2900: a planted FIFO hung the synchronous resolver and pinned threadpool threads; a symlinked home silently disabled the guard; timed-out breadcrumb and `.git` steps decided the opposite of the text fallback; unlisted legacy paths could push a re-used worktree into the text fallback.
+
+### Why an extension could not handle it
+
+It is an extension.
+
+### Expected merge conflict zones
+
+- Fork-only directory.
+
 ## 2026-10-08 - moved-path-guard: third review fixes (senpi#2898)
 
 ### What changed
