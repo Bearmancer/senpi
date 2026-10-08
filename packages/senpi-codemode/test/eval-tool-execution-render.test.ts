@@ -76,10 +76,10 @@ describe("eval ToolExecutionComponent lifecycle", () => {
 		);
 		component.setArgsComplete();
 
-		// When it is pending (no result yet, no animation yet), the call lane owns the single frame
+		// When it has no result yet, the call lane owns the single streaming frame
 		const pending = component.render(80);
 		expect.soft(countBoxes(pending)).toBe(1);
-		expect.soft(stripAnsi(pending.join("\n"))).toContain("pending");
+		expect.soft(stripAnsi(pending.join("\n"))).toContain("streaming");
 
 		// When execution starts and streams a partial (running) result
 		component.markExecutionStarted();

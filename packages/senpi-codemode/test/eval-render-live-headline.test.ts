@@ -44,12 +44,12 @@ function renderCall(args: Partial<EvalToolInput>, spinnerFrame: number | undefin
 }
 
 describe("live eval rows lead with the cell's summary (senpi#2802)", () => {
-	it("Given a running cell when its row renders collapsed then the header leads with the summary and the fixed code window follows (senpi#2933)", () => {
+	it("Given a running cell when its row renders collapsed then the header leads with the summary and the code window follows (senpi#2933)", () => {
 		const lines = render(liveResult({ summary }));
 
 		expect(lines[0]).toMatch(/^╭─ . Listing the repo with a shell helper · eval js running/u);
-		expect(lines).toContain("│ const sh = async (cmd) => {");
 		expect(lines.join("\n")).toContain("partial out");
+		expect(lines.at(-1)).toBe("╰─");
 	});
 
 	it("Given a queued and a detached cell when their rows render then both lead with the summary", () => {

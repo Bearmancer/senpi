@@ -215,6 +215,65 @@ describe("eval live block: one-line terminal rows (senpi#2933)", () => {
 	});
 });
 
+describe("eval live block: constant total height with output and events (senpi#2933 review MEDIUM-2)", () => {
+	it("Given streaming through running with output and status events then the total height is identical", () => {
+		const heights: number[] = [];
+		// streaming, no output
+		heights.push(
+			renderCallStreaming(
+				{ language: "js", code: "a();\nb();\nc();", summary: "grow" },
+				{ width: 80, now: STARTED_AT },
+			).length,
+		);
+		// running, no output
+		heights.push(
+			renderResult(cellResult({ status: "running", code: "a();", startedAt: STARTED_AT }), {
+				width: 80,
+				now: STARTED_AT + 1_000,
+			}).length,
+		);
+		// running with 10 output lines
+		heights.push(
+			renderResult(
+				cellResult({
+					status: "running",
+					code: "a();",
+					startedAt: STARTED_AT,
+					output: Array.from({ length: 10 }, (_, i) => `out-${i + 1}`).join("\n"),
+				}),
+				{ width: 80, now: STARTED_AT + 2_000 },
+			).length,
+		);
+		// running with 3 status events
+		heights.push(
+			renderResult(
+				cellResult({
+					status: "running",
+					code: "a();",
+					startedAt: STARTED_AT,
+					statusEvents: Array.from({ length: 3 }, (_, i) => ({ op: "log", message: `event-${i + 1}` })),
+				}),
+				{ width: 80, now: STARTED_AT + 3_000 },
+			).length,
+		);
+		// running with output AND status events
+		heights.push(
+			renderResult(
+				cellResult({
+					status: "running",
+					code: "a();",
+					startedAt: STARTED_AT,
+					output: "chunk 1\nchunk 2",
+					statusEvents: [{ op: "log", message: "one" }],
+				}),
+				{ width: 80, now: STARTED_AT + 4_000 },
+			).length,
+		);
+		expect(new Set(heights).size).toBe(1);
+		expect(heights[0]).toBe(8);
+	});
+});
+
 describe("eval live block: streaming header names the state (senpi#2933)", () => {
 	it("Given a call still streaming when rendered then the header says streaming with the spinner and no elapsed", () => {
 		const lines = renderCallStreaming(

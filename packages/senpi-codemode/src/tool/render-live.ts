@@ -34,8 +34,11 @@ const FRAME_INNER_PREFIX: PrefixStyle = { prefix: "│ ", continuation: "│ ", 
 const FRAME_SECTION_PREFIX: PrefixStyle = { prefix: "├─ ", continuation: "│  ", color: "dim" };
 
 export const LIVE_CODE_WINDOW_LINES = 6;
-const LIVE_OUTPUT_PREVIEW_LINES = 4;
-const LIVE_STATUS_PREVIEW_COUNT = 2;
+// The live block's total height never changes: header + 6 body rows + border. When output or
+// status events exist, they take a fixed tail section and the code window shrinks inside the
+// same total (review MEDIUM-2): 6 code rows alone, or 3 code + 3 tail rows.
+const LIVE_BODY_ROWS = 6;
+const LIVE_TAIL_ROWS = 3;
 
 export function isLiveCellStatus(status: CellStatus): boolean {
 	return status === "pending" || status === "running";
@@ -153,31 +156,38 @@ function joinSegments(base: string, segments: readonly string[]): string {
 	return segments.length === 0 ? base : `${base} · ${segments.join(" · ")}`;
 }
 
-// A live row is a framed block of constant height: the header plus a fixed code window of
-// LIVE_CODE_WINDOW_LINES visual lines and a closing border. New lines scroll the window upward;
-// the hidden prefix folds into one "N earlier code lines" row counted inside the window, so the
-// block never grows the transcript. Streamed output and status events keep their bounded sections.
+// A live row is a framed block of constant total height: header + LIVE_BODY_ROWS body rows +
+// border, whether or not output or status events have arrived. New code lines scroll the code
+// window upward inside its share; the hidden prefix folds into one "N earlier code lines" row
+// counted inside the share, so the block never grows the transcript.
 export function renderLiveCellFrame(
 	cell: EvalCellResult,
 	environment: RenderEnvironment,
 	badges: CellBadges,
 ): string[] {
 	const lines = renderPrefixed(cellHeader(cell, environment, badges), environment, FRAME_HEADER_PREFIX);
-	appendLines(lines, liveCodeWindow(cell, environment));
-	appendLines(lines, cellOutputSection(cell, environment, LIVE_OUTPUT_PREVIEW_LINES));
-	appendLines(lines, cellStatusSection(cell, environment, LIVE_STATUS_PREVIEW_COUNT));
+	const tail = liveTailSection(cell, environment);
+	const codeRows = tail.length === 0 ? LIVE_BODY_ROWS : LIVE_BODY_ROWS - LIVE_TAIL_ROWS;
+	appendLines(lines, liveCodeWindow(cell, environment, codeRows));
+	appendLines(lines, tail);
 	lines.push(style(environment.theme, "borderMuted", "╰─"));
 	return lines;
 }
 
-function liveCodeWindow(cell: EvalCellResult, environment: RenderEnvironment): string[] {
+function liveTailSection(cell: EvalCellResult, environment: RenderEnvironment): string[] {
+	const output = cellOutputSection(cell, environment, LIVE_TAIL_ROWS - 1);
+	const status = output.length === 0 ? cellStatusSection(cell, environment, LIVE_TAIL_ROWS - 1) : [];
+	return [...output, ...status].slice(0, LIVE_TAIL_ROWS);
+}
+
+function liveCodeWindow(cell: EvalCellResult, environment: RenderEnvironment, windowRows: number): string[] {
 	const innerWidth = Math.max(1, environment.width - 2);
 	// Streamed code is not yet trusted input: a hostile or half-arrived chunk can carry escape and
 	// control characters, and the collapsed row must stay inert in the terminal (senpi#2839).
 	const code = highlightedCode(sanitizeCellCode(cell.code), cell.language, environment.theme, environment.repaint);
 	const total = truncateToVisualLines(code, Number.POSITIVE_INFINITY, innerWidth).visualLines.length;
-	const skipped = Math.max(0, total - LIVE_CODE_WINDOW_LINES);
-	const budget = skipped > 0 ? LIVE_CODE_WINDOW_LINES - 1 : LIVE_CODE_WINDOW_LINES;
+	const skipped = Math.max(0, total - windowRows);
+	const budget = skipped > 0 ? windowRows - 1 : windowRows;
 	const preview = previewText(code, budget, innerWidth);
 	const windowLines: string[] = [];
 	if (preview.skipped > 0)
@@ -190,8 +200,8 @@ function liveCodeWindow(cell: EvalCellResult, environment: RenderEnvironment): s
 			}),
 		);
 	for (const line of preview.lines) appendLines(windowLines, renderPrefixed(line, environment, FRAME_INNER_PREFIX));
-	while (windowLines.length < LIVE_CODE_WINDOW_LINES) windowLines.push(style(environment.theme, "borderMuted", "│ "));
-	return windowLines.slice(0, LIVE_CODE_WINDOW_LINES);
+	while (windowLines.length < windowRows) windowLines.push(style(environment.theme, "borderMuted", "│ "));
+	return windowLines.slice(0, windowRows);
 }
 
 function sanitizeCellCode(code: string): string {

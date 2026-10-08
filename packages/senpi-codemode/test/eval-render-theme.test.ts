@@ -230,7 +230,7 @@ describe("eval renderer theme hierarchy", () => {
 		const codeLine = requiredLine(lines, "answer");
 
 		// Then
-		expect.soft(stripAnsi(lines[0] ?? "")).toContain("eval js pending");
+		expect.soft(stripAnsi(lines[0] ?? "")).toContain("eval js streaming");
 		expect.soft(stripAnsi(lines.join("\n"))).toContain("compute");
 		expect.soft(stripAnsi(codeLine)).toContain("const answer = 42;");
 		expect.soft(codeLine.startsWith(TEST_THEME.getFgAnsi("mdCodeBlock"))).toBe(false);
