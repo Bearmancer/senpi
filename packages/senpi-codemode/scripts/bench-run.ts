@@ -1,10 +1,11 @@
 import { availableParallelism } from "node:os";
 import { type Static, Type } from "typebox";
-import { type BlockAttempt, runBlockAttempt } from "./bench-block.ts";
+import { type BlockAttempt, classifyAttempt, runBlockAttempt } from "./bench-block.ts";
 import { LOAD_REFUSAL, type PairedBlock, type RuntimeStatus, type Series } from "./bench-compare.ts";
 import { contaminationCeiling, contaminationFailures } from "./bench-contamination.ts";
 import { type HostSample, summarizeSamples } from "./bench-sampler.ts";
 import { implementedScenarios, plannedScenarios } from "./bench-scenarios.ts";
+import { SETTLE_LOAD, waitForLoadBelow } from "./bench-settle.ts";
 import { runProcess } from "./bench-target.ts";
 import type { RuntimeReport } from "./bench-worker.ts";
 
@@ -30,6 +31,8 @@ export interface RunPlan {
 	readonly scriptRoot: string;
 	readonly env: NodeJS.ProcessEnv;
 	readonly log: (line: string) => void;
+	/** Runs before a spiked block is retried; defaults to waiting for the load to fall (senpi#2909). */
+	readonly settle?: () => Promise<void>;
 }
 
 /** `measurements` is the actual measurement order; the scheduler alternates which side goes first per repetition. */
@@ -88,6 +91,11 @@ export async function runBlocks(plan: RunPlan): Promise<RunResult> {
 	const blocks: BlockRecord[] = [];
 	const admissionLoads: number[] = [];
 	const retriedBlocks: { block: number; attempts: number }[] = [];
+	const settle =
+		plan.settle ??
+		(async () => {
+			await waitForLoadBelow(SETTLE_LOAD, { log: plan.log });
+		});
 	if ([...available.values()].some((present) => !present))
 		return {
 			reps: plan.reps,
@@ -103,12 +111,14 @@ export async function runBlocks(plan: RunPlan): Promise<RunResult> {
 		let kept: BlockAttempt | undefined;
 		for (let attempt = 0; attempt <= SPIKE_RETRIES; attempt += 1) {
 			const tried = await runBlockAttempt(plan, index, available);
-			if (tried.spikePeak === undefined) {
+			if (classifyAttempt(tried) !== "spiked") {
 				kept = tried;
 				break;
 			}
-			peaks.push(tried.spikePeak);
-			plan.log(`block ${index + 1}/${plan.blocks} discarded: host load spike ${tried.spikePeak.toFixed(2)} > ${LOAD_REFUSAL}`);
+			const peak = tried.spikePeak ?? LOAD_REFUSAL;
+			peaks.push(peak);
+			plan.log(`block ${index + 1}/${plan.blocks} discarded: host load spike ${peak.toFixed(2)} > ${LOAD_REFUSAL}`);
+			if (attempt < SPIKE_RETRIES) await settle();
 		}
 		if (peaks.length > 0 && kept) retriedBlocks.push({ block: index, attempts: peaks.length + 1 });
 		if (!kept) {

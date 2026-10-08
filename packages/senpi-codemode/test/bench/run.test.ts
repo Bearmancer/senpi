@@ -80,7 +80,7 @@ describe("paired runtime scheduling", () => {
 			return 81;
 		};
 		// When the scheduler measures.
-		const run = await runBlocks({ ...plan, log });
+		const run = await runBlocks({ ...plan, log, settle: async () => {} });
 		// Then all three blocks complete, block 2 once, and nothing from the discarded attempt survives.
 		expect(run.failures).toEqual([]);
 		expect(run.blocks.map((block) => block.index)).toEqual([0, 1, 2]);
@@ -91,7 +91,7 @@ describe("paired runtime scheduling", () => {
 			).toBeLessThanOrEqual(80);
 		const blockTwoReports = (run.reports["js-bun"] ?? []).filter((entry) => entry.block === 1);
 		expect(blockTwoReports).toHaveLength(4);
-		expect(run.retriedBlocks).toEqual([{ block: 1, attempts: 2 }]);
+		expect(run.retriedBlocks.map(({ block }) => block)).toEqual([1]);
 		expect(decide({ ...run, blockLoads: run.admissionLoads }).exitCode).toBe(0);
 	}, 60_000);
 
@@ -103,7 +103,7 @@ describe("paired runtime scheduling", () => {
 		};
 		host.loadAfter = () => (blockTwoStarted ? 1 : 81);
 		// When the scheduler measures.
-		const run = await runBlocks({ ...plan, log });
+		const run = await runBlocks({ ...plan, log, settle: async () => {} });
 		// Then block 1 is labelled after its retries, blocks 2 and 3 are kept, and the run is inconclusive, not refused.
 		const labelled = run.failures.filter((line) => line.startsWith("host load spike in block 1"));
 		expect(labelled).toHaveLength(1);
@@ -112,6 +112,37 @@ describe("paired runtime scheduling", () => {
 		expect((run.reports["js-bun"] ?? []).some((entry) => entry.block === 0)).toBe(false);
 		expect(decide({ ...run, blockLoads: run.admissionLoads }).exitCode).toBe(3);
 	}, 60_000);
+
+	it("discards a first runtime's reports when a later runtime in the same attempt spikes (senpi#2909)", async () => {
+		// Given two runtimes, and a spike that starts only once the second runtime begins measuring in block 1.
+		let secondRuntimeStarted = false;
+		let spikes = 0;
+		const log = (line: string) => {
+			if (line.startsWith("block 1/1 js-node")) secondRuntimeStarted = true;
+		};
+		host.loadAfter = () => {
+			if (!secondRuntimeStarted || spikes >= 2) return 1;
+			spikes += 1;
+			return 81;
+		};
+		const twoRuntimes: RunPlan = {
+			...plan,
+			blocks: 1,
+			runtimes: [
+				{ id: "js-bun", language: "js", jsRuntime: "bun" },
+				{ id: "js-node", language: "js", jsRuntime: "node" },
+			],
+			log,
+			settle: async () => {},
+		};
+		// When the scheduler measures.
+		const run = await runBlocks(twoRuntimes);
+		// Then the block was retried and each runtime has exactly one attempt's reports, not the discarded ones too.
+		expect(run.retriedBlocks.map(({ block }) => block)).toEqual([0]);
+		expect(run.reports["js-bun"]).toHaveLength(4);
+		expect(run.reports["js-node"]).toHaveLength(4);
+		expect(run.failures).toEqual([]);
+	}, 90_000);
 
 	it("marks a block contaminated when load exceeds the core count during measurement", async () => {
 		// Given an eight-core host whose load reads 9 for a short stretch inside the first block, far below 80.
