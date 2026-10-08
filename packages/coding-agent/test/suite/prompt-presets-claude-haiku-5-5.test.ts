@@ -55,20 +55,23 @@ describe("Claude Haiku 5.5 prompt preset", () => {
 		expect(preset?.prompt).toContain("You are senpi");
 	});
 
-	it.each(["claude-haiku-4-5", "claude-haiku-4-5-20251001", "anthropic/claude-haiku-4-5", "claude-3-5-haiku"])(
-		"leaves %s on the default dynamic prompt",
-		(modelId) => {
-			// given
-			const settings: PromptPresetSettings = { promptPreset: "auto" };
-			const model = createModel(modelId, "anthropic");
+	it.each([
+		"claude-haiku-4-5",
+		"claude-haiku-4.5",
+		"claude-haiku-4-5-20251001",
+		"anthropic/claude-haiku-4-5",
+		"claude-3-5-haiku",
+	])("leaves %s on the default dynamic prompt", (modelId) => {
+		// given
+		const settings: PromptPresetSettings = { promptPreset: "auto" };
+		const model = createModel(modelId, "anthropic");
 
-			// when
-			const presetName = resolvePresetName(model, settings);
+		// when
+		const presetName = resolvePresetName(model, settings);
 
-			// then
-			expect(presetName).toBeUndefined();
-		},
-	);
+		// then
+		expect(presetName).toBeUndefined();
+	});
 
 	it.each(["claude-sonnet-5-5", "claude-opus-5-5", "claude-fable-5-1", "claude-haiku-55"])(
 		"does not route %s to the claude-haiku-5-5 preset",
@@ -107,23 +110,20 @@ describe("Claude Haiku 5.5 prompt preset", () => {
 		expect(preset?.prompt).not.toContain("apply_patch");
 	});
 
-	// The catalog gains Haiku 5.5 with #2911; until then there is nothing to sweep.
-	it.skipIf(getHaiku55CatalogModels().length === 0)(
-		"returns claude-haiku-5-5 preset for every Claude Haiku 5.5 built-in catalog model",
-		() => {
-			// given
-			const settings: PromptPresetSettings = { promptPreset: "auto" };
-			const catalogModels = getHaiku55CatalogModels();
+	it("returns claude-haiku-5-5 preset for every Claude Haiku 5.5 built-in catalog model", () => {
+		// given
+		const settings: PromptPresetSettings = { promptPreset: "auto" };
+		const catalogModels = getHaiku55CatalogModels();
+		expect(catalogModels.length).toBeGreaterThan(0);
 
-			// when
-			const misses = catalogModels
-				.filter((model) => resolvePresetName(model, settings) !== "claude-haiku-5-5")
-				.map((model) => `${model.provider}/${model.id}`);
+		// when
+		const misses = catalogModels
+			.filter((model) => resolvePresetName(model, settings) !== "claude-haiku-5-5")
+			.map((model) => `${model.provider}/${model.id}`);
 
-			// then
-			expect(misses).toEqual([]);
-		},
-	);
+		// then
+		expect(misses).toEqual([]);
+	});
 
 	it("names the Haiku early stop instead of the three Sonnet stops", () => {
 		// given
