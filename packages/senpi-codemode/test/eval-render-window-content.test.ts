@@ -107,15 +107,25 @@ const LONG_SQL = [
 ].join("\n");
 
 describe("eval live window always shows the newest line (senpi#2933 review HIGH-B)", () => {
-	it("Given a 5-line JS cell with one long SQL line at 100 cols then the newest line is visible and the marker is exact", () => {
+	it("Given the 6-line JS cell with one long SQL line at 100 cols then the newest line is visible and the marker is not zero", () => {
 		const lines = renderStreamingCall({ language: "js", code: LONG_SQL, summary: "long sql" }, 100);
 		const text = lines.join("\n");
 		expect(text).toContain('print("done");');
 		expect(text).not.toContain("0 earlier code lines");
 	});
 
-	it("Given a 5-line JS cell with one long SQL line at 40 cols then the newest line is visible", () => {
+	it("Given the 6-line JS cell with one long SQL line at 40 cols then the newest line is visible and the marker counts the cut line", () => {
 		const lines = renderStreamingCall({ language: "js", code: LONG_SQL, summary: "long sql" }, 40);
+		const text = lines.join("\n");
+		expect(text).toContain('print("done");');
+		expect(text).not.toContain("0 earlier code lines");
+	});
+
+	it("Given the 6-line JS cell with one long SQL line at 40 cols when running with output then the marker counts the cut line", () => {
+		const lines = renderResult(
+			cellResult({ status: "running", language: "js", code: LONG_SQL, startedAt: STARTED_AT, output: "chunk" }),
+			{ width: 40, now: STARTED_AT + 1_000 },
+		);
 		const text = lines.join("\n");
 		expect(text).toContain('print("done");');
 		expect(text).not.toContain("0 earlier code lines");
@@ -133,8 +143,10 @@ describe("eval live window always shows the newest line (senpi#2933 review HIGH-
 		const text = lines.join("\n");
 		const marker = lines.find((line) => line.includes("earlier code lines"));
 		expect(marker).toBeDefined();
+		// Every shown row belongs to line 20 (38 rows wrap over 40 source rows), so the 19
+		// source lines whose first row is hidden fold into the exact count (review HIGH-B).
 		const count = Number(/(\d+) earlier code lines/u.exec(marker ?? "")?.[1]);
-		expect(count).toBeGreaterThanOrEqual(15);
+		expect(count).toBe(19);
 		expect(text).toContain("line20");
 	});
 
@@ -144,6 +156,73 @@ describe("eval live window always shows the newest line (senpi#2933 review HIGH-
 		const text = lines.join("\n");
 		expect(text).toContain("earlier code lines");
 		expect(text).toContain("w".repeat(20));
+	});
+});
+
+describe("eval live output tail counts hidden rows exactly (senpi#2933 review NEW-1)", () => {
+	const cellWithOutput = (output: string): Partial<EvalCellResult> => ({
+		status: "running",
+		startedAt: STARTED_AT,
+		code: "work();",
+		output,
+	});
+
+	it.each([3, 4, 10] as const)(
+		"Given %i output lines at 80 cols then the marker says %i - 1 earlier lines and shows the last line",
+		(count) => {
+			const output = Array.from({ length: count }, (_, i) => `line-${i + 1}`).join("\n");
+			const lines = renderResult(cellResult(cellWithOutput(output)), { width: 80, now: STARTED_AT + 1_000 });
+			const text = lines.join("\n");
+			expect(text).toContain(`${count - 1} earlier output lines`);
+			expect(text).toContain(`line-${count}`);
+			expect(text).not.toContain(`line-${count - 1}`);
+		},
+	);
+
+	it("Given one 200-char output line at 40 cols then the marker counts every hidden wrapped row", () => {
+		const lines = renderResult(cellResult(cellWithOutput("x".repeat(200))), { width: 40, now: STARTED_AT + 1_000 });
+		const text = lines.join("\n");
+		// The 200-char line wraps to 6 rows at a 38-cell body; only the last row is shown.
+		expect(text).toContain("5 earlier output lines");
+		expect(text).not.toContain("4 earlier output lines");
+	});
+});
+
+describe("eval live status tail keeps the newest event rows (senpi#2933 review NEW-2)", () => {
+	it("Given two 2-line events at 40 cols then the newest event is visible and older rows fold into the marker", () => {
+		const lines = renderResult(
+			cellResult({
+				status: "running",
+				startedAt: STARTED_AT,
+				statusEvents: [
+					{ op: "log", message: "first\nsecond" },
+					{ op: "log", message: "third\nfourth" },
+				],
+			}),
+			{ width: 40, now: STARTED_AT + 1_000 },
+		);
+		const text = lines.join("\n");
+		expect(text).toContain("fourth");
+		expect(text).not.toContain("first");
+		expect(text).not.toContain("second");
+		expect(text).toContain("1 earlier status events");
+	});
+
+	it("Given one 4-line event at 40 cols then its newest rows are kept and the cut row ends with an ellipsis", () => {
+		const lines = renderResult(
+			cellResult({
+				status: "running",
+				startedAt: STARTED_AT,
+				statusEvents: [{ op: "log", message: "line1\nline2\nline3\nline4" }],
+			}),
+			{ width: 40, now: STARTED_AT + 1_000 },
+		);
+		const text = lines.join("\n");
+		expect(text).toContain("line4");
+		expect(text).toContain("line3…");
+		expect(text).not.toContain("line2");
+		expect(text).not.toContain("line1");
+		expect(text).not.toContain("earlier status events");
 	});
 });
 

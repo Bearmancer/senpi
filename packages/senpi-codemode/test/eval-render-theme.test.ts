@@ -275,4 +275,53 @@ describe("eval renderer theme hierarchy", () => {
 		expect.soft(readLine).toContain(TEST_THEME.getFgAnsi("muted"));
 		expect.soft(errorLine).toContain(TEST_THEME.getFgAnsi("warning"));
 	});
+
+	it("Given a themed live status tail whose newest event overflows then the ellipsis never splits an escape sequence (senpi#2933 review NEW-3)", () => {
+		// Given: two 2-line events at 40 cols overflow the 2-row tail, so the oldest shown row
+		// truncates with an ellipsis. Styled with the real Theme, a character-index cut would
+		// leave a partial CSI like ESC[39 on the row.
+		const result = evalResult(
+			{
+				language: "py",
+				durationMs: 1,
+				toolCalls: [],
+				truncated: false,
+				cells: [
+					{
+						index: 0,
+						code: "work()",
+						language: "py",
+						output: "",
+						status: "running",
+						startedAt: 1_700_000_000_000,
+						statusEvents: [
+							{ op: "log", message: "first\nsecond" },
+							{ op: "log", message: "third\nfourth" },
+						],
+					},
+				],
+			},
+			"",
+		);
+
+		// When
+		const lines = renderEvalResult(
+			result,
+			{ expanded: false, isPartial: true },
+			TEST_THEME,
+			resultContext({ now: 1_700_000_001_000 }),
+		).render(40);
+
+		// Then: the newest event stays visible, the clipped row carries the ellipsis, and no
+		// escape sequence is partial — every CSI ends in a final byte (senpi#2839's inert rule).
+		const text = lines.join("\n");
+		expect(text).toContain("fourth");
+		expect(text).toContain("…");
+		const trailing = /\u001b\[[0-9;]*$/u;
+		for (const line of lines) {
+			expect(trailing.test(line), JSON.stringify(line)).toBe(false);
+			const stripped = line.replace(/\u001b\[[0-9;]*m/gu, "");
+			expect(stripped.includes("\u001b"), JSON.stringify(line)).toBe(false);
+		}
+	});
 });
