@@ -5,7 +5,7 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { catalogChangedSinceHead, decideTestGate, isCiCheckGreen } from "./release-test-gate.mjs";
+import { awaitCiEvidence, catalogChangedSinceHead, isCiCheckGreen, planCiEvidence } from "./release-test-gate.mjs";
 
 const CHECK_NAME = "Check and test";
 
@@ -59,51 +59,108 @@ describe("isCiCheckGreen", () => {
 	});
 });
 
-describe("decideTestGate", () => {
-	const greenChecks = [{ name: CHECK_NAME, status: "completed", conclusion: "success", head_sha: "abc123" }];
+const checkRun = (sha, status, conclusion = null) => ({ name: CHECK_NAME, status, conclusion, head_sha: sha });
 
-	it("skips when HEAD already has a green Check and test run", () => {
-		const decision = decideTestGate({ forceTests: false, dryRun: false, sha: "abc123", checkRuns: greenChecks });
-		assert.equal(decision.skip, true);
-		assert.match(decision.reason, /abc123/);
+describe("planCiEvidence (senpi#2943)", () => {
+	it("reuses a green Check and test run on the exact sha", () => {
+		assert.equal(planCiEvidence({ sha: "c1", checkRuns: [checkRun("c1", "completed", "success")] }).action, "reuse");
 	});
 
-	it("runs tests when --force-tests is given even with green CI", () => {
-		const decision = decideTestGate({ forceTests: true, dryRun: false, sha: "abc123", checkRuns: greenChecks });
-		assert.equal(decision.skip, false);
-		assert.match(decision.reason, /force-tests/);
+	it("waits while the run is queued or in progress, or not registered yet", () => {
+		assert.equal(planCiEvidence({ sha: "c1", checkRuns: [checkRun("c1", "in_progress")] }).action, "wait");
+		assert.equal(planCiEvidence({ sha: "c1", checkRuns: [checkRun("c1", "queued")] }).action, "wait");
+		assert.equal(planCiEvidence({ sha: "c1", checkRuns: [] }).action, "wait");
+		assert.equal(planCiEvidence({ sha: "c1", checkRuns: null }).action, "wait");
 	});
 
-	it("runs tests when check lookup failed (null = error/unavailable)", () => {
-		const decision = decideTestGate({ forceTests: false, dryRun: false, sha: "abc123", checkRuns: null });
-		assert.equal(decision.skip, false);
+	it("stops on a red run: the release must not ship what CI rejected", () => {
+		assert.equal(planCiEvidence({ sha: "c1", checkRuns: [checkRun("c1", "completed", "failure")] }).action, "stop");
+		assert.equal(planCiEvidence({ sha: "c1", checkRuns: [checkRun("c1", "completed", "timed_out")] }).action, "stop");
 	});
 
-	it("runs tests when the check is not green", () => {
-		const decision = decideTestGate({
-			forceTests: false,
-			dryRun: false,
-			sha: "abc123",
-			checkRuns: [{ name: CHECK_NAME, status: "completed", conclusion: "failure", head_sha: "abc123" }],
+	it("treats a cancelled run as superseded, not as evidence", () => {
+		assert.equal(planCiEvidence({ sha: "c1", checkRuns: [checkRun("c1", "completed", "cancelled")] }).action, "superseded");
+	});
+
+	it("ignores a green run for another sha", () => {
+		assert.equal(planCiEvidence({ sha: "c1", checkRuns: [checkRun("c0", "completed", "success")] }).action, "wait");
+	});
+
+	it("uses the newest run when CI ran more than once on the sha", () => {
+		const checkRuns = [checkRun("c1", "completed", "failure"), checkRun("c1", "completed", "success")];
+		assert.equal(planCiEvidence({ sha: "c1", checkRuns }).action, "reuse");
+	});
+});
+
+function world({ heads = ["c1"], runs = {}, timeline = [] } = {}) {
+	let now = 0;
+	let head = heads[0];
+	const calls = { merges: [], sleeps: 0 };
+	return {
+		calls,
+		deps: {
+			lookupCheckRuns: (sha) => {
+				const step = timeline.find((entry) => entry.sha === sha && entry.at <= now && (entry.until ?? Infinity) > now);
+				return step ? step.runs : (runs[sha] ?? []);
+			},
+			sleep: () => {
+				calls.sleeps += 1;
+				now += 30_000;
+			},
+			now: () => now,
+			headSha: () => head,
+			newerMainContaining: (sha) => {
+				const index = heads.indexOf(sha);
+				return index >= 0 && index < heads.length - 1 ? heads[heads.length - 1] : undefined;
+			},
+			fastForwardTo: (sha) => {
+				calls.merges.push(sha);
+				head = sha;
+			},
+			log: () => {},
+		},
+	};
+}
+
+describe("awaitCiEvidence (senpi#2943)", () => {
+	it("returns at once on green CI for HEAD, with no local suite and no waiting", () => {
+		const { deps, calls } = world({ runs: { c1: [checkRun("c1", "completed", "success")] } });
+		assert.equal(awaitCiEvidence({ timeoutMs: 600_000, pollMs: 30_000 }, deps), "c1");
+		assert.equal(calls.sleeps, 0);
+	});
+
+	it("waits for a pushed catalog commit's CI and returns once it turns green", () => {
+		const { deps, calls } = world({
+			timeline: [
+				{ sha: "c1", at: 0, until: 60_000, runs: [] },
+				{ sha: "c1", at: 60_000, until: 120_000, runs: [checkRun("c1", "in_progress")] },
+				{ sha: "c1", at: 120_000, runs: [checkRun("c1", "completed", "success")] },
+			],
 		});
-		assert.equal(decision.skip, false);
+		assert.equal(awaitCiEvidence({ timeoutMs: 600_000, pollMs: 30_000 }, deps), "c1");
+		assert.equal(calls.sleeps, 4);
 	});
 
-	// senpi#2645: HEAD's green CI ran on the catalog before the release regenerated it.
-	it("runs the full suite when the regeneration changed the catalog, even with green CI on HEAD", () => {
-		const decision = decideTestGate({ forceTests: false, dryRun: false, sha: "abc123", checkRuns: greenChecks, catalogChanged: true });
-		assert.equal(decision.skip, false);
-		assert.match(decision.reason, /catalog/);
+	it("stops the release when CI is red on the catalog commit", () => {
+		const { deps } = world({ runs: { c1: [checkRun("c1", "completed", "failure")] } });
+		assert.throws(() => awaitCiEvidence({ timeoutMs: 600_000, pollMs: 30_000 }, deps), /CI failed on c1/);
 	});
 
-	it("still skips on green CI when the regeneration left the catalog unchanged", () => {
-		const decision = decideTestGate({ forceTests: false, dryRun: false, sha: "abc123", checkRuns: greenChecks, catalogChanged: false });
-		assert.equal(decision.skip, true);
+	it("follows main forward when a newer push superseded the run, and uses the newer sha's CI", () => {
+		const { deps, calls } = world({
+			heads: ["c1", "c2"],
+			runs: { c1: [checkRun("c1", "completed", "cancelled")], c2: [checkRun("c2", "completed", "success")] },
+		});
+		assert.equal(awaitCiEvidence({ timeoutMs: 600_000, pollMs: 30_000 }, deps), "c2");
+		assert.deepEqual(calls.merges, ["c2"]);
 	});
 
-	it("never skips in dry-run mode (preview stays a preview of the real gate)", () => {
-		const decision = decideTestGate({ forceTests: false, dryRun: true, sha: "abc123", checkRuns: greenChecks });
-		assert.equal(decision.skip, false);
+	it("fails with a clear message instead of running the suite serially when no evidence arrives in time", () => {
+		const { deps } = world({ runs: { c1: [] } });
+		assert.throws(
+			() => awaitCiEvidence({ timeoutMs: 90_000, pollMs: 30_000 }, deps),
+			/no Check and test result for c1 within 2 min/,
+		);
 	});
 });
 

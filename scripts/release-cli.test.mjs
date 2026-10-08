@@ -9,8 +9,15 @@ import { fileURLToPath } from "node:url";
 import { WORKSPACE_PACKAGES } from "./release-packages.mjs";
 import { CHANGELOGS } from "./release-changelog.mjs";
 
-for (const mergeStatus of [0, 1]) {
-	it(`release CLI recovers concurrent main advancement and respects merge exit ${mergeStatus}`, () => {
+const ciCheckRuns = (conclusion) =>
+	JSON.stringify([{ check_runs: [{ id: 1, name: "Check and test", status: "completed", conclusion, head_sha: "fixture-sha" }] }]);
+
+for (const { mergeStatus, ci } of [
+	{ mergeStatus: 0, ci: "success" },
+	{ mergeStatus: 1, ci: "success" },
+	{ mergeStatus: 0, ci: "failure" },
+]) {
+	it(`release CLI with CI ${ci} recovers concurrent main advancement and respects merge exit ${mergeStatus}`, () => {
 		const root = mkdtempSync(join(tmpdir(), "senpi-release-cli-"));
 		try {
 			for (const file of WORKSPACE_PACKAGES) {
@@ -34,7 +41,7 @@ if (${JSON.stringify(name)} === "git") {
 	if (args[0] === "merge-base") process.exit(1);
 	if (args[0] === "merge") process.exit(${mergeStatus});
 }
-if (${JSON.stringify(name)} === "gh") process.stdout.write("[]");
+if (${JSON.stringify(name)} === "gh") process.stdout.write(${JSON.stringify(ciCheckRuns(ci))});
 `;
 				const runner = join(bin, `${name}.mjs`);
 				writeFileSync(runner, body);
@@ -52,6 +59,15 @@ if (${JSON.stringify(name)} === "gh") process.stdout.write("[]");
 				timeout: 15000,
 			});
 			const commands = readFileSync(calls, "utf8").trim().split("\n").map(JSON.parse);
+			if (ci !== "success") {
+				// senpi#2943: red CI on the release commit stops the release before it commits, tags or pushes.
+				assert.equal(result.status, 1, result.stderr);
+				assert.match(result.stderr, /CI failed on fixture-sha/);
+				assert.deepEqual(commands.filter((args) => args[1] === "push" || args[1] === "tag" || args[1] === "commit"), []);
+				assert.equal(commands.some((args) => args[0] === "npm" && args[1] === "test"), false);
+				return;
+			}
+			assert.equal(commands.some((args) => args[0] === "npm" && args[1] === "test"), false);
 			assert.ok(commands.some((args) => args[0] === "git" && args[1] === "merge"), result.stderr);
 			assert.equal(result.status, mergeStatus, result.stderr);
 			assert.deepEqual(commands.filter((args) => args[1] === "push"), mergeStatus === 0 ? [

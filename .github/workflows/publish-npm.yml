@@ -37,15 +37,12 @@ jobs:
     needs: native-prebuilds
     if: ${{ always() && (inputs.publish-only != true || needs.native-prebuilds.result == 'success') }}
     runs-on: ubuntu-latest
-    # `--ref main` resolves at run start, so the release can always check out a commit
-    # whose CI has not finished yet; the test gate then runs the full suite in-job.
-    # Measured full-gate releases land at 22-26 min, so a 30 min cap has under 5 min
-    # of headroom and kills the job mid-suite (run 33605173502). Budget for the slow
-    # path plus growth; gate-reused releases still finish in ~4 min.
-    # A regenerated catalog now always forces the full serial `CI=1 npm test` (senpi#2645),
-    # and that suite outgrew 50 min: run 37138537174 was still in the gate at the 50 min
-    # kill. A timed-out job keeps no log, so the cap must clear the slow path with room.
-    timeout-minutes: 90
+    # The release never re-runs the test suite (senpi#2943): its test evidence is the release
+    # commit's green sharded CI run ("Check and test"). A regenerated catalog is pushed to main
+    # first and CI tests it there. The job waits up to 40 min for that CI result (CI walls
+    # measured at 7-22 min), plus about 10 min of install, build and push, so 60 min clears it.
+    # A release whose HEAD already has green CI finishes in a few minutes.
+    timeout-minutes: 60
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
