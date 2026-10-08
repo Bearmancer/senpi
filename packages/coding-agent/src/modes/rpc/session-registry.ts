@@ -98,8 +98,8 @@ export class RpcSessionRegistry {
 	}
 
 	/** Daemon-family identities come from the endpoint's claims and generation registry. */
-	holderPids(): Promise<readonly number[]> {
-		return this.options.pathReservations?.holderPids?.() ?? Promise.resolve([]);
+	holderPids(observedStarts?: ReadonlyMap<number, number | undefined>): Promise<readonly number[]> {
+		return this.options.pathReservations?.holderPids?.(observedStarts) ?? Promise.resolve([]);
 	}
 
 	async openSession(requested: RpcSessionLaunchProfile, options?: RpcSessionOpenOptions): Promise<OpenRpcSession> {

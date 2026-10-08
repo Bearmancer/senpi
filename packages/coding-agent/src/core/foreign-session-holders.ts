@@ -2,7 +2,7 @@ import { createReadStream } from "node:fs";
 import { stat } from "node:fs/promises";
 import { createInterface } from "node:readline";
 import { resolveMovedPath } from "./extensions/builtin/moved-path-guard/resolve.ts";
-import { errorCode } from "./extensions/builtin/terminal/lease-file.ts";
+import { errorCode, type LockProbes } from "./extensions/builtin/terminal/lease-file.ts";
 import { liveSessionHolders, type SessionHolder } from "./session-holders.ts";
 import { parseEntryLine } from "./session-record.ts";
 
@@ -35,6 +35,7 @@ async function sessionIdFromFile(sessionFile: string): Promise<string | undefine
 export async function foreignSessionHolders(
 	sessionFile: string | undefined,
 	sessionId?: string,
+	probes?: LockProbes,
 ): Promise<SessionHolder[]> {
 	if (sessionFile === undefined) return [];
 	const path = resolveMovedPath(sessionFile);
@@ -42,7 +43,7 @@ export async function foreignSessionHolders(
 	if (id === undefined) return [];
 	// Both runtimes currently use this PID: the session-worker is a worker_threads Worker,
 	// not a subprocess. Do not exclude arbitrary descendants or holder-supplied host identities.
-	return (await liveSessionHolders(path, id)).filter((holder) => holder.pid !== process.pid);
+	return (await liveSessionHolders(path, id, probes)).filter((holder) => holder.pid !== process.pid);
 }
 
 /** One terminal-safe line; cwd can contain newlines or escape sequences. */

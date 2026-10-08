@@ -41,7 +41,7 @@ it.each([1, 10, 30])(
 		if (!sessionId) throw new Error("Session did not open");
 		const family = vi
 			.spyOn(rig.registry, "holderPids")
-			.mockImplementation(() => reservations.holderPids?.() ?? Promise.resolve([]));
+			.mockImplementation((starts) => reservations.holderPids?.(starts) ?? Promise.resolve([]));
 		const asynchronous = vi.mocked(childProcess.execFile);
 		const synchronous = vi.mocked(childProcess.execFileSync);
 		asynchronous.mockClear();
@@ -72,15 +72,19 @@ it("resolves a foreign-looking daemon once, deduplicates its claims and never pr
 	for (let index = 0; index < 10; index++) await current.claim(join(root, `current-${index}.jsonl`));
 	const family = vi
 		.spyOn(rig.registry, "holderPids")
-		.mockImplementation(() => current.holderPids?.() ?? Promise.resolve([]));
+		.mockImplementation((starts) => current.holderPids?.(starts) ?? Promise.resolve([]));
 	const identity = vi.spyOn(daemonProcess, "readProcessStartTime");
+	const processes = vi.mocked(childProcess.execFile);
+	processes.mockClear();
 	await rig.send("client", { type: "switch_session", id: "switch", sessionId, sessionPath: file });
 	expect(delivered).toEqual(["switch_session"]);
 	expect(family).toHaveBeenCalledTimes(1);
-	expect(identity.mock.calls.map(([pid]) => pid)).toEqual([holder.pid]);
+	expect(identity).not.toHaveBeenCalled();
+	expect(processes).toHaveBeenCalledTimes(process.platform === "linux" ? 0 : 1);
 	family.mockClear();
-	identity.mockClear();
+	processes.mockClear();
 	expect(await rig.open("another", { sessionPath: file })).toMatchObject({ success: true });
 	expect(family).toHaveBeenCalledTimes(1);
-	expect(identity.mock.calls.map(([pid]) => pid)).toEqual([holder.pid]);
+	expect(identity).not.toHaveBeenCalled();
+	expect(processes).toHaveBeenCalledTimes(process.platform === "linux" ? 0 : 1);
 });

@@ -22,9 +22,9 @@ import {
 	type RpcSessionRow,
 	sessionIdentity,
 } from "./session-registry.ts";
+import { releaseWithinGrace } from "./session-teardown.ts";
 import { SessionWorkerClient } from "./session-worker-client.ts";
 import { SESSION_WORKER_LIMITS, type SessionWriteGrant, typedWorkerRefusal } from "./session-worker-protocol.ts";
-import { releaseWithinGrace } from "./session-teardown.ts";
 import { WorkerSessionClaims } from "./worker-session-claims.ts";
 
 type SessionWorkerCallbacks = ConstructorParameters<typeof SessionWorkerClient>[0];
@@ -61,8 +61,8 @@ export class WorkerSessionRegistry {
 		return this.entries.size;
 	}
 
-	holderPids(): Promise<readonly number[]> {
-		return this.options.pathReservations?.holderPids?.() ?? Promise.resolve([]);
+	holderPids(observedStarts?: ReadonlyMap<number, number | undefined>): Promise<readonly number[]> {
+		return this.options.pathReservations?.holderPids?.(observedStarts) ?? Promise.resolve([]);
 	}
 
 	async openSession(profile: RpcSessionLaunchProfile, options?: RpcSessionOpenOptions): Promise<OpenRpcSession> {
@@ -360,10 +360,7 @@ export class WorkerSessionRegistry {
 			if (this.entries.get(handle) !== entry || entry.state !== "open") return;
 		}
 		this.reservations.reconcile(handle, { livePaths, sessionPath });
-		this.claims.get(handle)?.reconcile(
-			sessionPath ? [...livePaths, sessionPath] : livePaths,
-			attached,
-		);
+		this.claims.get(handle)?.reconcile(sessionPath ? [...livePaths, sessionPath] : livePaths, attached);
 		if (!sessionPath) return;
 		entry.reservationKey = sessionPath;
 		entry.sessionPath = sessionPath;

@@ -22,6 +22,7 @@
 import { createHash } from "node:crypto";
 import { mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { sameProcessStart } from "../../core/extensions/builtin/terminal/process-identity.ts";
 import { processIsLive, readProcessStartTime } from "../app-server/daemon/process.ts";
 import { createHostDaemonPaths, HOST_DAEMON_DIR_ENV, hostDaemonDirectoryPaths } from "./host-daemon-paths.ts";
 import { parseJson, readFileOrUndefined } from "./host-daemon-state.ts";
@@ -42,7 +43,7 @@ export interface SessionPathOwner {
 
 export interface SessionPathReservations {
 	/** Live processes registered to this daemon, never inferred from a holder's own labels. */
-	holderPids?(): Promise<readonly number[]>;
+	holderPids?(observedStarts?: ReadonlyMap<number, number | undefined>): Promise<readonly number[]>;
 	/** Records this host as the holder of `sessionPath`, or reports the holder whose claim stands. */
 	claim(sessionPath: string, attached?: boolean): Promise<SessionPathOwner | undefined>;
 	/** Drops this host's claim. A claim made by another generation is never touched. */
@@ -128,7 +129,7 @@ export function createSessionPathReservations(options: {
 		await rename(staging, file);
 	};
 	return {
-		async holderPids(): Promise<readonly number[]> {
+		async holderPids(observedStarts?: ReadonlyMap<number, number | undefined>): Promise<readonly number[]> {
 			const candidates = (await readSessionPathClaims(dir)).map(({ owner }) => owner);
 			const generations = await readdir(paths.generationsDir, { withFileTypes: true }).catch(() => []);
 			for (const generation of generations) {
@@ -154,8 +155,23 @@ export function createSessionPathReservations(options: {
 			const live = await Promise.all(
 				[...byPid].map(async ([pid, owners]) => {
 					if (!processIsLive(pid)) return undefined;
+					if (observedStarts) {
+						// Only foreign-looking holders need family classification. Their bounded OS
+						// probes were already done by lease validation at this command's admission.
+						if (!observedStarts.has(pid)) return undefined;
+						const observed = observedStarts.get(pid);
+						return owners.some((owner) => {
+							if (owner.processStartTime === null || observed === undefined) return true;
+							const start = /^\d+$/.test(owner.processStartTime)
+								? Number((BigInt(owner.processStartTime) - 116444736000000000n) / 10000n)
+								: Date.parse(owner.processStartTime);
+							return sameProcessStart(start, observed);
+						})
+							? pid
+							: undefined;
+					}
 					if (owners.some((owner) => owner.processStartTime === null)) return pid;
-					const current = await readProcessStartTime(pid).catch(() => undefined);
+					const current = await readProcessStartTime(pid, process.platform, 1_000).catch(() => undefined);
 					return current === undefined || owners.some((owner) => owner.processStartTime === current)
 						? pid
 						: undefined;

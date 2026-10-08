@@ -368,7 +368,7 @@ export class SessionCommandRouter {
 				entry,
 				this.bindings.get(sessionId),
 				() => this.acknowledgePrompt(command.id, sessionId),
-				() => this.registry.holderPids?.() ?? Promise.resolve([]),
+				(observedStarts) => this.registry.holderPids?.(observedStarts) ?? Promise.resolve([]),
 			);
 			return undefined;
 		} catch (cause) {
@@ -608,7 +608,9 @@ export class SessionCommandRouter {
 		if (retryFallbackError)
 			return error(command.id, "open_session", `${RPC_ERROR_INVALID_LAUNCH_PROFILE}: ${retryFallbackError}`);
 		let opened: OpenRpcSession | undefined;
-		const assertSessionNotHeld = sessionHeldCheck(() => this.registry.holderPids?.() ?? Promise.resolve([]));
+		const assertSessionNotHeld = sessionHeldCheck(
+			(observedStarts) => this.registry.holderPids?.(observedStarts) ?? Promise.resolve([]),
+		);
 		try {
 			await assertSessionNotHeld(command.sessionPath);
 			opened = await this.registry.openSession(

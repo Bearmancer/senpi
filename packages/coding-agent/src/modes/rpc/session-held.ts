@@ -1,3 +1,4 @@
+import { readProcessStartMs } from "../../core/extensions/builtin/terminal/process-start-probe.ts";
 import { foreignSessionHolders } from "../../core/foreign-session-holders.ts";
 import type { RpcInboundRecord } from "./rpc-types.ts";
 import { RPC_ERROR_SESSION_HELD } from "./rpc-types.ts";
@@ -43,13 +44,27 @@ const READ_ONLY_OR_CONTROL = new Set<RpcInboundRecord["type"]>([
 
 /** Fresh leases at each boundary; daemon identity resolution is lazy and scoped to one command. */
 export function sessionHeldCheck(
-	resolveDaemonPids?: () => Promise<readonly number[]>,
+	resolveDaemonPids?: (observedStarts: ReadonlyMap<number, number | undefined>) => Promise<readonly number[]>,
 ): (sessionFile: string | undefined, sessionId?: string) => Promise<void> {
 	let daemonPids: Promise<readonly number[]> | undefined;
+	const probes = new Map<number, Promise<number | undefined>>();
+	const observedStarts = new Map<number, number | undefined>();
 	return async (sessionFile, sessionId) => {
-		const holders = await foreignSessionHolders(sessionFile, sessionId);
+		const holders = await foreignSessionHolders(sessionFile, sessionId, {
+			readProcessStartMs: (pid) => {
+				let probe = probes.get(pid);
+				if (!probe) {
+					probe = readProcessStartMs(pid).then((start) => {
+						observedStarts.set(pid, start);
+						return start;
+					});
+					probes.set(pid, probe);
+				}
+				return probe;
+			},
+		});
 		if (holders.length === 0) return;
-		daemonPids ??= resolveDaemonPids?.() ?? Promise.resolve([]);
+		daemonPids ??= resolveDaemonPids?.(observedStarts) ?? Promise.resolve([]);
 		const family = await daemonPids;
 		const foreign = holders.filter((holder) => !family.includes(holder.pid));
 		if (foreign.length > 0)
@@ -65,7 +80,7 @@ export async function dispatchSessionBinding(
 	entry: RpcSessionEntry,
 	binding: RpcSessionBinding | undefined,
 	acknowledgePrompt: () => void,
-	daemonPids?: () => Promise<readonly number[]>,
+	daemonPids?: (observedStarts: ReadonlyMap<number, number | undefined>) => Promise<readonly number[]>,
 ): Promise<void> {
 	if (!binding) throw new RpcSessionRegistryError("unknown_session");
 	if (!READ_ONLY_OR_CONTROL.has(command.type)) {

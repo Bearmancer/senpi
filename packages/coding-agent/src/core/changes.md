@@ -3,6 +3,7 @@
 ### What changed
 
 - `packages/coding-agent/src/core/foreign-session-holders.ts`: asynchronously reads only a regular file's JSONL header when an id is not known, leaving FIFO readers to the session runtime; resolves moved paths and queries `liveSessionHolders` afresh. Excludes this process PID, shared by its session-worker threads; formats terminal-safe, one-line warnings. Advisory CLI lookup errors produce a warning without aborting startup or resume; host admission retains strict lookup errors.
+- `packages/coding-agent/src/core/session-holders.ts`: accepts command-scoped lease probes so publication rechecks reread holder records and check liveness without respawning the same PID identity query. Move-lock callers retain the default fresh probes.
 
 ### Why
 
