@@ -299,7 +299,8 @@ describe("ask-user builtin", () => {
 	it("keeps a UI failure's reason and refuses the gated action for a required question", async () => {
 		// given a required question whose UI fails while it is open
 		const { tool, ctx } = await setup();
-		ctx.ui.question = vi.fn(async () => {
+		ctx.ui.question = vi.fn(async (_request, options) => {
+			options?.onProgress?.({ answers: { q1: { selected: [], text: "only on staging" } } });
 			throw new Error("boom");
 		});
 
@@ -316,6 +317,9 @@ describe("ask-user builtin", () => {
 		const text = outcome.content.map((block) => (block.type === "text" ? block.text : "")).join("\n");
 		expect(text).toContain("Question UI failed: boom");
 		expect(text).toContain("do not take the action it gates");
+		const userWords = (outcome.details as { userWords?: Array<{ label: string }> }).userWords ?? [];
+		for (const word of userWords) expect(text).toContain(word.label);
+		expect(text).toContain("not an answer");
 	});
 
 	it("sends the user's typed draft along with a dismissed required question", async () => {

@@ -1,7 +1,7 @@
 import type { ExtensionAPI, ExtensionContext, ToolDefinition } from "../../types.ts";
 import { WAKE_SOURCE_STATE_EVENT, type WakeSourceStateEvent } from "../monitor-state-event.ts";
 import { TOOL_NAMES } from "./family.ts";
-import { formatModelAnswer, formatResultDetails, formatUserMessage, withGatedRefusal } from "./format.ts";
+import { formatGatedCancellation, formatModelAnswer, formatResultDetails, formatUserMessage } from "./format.ts";
 import {
 	ASK_USER_ASKED_EVENT,
 	ASK_USER_QUESTION_ENTRY,
@@ -355,7 +355,7 @@ export function createAskUserTool(variant: AskUserVariant, pi: ExtensionAPI, sta
 				request,
 				response.status === "cancelled" && response.comment
 					? request.required === true
-						? withGatedRefusal(response.comment)
+						? formatGatedCancellation(response.comment, response, request.requestId, request.questions)
 						: response.comment
 					: undefined,
 			);

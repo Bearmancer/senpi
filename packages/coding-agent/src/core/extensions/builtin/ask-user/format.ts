@@ -103,9 +103,17 @@ function formatGatedNoAnswer(response: QuestionResponse, questions: Questions, w
 	return lines.join("\n");
 }
 
-/** The required-question refusal, appended after a free-form cancellation reason (senpi#2949). */
-export function withGatedRefusal(reason: string): string {
-	return `${reason}\n${GATED_NO_ANSWER}`;
+/**
+ * A required question cancelled with a reason (a UI failure): the reason, then the gated body, so a
+ * draft the user typed is named and marked not an answer, and the action is refused (senpi#2949).
+ */
+export function formatGatedCancellation(
+	reason: string,
+	response: QuestionResponse,
+	requestId: string,
+	questions: Questions = [],
+): string {
+	return `${reason}\n${formatModelAnswer(response, requestId, questions, true).text}`;
 }
 
 function formatBody(response: QuestionResponse, questions: Questions, words: WordPlacement, required = false): string {

@@ -4,7 +4,6 @@ import {
 	formatModelAnswer,
 	formatResultText,
 	formatUserMessage,
-	withGatedRefusal,
 } from "../../../src/core/extensions/builtin/ask-user/format.ts";
 import {
 	AskUserSchemaError,
@@ -122,14 +121,6 @@ describe("senpi#2949 a question that gates an action", () => {
 
 		// then the Korean idle-timeout marker is still there
 		expect(text).toContain("(사용자가 답변을 안하고 timeout 으로 종료됨)");
-	});
-
-	it("appends the refusal to a free-form cancellation reason", () => {
-		// given a required question cancelled with a reason such as a UI failure
-		// then the reason is kept and followed by the refusal
-		expect(withGatedRefusal("Question UI failed: boom")).toBe(
-			"Question UI failed: boom\nNo answer: do not take the action it gates. Keep that action pending and end the turn.",
-		);
 	});
 
 	it("accepts an optional required flag in both tool variants and carries it on the request", () => {
