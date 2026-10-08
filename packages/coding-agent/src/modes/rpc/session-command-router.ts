@@ -736,7 +736,8 @@ export class SessionCommandRouter {
 		} catch (cause) {
 			if (opened) {
 				try {
-					await this.registry.close(opened.sessionId);
+					if (opened.attached) await this.releaseOwnedSession(opened.sessionId);
+					else await this.registry.close(opened.sessionId);
 				} catch {
 					/* The open rollback has already removed the entry. */
 				}
