@@ -16,6 +16,28 @@ The threshold decision, the cut point and the `RequiredCompactionError` throw al
 
 - LOW: the `if (inlineReason)` branch of the threshold block in `_checkCompaction`, and the `RequiredCompactionError` class header.
 
+## 2026-10-08 - Engine-originated turns are bounded per user message and per minute (senpi#2967)
+
+### What changed
+
+- `packages/coding-agent/src/core/engine-turn-limit.ts` (new): `engineTurnStop(entries, now, limits)` counts the `engine-turn-start` entries since the user's last message and returns a stop when the next engine-originated turn (any extension's `sendMessage` with `triggerTurn` that starts a turn while idle) would exceed `maxPerUserInput` (default 150) or `maxToolFreePerMinute` engine turns in the last 60 s whose reply called no tool (default 12). Only turns after the last user message count, so any user message lifts a pause; `0` turns a limit off.
+- `packages/coding-agent/src/core/agent-session.ts`: `sendCustomMessage` checks it before starting a `triggerTurn` turn and, once the turn is admitted, records an `engine-turn-start` entry. A `.` manual continue and a continue-from-leaf are the user's own requests: they are never limited and count as a user message. On a stop no turn starts but the message is still recorded (eval results, terminal notices and cross-session messages are not re-sent) and a cross-session delivery it carries is settled as persisted or refused. The `engine-turn-start` write is best-effort and never stops a turn; the session also keeps an in-process record of the engine turns it started since the user's last message (cleared by a user message, marked by a tool call), and the larger of the persisted and in-process counts is enforced, so a session file that refuses writes is still bounded within the running process; an `engine-turn-limit` entry is appended (and published as `entry_appended`), `engine:turn-limit` is emitted on the extension bus and the user sees "Paused: ... Send any message to continue." Messages queued while a turn is streaming or a compaction is pending join that running turn and start none.
+- `packages/coding-agent/src/core/settings-manager.ts`: `engineTurns.maxPerUserInput` and `engineTurns.maxToolFreePerMinute` settings with those defaults; `0` disables (`getEngineTurnSettings`). Documented in `docs/settings.md`.
+- `packages/coding-agent/src/core/extensions/runner.ts`: `emitBusEvent(channel, data)` beside `onBusEvent`.
+
+### Why
+
+- One user message drove 66 turns in about 66 s through the ttsr `repetitive-turns` nudge, and 93 requests in 3 s through goal continuation, until the user pressed Stop (senpi#2967). The desktop's server-hosted session reopens the session around every turn, so in-memory guards in the extensions reset; the bound is read from the session itself.
+- The per-minute breaker counts only tool-free engine turns because of measured data: across 604 local sessions with goals (27,650 goal continuations), continuations that called a tool were never closer than 36.8 s apart at p1, and every window with 8 or more tool-free continuations per minute (30 sessions, maximum 14) consisted entirely of `stopReason: error` turns, i.e. runaways.
+
+### Why an extension could not handle it
+
+- Each extension only sees its own turns; the bound has to cover every source and survive extension rebuilds, so it sits where `triggerTurn` starts a turn.
+
+### Expected merge conflict zones
+
+- MEDIUM: `agent-session.ts` `sendCustomMessage` `triggerTurn` branch and its imports; LOW: `settings-manager.ts` `Settings` fields, `runner.ts` bus methods.
+
 ## 2026-10-08 - Runtime diagnostics carry an optional machine code (senpi#2906)
 
 ### What changed
