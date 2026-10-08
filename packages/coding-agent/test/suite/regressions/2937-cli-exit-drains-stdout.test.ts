@@ -3,6 +3,7 @@ import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
 const child = resolve(__dirname, "../../fixtures/print-then-exit-child.ts");
+const throwingChild = resolve(__dirname, "../../fixtures/print-then-exit-throwing-child.ts");
 const tsconfig = resolve(__dirname, "../../../../../tsconfig.json");
 const ROWS = 4000;
 const READER_DELAY_MS = 4000;
@@ -74,4 +75,18 @@ describe("senpi#2937 a print-then-exit command delivers all of its output", () =
 		},
 		20_000,
 	);
+
+	it("writes what was printed before a printing function throws, and the error still reaches the caller", () => {
+		// given a print that writes a line and then throws
+		// when it runs under printThenExit
+		const result = spawnSync(process.execPath, ["--import", "tsx", throwingChild], {
+			env: { ...process.env, TSX_TSCONFIG_PATH: tsconfig },
+			encoding: "utf8",
+		});
+
+		// then the line is not lost and the caller sees the error
+		expect(result.stdout).toBe("before the failure\n");
+		expect(result.stderr).toContain("caught: print failed");
+		expect(result.status).toBe(3);
+	});
 });
