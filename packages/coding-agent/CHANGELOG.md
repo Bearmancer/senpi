@@ -6,6 +6,8 @@
 
 ### Added
 
+- Claude Haiku 5.5 gets its own system prompt preset, `claude-haiku-5-5`, selected automatically for every Haiku 5.5 id and available as `promptPreset: "claude-haiku-5-5"`. It is the Sonnet 5.5 core with the deltas Anthropic's Haiku 5.5 prompting guide documents for coding agents: it keeps working instead of handing an unfinished task back, and when web search is available it searches for facts that may have changed since its training data ends. Haiku 4.5 and older keep the default prompt ([#2917](https://github.com/code-yeongyu/senpi/issues/2917)).
+
 - `context` and `context_with_system` extension handlers accept a `{ mutatesMessages: false }` registration option, an opt-in performance declaration that the handler never edits a received message object in place ([#2525](https://github.com/code-yeongyu/senpi/issues/2525)).
 
 - Every model switch records what made it: `model_change` entries, the `model_changed` event and one `session.log` line per switch carry a `source` (`command`, `picker`, `cycle`, `control`, `rpc`, `app-server`, `extension`, `provider-login`, `fallback`, `fallback-revert`, `held-switch`, `restore`, `sdk`) and, where known, an `actor`; a switch that lands while a turn is streaming is marked `duringTurn` and shown as a transcript row naming both models, and the `thinking_level_change` a switch writes names the same source ([#2870](https://github.com/code-yeongyu/senpi/issues/2870)).
