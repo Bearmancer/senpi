@@ -16,6 +16,26 @@ The threshold decision, the cut point and the `RequiredCompactionError` throw al
 
 - LOW: the `if (inlineReason)` branch of the threshold block in `_checkCompaction`, and the `RequiredCompactionError` class header.
 
+## 2026-10-09 - Concurrent log rotation never disables a log sink (senpi#2976)
+
+### What changed
+
+- `packages/coding-agent/src/core/log-file-rotation.ts` (new): `rotateLogIfNeeded(filePath, incomingBytes, maxBytes)` rotates under a `<file>.rotate-lock` created with `wx`, re-checks the size under the lock, treats a lost rename (ENOENT) as done, clears a lock older than 10 s, and exports `LOG_SINK_RETRY_MS`.
+- `packages/coding-agent/src/core/session-log.ts`: `writeLine` rotates through it and sets the mode on the open descriptor.
+- `packages/coding-agent/src/core/retry-fallback/log.ts`: `writeLine` rotates through it and sets the mode on the open descriptor.
+
+### Why
+
+- Several processes share one agent dir (engine host, CLI, desktop host). Rotation was a non-atomic stat, remove `.1`, rename: when two crossed the cap together, the loser's rename threw ENOENT and its sink was disabled for the whole process (config-reload, MCP) or the line was lost (session, fallback), and the remove step could delete a generation another process had just rotated. A two-to-four-process burst dropped hundreds of lines per losing process. Rotation now runs under an exclusive lock file and re-checks the size while holding it, a lost race keeps appending, and a failed sink retries after `LOG_SINK_RETRY_MS` (5 s) instead of staying off. The `chmod` after each append moved onto the open descriptor (`fchmodSync`), since the path may already name a newer file another process created.
+
+### Why an extension could not handle it
+
+- These are the engine's own log writers.
+
+### Expected merge conflict zones
+
+- LOW: the `writeLine` helpers in `session-log.ts` and `retry-fallback/log.ts`.
+
 ## 2026-10-09 - The engine-turn pause stays visible when the session file refuses writes (senpi#2967 follow-up)
 
 ### What changed
