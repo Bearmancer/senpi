@@ -144,7 +144,11 @@ describe("eval live header is always one row (senpi#2933 review HIGH-1)", () => 
 			{ width: 80, now: STARTED_AT + 1_000 },
 		);
 		const text = lines.join("\n");
-		expect(text).toContain("19904 earlier status events");
+		// The 3-row tail shows the section header, the fold marker and the newest event, so the
+		// exact omission is the stored 19,901 plus the 4 sliced events.
+		expect(text).toContain("19905 earlier status events");
+		expect(text).toContain("status-5");
+		expect(text).not.toContain("status-4");
 	});
 
 	it("Given a very long summary at 40 cols then the summary keeps a readable remainder", () => {

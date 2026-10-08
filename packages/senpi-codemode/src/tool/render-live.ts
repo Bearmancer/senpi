@@ -169,14 +169,13 @@ export function renderLiveCellFrame(
 	const hasOutput = cell.output.trimEnd().length > 0;
 	const hasStatus = (cell.statusEvents ?? []).some((event) => event.op !== "agent");
 	const tail: string[] = [];
-	if (hasOutput) appendLines(tail, cellOutputSection(cell, environment, LIVE_TAIL_ROWS - 1));
-	else if (hasStatus) appendLines(tail, cellStatusSection(cell, environment, LIVE_TAIL_ROWS - 1));
-	// The tail's own rows (section header and omission marker) are counted in its budget here.
-	// The status fold is exact (review HIGH-2), so the frame never re-counts it.
-	const keptTail = tail.slice(0, LIVE_TAIL_ROWS);
-	const codeRows = keptTail.length === 0 ? LIVE_BODY_ROWS : LIVE_BODY_ROWS - LIVE_TAIL_ROWS;
+	if (hasOutput) appendLines(tail, cellOutputSection(cell, environment, 0, LIVE_TAIL_ROWS));
+	else if (hasStatus) appendLines(tail, cellStatusSection(cell, environment, LIVE_TAIL_ROWS));
+	// The sections fit themselves inside the tail budget with exact omission markers, so the
+	// block's total never changes and no count is understated (review MEDIUM-2, HIGH-2).
+	const codeRows = tail.length === 0 ? LIVE_BODY_ROWS : LIVE_BODY_ROWS - LIVE_TAIL_ROWS;
 	appendLines(lines, liveCodeWindow(cell, environment, codeRows));
-	appendLines(lines, keptTail);
+	appendLines(lines, tail);
 	lines.push(style(environment.theme, "borderMuted", "╰─"));
 	return lines;
 }
@@ -217,7 +216,12 @@ function sanitizeCellCode(code: string): string {
 // The window's "N earlier code lines" marker counts SOURCE lines (LOW-4), while the shown rows
 // stay visual lines so wrapping never changes the height.
 
-export function cellOutputSection(cell: EvalCellResult, environment: RenderEnvironment, maxLines: number): string[] {
+export function cellOutputSection(
+	cell: EvalCellResult,
+	environment: RenderEnvironment,
+	maxLines: number,
+	rowBudget?: number,
+): string[] {
 	const output = cell.output.trimEnd();
 	if (output.length === 0) return [];
 	const lines = renderPrefixed("output", environment, FRAME_SECTION_PREFIX);
@@ -227,6 +231,27 @@ export function cellOutputSection(cell: EvalCellResult, environment: RenderEnvir
 		.map((line) => style(environment.theme, outputColor, line))
 		.join("\n");
 	const innerWidth = Math.max(1, environment.width - 2);
+	if (rowBudget !== undefined) {
+		// Fit the whole section (header, omission marker, lines) inside the row budget; the
+		// marker counts every line not shown, exactly (review MEDIUM-2).
+		const preview = previewText(styledOutput, Math.max(1, rowBudget - 1), innerWidth);
+		if (preview.skipped === 0) {
+			for (const line of preview.lines) appendLines(lines, renderPrefixed(line, environment, FRAME_INNER_PREFIX));
+			return lines;
+		}
+		const kept = preview.lines.slice(-Math.max(0, rowBudget - 2));
+		const omitted = preview.skipped + preview.lines.length - kept.length;
+		appendLines(
+			lines,
+			renderPrefixed(`${omitted} earlier output lines`, environment, {
+				prefix: "│ ",
+				continuation: "│ ",
+				color: "muted",
+			}),
+		);
+		for (const line of kept) appendLines(lines, renderPrefixed(line, environment, FRAME_INNER_PREFIX));
+		return lines;
+	}
 	const outputPreview = previewText(styledOutput, maxLines, innerWidth);
 	if (outputPreview.skipped > 0)
 		appendLines(
@@ -241,26 +266,26 @@ export function cellOutputSection(cell: EvalCellResult, environment: RenderEnvir
 	return lines;
 }
 
-export function cellStatusSection(
-	cell: EvalCellResult,
-	environment: RenderEnvironment,
-	previewCount: number | undefined,
-): string[] {
+export function cellStatusSection(cell: EvalCellResult, environment: RenderEnvironment, rowBudget?: number): string[] {
 	const statusEvents = (cell.statusEvents ?? []).filter((event) => event.op !== "agent");
 	if (statusEvents.length === 0) return [];
 	const lines = renderPrefixed("status", environment, FRAME_SECTION_PREFIX);
-	if (previewCount === undefined) {
+	if (rowBudget === undefined) {
 		for (const line of renderStatusEvents(statusEvents, environment))
 			appendLines(lines, renderPrefixed(line, environment, FRAME_INNER_PREFIX));
 		return lines;
 	}
-	// Fold the stored bound marker and the sliced events into one omission count (review HIGH-2):
-	// the marker is never a row of its own here, so previewCount is the number of event rows kept.
+	// Fit the whole section (header, omission marker, event rows) inside the row budget, folding
+	// the stored bound marker and the sliced events into one exact omission count (review HIGH-2).
 	const first = statusEvents[0];
 	const omittedByBound = first?.op === "status-events-omitted" && typeof first.count === "number" ? first.count : 0;
 	const visible = omittedByBound > 0 ? statusEvents.slice(1) : statusEvents;
-	const retained = visible.slice(-previewCount);
-	const skipped = visible.length - retained.length + omittedByBound;
+	let retained = visible.slice(-Math.max(0, rowBudget - 1));
+	let skipped = visible.length - retained.length + omittedByBound;
+	if (skipped > 0) {
+		retained = visible.slice(-Math.max(0, rowBudget - 2));
+		skipped = visible.length - retained.length + omittedByBound;
+	}
 	if (skipped > 0)
 		appendLines(
 			lines,

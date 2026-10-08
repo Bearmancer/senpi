@@ -151,7 +151,7 @@ function renderExpandedCellFrame(
 		lines,
 		cellOutputSection(cell, environment, previewsCollapsed ? OUTPUT_PREVIEW_LINES : Number.POSITIVE_INFINITY),
 	);
-	appendLines(lines, cellStatusSection(cell, environment, undefined));
+	appendLines(lines, cellStatusSection(cell, environment));
 	lines.push(style(environment.theme, "borderMuted", "╰─"));
 	return lines;
 }

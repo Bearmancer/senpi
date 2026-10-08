@@ -421,6 +421,8 @@ describe("eval renderer preview", () => {
 		)
 			.render(80)
 			.join("\n");
-		expect(liveText).toContain("19904 earlier status events");
+		// The live tail (3 rows) shows the fold marker and the newest event; the exact omission
+		// is the stored 19,901 plus the 4 sliced events (review HIGH-2).
+		expect(liveText).toContain("19905 earlier status events");
 	});
 });
