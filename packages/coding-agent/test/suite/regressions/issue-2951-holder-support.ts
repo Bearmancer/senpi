@@ -18,11 +18,20 @@ export async function startSessionHolder(sessionFile: string, sessionId: string,
 		},
 	);
 	const exited = once(child, "exit");
+	let stderr = "";
+	child.stderr.on("data", (chunk: Buffer) => {
+		stderr = (stderr + chunk.toString()).slice(-2000);
+	});
 	try {
-		const [chunk] = await once(child.stdout, "data", { signal: AbortSignal.timeout(10_000) });
+		const [chunk] = await Promise.race([
+			once(child.stdout, "data", { signal: AbortSignal.timeout(10_000) }),
+			exited.then(([code, signal]) => {
+				throw new Error(`Holder exited before publication: code=${code} signal=${signal}; ${stderr}`);
+			}),
+		]);
 		expect(String(chunk)).toBe("HELD\n");
 	} catch (cause) {
-		child.kill();
+		if (child.exitCode === null && child.signalCode === null) child.kill();
 		await exited;
 		throw cause;
 	}

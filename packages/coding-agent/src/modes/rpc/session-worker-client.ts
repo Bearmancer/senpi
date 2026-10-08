@@ -21,9 +21,9 @@ import { acknowledge, acknowledgeGrant } from "./session-worker-signals.ts";
 
 /** Lifecycle hooks the owning registry installs on every worker it allocates. */
 export interface SessionWorkerCallbacks {
-	reserve: (path: string) => SessionWriteGrant;
+	reserve: (path: string) => SessionWriteGrant | Promise<SessionWriteGrant>;
 	/** Every snapshot republishes which paths this worker still writes. */
-	reconcile: (livePaths: readonly string[]) => void;
+	reconcile: (livePaths: readonly string[]) => void | Promise<void>;
 	exit: () => void | Promise<void>;
 	failure: (error: string) => void;
 }
@@ -194,16 +194,30 @@ export class SessionWorkerClient {
 			case "ready":
 			case "result": {
 				this.requests.receive(message);
+				if (this.snapshot)
+					void Promise.resolve(this.callbacks.reconcile(this.snapshot.liveSessionPaths)).catch(() =>
+						this.fail("session_claim_reconcile_failed"),
+					);
 				return;
 			}
 			case "reserve":
-				acknowledgeGrant(message.signal, this.callbacks.reserve(message.path));
+				void Promise.resolve(this.callbacks.reserve(message.path)).then(
+					(grant) => acknowledgeGrant(message.signal, this.stopped ? "conflict" : grant),
+					() => acknowledgeGrant(message.signal, "conflict"),
+				);
 				return;
 			case "snapshot":
 				this.snapshot = message.snapshot;
-				this.callbacks.reconcile(message.snapshot.liveSessionPaths);
-				acknowledge(message.signal, true);
-				if (message.settled) for (const listener of [...this.listeners]) listener();
+				void Promise.resolve(this.callbacks.reconcile(message.snapshot.liveSessionPaths)).then(
+					() => {
+						acknowledge(message.signal, !this.stopped);
+						if (message.settled) for (const listener of [...this.listeners]) listener();
+					},
+					() => {
+						acknowledge(message.signal, false);
+						this.fail("session_claim_reconcile_failed");
+					},
+				);
 				return;
 			case "control_done":
 				this.cancelUiPending = false;
@@ -218,7 +232,6 @@ export class SessionWorkerClient {
 				// Identity and activity commit before publication; clients may attach or disconnect on that event.
 				if (message.snapshot) {
 					this.snapshot = message.snapshot;
-					this.callbacks.reconcile(message.snapshot.liveSessionPaths);
 				} else if (this.snapshot)
 					this.snapshot = {
 						...this.snapshot,
@@ -233,8 +246,11 @@ export class SessionWorkerClient {
 					}
 					return writer.waitForSessionBackpressure(sessionId);
 				};
-				const consumed =
-					message.connection === undefined ? enqueue() : writer.withConnection(message.connection, enqueue);
+				const consumed = Promise.resolve(
+					message.snapshot ? this.callbacks.reconcile(message.snapshot.liveSessionPaths) : undefined,
+				).then(() =>
+					message.connection === undefined ? enqueue() : writer.withConnection(message.connection, enqueue),
+				);
 				void consumed.then(
 					() => acknowledge(message.signal, true),
 					(cause: unknown) => {

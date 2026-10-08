@@ -25,7 +25,7 @@ import { runWithSessionAttribution } from "./session-attribution.ts";
 import { createRpcSessionBinding, type RpcSessionBinding } from "./session-binding.ts";
 import { readDrainVerdicts } from "./session-drain.ts";
 import type { SessionEventWriter } from "./session-event-writer.ts";
-import { assertSessionNotHeld, dispatchSessionBinding } from "./session-held.ts";
+import { dispatchSessionBinding, sessionHeldCheck } from "./session-held.ts";
 import type { OpenRpcSession, RpcSessionLaunchProfile, RpcSessionRegistry } from "./session-registry.ts";
 import { RpcSessionRegistryError } from "./session-registry.ts";
 import { releaseSession } from "./session-release.ts";
@@ -608,8 +608,9 @@ export class SessionCommandRouter {
 		if (retryFallbackError)
 			return error(command.id, "open_session", `${RPC_ERROR_INVALID_LAUNCH_PROFILE}: ${retryFallbackError}`);
 		let opened: OpenRpcSession | undefined;
+		const assertSessionNotHeld = sessionHeldCheck(() => this.registry.holderPids?.() ?? Promise.resolve([]));
 		try {
-			await assertSessionNotHeld(command.sessionPath, undefined, await this.registry.holderPids?.());
+			await assertSessionNotHeld(command.sessionPath);
 			opened = await this.registry.openSession(
 				{
 					cwd: command.cwd ?? this.defaults.cwd,
@@ -641,7 +642,6 @@ export class SessionCommandRouter {
 			await assertSessionNotHeld(
 				entry.runtime?.session.sessionFile ?? state?.sessionFile ?? entry.sessionPath,
 				entry.runtime?.session.sessionId ?? state?.sessionId ?? entry.durableSessionId,
-				await this.registry.holderPids?.(),
 			);
 			this.writer.setSessionKind(openedSession.sessionId, entry.kind);
 			this.writer.setSessionMedia(

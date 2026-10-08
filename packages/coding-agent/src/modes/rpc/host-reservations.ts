@@ -144,8 +144,22 @@ export function createSessionPathReservations(options: {
 					sessionPath: "",
 				});
 			}
+			const byPid = new Map<number, SessionPathOwner[]>();
+			for (const owner of candidates) {
+				if (owner.pid === process.pid) continue;
+				const owners = byPid.get(owner.pid) ?? [];
+				owners.push(owner);
+				byPid.set(owner.pid, owners);
+			}
 			const live = await Promise.all(
-				candidates.map(async (owner) => ((await claimOwnerIsLive(owner)) ? owner.pid : undefined)),
+				[...byPid].map(async ([pid, owners]) => {
+					if (!processIsLive(pid)) return undefined;
+					if (owners.some((owner) => owner.processStartTime === null)) return pid;
+					const current = await readProcessStartTime(pid).catch(() => undefined);
+					return current === undefined || owners.some((owner) => owner.processStartTime === current)
+						? pid
+						: undefined;
+				}),
 			);
 			return [...new Set(live.filter((value): value is number => value !== undefined))];
 		},

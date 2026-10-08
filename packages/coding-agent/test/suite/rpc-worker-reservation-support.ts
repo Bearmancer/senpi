@@ -3,7 +3,7 @@ import type { RpcCommand } from "../../src/modes/rpc/rpc-types.ts";
 import { SessionCommandRouter } from "../../src/modes/rpc/session-command-router.ts";
 import { SessionEventWriter } from "../../src/modes/rpc/session-event-writer.ts";
 import { SessionWorkerClient } from "../../src/modes/rpc/session-worker-client.ts";
-import { WorkerSessionRegistry } from "../../src/modes/rpc/worker-session-registry.ts";
+import { WorkerSessionRegistry, type WorkerSessionRegistryOptions } from "../../src/modes/rpc/worker-session-registry.ts";
 
 const nativeSetTimeout = setTimeout;
 const nativeClearTimeout = clearTimeout;
@@ -26,7 +26,12 @@ export async function reservationPhase<T>(name: string, signal: Promise<T>): Pro
 }
 
 /** Real workers and production routing; only the observation sink is in memory. */
-export function reservationHost(cwd: string, agentDir: string, extension?: string) {
+export function reservationHost(
+	cwd: string,
+	agentDir: string,
+	extension?: string,
+	options: Pick<WorkerSessionRegistryOptions, "pathReservations"> = {},
+) {
 	const records: unknown[] = [];
 	const writer = new SessionEventWriter(() => {});
 	const workers = new Set<SessionWorkerClient>();
@@ -49,6 +54,7 @@ export function reservationHost(cwd: string, agentDir: string, extension?: strin
 		},
 		closeGraceMs: 100,
 		now: Date.now,
+		...options,
 		createWorker: (callbacks) => {
 			const worker = new SessionWorkerClient(callbacks);
 			workers.add(worker);

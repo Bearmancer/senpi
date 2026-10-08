@@ -8776,7 +8776,9 @@ export class InteractiveMode {
 				withSession: options?.withSession,
 				projectTrustContextFactory: (cwd) => this.createProjectTrustContext(cwd),
 			});
-			if (result.cancelled) return result;
+			if (result.cancelled) {
+				return result;
+			}
 			const warning = await sessionHolderWarning(
 				this.sessionManager.getSessionFile(),
 				this.sessionManager.getSessionId(),
@@ -8787,27 +8789,30 @@ export class InteractiveMode {
 				switchTimings === undefined ? "Resumed session" : `Resumed session | switch timings: ${switchTimings}`,
 			);
 			return result;
-		} catch (cause) {
-			if (!(cause instanceof MissingSessionCwdError))
-				return this.handleFatalRuntimeError("Failed to resume session", cause);
-			const cwdOverride = await this.promptForMissingSessionCwd(cause);
-			if (!cwdOverride) {
-				this.showStatus("Resume cancelled");
-				return { cancelled: true };
+		} catch (error: unknown) {
+			if (error instanceof MissingSessionCwdError) {
+				const selectedCwd = await this.promptForMissingSessionCwd(error);
+				if (!selectedCwd) {
+					this.showStatus("Resume cancelled");
+					return { cancelled: true };
+				}
+				const result = await this.runtimeHost.switchSession(sessionPath, {
+					cwdOverride: selectedCwd,
+					withSession: options?.withSession,
+					projectTrustContextFactory: (cwd) => this.createProjectTrustContext(cwd),
+				});
+				if (result.cancelled) {
+					return result;
+				}
+				const warning = await sessionHolderWarning(
+					this.sessionManager.getSessionFile(),
+					this.sessionManager.getSessionId(),
+				);
+				if (warning !== undefined) this.showWarning(warning);
+				this.showStatus("Resumed session in current cwd");
+				return result;
 			}
-			const result = await this.runtimeHost.switchSession(sessionPath, {
-				cwdOverride,
-				withSession: options?.withSession,
-				projectTrustContextFactory: (cwd) => this.createProjectTrustContext(cwd),
-			});
-			if (result.cancelled) return result;
-			const warning = await sessionHolderWarning(
-				this.sessionManager.getSessionFile(),
-				this.sessionManager.getSessionId(),
-			);
-			if (warning !== undefined) this.showWarning(warning);
-			this.showStatus("Resumed session in current cwd");
-			return result;
+			return this.handleFatalRuntimeError("Failed to resume session", error);
 		}
 	}
 
