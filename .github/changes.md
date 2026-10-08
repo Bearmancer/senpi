@@ -1,3 +1,21 @@
+## 2026-10-08 - Every main commit gets its own CI run, never cancelled or replaced by a later merge (senpi#2960)
+
+### What changed
+
+- `.github/workflows/ci.yml`: the concurrency group is `ci-${{ github.event_name == 'pull_request' && github.ref || github.sha }}` (was `ci-${{ github.ref }}`), and `cancel-in-progress` is `${{ github.event_name == 'pull_request' }}` (was `true`). A pull request keeps one group per ref, so a newer push or restack still cancels the run it supersedes. Each `main` push gets a group of its own, so its run starts at once and is never cancelled, queued or replaced by a later merge. `scripts/ci-concurrency.test.mjs` evaluates the group and the cancel flag for two `main` commits and two pushes to one pull request.
+
+### Why
+
+Since senpi#2945 the release's test evidence is the release commit's green "Check and test" run. With one group for `main`, a merge during a release cancelled that run, or, with cancel-in-progress off, left it waiting behind the previous run and let a later merge replace it before it started. Either way the release lost its evidence and timed out; two merges in one window made the release miss its 40-minute window twice.
+
+### Why an extension could not handle it
+
+The CI concurrency policy is repository workflow configuration.
+
+### Expected merge conflict zones
+
+- The `concurrency:` block at the top of `ci.yml`.
+
 ## 2026-10-05 - The process-mode kernel suite runs on Linux and macOS (codemode plan node 17)
 
 ### What changed
