@@ -38,6 +38,26 @@ function cellResult(cell: Partial<EvalCellResult>): AgentToolResult<EvalToolDeta
 	};
 }
 
+function renderThemedResult(
+	result: AgentToolResult<EvalToolDetails>,
+	options: { width: number; now?: number; args?: Partial<EvalToolInput> },
+): string[] {
+	return renderEvalResult(
+		result,
+		{ expanded: false, isPartial: true },
+		plainTheme as never,
+		{
+			...resultContext({
+				args: { language: "js", code: "work();", summary: "fixture", ...options.args },
+				...(options.now === undefined ? {} : { now: options.now }),
+			}),
+			spinnerFrame: 2,
+		} as never,
+	)
+		.render(options.width)
+		.map(stripAnsi);
+}
+
 function renderResult(
 	result: AgentToolResult<EvalToolDetails>,
 	options: { width: number; now?: number; args?: Partial<EvalToolInput> },
@@ -106,8 +126,11 @@ describe("eval live header is always one row (senpi#2933 review HIGH-1)", () => 
 			cellResult({ status: "queued", queuedBehind: [], summary: "queued run", startedAt: STARTED_AT }),
 			{ width, now: STARTED_AT + 1_000 },
 		);
-		expect(visibleWidth(lines[0] ?? "")).toBeLessThanOrEqual(width);
+		// Same wrap detector as the running cases (review MEDIUM-4): the block is header +
+		// body + border, so a wrapped header grows the array.
+		expect(lines).toHaveLength(8);
 		expect(lines[0]).toContain("queued");
+		expect(lines.at(-1)).toBe("╰─");
 	});
 
 	it.each(WIDTHS)("Given a queued cell behind another at %i cols then the header is one row", (width) => {
@@ -115,7 +138,8 @@ describe("eval live header is always one row (senpi#2933 review HIGH-1)", () => 
 			cellResult({ status: "queued", queuedBehind: ["cell-17"], summary: "queued run", startedAt: STARTED_AT }),
 			{ width, now: STARTED_AT + 1_000 },
 		);
-		expect(visibleWidth(lines[0] ?? "")).toBeLessThanOrEqual(width);
+		expect(lines).toHaveLength(8);
+		expect(lines.at(-1)).toBe("╰─");
 	});
 
 	it.each(WIDTHS)("Given a streaming call with reset and timeout at %i cols then the header is one row", (width) => {
@@ -123,7 +147,8 @@ describe("eval live header is always one row (senpi#2933 review HIGH-1)", () => 
 			{ language: "js", code: "work();", summary: "bounded run", reset: true, timeout: 30 },
 			width,
 		);
-		expect(visibleWidth(lines[0] ?? "")).toBeLessThanOrEqual(width);
+		expect(lines).toHaveLength(8);
+		expect(lines.at(-1)).toBe("╰─");
 	});
 
 	it("Given a done cell with badges at 40 cols then the row is exactly one line", () => {
@@ -151,6 +176,25 @@ describe("eval live header is always one row (senpi#2933 review HIGH-1)", () => 
 		expect(text).toContain("19905 earlier status events");
 		expect(text).toContain("status-5");
 		expect(text).not.toContain("status-4");
+	});
+
+	it("Given a long headline at 40 cols with a badge then the headline is cut before elapsed drops (review MEDIUM-3)", () => {
+		// width 40 -> fitOneLine budget 37; the badge-less rest leaves a 13-cell headline budget,
+		// so the floor-length cut headline and elapsed fit together when elapsed drops last.
+		const summary = "count to twenty and then stop right there please";
+		const lines = renderThemedResult(
+			cellResult({
+				status: "running",
+				language: "js",
+				runtime: { name: "bun", version: "1.3.1", path: "~/.bun/bin/bun" },
+				summary,
+				startedAt: STARTED_AT,
+			}),
+			{ width: 40, now: STARTED_AT + 1_000 },
+		);
+		expect(lines).toHaveLength(8);
+		expect(lines[0]).toBe("╭─ ⠹ count to tw… · eval js running · 1s");
+		expect(visibleWidth(lines[0] ?? "")).toBeLessThanOrEqual(40);
 	});
 
 	it("Given a very long summary at 40 cols then the summary keeps a readable remainder", () => {

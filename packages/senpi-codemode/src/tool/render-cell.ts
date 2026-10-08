@@ -85,19 +85,24 @@ function renderCellFrame(cell: EvalCellResult, environment: RenderEnvironment, b
 function renderTerminalCellLine(cell: EvalCellResult, environment: RenderEnvironment, badges: CellBadges): string[] {
 	const presentation = cellPresentation(cell.status, environment.spinnerFrame);
 	const runtimeBadge = cell.runtime === undefined ? "" : ` (${formatRuntimeBadge(cell.language, cell.runtime)})`;
-	let rest = `eval ${cell.language}${runtimeBadge} ${presentation.label}`;
+	// The runtime badge rides the base label when it fits (review MEDIUM-1); when it would wrap
+	// the row it drops like any badge, so the done row stays one line at any width.
+	const segments: string[] = [];
 	if (badges.throughput !== undefined) {
 		const badge = formatThroughputBadge(badges.throughput);
-		if (badge !== undefined) rest += ` · ${badge}`;
+		if (badge !== undefined) segments.push(badge);
 	}
 	const elapsedMs = badges.throughput?.wallDurationMs ?? cellElapsedMs(cell, environment);
-	if (elapsedMs !== undefined) rest += ` · ${formatDuration(elapsedMs)}`;
-	if (badges.reset) rest += " · reset";
-	if (badges.timeout !== undefined) rest += ` · timeout ${badges.timeout}s`;
+	if (elapsedMs !== undefined) segments.push(formatDuration(elapsedMs));
+	if (badges.reset) segments.push("reset");
+	if (badges.timeout !== undefined) segments.push(`timeout ${badges.timeout}s`);
+	const tail = segments.length === 0 ? "" : ` · ${segments.join(" · ")}`;
+	const rest = `eval ${cell.language}${runtimeBadge} ${presentation.label}${tail}`;
+	const badgelessRest = runtimeBadge === "" ? rest : `eval ${cell.language} ${presentation.label}${tail}`;
 	const line = style(
 		environment.theme,
 		presentation.color,
-		headlined(presentation.icon, cell.summary, cell.code, rest, environment),
+		headlined(presentation.icon, cell.summary, cell.code, rest, environment, { badgelessRest }),
 	);
 	return renderPrefixed(line, environment, LIVE_LINE_PREFIX);
 }

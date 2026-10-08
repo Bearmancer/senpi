@@ -1,5 +1,6 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { visibleWidth } from "@code-yeongyu/senpi";
 import { describe, expect, it } from "vitest";
 import { renderEvalResult } from "../src/tool/render.ts";
 import type { EvalToolDetails } from "../src/tool/types.ts";
@@ -69,5 +70,22 @@ describe("eval renderer runtime badge", () => {
 		);
 
 		expect(rendered[0]).toBe("╶─ ✓ print(1) · eval py done");
+	});
+
+	it("keeps the done row one line at 40 cols by letting the badge drop (senpi#2933 review MEDIUM-1)", () => {
+		const pythonPath = join(homedir(), ".venv", "bin", "python3.12");
+		const result = evalResult(detailsWithCell({ name: "python", version: "3.12.4", path: pythonPath }), "done");
+
+		const component = renderEvalResult(
+			result,
+			{ expanded: false, isPartial: false },
+			undefined,
+			resultContext(undefined, false),
+		);
+		const rendered = component.render(40);
+
+		expect(rendered).toHaveLength(1);
+		expect(rendered[0]).toBe("╶─ ✓ print(1) · eval py done");
+		expect(visibleWidth(rendered[0] ?? "")).toBeLessThanOrEqual(40);
 	});
 });
