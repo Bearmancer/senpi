@@ -1,5 +1,5 @@
-import { lstatSync, readFileSync, type Stats } from "node:fs";
-import { lstat, readFile } from "node:fs/promises";
+import { closeSync, constants, fstatSync, openSync, readSync, type Stats } from "node:fs";
+import { open } from "node:fs/promises";
 import { join } from "node:path";
 import { MOVED_BREADCRUMB_FILE, type MovedBreadcrumb, parseMovedBreadcrumb } from "./breadcrumb.ts";
 import { logGuardEvent } from "./guard-log.ts";
@@ -29,37 +29,65 @@ function parseJson(text: string): unknown {
 }
 
 /**
- * Whether a breadcrumb or marker may be believed, from its own lstat (a symlink is never followed): a regular file of
- * at most `MAX_TRUST_FILE_BYTES`, and on POSIX owned by this user and writable by nobody else, so another local user
- * cannot plant one in a shared folder such as `/tmp` (senpi#2898). Windows has no uid/mode to check; there the
- * marker's homeId binding is the only guard.
+ * Whether a breadcrumb or marker may be believed, from `fstat` of the descriptor it is read through (opened without
+ * following a symlink, so the decision and the content are the same file): a regular file of at most
+ * `MAX_TRUST_FILE_BYTES`, and on POSIX owned by this user and writable by nobody else, so another local user cannot
+ * plant one in a shared folder such as `/tmp` (senpi#2898). Windows has no uid/mode to check; there the marker's
+ * homeId binding is the only guard.
  */
-function trustStamp(stats: Stats | undefined): string | undefined {
-	if (!stats?.isFile() || stats.size > MAX_TRUST_FILE_BYTES) return undefined;
+function trustStamp(stats: Stats): string | undefined {
+	if (!stats.isFile() || stats.size > MAX_TRUST_FILE_BYTES) return undefined;
 	if (process.platform !== "win32" && (stats.uid !== process.getuid?.() || (stats.mode & 0o022) !== 0))
 		return undefined;
 	return `${stats.mtimeMs}:${stats.size}:${stats.ino}`;
 }
 
-/** One small JSON file the guard may trust, re-read only when it changed; `undefined` when absent, unreadable or untrusted. */
-export function readJsonFileSync(file: string): unknown {
-	const stamp = trustStamp(lstatSync(file, { throwIfNoEntry: false }));
-	if (stamp === undefined) return undefined;
+const OPEN_FLAGS = constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0);
+
+function remembered(file: string, stamp: string, read: () => Buffer): unknown {
 	const cached = jsonByFile.get(file);
 	if (cached?.stamp === stamp) return cached.value;
-	const value = parseJson(readFileSync(file, "utf8"));
+	const value = parseJson(read().toString("utf8"));
 	jsonByFile.set(file, { stamp, value });
 	return value;
 }
 
+/** One small JSON file the guard may trust, re-read only when it changed; `undefined` when absent, unreadable or untrusted. */
+export function readJsonFileSync(file: string): unknown {
+	let fd: number;
+	try {
+		fd = openSync(file, OPEN_FLAGS);
+	} catch {
+		return undefined;
+	}
+	try {
+		const stats = fstatSync(fd);
+		const stamp = trustStamp(stats);
+		if (stamp === undefined) return undefined;
+		return remembered(file, stamp, () => {
+			const buffer = Buffer.alloc(stats.size);
+			return buffer.subarray(0, readSync(fd, buffer, 0, stats.size, 0));
+		});
+	} finally {
+		closeSync(fd);
+	}
+}
+
 export async function readJsonFileAsync(file: string): Promise<unknown> {
-	const stamp = trustStamp(await lstat(file).catch(() => undefined));
-	if (stamp === undefined) return undefined;
-	const cached = jsonByFile.get(file);
-	if (cached?.stamp === stamp) return cached.value;
-	const value = parseJson(await readFile(file, "utf8"));
-	jsonByFile.set(file, { stamp, value });
-	return value;
+	const handle = await open(file, OPEN_FLAGS).catch(() => undefined);
+	if (!handle) return undefined;
+	try {
+		const stats = await handle.stat();
+		const stamp = trustStamp(stats);
+		if (stamp === undefined) return undefined;
+		const cached = jsonByFile.get(file);
+		if (cached?.stamp === stamp) return cached.value;
+		const buffer = Buffer.alloc(stats.size);
+		const { bytesRead } = await handle.read(buffer, 0, stats.size, 0);
+		return remembered(file, stamp, () => buffer.subarray(0, bytesRead));
+	} finally {
+		await handle.close();
+	}
 }
 
 export const breadcrumbFile = (dir: string): string => join(dir, MOVED_BREADCRUMB_FILE);
