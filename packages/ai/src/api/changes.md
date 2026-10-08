@@ -1,20 +1,32 @@
-## 2026-10-08 - A configured anthropic-beta header is merged with the betas a request needs (senpi#2957)
+## 2026-10-08 - A configured anthropic-beta header is merged with the betas the request body needs (senpi#2957)
 
 ### What changed
 
-- `packages/ai/src/api/anthropic-messages.ts` `getBetaFeatures`: a configured `anthropic-beta` header (model-level `headers` or per-request `options.headers`) used to replace the whole computed beta list. It now owns only the optional betas: the betas the request's own shape needs are appended to it, de-duplicated, with the configured order first. Those are the OAuth identity betas, the mid-conversation effort and thinking-binding betas on `supportsMidConvoEffort` models, and mid-conversation tool changes. A header set to `null` still suppresses every beta when the request needs none. When the request does need some, the call now fails before sending with an error that names them, instead of reaching the API.
+- `packages/ai/src/api/anthropic-messages.ts` `getBetaFeatures`: a configured `anthropic-beta` header (model `headers` or per-request `options.headers`) used to replace the whole computed beta list. It now owns only the optional betas, and the betas the request body depends on are appended to it, de-duplicated, configured order first. Those betas come from the request shape `buildParams` decided (`BetaDependentShape`):
+  - OAuth identity;
+  - mid-conversation effort markers, plus thinking binding when thinking is on;
+  - native tool changes;
+  - `fallbacks` in the body (`server-side-fallback-2026-07-01`, which a configured header also dropped before).
+
+  Interleaved thinking is stripped from a configured list on adaptive models, as it already was from the client headers.
+- `buildParams`: `anthropic-beta: null` makes the request take a shape that needs no beta:
+  - the current tool list instead of native tool changes;
+  - top-level effort instead of per-message effort markers and `block_binding`;
+  - no `fallbacks`.
+
+  The client-level fallback beta follows the same rule. Only an OAuth token, whose credential depends on its identity betas, still fails, before sending, with an error that names them.
 
 ### Why
 
-A proxy route that sets its own `anthropic-beta` header dropped `mid-conversation-output-config-2026-07-01` while senpi still sent the mid-conversation effort message. Claude Haiku 5.5, and Opus and Sonnet 5.5, then failed the first request with `400 messages.1.output_config: Extra inputs are not permitted`.
+A proxy route that sets its own `anthropic-beta` header dropped `mid-conversation-output-config-2026-07-01` while senpi still sent the mid-conversation effort message. Claude Haiku, Opus and Sonnet 5.5 then failed the first request with `400 messages.1.output_config: Extra inputs are not permitted`. A `null` header must keep working: a request it would otherwise invalidate switches shape instead of failing.
 
 ### Why an extension could not handle it
 
-The beta list is assembled inside the provider's request builder, after every extension hook has run.
+The beta list and the request shape are assembled inside the provider's request builder, after every extension hook has run.
 
 ### Expected merge conflict zones
 
-- `getBetaFeatures` in `anthropic-messages.ts` (rewritten branch for a configured header).
+- `getBetaFeatures` (with `configuredBetaHeader`, `defaultOptionalBetas`) and the `nativeToolChanges` / effort / `fallbacks` decisions in `buildParams`.
 
 ## 2026-10-08 - Claude Haiku 5.5 joins the adaptive-only families (senpi#2892)
 

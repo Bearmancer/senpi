@@ -225,13 +225,27 @@ describe("Anthropic mid-conversation effort", () => {
 	});
 
 	// senpi#2957: a provider or route that configures its own anthropic-beta header must not drop the betas the
-	// request needs. A proxy route with a custom header used to replace senpi's list, so Claude 5.5 models 400ed on
-	// the first call ("messages.1.output_config: Extra inputs are not permitted").
+	// request body depends on. A proxy route with a custom header used to replace senpi's list, so Claude 5.5 models
+	// 400ed on the first call ("messages.1.output_config: Extra inputs are not permitted").
 	describe("a configured anthropic-beta header (senpi#2957)", () => {
 		const PROXY_BETAS = "interleaved-thinking-2025-05-14,fine-grained-tool-streaming-2025-05-14";
+		const EFFORT = "mid-conversation-output-config-2026-07-01";
+		const BINDING = "thinking-binding-controls-2026-08-01";
+		const TOOL_CHANGES = "mid-conversation-tool-changes-2026-07-01";
+		const FALLBACK = "server-side-fallback-2026-07-01";
 
-		async function wireBetas(model: Model<"anthropic-messages">, headers?: Record<string, string | null>) {
-			const sent: string[] = [];
+		type WireBody = CapturedPayload & { fallbacks?: unknown; output_config?: unknown; tools?: unknown[] };
+
+		async function wire(
+			model: Model<"anthropic-messages">,
+			options: {
+				headers?: Record<string, string | null>;
+				apiKey?: string;
+				context?: Context;
+				refusalFallbacks?: "default";
+			} = {},
+		) {
+			const sent: { betas: string[]; body: WireBody }[] = [];
 			const events = [
 				{
 					type: "message_start",
@@ -243,64 +257,126 @@ describe("Anthropic mid-conversation effort", () => {
 			const body = events.map((event) => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`).join("");
 			const fetchImpl: typeof fetch = async (input, init) => {
 				const request = input instanceof Request ? input : new Request(input, init);
-				sent.push(request.headers.get("anthropic-beta") ?? "");
+				const header = request.headers.get("anthropic-beta") ?? "";
+				sent.push({
+					betas: header ? header.split(",").map((beta) => beta.trim()) : [],
+					body: (await request.json()) as WireBody,
+				});
 				return new Response(body, { status: 200, headers: { "content-type": "text/event-stream" } });
 			};
 			const result = await stream(
 				{ ...model, baseUrl: "http://127.0.0.1:9" },
-				normalizeContext({ messages: [user("one", 1)] }),
+				normalizeContext(options.context ?? { messages: [user("one", 1)] }),
 				{
-					apiKey: "test-key",
+					apiKey: options.apiKey ?? "test-key",
 					cacheRetention: "none",
 					fetch: fetchImpl,
-					...(headers ? { headers } : {}),
+					...(options.headers ? { headers: options.headers } : {}),
+					...(options.refusalFallbacks ? { refusalFallbacks: options.refusalFallbacks } : {}),
 				},
 			).result();
-			const betas = sent.length > 0 ? sent[0].split(",").map((beta) => beta.trim()) : [];
-			return { result, betas, requests: sent.length };
+			return { result, request: sent[0], requests: sent.length };
 		}
 
-		const haiku = (headers?: Record<string, string>): Model<"anthropic-messages"> => {
-			const model = getModel("anthropic", "claude-haiku-5-5") as Model<"anthropic-messages">;
-			expect(model.compat?.supportsMidConvoEffort).toBe(true);
+		const anthropicModel = (id: string, headers?: Record<string, string>): Model<"anthropic-messages"> => {
+			const model = getModel("anthropic", id as "claude-haiku-5-5") as Model<"anthropic-messages">;
 			return headers ? { ...model, headers } : model;
 		};
+		const toolContext: Context = {
+			messages: [user("one", 1)],
+			tools: [
+				{ name: "read_file", description: "Read a file", parameters: { type: "object", properties: {} } as never },
+			],
+		};
 
-		it("merges a model-level header with the effort and binding betas, configured first, each once", async () => {
-			const { result, betas } = await wireBetas(haiku({ "anthropic-beta": PROXY_BETAS }));
+		it("merges a model-level header with the effort and binding betas, configured order first, each once", async () => {
+			const { result, request } = await wire(anthropicModel("claude-haiku-5-5", { "anthropic-beta": PROXY_BETAS }));
 			expect(result.stopReason).toBe("stop");
-			expect(betas.slice(0, 2)).toEqual([
-				"interleaved-thinking-2025-05-14",
-				"fine-grained-tool-streaming-2025-05-14",
+			// Interleaved thinking is built into adaptive models and is stripped from the configured list.
+			expect(request?.betas).toEqual(["fine-grained-tool-streaming-2025-05-14", EFFORT, BINDING]);
+			expect(effortMessages(request?.body as CapturedPayload)).toEqual([
+				{ role: "system", content: [], output_config: { effort: "high" } },
 			]);
-			expect(betas).toContain("mid-conversation-output-config-2026-07-01");
-			expect(betas).toContain("thinking-binding-controls-2026-08-01");
-			expect(new Set(betas).size).toBe(betas.length);
 		});
 
 		it("merges a per-request header the same way", async () => {
-			const { betas } = await wireBetas(haiku(), { "anthropic-beta": "custom-proxy-beta" });
-			expect(betas[0]).toBe("custom-proxy-beta");
-			expect(betas).toContain("mid-conversation-output-config-2026-07-01");
-			expect(betas).toContain("thinking-binding-controls-2026-08-01");
+			const { request } = await wire(anthropicModel("claude-haiku-5-5"), {
+				headers: { "anthropic-beta": "custom-proxy-beta" },
+			});
+			expect(request?.betas).toEqual(["custom-proxy-beta", EFFORT, BINDING]);
 		});
 
 		it("does not repeat a needed beta the header already lists", async () => {
-			const { betas } = await wireBetas(
-				haiku({ "anthropic-beta": "mid-conversation-output-config-2026-07-01, custom-proxy-beta" }),
+			const { request } = await wire(
+				anthropicModel("claude-haiku-5-5", { "anthropic-beta": `${EFFORT}, custom-proxy-beta` }),
 			);
-			expect(betas.filter((beta) => beta === "mid-conversation-output-config-2026-07-01")).toHaveLength(1);
-			expect(betas).toContain("custom-proxy-beta");
-			expect(betas).toContain("thinking-binding-controls-2026-08-01");
+			expect(request?.betas).toEqual([EFFORT, "custom-proxy-beta", BINDING]);
 		});
 
-		it("fails before sending, naming the betas, when a header suppresses betas the request needs", async () => {
-			const { result, requests } = await wireBetas(haiku(), { "anthropic-beta": null });
-			expect(requests).toBe(0);
-			expect(result.stopReason).toBe("error");
-			expect(result.errorMessage).toContain("mid-conversation-output-config-2026-07-01");
-			expect(result.errorMessage).toContain("thinking-binding-controls-2026-08-01");
-			expect(result.errorMessage).toContain("anthropic-beta");
+		it("keeps the OAuth identity betas when a header is configured", async () => {
+			const { request } = await wire(anthropicModel("claude-haiku-5-5", { "anthropic-beta": "custom-proxy-beta" }), {
+				apiKey: "sk-ant-oat01-test",
+			});
+			expect(request?.betas).toEqual(
+				expect.arrayContaining(["custom-proxy-beta", "claude-code-20250219", "oauth-2025-04-20"]),
+			);
+		});
+
+		it("adds the server-side fallback beta whenever the body carries fallbacks", async () => {
+			const { request } = await wire(anthropicModel("claude-opus-5-5", { "anthropic-beta": "custom-proxy-beta" }), {
+				refusalFallbacks: "default",
+			});
+			expect(request?.body.fallbacks).toBe("default");
+			expect(request?.betas).toContain(FALLBACK);
+		});
+
+		it("adds the tool-changes beta when native tool changes are sent", async () => {
+			const { request } = await wire(anthropicModel("claude-opus-4-8", { "anthropic-beta": "custom-proxy-beta" }), {
+				context: toolContext,
+			});
+			expect(request?.betas).toEqual(["custom-proxy-beta", TOOL_CHANGES]);
+		});
+
+		describe("a null header sends a request that needs no beta", () => {
+			it("uses top-level effort instead of per-message markers on a mid-conversation-effort model", async () => {
+				const { result, request } = await wire(anthropicModel("claude-haiku-5-5"), {
+					headers: { "anthropic-beta": null },
+				});
+				expect(result.stopReason).toBe("stop");
+				expect(request?.betas).toEqual([]);
+				expect(effortMessages(request?.body as CapturedPayload)).toEqual([]);
+				expect(JSON.stringify(request?.body.thinking ?? {})).not.toContain("block_binding");
+			});
+
+			it("sends the current tool list instead of native tool changes", async () => {
+				const { result, request } = await wire(anthropicModel("claude-opus-4-8"), {
+					headers: { "anthropic-beta": null },
+					context: toolContext,
+				});
+				expect(result.stopReason).toBe("stop");
+				expect(request?.betas).toEqual([]);
+				expect(request?.body.tools).toHaveLength(1);
+			});
+
+			it("drops server-side fallbacks", async () => {
+				const { request } = await wire(anthropicModel("claude-opus-5-5"), {
+					headers: { "anthropic-beta": null },
+					refusalFallbacks: "default",
+				});
+				expect(request?.betas).toEqual([]);
+				expect(request?.body.fallbacks).toBeUndefined();
+			});
+
+			it("fails before sending when an OAuth token needs its identity betas", async () => {
+				const { result, requests } = await wire(anthropicModel("claude-haiku-5-5"), {
+					headers: { "anthropic-beta": null },
+					apiKey: "sk-ant-oat01-test",
+				});
+				expect(requests).toBe(0);
+				expect(result.stopReason).toBe("error");
+				expect(result.errorMessage).toContain("claude-code-20250219");
+				expect(result.errorMessage).toContain("anthropic-beta");
+			});
 		});
 	});
 
