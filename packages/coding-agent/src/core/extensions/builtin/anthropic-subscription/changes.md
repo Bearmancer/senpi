@@ -1,3 +1,24 @@
+## 2026-10-08 - An auth-blocked account recovers once through its saved grant (senpi#2926)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/auth-block-recovery.ts` (new): before account selection, when no account can serve the request, each stored slot blocked with `auth_error` that still holds refresh material redeems that grant once under the auth.json lock. Success stores the new token and clears the block; a grant the token endpoint rejects stays blocked. Either way the slot records `authRecoveryGrant`, a digest of the grant it must not redeem again (the rejected one, or the one the recovery produced), so one auth block gets at most one recovery. A throttled or unavailable token endpoint records nothing and is retried on the next request.
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/auth-lane.ts`: `queryWithAuthLane` runs that recovery before `runFailover` and takes the re-read pool; when the recovery failed only transiently and still no account is usable, the request fails with the classified refresh error (retryable) instead of "blocked until re-login". A healthy sibling serves the request without any refresh of the blocked slot.
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/refresh-failure.ts` (new): the token-endpoint failure classification (`refreshFailure`, `isGrantRejected`) moved out of `auth-lane.ts` unchanged, shared by the lane refresh and the recovery.
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/accounts.ts`: `AccountSlot.authRecoveryGrant`, `authGrantDigest`; `upsertAccount` (re-login) clears the recovery marker with the block stamps.
+
+### Why
+
+- An `auth_error` block was kept until re-login (`affinity.ts` `isAccountBlocked` / `clearExpiredBlocks`), and `selectAccount` excluded the slot before `prepareSlot` could refresh it. A slot whose access token failed while its saved refresh token was still accepted therefore dead-ended every request with "All Claude accounts ... are currently blocked (authentication error)" although redeeming its own grant recovered it (senpi#2926).
+
+### Why an extension could not handle it
+
+- Account selection, block state and the refresh lane are owned by this builtin; there is no hook between the stored pool and account selection.
+
+### Expected merge conflict zones
+
+- LOW: `auth-lane.ts` `queryWithAuthLane` (before `runFailover`), `accounts.ts` `AccountSlot` and `upsertAccount`.
+
 ## 2026-10-07 - A restored binding with no recorded assistant turn is never resumed unchecked (senpi#2858)
 
 ### What changed

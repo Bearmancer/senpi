@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type { Credential, CredentialStore, OAuthCredential } from "@earendil-works/pi-ai";
 import type { ModelBlocks } from "../../../credential-pool/model-scope.ts";
 
@@ -13,6 +14,11 @@ export type AccountSlot = {
 	blockReason?: string;
 	/** Rate limits that bind one model family on this account, not the account (senpi#2555). */
 	modelBlocks?: ModelBlocks;
+	/**
+	 * Digest of the grant an auth-block recovery must not redeem again: the grant the token endpoint
+	 * rejected, or the grant a recovery produced, so one auth block gets at most one recovery (senpi#2926).
+	 */
+	authRecoveryGrant?: string;
 };
 
 export type SlotState = Record<string, { blockedUntil?: number; blockReason?: string; modelBlocks?: ModelBlocks }>;
@@ -45,6 +51,11 @@ function storedSlots(credential: AnthropicSubscriptionCredential): AccountSlot[]
  */
 export function isSentinelSlot(slot: Pick<AccountSlot, "access" | "refresh">): boolean {
 	return slot.access === SENTINEL_OAUTH_FIELDS.access && slot.refresh === SENTINEL_OAUTH_FIELDS.refresh;
+}
+
+/** A stable, non-reversible name for a refresh token, safe to persist next to it. */
+export function authGrantDigest(refresh: string): string {
+	return createHash("sha256").update(refresh).digest("hex").slice(0, 32);
 }
 
 export function listAccounts(
@@ -95,7 +106,13 @@ export function upsertAccount(
 	assertValidAccountName(slot.name);
 	const existing = storedSlots(credential).find((candidate) => candidate.name === slot.name);
 	if (!existing) return { ...credential, accounts: [...storedSlots(credential), slot] };
-	const { blockedUntil: _blockedUntil, blockReason: _blockReason, modelBlocks: _modelBlocks, ...identity } = existing;
+	const {
+		blockedUntil: _blockedUntil,
+		blockReason: _blockReason,
+		modelBlocks: _modelBlocks,
+		authRecoveryGrant: _authRecoveryGrant,
+		...identity
+	} = existing;
 	const refreshed: AccountSlot = {
 		...identity,
 		access: slot.access,

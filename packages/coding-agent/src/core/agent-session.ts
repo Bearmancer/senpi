@@ -843,9 +843,13 @@ class ModelNotReadyError extends Error {
 	}
 }
 
+/** The error a turn ends with when a required compaction could not bring the context back under the window. */
+export const REQUIRED_COMPACTION_ERROR_MESSAGE =
+	"Context remains above the compaction threshold because compaction did not complete";
+
 class RequiredCompactionError extends Error {
 	constructor() {
-		super("Context remains above the compaction threshold because compaction did not complete");
+		super(REQUIRED_COMPACTION_ERROR_MESSAGE);
 		this.name = "RequiredCompactionError";
 	}
 }
@@ -8281,11 +8285,25 @@ export class AgentSession {
 		}
 		if (shouldCompact(contextTokens, contextWindow, settings)) {
 			if (inlineReason) {
+				const compacted = await this._runPrePromptCompaction(
+					assistantMessage,
+					skipAbortedCheck,
+					inlineReason,
+					retryAfterCompaction,
+				);
+				if (compacted || !this._compactionSkippedTooSmall) return compacted;
+				// Everything compactable sits inside the recent window, typically one long tool-heavy turn on a
+				// small window whose system prompt and tool schemas already fill most of it (senpi#2925). Split
+				// the current turn: summarize its earlier steps and keep only the latest one, as the overflow
+				// path's second rung does.
+				this._compactionSkippedTooSmall = false;
 				return await this._runPrePromptCompaction(
 					assistantMessage,
 					skipAbortedCheck,
 					inlineReason,
 					retryAfterCompaction,
+					false,
+					0,
 				);
 			} else {
 				const compacted = await this._runAutoCompaction("threshold", retryAfterCompaction);
@@ -8341,6 +8359,9 @@ export class AgentSession {
 		allowSummaryOnly = false,
 		keepRecentTokensOverride?: number,
 	): Promise<boolean> {
+		// The flag reports THIS attempt's "nothing to compact" outcome only; a value left by an earlier attempt
+		// must not make a caller treat a cancelled or rejected compaction as too small (senpi#2925 review).
+		this._compactionSkippedTooSmall = false;
 		// An earlier external-owner rejection never answers for a rejected request
 		// awaiting its retry: whether the owner can recover it depends on the request
 		// that failed, so ask again. A completed turn keeps the sticky delegation (#1174).
