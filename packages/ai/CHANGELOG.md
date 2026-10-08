@@ -12,6 +12,7 @@
 
 ### Fixed
 
+- The reasoning effort you pick for Claude Opus 5 / 5.5, Sonnet 5.5 and Fable / Mythos 5.1 now reaches Anthropic: it was always sent as `high`. A thinking-off turn on these models runs at `low` and no longer carries a contradicting effort ([#2912](https://github.com/code-yeongyu/senpi/issues/2912)).
 - Transient OAuth token refresh failures retain structured transport and HTTP facts, preserve stored credentials, and mark failed requests for same-model retry rather than ending the turn ([#2893](https://github.com/code-yeongyu/senpi/issues/2893)).
 
 ### Removed
