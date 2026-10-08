@@ -268,4 +268,31 @@ describe("ask-user builtin", () => {
 			status: "answered",
 		});
 	});
+
+	it("refuses a required question's gated action through the real tool on timeout and on the re-ask guard", async () => {
+		// given a required question the user never answers
+		vi.useFakeTimers();
+		const { tool, ctx } = await setup();
+		ctx.ui.question = vi.fn(() => new Promise<QuestionResponse>(() => {}));
+		const gated = { ...args, required: true };
+
+		// when it times out, and a second required question is asked in the same turn
+		const first = required(tool).execute("gate", gated, undefined, undefined, ctx as ExtensionToolContext);
+		await vi.advanceTimersByTimeAsync(1_800_000);
+		const timedOut = await first;
+		const reask = await required(tool).execute(
+			"gate-again",
+			gated,
+			undefined,
+			undefined,
+			ctx as ExtensionToolContext,
+		);
+
+		// then neither tool result invites the model to proceed
+		for (const outcome of [timedOut, reask]) {
+			const text = outcome.content.map((block) => (block.type === "text" ? block.text : "")).join("\n");
+			expect(text).toContain("do not take the action it gates");
+			expect(text).not.toMatch(/best judgment|continue without asking/i);
+		}
+	});
 });
