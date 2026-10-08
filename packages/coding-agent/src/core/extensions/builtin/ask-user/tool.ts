@@ -51,7 +51,7 @@ function result(
 					formatModelAnswer(response, request.requestId, request.questions, request.required === true).text,
 			},
 		],
-		details: formatResultDetails(variant, response, request.requestId, request.questions),
+		details: formatResultDetails(variant, response, request.requestId, request.questions, request.required === true),
 	};
 }
 /**

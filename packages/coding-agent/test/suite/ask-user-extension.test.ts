@@ -295,4 +295,52 @@ describe("ask-user builtin", () => {
 			expect(text).not.toMatch(/best judgment|continue without asking/i);
 		}
 	});
+
+	it("keeps a UI failure's reason and refuses the gated action for a required question", async () => {
+		// given a required question whose UI fails while it is open
+		const { tool, ctx } = await setup();
+		ctx.ui.question = vi.fn(async () => {
+			throw new Error("boom");
+		});
+
+		// when the blocking call settles
+		const outcome = await required(tool).execute(
+			"gate-ui",
+			{ ...args, required: true },
+			undefined,
+			undefined,
+			ctx as ExtensionToolContext,
+		);
+
+		// then the reason is kept and the model is told not to take the gated action
+		const text = outcome.content.map((block) => (block.type === "text" ? block.text : "")).join("\n");
+		expect(text).toContain("Question UI failed: boom");
+		expect(text).toContain("do not take the action it gates");
+	});
+
+	it("sends the user's typed draft along with a dismissed required question", async () => {
+		// given a required question the user typed a draft into and then dismissed
+		const { tool, ctx } = await setup();
+		ctx.ui.question = vi.fn(async () => ({
+			status: "cancelled" as const,
+			answers: { q1: { selected: [], text: "only after tests pass" } },
+			unanswered: [],
+		}));
+
+		// when the blocking call settles
+		const outcome = await required(tool).execute(
+			"gate-draft",
+			{ ...args, required: true },
+			undefined,
+			undefined,
+			ctx as ExtensionToolContext,
+		);
+
+		// then the refusal points at the draft and the draft travels in the result details
+		const text = outcome.content.map((block) => (block.type === "text" ? block.text : "")).join("\n");
+		expect(text).toContain("do not take the action it gates");
+		expect(text).not.toContain("only after tests pass");
+		const userWords = (outcome.details as { userWords?: Array<{ text: string }> }).userWords ?? [];
+		expect(userWords.map((word) => word.text)).toContain("only after tests pass");
+	});
 });

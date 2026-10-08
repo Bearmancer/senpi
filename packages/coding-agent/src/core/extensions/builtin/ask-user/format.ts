@@ -221,8 +221,9 @@ export function formatResultDetails(
 	response: QuestionResponse,
 	requestId: string,
 	questions: Questions = [],
+	required = false,
 ): CodexResultDetails | ClaudeResultDetails {
-	const { words } = formatModelAnswer(response, requestId, questions);
+	const { words } = formatModelAnswer(response, requestId, questions, required);
 	if (variant === "codex") {
 		const answers: CodexResultDetails["answers"] = {};
 		for (const [id, answer] of Object.entries(response.answers)) {
