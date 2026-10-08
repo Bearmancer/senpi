@@ -6,8 +6,6 @@
 
 ### Added
 
-- Anthropic native tool search is offered on Claude Haiku 5.5, which Anthropic lists for both tool-search variants; earlier Haiku stays off ([#2892](https://github.com/code-yeongyu/senpi/issues/2892)).
-
 - `context` and `context_with_system` extension handlers accept a `{ mutatesMessages: false }` registration option, an opt-in performance declaration that the handler never edits a received message object in place ([#2525](https://github.com/code-yeongyu/senpi/issues/2525)).
 
 - Every model switch records what made it: `model_change` entries, the `model_changed` event and one `session.log` line per switch carry a `source` (`command`, `picker`, `cycle`, `control`, `rpc`, `app-server`, `extension`, `provider-login`, `fallback`, `fallback-revert`, `held-switch`, `restore`, `sdk`) and, where known, an `actor`; a switch that lands while a turn is streaming is marked `duringTurn` and shown as a transcript row naming both models, and the `thinking_level_change` a switch writes names the same source ([#2870](https://github.com/code-yeongyu/senpi/issues/2870)).

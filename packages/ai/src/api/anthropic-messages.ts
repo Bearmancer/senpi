@@ -315,8 +315,11 @@ const NATIVE_XHIGH_EFFORT_MODEL_MARKERS = [
 	"mythos-5",
 ] as const;
 /**
- * Adaptive families that reject `thinking: {type: "disabled"}` outright (verified 400:
- * `"thinking.type.disabled" is not supported for this model`). The generated catalog also encodes
+ * Adaptive families that reject `thinking: {type: "disabled"}` outright. Verified with the live 400
+ * `"thinking.type.disabled" is not supported for this model` on Fable 5, Opus 5.5 and Sonnet 5.5;
+ * Mythos 5 is listed by family with Fable; Haiku 5.5 is UNVERIFIED (its docs name only an unset or
+ * adaptive `thinking`; senpi#2914), kept here because the thinking-off shape this list selects
+ * (no `thinking`, effort `low`) is valid either way. The generated catalog also encodes
  * this as `compat.supportsDisabledThinking: false`, but `models.json` entries and third-party
  * gateway rows carry no generated compat, so the family fact has to live here as well.
  */

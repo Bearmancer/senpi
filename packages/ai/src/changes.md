@@ -1,21 +1,3 @@
-## 2026-10-08 - supportsToolReferences doc names the Haiku floor (senpi#2892)
-
-### What changed
-
-- `packages/ai/src/types.ts`: the `supportsToolReferences` doc comment says "except Haiku before 5.5".
-
-### Why
-
-The default now enables Haiku 5.5 (see `src/utils/changes.md`).
-
-### Why an extension could not handle it
-
-Public type documentation.
-
-### Expected merge conflict zones
-
-- The `supportsToolReferences` doc comment in `types.ts`.
-
 ## 2026-10-07 - Claude Agent SDK 0.3.292 (senpi#2545)
 
 ### What changed

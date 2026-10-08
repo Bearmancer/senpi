@@ -3,6 +3,7 @@
 ### What changed
 
 - `packages/ai/src/api/anthropic-messages.ts`: `ADAPTIVE_THINKING_MODEL_MARKERS` and `NATIVE_XHIGH_EFFORT_MODEL_MARKERS` gain `haiku-5-5`, and `DISABLED_THINKING_REJECTING_MODEL_MARKERS` gains `haiku-5-5` / `haiku-5.5`, so a Haiku 5.5 row without generated compat (a `models.json` entry, a gateway row) sends adaptive thinking with an effort instead of `budget_tokens` and pins effort `low` for a thinking-off turn instead of `thinking.type: "disabled"`.
+- `packages/ai/src/api/anthropic-messages.ts`: the `DISABLED_THINKING_REJECTING_MODEL_MARKERS` comment says which entries the live 400 verified (Fable 5, Opus 5.5, Sonnet 5.5) and that Haiku 5.5 is unverified (senpi#2914).
 - `packages/ai/src/api/anthropic-messages.ts`: the managed-effort branch comment no longer claims these families accept `thinking.type: "disabled"`; it names `disableThinkingForRequest` as the thinking-off path.
 - `packages/ai/src/api/bedrock-converse-stream.ts`: `supportsAdaptiveThinking`, `supportsNativeXhighEffort` and `rejectsDisabledThinking` match `haiku-5-5` (and the dotted spelling for the last), for the same reason on Bedrock Converse.
 

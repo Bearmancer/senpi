@@ -1177,7 +1177,7 @@ export interface AnthropicMessagesCompat {
 	/**
 	 * Whether the provider supports deferred tools loaded by `tool_reference`
 	 * blocks in tool results. Default: true for first-party Anthropic models
-	 * except Haiku before 5.5 and models older than Claude 4.5; false for other providers.
+	 * except Haiku and models older than Claude 4.5; false for other providers.
 	 */
 	supportsToolReferences?: boolean;
 	/**

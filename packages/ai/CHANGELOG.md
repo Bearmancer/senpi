@@ -6,7 +6,7 @@
 
 ### Added
 
-- Claude Haiku 5.5 (`claude-haiku-5-5`) on Anthropic, Amazon Bedrock (on-demand plus global/us/eu/jp/au inference profiles), OpenCode, OpenCode Go, OpenRouter, Vercel AI Gateway and Venice: 1M context, 128K output, text and image input, adaptive thinking with effort low through max, forced tool choice kept, native tool search, and prices that bill a prompt over 100K input tokens entirely at the long-context rate ([#2892](https://github.com/code-yeongyu/senpi/issues/2892)).
+- Claude Haiku 5.5 (`claude-haiku-5-5`) on Anthropic, Amazon Bedrock (on-demand plus global/us/eu/jp/au inference profiles), OpenCode, OpenCode Go, OpenRouter, Vercel AI Gateway and Venice: 1M context, 128K output, text and image input, adaptive thinking with effort low through max, forced tool choice kept, and prices that bill a prompt over 100K input tokens entirely at the long-context rate ([#2892](https://github.com/code-yeongyu/senpi/issues/2892)).
 
 ### Changed
 

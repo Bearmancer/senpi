@@ -141,8 +141,9 @@ describe("Claude Haiku 5.5 catalog row (anthropic)", () => {
 		expect(model.compat?.supportsMidConvoSystemMessages).toBe(true);
 		expect(model.compat?.allowedFallbackModels).toBeUndefined();
 		expect(getAnthropicCompat(model).supportsForcedToolChoice).toBe(true);
-		// Anthropic's tool-search compatibility table lists Claude Haiku 5.5 for both server tool variants.
-		expect(getAnthropicCompat(model).supportsToolReferences).toBe(true);
+		// Listed in Anthropic's tool-search table, but Haiku 4.5 was listed too and rejects tool_reference;
+		// off until a live probe (senpi#2914).
+		expect(getAnthropicCompat(model).supportsToolReferences).toBe(false);
 	});
 
 	it("bills a prompt over 100,000 input tokens entirely at the long-context rate", () => {

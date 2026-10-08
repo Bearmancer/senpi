@@ -3070,7 +3070,7 @@ The DIY lifecycle is:
 #### Models with native deferred loading
 
 - **Anthropic**
-  - **Models:** Sonnet, Opus, Fable version 4.5 or newer, and Haiku 5.5 or newer
+  - **Models:** Sonnet, Opus, Fable version 4.5 or newer (without Haiku)
   - **Native representation:** Deferred definitions use `defer_loading`; the load point uses `tool_reference` content.
 - **Fireworks Messages API**
   - **Native representation:** Deferred definitions use `defer_loading`; the load point uses `tool_reference` content.

@@ -1,12 +1,12 @@
-## 2026-10-08 - Native tool search on Claude Haiku 5.5 (senpi#2892)
+## 2026-10-08 - Haiku 5.5 stays off for tool_reference loading until verified (senpi#2892, senpi#2914)
 
 ### What changed
 
-- `packages/ai/src/utils/prompt-cache-ttl.ts`: `defaultSupportsToolReferences` classifies Haiku by version. Haiku 5.5 and later support `tool_reference` loading; earlier Haiku stays off.
+- `packages/ai/src/utils/prompt-cache-ttl.ts`: the `defaultSupportsToolReferences` doc comment names Claude Haiku 5.5 as listed in Anthropic's tool-search table but kept off (the existing `haiku` exclusion) until a live probe; no behavior change.
 
 ### Why
 
-Anthropic's tool-search compatibility table lists Claude Haiku 5.5 for both server tool variants (https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-search-tool#model-compatibility). The old substring check excluded every Haiku.
+The same table lists Haiku 4.5, which rejects client-side `tool_reference` blocks (#6474), and a rejection other than `Tool reference '…' not found` would fail the turn with no automatic demotion. senpi#2914 tracks the probe and the enable.
 
 ### Why an extension could not handle it
 
@@ -14,7 +14,7 @@ The `supportsToolReferences` default lives in the provider compat matrix.
 
 ### Expected merge conflict zones
 
-- `defaultSupportsToolReferences` in `prompt-cache-ttl.ts`.
+- The `defaultSupportsToolReferences` doc comment in `prompt-cache-ttl.ts`.
 
 ## 2026-10-07 - Structured OAuth refresh retry facts (senpi#2893)
 

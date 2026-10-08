@@ -4,7 +4,7 @@ export type AnthropicToolSearchModel = Pick<Model<Api>, "api" | "id" | "provider
 	Partial<Pick<Model<Api>, "compat">>;
 export type AnthropicToolSearchTarget = Api | AnthropicToolSearchModel | undefined;
 
-const CLAUDE_VERSIONED_MODEL_ID = /^claude-(opus|sonnet|fable|haiku)-(\d+)(?:-(\d+))?(?:-|$)/;
+const CLAUDE_VERSIONED_MODEL_ID = /^claude-(?:opus|sonnet|fable)-(\d+)(?:-(\d+))?(?:-|$)/;
 /** A trailing 8-digit group is a release date (claude-opus-4-5-20251101), not a minor version. */
 const MODEL_ID_DATE_SUFFIX_LENGTH = 8;
 
@@ -19,19 +19,19 @@ function isSupportedModel(model: AnthropicToolSearchModel): boolean {
  * with `packages/ai/src/utils/prompt-cache-ttl.ts`. Diverging would inject the
  * server tool for a model whose deferred tools pi-ai refuses to defer, so the
  * request would carry a search tool with nothing to find. Anthropic's table
- * lists tool search on Opus/Sonnet 4.5+, Haiku 5.5 and the Fable/Mythos line;
- * Opus 4.1 and earlier reject the server tool and Haiku 4.5 rejects
- * `tool_reference` blocks.
+ * lists tool search on Opus/Sonnet 4.5+ and the Fable/Mythos line; Opus 4.1 and
+ * earlier reject the server tool and Haiku rejects `tool_reference` blocks.
+ * Haiku 5.5 is listed too but stays off until a live probe confirms it
+ * (senpi#2914).
  */
 function defaultSupportsToolSearch(model: AnthropicToolSearchModel): boolean {
-	if (model.provider !== "anthropic") return false;
+	if (model.provider !== "anthropic" || model.id.includes("haiku")) return false;
 	const version = model.id.match(CLAUDE_VERSIONED_MODEL_ID);
 	if (!version) return false;
-	const major = Number(version[2]);
-	const rawMinor = version[3];
+	const major = Number(version[1]);
+	const rawMinor = version[2];
 	const minor = rawMinor !== undefined && rawMinor.length < MODEL_ID_DATE_SUFFIX_LENGTH ? Number(rawMinor) : 0;
-	const [floorMajor, floorMinor] = version[1] === "haiku" ? [5, 5] : [4, 5];
-	return major > floorMajor || (major === floorMajor && minor >= floorMinor);
+	return major > 4 || (major === 4 && minor >= 5);
 }
 
 /**

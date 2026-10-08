@@ -74,10 +74,7 @@ describe("Anthropic native tool-search model gate", () => {
 		["claude-opus-4-8", true],
 		["claude-sonnet-4-5-20250929", true],
 		["claude-opus-4-1", false],
-		// Haiku 4.5 is listed by Anthropic but rejects client-side tool_reference blocks (kept off).
 		["claude-haiku-4-5-20251001", false],
-		// senpi#2892: Haiku 5.5 is listed for both tool-search variants.
-		["claude-haiku-5-5", true],
 		["claude-3-5-sonnet-20241022", false],
 	])("resolves %s to %s per Anthropic's compatibility table", (id, supported) => {
 		// given a first-party Anthropic model id
