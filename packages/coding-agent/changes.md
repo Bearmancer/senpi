@@ -1624,3 +1624,22 @@ amplification or dropping classic per-event backpressure.
 - HIGH: `packages/coding-agent/package.json` `scripts`, `exports`, `dependencies` and `files` on every upstream release.
 - MEDIUM: `tsconfig.build.json` `paths`/`exclude` and `vitest.config.ts` `alias` when upstream adds workspaces.
 - LOW: `install-lock/package.json` (regenerated, never hand-edited).
+
+
+## 2026-10-08 - MCP SDK 1.32.1 for the OAuth issuer advisory (senpi#2940)
+
+### What changed
+
+- `packages/coding-agent/package.json`: `@modelcontextprotocol/sdk` pin 1.30.0 -> 1.32.1 (GHSA-6qxp-vccf-f47h). The lockfiles also resolve `proxy-addr` 2.0.8 (GHSA-jqcg-44mw-7w3h) inside the existing range. The issuer binding and redirect handling that go with it are recorded in `src/core/extensions/builtin/mcp/changes.md`.
+
+### Why
+
+- 1.30.0 can send saved OAuth credentials to an authorization server the MCP server chooses; the shipped-dependency audit flags it high.
+
+### Why an extension could not handle it
+
+- The SDK version is a package dependency pin; nothing at runtime can change it.
+
+### Expected merge conflict zones
+
+- MEDIUM: `packages/coding-agent/package.json` `dependencies` when upstream moves the MCP SDK pin.
