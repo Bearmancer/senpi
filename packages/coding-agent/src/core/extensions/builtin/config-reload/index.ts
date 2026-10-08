@@ -46,6 +46,12 @@ const BUILTIN_REGISTRATION_ID = "builtin";
 export const DEFAULT_DEBOUNCE_MS = 200;
 const COMPACTION_RECHECK_MS = 250;
 const VETO_RECHECK_MS = 1000;
+// After the first few 1 s rechecks a still-vetoed reload (e.g. long-running subagents) backs off;
+// agent_end/agent_settled still flush it immediately when the session goes idle.
+const VETO_RECHECK_FAST_ATTEMPTS = 5;
+const VETO_RECHECK_MAX_MS = 30_000;
+// A reload that only ever re-triggers itself from the post-reload comparison stops here (#2878).
+const MAX_HANDOFF_RELOADS = 3;
 const CONFIG_FILE_NAMES = ["settings.jsonc", "settings.json", "models.json", "keybindings.json"] as const;
 
 /**
@@ -92,7 +98,13 @@ type PendingChange = {
 	readonly paths: Set<string>;
 };
 
+type HandoffChain = {
+	/** Consecutive reloads requested only by a post-reload comparison; 0 for a watcher-detected change. */
+	readonly count: number;
+};
+
 type ReloadHandoff = {
+	readonly chain: HandoffChain;
 	readonly hashesAtRequest: ReadonlyMap<string, string>;
 	readonly settingsContentsAtRequest: ReadonlyMap<string, string>;
 	readonly requestedAt: number;
@@ -164,7 +176,12 @@ export function configReloadExtension(pi: ExtensionAPI, options: ConfigReloadExt
 	let unavailableReloadLogged = false;
 	let compactionRecheck: ReturnType<typeof setTimeout> | undefined;
 	let vetoRecheck: ReturnType<typeof setTimeout> | undefined;
+	let vetoRecheckAttempts = 0;
 	const vetoDeferral = new ReloadVetoDeferral();
+	let nextReloadChain: HandoffChain | undefined;
+	/** Handoff paths an extension watched before the reload and has not re-registered yet. */
+	const awaitingRegistration = new Map<string, string>();
+	let awaitingHandoff: ReloadHandoff | undefined;
 	let changeChain: Promise<void> = Promise.resolve();
 
 	// Cancel registrations synchronously; session_shutdown joins every disposer.
@@ -230,6 +247,7 @@ export function configReloadExtension(pi: ExtensionAPI, options: ConfigReloadExt
 		logger.info("registration_added", { id: payload.id });
 		if (started && currentContext) {
 			rebuildWatchers(currentContext);
+			settleAwaitingRegistration(currentContext);
 		}
 	};
 
@@ -339,7 +357,10 @@ export function configReloadExtension(pi: ExtensionAPI, options: ConfigReloadExt
 			debounceMs: settings.debounceMs,
 			clock: options.clock,
 			hashFile: options.hashFile,
-			onRealChange: bindSessionScopedCallback(enqueueChange),
+			onRealChange: bindSessionScopedCallback((change: RealChange) => {
+				nextReloadChain = undefined;
+				enqueueChange(change);
+			}),
 			onError: bindSessionScopedCallback((error, path) => {
 				logger.error("watcher_error", { path, message: errorMessage(error) });
 			}),
@@ -375,24 +396,29 @@ export function configReloadExtension(pi: ExtensionAPI, options: ConfigReloadExt
 			if (currentContext !== ctx || reloadInFlight || pending.size === 0 || !canRequestReload(ctx)) return;
 			if (veto.cancelled) {
 				const notice = vetoDeferral.defer(veto.reason);
-				if (notice) ctx.ui.notify(notice, "info");
-				logger.info("reload_deferred", { reason: veto.reason ?? "extension veto" });
+				if (notice) {
+					ctx.ui.notify(notice, "info");
+					logger.info("reload_deferred", { reason: veto.reason ?? "extension veto" });
+				}
 				armVetoRecheck();
 				return;
 			}
 		}
 		clearVetoRecheck();
+		vetoRecheckAttempts = 0;
 		vetoDeferral.reset();
 
 		const changes = pendingChanges(pending);
 		const paths = uniquePaths(changes.flatMap((change) => change.paths));
 		reloadInFlight = true;
 		reloadHandoffs.set(handoffKey(ctx), {
+			chain: nextReloadChain ?? { count: 0 },
 			hashesAtRequest: engine?.getBaselineSnapshot() ?? new Map<string, string>(),
 			settingsContentsAtRequest: new Map(settingsContents),
 			requestedAt: Date.now(),
 			changes,
 		});
+		nextReloadChain = undefined;
 		ctx.ui.notify(`Hot-reloading: ${formatPaths(paths)}`, "info");
 		logger.info("reload_requested", { reason: "config changed", paths });
 
@@ -420,10 +446,56 @@ export function configReloadExtension(pi: ExtensionAPI, options: ConfigReloadExt
 	const armVetoRecheck = (): void => {
 		if (vetoRecheck !== undefined) return;
 		const clock = options.clock ?? defaultClock;
+		const backoffStep = vetoRecheckAttempts - VETO_RECHECK_FAST_ATTEMPTS + 1;
+		const delay =
+			backoffStep <= 0 ? VETO_RECHECK_MS : Math.min(VETO_RECHECK_MAX_MS, VETO_RECHECK_MS * 2 ** backoffStep);
+		vetoRecheckAttempts++;
 		vetoRecheck = clock.setTimeout(() => {
 			vetoRecheck = undefined;
 			void flushPending();
-		}, VETO_RECHECK_MS);
+		}, delay);
+	};
+
+	/**
+	 * Queue a change the post-reload comparison found. A comparison-only chain (each reload
+	 * triggered solely by the previous reload's comparison) stops after MAX_HANDOFF_RELOADS
+	 * consecutive reloads however slow each one is, so a path that always looks changed cannot loop forever.
+	 */
+	const enqueueHandoffChange = async (
+		handoff: ReloadHandoff,
+		changedPaths: readonly string[],
+		ctx: ExtensionContext,
+	): Promise<void> => {
+		if (changedPaths.length === 0) return;
+		const chain: HandoffChain = { count: handoff.chain.count + 1 };
+		if (chain.count > MAX_HANDOFF_RELOADS) {
+			logger.warn("reload_loop_stopped", { paths: changedPaths, reloads: handoff.chain.count });
+			ctx.ui.notify(
+				`Hot-reload stopped: ${formatPaths(changedPaths)} still looked changed after ${handoff.chain.count} reloads in a row. Edit the file again or run /reload to retry.`,
+				"warning",
+			);
+			return;
+		}
+		settingsContents.clear();
+		for (const [path, content] of handoff.settingsContentsAtRequest) settingsContents.set(path, content);
+		nextReloadChain = chain;
+		enqueueChange({ changedPaths: [...changedPaths], created: [], deleted: [] });
+		await changeChain;
+	};
+
+	/** Compare handoff paths whose extension re-registered them after session_start (#2878). */
+	const settleAwaitingRegistration = (ctx: ExtensionContext): void => {
+		const handoff = awaitingHandoff;
+		if (!handoff || awaitingRegistration.size === 0) return;
+		const current = engine?.getBaselineSnapshot() ?? new Map<string, string>();
+		const changed: string[] = [];
+		for (const [path, hash] of awaitingRegistration) {
+			if (!current.has(path)) continue;
+			awaitingRegistration.delete(path);
+			if (current.get(path) !== hash) changed.push(path);
+		}
+		if (awaitingRegistration.size === 0) awaitingHandoff = undefined;
+		void enqueueHandoffChange(handoff, changed.sort(), ctx);
 	};
 
 	const processReloadHandoff = async (event: SessionStartEvent, ctx: ExtensionContext): Promise<void> => {
@@ -440,13 +512,15 @@ export function configReloadExtension(pi: ExtensionAPI, options: ConfigReloadExt
 		ctx.ui.notify(`Hot-reloaded: ${formatPaths(paths)}`, "info");
 		logger.info("reload_completed", { durationMs: Math.max(0, Date.now() - handoff.requestedAt) });
 
-		const changedPaths = compareSnapshots(handoff.hashesAtRequest, engine?.getBaselineSnapshot() ?? new Map());
-		if (changedPaths.length > 0) {
-			settingsContents.clear();
-			for (const [path, content] of handoff.settingsContentsAtRequest) settingsContents.set(path, content);
-			enqueueChange({ changedPaths, created: [], deleted: [] });
-			await changeChain;
-		}
+		// Extensions re-register their watch targets after this session_start handler, so a path
+		// missing from the new baseline but still on disk is awaited, not reported as changed (#2878).
+		const { changed, awaiting } = compareHandoffSnapshots(
+			handoff.hashesAtRequest,
+			engine?.getBaselineSnapshot() ?? new Map(),
+		);
+		for (const [path, hash] of awaiting) awaitingRegistration.set(path, hash);
+		awaitingHandoff = awaiting.size > 0 ? handoff : undefined;
+		await enqueueHandoffChange(handoff, changed, ctx);
 	};
 
 	eventUnsubscribes.push(pi.events.on(CONFIG_WATCH_REGISTER, handleRegistration));
@@ -455,6 +529,8 @@ export function configReloadExtension(pi: ExtensionAPI, options: ConfigReloadExt
 	pi.on("session_start", async (event, ctx) => {
 		started = true;
 		currentContext = ctx;
+		awaitingRegistration.clear();
+		awaitingHandoff = undefined;
 		rebuildWatchers(ctx);
 		await processReloadHandoff(event, ctx);
 	});
@@ -480,9 +556,13 @@ export function configReloadExtension(pi: ExtensionAPI, options: ConfigReloadExt
 		closeWatchers();
 		clearCompactionRecheck();
 		clearVetoRecheck();
+		vetoRecheckAttempts = 0;
 		vetoDeferral.reset();
 		cleanupEventListeners();
 		pending.clear();
+		awaitingRegistration.clear();
+		awaitingHandoff = undefined;
+		nextReloadChain = undefined;
 		if (event.reason !== "reload" && closingContext) reloadHandoffs.delete(handoffKey(closingContext));
 		const results = (await Promise.all(watcherClosures.splice(0))).flat();
 		const errors = results.filter((result) => result.status === "rejected").map((result) => result.reason);
@@ -903,6 +983,23 @@ function pendingChanges(pending: ReadonlyMap<string, PendingChange>): Array<{
 		registrationId: change.registrationId,
 		paths: [...change.paths].sort(),
 	}));
+}
+
+function compareHandoffSnapshots(
+	previousHashes: ReadonlyMap<string, string>,
+	next: ReadonlyMap<string, string>,
+): { readonly changed: string[]; readonly awaiting: ReadonlyMap<string, string> } {
+	const changed = new Set<string>();
+	const awaiting = new Map<string, string>();
+	for (const [path, hash] of next) {
+		if (previousHashes.get(path) !== hash) changed.add(path);
+	}
+	for (const [path, hash] of previousHashes) {
+		if (next.has(path)) continue;
+		if (existsSync(path)) awaiting.set(path, hash);
+		else changed.add(path);
+	}
+	return { changed: [...changed].sort(), awaiting };
 }
 
 function compareSnapshots(previous: ReadonlyMap<string, string>, next: ReadonlyMap<string, string>): string[] {

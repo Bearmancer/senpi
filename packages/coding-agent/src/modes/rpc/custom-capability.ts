@@ -72,6 +72,13 @@ export const WARM_CAPABILITY = "warm";
 export const DURABLE_SESSION_ID_CAPABILITY = "durable_session_id";
 
 /**
+ * HOST capability: this engine runs the builtin `moved-path-guard` and resolves paths the OmO desktop moved
+ * with its data home in `open_session`, schedule delivery and session-holder claims (senpi#2898). The desktop
+ * resumes a moved thread only on a host that advertises it.
+ */
+export const MOVED_PATH_GUARD_CAPABILITY = "moved_path_guard";
+
+/**
  * HOST capability: this host honors `open_session.promptSurface`, building each session's prompt for
  * the surface its opener renders on (`terminal` | `app`) instead of only the process-wide
  * `SENPI_PROMPT_SURFACE`. A later open that names another surface rebuilds that session's prompt.

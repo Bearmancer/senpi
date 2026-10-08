@@ -18,6 +18,7 @@ export type ConfigReloadLogEvent =
 	| "reload_requested"
 	| "reload_deferred"
 	| "reload_completed"
+	| "reload_loop_stopped"
 	| "validation_rejected"
 	| "registration_rejected"
 	| "registration_rejection_suppressed"
@@ -34,6 +35,7 @@ export interface ConfigReloadLogDetails {
 	reload_requested: { reason: string; paths: readonly string[] };
 	reload_deferred: { reason: string };
 	reload_completed: { durationMs: number };
+	reload_loop_stopped: { paths: readonly string[]; reloads: number };
 	validation_rejected: { registrationId: string; errorCount: number };
 	registration_rejected: { registrationId: string; errorCount: number };
 	registration_rejection_suppressed: { registrationId: string };
@@ -150,6 +152,12 @@ function formatEntry<Event extends ConfigReloadLogEvent>(
 		case "reload_completed":
 			entry.durationMs = finiteNumber((details as ConfigReloadLogDetails["reload_completed"]).durationMs);
 			break;
+		case "reload_loop_stopped": {
+			const eventDetails = details as ConfigReloadLogDetails["reload_loop_stopped"];
+			entry.paths = safePaths(eventDetails.paths);
+			entry.reloads = finiteNumber(eventDetails.reloads);
+			break;
+		}
 		case "validation_rejected":
 		case "registration_rejected": {
 			const eventDetails = details as ConfigReloadLogDetails["validation_rejected"];

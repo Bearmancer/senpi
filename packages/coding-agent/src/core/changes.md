@@ -93,6 +93,24 @@ The entry-id WeakMap and the resident string store are core session internals; e
 - `session-manager.ts`: the `contextMessageEntryIds` helpers beside `withContextEntryId`.
 - `session-resident-store.ts`: the `_mutateStringsInPlace` loop.
 
+## 2026-10-08 - Session-holder claims follow paths the OmO desktop moved (senpi#2898)
+
+### What changed
+
+- `packages/coding-agent/src/core/session-holders.ts`: `holdersDir` and the `expectExisting` check of `holdSessionFile` resolve the session file through `resolveMovedPath` (builtin `moved-path-guard`), so a claim, a holder listing and a move lock on an old spelling of a moved file are the moved file's.
+
+### Why
+
+After the OmO desktop moves its data home (omo-desktop-app#1829), a process holding a session under its old path and one probing the new path must see each other; otherwise schedule delivery would start a second writer on a session that is open.
+
+### Why an extension could not handle it
+
+Holder records are the cross-process session ownership protocol, used before and outside any session's extensions.
+
+### Expected merge conflict zones
+
+- LOW: `holdersDir` and the `expectExisting` branch of `holdSessionFile`.
+
 ## 2026-10-08 - A fallback rung the context-window guard refuses no longer ends the chain (senpi#2894)
 
 ### What changed

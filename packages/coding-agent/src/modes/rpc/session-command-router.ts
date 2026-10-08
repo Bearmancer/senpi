@@ -1,25 +1,6 @@
 import { VERSION } from "../../config.ts";
-import {
-	ACCEPT_EDITS_PERMISSION_PRESET_CAPABILITY,
-	AUTO_PERMISSION_PRESET_CAPABILITY,
-} from "../../core/extensions/builtin/permission-system/config.ts";
-import { DURABLE_CLIENT_MESSAGE_ID_CAPABILITY } from "./client-admission-record.ts";
 import { buildRpcSessionState } from "./connection-handler.ts";
-import {
-	AUTO_TITLE_PER_SESSION_CAPABILITY,
-	AUTO_TITLE_SESSIONS_CAPABILITY,
-	BROWSER_ENGINE_CAPABILITY,
-	CONTINUE_FROM_LEAF_CAPABILITY,
-	DURABLE_SESSION_ID_CAPABILITY,
-	MEDIA_PLACEHOLDERS_CAPABILITY,
-	PROMPT_SURFACE_CAPABILITY,
-	PROMPT_SURFACE_CHAT_CAPABILITY,
-	RETAIN_ON_DISCONNECT_CAPABILITY,
-	RETRY_FALLBACK_PROFILE_CAPABILITY,
-	SESSION_CONTEXT_CAPABILITY,
-	SESSION_KIND_CAPABILITY,
-	WARM_CAPABILITY,
-} from "./custom-capability.ts";
+import { multiSessionHostCapabilities } from "./host-capabilities.ts";
 import { answerWarm } from "./host-warm.ts";
 import { protocolIdentity } from "./protocol-identity.ts";
 import {
@@ -314,36 +295,10 @@ export class SessionCommandRouter {
 
 	private async dispatch(command: Exclude<RpcCommand, { type: "warm" }>): Promise<RpcResponse | undefined> {
 		if (command.type === "get_protocol_info") {
-			const capabilities = new Set([
-				"multi_session",
-				AUTO_TITLE_SESSIONS_CAPABILITY,
-				MEDIA_PLACEHOLDERS_CAPABILITY,
-				DURABLE_CLIENT_MESSAGE_ID_CAPABILITY,
-				CONTINUE_FROM_LEAF_CAPABILITY,
-				// Host capabilities, not client opt-ins: only a multi-session host owns the
-				// attachment refcount `open_session.retain_on_disconnect` detaches from, the
-				// per-session launch profile `context`/`auto_title` travel on, and the session
-				// listing `kind` filters.
-				RETAIN_ON_DISCONNECT_CAPABILITY,
-				SESSION_CONTEXT_CAPABILITY,
-				SESSION_KIND_CAPABILITY,
-				AUTO_TITLE_PER_SESSION_CAPABILITY,
-				// Only a multi-session host can refuse a duplicate durable id, because only it
-				// sees every live session's identity.
-				DURABLE_SESSION_ID_CAPABILITY,
-				// Every session's prompt is built from its own launch profile, so one host serves both surfaces.
-				PROMPT_SURFACE_CAPABILITY,
-				PROMPT_SURFACE_CHAT_CAPABILITY,
-				// Each session's tool subprocesses and eval kernel get its own OMO_BROWSER_ENGINE from its launch profile.
-				BROWSER_ENGINE_CAPABILITY,
-				// Each session's fallback chain is its own in-memory settings override, never the host's file.
-				RETRY_FALLBACK_PROFILE_CAPABILITY,
-				ACCEPT_EDITS_PERMISSION_PRESET_CAPABILITY,
-				AUTO_PERMISSION_PRESET_CAPABILITY,
-				// Only an in-process runtime shares the loop a warm loads into (senpi#2314).
-				...(this.registry.warm ? [WARM_CAPABILITY] : []),
-				...(this.connectionOptions?.capabilities ?? []),
-			]);
+			const capabilities = multiSessionHostCapabilities({
+				warm: this.registry.warm !== undefined,
+				negotiated: this.connectionOptions?.capabilities ?? [],
+			});
 			return {
 				id: command.id,
 				type: "response",
@@ -352,7 +307,7 @@ export class SessionCommandRouter {
 				data: {
 					protocolVersion: 1,
 					serverVersion: VERSION,
-					capabilities: [...capabilities],
+					capabilities,
 					mode: "multi",
 					...protocolIdentity(),
 					memory_pressure: this.memoryPressure,
