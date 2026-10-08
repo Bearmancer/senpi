@@ -12,9 +12,9 @@ import type { SdkErrorClassification } from "./errors.ts";
 
 export const MAX_RATE_LIMIT_BLOCK_MS = 48 * 60 * 60 * 1_000;
 export const DEFAULT_RATE_LIMIT_BLOCK_MS = 60_000;
-/** Same-account retries for a transient failure (overload, network, server error) before rotating. */
-export const DEFAULT_TRANSIENT_RETRIES = 2;
-export const DEFAULT_TRANSIENT_RETRY_DELAY_MS = 1_000;
+/** Same-account retries per turn for a transient failure (overload, network, server error) before rotating. */
+export const TRANSIENT_RETRIES_PER_TURN = 2;
+export const TRANSIENT_RETRY_DELAY_MS = 1_000;
 export const TURN_RETRY_SUPPRESSION_PREFIX = "senpi:no-turn-retry:";
 
 type RecordValue = Record<string, unknown>;
@@ -41,10 +41,7 @@ export type FailoverOptions<TEvent> = {
 	onFailover?: (event: FailoverEvent) => void | Promise<void>;
 	errorFromEvent?: (event: TEvent) => unknown | undefined;
 	isVisibleDelta?: (event: TEvent) => boolean;
-	/** Retries of the same account after a transient failure; usage, auth and billing failures rotate at once. */
-	transientRetries?: number;
-	/** First transient retry delay; each further retry doubles it. */
-	transientRetryDelayMs?: number;
+	/** Waits before a transient same-account retry; injectable for tests. */
 	sleep?: (ms: number, signal?: AbortSignal) => Promise<void>;
 	signal?: AbortSignal;
 };
@@ -217,7 +214,8 @@ function usable(account: AccountSlot, now: number, model: string | undefined): b
 }
 
 /**
- * Runs at most one attempt per account. A retry is transparent only before a
+ * Runs one attempt per account, plus at most TRANSIENT_RETRIES_PER_TURN same-account retries
+ * for a transient failure (and one retry on newer stored credentials). A retry is transparent only before a
  * text, thinking, or tool-call event reaches the caller; post-delta failures
  * are marked so AgentSession never replays the partial turn.
  */
@@ -227,8 +225,7 @@ export async function* runFailover<TEvent>(options: FailoverOptions<TEvent>): As
 	let accounts = clearExpiredBlocks(options.accounts, now());
 	let lastError: ClassifiedSdkError | undefined;
 	const retriedOnStoredMaterial = new Set<string>();
-	const transientRetries = options.transientRetries ?? DEFAULT_TRANSIENT_RETRIES;
-	const transientRetriesUsed = new Map<string, number>();
+	let transientRetriesUsed = 0;
 	let retryAccountName: string | undefined;
 
 	for (let attempt = 0; attempt < accounts.length; attempt++) {
@@ -256,10 +253,11 @@ export async function* runFailover<TEvent>(options: FailoverOptions<TEvent>): As
 
 			// A transient failure says nothing about the account, and on the config-dir lane moving
 			// to another account re-sends the whole conversation (senpi#2891): retry it in place first.
-			const used = transientRetriesUsed.get(account.name) ?? 0;
-			if (!visibleDeltaEmitted && isTransient(classification) && used < transientRetries) {
-				transientRetriesUsed.set(account.name, used + 1);
-				const delayMs = (options.transientRetryDelayMs ?? DEFAULT_TRANSIENT_RETRY_DELAY_MS) * 2 ** used;
+			// The budget is per turn, not per account: an outage that fails every account must not
+			// multiply into retries on each of them.
+			if (!visibleDeltaEmitted && isTransient(classification) && transientRetriesUsed < TRANSIENT_RETRIES_PER_TURN) {
+				const delayMs = TRANSIENT_RETRY_DELAY_MS * 2 ** transientRetriesUsed;
+				transientRetriesUsed += 1;
 				try {
 					await (options.sleep ?? abortableSleep)(delayMs, options.signal);
 				} catch {

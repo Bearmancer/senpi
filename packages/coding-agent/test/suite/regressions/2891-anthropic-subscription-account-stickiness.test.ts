@@ -44,6 +44,9 @@ async function storedPool(store: CredentialStore): Promise<AccountSlot[]> {
 
 type Turn = { served: string; attempts: string[]; sleeps: number[] };
 
+let attemptLog: string[] = [];
+let sleepLog: number[] = [];
+
 async function runTurn(
 	store: CredentialStore,
 	now: number,
@@ -52,6 +55,8 @@ async function runTurn(
 ): Promise<Turn> {
 	const attempts: string[] = [];
 	const sleeps: number[] = [];
+	attemptLog = attempts;
+	sleepLog = sleeps;
 	let served = "";
 	const stream = runFailover<AttemptEvent>({
 		accounts: await storedPool(store),
@@ -137,6 +142,19 @@ describe("senpi#2891 a session stays on its account unless the account cannot se
 		expect(turn.attempts).toEqual([home, home, home, other]);
 		expect(turn.sleeps).toEqual([1_000, 2_000]);
 		expect(turn.served).toBe(other);
+	});
+
+	it("spends the transient retry budget once per turn when every account fails", async () => {
+		// given an outage that overloads every account
+		const store = await storeWithPool();
+
+		// when the turn runs
+		const turn = await runTurn(store, 10_000, home, () => "HTTP 529 overloaded").catch(() => undefined);
+
+		// then the session's account is retried twice and the other account is tried once, not twice more
+		expect(turn).toBeUndefined();
+		expect(attemptLog).toEqual([home, home, home, other]);
+		expect(sleepLog).toEqual([1_000, 2_000]);
 	});
 
 	it.each([

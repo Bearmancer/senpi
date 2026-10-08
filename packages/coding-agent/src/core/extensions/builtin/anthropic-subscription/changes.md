@@ -23,7 +23,7 @@
 
 ### What changed
 
-- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/failover.ts`: `runFailover` retries a transient failure (`overloaded`, or a retryable `other`: network errors, `server_error`) on the SAME account up to `DEFAULT_TRANSIENT_RETRIES` (2) times, with a doubling delay from `DEFAULT_TRANSIENT_RETRY_DELAY_MS` (1 s, abortable), before blocking it and rotating. Usage limits, rate limits, auth and billing failures still rotate at once. New options: `transientRetries`, `transientRetryDelayMs`, `sleep`, `signal`.
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/failover.ts`: `runFailover` retries a transient failure (`overloaded`, or a retryable `other`: network errors, `server_error`) on the SAME account with a budget of `TRANSIENT_RETRIES_PER_TURN` (2) per turn, not per account, and a doubling delay from `TRANSIENT_RETRY_DELAY_MS` (1 s, abortable), before blocking it and rotating. Usage limits, rate limits, auth and billing failures still rotate at once. New options: `sleep` (injectable wait) and `signal`.
 - `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/affinity.ts`: `selectAccount` takes `preferredAccount`, the account the session's SDK transcript lives under; it is chosen after a valid pin and before HRW order while it can serve the model.
 - `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/auth-lane.ts`: `AuthenticatedQueryInput.preferredAccount` is passed to selection, and the request signal to `runFailover`.
 - `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/session-stream.ts`: the resident path prefers the live session's or restored binding's account.
