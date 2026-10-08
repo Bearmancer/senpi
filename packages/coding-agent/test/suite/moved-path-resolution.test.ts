@@ -1,3 +1,4 @@
+import { mkdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -8,6 +9,7 @@ import type {
 	CreateAgentSessionRuntimeFactory,
 	CreateAgentSessionRuntimeResult,
 } from "../../src/core/agent-session-runtime.ts";
+import { resolveMovedPath } from "../../src/core/extensions/builtin/moved-path-guard/resolve.ts";
 import { createScheduledJob, listScheduledJobs } from "../../src/core/extensions/builtin/schedule/store.ts";
 import { holdSessionFile, liveSessionHolders } from "../../src/core/session-holders.ts";
 import { ProjectTrustStore } from "../../src/core/trust-manager.ts";
@@ -98,6 +100,19 @@ describe("moved path resolution (#2898)", () => {
 
 		expect(second).toMatchObject({ sessionId: first.sessionId, attached: true });
 		await registry.close(first.sessionId);
+	});
+
+	// Sixth review LOW-3: the synchronous resolver (session and schedule cwd) maps a .git it cannot read (here ELOOP)
+	// to "unknown" like the async probe, so it keeps the remembered re-used answer instead of moving a live worktree.
+	it("a re-used worktree cwd stays put when its .git becomes unreadable", () => {
+		const { layout } = movedSession();
+		mkdirSync(layout.oldWorktree, { recursive: true });
+		writeFileSync(join(layout.oldWorktree, ".git"), "gitdir: /elsewhere/.git/worktrees/w1\n");
+		expect(resolveMovedPath(join(layout.oldWorktree, "src"))).toBe(join(layout.oldWorktree, "src"));
+		rmSync(join(layout.oldWorktree, ".git"));
+		symlinkSync(".git", join(layout.oldWorktree, ".git"));
+
+		expect(resolveMovedPath(join(layout.oldWorktree, "src"))).toBe(join(layout.oldWorktree, "src"));
 	});
 
 	it("a holder claim on the old path is a claim on the new path", async () => {

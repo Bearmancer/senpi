@@ -1,4 +1,4 @@
-import { existsSync, lstatSync, realpathSync } from "node:fs";
+import { accessSync, existsSync, lstatSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { type MovedPath, readJsonFileSync } from "./breadcrumb-trust.ts";
@@ -20,13 +20,27 @@ function canonicalPath(path: string): string {
 	return join(realpathSync(existing), ...missing);
 }
 
+/**
+ * Whether `path` exists, as the async probe answers it (sixth review LOW-3): `false` only for ENOENT and ENOTDIR,
+ * `undefined` for any other error, so an unreadable `.git` keeps the remembered re-used answer instead of overwriting it.
+ */
+function pathExistsSync(path: string): boolean | undefined {
+	try {
+		accessSync(path);
+		return true;
+	} catch (error) {
+		const code = (error as NodeJS.ErrnoException)?.code;
+		return code === "ENOENT" || code === "ENOTDIR" ? false : undefined;
+	}
+}
+
 function answer(step: ResolverStep): unknown {
 	try {
 		if (step.op === "canonical") return canonicalPath(step.path);
 		if (step.op === "json") return readJsonFileSync(step.file);
 		if (step.op === "home") return realpathSync(homedir());
 		if (step.op === "folder") return lstatSync(step.path);
-		return existsSync(step.path);
+		return pathExistsSync(step.path);
 	} catch {
 		return failedReply(step);
 	}
