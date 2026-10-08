@@ -84,4 +84,24 @@ describe("moved-path-guard step timeouts on breadcrumb and .git (#2898)", () => 
 
 		expect(result.outcome).toBe("ok");
 	});
+
+	// Fifth review M-1: a timed-out breadcrumb read never reaches the .git step, so the text fallback itself must honour
+	// the re-used decision this process already holds for the prefix.
+	it("allows a re-used worktree whose breadcrumb read times out after it was found re-used", async () => {
+		const { layout, harness } = await reusedWorktreeSetup();
+		expect(await runTool(harness, "bash", { command: "touch src/a.ts" })).toMatchObject({ outcome: "ok" });
+		stall.breadcrumb = join(layout.oldRoot, "omo-desktop-moved.json");
+
+		const result = await runTool(harness, "bash", { command: "touch src/b.ts" });
+
+		expect(result.outcome).toBe("ok");
+	});
+
+	function reusedWorktreeSetup() {
+		return setup((moved) => {
+			mkdirSync(join(moved.oldWorktree, "src"), { recursive: true });
+			writeFileSync(join(moved.oldWorktree, ".git"), "gitdir: /elsewhere/.git/worktrees/w1\n");
+			return moved.oldWorktree;
+		});
+	}
 });

@@ -48,13 +48,15 @@ export function looksMoved(path: string, platform: PathPlatform = currentPathPla
 
 /**
  * The moved location of `path` by text alone, from breadcrumbs trusted earlier in this process (senpi#2898 re-review
- * M3): used only for paths past a call's probe budget or deadline, so it does no filesystem work. The caller skips
- * prefixes its probe found re-used (their own `.git`), so a re-used worktree is never refused this way.
+ * M3): used only for paths past a call's probe budget or deadline, so it does no filesystem work. A prefix this
+ * process last found re-used (its own `.git`) is skipped, as the caller skips prefixes its own probe found re-used, so
+ * a re-used worktree is never refused this way, also when a breadcrumb read timed out before the `.git` step
+ * (fifth review M-1).
  */
 export function knownMove(path: string, platform: PathPlatform = currentPathPlatform()): MovedPath | undefined {
 	for (const [oldRoot, breadcrumb] of known) {
 		const match = matchMovedPrefix(path, oldRoot, breadcrumb.moved, platform);
-		if (match)
+		if (match && rememberedReused(prefixKey(oldRoot, breadcrumb, match.prefix)) !== true)
 			return { oldRoot, movedTo: breadcrumb.movedTo, mappedPath: join(breadcrumb.movedTo, ...match.remainder) };
 	}
 	return undefined;
