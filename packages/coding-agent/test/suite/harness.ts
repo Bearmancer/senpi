@@ -22,8 +22,7 @@ import type { ExtensionRunner, ExtensionUIContext } from "../../src/core/extensi
 import { convertToLlmForTransport } from "../../src/core/messages.ts";
 import type { ModelRegistry } from "../../src/core/model-registry.ts";
 import { SessionManager } from "../../src/core/session-manager.ts";
-import type { Settings } from "../../src/core/settings-manager.ts";
-import { SettingsManager } from "../../src/core/settings-manager.ts";
+import { type Settings, SettingsManager } from "../../src/core/settings-manager.ts";
 import type { InlineExtension, ResourceLoader } from "../../src/index.ts";
 import { theme } from "../../src/modes/interactive/theme/theme.ts";
 import {

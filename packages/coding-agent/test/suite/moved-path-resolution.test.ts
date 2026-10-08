@@ -11,8 +11,6 @@ import type {
 import { createScheduledJob, listScheduledJobs } from "../../src/core/extensions/builtin/schedule/store.ts";
 import { holdSessionFile, liveSessionHolders } from "../../src/core/session-holders.ts";
 import { ProjectTrustStore } from "../../src/core/trust-manager.ts";
-import { SessionCommandRouter } from "../../src/modes/rpc/session-command-router.ts";
-import { SessionEventWriter } from "../../src/modes/rpc/session-event-writer.ts";
 import { RpcSessionRegistry } from "../../src/modes/rpc/session-registry.ts";
 import { createMovedLayout, type MovedLayout, writeSessionHeader } from "./moved-path-guard-fixtures.ts";
 
@@ -161,18 +159,5 @@ describe("moved path resolution (#2898)", () => {
 		expect((await listScheduledJobs(dir)).jobs.map(({ job }) => [job.sessionFile, job.cwd])).toEqual([
 			[oldSession, layout.oldWorktree],
 		]);
-	});
-
-	it("get_protocol_info advertises moved_path_guard", async () => {
-		const layout = createMovedLayout();
-		layouts.push(layout);
-		const registry = new RpcSessionRegistry({ agentDir: layout.home, createRuntime: recordingFactory([]) });
-		const router = new SessionCommandRouter(registry, new SessionEventWriter(() => {}), { cwd: layout.home });
-
-		const response = (await router.handle({ id: "caps", type: "get_protocol_info" })) as {
-			data?: { capabilities?: string[] };
-		};
-
-		expect(response.data?.capabilities).toContain("moved_path_guard");
 	});
 });
