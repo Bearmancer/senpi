@@ -99,11 +99,10 @@ export function parsedBreadcrumb(dir: string, raw: unknown): MovedBreadcrumb | u
 export function trustedBreadcrumb(
 	dir: string,
 	breadcrumb: MovedBreadcrumb,
-	canonicalMovedTo: string,
 	markerRaw: unknown,
 	platform: PathPlatform,
 ): MovedBreadcrumb | undefined {
-	if (matchMovedPrefix(canonicalMovedTo, dir, [[]], platform))
+	if (matchMovedPrefix(breadcrumb.movedTo, dir, [[]], platform))
 		return ignoreBreadcrumb(breadcrumbFile(dir), "movedTo is the breadcrumb's own folder or inside it");
 	if (parseDesktopHomeId(markerRaw) !== breadcrumb.homeId)
 		return ignoreBreadcrumb(breadcrumbFile(dir), "movedTo holds no desktop home marker with this homeId");

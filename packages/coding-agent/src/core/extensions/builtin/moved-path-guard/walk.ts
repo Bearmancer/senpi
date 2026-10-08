@@ -1,0 +1,61 @@
+import { homedir } from "node:os";
+import { dirname } from "node:path";
+import {
+	breadcrumbFile,
+	gitEntryOf,
+	homeMarkerFile,
+	MAX_HOPS,
+	type MovedPath,
+	movedMatch,
+	parsedBreadcrumb,
+	trustedBreadcrumb,
+} from "./breadcrumb-trust.ts";
+import type { PathPlatform } from "./path-match.ts";
+
+/** One filesystem question the walk asks; the sync and async resolvers answer it with their own I/O. */
+export type ResolverStep =
+	| { readonly op: "canonical"; readonly path: string }
+	| { readonly op: "json"; readonly file: string }
+	| { readonly op: "exists"; readonly path: string };
+
+/** The answer to a step whose I/O failed or timed out: a path that cannot be resolved is not moved. */
+export function failedReply(step: ResolverStep): unknown {
+	return step.op === "exists" ? false : undefined;
+}
+
+type Walk<T> = Generator<ResolverStep, T, unknown>;
+
+function* movedOnce(path: string, platform: PathPlatform): Walk<MovedPath | undefined> {
+	const canonical = (yield { op: "canonical", path }) as string | undefined;
+	if (canonical === undefined) return undefined;
+	const stop = dirname(homedir());
+	for (let dir = dirname(canonical); ; dir = dirname(dir)) {
+		const breadcrumb = parsedBreadcrumb(dir, yield { op: "json", file: breadcrumbFile(dir) });
+		// The listed-prefix match comes first: a breadcrumb that lists nothing this path is under never makes the
+		// walk touch the folder it names.
+		const match = breadcrumb && movedMatch(dir, breadcrumb, canonical, platform);
+		if (
+			match &&
+			trustedBreadcrumb(dir, breadcrumb, yield { op: "json", file: homeMarkerFile(breadcrumb.movedTo) }, platform)
+		) {
+			const gitEntry = gitEntryOf(dir, match.prefix);
+			if (!(gitEntry && (yield { op: "exists", path: gitEntry }))) return match.moved;
+		}
+		if (dir === stop || dirname(dir) === dir) return undefined;
+	}
+}
+
+/**
+ * The single decision both resolvers drive (senpi#2898): canonicalize the path, walk its ancestors for a breadcrumb
+ * listing it, trust that breadcrumb only when its home's marker matches, and follow up to `MAX_HOPS` moves. Every I/O
+ * is a yielded step, so the sync and async resolvers cannot disagree on order or on what a failure means.
+ */
+export function* movedPathWalk(path: string, platform: PathPlatform): Walk<MovedPath | undefined> {
+	let found: MovedPath | undefined;
+	for (let hop = 0; hop < MAX_HOPS; hop++) {
+		const next = yield* movedOnce(found?.mappedPath ?? path, platform);
+		if (!next) break;
+		found = found ? { ...next, oldRoot: found.oldRoot } : next;
+	}
+	return found;
+}

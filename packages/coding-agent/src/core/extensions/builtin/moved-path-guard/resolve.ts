@@ -1,19 +1,8 @@
 import { existsSync, realpathSync } from "node:fs";
-import { homedir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
-import type { MovedBreadcrumb } from "./breadcrumb.ts";
-import {
-	breadcrumbFile,
-	gitEntryOf,
-	homeMarkerFile,
-	MAX_HOPS,
-	type MovedPath,
-	movedMatch,
-	parsedBreadcrumb,
-	readJsonFileSync,
-	trustedBreadcrumb,
-} from "./breadcrumb-trust.ts";
+import { type MovedPath, readJsonFileSync } from "./breadcrumb-trust.ts";
 import { currentPathPlatform, type PathPlatform } from "./path-match.ts";
+import { failedReply, movedPathWalk, type ResolverStep } from "./walk.ts";
 
 export { type MovedPath, movedPathReason } from "./breadcrumb-trust.ts";
 
@@ -27,45 +16,29 @@ function canonicalPath(path: string): string {
 		missing.unshift(basename(existing));
 		existing = parent;
 	}
+	return join(realpathSync(existing), ...missing);
+}
+
+function answer(step: ResolverStep): unknown {
 	try {
-		return join(realpathSync(existing), ...missing);
+		if (step.op === "canonical") return canonicalPath(step.path);
+		if (step.op === "json") return readJsonFileSync(step.file);
+		return existsSync(step.path);
 	} catch {
-		return resolve(path);
-	}
-}
-
-function readTrustedBreadcrumb(dir: string, platform: PathPlatform): MovedBreadcrumb | undefined {
-	const breadcrumb = parsedBreadcrumb(dir, readJsonFileSync(breadcrumbFile(dir)));
-	if (!breadcrumb) return undefined;
-	const marker = readJsonFileSync(homeMarkerFile(breadcrumb.movedTo));
-	return trustedBreadcrumb(dir, breadcrumb, canonicalPath(breadcrumb.movedTo), marker, platform);
-}
-
-function movedOnce(path: string, platform: PathPlatform): MovedPath | undefined {
-	const canonical = canonicalPath(path);
-	const stop = dirname(homedir());
-	for (let dir = dirname(canonical); ; dir = dirname(dir)) {
-		const breadcrumb = readTrustedBreadcrumb(dir, platform);
-		const match = breadcrumb && movedMatch(dir, breadcrumb, canonical, platform);
-		const gitEntry = match && gitEntryOf(dir, match.prefix);
-		if (match && !(gitEntry && existsSync(gitEntry))) return match.moved;
-		if (dir === stop || dirname(dir) === dir) return undefined;
+		return failedReply(step);
 	}
 }
 
 /**
  * Synchronous resolution, only for callers that are synchronous themselves and hold one session path: the registry
  * open, session-holder claims and schedule delivery (senpi#2898). Tool calls use `createMovedPathProbe`, which never
- * blocks the session loop. Discovery reads the filesystem on every call; only parsed files are memoized.
+ * blocks the session loop. Both drive the same walk (`walk.ts`).
  */
 export function findMovedPath(path: string, platform: PathPlatform = currentPathPlatform()): MovedPath | undefined {
-	let found: MovedPath | undefined;
-	for (let hop = 0; hop < MAX_HOPS; hop++) {
-		const next = movedOnce(found?.mappedPath ?? path, platform);
-		if (!next) break;
-		found = found ? { ...next, oldRoot: found.oldRoot } : next;
-	}
-	return found;
+	const walk = movedPathWalk(path, platform);
+	let step = walk.next();
+	while (!step.done) step = walk.next(answer(step.value));
+	return step.value;
 }
 
 export function resolveMovedPath(path: string): string {
