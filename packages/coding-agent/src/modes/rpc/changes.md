@@ -2,7 +2,8 @@
 
 ### What changed
 
-- `packages/coding-agent/src/modes/rpc/session-registry.ts`: the resolved profile is validated again (absolute paths), and an old session path whose moved file does not exist fails `open_failed` naming the new path instead of creating a fresh session there.
+- `packages/coding-agent/src/modes/rpc/session-registry-moved-path.ts` (new): `resolveMovedProfile` resolves `cwd` and `sessionPath`, validates the result like the request (absolute paths), and fails `open_failed` naming the new path when the moved session file does not exist, instead of creating a fresh session there.
+- `packages/coding-agent/src/modes/rpc/session-registry.ts`: `openSession` calls `resolveMovedProfile` after validating the request and before the durable-id scan and the reservation.
 - `packages/coding-agent/src/modes/rpc/session-worker.ts`: `prepare` resolves the requested `cwd` as well, refuses a non-absolute resolved session path, and refuses a moved session file that is gone the same way.
 
 ### Why
@@ -15,7 +16,7 @@ Session open is host-registry behavior that runs before any extension of the ses
 
 ### Expected merge conflict zones
 
-- LOW: the head of `RpcSessionRegistry.openSession`; the `prepare` case of `session-worker.ts`.
+- LOW: one call at the head of `RpcSessionRegistry.openSession`; the `prepare` case of `session-worker.ts`.
 
 ## 2026-10-08 - open_session resolves paths the OmO desktop moved; host capability moved_path_guard (senpi#2898)
 
@@ -24,7 +25,8 @@ Session open is host-registry behavior that runs before any extension of the ses
 - `packages/coding-agent/src/modes/rpc/session-registry.ts`: `openSession` maps `cwd` and `sessionPath` through `resolveMovedPath` (builtin `moved-path-guard`) after validation and before the durable-id scan, the path reservation and the cross-generation claim, so an old spelling of a moved session file is the same reservation as its new one and the session runs in the moved working directory.
 - `packages/coding-agent/src/modes/rpc/session-worker.ts`: the worker's `prepare` resolves `sessionPath` the same way before canonicalizing it, so the key the host reserves is the moved file's. The host loop still never inspects caller paths; the in-worker registry resolves `cwd`.
 - `packages/coding-agent/src/modes/rpc/custom-capability.ts`: new host capability `MOVED_PATH_GUARD_CAPABILITY = "moved_path_guard"`.
-- `packages/coding-agent/src/modes/rpc/session-command-router.ts`: `get_protocol_info` advertises `moved_path_guard`.
+- `packages/coding-agent/src/modes/rpc/host-capabilities.ts` (new): `multiSessionHostCapabilities` owns the multi-session host's `get_protocol_info` capability list, in the same wire order, now including `moved_path_guard`.
+- `packages/coding-agent/src/modes/rpc/session-command-router.ts`: `get_protocol_info` takes its capabilities from `multiSessionHostCapabilities` (the list moved out of the 790-line router unchanged).
 
 ### Why
 

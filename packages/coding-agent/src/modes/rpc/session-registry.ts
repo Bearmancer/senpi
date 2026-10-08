@@ -2,7 +2,6 @@ import { existsSync } from "node:fs";
 import { isAbsolute } from "node:path";
 import { ProviderScope, runWithProviderScope } from "@earendil-works/pi-ai/node/provider-scope";
 import { createAgentSessionRuntime } from "../../core/agent-session-runtime.ts";
-import { resolveMovedPath } from "../../core/extensions/builtin/moved-path-guard/resolve.ts";
 import type { SessionStartEvent } from "../../core/extensions/types.ts";
 import { assertValidSessionId, SessionManager } from "../../core/session-manager.ts";
 import { SESSION_PATH_RETRY_AFTER_MS } from "./host-reservations.ts";
@@ -11,6 +10,7 @@ import { refreshesSessionActivity } from "./session-command-activity.ts";
 import { canonicalSessionPath } from "./session-path-key.ts";
 import { attachToOpenSession } from "./session-registry-attach.ts";
 import { settleClosingReservation, syncRuntimeMetadata } from "./session-registry-claims.ts";
+import { resolveMovedProfile } from "./session-registry-moved-path.ts";
 import { createEntrySwitchSession } from "./session-registry-switch.ts";
 import {
 	frozenProfile,
@@ -98,16 +98,7 @@ export class RpcSessionRegistry {
 
 	async openSession(requested: RpcSessionLaunchProfile, options?: RpcSessionOpenOptions): Promise<OpenRpcSession> {
 		this.validateProfile(requested);
-		// Before the reservation: an old spelling of a path the desktop moved is the same session (senpi#2898).
-		const profile: RpcSessionLaunchProfile = {
-			...requested,
-			cwd: resolveMovedPath(requested.cwd),
-			...(requested.sessionPath ? { sessionPath: resolveMovedPath(requested.sessionPath) } : {}),
-		};
-		this.validateProfile(profile);
-		// A session the desktop moved whose file is gone is reported where it should be, never re-created there.
-		if (profile.sessionPath !== requested.sessionPath && profile.sessionPath && !existsSync(profile.sessionPath))
-			throw new RpcSessionRegistryError("open_failed", `moved session file does not exist: ${profile.sessionPath}`);
+		const profile = resolveMovedProfile(requested, (resolved) => this.validateProfile(resolved));
 		this.syncRuntimeMetadata();
 		const sessionPath = profile.sessionPath ? canonicalSessionPath(profile.sessionPath) : undefined;
 		// Taken SYNCHRONOUSLY, before any await, exactly like the path reservation below: a

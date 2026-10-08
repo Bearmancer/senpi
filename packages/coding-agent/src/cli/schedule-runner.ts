@@ -35,7 +35,7 @@ import {
 	nextRecurringDueAt,
 	type ScheduledJob,
 } from "../core/extensions/builtin/schedule/types.ts";
-import { type DeferProbe, type Delivery, type DeliveryResult, withMovedPaths } from "./schedule-delivery.ts";
+import { type DeferProbe, type Delivery, type DeliveryResult, movedJobPaths } from "./schedule-delivery.ts";
 
 export type RunnerEvent =
 	| {
@@ -152,7 +152,7 @@ async function fireOne(options: RunDueOptions, listed: ScheduledJob): Promise<Ru
 	try {
 		const job = await freshPendingJob(options, listed.id);
 		if (job === undefined) return undefined;
-		const deferReason = await options.shouldDefer?.(withMovedPaths(job));
+		const deferReason = await options.shouldDefer?.({ ...job, ...movedJobPaths(job) });
 		if (deferReason !== undefined)
 			return { event: "deferred", id: job.id, sessionId: job.sessionId, reason: deferReason };
 		return await deliverClaimed(options, job, (pid) => lock.attachDelivery(pid));
@@ -188,15 +188,13 @@ async function deliverClaimed(
 		}
 	}
 	let result: DeliveryResult;
-	const moved = withMovedPaths(job);
 	try {
 		result = await options.deliver(
 			{
 				type: "scheduled_prompt",
 				id: job.id,
 				sessionId: job.sessionId,
-				sessionFile: moved.sessionFile,
-				cwd: moved.cwd,
+				...movedJobPaths(job),
 				prompt: job.prompt,
 				message: formatScheduledMessage(job, firedAt),
 				dueAt: job.dueAt,

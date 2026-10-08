@@ -2,8 +2,8 @@
 
 ### What changed
 
-- `packages/coding-agent/src/cli/schedule-delivery.ts`: new `withMovedPaths(job)` maps a job's `sessionFile` and `cwd` through `resolveMovedPath`.
-- `packages/coding-agent/src/cli/schedule-runner.ts`: the defer probe and the delivered `scheduled_prompt` event see the job through `withMovedPaths`. The job file itself, its re-arm and its settlement keep the stored paths.
+- `packages/coding-agent/src/cli/schedule-delivery.ts`: new `movedJobPaths(job)` maps a job's `sessionFile` and `cwd` through `resolveMovedPath`.
+- `packages/coding-agent/src/cli/schedule-runner.ts`: the defer probe and the delivered `scheduled_prompt` event take the job's paths from `movedJobPaths`. The job file itself, its re-arm and its settlement keep the stored paths.
 
 ### Why
 

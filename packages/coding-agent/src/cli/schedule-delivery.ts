@@ -38,9 +38,8 @@ export type Delivery = (event: ScheduledPromptEvent, context?: DeliveryContext) 
 export type DeferProbe = (job: ScheduledJob) => Promise<string | undefined>;
 
 // A job written before the desktop moved its data home fires against the moved files; its own file keeps the old paths (senpi#2898).
-export function withMovedPaths(job: ScheduledJob): ScheduledJob {
+export function movedJobPaths(job: ScheduledJob): Pick<ScheduledJob, "sessionFile" | "cwd"> {
 	return {
-		...job,
 		sessionFile: job.sessionFile === null ? null : resolveMovedPath(job.sessionFile),
 		cwd: resolveMovedPath(job.cwd),
 	};
