@@ -6,14 +6,13 @@ import {
 	assertNever,
 	LIVE_RENDER_TICK_MS,
 	type PrefixStyle,
-	previewText,
 	type RenderEnvironment,
 	renderPrefixed,
 	type StatusPresentation,
 	spinner,
 	style,
 } from "./render-blocks.ts";
-import { formatThroughputBadge, renderStatusEvents } from "./render-status.ts";
+import { formatThroughputBadge } from "./render-status.ts";
 import { cellOutputSection, cellStatusSection } from "./render-tail.ts";
 import { formatRuntimeBadge } from "./runtime-label.ts";
 import { formatDuration } from "./tool-widgets.ts";
@@ -80,53 +79,82 @@ export function cellElapsedMs(cell: EvalCellResult, environment: RenderEnvironme
 
 // An in-progress row leads with what the cell is doing (senpi#2802). Collapsed, the whole row
 // (icon, headline and every badge) always fits one visual line (senpi#2933 review HIGH-1).
-// Drop order: reset/timeout, then queued-behind/throughput, then the runtime badge, then the
-// headline is cut to its floor (never emptied), and elapsed/duration is dropped last of all,
-// because it is the live signal the user most wants (review MEDIUM-2/3).
+// Drop order: reset/timeout, then queued-behind/throughput, then the runtime badge; the
+// headline is cut to its floor (never emptied) before elapsed is dropped, and only the final
+// pass may drop the base label itself (review MEDIUM-2/3).
 export function headlined(
 	icon: string,
 	summary: string | undefined,
 	code: string | undefined,
 	rest: string,
 	environment: RenderEnvironment,
+	options: { readonly badgelessRest?: string; readonly protectedTail?: string } = {},
 ): string {
-	if (environment.expanded) return `${icon} ${liveHeadline(summary, code, undefined)} · ${rest}`;
-	return fitOneLine(icon, liveHeadline(summary, code, undefined), rest, Math.max(1, environment.width - 3));
+	if (environment.expanded)
+		return `${icon} ${liveHeadline(summary, code, undefined)} · ${rest}${
+			options.protectedTail === undefined ? "" : ` · ${options.protectedTail}`
+		}`;
+	const headline = liveHeadline(summary, code, undefined);
+	const width = Math.max(1, environment.width - 3);
+	// When a badge rides the base label and the full rest cannot fit on one line, the badge
+	// drops before anything else is cut, and the badge-less form is fitted instead (review
+	// MEDIUM-1).
+	const fullTail = options.protectedTail === undefined ? rest : `${rest} · ${options.protectedTail}`;
+	if (
+		options.badgelessRest !== undefined &&
+		options.badgelessRest !== rest &&
+		visibleWidth(`${icon} ${headline} · ${fullTail}`) > width
+	)
+		return fitOneLine(icon, headline, options.badgelessRest, width, options.protectedTail);
+	return fitOneLine(icon, headline, rest, width, options.protectedTail);
 }
 
 const HEADLINE_FLOOR_CELLS = 12;
 
-function fitOneLine(icon: string, headline: string, rest: string, width: number): string {
+function fitOneLine(icon: string, headline: string, rest: string, width: number, protectedTail?: string): string {
 	const lead = `${icon} `;
 	const middle = " · ";
-	const full = `${lead}${headline}${middle}${rest}`;
+	const tail = protectedTail === undefined ? "" : `${middle}${protectedTail}`;
+	const full = `${lead}${headline}${middle}${rest}${tail}`;
 	if (visibleWidth(full) <= width) return full;
-	// 1) Drop the lowest-priority tail segments (reset/timeout are last in the array).
+	// 1) Drop the lowest-priority tail segments (reset/timeout are last in rest), keeping
+	//    elapsed appended, until one fits with the full headline.
 	let keptRest = rest;
 	for (;;) {
 		const cut = keptRest.lastIndexOf(middle);
 		if (cut <= 0) break;
 		const candidate = keptRest.slice(0, cut);
-		if (visibleWidth(`${lead}${headline}${middle}${candidate}`) <= width)
-			return `${lead}${headline}${middle}${candidate}`;
+		if (visibleWidth(`${lead}${headline}${middle}${candidate}${tail}`) <= width)
+			return `${lead}${headline}${middle}${candidate}${tail}`;
 		keptRest = candidate;
 	}
 	// 2) Cut the headline to its floor before dropping elapsed (review MEDIUM-3).
-	const floorBudget = Math.max(4, width - visibleWidth(`${lead}${middle}${keptRest}`) - 1);
-	if (visibleWidth(headline) > Math.max(HEADLINE_FLOOR_CELLS, floorBudget)) {
-		const cut = cellPrefixText(headline, Math.max(HEADLINE_FLOOR_CELLS, floorBudget) - 1);
-		if (visibleWidth(`${lead}${cut}…${middle}${keptRest}`) <= width) return `${lead}${cut}…${middle}${keptRest}`;
+	const floorBudget = Math.max(4, width - visibleWidth(`${lead}${middle}${keptRest}${tail}`) - 1);
+	const floor = Math.max(HEADLINE_FLOOR_CELLS, floorBudget);
+	let cutHeadline = headline;
+	if (visibleWidth(headline) > floor) {
+		const candidate = `${cellPrefixText(headline, floor - 1)}…`;
+		if (visibleWidth(`${lead}${candidate}${middle}${keptRest}${tail}`) <= width) cutHeadline = candidate;
 	}
-	// 3) Only then drop remaining segments (elapsed, then the runtime badge).
-	while (keptRest.includes(middle)) {
-		const cut = keptRest.lastIndexOf(middle);
-		keptRest = keptRest.slice(0, cut);
-		if (visibleWidth(`${lead}${headline}${middle}${keptRest}`) <= width)
-			return `${lead}${headline}${middle}${keptRest}`;
+	// 3) Then drop the remaining rest segments, elapsed still appended.
+	let finalRest = keptRest;
+	while (finalRest.includes(middle)) {
+		const cut = finalRest.lastIndexOf(middle);
+		const candidate = finalRest.slice(0, cut);
+		if (visibleWidth(`${lead}${cutHeadline}${middle}${candidate}${tail}`) <= width) {
+			finalRest = candidate;
+			continue;
+		}
+		break;
 	}
-	const budget = Math.max(4, width - visibleWidth(`${lead}${middle}${keptRest}`) - 1);
-	const shortened = visibleWidth(headline) <= budget ? headline : `${cellPrefixText(headline, budget - 1)}…`;
-	return `${lead}${shortened}${middle}${keptRest}`;
+	if (visibleWidth(`${lead}${cutHeadline}${middle}${finalRest}${tail}`) <= width)
+		return `${lead}${cutHeadline}${middle}${finalRest}${tail}`;
+	// 4) Drop elapsed, then cut the headline to whatever the base label leaves (review MEDIUM-3).
+	if (visibleWidth(`${lead}${cutHeadline}${middle}${finalRest}`) <= width)
+		return `${lead}${cutHeadline}${middle}${finalRest}`;
+	const budget = Math.max(4, width - visibleWidth(`${lead}${middle}${finalRest}`) - 1);
+	const shortened = visibleWidth(cutHeadline) <= budget ? cutHeadline : `${cellPrefixText(cutHeadline, budget - 1)}…`;
+	return `${lead}${shortened}${middle}${finalRest}`;
 }
 
 function cellPrefixText(text: string, cells: number): string {
@@ -154,8 +182,8 @@ export function cellHeader(cell: EvalCellResult, environment: RenderEnvironment,
 		: `eval ${cell.language} ${presentation.label} ${presentation.icon}`;
 	const segments: string[] = [];
 	// The runtime badge is droppable like any badge (review MEDIUM-2): it sits after
-	// queued-behind/throughput so those drop first, and the elapsed segment is last so it is
-	// dropped only after the headline is cut (review MEDIUM-3).
+	// queued-behind/throughput so those drop first. Elapsed is passed separately as the
+	// protected tail, so it is dropped only after the headline is cut (review MEDIUM-3).
 	if (cell.queuedBehind !== undefined && cell.queuedBehind.length > 0)
 		segments.push(`queued behind ${cell.queuedBehind.map(sanitizeTerminalLabel).join(", ")}`);
 	else if (cell.queuedBehind !== undefined && cell.status === "queued")
@@ -163,13 +191,15 @@ export function cellHeader(cell: EvalCellResult, environment: RenderEnvironment,
 	const throughputBadge = badges.throughput === undefined ? undefined : formatThroughputBadge(badges.throughput);
 	if (throughputBadge !== undefined) segments.push(throughputBadge);
 	if (runtimeBadge !== "") segments.push(runtimeBadge.trimStart());
-	const elapsedMs = badges.throughput?.wallDurationMs ?? cellElapsedMs(cell, environment);
-	if (elapsedMs !== undefined) segments.push(formatDuration(elapsedMs));
 	if (badges.reset) segments.push("reset");
 	if (badges.timeout !== undefined) segments.push(`timeout ${badges.timeout}s`);
+	const elapsedMs = badges.throughput?.wallDurationMs ?? cellElapsedMs(cell, environment);
+	const protectedTail = elapsedMs === undefined ? undefined : formatDuration(elapsedMs);
 	const header = leadsWithHeadline(cell.status)
-		? headlined(presentation.icon, cell.summary, cell.code, joinSegments(base, segments), environment)
-		: joinSegments(base, segments);
+		? headlined(presentation.icon, cell.summary, cell.code, joinSegments(base, segments), environment, {
+				protectedTail,
+			})
+		: joinSegments(base, protectedTail === undefined ? segments : [...segments, protectedTail]);
 	return style(environment.theme, presentation.color, header);
 }
 
@@ -231,17 +261,17 @@ function liveCodeWindow(cell: EvalCellResult, environment: RenderEnvironment, wi
 	return windowLines;
 }
 
-// The source lines whose start lies above the first shown row: walk the code's own lines,
-// wrapping each, and count the lines whose visual rows are entirely hidden (review HIGH-B).
+// The source lines whose first visual row lies above the first shown row (review HIGH-B):
+// walk the code's own lines, wrap each, and count a line as hidden as soon as the cut reaches
+// its first row — a line the cut slices through is hidden even though its tail still shows.
 function countHiddenSourceLines(code: string, innerWidth: number, skippedVisual: number): number {
 	if (skippedVisual <= 0) return 0;
 	let consumed = 0;
 	let hidden = 0;
 	for (const sourceLine of code.split("\n")) {
-		const rows = Math.max(1, visualLines(sourceLine, innerWidth).length);
-		if (consumed + rows > skippedVisual) break;
-		consumed += rows;
+		if (consumed >= skippedVisual) break;
 		hidden += 1;
+		consumed += Math.max(1, visualLines(sourceLine, innerWidth).length);
 	}
 	return hidden;
 }
