@@ -1,12 +1,16 @@
+import * as childProcess from "node:child_process";
 import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { readProcessStartMs } from "../../../src/core/extensions/builtin/terminal/process-start-probe.ts";
 import { liveSessionHolders } from "../../../src/core/session-holders.ts";
 import { readProcessStartTime } from "../../../src/modes/app-server/daemon/process.ts";
 import { createSessionPathReservations } from "../../../src/modes/rpc/host-reservations.ts";
 import { createInProcessRig } from "../rpc-inprocess-host-support.ts";
 import { startSessionHolder } from "./issue-2951-holder-support.ts";
+
+vi.mock("node:child_process", { spy: true });
 
 const id = "29510000-0000-4000-8000-000000000002";
 let root: string;
@@ -21,13 +25,23 @@ beforeEach(async () => {
 });
 afterEach(async () => {
 	vi.restoreAllMocks();
+	vi.unstubAllEnvs();
 	await rm(root, { recursive: true, force: true });
 });
 
-it.each([true, false])(
-	"keeps a same-daemon generation's attached=%s claim semantics on an existing file",
-	async (attached) => {
+it.each([
+	{ attached: true, lang: undefined },
+	{ attached: false, lang: undefined },
+	{ attached: true, lang: "ko_KR.UTF-8" },
+	{ attached: false, lang: "ko_KR.UTF-8" },
+])(
+	"keeps a same-daemon generation's attached=$attached claim semantics under LANG=$lang",
+	async ({ attached, lang }) => {
+		if (lang !== undefined) vi.stubEnv("LANG", lang);
+		vi.stubEnv("LC_ALL", undefined);
+		vi.mocked(childProcess.execFile).mockClear();
 		await using holder = await startSessionHolder(file, id, root);
+		expect(await readProcessStartMs(holder.pid)).toBeDefined();
 		const dir = join(root, "daemon");
 		await mkdir(dir);
 		await mkdir(join(dir, "generations", "old"), { recursive: true });
@@ -67,6 +81,12 @@ it.each([true, false])(
 				await rig.send("client", { type: "set_session_name", name: "reclaimed", sessionId, id: "name" }),
 			).not.toMatchObject({ error: "session_held" });
 			expect(delivered).toEqual(["set_session_name"]);
+		}
+		if (process.platform === "darwin") {
+			const queries = vi.mocked(childProcess.execFile).mock.calls.filter(([command]) => command === "ps");
+			expect(queries.length).toBeGreaterThanOrEqual(3);
+			for (const [, , options] of queries)
+				expect(options).toMatchObject({ env: { LC_ALL: "C", LANG: "C", PATH: process.env.PATH } });
 		}
 	},
 );

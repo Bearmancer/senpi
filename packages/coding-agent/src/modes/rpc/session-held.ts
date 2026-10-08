@@ -60,7 +60,12 @@ function readProcessStarts(): Promise<ReadonlyMap<number, number> | undefined> {
 		execFile(
 			command,
 			args,
-			{ timeout: windows ? 5_000 : 1_000, maxBuffer: 4 * 1024 * 1024, windowsHide: true },
+			{
+				timeout: windows ? 5_000 : 1_000,
+				maxBuffer: 4 * 1024 * 1024,
+				windowsHide: true,
+				...(windows ? {} : { env: { ...process.env, LC_ALL: "C", LANG: "C" } }),
+			},
 			(error, stdout) => {
 				if (error) return resolve(undefined);
 				const starts = new Map<number, number>();

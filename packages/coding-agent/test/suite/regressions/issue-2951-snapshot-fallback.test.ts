@@ -90,21 +90,26 @@ it.runIf(process.platform === "linux")(
 	},
 );
 
-it.each(["observation", "claim"] as const)("never treats an unknown %s identity as the daemon family", async (kind) => {
-	await using holder = await startSessionHolder(file, id, root);
-	const daemonDir = join(root, "daemon");
-	const previous = createSessionPathReservations({ daemonDir, instanceId: "previous", pid: holder.pid });
-	await previous.claim(file);
-	if (kind === "claim") {
-		const claims = await readSessionPathClaims(hostDaemonDirectoryPaths(daemonDir).reservationsDir);
-		const claim = claims[0];
-		if (!claim) throw new Error("Claim was not published");
-		await writeFile(claim.file, JSON.stringify({ ...claim.owner, processStartTime: null }));
-	}
-	const current = createSessionPathReservations({ daemonDir, instanceId: "current" });
-	const start = kind === "claim" ? await probes.readProcessStartMs(holder.pid) : undefined;
-	await expect(current.holderPids?.(new Map([[holder.pid, start]]))).resolves.toEqual([]);
-});
+it.each(["observation", "claim", "localized claim"] as const)(
+	"never treats an unknown %s identity as the daemon family",
+	async (kind) => {
+		await using holder = await startSessionHolder(file, id, root);
+		const daemonDir = join(root, "daemon");
+		const previous = createSessionPathReservations({ daemonDir, instanceId: "previous", pid: holder.pid });
+		await previous.claim(file);
+		if (kind !== "observation") {
+			const claims = await readSessionPathClaims(hostDaemonDirectoryPaths(daemonDir).reservationsDir);
+			const claim = claims[0];
+			if (!claim) throw new Error("Claim was not published");
+			const processStartTime =
+				kind === "claim" ? null : "2026\uB144 10\uC6D4 9\uC77C \uAE08\uC694\uC77C 07\uC2DC 36\uBD84 42\uCD08";
+			await writeFile(claim.file, JSON.stringify({ ...claim.owner, processStartTime }));
+		}
+		const current = createSessionPathReservations({ daemonDir, instanceId: "current" });
+		const start = kind !== "observation" ? await probes.readProcessStartMs(holder.pid) : undefined;
+		await expect(current.holderPids?.(new Map([[holder.pid, start]]))).resolves.toEqual([]);
+	},
+);
 
 it.each([
 	{ identity: "134359344000000000", started: 1_791_460_800_000 },

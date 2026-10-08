@@ -143,7 +143,11 @@ export async function readProcessIdentity(
 		execFile(
 			command.executable,
 			command.args,
-			{ windowsHide: true, ...(effectiveTimeoutMs === undefined ? {} : { timeout: effectiveTimeoutMs }) },
+			{
+				windowsHide: true,
+				...(effectiveTimeoutMs === undefined ? {} : { timeout: effectiveTimeoutMs }),
+				...(platform === "win32" ? {} : { env: { ...process.env, LC_ALL: "C", LANG: "C" } }),
+			},
 			(error, stdout) => {
 				if (error) {
 					const code = "code" in error ? error.code : undefined;

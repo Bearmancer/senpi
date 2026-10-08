@@ -18,10 +18,20 @@ async function linuxProcessStartMs(pid: number): Promise<number | undefined> {
 
 function execText(command: string, args: readonly string[]): Promise<string> {
 	return new Promise((resolve, reject) => {
-		execFile(command, [...args], { encoding: "utf8", timeout: 5_000, windowsHide: true }, (error, stdout) => {
-			if (error) reject(error);
-			else resolve(stdout);
-		});
+		execFile(
+			command,
+			[...args],
+			{
+				encoding: "utf8",
+				timeout: 5_000,
+				windowsHide: true,
+				...(command === "ps" ? { env: { ...process.env, LC_ALL: "C", LANG: "C" } } : {}),
+			},
+			(error, stdout) => {
+				if (error) reject(error);
+				else resolve(stdout);
+			},
+		);
 	});
 }
 
