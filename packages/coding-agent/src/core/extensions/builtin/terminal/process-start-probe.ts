@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
 import { readFile } from "node:fs/promises";
+import { processStartTimeMs } from "../../../../modes/app-server/daemon/process.ts";
 
 const LINUX_CLOCK_TICKS_PER_SECOND = 100;
 
@@ -27,15 +28,13 @@ function execText(command: string, args: readonly string[]): Promise<string> {
 async function darwinProcessStartMs(pid: number): Promise<number | undefined> {
 	const text = (await execText("ps", ["-o", "lstart=", "-p", String(pid)])).trim();
 	if (text.length === 0) return undefined;
-	const parsed = new Date(text).getTime();
-	return Number.isFinite(parsed) ? parsed : undefined;
+	return processStartTimeMs(text);
 }
 
 async function windowsProcessStartMs(pid: number): Promise<number | undefined> {
 	const script = `(Get-Process -Id ${pid} -ErrorAction Stop).StartTime.ToUniversalTime().ToString('o')`;
 	const text = (await execText("powershell", ["-NoProfile", "-NonInteractive", "-Command", script])).trim();
-	const parsed = new Date(text).getTime();
-	return Number.isFinite(parsed) ? parsed : undefined;
+	return processStartTimeMs(text);
 }
 
 /**

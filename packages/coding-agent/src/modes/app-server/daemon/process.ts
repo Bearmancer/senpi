@@ -1,5 +1,26 @@
 import { execFile } from "node:child_process";
 
+const WINDOWS_FILETIME_EPOCH = 116444736000000000n;
+export const PROCESS_START_TOLERANCE_MS = 3_000;
+
+/** The daemon's FILETIME identity and ps/ISO start times share one millisecond representation. */
+export function processStartTimeMs(identity: string): number | undefined {
+	const parsed = /^\d+$/.test(identity)
+		? Number((BigInt(identity) - WINDOWS_FILETIME_EPOCH) / 10_000n)
+		: Date.parse(identity);
+	return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+export function sameProcessStartMs(recorded: number | undefined, observed: number | undefined): boolean {
+	return (
+		recorded !== undefined &&
+		observed !== undefined &&
+		Number.isFinite(recorded) &&
+		Number.isFinite(observed) &&
+		Math.abs(recorded - observed) <= PROCESS_START_TOLERANCE_MS
+	);
+}
+
 export interface DaemonPidFile {
 	readonly pid: number;
 	/**

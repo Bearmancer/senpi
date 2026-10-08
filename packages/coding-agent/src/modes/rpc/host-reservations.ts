@@ -22,7 +22,12 @@
 import { createHash } from "node:crypto";
 import { mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { processIsLive, readProcessStartTime } from "../app-server/daemon/process.ts";
+import {
+	processIsLive,
+	processStartTimeMs,
+	readProcessStartTime,
+	sameProcessStartMs,
+} from "../app-server/daemon/process.ts";
 import { createHostDaemonPaths, HOST_DAEMON_DIR_ENV, hostDaemonDirectoryPaths } from "./host-daemon-paths.ts";
 import { parseJson, readFileOrUndefined } from "./host-daemon-state.ts";
 
@@ -160,19 +165,14 @@ export function createSessionPathReservations(options: {
 						if (!observedStarts.has(pid)) return undefined;
 						const observed = observedStarts.get(pid);
 						return owners.some((owner) => {
-							if (owner.processStartTime === null || observed === undefined) return true;
-							const start = /^\d+$/.test(owner.processStartTime)
-								? Number((BigInt(owner.processStartTime) - 116444736000000000n) / 10000n)
-								: Date.parse(owner.processStartTime);
-							// Match lease validation's 3 s tolerance without expanding the supervisor graph.
-							return Math.abs(start - observed) <= 3_000;
+							if (owner.processStartTime === null) return false;
+							return sameProcessStartMs(processStartTimeMs(owner.processStartTime), observed);
 						})
 							? pid
 							: undefined;
 					}
-					if (owners.some((owner) => owner.processStartTime === null)) return pid;
 					const current = await readProcessStartTime(pid, process.platform, 1_000).catch(() => undefined);
-					return current === undefined || owners.some((owner) => owner.processStartTime === current)
+					return current !== undefined && owners.some((owner) => owner.processStartTime === current)
 						? pid
 						: undefined;
 				}),

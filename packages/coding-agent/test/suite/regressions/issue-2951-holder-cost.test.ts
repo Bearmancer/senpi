@@ -1,5 +1,5 @@
 import * as childProcess from "node:child_process";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
@@ -25,6 +25,32 @@ afterEach(async () => {
 	vi.restoreAllMocks();
 	await rm(root, { recursive: true, force: true });
 });
+
+// Control snapshot success; its process-count assertion must not depend on OS query timing.
+async function snapshot(pids: readonly number[]): Promise<void> {
+	if (process.platform === "linux") return;
+	const rows = await Promise.all(
+		pids.map(async (pid) => {
+			const record: unknown = JSON.parse(
+				await readFile(join(root, "session-holders", durableId, `${pid}.json`), "utf8"),
+			);
+			if (
+				typeof record !== "object" ||
+				record === null ||
+				!("processStartedAtMs" in record) ||
+				typeof record.processStartedAtMs !== "number"
+			)
+				throw new Error("Holder identity is absent");
+			return `${pid} ${new Date(record.processStartedAtMs).toISOString()}`;
+		}),
+	);
+	vi.mocked(childProcess.execFile).mockImplementationOnce((...args) => {
+		const callback = args.at(-1);
+		if (typeof callback !== "function") throw new Error("Snapshot callback is absent");
+		callback(null, rows.join("\n"), "");
+		return new childProcess.ChildProcess();
+	});
+}
 
 // senpi#2951: admission cost is bounded by distinct foreign processes, not claim count.
 it.each([1, 10, 30])(
@@ -76,17 +102,19 @@ it("resolves a foreign-looking daemon once, deduplicates its claims and never pr
 	const identity = vi.spyOn(daemonProcess, "readProcessStartTime");
 	const processes = vi.mocked(childProcess.execFile);
 	processes.mockClear();
+	await snapshot([holder.pid]);
 	await rig.send("client", { type: "switch_session", id: "switch", sessionId, sessionPath: file });
 	expect(delivered).toEqual(["switch_session"]);
 	expect(family).toHaveBeenCalledTimes(1);
 	expect(identity).not.toHaveBeenCalled();
-	expect(processes).toHaveBeenCalledTimes(1);
+	expect(processes).toHaveBeenCalledTimes(process.platform === "linux" ? 0 : 1);
 	family.mockClear();
 	processes.mockClear();
+	await snapshot([holder.pid]);
 	expect(await rig.open("another", { sessionPath: file })).toMatchObject({ success: true });
 	expect(family).toHaveBeenCalledTimes(1);
 	expect(identity).not.toHaveBeenCalled();
-	expect(processes).toHaveBeenCalledTimes(1);
+	expect(processes).toHaveBeenCalledTimes(process.platform === "linux" ? 0 : 1);
 });
 
 it("uses one bounded process snapshot for multiple foreign holders and refreshes it for the next command", async () => {
@@ -99,6 +127,7 @@ it("uses one bounded process snapshot for multiple foreign holders and refreshes
 	const processes = vi.mocked(childProcess.execFile);
 	processes.mockClear();
 	for (const id of ["first", "retry"]) {
+		await snapshot([first.pid, second.pid]);
 		const response = await rig.send("client", { type: "set_session_name", id, sessionId, name: "held" });
 		expect(response).toMatchObject({
 			error: "session_held",
@@ -110,12 +139,15 @@ it("uses one bounded process snapshot for multiple foreign holders and refreshes
 			},
 		});
 	}
-	expect(processes).toHaveBeenCalledTimes(2);
+	expect(processes).toHaveBeenCalledTimes(process.platform === "linux" ? 0 : 2);
 	for (const call of processes.mock.calls)
-		expect(call[2]).toMatchObject({ timeout: 1_000, maxBuffer: 4 * 1024 * 1024 });
+		expect(call[2]).toMatchObject({
+			timeout: process.platform === "win32" ? 5_000 : 1_000,
+			maxBuffer: 4 * 1024 * 1024,
+		});
 });
 
-it("reuses the open snapshot but refuses a new foreign lease at publication without another spawn", async () => {
+it("reuses the open snapshot and probes a late foreign pid before refusing its publication", async () => {
 	await using rig = createInProcessRig(root);
 	await rig.open("client", { sessionPath: file });
 	await using daemonHolder = await startSessionHolder(file, durableId, root);
@@ -135,14 +167,17 @@ it("reuses the open snapshot but refuses a new foreign lease at publication with
 	});
 	const processes = vi.mocked(childProcess.execFile);
 	processes.mockClear();
+	await snapshot([daemonHolder.pid]);
 	try {
-		expect(await rig.open("another", { sessionPath: file })).toMatchObject({
+		const response = await rig.open("another", { sessionPath: file });
+		if (!late) throw new Error("Late holder did not start");
+		expect(response).toMatchObject({
 			success: false,
 			error: "session_held",
-			errorData: { holders: [{ pid: expect.any(Number), cwd: root }] },
+			errorData: { holders: [{ pid: late.pid, cwd: root }] },
 		});
 		expect(rig.registry.list()).toMatchObject([{ attachments: 1 }]);
-		expect(processes).toHaveBeenCalledTimes(1);
+		expect(processes).toHaveBeenCalledTimes(process.platform === "linux" ? 0 : 2);
 	} finally {
 		await late?.stop();
 	}
