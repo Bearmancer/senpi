@@ -1,4 +1,6 @@
-import path, { type PlatformPath, posix, win32 } from "node:path";
+import path, { posix, win32 } from "node:path";
+
+type PathRules = typeof posix;
 
 /**
  * Vendored contract: the old-location breadcrumb the OmO desktop leaves at a data root it moved
@@ -35,12 +37,12 @@ function prefixSegments(prefix: unknown): string[] | undefined {
 }
 
 /** Absolute on the host's own rules and already normalized: no `..`, no `.`, no trailing separator. */
-function isNormalizedAbsolute(value: string, host: PlatformPath): boolean {
+function isNormalizedAbsolute(value: string, host: PathRules): boolean {
 	if (!host.isAbsolute(value) || host.normalize(value) !== value) return false;
 	return value === host.parse(value).root || !(value.endsWith("/") || value.endsWith(host.sep));
 }
 
-export function parseMovedBreadcrumb(raw: unknown, host: PlatformPath = path): BreadcrumbParse {
+export function parseMovedBreadcrumb(raw: unknown, host: PathRules = path): BreadcrumbParse {
 	if (typeof raw !== "object" || raw === null) return ignored("not an object");
 	const record = raw as Record<string, unknown>;
 	if (record.kind !== MOVED_BREADCRUMB_KIND) return ignored("foreign kind");
