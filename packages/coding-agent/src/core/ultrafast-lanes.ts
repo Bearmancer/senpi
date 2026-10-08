@@ -8,7 +8,7 @@ import type { ServiceTier } from "./extensions/types.ts";
  */
 const ULTRAFAST_PROVIDERS: ReadonlySet<string> = new Set(["openai", "chatgpt-subscription"]);
 
-const ULTRAFAST_DOCUMENTED_MODEL_ID = "gpt-6-astra";
+const ULTRAFAST_DOCUMENTED_MODEL_IDS: ReadonlySet<string> = new Set(["gpt-6-astra", "gpt-6.1-sol"]);
 
 export function serviceTierForProvider(
 	provider: string | undefined,
@@ -27,6 +27,6 @@ export function ultrafastSelectionWarning(
 	if (!ULTRAFAST_PROVIDERS.has(model.provider)) {
 		return `Ultrafast is only sent to OpenAI and ChatGPT Subscription; ${model.provider}/${model.id} runs at its default tier`;
 	}
-	if (model.id === ULTRAFAST_DOCUMENTED_MODEL_ID) return undefined;
-	return `Ultrafast is documented for GPT-6 Astra only; ${model.provider}/${model.id} may reject or ignore it`;
+	if (ULTRAFAST_DOCUMENTED_MODEL_IDS.has(model.id)) return undefined;
+	return `Ultrafast is documented for GPT-6 Astra and GPT-6.1 Sol; ${model.provider}/${model.id} may reject or ignore it`;
 }
