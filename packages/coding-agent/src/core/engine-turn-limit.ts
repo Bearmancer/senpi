@@ -19,6 +19,12 @@ export interface EngineTurnLimits {
 	readonly maxToolFreePerMinute: number;
 }
 
+/** An engine turn this process started since the user's last message, kept even when the session file refuses writes. */
+export interface EngineTurnStartRecord {
+	readonly at: number;
+	toolUsed: boolean;
+}
+
 export interface EngineTurnStop {
 	readonly reason: EngineTurnStopReason;
 	readonly sinceUserInput: number;
@@ -64,6 +70,7 @@ export function engineTurnStop(
 	entries: readonly SessionEntry[],
 	now: number,
 	limits: EngineTurnLimits,
+	inProcess: readonly EngineTurnStartRecord[] = [],
 ): EngineTurnStop | null {
 	let start = entries.length;
 	while (start > 0 && !isUserMessage(entries[start - 1])) start -= 1;
@@ -83,6 +90,13 @@ export function engineTurnStop(
 		}
 		if (!toolUsed) toolFreeInWindow += 1;
 	}
+	// The session record and this process's own record: the larger count wins, so a file that refuses writes
+	// cannot lift the bound for the process that is running the turns.
+	sinceUserInput = Math.max(sinceUserInput, inProcess.length);
+	toolFreeInWindow = Math.max(
+		toolFreeInWindow,
+		inProcess.filter((record) => !record.toolUsed && now - record.at < ENGINE_TURN_WINDOW_MS).length,
+	);
 	if (limits.maxPerUserInput > 0 && sinceUserInput >= limits.maxPerUserInput) {
 		return { reason: "per-user-input", sinceUserInput, toolFreeInWindow };
 	}

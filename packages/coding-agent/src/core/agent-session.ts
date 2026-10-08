@@ -159,6 +159,7 @@ import {
 	ENGINE_TURN_LIMIT_ENTRY_TYPE,
 	ENGINE_TURN_LIMIT_EVENT,
 	ENGINE_TURN_START_ENTRY_TYPE,
+	type EngineTurnStartRecord,
 	engineTurnLimitNotice,
 	engineTurnStop,
 	isUserDirectedTurn,
@@ -1091,6 +1092,7 @@ export class AgentSession {
 	private _sessionStartDispatching = false;
 	/** User-abort generation at the start of an idle trigger turn's awaited admission hooks. */
 	private _triggerTurnAdmissionAbortGeneration: number | undefined;
+	private _engineTurnStarts: EngineTurnStartRecord[] = [];
 	private _nextInputId = 0;
 	private _idleWaitPromise: Promise<void> | undefined;
 	private _resolveIdleWait: (() => void) | undefined;
@@ -3181,6 +3183,7 @@ export class AgentSession {
 
 		// Handle session persistence
 		if (event.type === "message_end") {
+			this._observeEngineTurnMessage(event.message);
 			let entryId: string | undefined;
 			try {
 				// Check if this is a custom message from extensions
@@ -5637,7 +5640,7 @@ export class AgentSession {
 					this.agent.steer(appMessage);
 				}
 			} else if (options?.triggerTurn && this._stopEngineTurn(message.customType)) {
-				this._appendCustomMessage(appMessage);
+				this._recordRefusedEngineTurnMessage(appMessage);
 			} else if (options?.triggerTurn) {
 				finishSessionWork ??= this._sessionWorkBarrier.begin();
 				const environmentContext = this._pendingEnvironmentContextMessage();
@@ -5684,13 +5687,7 @@ export class AgentSession {
 				} finally {
 					this._triggerTurnAdmissionAbortGeneration = undefined;
 				}
-				if (!isUserDirectedTurn(message.customType)) {
-					this._emitEntryAppended(
-						this.sessionManager.appendCustomEntry(ENGINE_TURN_START_ENTRY_TYPE, {
-							customType: message.customType,
-						}),
-					);
-				}
+				if (!isUserDirectedTurn(message.customType)) this._recordEngineTurnStart(message.customType);
 				await this._promptAgent(messages, deferredTurnClaim);
 			} else if (this.isStreaming) {
 				this._pendingCustomMessages.push(appMessage);
@@ -5708,12 +5705,52 @@ export class AgentSession {
 	 * exceed the engine-wide bound is not started: the message is still recorded, and the stop is recorded,
 	 * emitted and shown (senpi#2967).
 	 */
+	/**
+	 * The engine-turn bound's bookkeeping must never stop a turn: a session file that refuses the write (read-only,
+	 * full disk) only loses the count, as the turn's own persistence reports the failure (senpi#2967).
+	 */
+	private _recordEngineTurnStart(customType: string): void {
+		this._engineTurnStarts.push({ at: Date.now(), toolUsed: false });
+		try {
+			this._emitEntryAppended(this.sessionManager.appendCustomEntry(ENGINE_TURN_START_ENTRY_TYPE, { customType }));
+		} catch {
+			return;
+		}
+	}
+
+	/** A refused engine turn still records its message and settles a cross-session delivery it carries. */
+	private _recordRefusedEngineTurnMessage(appMessage: CustomMessage): void {
+		try {
+			this._appendCustomMessage(appMessage);
+			this.externalAdmission.observePersisted(appMessage);
+		} catch (error) {
+			this.externalAdmission.observeRefused(appMessage, error instanceof Error ? error.message : String(error));
+		}
+	}
+
+	/** Keeps this process's engine-turn record: a user message clears it, a tool call marks the running engine turn. */
+	private _observeEngineTurnMessage(message: AgentMessage): void {
+		if (message.role === "user" || (message.role === "custom" && isUserDirectedTurn(message.customType))) {
+			this._engineTurnStarts = [];
+			return;
+		}
+		const running = this._engineTurnStarts.at(-1);
+		if (
+			running !== undefined &&
+			message.role === "assistant" &&
+			message.content.some((block) => block.type === "toolCall")
+		) {
+			running.toolUsed = true;
+		}
+	}
+
 	private _stopEngineTurn(customType: string): boolean {
 		if (isUserDirectedTurn(customType)) return false;
 		const stop = engineTurnStop(
 			this.sessionManager.getEntries(),
 			Date.now(),
 			this.settingsManager.getEngineTurnSettings(),
+			this._engineTurnStarts,
 		);
 		if (stop === null) return false;
 		const details = { customType, ...stop, at: Date.now() };

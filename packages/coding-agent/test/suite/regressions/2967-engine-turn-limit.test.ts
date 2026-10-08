@@ -1,3 +1,4 @@
+import { chmodSync } from "node:fs";
 import { fauxAssistantMessage, fauxText, fauxToolCall } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { afterEach, describe, expect, it } from "vitest";
@@ -22,6 +23,27 @@ function selfContinuing(customType: string, attempts: number, registerWork = fal
 		}
 		pi.on("agent_settled", () => {
 			if (sent >= attempts) return;
+			sent += 1;
+			pi.sendMessage({ customType, content: "continue", display: false }, { triggerTurn: true });
+		});
+	};
+}
+
+function armedByInput(customType: string, armText: string, attempts: number, onArmedTurnStart: () => void) {
+	return (pi: ExtensionAPI): void => {
+		let armed = false;
+		let sent = 0;
+		let started = false;
+		pi.on("input", (event) => {
+			if (event.text === armText) armed = true;
+		});
+		pi.on("turn_start", () => {
+			if (!armed || started) return;
+			started = true;
+			onArmedTurnStart();
+		});
+		pi.on("agent_settled", () => {
+			if (!armed || sent >= attempts) return;
 			sent += 1;
 			pi.sendMessage({ customType, content: "continue", display: false }, { triggerTurn: true });
 		});
@@ -142,4 +164,37 @@ describe("senpi#2967 engine-originated turns are bounded for every source", () =
 		expect(harness.faux.getCallLog().length).toBeGreaterThan(callsAtStop);
 		expect(limitEntries(harness)).toHaveLength(1);
 	});
+
+	it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
+		"still stops at the cap when the session file refuses writes",
+		async () => {
+			// given a source that keeps starting tool-free turns, and a session file that refuses every write once the
+			// user's message is in
+			let lockSessionFile = (): void => undefined;
+			harness = await createHarness({
+				extensionFactories: [armedByInput("ttsr-injection", "go", AUTO_TURN_ATTEMPTS, () => lockSessionFile())],
+				persistSession: true,
+			});
+			harness.setResponses(
+				Array.from({ length: AUTO_TURN_ATTEMPTS + 2 }, () => fauxAssistantMessage([fauxText("the same reply")])),
+			);
+			await harness.session.prompt("seed");
+			await drain(harness);
+			const sessionFile = harness.sessionManager.getSessionFile();
+			if (sessionFile === undefined) throw new Error("expected a persisted session file");
+			lockSessionFile = () => chmodSync(sessionFile, 0o444);
+			const callsBefore = harness.faux.getCallLog().length;
+
+			// when one more user message arrives
+			try {
+				await expect(harness.session.prompt("go")).rejects.toThrow(/EACCES/);
+				await drain(harness);
+			} finally {
+				chmodSync(sessionFile, 0o644);
+			}
+
+			// then the in-process record still stops it at the per-minute cap
+			expect(harness.faux.getCallLog().length - callsBefore).toBeLessThanOrEqual(1 + 12);
+		},
+	);
 });
