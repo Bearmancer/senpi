@@ -19,6 +19,10 @@ const argv = process.argv.slice(2);
 const evidenceSlug = argv.includes("--evidence") ? argv[argv.indexOf("--evidence") + 1] : undefined;
 const API = "openai-completions";
 const WORKTREE = join("worktrees", "demo-project", "feature-1");
+// Third review M-a: a listed prefix whose old folder still exists but cannot be searched, so a lookup under it fails.
+const UNSEARCHABLE = join("worktrees", "slow-project", "feature-2");
+// Third review M-b: a listed worktree a later T3 Code checkout reused (its own .git): never moved.
+const REUSED = join("worktrees", "reused-project", "feature-3");
 
 function seedMovedHome(home) {
 	const oldHome = join(home, ".t3");
@@ -42,12 +46,16 @@ function seedMovedHome(home) {
 				homeId: "qa-home-0001",
 				movedAt: "2026-10-08T00:00:00.000Z",
 				byVersion: "qa",
-				moved: [WORKTREE, "userdata/omo-sessions"],
+				moved: [WORKTREE, "userdata/omo-sessions", UNSEARCHABLE, REUSED],
 			},
 			null,
 			2,
 		)}\n`,
 	);
+	mkdirSync(join(oldHome, REUSED), { recursive: true });
+	writeFileSync(join(oldHome, REUSED, ".git"), "gitdir: /elsewhere/.git/worktrees/feature-3\n");
+	mkdirSync(join(oldHome, "worktrees", "slow-project"), { recursive: true });
+	chmodSync(join(oldHome, "worktrees", "slow-project"), 0o000);
 	return { oldHome, newHome };
 }
 
@@ -104,6 +112,16 @@ async function selfTest() {
 		// Review M3: eval code that writes by the old path itself, with no nested tool call.
 		{ toolCalls: [{ name: "eval", args: { language: "js", summary: "direct fs write by the old path", code: `const fs = await import("node:fs"); fs.writeFileSync("${oldWorktree}/eval.txt", "x"); return "wrote";` } }] },
 		{ toolCalls: [{ name: "write", args: { path: join(repo, "src", "planted.txt"), content: "repo file\n" } }] },
+		// Third review M-a: a moved path whose own lookup fails is still refused.
+		{ toolCalls: [shellInEval(`touch ${join(oldHome, UNSEARCHABLE, "slow.txt")}`)] },
+		// Third review M-b: 70 paths inside the re-used worktree, past the per-call probe budget.
+		{
+			toolCalls: [
+				shellInEval(
+					`touch ${Array.from({ length: 70 }, (_, index) => join(oldHome, REUSED, `f${index}.ts`)).join(" ")} && echo reused-ok`,
+				),
+			],
+		},
 		// Re-review H-new: a path the guard cannot resolve (not searchable here) never fails the call.
 		{ toolCalls: [shellInEval(`ls ${join(box.dir, "locked", "inner", "foo")} 2>/dev/null; echo ran-after-unreadable`)] },
 		{ text: "done" },
@@ -135,6 +153,14 @@ async function selfTest() {
 	checks.ok("H1: a planted breadcrumb without a desktop marker is ignored", existsSync(join(repo, "src", "planted.txt")) && !existsSync(join(elsewhere, "src")), `repo=${existsSync(join(repo, "src", "planted.txt"))} redirected=${existsSync(join(elsewhere, "src"))}`);
 	const ranUnreadable = results.find((text) => text.includes("ran-after-unreadable"));
 	checks.ok("H-new: a command naming an unreadable path still runs", ranUnreadable !== undefined, ranUnreadable?.slice(0, 120) ?? "call failed");
+	const refusedSlow = results.find((text) => /moved/i.test(text) && text.includes(join(newHome, UNSEARCHABLE, "slow.txt")));
+	checks.ok("M-a: a moved path whose own lookup fails is still refused", refusedSlow !== undefined, refusedSlow?.slice(0, 140) ?? "no refusal");
+	const reusedOk = results.find((text) => text.includes("reused-ok"));
+	checks.ok(
+		"M-b: 70 paths in a re-used worktree are allowed",
+		reusedOk !== undefined && existsSync(join(oldHome, REUSED, "f69.ts")),
+		reusedOk?.slice(0, 120) ?? results.find((text) => text.includes(REUSED))?.slice(0, 160) ?? "call refused",
+	);
 	checks.ok("the moved home's existing file is untouched", readFileSync(join(newWorktree, "notes.txt"), "utf8") === "moved content\n", "");
 
 	if (evidenceSlug !== undefined) {
@@ -146,6 +172,7 @@ async function selfTest() {
 	if (result.code !== 0) process.stderr.write(`\n--- stderr tail ---\n${result.stderr.slice(-800)}\n`);
 	await server.stop();
 	chmodSync(join(box.dir, "locked"), 0o700);
+	chmodSync(join(oldHome, "worktrees", "slow-project"), 0o700);
 	box.cleanup();
 	checkRealAuthUnchanged(checks, guard);
 	process.exit(checks.finish() ? 0 : 1);
