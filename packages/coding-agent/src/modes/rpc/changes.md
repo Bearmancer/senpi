@@ -2964,6 +2964,25 @@ cannot be connected to at all takes the stop-and-start path.
 
 # changes
 
+## 2026-10-08 - RPC host launches share the runtime argument filter (senpi#2599)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-exec-argv.ts`: moved the existing filter to `src/utils/runtime-exec-argv.ts`.
+- `packages/coding-agent/src/modes/rpc/host-launch.ts` and `packages/coding-agent/src/modes/rpc/host-lifecycle-launch.ts`: import that shared filter with unchanged host launch behavior.
+
+### Why
+
+Other native script launchers need the same entry-mode boundary, and keeping a second filter would let Node and Bun behavior drift.
+
+### Why an extension could not handle it
+
+The host supervisor and child are spawned before either process loads extensions.
+
+### Expected merge conflict zones
+
+- LOW: host launch imports and runtime argv construction.
+
 ## 2026-09-14 - Publish RPC close only after registry removal (#1656)
 
 ### What changed

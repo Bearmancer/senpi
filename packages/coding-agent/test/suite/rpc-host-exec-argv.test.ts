@@ -4,9 +4,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
-import { rpcHostExecArgv } from "../../src/modes/rpc/host-exec-argv.ts";
 import { defaultHostLaunch } from "../../src/modes/rpc/host-launch.ts";
 import { INTERNAL_SUPERVISOR_FLAG, resolveHostChildLaunch } from "../../src/modes/rpc/host-lifecycle.ts";
+import { runtimeExecArgv } from "../../src/utils/runtime-exec-argv.ts";
 
 const bunAvailable = spawnSync("bun", ["--version"], { encoding: "utf8" }).status === 0;
 const originalExecArgv = process.execArgv;
@@ -94,11 +94,11 @@ describe("RPC host runtime arguments", () => {
 	});
 
 	it.each(bunCases)("filters Bun $name", ({ input, expected }) => {
-		expect(rpcHostExecArgv(input, true)).toEqual(expected);
+		expect(runtimeExecArgv(input, true)).toEqual(expected);
 	});
 
 	it("keeps single-dash V8 flags and glued-looking tokens under Node", () => {
-		expect(rpcHostExecArgv(["-expose-gc", "-predictable", "-ep", "--eval", "startHost()"], false)).toEqual([
+		expect(runtimeExecArgv(["-expose-gc", "-predictable", "-ep", "--eval", "startHost()"], false)).toEqual([
 			"-expose-gc",
 			"-predictable",
 			"-ep",

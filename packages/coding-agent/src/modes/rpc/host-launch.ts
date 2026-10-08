@@ -10,8 +10,8 @@ import { existsSync } from "node:fs";
 import { basename, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { isBunBinary } from "../../config.ts";
+import { runtimeExecArgv } from "../../utils/runtime-exec-argv.ts";
 import { CUSTOM_UNSUPPORTED_CAPABILITY, EXTENSION_EVENTS_CAPABILITY } from "./custom-capability.ts";
-import { rpcHostExecArgv } from "./host-exec-argv.ts";
 import { INTERNAL_SUPERVISOR_FLAG, resolveCliMainPath } from "./host-lifecycle.ts";
 
 /**
@@ -39,7 +39,7 @@ export function defaultHostLaunch(
 	sibling: string | null = resolveHostLifecycleEntryPath() ?? null,
 ): { command: string; args: string[] } {
 	if (compiled) return { command: process.execPath, args: [INTERNAL_SUPERVISOR_FLAG, ...supervisorArgs] };
-	if (sibling !== null) return { command: process.execPath, args: [...rpcHostExecArgv(), sibling, ...supervisorArgs] };
+	if (sibling !== null) return { command: process.execPath, args: [...runtimeExecArgv(), sibling, ...supervisorArgs] };
 	// Bundled, the host-lifecycle entry beside us is a bundler chunk, not the standalone
 	// program the unbundled tree ships: run directly it returns immediately without ever
 	// listening, so ensure saw "exited with code 0 before answering get_protocol_info".
@@ -48,7 +48,7 @@ export function defaultHostLaunch(
 	// counting "..", which lands on the package root once this module is bundled.
 	return {
 		command: process.execPath,
-		args: [...rpcHostExecArgv(), resolveCliMainPath(), INTERNAL_SUPERVISOR_FLAG, ...supervisorArgs],
+		args: [...runtimeExecArgv(), resolveCliMainPath(), INTERNAL_SUPERVISOR_FLAG, ...supervisorArgs],
 	};
 }
 

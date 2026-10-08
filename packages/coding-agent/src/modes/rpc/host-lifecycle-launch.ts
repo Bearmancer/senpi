@@ -6,9 +6,9 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import { extname } from "node:path";
 import { isBunBinary } from "../../config.ts";
+import { runtimeExecArgv } from "../../utils/runtime-exec-argv.ts";
 import { resolveCliMainPath } from "./host-cli-entry.ts";
 import { HOST_DAEMON_DIR_ENV } from "./host-daemon-paths.ts";
-import { rpcHostExecArgv } from "./host-exec-argv.ts";
 import { HOST_INSTANCE_ID_ENV } from "./host-identity-env.ts";
 import {
 	HOST_CLEANUP_PATHS_ENV,
@@ -154,7 +154,7 @@ export function resolveHostChildLaunch(
 	return {
 		command: process.execPath,
 		args: [
-			...(compiled ? [] : [...rpcHostExecArgv(), resolveCliMainPath()]),
+			...(compiled ? [] : [...runtimeExecArgv(), resolveCliMainPath()]),
 			"--mode",
 			"rpc",
 			"--multi-session",
