@@ -85,6 +85,26 @@ export function demoteUnavailableToolReferences(params: MessageCreateParamsStrea
 
 	let changed = false;
 	const availableToolNames = [...available];
+	// A native search pair whose every reference stopped resolving is demoted as a
+	// unit: the result decides, and its `server_tool_use` follows. The pair can span
+	// two assistant messages (a deferred server tool resumes in the continuation), so
+	// the decision is collected over the whole request before any message is rewritten.
+	const droppedSearchUseIds = new Set<string>();
+	const droppedSearchNames = new Map<string, string[]>();
+	for (const message of messages) {
+		if (message.role !== "assistant" || !Array.isArray(message.content)) continue;
+		for (const block of message.content) {
+			if (!isNativeToolSearchResultBlock(block)) continue;
+			const names = block.content.tool_references
+				.filter((item): item is Record<string, unknown> => isRecord(item) && item.type === "tool_reference")
+				.map((item) => (typeof item.tool_name === "string" ? item.tool_name : ""));
+			if (names.length > 0 && names.every((name) => resolve(name) === undefined)) {
+				droppedSearchUseIds.add(block.tool_use_id);
+				droppedSearchNames.set(block.tool_use_id, names);
+			}
+		}
+	}
+
 	const seenDemotedCallNames = new Set<string>();
 	const rewrittenMessages: MessageParam[] = [];
 	for (const message of messages) {
@@ -93,22 +113,6 @@ export function demoteUnavailableToolReferences(params: MessageCreateParamsStrea
 			continue;
 		}
 		let messageChanged = false;
-		// A native search pair whose every reference stopped resolving is demoted
-		// as a unit: the result decides, and its `server_tool_use` follows.
-		const droppedSearchUseIds = new Set<string>();
-		const droppedSearchNames = new Map<string, string[]>();
-		if (message.role === "assistant") {
-			for (const block of message.content) {
-				if (!isNativeToolSearchResultBlock(block)) continue;
-				const names = block.content.tool_references
-					.filter((item): item is Record<string, unknown> => isRecord(item) && item.type === "tool_reference")
-					.map((item) => (typeof item.tool_name === "string" ? item.tool_name : ""));
-				if (names.length > 0 && names.every((name) => resolve(name) === undefined)) {
-					droppedSearchUseIds.add(block.tool_use_id);
-					droppedSearchNames.set(block.tool_use_id, names);
-				}
-			}
-		}
 		const content: ContentBlockParam[] = [];
 		for (const block of message.content) {
 			if (message.role === "assistant" && isRecord(block) && block.type === "tool_use") {
@@ -180,7 +184,9 @@ export function demoteUnavailableToolReferences(params: MessageCreateParamsStrea
 			}
 			content.push(block);
 		}
-		if (content.length === 0) {
+		// Only a message this pass emptied is dropped; a message that arrived empty (a per-message
+		// effort marker carries `content: []` by design) passes through untouched (senpi#2912).
+		if (messageChanged && content.length === 0) {
 			changed = true;
 			continue;
 		}

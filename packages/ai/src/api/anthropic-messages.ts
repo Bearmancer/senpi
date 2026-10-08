@@ -297,6 +297,7 @@ const ADAPTIVE_THINKING_MODEL_MARKERS = [
 	"opus-5",
 	"sonnet-4-6",
 	"sonnet-5",
+	"haiku-5-5",
 	"fable-5",
 	"mythos-5",
 ] as const;
@@ -309,14 +310,20 @@ const NATIVE_XHIGH_EFFORT_MODEL_MARKERS = [
 	"opus-4-8",
 	"opus-5",
 	"sonnet-5",
+	"haiku-5-5",
 	"fable-5",
 	"mythos-5",
 ] as const;
 /**
- * Adaptive families that reject `thinking: {type: "disabled"}` outright (verified 400:
- * `"thinking.type.disabled" is not supported for this model`). The generated catalog also encodes
- * this as `compat.supportsDisabledThinking: false`, but `models.json` entries and third-party
- * gateway rows carry no generated compat, so the family fact has to live here as well.
+ * Families senpi never sends `thinking: {type: "disabled"}` to. Fable 5, Opus 5.5 and Sonnet 5.5 reject it
+ * outright (verified live 400: `"thinking.type.disabled" is not supported for this model`); Mythos 5 is
+ * listed by family with Fable. Claude Haiku 5.5 is listed by choice, not because it rejects `disabled`: its
+ * effort docs accept `disabled` at effort `high` or below (400 only at `xhigh` / `max`) and reject a
+ * differing per-message effort while disabled, so a real thinking-off needs marker handling first
+ * (senpi#2927). Until then a thinking-off turn sends no `thinking` and effort `low`, which is valid on all of
+ * them. The generated catalog also encodes this as `compat.supportsDisabledThinking: false`, but
+ * `models.json` entries and third-party gateway rows carry no generated compat, so the family fact has to
+ * live here as well.
  */
 const DISABLED_THINKING_REJECTING_MODEL_MARKERS = [
 	"fable-5",
@@ -325,6 +332,8 @@ const DISABLED_THINKING_REJECTING_MODEL_MARKERS = [
 	"opus-5.5",
 	"sonnet-5-5",
 	"sonnet-5.5",
+	"haiku-5-5",
+	"haiku-5.5",
 ] as const;
 const UNSUPPORTED_NATIVE_COMPUTER_TOOL_MODEL_MARKERS = [
 	"opus-4-6",
@@ -1309,7 +1318,7 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 	const currentTools = getCurrentTools(normalizedContext.messages);
 
 	(async () => {
-		const providerThinkingLevel = model.compat?.supportsMidConvoEffort ? (options?.effort ?? "high") : undefined;
+		const providerThinkingLevel = managedEffortForRequest(model, options);
 		const output: AssistantMessage = {
 			role: "assistant",
 			content: [],
@@ -1884,6 +1893,31 @@ function cannotDisableThinking(
 	return matchesModelMarker(model, DISABLED_THINKING_REJECTING_MODEL_MARKERS);
 }
 
+/**
+ * Effort a per-message-effort request runs at, which is also the active marker and the level recorded
+ * on the reply: the caller's effort with thinking on, `low` for a thinking-off turn on a family that
+ * cannot disable thinking, and none when thinking is actually disabled (senpi#2912).
+ */
+function managedEffortForRequest(
+	model: Model<"anthropic-messages">,
+	options: AnthropicOptions | undefined,
+): AnthropicEffort | undefined {
+	if (model.compat?.supportsMidConvoEffort !== true) return undefined;
+	if (options?.thinkingEnabled === false) {
+		return cannotDisableThinking(model, getAnthropicCompat(model)) ? "low" : undefined;
+	}
+	return options?.effort ?? "high";
+}
+
+function isEffortMarker(message: MessageParam): boolean {
+	return (
+		message.role === "system" &&
+		Array.isArray(message.content) &&
+		message.content.length === 0 &&
+		(message as { output_config?: { effort?: unknown } }).output_config?.effort !== undefined
+	);
+}
+
 function disableThinkingForRequest(
 	params: MessageCreateParamsStreaming,
 	model: Model<"anthropic-messages">,
@@ -1899,6 +1933,8 @@ function disableThinkingForRequest(
 		return;
 	}
 	params.thinking = { type: "disabled" };
+	// Per-message effort is rejected alongside disabled thinking (senpi#1399).
+	params.messages = params.messages.filter((message) => !isEffortMarker(message));
 }
 
 function supportsAdaptiveThinking(model: Model<"anthropic-messages">): boolean {
@@ -2276,7 +2312,7 @@ function buildParams(
 		deferredTools = [];
 	}
 	const deferredToolNames = new Set(deferredTools.map((tool) => normalizeToolName(tool.name)));
-	const activeEffort = options?.effort ?? "high";
+	const activeEffort = managedEffortForRequest(model, options) ?? "high";
 	const betaFeatures = getBetaFeatures(model, context, isOAuthToken, nativeToolChanges, options);
 	const convertedMessages = convertMessages(
 		conversationMessages,
@@ -2399,8 +2435,9 @@ function buildParams(
 	}
 
 	// Managed effort models always use adaptive thinking so prefix mismatches can
-	// be dropped instead of surfacing as persistent 400 responses. Thinking-off is
-	// handled before this managed branch because these models accept `disabled`.
+	// be dropped instead of surfacing as persistent 400 responses. A thinking-off turn
+	// skips this branch: `disableThinkingForRequest` sends `disabled` where the family
+	// accepts it and pins effort `low` where it does not (Opus/Sonnet/Haiku 5.5, Fable, Mythos).
 	if (model.compat?.supportsMidConvoEffort === true && options?.thinkingEnabled !== false) {
 		params.thinking = {
 			type: "adaptive",

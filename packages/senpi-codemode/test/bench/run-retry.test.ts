@@ -1,11 +1,16 @@
-import { availableParallelism } from "node:os";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { BlockAttempt } from "../../scripts/bench-block.ts";
 import { decide } from "../../scripts/bench-compare.ts";
-import { type RunPlan, runBlocks, SPIKE_RETRIES } from "../../scripts/bench-run.ts";
+import { type RunPlan, runBlocks, SPIKE_RETRIES, settleTarget } from "../../scripts/bench-run.ts";
 import type { RuntimeReport } from "../../scripts/bench-worker.ts";
 
 const attempts = vi.hoisted(() => ({ queue: [] as BlockAttempt[] }));
+const host = vi.hoisted(() => ({ cores: 14 }));
+
+vi.mock("node:os", async (original) => ({
+	...(await original<typeof import("node:os")>()),
+	availableParallelism: () => host.cores,
+}));
 
 vi.mock("../../scripts/bench-block.ts", async (original) => ({
 	...(await original<typeof import("../../scripts/bench-block.ts")>()),
@@ -18,6 +23,7 @@ vi.mock("../../scripts/bench-block.ts", async (original) => ({
 
 afterEach(() => {
 	attempts.queue = [];
+	host.cores = 14;
 });
 
 const report = (marker: number): RuntimeReport => ({
@@ -93,7 +99,7 @@ describe("per-block spike retry (senpi#2909)", () => {
 		// When both blocks run.
 		const run = await runBlocks({ ...plan(settle), blocks: 2 });
 		// Then the retry waited for block 1's calm start load (30 + 5), not the spiking start load (95 + 5).
-		expect(settle).toHaveBeenCalledWith(Math.max(availableParallelism(), 35));
+		expect(settle).toHaveBeenCalledWith(35);
 		expect(run.blocks.map((block) => block.loadavg[0])).toEqual([30, 31]);
 	});
 
@@ -122,5 +128,24 @@ describe("per-block spike retry (senpi#2909)", () => {
 		expect(run.failures).toEqual([
 			`host load spike in block 1: discarded after ${SPIKE_RETRIES + 1} attempts (peaks 95.00, 94.00, 93.00, 92.00 > 80)`,
 		]);
+	});
+
+	it("never waits for a load at or above the refusal ceiling (senpi#2922)", () => {
+		// Given a calm level near the ceiling (a kept block that started at load 76.6).
+		// Then the retry waits for a load under 80 with margin, not 76.6 + 5 = 81.6, which a retry would start into.
+		expect(settleTarget(76.6)).toBe(70);
+		expect(settleTarget(120)).toBe(70);
+		// And a calm level well under the cap keeps its own target.
+		expect(settleTarget(30)).toBe(35);
+	});
+
+	it("caps the target even when the host has more cores than the cap (senpi#2922)", () => {
+		// Given a 128-core host, whose contamination ceiling alone (128) is far above the refusal line.
+		host.cores = 128;
+		// Then the cap still wins: a target of 128 would end the wait at once, the #2922 no-op.
+		expect(settleTarget(30)).toBe(70);
+		// And under the cap the core-count floor still applies.
+		host.cores = 40;
+		expect(settleTarget(10)).toBe(40);
 	});
 });

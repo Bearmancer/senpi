@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { normalizeContext } from "@earendil-works/pi-ai";
+import { calculateCost, normalizeContext } from "@earendil-works/pi-ai";
 import type { AnthropicMessagesCompat, Api, Model, OpenAICompletionsCompat } from "@earendil-works/pi-ai/compat";
 import { getApiProvider, getSupportedThinkingLevels } from "@earendil-works/pi-ai/compat";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
@@ -714,6 +714,38 @@ describe("ModelRegistry", () => {
 				},
 			];
 		}
+
+		// senpi#2892: Claude Haiku 5.5 opens at the 100K price band; a modelOverrides contextWindow is the 1M opt-in.
+		test("Claude Haiku 5.5 defaults to its 100K price band and opts into 1M through a modelOverrides window", async () => {
+			const defaultRegistry = await createModelRegistry(authStorage, modelsJsonPath);
+			const defaultHaiku = defaultRegistry.find("anthropic", "claude-haiku-5-5");
+			expect(defaultHaiku?.contextWindow).toBe(100_000);
+			expect(defaultHaiku?.maxTokens).toBe(32_000);
+
+			writeRawModelsJson({
+				anthropic: { modelOverrides: { "claude-haiku-5-5": { contextWindow: 1_000_000, maxTokens: 128_000 } } },
+			});
+			const registry = await createModelRegistry(authStorage, modelsJsonPath);
+			const haiku = registry.find("anthropic", "claude-haiku-5-5");
+
+			expect(registry.getError()).toBeUndefined();
+			expect(haiku?.contextWindow).toBe(1_000_000);
+			expect(haiku?.maxTokens).toBe(128_000);
+			expect(haiku?.cost.tiers).toEqual([
+				{ inputTokensAbove: 100_000, input: 0.5, output: 2.5, cacheRead: 0.05, cacheWrite: 0.625 },
+			]);
+			if (!haiku) throw new Error("anthropic/claude-haiku-5-5 must resolve");
+			const cost = calculateCost(haiku, {
+				input: 150_000,
+				output: 2_000,
+				cacheRead: 0,
+				cacheWrite: 0,
+				totalTokens: 152_000,
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+			});
+			expect(cost.input).toBeCloseTo(0.075, 10);
+			expect(cost.output).toBeCloseTo(0.005, 10);
+		});
 
 		test("model override applies to a single built-in model", async () => {
 			writeRawModelsJson({
