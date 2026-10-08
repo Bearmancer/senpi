@@ -134,6 +134,40 @@ describe("senpi#2982 a rebuilt Anthropic Subscription prompt is append-only up t
 		expect(text).toContain("[ultrawork directive repeated");
 	});
 
+	it("keeps a changed directive as new content after the earlier one, without rewriting it", () => {
+		// given a turn whose history carries the first directive
+		const before = toolLoop(2);
+		const previous = rebuilt(before);
+		const updated = "<ultrawork-mode>work until done, and run the tests first</ultrawork-mode>";
+
+		// when the user sends a directive with different text and the conversation is rebuilt
+		const after: Message[] = [
+			...before,
+			assistant([{ type: "text", text: "done with f2" }], 10),
+			{ role: "user", content: `${updated} now the tests`, timestamp: 11 },
+			assistant([{ type: "toolCall", id: "call-9", name: "read", arguments: { path: "t.ts" } }], 12),
+			{
+				role: "toolResult",
+				toolCallId: "call-9",
+				toolName: "read",
+				content: [{ type: "text", text: "test contents" }],
+				isError: false,
+				timestamp: 13,
+			},
+		];
+		const next = rebuilt(after);
+
+		// then the earlier history is unchanged, both directives are present, and the newer one comes later
+		expectCacheablePrefix(previous, next);
+		const history = next
+			.slice(0, (breakpointIndexes(next)[0] ?? 0) + 1)
+			.map((block) => (block.type === "text" ? block.text : ""))
+			.join("");
+		expect(history.indexOf(DIRECTIVE)).toBeGreaterThanOrEqual(0);
+		expect(history.indexOf(updated)).toBeGreaterThan(history.indexOf(DIRECTIVE));
+		expect(history).not.toContain("[ultrawork directive repeated");
+	});
+
 	it("keeps the directive of the current message in full", () => {
 		// given an earlier ultrawork prompt in history and a new one as the current message
 		const messages: Message[] = [
