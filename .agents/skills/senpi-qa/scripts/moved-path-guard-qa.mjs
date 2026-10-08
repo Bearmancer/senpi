@@ -9,7 +9,7 @@
 //
 //   node .agents/skills/senpi-qa/scripts/moved-path-guard-qa.mjs --self-test
 //   node .agents/skills/senpi-qa/scripts/moved-path-guard-qa.mjs --self-test --evidence moved-path-guard
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createChecks, evidenceDir, guardRealAuth, installCleanupHooks, makeSandbox, runCli } from "./lib/common.mjs";
 import { startFakeModelServer } from "./lib/fake-model-server.mjs";
@@ -83,6 +83,8 @@ async function selfTest() {
 	const repo = join(box.dir, "repo");
 	const elsewhere = join(box.dir, "elsewhere");
 	mkdirSync(join(repo, "src"), { recursive: true });
+	mkdirSync(join(box.dir, "locked", "inner"), { recursive: true });
+	chmodSync(join(box.dir, "locked"), 0o000);
 	mkdirSync(elsewhere, { recursive: true });
 	writeFileSync(
 		join(repo, "omo-desktop-moved.json"),
@@ -102,6 +104,8 @@ async function selfTest() {
 		// Review M3: eval code that writes by the old path itself, with no nested tool call.
 		{ toolCalls: [{ name: "eval", args: { language: "js", summary: "direct fs write by the old path", code: `const fs = await import("node:fs"); fs.writeFileSync("${oldWorktree}/eval.txt", "x"); return "wrote";` } }] },
 		{ toolCalls: [{ name: "write", args: { path: join(repo, "src", "planted.txt"), content: "repo file\n" } }] },
+		// Re-review H-new: a path the guard cannot resolve (not searchable here) never fails the call.
+		{ toolCalls: [shellInEval(`ls ${join(box.dir, "locked", "inner", "foo")} 2>/dev/null; echo ran-after-unreadable`)] },
 		{ text: "done" },
 	];
 	const server = await startFakeModelServer({ turns });
@@ -129,6 +133,8 @@ async function selfTest() {
 	checks.ok("M2: a relative path after cd ~/.t3 is refused", refusedFor("cdx") !== undefined, refusedFor("cdx")?.slice(0, 160) ?? "no refusal");
 	checks.ok("M3: eval code naming the old path is refused", refusedFor("eval.txt") !== undefined, refusedFor("eval.txt")?.slice(0, 160) ?? "no refusal");
 	checks.ok("H1: a planted breadcrumb without a desktop marker is ignored", existsSync(join(repo, "src", "planted.txt")) && !existsSync(join(elsewhere, "src")), `repo=${existsSync(join(repo, "src", "planted.txt"))} redirected=${existsSync(join(elsewhere, "src"))}`);
+	const ranUnreadable = results.find((text) => text.includes("ran-after-unreadable"));
+	checks.ok("H-new: a command naming an unreadable path still runs", ranUnreadable !== undefined, ranUnreadable?.slice(0, 120) ?? "call failed");
 	checks.ok("the moved home's existing file is untouched", readFileSync(join(newWorktree, "notes.txt"), "utf8") === "moved content\n", "");
 
 	if (evidenceSlug !== undefined) {
@@ -139,6 +145,7 @@ async function selfTest() {
 	}
 	if (result.code !== 0) process.stderr.write(`\n--- stderr tail ---\n${result.stderr.slice(-800)}\n`);
 	await server.stop();
+	chmodSync(join(box.dir, "locked"), 0o700);
 	box.cleanup();
 	checkRealAuthUnchanged(checks, guard);
 	process.exit(checks.finish() ? 0 : 1);
