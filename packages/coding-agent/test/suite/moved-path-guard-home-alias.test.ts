@@ -1,14 +1,14 @@
-import { rmSync, symlinkSync } from "node:fs";
+import { mkdirSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { builtinExtensions } from "../../src/core/extensions/builtin/index.ts";
 import { createHarness, type Harness } from "./harness.ts";
 import { createMovedLayout, MOVED_WORKTREE, type MovedLayout, runTool } from "./moved-path-guard-fixtures.ts";
 
-// code-yeongyu/senpi#2898 fifth review M-2: on a host whose $HOME is a symlink, a trusted breadcrumb's old root is the
-// realpath spelling while commands name `~/.t3/...` in the $HOME spelling. The text fallback and the probe ranking must
-// match both spellings, or a moved target past the probe budget or after a step timeout is allowed. Node's
-// `os.homedir()` follows a runtime $HOME change (Bun's does not), so these run under vitest/node.
+// code-yeongyu/senpi#2898 fifth review M-2, sixth review MEDIUM-1: a trusted breadcrumb's old root is walked in its
+// realpath spelling while commands name `~/.t3/...`. When `$HOME` or `~/.t3` itself is a symlink those differ, and the
+// text fallback and the probe ranking must match both, or a moved target past the probe budget or after a step timeout
+// is allowed. Node's `os.homedir()` follows a runtime $HOME change (Bun's does not), so these run under vitest/node.
 
 const stall = vi.hoisted(() => ({ breadcrumb: "" }));
 
@@ -26,30 +26,40 @@ const guard = builtinExtensions.find((entry) => entry.id === "moved-path-guard")
 const UNLISTED = Array.from({ length: 70 }, (_, index) => `~/.t3/unlisted/d${index}`).join(" ");
 
 describe.each([
-	["a symlinked $HOME", true],
-	["an unaliased $HOME", false],
-])("moved-path-guard text fallback with %s (#2898)", (_label, aliased) => {
+	["a symlinked $HOME", "home"],
+	["a symlinked ~/.t3", "legacy-root"],
+	["no symlink", "none"],
+] as const)("moved-path-guard text fallback with %s (#2898)", (_label, symlinked) => {
 	const layouts: MovedLayout[] = [];
 	const harnesses: Harness[] = [];
-	const links: string[] = [];
+	const extras: string[] = [];
 
 	afterEach(() => {
 		stall.breadcrumb = "";
 		vi.unstubAllEnvs();
 		while (harnesses.length > 0) harnesses.pop()?.cleanup();
-		while (links.length > 0) rmSync(links.pop() ?? "", { force: true });
+		while (extras.length > 0) rmSync(extras.pop() ?? "", { recursive: true, force: true });
 		while (layouts.length > 0) layouts.pop()?.cleanup();
 	});
 
-	async function trusted() {
+	async function setup(reused = false) {
 		if (!guard) throw new Error("moved-path-guard is not registered");
 		const layout = createMovedLayout();
 		layouts.push(layout);
-		if (aliased) {
+		if (reused) {
+			mkdirSync(join(layout.oldWorktree, "src"), { recursive: true });
+			writeFileSync(join(layout.oldWorktree, ".git"), "gitdir: /elsewhere/.git/worktrees/w1\n");
+		}
+		if (symlinked === "home") {
 			const link = `${layout.home}-link`;
 			symlinkSync(layout.home, link);
-			links.push(link);
+			extras.push(link);
 			vi.stubEnv("HOME", link);
+		} else if (symlinked === "legacy-root") {
+			const external = `${layout.home}-ext-t3`;
+			renameSync(layout.oldRoot, external);
+			symlinkSync(external, layout.oldRoot);
+			extras.push(external);
 		}
 		const harness = await createHarness({
 			cwd: layout.home,
@@ -58,14 +68,18 @@ describe.each([
 		});
 		harnesses.push(harness);
 		await harness.session.bindExtensions({});
-		expect(await runTool(harness, "bash", { command: `touch ~/.t3/${MOVED_WORKTREE}/a` })).toMatchObject({
-			outcome: "blocked",
+		const trustCall = reused ? `touch ~/.t3/${MOVED_WORKTREE}/src/a.ts` : `touch ~/.t3/${MOVED_WORKTREE}/a`;
+		expect(await runTool(harness, "bash", { command: trustCall })).toMatchObject({
+			outcome: reused ? "ok" : "blocked",
 		});
-		return { layout, harness };
+		const stallBreadcrumb = () => {
+			stall.breadcrumb = join(realpathSync(layout.oldRoot), "omo-desktop-moved.json");
+		};
+		return { layout, harness, stallBreadcrumb };
 	}
 
 	it("refuses a moved target behind 70 unlisted legacy paths", async () => {
-		const { layout, harness } = await trusted();
+		const { layout, harness } = await setup();
 
 		const result = await runTool(harness, "bash", { command: `touch ${UNLISTED} ~/.t3/${MOVED_WORKTREE}/b` });
 
@@ -74,12 +88,21 @@ describe.each([
 	});
 
 	it("refuses a moved target whose breadcrumb read times out", async () => {
-		const { layout, harness } = await trusted();
-		stall.breadcrumb = join(layout.oldRoot, "omo-desktop-moved.json");
+		const { layout, harness, stallBreadcrumb } = await setup();
+		stallBreadcrumb();
 
 		const result = await runTool(harness, "bash", { command: `touch ~/.t3/${MOVED_WORKTREE}/c` });
 
 		expect(result.outcome).toBe("blocked");
 		expect(result.text).toContain(join(layout.newWorktree, "c"));
+	});
+
+	it("allows a re-used worktree whose breadcrumb read times out after it was found re-used", async () => {
+		const { harness, stallBreadcrumb } = await setup(true);
+		stallBreadcrumb();
+
+		const result = await runTool(harness, "bash", { command: `touch ~/.t3/${MOVED_WORKTREE}/src/b.ts` });
+
+		expect(result.outcome).toBe("ok");
 	});
 });

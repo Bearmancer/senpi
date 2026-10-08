@@ -16,7 +16,7 @@ export function pathSegments(path: string, platform: PathPlatform): string[] {
 	return stripped.split(/[\\/]/).filter((segment) => segment.length > 0);
 }
 
-function sameSegment(a: string, b: string, platform: PathPlatform): boolean {
+export function sameSegment(a: string, b: string, platform: PathPlatform): boolean {
 	return platform === "posix" ? a === b : a.toLowerCase() === b.toLowerCase();
 }
 

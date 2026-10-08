@@ -10,7 +10,7 @@
 //   node .agents/skills/senpi-qa/scripts/moved-path-guard-qa.mjs --self-test
 //   node .agents/skills/senpi-qa/scripts/moved-path-guard-qa.mjs --self-test --evidence moved-path-guard
 import { execFileSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createChecks, evidenceDir, guardRealAuth, installCleanupHooks, makeSandbox, runCli } from "./lib/common.mjs";
 import { startFakeModelServer } from "./lib/fake-model-server.mjs";
@@ -79,14 +79,21 @@ function toolResultTexts(requests) {
 	return [...new Set(texts)];
 }
 
-// Fifth review M-2: HOME is a symlink to the real home, and the desktop wrote movedTo realpath'd. After one refusal has
-// trusted the breadcrumb, 70 unlisted ~/.t3 paths ahead of a moved target must not push it past the probe budget.
-async function aliasedHomeCase(checks, preset) {
-	const box = makeSandbox("moved-path-guard-qa-alias");
+// Fifth review M-2 (HOME is a symlink) and sixth review MEDIUM-1 (~/.t3 is a symlink to another folder): the walk sees
+// the old root realpath'd while commands name ~/.t3. After one refusal has trusted the breadcrumb, 70 unlisted ~/.t3
+// paths ahead of a moved target must not push it past the probe budget.
+async function symlinkedRootCase(checks, preset, symlinked) {
+	const box = makeSandbox(`moved-path-guard-qa-${symlinked}`);
 	const realHome = realpathSync(box.dir);
-	const link = `${realHome}-homelink`;
-	symlinkSync(realHome, link);
+	const link = symlinked === "home" ? `${realHome}-homelink` : `${realHome}-ext-t3`;
 	const { oldHome, newHome } = seedMovedHome(realHome);
+	const realOldHome = symlinked === "home" ? oldHome : link;
+	if (symlinked === "home") symlinkSync(realHome, link);
+	else {
+		renameSync(oldHome, link);
+		symlinkSync(link, oldHome);
+	}
+	const home = symlinked === "home" ? link : box.dir;
 	const unlisted = Array.from({ length: 70 }, (_, index) => `~/.t3/unlisted/d${index}`).join(" ");
 	const server = await startFakeModelServer({
 		turns: [
@@ -98,19 +105,20 @@ async function aliasedHomeCase(checks, preset) {
 	writeMockModelsJson(box.agentDir, server, API);
 	const result = await runCli(
 		["--provider", preset.provider, "--model", preset.modelId, "--no-context-files", "--no-extensions", "--approve", "--print", "Run the scripted tools, then reply done."],
-		{ env: hermeticEnv({ ...box.env, HOME: link, USERPROFILE: link }), cwd: box.cwd, timeoutMs: 180000 },
+		{ env: hermeticEnv({ ...box.env, HOME: home, USERPROFILE: home }), cwd: box.cwd, timeoutMs: 180000 },
 	);
 	const results = toolResultTexts(server.requests);
 	const refused = results.find((text) => /moved/i.test(text) && text.includes(join(newHome, WORKTREE, "alias.txt")));
-	checks.ok("aliased HOME: run completed", result.code === 0, `code=${result.code}`);
+	const finding = symlinked === "home" ? "M-2: with a symlinked HOME" : "MEDIUM-1: with a symlinked ~/.t3";
+	checks.ok(`symlinked ${symlinked}: run completed`, result.code === 0, `code=${result.code}`);
 	checks.ok(
-		"M-2: with a symlinked HOME a moved target behind 70 unlisted ~/.t3 paths is refused",
-		refused !== undefined && !existsSync(join(oldHome, WORKTREE, "alias.txt")),
+		`${finding} a moved target behind 70 unlisted ~/.t3 paths is refused`,
+		refused !== undefined && !existsSync(join(realOldHome, WORKTREE, "alias.txt")),
 		refused?.slice(0, 160) ?? results.at(-1)?.slice(0, 160) ?? "no refusal",
 	);
 	await server.stop();
-	chmodSync(join(oldHome, "worktrees", "slow-project"), 0o700);
-	rmSync(link, { force: true });
+	chmodSync(join(realOldHome, "worktrees", "slow-project"), 0o700);
+	rmSync(link, { recursive: true, force: true });
 	box.cleanup();
 	return results.map((text) => text.replaceAll(realHome, "<HOME>"));
 }
@@ -211,11 +219,12 @@ async function selfTest() {
 	chmodSync(join(box.dir, "locked"), 0o700);
 	chmodSync(join(oldHome, "worktrees", "slow-project"), 0o700);
 	box.cleanup();
-	const aliasedResults = await aliasedHomeCase(checks, preset);
+	const aliasedResults = await symlinkedRootCase(checks, preset, "home");
+	const legacyLinkResults = await symlinkedRootCase(checks, preset, "legacy-root");
 	if (evidenceSlug !== undefined) {
 		writeFileSync(
 			join(evidenceDir(evidenceSlug), "moved-path-guard.json"),
-			JSON.stringify({ exitCode: result.code, requestCount: server.requests.length, toolResults: results.map((text) => text.replaceAll(box.dir, "<HOME>")), aliasedHomeToolResults: aliasedResults }, null, 2),
+			JSON.stringify({ exitCode: result.code, requestCount: server.requests.length, toolResults: results.map((text) => text.replaceAll(box.dir, "<HOME>")), aliasedHomeToolResults: aliasedResults, symlinkedLegacyRootToolResults: legacyLinkResults }, null, 2),
 		);
 	}
 	checkRealAuthUnchanged(checks, guard);
