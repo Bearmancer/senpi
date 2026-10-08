@@ -20,7 +20,7 @@ describe("moved-path-guard re-used worktree past the call bounds (#2898)", () =>
 		while (layouts.length > 0) layouts.pop()?.cleanup();
 	});
 
-	async function reusedWorktree() {
+	async function reusedWorktree(cwd: (layout: MovedLayout) => string = (layout) => layout.oldWorktree) {
 		if (!guard) throw new Error("moved-path-guard is not registered");
 		const layout = createMovedLayout();
 		layouts.push(layout);
@@ -28,7 +28,7 @@ describe("moved-path-guard re-used worktree past the call bounds (#2898)", () =>
 		mkdirSync(join(layout.oldWorktree, "src"), { recursive: true });
 		writeFileSync(join(layout.oldWorktree, ".git"), "gitdir: /elsewhere/.git/worktrees/w1\n");
 		const harness = await createHarness({
-			cwd: layout.oldWorktree,
+			cwd: cwd(layout),
 			extensionFactories: [guard.factory],
 			initialActiveToolNames: ["bash"],
 		});
@@ -42,6 +42,23 @@ describe("moved-path-guard re-used worktree past the call bounds (#2898)", () =>
 		const files = Array.from({ length: 70 }, (_, index) => `src/f${index}.ts`).join(" ");
 
 		const result = await runTool(harness, "bash", { command: `git add ${files} 2>/dev/null; echo ran` });
+
+		expect(result.outcome).toBe("ok");
+	});
+
+	// Fourth review L-g: targets under a listed prefix are probed before ones that are only under a legacy root, so 64+
+	// unlisted ~/.t3 paths ahead of a re-used worktree path cannot push it into the text fallback.
+	it("allows a re-used worktree path behind 70 unlisted legacy paths", async () => {
+		const { layout, harness } = await reusedWorktree((moved) => moved.home);
+		const warm = join(layout.oldWorktree, "src", "warm.ts");
+		expect(await runTool(harness, "bash", { command: `touch ${warm}` })).toMatchObject({ outcome: "ok" });
+		const unlisted = Array.from({ length: 70 }, (_, index) => join(layout.oldRoot, "unlisted", `d${index}`)).join(
+			" ",
+		);
+
+		const result = await runTool(harness, "bash", {
+			command: `ls ${unlisted} ${join(layout.oldWorktree, "src", "z.ts")} 2>/dev/null; echo ran`,
+		});
 
 		expect(result.outcome).toBe("ok");
 	});

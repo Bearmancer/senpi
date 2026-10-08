@@ -5,7 +5,7 @@ import { extractPatchedPaths } from "../gpt-apply-patch/text.ts";
 import { type MovedPath, movedPathReason } from "./breadcrumb-trust.ts";
 import { commandPaths } from "./command-paths.ts";
 import { logGuardEvent } from "./guard-log.ts";
-import { knownMove, looksMoved } from "./known-moves.ts";
+import { knownMove, knownPrefixKeys, looksMoved } from "./known-moves.ts";
 import { createMovedPathProbe, type MovedPathProbe, pathExists, STEP_DEADLINE_MS } from "./resolve-async.ts";
 import { MOVED_PATH_TOOL_CLASSES } from "./tool-classes.ts";
 
@@ -74,7 +74,13 @@ function firstKnownMove(list: readonly Target[], probe: MovedPathProbe): MovedPa
 }
 
 async function checkTargets(list: readonly Target[]): Promise<MovedPath | undefined> {
-	const ordered = [...list.filter((target) => looksMoved(target.path)), ...list.filter((t) => !looksMoved(t.path))];
+	// Probe order: targets under a listed prefix trusted earlier, then ones only under a legacy root, then the rest, so
+	// unlisted legacy paths cannot push a known prefix (re-used or moved) past the probe budget.
+	const rank = (target: Target) => (knownPrefixKeys(target.path).length > 0 ? 0 : looksMoved(target.path) ? 1 : 2);
+	const ordered = list
+		.map((target) => ({ target, rank: rank(target) }))
+		.sort((a, b) => a.rank - b.rank)
+		.map((entry) => entry.target);
 	const probe = createMovedPathProbe();
 	const unprobed: Target[] = [];
 	let probes = 0;
