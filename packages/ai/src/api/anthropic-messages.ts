@@ -315,13 +315,15 @@ const NATIVE_XHIGH_EFFORT_MODEL_MARKERS = [
 	"mythos-5",
 ] as const;
 /**
- * Adaptive families that reject `thinking: {type: "disabled"}` outright. Verified with the live 400
- * `"thinking.type.disabled" is not supported for this model` on Fable 5, Opus 5.5 and Sonnet 5.5;
- * Mythos 5 is listed by family with Fable; Haiku 5.5 is UNVERIFIED (its docs name only an unset or
- * adaptive `thinking`; senpi#2914), kept here because the thinking-off shape this list selects
- * (no `thinking`, effort `low`) is valid either way. The generated catalog also encodes
- * this as `compat.supportsDisabledThinking: false`, but `models.json` entries and third-party
- * gateway rows carry no generated compat, so the family fact has to live here as well.
+ * Families senpi never sends `thinking: {type: "disabled"}` to. Fable 5, Opus 5.5 and Sonnet 5.5 reject it
+ * outright (verified live 400: `"thinking.type.disabled" is not supported for this model`); Mythos 5 is
+ * listed by family with Fable. Claude Haiku 5.5 is listed by choice, not because it rejects `disabled`: its
+ * effort docs accept `disabled` at effort `high` or below (400 only at `xhigh` / `max`) and reject a
+ * differing per-message effort while disabled, so a real thinking-off needs marker handling first
+ * (senpi#2927). Until then a thinking-off turn sends no `thinking` and effort `low`, which is valid on all of
+ * them. The generated catalog also encodes this as `compat.supportsDisabledThinking: false`, but
+ * `models.json` entries and third-party gateway rows carry no generated compat, so the family fact has to
+ * live here as well.
  */
 const DISABLED_THINKING_REJECTING_MODEL_MARKERS = [
 	"fable-5",

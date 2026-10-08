@@ -854,10 +854,10 @@ function supportsAnthropicMidConvoEffort(modelId: string): boolean {
 
 // Opus 5.5 and Sonnet 5.5 reject `thinking: {type: "disabled"}` and `{type: "enabled"}` alike (400:
 // `"thinking.type.disabled" is not supported for this model`); only adaptive thinking is accepted.
-// Haiku 5.5 rejects `enabled` and its docs name only an unset or adaptive `thinking`; whether it rejects
-// `disabled` is UNVERIFIED (no live probe yet; models.dev lists a thinking toggle for it). Until a probe
-// settles it, it is held to the adaptive-only contract, whose thinking-off shape (unset + effort `low`)
-// is valid either way.
+// Haiku 5.5 rejects `enabled` too, but its effort docs accept `disabled` at effort `high` or below (400 only
+// at `xhigh` / `max`, and a differing per-message effort while disabled is a 400). Exposing that real
+// thinking-off needs marker handling (senpi#2927), so until then it is held to the adaptive-only contract,
+// whose thinking-off shape (unset + effort `low`) is valid either way.
 function isAnthropicAdaptiveOnlyModel(modelId: string): boolean {
 	return (
 		modelId.includes("fable-5") ||
@@ -3506,10 +3506,8 @@ async function generateModels() {
 			// (oh-my-pi #14903 caps the window the same way; senpi#2916 tracks a first-class opt-in). Output
 			// drops to 32K with it: compaction reserves min(maxTokens, half the window) for output, so 128K would
 			// start emergency pruning at under half of a 100K window.
-			if (candidate.contextWindow > CLAUDE_HAIKU_55_LONG_CONTEXT_INPUT_THRESHOLD) {
-				candidate.contextWindow = CLAUDE_HAIKU_55_LONG_CONTEXT_INPUT_THRESHOLD;
-				candidate.maxTokens = Math.min(candidate.maxTokens, CLAUDE_HAIKU_55_BANDED_MAX_TOKENS);
-			}
+			candidate.contextWindow = Math.min(candidate.contextWindow, CLAUDE_HAIKU_55_LONG_CONTEXT_INPUT_THRESHOLD);
+			candidate.maxTokens = Math.min(candidate.maxTokens, CLAUDE_HAIKU_55_BANDED_MAX_TOKENS);
 		}
 
 		// models.dev may list Opus 5.5, Sonnet 5.5 and Haiku 5.5 before their effort metadata is complete.
