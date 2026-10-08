@@ -25,6 +25,7 @@ import {
 	setConfig,
 	stdioServer,
 	type TestRoot,
+	writeProjectConfig,
 } from "../../mcp/fixtures/service-lifecycle.ts";
 import { sharingHttpFixture } from "../../mcp/fixtures/sharing-http.ts";
 import { assertProcessDead, stdioFixtureCommand } from "../../mcp/fixtures/spawn-fixture.ts";
@@ -641,6 +642,52 @@ describe("senpi#2986: a session's skill servers follow its own trust, env and ag
 		expect(alphaResult).toMatchObject({ details: { error: { kind: "unavailable", server: "fx", tool: "echo" } } });
 		expect(bravoResult).toMatchObject({ content: [{ type: "text", text: JSON.stringify({ value: "b" }) }] });
 		expect(fixture.callAuthorizations).toEqual(["Bearer bravo-token"]);
+	});
+});
+
+/** The shared `fx` for every session, plus `extra` declared only by the project at `root.cwd`; returns a peer project. */
+function configureExtraForRootProject(): TestRoot {
+	configureServer();
+	writeProjectConfig(root.cwd, {
+		extra: { ...stdioServer(["--tools", "1"]), exposure: "search", lifecycle: "eager" },
+	});
+	return makeRoot("2597-peer", cleanupTasks);
+}
+
+/** Attach an app-server session in `project` whose session id is `sessionId`, sharing the agent dir. */
+async function attachInProject(pi: CapturingPi, project: TestRoot, sessionId: string): Promise<void> {
+	await getMcpService().attachSession(
+		{ type: "session_start", reason: "startup" },
+		{
+			cwd: project.cwd,
+			isProjectTrusted: () => true,
+			mode: "app-server",
+			sessionManager: { getEntries: () => [], getSessionId: () => sessionId },
+		},
+		pi,
+		{ agentDir: root.agentDir },
+	);
+}
+
+describe("senpi#2597: a session's MCP status and the service's teardown follow the live sessions", () => {
+	it("lists only a session's own servers in its MCP status, never a peer's", async () => {
+		// Given: the first session's project declares `extra` beside the shared `fx`; a peer elsewhere declares only `fx`.
+		const peer = configureExtraForRootProject();
+		const alphaPi = capturingPi();
+		const bravoPi = capturingPi();
+		await attachInProject(alphaPi, root, "alpha");
+		await untilFakeRegistered(alphaPi, EXTRA_TOOL);
+		await attachInProject(bravoPi, peer, "bravo");
+		await untilFakeRegistered(bravoPi, TOOL);
+
+		// When: each session asks for its MCP status.
+		const alpha = await getMcpService().refreshWireStatusSnapshot("alpha");
+		const bravo = await getMcpService().refreshWireStatusSnapshot("bravo");
+
+		// Then: each lists the servers its own config declares, though the shared service runs both.
+		expect(alpha.servers.map((server) => server.name)).toEqual(["extra", "fx"]);
+		expect(bravo.servers.map((server) => server.name)).toEqual(["fx"]);
+		expect(getMcpService().getConnection("extra")).toBeDefined();
 	});
 });
 

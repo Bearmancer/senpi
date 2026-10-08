@@ -175,7 +175,10 @@ export class McpService {
 			// one turn late. Doing it here puts restored tools on the very first
 			// wire payload after a --continue/resume.
 			if (binding !== undefined) this.#rehydrateFromSessionHistory(binding);
-			if (shouldCaptureWireStatus(ctx)) await this.refreshWireStatusSnapshot(ctx.sessionManager?.getSessionId?.());
+			// An unbound attach (no `pi`, or a session that quit while queued) still reports its own config.
+			if (shouldCaptureWireStatus(ctx)) {
+				await this.#refreshWireStatus(ctx.sessionManager?.getSessionId?.(), () => binding ?? owner);
+			}
 		});
 		this.#attachQueue = attach.then(
 			() => undefined,
@@ -452,7 +455,15 @@ export class McpService {
 
 	/** Refresh and return the current session-owned MCP wire inventory. */
 	async refreshWireStatusSnapshot(sessionId?: string): Promise<McpWireStatusSnapshot> {
-		const refresh = this.#wireStatusRefreshQueue.then(() => this.#captureWireStatus(sessionId));
+		return await this.#refreshWireStatus(sessionId, () => this.#statusOwner(sessionId));
+	}
+
+	/** `owner` is resolved when the queued capture runs, so it sees the bindings current at that point. */
+	async #refreshWireStatus(
+		sessionId: string | undefined,
+		owner: () => McpConfigOwner | undefined,
+	): Promise<McpWireStatusSnapshot> {
+		const refresh = this.#wireStatusRefreshQueue.then(() => this.#captureWireStatus(sessionId, owner()));
 		this.#wireStatusRefreshQueue = refresh.then(
 			() => undefined,
 			() => undefined,
@@ -525,7 +536,9 @@ export class McpService {
 	getServerSnapshots(): McpServerSnapshot[] {
 		const names = new Set<string>(Object.keys(this.#config?.servers ?? {}));
 		for (const entry of this.#connections.values()) names.add(entry.name);
-		return [...names].sort().map((name) => this.#serverSnapshot(name));
+		return [...names]
+			.sort()
+			.map((name) => this.#serverSnapshot(name, this.#config?.servers[name], this.#entryForName(name)));
 	}
 
 	getLogLines(name: string, maxLines: number): string[] {
@@ -792,12 +805,15 @@ export class McpService {
 		);
 	}
 
-	#serverSnapshot(name: string): McpServerSnapshot {
-		const entry = this.#entryForName(name);
-		const config = this.#config?.servers[name]?.config;
-		const connection = this.getConnection(name);
+	#serverSnapshot(
+		name: string,
+		server: ResolvedMcpServer | undefined,
+		entry: McpConnectionEntry | undefined,
+	): McpServerSnapshot {
+		const config = server?.config;
+		const connection = entry?.credentialsCurrent?.() === false ? undefined : entry?.connection;
 		connection?.refreshCapturedDiagnostics();
-		const snapshot = buildMcpServerSnapshot(name, this.#config?.servers[name], connection, entry);
+		const snapshot = buildMcpServerSnapshot(name, server, connection, entry);
 		if (
 			config !== undefined &&
 			entry?.connection.state === "needs_auth" &&
@@ -808,13 +824,23 @@ export class McpService {
 		return snapshot;
 	}
 
-	async #captureWireStatus(sessionId: string | undefined): Promise<void> {
-		const config = this.#config;
-		if (config === null) return;
+	/**
+	 * The config a session's status reports: its own binding's, found by session id (senpi#2597). The merged config
+	 * decides only which connections live; a session's status lists only the servers it declares. Without a session
+	 * id, the most recently attached live session's.
+	 */
+	#statusOwner(sessionId: string | undefined): McpConfigOwner | undefined {
+		const live = this.#liveBindings();
+		if (sessionId === undefined) return live.at(-1);
+		return live.findLast((binding) => binding.context.sessionManager?.getSessionId?.() === sessionId);
+	}
+
+	async #captureWireStatus(sessionId: string | undefined, owner: McpConfigOwner | undefined): Promise<void> {
+		if (this.#config === null || owner === undefined) return;
 		const servers = await Promise.all(
-			Object.keys(config.servers)
+			Object.keys(owner.config.servers)
 				.sort()
-				.map((name) => this.#captureWireStatusServer(name, config.servers[name])),
+				.map((name) => this.#captureWireStatusServer(name, owner)),
 		);
 		const snapshot: McpWireStatusSnapshot = { servers };
 		const previous = this.getWireStatusSnapshot(sessionId);
@@ -824,11 +850,14 @@ export class McpService {
 		for (const listener of this.#wireStatusListeners) listener(sessionId, snapshot);
 	}
 
-	async #captureWireStatusServer(name: string, server: ResolvedMcpServer | undefined): Promise<McpWireStatusServer> {
-		const entry = this.#entryForName(name);
-		const connection = this.getConnection(name);
+	/** Only a connection resolving `owner`'s own credentials counts: a peer's catalog and login never show in its status. */
+	async #captureWireStatusServer(name: string, owner: McpConfigOwner): Promise<McpWireStatusServer> {
+		const server = owner.config.servers[name];
+		const shared = this.#entryForName(name);
+		const entry = shared !== undefined && resolvesSameCredentials(owner, shared) ? shared : undefined;
+		const connection = entry?.credentialsCurrent?.() === false ? undefined : entry?.connection;
 		const connected = connection?.state === "connected";
-		const needsAuth = !connected && this.#serverSnapshot(name).lifecycleState === "needs_auth";
+		const needsAuth = !connected && this.#serverSnapshot(name, server, entry).lifecycleState === "needs_auth";
 		const cached = entry?.credentialsCurrent?.() === false ? undefined : entry?.cachedCatalog;
 		const tools = cached?.tools ?? [];
 		const resources = cached?.resources ?? [];
@@ -847,7 +876,11 @@ export class McpService {
 			tools: tools.map(mapWireTool),
 			resources: resources.map(mapWireResource),
 			resourceTemplates: resourceTemplates.map(mapWireResourceTemplate),
-			authStatus: wireAuthStatus(entry, server, this.#credentialOptions(name)),
+			authStatus: wireAuthStatus(
+				entry,
+				server,
+				entry === undefined ? owner.options : { agentDir: entry.agentDir, env: entry.env },
+			),
 			...(connection?.state === undefined && server?.state === undefined
 				? {}
 				: {
@@ -961,6 +994,22 @@ function offersConnection(binding: McpSessionBinding, entry: McpConnectionEntry)
 	if (server?.config === undefined || server.configHash !== entry.configHash) return false;
 	const { agentDir, env } = binding.options;
 	return mcpCredentialIdentity(server.config, entry.name, agentDir, env) === entry.credentialIdentity;
+}
+
+/**
+ * Whether `owner` declares `entry`'s server with its config hash and resolves, now, the credentials the connection's
+ * own agent dir and env resolve. Unlike `offersConnection`, a connection whose credentials went stale (revoked or
+ * rotated tokens) still matches its own session, so that session's status reports it as needing auth; a peer's
+ * connection with other credentials never matches.
+ */
+function resolvesSameCredentials(owner: McpConfigOwner, entry: McpConnectionEntry): boolean {
+	const server = owner.config.servers[entry.name];
+	if (server?.config === undefined || server.configHash !== entry.configHash) return false;
+	const { agentDir, env } = owner.options;
+	return (
+		mcpCredentialIdentity(server.config, entry.name, agentDir, env) ===
+		mcpCredentialIdentity(server.config, entry.name, entry.agentDir, entry.env)
+	);
 }
 
 /** Whether `config` declares `name` as the same server, by config hash. */
