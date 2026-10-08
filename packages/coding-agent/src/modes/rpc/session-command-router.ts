@@ -638,7 +638,7 @@ export class SessionCommandRouter {
 		const browserEngineError = sessionBrowserEngineError(command.browserEngine);
 		if (browserEngineError)
 			return error(command.id, "open_session", `${RPC_ERROR_INVALID_LAUNCH_PROFILE}: ${browserEngineError}`);
-		if ((command.provider === undefined) !== (command.modelId === undefined))
+		if (!command.provider !== !command.modelId)
 			return error(
 				command.id,
 				"open_session",

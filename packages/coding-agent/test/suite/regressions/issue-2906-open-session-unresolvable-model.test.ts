@@ -161,6 +161,7 @@ describe("open_session with an unresolvable creationModel (#2906)", () => {
 	it.each([
 		["provider without modelId", { provider: "openai" }],
 		["modelId without provider", { modelId: "gpt-6-astra" }],
+		["an empty modelId", { provider: "openai", modelId: "" }],
 	] as const)("refuses open_session with %s", async (_name, half) => {
 		const router = new SessionCommandRouter(hostRegistry(), new SessionEventWriter(() => {}), { cwd });
 		const response = await router.handle({ id: "half", type: "open_session", cwd, ...half });
