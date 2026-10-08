@@ -10,6 +10,7 @@ import {
 	parsedBreadcrumb,
 	trustedBreadcrumb,
 } from "./breadcrumb-trust.ts";
+import { rememberTrustedBreadcrumb } from "./known-moves.ts";
 import type { PathPlatform } from "./path-match.ts";
 
 /** One filesystem question the walk asks; the sync and async resolvers answer it with their own I/O. */
@@ -38,6 +39,7 @@ function* movedOnce(path: string, platform: PathPlatform): Walk<MovedPath | unde
 			match &&
 			trustedBreadcrumb(dir, breadcrumb, yield { op: "json", file: homeMarkerFile(breadcrumb.movedTo) }, platform)
 		) {
+			rememberTrustedBreadcrumb(dir, breadcrumb);
 			const gitEntry = gitEntryOf(dir, match.prefix);
 			if (!(gitEntry && (yield { op: "exists", path: gitEntry }))) return match.moved;
 		}

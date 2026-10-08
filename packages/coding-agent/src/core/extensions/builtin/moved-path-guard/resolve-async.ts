@@ -5,6 +5,9 @@ import { type MovedPath, readJsonFileAsync } from "./breadcrumb-trust.ts";
 import { currentPathPlatform, type PathPlatform } from "./path-match.ts";
 import { failedReply, movedPathWalk, type ResolverStep } from "./walk.ts";
 
+/** Each filesystem step of a probe; strictly below the guard's whole-call deadline, so one slow step cannot use it all. */
+export const STEP_DEADLINE_MS = 500;
+
 export type MovedPathProbe = (path: string) => Promise<MovedPath | undefined>;
 
 export async function pathExists(path: string): Promise<boolean> {
@@ -24,7 +27,7 @@ async function answer(step: ResolverStep): Promise<unknown> {
 				? readJsonFileAsync(step.file)
 				: pathExists(step.path);
 	try {
-		const reply = await withResolutionDeadline(io);
+		const reply = await withResolutionDeadline(io, STEP_DEADLINE_MS);
 		return reply === RESOLUTION_TIMED_OUT ? failedReply(step) : reply;
 	} catch {
 		return failedReply(step);

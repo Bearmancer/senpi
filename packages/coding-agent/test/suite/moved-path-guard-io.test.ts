@@ -36,6 +36,7 @@ describe("moved-path-guard I/O on the session loop (#2898)", () => {
 	const harnesses: Harness[] = [];
 
 	afterEach(() => {
+		vi.unstubAllEnvs();
 		while (harnesses.length > 0) harnesses.pop()?.cleanup();
 		while (layouts.length > 0) layouts.pop()?.cleanup();
 	});
@@ -80,5 +81,28 @@ describe("moved-path-guard I/O on the session loop (#2898)", () => {
 
 		expect(result.outcome).toBe("ok");
 		expect(vi.mocked(fs.appendFileSync)).not.toHaveBeenCalled();
+	});
+
+	// Re-review M3: past the per-call bound the guard still refuses a literal old path, by text, without filesystem work.
+	it("refuses a literal old path behind more decoy paths than one call examines", async () => {
+		const guard = builtinExtensions.find((entry) => entry.id === "moved-path-guard");
+		if (!guard) throw new Error("moved-path-guard is not registered");
+		const layout = createMovedLayout();
+		layouts.push(layout);
+		const harness = await createHarness({
+			cwd: layout.home,
+			extensionFactories: [guard.factory],
+			initialActiveToolNames: ["bash"],
+		});
+		harnesses.push(harness);
+		await harness.session.bindExtensions({});
+		vi.stubEnv("HOME", layout.home);
+		vi.stubEnv("USERPROFILE", layout.home);
+		const decoys = Array.from({ length: 500 }, (_, index) => `/decoy/${index}`).join(" ");
+
+		const result = await runTool(harness, "bash", { command: `touch ${decoys} ${layout.oldWorktree}/late.txt` });
+
+		expect(result.outcome).toBe("blocked");
+		expect(result.text).toContain(layout.newWorktree);
 	});
 });
