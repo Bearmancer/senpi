@@ -86,15 +86,21 @@ function answeredLines(response: QuestionResponse, questions: Questions, words: 
 const GATED_NO_ANSWER = "No answer: do not take the action it gates. Keep that action pending and end the turn.";
 
 /** A required question gates an action, so every settlement without an answer refuses that action (senpi#2949). */
-function formatGatedNoAnswer(response: QuestionResponse, questions: Questions, words: WordPlacement): string {
+function formatGatedNoAnswer(
+	response: QuestionResponse,
+	questions: Questions,
+	words: WordPlacement,
+	cancellationReason?: string,
+): string {
 	const reason =
-		response.status === "timed_out"
+		cancellationReason ??
+		(response.status === "timed_out"
 			? `The user did not answer within ${Math.round((response.autoResolvedAfterMs ?? DEFAULT_ASK_USER_TIMEOUT_MS) / 60_000)} minutes. (사용자가 답변을 안하고 timeout 으로 종료됨)`
 			: response.status === "cancelled"
 				? "The user dismissed the question."
 				: response.status === "orphaned-after-restart"
 					? "The pending question could not be resumed after a restart."
-					: "This session has no user attached (subagent or headless).";
+					: "This session has no user attached (subagent or headless).");
 	const lines = [reason];
 	const selected = answeredLines(response, questions, words);
 	if (selected.length > 0)
@@ -104,16 +110,16 @@ function formatGatedNoAnswer(response: QuestionResponse, questions: Questions, w
 }
 
 /**
- * A required question cancelled with a reason (a UI failure): the reason, then the gated body, so a
- * draft the user typed is named and marked not an answer, and the action is refused (senpi#2949).
+ * A required question cancelled with a reason (a UI failure): the reason stands in for the status line,
+ * a draft the user typed is named and marked not an answer, and the action is refused (senpi#2949).
  */
 export function formatGatedCancellation(
 	reason: string,
 	response: QuestionResponse,
 	requestId: string,
-	questions: Questions = [],
+	questions: Questions,
 ): string {
-	return `${reason}\n${formatModelAnswer(response, requestId, questions, true).text}`;
+	return formatGatedNoAnswer(response, questions, separatedWords(requestId), reason);
 }
 
 function formatBody(response: QuestionResponse, questions: Questions, words: WordPlacement, required = false): string {

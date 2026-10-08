@@ -318,8 +318,10 @@ describe("ask-user builtin", () => {
 		expect(text).toContain("Question UI failed: boom");
 		expect(text).toContain("do not take the action it gates");
 		const userWords = (outcome.details as { userWords?: Array<{ label: string }> }).userWords ?? [];
+		expect(userWords).toHaveLength(1);
 		for (const word of userWords) expect(text).toContain(word.label);
 		expect(text).toContain("not an answer");
+		expect(text).not.toContain("The user dismissed the question.");
 	});
 
 	it("sends the user's typed draft along with a dismissed required question", async () => {
