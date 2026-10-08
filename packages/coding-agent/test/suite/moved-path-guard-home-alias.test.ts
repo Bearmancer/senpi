@@ -12,6 +12,16 @@ import { createMovedLayout, MOVED_WORKTREE, type MovedLayout, runTool } from "./
 
 const stall = vi.hoisted(() => ({ breadcrumb: "" }));
 
+// A path spelled with SLOW never finishes canonicalizing, standing in for a wedged mount (seventh review LOW-B).
+vi.mock("../../src/core/tools/filesystem-policy.ts", async (importOriginal) => {
+	const actual = await importOriginal<typeof import("../../src/core/tools/filesystem-policy.ts")>();
+	return {
+		...actual,
+		canonicalizeFilesystemPath: (path: string) =>
+			path.includes("SLOW") ? new Promise<string>(() => {}) : actual.canonicalizeFilesystemPath(path),
+	};
+});
+
 vi.mock("../../src/core/extensions/builtin/moved-path-guard/breadcrumb-trust.ts", async (importOriginal) => {
 	const actual =
 		await importOriginal<typeof import("../../src/core/extensions/builtin/moved-path-guard/breadcrumb-trust.ts")>();
@@ -42,7 +52,7 @@ describe.each([
 		while (layouts.length > 0) layouts.pop()?.cleanup();
 	});
 
-	async function setup(reused = false) {
+	async function setup(reused = false, trust = true) {
 		if (!guard) throw new Error("moved-path-guard is not registered");
 		const layout = createMovedLayout();
 		layouts.push(layout);
@@ -69,9 +79,10 @@ describe.each([
 		harnesses.push(harness);
 		await harness.session.bindExtensions({});
 		const trustCall = reused ? `touch ~/.t3/${MOVED_WORKTREE}/src/a.ts` : `touch ~/.t3/${MOVED_WORKTREE}/a`;
-		expect(await runTool(harness, "bash", { command: trustCall })).toMatchObject({
-			outcome: reused ? "ok" : "blocked",
-		});
+		if (trust)
+			expect(await runTool(harness, "bash", { command: trustCall })).toMatchObject({
+				outcome: reused ? "ok" : "blocked",
+			});
 		const stallBreadcrumb = () => {
 			stall.breadcrumb = join(realpathSync(layout.oldRoot), "omo-desktop-moved.json");
 		};
@@ -95,6 +106,17 @@ describe.each([
 
 		expect(result.outcome).toBe("blocked");
 		expect(result.text).toContain(join(layout.newWorktree, "c"));
+	});
+
+	// Seventh review LOW-B: when the path's own canonicalization times out the walk meets the old root by its called
+	// spelling, which is the symlink itself for a symlinked ~/.t3; the folder check follows it to the real folder.
+	it("refuses a first call whose canonical step times out", async () => {
+		const { layout, harness } = await setup(false, false);
+
+		const result = await runTool(harness, "bash", { command: `touch ~/.t3/${MOVED_WORKTREE}/SLOW` });
+
+		expect(result.outcome).toBe("blocked");
+		expect(result.text).toContain(join(layout.newWorktree, "SLOW"));
 	});
 
 	it("allows a re-used worktree whose breadcrumb read times out after it was found re-used", async () => {

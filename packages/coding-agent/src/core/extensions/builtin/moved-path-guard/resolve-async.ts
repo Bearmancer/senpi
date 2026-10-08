@@ -1,4 +1,4 @@
-import { access, lstat, realpath } from "node:fs/promises";
+import { access, realpath, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { RESOLUTION_TIMED_OUT, withResolutionDeadline } from "../../../tools/bounded-realpath.ts";
 import { canonicalizeFilesystemPath } from "../../../tools/filesystem-policy.ts";
@@ -58,7 +58,7 @@ async function answer(step: ResolverStep, onTimeout: () => void): Promise<unknow
 				: step.op === "home"
 					? realHome()
 					: step.op === "folder"
-						? lstat(step.path)
+						? stat(step.path)
 						: pathExists(step.path);
 	try {
 		const reply = await withResolutionDeadline(io, STEP_DEADLINE_MS);

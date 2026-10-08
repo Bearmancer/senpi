@@ -1,4 +1,4 @@
-import { accessSync, existsSync, lstatSync, realpathSync } from "node:fs";
+import { accessSync, existsSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { type MovedPath, readJsonFileSync } from "./breadcrumb-trust.ts";
@@ -39,7 +39,7 @@ function answer(step: ResolverStep): unknown {
 		if (step.op === "canonical") return canonicalPath(step.path);
 		if (step.op === "json") return readJsonFileSync(step.file);
 		if (step.op === "home") return realpathSync(homedir());
-		if (step.op === "folder") return lstatSync(step.path);
+		if (step.op === "folder") return statSync(step.path);
 		return pathExistsSync(step.path);
 	} catch {
 		return failedReply(step);
@@ -53,7 +53,7 @@ function answer(step: ResolverStep): unknown {
  *
  * Bound, per hop (at most `MAX_HOPS`): canonicalizing the one path; one O_NOFOLLOW open of at most 64 KiB per
  * ancestor directory's breadcrumb; and, only for a breadcrumb listing this path whose `movedTo` lies under the user's
- * home, one `lstat` of the breadcrumb's folder, one such open of that home's marker and one `.git` existence check.
+ * home, one `stat` of the breadcrumb's folder, one such open of that home's marker and one `.git` existence check.
  */
 export function findMovedPath(path: string, platform: PathPlatform = currentPathPlatform()): MovedPath | undefined {
 	const walk = movedPathWalk(path, platform);
