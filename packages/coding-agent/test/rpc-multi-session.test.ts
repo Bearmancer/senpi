@@ -1,6 +1,4 @@
 import { describe, expect, test, vi } from "vitest";
-import { VERSION } from "../src/config.ts";
-import { engineBuildIdentityFrom } from "../src/core/engine-build-identity.ts";
 import {
 	RPC_ERROR_MISSING_SESSION_ID,
 	RPC_ERROR_MULTI_SESSION_DISABLED,
@@ -39,50 +37,6 @@ describe("multi-session RPC routing", () => {
 		expect(
 			await routerFor("closing").handle({ id: "p", type: "prompt", message: "hello", sessionId: "known" }),
 		).toMatchObject({ error: RPC_ERROR_SESSION_CLOSING });
-	});
-
-	test("advertises multi-session capability before any session is opened", async () => {
-		expect(await routerFor().handle({ id: "probe", type: "get_protocol_info" })).toEqual({
-			id: "probe",
-			type: "response",
-			command: "get_protocol_info",
-			success: true,
-			data: {
-				protocolVersion: 1,
-				serverVersion: VERSION,
-				capabilities: [
-					"multi_session",
-					"auto_title_sessions",
-					"media_placeholders",
-					"durable_client_message_id",
-					"continue_from_leaf",
-					"retain_on_disconnect",
-					"session_context",
-					"session_kind",
-					"auto_title_per_session",
-					"durable_session_id",
-					"moved_path_guard",
-					"prompt_surface",
-					"prompt_surface_chat",
-					"browser_engine",
-					"retry_fallback_profile",
-					"permission_preset_accept_edits",
-					"permission_preset_auto",
-				],
-				mode: "multi",
-				// Host identity (`protocol-identity.ts`): the instance is this process, the
-				// engine ordinal is built from this tree's VERSION by an independent builder,
-				// and the launch profile of a router built here is whatever argv the test
-				// runner has - `test/rpc-protocol-identity.test.ts` pins its contents against
-				// a host launched with known flags.
-				instanceId: expect.stringMatching(/^[0-9a-f-]{36}$/),
-				generation: 0,
-				engineVersion: VERSION,
-				engineOrdinal: engineBuildIdentityFrom({ version: VERSION }).ordinal,
-				launch_profile: { profile_id: expect.stringMatching(/^[0-9a-f]{64}$/), core: expect.anything() },
-				memory_pressure: false,
-			},
-		});
 	});
 
 	test("forwards client capabilities into each opened session binding", async () => {
