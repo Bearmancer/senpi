@@ -1,3 +1,4 @@
+import type { Stats } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, resolve } from "node:path";
 import type { MovedBreadcrumb } from "./breadcrumb.ts";
@@ -11,6 +12,7 @@ import {
 	movedToInHome,
 	parsedBreadcrumb,
 	trustedBreadcrumb,
+	trustedFolder,
 } from "./breadcrumb-trust.ts";
 import { prefixKey, rememberedReused, rememberReused, rememberTrustedBreadcrumb } from "./known-moves.ts";
 import { type PathPlatform, sameSegment } from "./path-match.ts";
@@ -20,6 +22,7 @@ export type ResolverStep =
 	| { readonly op: "canonical"; readonly path: string }
 	| { readonly op: "json"; readonly file: string }
 	| { readonly op: "exists"; readonly path: string }
+	| { readonly op: "folder"; readonly path: string }
 	| { readonly op: "home" };
 
 /**
@@ -67,6 +70,7 @@ function* movedOnce(path: string, platform: PathPlatform, onReused?: OnReused): 
 		if (
 			match &&
 			movedToInHome(dir, breadcrumb, homes, platform) &&
+			trustedFolder(dir, (yield { op: "folder", path: dir }) as Stats | undefined) &&
 			trustedBreadcrumb(dir, breadcrumb, yield { op: "json", file: homeMarkerFile(breadcrumb.movedTo) }, platform)
 		) {
 			// The re-used decision is recorded before the breadcrumb is remembered, so no text fallback in this call can

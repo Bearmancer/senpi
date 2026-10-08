@@ -31,17 +31,13 @@ function parseJson(text: string): unknown {
 /**
  * Whether a breadcrumb or marker may be believed, from `fstat` of the descriptor it is read through (opened without
  * following a symlink, so the decision and the content are the same file): a regular file of at most
- * `MAX_TRUST_FILE_BYTES`, and on POSIX owned by this user, writable by nobody else and with exactly one name, so
- * another local user cannot plant one in a shared folder such as `/tmp`, neither by writing it nor by hard-linking the
- * user's own breadcrumb there (senpi#2898, fifth review L-1). Windows has no uid/mode to check; there the marker's
- * homeId binding is the only guard.
+ * `MAX_TRUST_FILE_BYTES`, and on POSIX owned by this user and writable by nobody else, so another local user cannot
+ * plant one in a shared folder such as `/tmp` (senpi#2898); a hard link of the user's own breadcrumb there is refused
+ * by `trustedFolder`. Windows has no uid/mode to check; there the marker's homeId binding is the only guard.
  */
 function trustStamp(stats: Stats): string | undefined {
 	if (!stats.isFile() || stats.size > MAX_TRUST_FILE_BYTES) return undefined;
-	if (
-		process.platform !== "win32" &&
-		(stats.uid !== process.getuid?.() || (stats.mode & 0o022) !== 0 || stats.nlink !== 1)
-	)
+	if (process.platform !== "win32" && (stats.uid !== process.getuid?.() || (stats.mode & 0o022) !== 0))
 		return undefined;
 	return `${stats.mtimeMs}:${stats.size}:${stats.ino}`;
 }
@@ -133,6 +129,20 @@ export function movedToInHome(
 ): boolean {
 	if (homes.some((home) => matchMovedPrefix(breadcrumb.movedTo, home, [[]], platform))) return true;
 	ignoreBreadcrumb(breadcrumbFile(dir), "movedTo is outside the user's home");
+	return false;
+}
+
+/**
+ * Whether the folder holding a matched breadcrumb may hold one (sixth review LOW-1): on POSIX a directory this user owns
+ * that nobody else can write, so a breadcrumb linked or written into a shared folder such as `/tmp` is ignored, while
+ * the owner's own breadcrumb keeps working with extra hard links (backups made with `cp -al` or `rsync --link-dest`).
+ * `stats` is the folder's `lstat`; a folder that could not be examined is untrusted. Windows has no uid/mode to check.
+ */
+export function trustedFolder(dir: string, stats: Stats | undefined): boolean {
+	if (stats === undefined) return false;
+	if (process.platform === "win32") return true;
+	if (stats.isDirectory() && stats.uid === process.getuid?.() && (stats.mode & 0o022) === 0) return true;
+	ignoreBreadcrumb(breadcrumbFile(dir), "its folder is shared or not the user's");
 	return false;
 }
 

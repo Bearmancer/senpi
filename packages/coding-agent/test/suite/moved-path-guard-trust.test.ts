@@ -52,15 +52,31 @@ describe("moved-path-guard breadcrumb trust (#2898)", () => {
 		expect(resolveMovedPath(join(moved.oldWorktree, "a.ts"))).toBe(join(moved.newWorktree, "a.ts"));
 	});
 
-	// Fifth review L-1: another local user can hard-link a victim's breadcrumb into a shared folder such as /tmp; the
-	// link passes the uid and mode checks, so a breadcrumb with more than one name is not believed anywhere.
-	it.skipIf(process.platform === "win32")("ignores a hard-linked breadcrumb under either of its names", () => {
+	// Sixth review LOW-1 (replaces the fifth review's nlink rule, which let a second hard link turn the guard off): a
+	// breadcrumb counts only in a folder this user owns that nobody else can write, so a link planted in a shared folder
+	// such as /tmp is ignored while the owner's own breadcrumb keeps working with an extra hard link (backups).
+	it.skipIf(process.platform === "win32")("ignores a breadcrumb hard-linked into a shared sticky folder", () => {
 		const moved = layout();
 		const shared = join(moved.home, "shared");
 		mkdirSync(shared);
+		chmodSync(shared, 0o1777);
 		linkSync(join(moved.oldRoot, "omo-desktop-moved.json"), join(shared, "omo-desktop-moved.json"));
 
 		expect(findMovedPath(join(shared, MOVED_WORKTREE, "a.ts"))).toBeUndefined();
+	});
+
+	it.skipIf(process.platform === "win32")("still follows the owner's breadcrumb that has an extra hard link", () => {
+		const moved = layout();
+		mkdirSync(join(moved.home, "backup"));
+		linkSync(join(moved.oldRoot, "omo-desktop-moved.json"), join(moved.home, "backup", "omo-desktop-moved.json"));
+
+		expect(resolveMovedPath(join(moved.oldWorktree, "a.ts"))).toBe(join(moved.newWorktree, "a.ts"));
+	});
+
+	it.skipIf(process.platform === "win32")("ignores a breadcrumb in a group-writable folder", () => {
+		const moved = layout();
+		chmodSync(moved.oldRoot, 0o775);
+
 		expect(findMovedPath(join(moved.oldWorktree, "a.ts"))).toBeUndefined();
 	});
 
