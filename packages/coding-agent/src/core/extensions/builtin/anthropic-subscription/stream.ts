@@ -14,14 +14,19 @@ import { buildCustomToolServers } from "./custom-tools.ts";
 import { sdkAssistantFailure, sdkResultFailure, sdkResultFailureUsage } from "./errors.ts";
 import { type ClaudeCodeRun, defaultExecutableDeps, resolveClaudeCodeRun } from "./executable.ts";
 import { buildAnthropicSubscriptionQueryOptions } from "./options.ts";
-import { buildPromptBlocks, buildPromptStream } from "./prompt-bridge.ts";
+import { buildDeferredPromptStream, buildPromptBlocks } from "./prompt-bridge.ts";
+import { type PromptCacheTtl, pinOneShotPromptCacheTtl } from "./prompt-cache-ttl.ts";
 import { dedupeUltraworkBlocks } from "./prompt-directive-dedupe.ts";
 import { refusalError } from "./refusal.ts";
 import { getSdkBoundary, loadClaudeAgentSdk, type SdkQueryHandle } from "./sdk-boundary.ts";
 import { type ContinuityObservation, emitContinuityObservation } from "./session-observability.ts";
 import { forgetBinding } from "./session-reattach.ts";
 import { residentSessionMessages } from "./session-stream.ts";
-import { loadAnthropicSubscriptionProviderSettingsFromDisk, resolveCompactionOwner } from "./settings.ts";
+import {
+	loadAnthropicSubscriptionProviderSettingsFromDisk,
+	resolveCompactionOwner,
+	resumeModeSource,
+} from "./settings.ts";
 import { applyStreamEvent } from "./stream-events.ts";
 import { withAuthGuidance } from "./stream-guidance.ts";
 import { emptyOutput, errorMessage, mapStopReason, type StreamBlock, updateUsage } from "./stream-protocol.ts";
@@ -83,6 +88,7 @@ export function streamAnthropicSubscription(
 			const mcpServers = toolLessRequest ? undefined : await buildCustomToolServers(resolvedTools.customTools);
 			claudeCodeRun = resolveClaudeCodeRun(defaultExecutableDeps());
 			const executable = claudeCodeRun.executable;
+			let oneShotCacheTtl: PromptCacheTtl | undefined;
 			const buildOptions = (authLane: Parameters<typeof buildAnthropicSubscriptionQueryOptions>[0]["authLane"]) => {
 				const queryOptions = buildAnthropicSubscriptionQueryOptions({
 					model,
@@ -101,6 +107,14 @@ export function streamAnthropicSubscription(
 					},
 				});
 				if (mcpServers) queryOptions.mcpServers = mcpServers;
+				// The one-shot prompt is built after this, for the lane this attempt resolved (senpi#2982).
+				if (!useResidentSession) {
+					oneShotCacheTtl = pinOneShotPromptCacheTtl(
+						queryOptions,
+						authLane ?? providerSettings.tokenInjection ?? "ambient",
+						{ ...process.env, ...options?.env },
+					);
+				}
 				return queryOptions;
 			};
 			const recordContinuity = (observation: ContinuityObservation): void => {
@@ -124,6 +138,9 @@ export function streamAnthropicSubscription(
 					{
 						kind: "disabled",
 						reason: providerSettings.resumeMode === "off" ? "resume_mode_off" : "registry_miss",
+						...(providerSettings.resumeMode === "off"
+							? { settingSource: resumeModeSource(providerSettings) }
+							: {}),
 					},
 					options.sessionId,
 					recordContinuity,
@@ -152,9 +169,16 @@ export function streamAnthropicSubscription(
 						},
 					})
 				: queryWithAuthLane({
-						prompt: buildPromptStream(
-							dedupeUltraworkBlocks(buildPromptBlocks(context, resolvedTools.customToolNameToSdk, toolWatchNote))
-								.blocks,
+						prompt: buildDeferredPromptStream(
+							() =>
+								dedupeUltraworkBlocks(
+									buildPromptBlocks(
+										context,
+										resolvedTools.customToolNameToSdk,
+										toolWatchNote,
+										oneShotCacheTtl === undefined ? {} : { cacheBreakpoint: oneShotCacheTtl },
+									),
+								).blocks,
 						),
 						query: getSdkBoundary().query,
 						providerSettings,

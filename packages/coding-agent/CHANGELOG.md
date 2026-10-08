@@ -12,6 +12,8 @@
 
 ### Fixed
 
+- Anthropic Subscription with `resumeMode: "off"` no longer re-writes the whole conversation to the prompt cache every turn: the rebuilt history ends at a cache breakpoint, so each turn reads the earlier conversation from cache and writes only what is new. The breakpoint uses the same cache lifetime Claude Code is pinned to on the managed subscription lanes (1 hour unless `CLAUDE_CODE_PROMPT_CACHE_TTL` says otherwise). A repeated ultrawork directive no longer changes earlier history, a changed one is kept in full, and the "continuity disabled" notice says whether the environment variable, project settings or global settings turned resume off ([#2982](https://github.com/code-yeongyu/senpi/issues/2982)).
+
 - With several Anthropic Subscription accounts, a session no longer switches accounts on a transient error (overload, network, server error) and switches back on the next turn, each switch re-sending the whole conversation on the config-dir lane. It retries the same account twice with a short backoff, then stays on whichever account now holds its transcript; usage limits and sign-in failures still move it at once ([#2891](https://github.com/code-yeongyu/senpi/issues/2891)).
 
 - When several processes share one agent directory (the desktop engine, the CLI), a log rotation race no longer switches off a process's config-reload or MCP log for the rest of its life or drops session and fallback log lines; a log that failed to write tries again after a few seconds ([#2976](https://github.com/code-yeongyu/senpi/issues/2976)).

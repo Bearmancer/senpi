@@ -53,6 +53,15 @@ type Environment = Readonly<Record<string, string | undefined>>;
 
 const systemPromptModeSources = new WeakMap<AnthropicSubscriptionProviderSettings, "env">();
 
+/** Which layer set `resumeMode`: the environment variable, project settings, or global settings. */
+export type ResumeModeSource = "env" | "project" | "global";
+const resumeModeSources = new WeakMap<AnthropicSubscriptionProviderSettings, ResumeModeSource>();
+
+/** The layer that set `resumeMode`; settings built outside the loader report "global". */
+export function resumeModeSource(settings: AnthropicSubscriptionProviderSettings): ResumeModeSource {
+	return resumeModeSources.get(settings) ?? "global";
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -178,12 +187,25 @@ export function loadAnthropicSubscriptionProviderSettings(
 	const global = settingsManager.getGlobalSettings() as SettingsWithAnthropicSubscriptionProvider;
 	const project = settingsManager.getProjectSettings() as SettingsWithAnthropicSubscriptionProvider;
 	const environmentSettings = parseEnvironmentSettings(environment);
+	const projectSettings = parseProviderSettings(
+		project.anthropicSubscriptionProvider ?? project.claudeSdkOauthProvider,
+	);
 	const settings = {
 		...parseProviderSettings(global.anthropicSubscriptionProvider ?? global.claudeSdkOauthProvider),
-		...parseProviderSettings(project.anthropicSubscriptionProvider ?? project.claudeSdkOauthProvider),
+		...projectSettings,
 		...environmentSettings,
 	};
 	if (environmentSettings.systemPromptMode !== undefined) systemPromptModeSources.set(settings, "env");
+	if (settings.resumeMode !== undefined) {
+		resumeModeSources.set(
+			settings,
+			environmentSettings.resumeMode !== undefined
+				? "env"
+				: projectSettings.resumeMode !== undefined
+					? "project"
+					: "global",
+		);
+	}
 	return settings;
 }
 
