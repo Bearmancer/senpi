@@ -653,14 +653,14 @@ function buildRequestBody(
 }
 
 function getServiceTierCostMultiplier(
-	model: Pick<Model<"openai-codex-responses">, "id">,
+	model: Pick<Model<"openai-codex-responses">, "id" | "upstreamModelId">,
 	serviceTier: ResponseCreateParamsStreaming["service_tier"] | "fast" | "ultrafast" | undefined,
 ): number {
 	switch (serviceTier) {
 		case "ultrafast":
-			// OpenAI publishes an Ultrafast price for GPT-6 Astra only: 6x Standard on every
+			// OpenAI prices GPT-6 Astra and GPT-6.1 Sol Ultrafast at 6x Standard on every
 			// token class and context tier. Any other model keeps its base rate.
-			return model.id === "gpt-6-astra" ? 6 : 1;
+			return ["gpt-6-astra", "gpt-6.1-sol"].includes(model.upstreamModelId ?? model.id) ? 6 : 1;
 		case "flex":
 			return 0.5;
 		case "priority":
@@ -674,7 +674,7 @@ function getServiceTierCostMultiplier(
 function applyServiceTierPricing(
 	usage: Usage,
 	serviceTier: ResponseCreateParamsStreaming["service_tier"] | "fast" | "ultrafast" | undefined,
-	model: Pick<Model<"openai-codex-responses">, "id">,
+	model: Pick<Model<"openai-codex-responses">, "id" | "upstreamModelId">,
 ) {
 	const multiplier = getServiceTierCostMultiplier(model, serviceTier);
 	if (multiplier === 1) return;

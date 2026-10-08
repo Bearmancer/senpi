@@ -66,6 +66,7 @@ describe("OpenAI mid-session configuration updates", () => {
 		["chatgpt-subscription", "gpt-6-astra-fast"],
 		["chatgpt-subscription", "gpt-6.1-sol"],
 		["chatgpt-subscription", "gpt-6.1-sol-fast"],
+		["chatgpt-subscription", "gpt-6.1-sol-ultrafast"],
 	] as const)("emits the update for flagged %s/%s", (provider, id) => {
 		expect(convert(catalogModel(provider, id), updateThenUser)).toMatchObject([
 			{ type: "configuration_update", reasoning: { effort: "high" } },
@@ -117,11 +118,17 @@ describe("configuration_update catalog flag", () => {
 		}
 	});
 
-	it("flags only gpt-6-astra, gpt-6.1-sol and their -fast variants on the ChatGPT subscription", () => {
+	it("flags only gpt-6-astra, gpt-6.1-sol and their tier variants on the ChatGPT subscription", () => {
 		const flagged = getModels("chatgpt-subscription")
 			.filter((model) => supportsConfigurationUpdate(model))
 			.map((model) => model.id)
 			.sort();
-		expect(flagged).toEqual(["gpt-6-astra", "gpt-6-astra-fast", "gpt-6.1-sol", "gpt-6.1-sol-fast"]);
+		expect(flagged).toEqual([
+			"gpt-6-astra",
+			"gpt-6-astra-fast",
+			"gpt-6.1-sol",
+			"gpt-6.1-sol-fast",
+			"gpt-6.1-sol-ultrafast",
+		]);
 	});
 });

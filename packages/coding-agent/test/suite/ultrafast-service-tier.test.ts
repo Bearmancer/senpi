@@ -61,7 +61,7 @@ describe("Ultrafast service-tier selection", () => {
 		expect(manager.getModelServiceTier(PROVIDER, MODEL)).toBe("priority");
 	});
 
-	it("warns for a glob that pairs ultrafast with a non-Astra model and still scopes it", () => {
+	it("scopes a glob matching both documented Ultrafast models without warnings", () => {
 		const openaiAstra = getModel("openai", MODEL);
 		const sol = getModel("openai", "gpt-6.1-sol");
 		const scope = resolveModelScopeFromModels(["openai/gpt-6*:ultrafast"], [openaiAstra, sol]);
@@ -69,14 +69,7 @@ describe("Ultrafast service-tier selection", () => {
 			[MODEL, "ultrafast"],
 			["gpt-6.1-sol", "ultrafast"],
 		]);
-		expect(scope.diagnostics).toEqual([
-			{
-				type: "warning",
-				code: "ultrafast-undocumented",
-				message: "Ultrafast is documented for GPT-6 Astra only; openai/gpt-6.1-sol may reject or ignore it",
-				pattern: "openai/gpt-6*:ultrafast",
-			},
-		]);
+		expect(scope.diagnostics).toEqual([]);
 	});
 
 	it("keeps an Ultrafast model pin above remembered priority and the /fast toggle", async () => {
@@ -135,8 +128,8 @@ describe("Ultrafast service-tier selection", () => {
 	);
 
 	it("warns for resolved settings and models.json alias tiers without repeating the advisory", async () => {
-		const sol = getModel("openai", "gpt-6.1-sol");
-		const aliasId = "gpt-6.1-sol-ultrafast";
+		const sol = getModel("openai", "gpt-6-sol");
+		const aliasId = "gpt-6-sol-ultrafast";
 		const cases = [
 			await createHarness({
 				api: "openai-responses",
@@ -167,10 +160,31 @@ describe("Ultrafast service-tier selection", () => {
 			const notify = vi.spyOn(runner.getUIContext(), "notify");
 			await runner.emitBeforeProviderRequest({ model: sol.id });
 			expect(notify).toHaveBeenCalledWith(
-				"Ultrafast is documented for GPT-6 Astra only; openai/gpt-6.1-sol may reject or ignore it",
+				"Ultrafast is documented for GPT-6 Astra and GPT-6.1 Sol; openai/gpt-6-sol may reject or ignore it",
 				"warning",
 			);
 		}
+	});
+
+	it("does not warn for the Sol Ultrafast alias with the service-tier extension loaded", async () => {
+		// #2975: the extension resolves the alias to its upstream id before warning.
+		const sol = getModel(PROVIDER, "gpt-6.1-sol-ultrafast");
+		const harness = await createHarness({
+			api: "openai-codex-responses",
+			provider: PROVIDER,
+			models: [{ id: sol.id }],
+			modelsJson: { providers: { [PROVIDER]: { models: [sol] } } },
+			extensionFactories: [serviceTierExtension],
+		});
+		harnesses.push(harness);
+		await harness.session.bindExtensions({});
+		const runner = harness.getExtensionRunner();
+		const notify = vi.spyOn(runner.getUIContext(), "notify");
+		expect(await runner.emitBeforeProviderRequest({ model: sol.upstreamModelId })).toEqual({
+			model: "gpt-6.1-sol",
+			service_tier: "ultrafast",
+		});
+		expect(notify).not.toHaveBeenCalled();
 	});
 
 	it("preserves an Ultrafast pin in an extension-less session with fast mode already on", async () => {

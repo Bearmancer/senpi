@@ -9363,3 +9363,21 @@ The `promptSurface` plumbing in `agent-session.ts`, `agent-session-services.ts` 
 ### Expected merge conflict zones
 
 - LOW: the final `return` of `convertToLlm` and its import in `messages.ts`; in `agent-session.ts`, `PromptOptions` (new `textBlocks`), the `inputResult.action === "transform"` branch and the `userContent` line in `prompt()`, the `_queueSteer` / `_queueFollowUp` / `_enqueuePreparedInput` signatures and content line, the text-part loop plus `prompt()` call in `sendUserMessage`, and the `text` line of `getUserMessagesForForking`.
+
+## 2026-10-08 - Recognize GPT-6.1 Sol as a documented Ultrafast model (senpi#2975)
+
+### What changed
+
+- `packages/coding-agent/src/core/ultrafast-lanes.ts`: the documented model set includes `gpt-6-astra` and `gpt-6.1-sol`, so the native Sol Ultrafast alias does not emit an unsupported-tier warning after the service-tier extension resolves its upstream id. Other models and non-first-party providers retain their warnings.
+
+### Why
+
+- The current subscription catalog advertises Ultrafast for both models; the previous Astra-only notice was misleading for Sol.
+
+### Why an extension could not handle it
+
+- Model resolution and the builtin service-tier extension share this core warning policy.
+
+### Expected merge conflict zones
+
+- LOW: the documented model set and warning text in `packages/coding-agent/src/core/ultrafast-lanes.ts`.

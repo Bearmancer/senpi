@@ -6,6 +6,8 @@
 
 ### Added
 
+- Select `chatgpt-subscription/gpt-6.1-sol-ultrafast` without a local extension to use Sol with the Ultrafast service tier and default `xhigh` reasoning. Usage estimates include its published 6x Standard pricing ([#2975](https://github.com/code-yeongyu/senpi/pull/2975) by [@audreyt](https://github.com/audreyt)).
+
 ### Changed
 
 ### Fixed

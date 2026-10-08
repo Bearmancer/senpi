@@ -6,6 +6,8 @@
 
 ### Added
 
+- The ChatGPT Subscription catalog includes `gpt-6.1-sol-ultrafast`, sending upstream `gpt-6.1-sol` with the Ultrafast service tier and default `xhigh` reasoning without a local extension. Both OpenAI adapters estimate Sol and Astra Ultrafast costs at the published 6x Standard rates, including pinned aliases ([#2975](https://github.com/code-yeongyu/senpi/pull/2975) by [@audreyt](https://github.com/audreyt)).
+
 ### Changed
 
 ### Fixed

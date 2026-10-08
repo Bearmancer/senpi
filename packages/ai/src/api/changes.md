@@ -1,3 +1,21 @@
+## 2026-10-08 - Sol Ultrafast uses published sixfold pricing (senpi#2975)
+
+### What changed
+
+- `packages/ai/src/api/openai-responses.ts` and `packages/ai/src/api/openai-codex-responses.ts`: Ultrafast estimated costs apply the published 6x Standard multiplier to GPT-6.1 Sol as well as GPT-6 Astra. The pricing lookup uses `upstreamModelId ?? id`, covering pinned aliases while leaving the wire request unchanged.
+
+### Why
+
+- [OpenAI's pricing page](https://developers.openai.com/api/docs/pricing) now lists Sol Ultrafast at $12/$0.60/$15/$60 per million input/cached-input/cache-write/output tokens, and $24/$1.20/$30/$90 for long context. Both tables are 6x Standard. Matching only the catalog id undercounted the native alias by sixfold.
+
+### Why an extension could not handle it
+
+- Both adapters calculate streamed usage costs internally after response processing.
+
+### Expected merge conflict zones
+
+- LOW: `getServiceTierCostMultiplier` and `applyServiceTierPricing` in both adapters.
+
 ## 2026-10-08 - A configured anthropic-beta header is merged with the betas the request body needs (senpi#2957)
 
 ### What changed
