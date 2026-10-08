@@ -128,5 +128,4 @@ describe("senpi#2925: a required compaction inside one tool-heavy turn", () => {
 		expect(last?.content).toEqual([expect.objectContaining({ type: "text", text: FINAL })]);
 		expect(harness.sessionManager.getEntries().some((entry) => entry.type === "compaction")).toBe(true);
 	});
-
 });
