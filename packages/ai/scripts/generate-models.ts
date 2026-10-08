@@ -854,8 +854,10 @@ function supportsAnthropicMidConvoEffort(modelId: string): boolean {
 
 // Opus 5.5 and Sonnet 5.5 reject `thinking: {type: "disabled"}` and `{type: "enabled"}` alike (400:
 // `"thinking.type.disabled" is not supported for this model`); only adaptive thinking is accepted.
-// Haiku 5.5 rejects `enabled` and documents only an unset or adaptive `thinking`, so it is held to
-// the same contract.
+// Haiku 5.5 rejects `enabled` and its docs name only an unset or adaptive `thinking`; whether it rejects
+// `disabled` is UNVERIFIED (no live probe yet; models.dev lists a thinking toggle for it). Until a probe
+// settles it, it is held to the adaptive-only contract, whose thinking-off shape (unset + effort `low`)
+// is valid either way.
 function isAnthropicAdaptiveOnlyModel(modelId: string): boolean {
 	return (
 		modelId.includes("fable-5") ||
@@ -1615,10 +1617,25 @@ function roundCost(value: number): number {
 	return Number(value.toFixed(6));
 }
 
-// Claude Haiku 5.5 bills a prompt over 100K input tokens entirely at its long-context rates on every
-// route; passthrough blocks that keep flat prices elsewhere take its models.dev tiers.
-function isClaudeHaiku55ModelId(modelId: string): boolean {
-	return /haiku-5[.-]5/.test(modelId);
+// Claude Haiku 5.5 bills the whole request at five times every base rate once the prompt exceeds 100K input
+// tokens, on every route (https://platform.claude.com/docs/en/about-claude/pricing). Catalogs that list it
+// with flat prices (regional Bedrock, batch variants, gateways) take the tier from their own base rates.
+const CLAUDE_HAIKU_55_LONG_CONTEXT_INPUT_THRESHOLD = 100000;
+
+function withClaudeHaiku55LongContextPricing(cost: ModelCost): ModelCost {
+	if (cost.tiers?.length) return cost;
+	return {
+		...cost,
+		tiers: [
+			{
+				inputTokensAbove: CLAUDE_HAIKU_55_LONG_CONTEXT_INPUT_THRESHOLD,
+				input: roundCost(cost.input * 5),
+				output: roundCost(cost.output * 5),
+				cacheRead: roundCost(cost.cacheRead * 5),
+				cacheWrite: roundCost(cost.cacheWrite * 5),
+			},
+		],
+	};
 }
 
 function getModelsDevCost(cost: ModelsDevModel["cost"]): ModelCost {
@@ -2162,14 +2179,12 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 					baseUrl: getBedrockBaseUrl(id),
 					reasoning: m.reasoning === true,
 					input: (m.modalities?.input?.includes("image") ? ["text", "image"] : ["text"]) as ("text" | "image")[],
-					cost: isClaudeHaiku55ModelId(id)
-						? getModelsDevCost(m.cost)
-						: {
-								input: m.cost?.input || 0,
-								output: m.cost?.output || 0,
-								cacheRead: m.cost?.cache_read || 0,
-								cacheWrite: m.cost?.cache_write || 0,
-							},
+					cost: {
+						input: m.cost?.input || 0,
+						output: m.cost?.output || 0,
+						cacheRead: m.cost?.cache_read || 0,
+						cacheWrite: m.cost?.cache_write || 0,
+					},
 					contextWindow: m.limit?.context || 4096,
 					maxTokens: m.limit?.output || 4096,
 					...(m.structured_output === true && { compat: { supportsStrictMode: true } }),
@@ -2192,7 +2207,12 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 					baseUrl: "https://api.anthropic.com",
 					reasoning: m.reasoning === true,
 					input: m.modalities?.input?.includes("image") ? ["text", "image"] : ["text"],
-					cost: getModelsDevCost(m.cost),
+					cost: {
+						input: m.cost?.input || 0,
+						output: m.cost?.output || 0,
+						cacheRead: m.cost?.cache_read || 0,
+						cacheWrite: m.cost?.cache_write || 0,
+					},
 					contextWindow: m.limit?.context || 4096,
 					maxTokens: m.limit?.output || 4096,
 				});
@@ -2770,14 +2790,12 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 					reasoning: m.reasoning === true,
 					...(thinkingLevelMap ? { thinkingLevelMap } : {}),
 					input: m.modalities?.input?.includes("image") ? ["text", "image"] : ["text"],
-					cost: isClaudeHaiku55ModelId(modelId)
-						? getModelsDevCost(m.cost)
-						: {
-								input: m.cost?.input || 0,
-								output: m.cost?.output || 0,
-								cacheRead: m.cost?.cache_read || 0,
-								cacheWrite: m.cost?.cache_write || 0,
-							},
+					cost: {
+						input: m.cost?.input || 0,
+						output: m.cost?.output || 0,
+						cacheRead: m.cost?.cache_read || 0,
+						cacheWrite: m.cost?.cache_write || 0,
+					},
 					...(compat ? { compat } : {}),
 					contextWindow: m.limit?.context || 4096,
 					maxTokens: m.limit?.output || 4096,
@@ -3478,6 +3496,10 @@ async function generateModels() {
 	for (const candidate of allModels) {
 		if (candidate.provider === "github-copilot" && GITHUB_COPILOT_EXTENDED_CONTEXT_MODELS.has(candidate.id)) {
 			candidate.contextWindow = 1000000;
+		}
+
+		if (/haiku-5[.-]5/.test(candidate.id)) {
+			candidate.cost = withClaudeHaiku55LongContextPricing(candidate.cost);
 		}
 
 		// models.dev may list Opus 5.5, Sonnet 5.5 and Haiku 5.5 before their effort metadata is complete.
