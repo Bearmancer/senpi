@@ -71,6 +71,8 @@ interface McpSessionBinding {
 	/** True when `fallbackToolSearch` is the process-wide fallback rather than a private one. */
 	readonly holdsProcessFallback: boolean;
 	readonly context: McpSessionContext;
+	/** The config this session resolved at attach: its tools register and are fenced against it alone (senpi#2597). */
+	readonly config: ResolvedMcpConfig;
 	readonly registeredIdentities: Map<string, string>;
 	registration: McpSessionRegistration | undefined;
 }
@@ -154,13 +156,19 @@ export class McpService {
 				projectTrusted: sessionOptions.projectTrusted ?? ctx.isProjectTrusted(),
 			});
 			mergeExtensionMcpServers(config, ctx.getRegisteredMcpServers?.() ?? []);
-			// Equivalent peer attachment must not retire another session's configuration fence.
-			this.#config = JSON.stringify(this.#config) === JSON.stringify(config) ? this.#config : config;
-			const binding = _pi === undefined || this.#releasedSessions.has(_pi) ? undefined : this.#bind(_pi, ctx);
+			const binding =
+				_pi === undefined || this.#releasedSessions.has(_pi) ? undefined : this.#bind(_pi, ctx, config);
+			// An equivalent effective config keeps its identity, so credential refreshes it scheduled stay current.
+			const effective = this.#effectiveConfig(config);
+			const current =
+				this.#config !== null && JSON.stringify(this.#config) === JSON.stringify(effective)
+					? this.#config
+					: effective;
+			this.#config = current;
 			this.#authAgentDir = sessionOptions.agentDir;
 			this.#authEnv = sessionOptions.env;
 			this.#sessionOptions = sessionOptions;
-			await this.#syncFromConfig(config, sessionOptions, event.reason !== "reload", binding);
+			await this.#syncFromConfig(current, sessionOptions, event.reason !== "reload", binding);
 			if (binding !== undefined) await this.#registerDirectTools(binding);
 			// Replay promotion markers from the (possibly resumed) session history
 			// BEFORE the first turn: the request tool snapshot is taken before the
@@ -192,7 +200,20 @@ export class McpService {
 		for (const settle of this.#deferredDisposeWaiters.splice(0)) settle();
 	}
 
-	#bind(pi: McpToolRegistrar, ctx: McpSessionContext): McpSessionBinding {
+	/**
+	 * The config the shared connections follow: `preferred` (the attaching session's) plus every server another live
+	 * session declares and `preferred` does not, so a peer's attach never tears down a server a live session still
+	 * uses (senpi#2597). A name both declare follows `preferred`, as connections are one per server name.
+	 */
+	#effectiveConfig(preferred: ResolvedMcpConfig): ResolvedMcpConfig {
+		const servers = { ...preferred.servers };
+		for (const binding of this.#liveBindings()) {
+			for (const [name, server] of Object.entries(binding.config.servers)) servers[name] ??= server;
+		}
+		return { ...preferred, servers };
+	}
+
+	#bind(pi: McpToolRegistrar, ctx: McpSessionContext, config: ResolvedMcpConfig): McpSessionBinding {
 		const activationRuntime = {
 			getActiveTools: () => pi.getActiveTools(),
 			setActiveTools: (names: readonly string[]) => pi.setActiveTools([...names]),
@@ -223,6 +244,7 @@ export class McpService {
 			fallbackToolSearch,
 			holdsProcessFallback,
 			context: ctx,
+			config,
 			registeredIdentities: previous?.registeredIdentities ?? new Map(),
 			registration: previous?.registration,
 		};
@@ -306,9 +328,9 @@ export class McpService {
 	 * skill's trust (skill-server.ts); each trust warning is returned once per session.
 	 */
 	async attachSkillMcpServers(declared: ReadonlyMap<string, SkillServerRegistration>, pi?: object): Promise<string[]> {
-		const config = this.#config;
 		const binding = this.#bindingFor(pi);
-		if (config === null || binding === undefined) return [];
+		if (this.#config === null || binding === undefined) return [];
+		const config = binding.config;
 		const warnings: string[] = [];
 		const projectTrusted = this.#sessionOptions.projectTrusted ?? this.#sessionContext?.isProjectTrusted() ?? false;
 		let added = 0;
@@ -335,7 +357,8 @@ export class McpService {
 			added += 1;
 		}
 		if (added > 0) {
-			await this.#syncFromConfig(config, this.#sessionOptions, false, binding);
+			this.#config = this.#effectiveConfig(config);
+			await this.#syncFromConfig(this.#config, this.#sessionOptions, false, binding);
 			await this.#registerDirectTools(binding);
 			if (this.#sessionContext !== null && shouldCaptureWireStatus(this.#sessionContext)) {
 				await this.refreshWireStatusSnapshot(this.#sessionContext.sessionManager?.getSessionId?.());
@@ -655,32 +678,35 @@ export class McpService {
 		// Resolved when the refresh registers, not when it starts: a session that attaches while the
 		// refresh is still listing tools must receive the refreshed catalog too.
 		const targets = () =>
-			this.#liveBindings().map((binding) => ({
-				pi: binding.pi,
-				registeredIdentity: () => binding.registeredIdentities.get(entry.key),
-				register: () => this.#registerDirectTools(binding),
-			}));
+			this.#liveBindings()
+				.filter((binding) => binding.config.servers[entry.name]?.configHash === entry.configHash)
+				.map((binding) => ({
+					pi: binding.pi,
+					registeredIdentity: () => binding.registeredIdentities.get(entry.key),
+					register: () => this.#registerDirectTools(binding),
+				}));
 		await refreshMcpToolsOnListChanged(entry, targets, config, connectOnly);
 	}
 
 	async #registerDirectTools(binding: McpSessionBinding): Promise<void> {
-		const config = this.#config;
-		if (config === null) return;
+		if (this.#disposed) return;
+		const config = binding.config;
 		const toolSearchService = this.#toolSearchFor(binding);
 		if (toolSearchService === undefined) return;
 		binding.registration = await registerMcpServiceDirectTools(
 			binding.pi,
 			config,
-			this.#connections.values(),
+			// Only the connections this session's own config declares; a peer's config never decides its tools.
+			[...this.#connections.values()].filter((entry) => config.servers[entry.name]?.configHash === entry.configHash),
 			toolSearchService,
 			{
 				refreshActiveSetWhenEmpty: this.#refreshActiveSetWhenNoTools,
 				onRegistered: (entry, identity) => binding.registeredIdentities.set(entry.key, identity),
 				contextRequired: binding.context.mode !== undefined,
 				sessionManager: binding.context.sessionManager,
+				// A new attach of this session replaces its binding (and with it its config); a peer's attach does not.
 				isCurrent: (entry) =>
 					!this.#disposed &&
-					this.#config === config &&
 					this.#bindings.get(binding.pi) === binding &&
 					this.#entryForName(entry.name) === entry,
 				publishCurrent: async () => {

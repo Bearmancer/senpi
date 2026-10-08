@@ -15,7 +15,7 @@ import toolSearchExtension from "../../../src/core/extensions/builtin/tool-searc
 import { getToolSearchService } from "../../../src/core/extensions/builtin/tool-search/service.ts";
 import type { ResourceLoader } from "../../../src/core/resource-loader.ts";
 import type { ExtensionAPI, LoadExtensionsResult } from "../../../src/index.ts";
-import { type CapturingPi, capturingPi } from "../../mcp/fixtures/register-call.ts";
+import { type CapturingPi, capturingPi, registeredTool } from "../../mcp/fixtures/register-call.ts";
 import {
 	cleanupRoots,
 	makeRoot,
@@ -25,11 +25,12 @@ import {
 	type TestRoot,
 } from "../../mcp/fixtures/service-lifecycle.ts";
 import { sharingHttpFixture } from "../../mcp/fixtures/sharing-http.ts";
-import { assertProcessDead } from "../../mcp/fixtures/spawn-fixture.ts";
+import { assertProcessDead, stdioFixtureCommand } from "../../mcp/fixtures/spawn-fixture.ts";
 import { createTestExtensionsResult, createTestResourceLoader } from "../../utilities.ts";
 import { createHarness, getMessageText, type Harness } from "../harness.ts";
 
 const TOOL = "mcp_fx_tool_1";
+const EXTRA_TOOL = "mcp_extra_tool_1";
 const REGISTRATION_TIMEOUT_MS = 8_000;
 
 const cleanupTasks: Array<() => Promise<void>> = [];
@@ -127,18 +128,18 @@ function untilToolRegistered(harness: Harness, name: string): Promise<void> {
 	});
 }
 
-async function callMcpTool(harness: Harness, value: string): Promise<string> {
+async function callMcpTool(harness: Harness, value: string, tool = TOOL): Promise<string> {
 	harness.setResponses([
-		fauxAssistantMessage(fauxToolCall(TOOL, { value }), { stopReason: "toolUse" }),
+		fauxAssistantMessage(fauxToolCall(tool, { value }), { stopReason: "toolUse" }),
 		fauxAssistantMessage("done"),
 	]);
-	await harness.session.prompt(`call ${TOOL}`);
+	await harness.session.prompt(`call ${tool}`);
 	const result = harness.sessionManager
 		.getEntries()
 		.filter((entry) => entry.type === "message")
 		.map((entry) => entry.message)
-		.find((message) => message.role === "toolResult" && message.toolName === TOOL);
-	if (result === undefined) throw new Error(`no ${TOOL} result in session ${harness.session.sessionId}`);
+		.findLast((message) => message.role === "toolResult" && message.toolName === tool);
+	if (result === undefined) throw new Error(`no ${tool} result in session ${harness.session.sessionId}`);
 	return getMessageText(result);
 }
 
@@ -234,6 +235,39 @@ describe("senpi#2514: each session binds its own view of the shared MCP service"
 		expect(service.isDisposed()).toBe(false);
 		expect(service.getConnection("fx")?.getRootPid()).toBe(pid);
 		expect(service.getConnection("fx")?.generation).toBe(generation);
+		expect(await readCounter(spawnCounter)).toBe(1);
+	});
+
+	it("keeps a session's MCP tools working after a peer session with a different MCP config attaches (senpi#2597)", async () => {
+		// Given: the first session's extensions declare an extra MCP server, so its resolved config differs from a
+		// peer that loads without them (an OmO memory sidecar beside the main session), and both declare `fx`.
+		configureServer();
+		const fixture = stdioFixtureCommand();
+		const alpha = await openSession(
+			await mcpExtensions((pi) => {
+				pi.registerMcpServer("extra", {
+					type: "stdio",
+					command: fixture.command,
+					args: [...fixture.args, "--tools", "1"],
+					exposure: "search",
+					lifecycle: "eager",
+				});
+			}),
+		);
+		await untilToolRegistered(alpha, TOOL);
+		await untilToolRegistered(alpha, EXTRA_TOOL);
+
+		// When: the peer attaches to the shared service, then the first session calls both servers' tools.
+		const bravo = await openSession();
+		await untilToolRegistered(bravo, TOOL);
+		const shared = await callMcpTool(alpha, "after-peer");
+		const extra = await callMcpTool(alpha, "extra-after-peer", EXTRA_TOOL);
+
+		// Then: the peer's attach neither retired the first session's tools nor tore down the server only it declares.
+		expect(shared).toContain("fixture tool_1 value=after-peer");
+		expect(extra).toContain("fixture tool_1 value=extra-after-peer");
+		expect(registeredNames(bravo)).not.toContain(EXTRA_TOOL);
+		expect(await callMcpTool(bravo, "from-bravo")).toContain("fixture tool_1 value=from-bravo");
 		expect(await readCounter(spawnCounter)).toBe(1);
 	});
 
@@ -374,6 +408,29 @@ describe("senpi#2514: the shared service keeps sessions apart under concurrency 
 		await service.releaseSession(bravoPi, "quit");
 		expect(service.getSnapshot()).toMatchObject({ disposed: true, connectionCount: 0 });
 		if (pid !== null && pid !== undefined) await assertProcessDead(pid);
+	});
+
+	it("refuses a session's earlier MCP tool once that session's own server configuration changes", async () => {
+		// Given: a session whose `fx` tool is registered.
+		configureServer();
+		const alphaPi = capturingPi();
+		await attachFake(alphaPi);
+		await untilFakeRegistered(alphaPi, TOOL);
+		const stale = registeredTool(alphaPi, TOOL);
+
+		// When: its own `fx` configuration changes and it attaches again, as a reload does.
+		setConfig(root, {
+			fx: {
+				...stdioServer(["--tools", "3", "--spawn-counter-file", spawnCounter]),
+				exposure: "search",
+				lifecycle: "eager",
+			},
+		});
+		await attachFake(alphaPi);
+		const result = await Reflect.apply(stale.execute, stale, ["stale", { value: "stale" }, undefined, undefined]);
+
+		// Then: the offer made under the old configuration is refused instead of reaching the replaced server.
+		expect(result).toMatchObject({ details: { error: { kind: "unavailable", server: "fx", tool: "tool_1" } } });
 	});
 
 	it("refuses an attach to a disposed service instead of opening connections nobody can close", async () => {

@@ -1,3 +1,23 @@
+## 2026-10-08 - Fence each session's MCP tools with its own config, not the last attach's (senpi#2597)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/service.ts`: each session binding now records the `ResolvedMcpConfig` it attached with. `#registerDirectTools` registers a session's tools from that config and only for the connections whose `configHash` it declares. The invocation fence no longer compares the process-wide `#config` identity. A session's offers stay current while its own binding and the connection entry they were made against are current. A new attach by the same session replaces its binding and retires its old offers; a peer's attach does not.
+- `service.ts`: the shared connections follow an effective config. That config is the attaching session's config plus every server another live binding declares that it does not. A peer whose config lacks a server, such as an OmO memory sidecar loaded without extension-registered servers, no longer tears down a connection a live session still declares. On a name collision the attaching config wins, as before, because connections are one per server name. The effective config keeps its object identity when it is JSON-equal to the previous one, so credential-change resyncs keep running across subset-peer attaches. This supersedes the identical-config preservation bullet in the senpi#2843 entry.
+- `service.ts`: skill-declared servers (`attachSkillMcpServers`) merge into the declaring session's own config, then into the effective config. A list_changed refresh re-registers and tombstones only in sessions that declare that server with the refreshed connection's hash.
+
+### Why
+
+- The fence compared one process-wide `#config` object, and any attach with a different resolved config replaced it. On a multi-session host, the main session (with extension-registered servers) and sidecar sessions (without them) share one service. Each sidecar attach therefore refused every MCP tool in the main session with "MCP session or server configuration was replaced.". The refusal was permanent, because no later attach restored the identity and the main session's binding was never republished. The same last-attach config also decided which connections lived, so a sidecar attach disposed the main session's extension-registered servers.
+
+### Why an extension could not handle it
+
+- The fence and the connection set are private state of the MCP builtin's shared service; no extension can see or replace them.
+
+### Expected merge conflict zones
+
+- `McpSessionBinding`, `attachSession`, `#bind`, `attachSkillMcpServers`, `#handleServerToolsChanged` and `#registerDirectTools` in `packages/coding-agent/src/core/extensions/builtin/mcp/service.ts`.
+
 ## 2026-10-06 - Nonblocking first-turn MCP admission (senpi#2843)
 
 ### What changed
