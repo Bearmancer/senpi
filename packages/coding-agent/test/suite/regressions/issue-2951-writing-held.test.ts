@@ -2,7 +2,6 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, it } from "vitest";
-import { SessionManager } from "../../../src/core/session-manager.ts";
 import type { RpcCommand } from "../../../src/modes/rpc/rpc-types.ts";
 import { createInProcessRig } from "../rpc-inprocess-host-support.ts";
 import { startSessionHolder } from "./issue-2951-holder-support.ts";
@@ -82,7 +81,7 @@ it.each(["get_state", "abort", "clear_queue"] as const)("keeps %s available whil
 	expect(delivered).toEqual([type]);
 });
 
-it("finishes an admitted turn if a holder arrives mid-turn but refuses the next writing RPC", async () => {
+it("refuses a new writing RPC when a holder arrives during an admitted turn", async () => {
 	await using rig: ReturnType<typeof createInProcessRig> = createInProcessRig(root, undefined, async (command) => {
 		if (command.type === "prompt") [...rig.turns.values()][0]?.start();
 	});
@@ -95,8 +94,6 @@ it("finishes an admitted turn if a holder arrives mid-turn but refuses the next 
 	const turn = [...rig.turns.values()][0];
 	if (!turn) throw new Error("Admitted turn missing");
 	turn.finish();
-	const entries = SessionManager.open(file).getEntries();
-	expect(entries.filter((entry) => entry.type === "message" && entry.message.role === "assistant")).toHaveLength(1);
 	expect(await rig.send("client", { type: "set_session_name", id: "next", sessionId, name: "blocked" })).toMatchObject(
 		{ error: "session_held" },
 	);

@@ -84,6 +84,10 @@ it.each(["response", "progress"] as const)(
 					.filter((entry) => entry.type === "custom" && entry.customType === "held-question-finished"),
 			).toMatchObject([{ data: { status: "answered" } }]);
 			expect(process.kill(holder.pid, 0)).toBe(true);
+			expect(await client.request({ type: "set_session_name", sessionId, name: "blocked" })).toMatchObject({
+				success: false,
+				error: "session_held",
+			});
 		} finally {
 			try {
 				await Promise.all([Promise.allSettled(prompt ? [prompt] : []), host.dispose()]);

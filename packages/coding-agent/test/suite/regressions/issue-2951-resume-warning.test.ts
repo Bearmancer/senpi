@@ -25,7 +25,10 @@ it.each(["holder", "lookup-error"] as const)("resumes through the public control
 	const root = await mkdtemp(join(tmpdir(), "held-resume-public-"));
 	const target = join(root, "target.jsonl");
 	const id = randomUUID();
-	await writeFile(target, `${JSON.stringify({ type: "session", version: 3, id, cwd: root, timestamp: new Date(0).toISOString() })}\n`);
+	await writeFile(
+		target,
+		`${JSON.stringify({ type: "session", version: 3, id, cwd: root, timestamp: new Date(0).toISOString() })}\n`,
+	);
 	const faux = registerFauxProvider({ models: [{ id: "faux-resume", reasoning: false }] });
 	const authStorage = AuthStorage.inMemory();
 	await authStorage.modify(faux.getModel().provider, async () => ({ type: "api_key", key: "faux-key" }));
@@ -68,7 +71,12 @@ it.each(["holder", "lookup-error"] as const)("resumes through the public control
 		});
 		services.settingsManager.applyOverrides({ quietStartup: true });
 		return {
-			...(await createAgentSessionFromServices({ services, sessionManager, sessionStartEvent, model: faux.getModel() })),
+			...(await createAgentSessionFromServices({
+				services,
+				sessionManager,
+				sessionStartEvent,
+				model: faux.getModel(),
+			})),
 			services,
 			diagnostics: services.diagnostics,
 		};
@@ -96,7 +104,7 @@ it.each(["holder", "lookup-error"] as const)("resumes through the public control
 		await mode.init();
 		if (kind === "lookup-error")
 			vi.spyOn(sessionHolders, "liveSessionHolders").mockRejectedValueOnce(new Error("ENOTDIR"));
-		needle = holder ? String(holder.pid) : "ENOTDIR";
+		needle = holder ? String(holder.pid) : "Unable to inspect session holders";
 		await runtime.session.prompt("/fixture-resume");
 		expect(runtime.session.sessionManager.getSessionId()).toBe(id);
 		await reservationPhase("resume-warning-rendered", printed.promise);

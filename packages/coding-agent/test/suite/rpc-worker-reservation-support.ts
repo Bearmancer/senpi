@@ -3,7 +3,10 @@ import type { RpcCommand } from "../../src/modes/rpc/rpc-types.ts";
 import { SessionCommandRouter } from "../../src/modes/rpc/session-command-router.ts";
 import { SessionEventWriter } from "../../src/modes/rpc/session-event-writer.ts";
 import { SessionWorkerClient } from "../../src/modes/rpc/session-worker-client.ts";
-import { WorkerSessionRegistry, type WorkerSessionRegistryOptions } from "../../src/modes/rpc/worker-session-registry.ts";
+import {
+	WorkerSessionRegistry,
+	type WorkerSessionRegistryOptions,
+} from "../../src/modes/rpc/worker-session-registry.ts";
 
 const nativeSetTimeout = setTimeout;
 const nativeClearTimeout = clearTimeout;

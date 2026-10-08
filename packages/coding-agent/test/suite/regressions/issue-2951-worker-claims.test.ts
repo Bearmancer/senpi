@@ -4,8 +4,8 @@ import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
-import { createSessionPathReservations, readSessionPathClaims } from "../../../src/modes/rpc/host-reservations.ts";
 import { hostDaemonDirectoryPaths } from "../../../src/modes/rpc/host-daemon-paths.ts";
+import { createSessionPathReservations, readSessionPathClaims } from "../../../src/modes/rpc/host-reservations.ts";
 import { reservationHost, reservationPhase } from "../rpc-worker-reservation-support.ts";
 
 afterEach(() => {
@@ -22,13 +22,22 @@ async function workerHost() {
 	const first = join(root, "first.jsonl");
 	const second = join(root, "second.jsonl");
 	for (const file of [first, second])
-		await writeFile(file, `${JSON.stringify({ type: "session", version: 3, id: randomUUID(), cwd, timestamp: new Date(0).toISOString() })}\n`);
+		await writeFile(
+			file,
+			`${JSON.stringify({ type: "session", version: 3, id: randomUUID(), cwd, timestamp: new Date(0).toISOString() })}\n`,
+		);
 	const daemon = createSessionPathReservations({ daemonDir: join(root, "daemon"), instanceId: "current" });
 	vi.stubEnv("SENPI_OFFLINE", "1");
 	const host = reservationHost(cwd, agentDir, undefined, { pathReservations: daemon });
 	host.connect("client");
 	try {
-		await host.send("client", { id: "open", type: "open_session", cwd, sessionPath: first, retain_on_disconnect: true });
+		await host.send("client", {
+			id: "open",
+			type: "open_session",
+			cwd,
+			sessionPath: first,
+			retain_on_disconnect: true,
+		});
 		await host.writer.flush();
 		expect(host.records).toContainEqual(expect.objectContaining({ type: "response", id: "open", success: true }));
 		const handle = host.registry.list()[0]?.sessionId;
@@ -60,9 +69,16 @@ it("moves a real worker's daemon claim to its switched session file", async () =
 			await originalRelease(path);
 			if (path === rig.first) removed.resolve();
 		});
-		await rig.host.send("client", { id: "switch", type: "switch_session", sessionId: rig.handle, sessionPath: rig.second });
+		await rig.host.send("client", {
+			id: "switch",
+			type: "switch_session",
+			sessionId: rig.handle,
+			sessionPath: rig.second,
+		});
 		await rig.host.writer.flush();
-		expect(rig.host.records).toContainEqual(expect.objectContaining({ type: "response", id: "switch", success: true }));
+		expect(rig.host.records).toContainEqual(
+			expect.objectContaining({ type: "response", id: "switch", success: true }),
+		);
 		expect(claim).toHaveBeenCalledWith(rig.second, true);
 		expect(release).toHaveBeenCalledWith(rig.first);
 		expect(rig.host.registry.peek(rig.handle)?.reservationKey).toBe(rig.second);
@@ -84,7 +100,11 @@ it("publishes a real retained idle worker's detached claim state", async () => {
 			if (path === rig.first && !value) detached.resolve();
 		});
 		await rig.host.disconnect("client");
-		expect(rig.host.registry.peek(rig.handle)).toMatchObject({ state: "open", attachments: 0, detachedAt: expect.any(Number) });
+		expect(rig.host.registry.peek(rig.handle)).toMatchObject({
+			state: "open",
+			attachments: 0,
+			detachedAt: expect.any(Number),
+		});
 		await reservationPhase("idle-claim-detached", detached.promise);
 		expect(attached).toHaveBeenCalledWith(rig.first, false);
 	} finally {
