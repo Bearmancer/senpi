@@ -9,7 +9,6 @@
 - `packages/coding-agent/src/core/extensions/builtin/ask-user/tool.ts`: passes `required` to both formatters; the same-turn re-ask guard uses the no-action text for a required question; the tool description says what `required` does in one clause.
 - `packages/coding-agent/src/core/extensions/builtin/ask-user/resume.ts`: a required question that cannot be restored after a restart keeps its flag, so its orphaned notice is the no-action text.
 - `packages/coding-agent/src/core/extensions/builtin/hooks/index.ts`: the ask-user timeout Notification renders the required text for a required question, so it no longer says the agent continues on best judgment.
-- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: `/answer skip` passes `required` to `formatUserMessage`, so a dismissed required question reaches the model with the no-action text.
 
 ### Why
 

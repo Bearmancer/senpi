@@ -1,3 +1,21 @@
+## 2026-10-08 - `/answer skip` keeps a required question's refusal (senpi#2949)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: `/answer skip` passes the question's `required` flag to `formatUserMessage`, so a dismissed required question reaches the model as "do not take the action it gates" instead of only "The user dismissed the question."
+
+### Why
+
+- `/answer skip` is the only path that sends a dismissed-question message to the model; without the flag, the ask-user builtin's required-question text never reached it (senpi#2949).
+
+### Why an extension could not handle it
+
+- The `/answer` command and its message are owned by interactive mode.
+
+### Expected merge conflict zones
+
+- LOW: `interactive-mode.ts` `/answer skip` branch, the `formatUserMessage` call.
+
 ## 2026-10-07 - A terminal model pick no longer rewrites the default model (senpi#2870)
 
 ### What changed
