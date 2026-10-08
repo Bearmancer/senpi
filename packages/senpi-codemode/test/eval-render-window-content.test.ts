@@ -114,21 +114,24 @@ describe("eval live window always shows the newest line (senpi#2933 review HIGH-
 		expect(text).not.toContain("0 earlier code lines");
 	});
 
-	it("Given the 6-line JS cell with one long SQL line at 40 cols then the newest line is visible and the marker counts the cut line", () => {
+	it("Given the 6-line JS cell with one long SQL line at 40 cols then the newest line is visible and the hidden SQL line is counted once", () => {
 		const lines = renderStreamingCall({ language: "js", code: LONG_SQL, summary: "long sql" }, 40);
 		const text = lines.join("\n");
 		expect(text).toContain('print("done");');
-		expect(text).not.toContain("0 earlier code lines");
+		expect(text).toContain("1 earlier code lines");
 	});
 
-	it("Given the 6-line JS cell with one long SQL line at 40 cols when running with output then the marker counts the cut line", () => {
+	it("Given a long SQL line whose head rows are cut by the window when running with output then the marker counts the cut line", () => {
+		// Given: the SQL line wraps to several rows at 40 cols and the 3-row code window keeps
+		// only its last row plus the final line, so the SQL line is partly visible: it counts.
+		const code = [LONG_SQL.split("\n")[0] ?? "", 'print("done");'].join("\n");
 		const lines = renderResult(
-			cellResult({ status: "running", language: "js", code: LONG_SQL, startedAt: STARTED_AT, output: "chunk" }),
+			cellResult({ status: "running", language: "js", code, startedAt: STARTED_AT, output: "chunk" }),
 			{ width: 40, now: STARTED_AT + 1_000 },
 		);
 		const text = lines.join("\n");
 		expect(text).toContain('print("done");');
-		expect(text).not.toContain("0 earlier code lines");
+		expect(text).toContain("1 earlier code lines");
 	});
 
 	it("Given 3 source lines with one 150-char line at 40 cols then the newest line stays visible", () => {
@@ -167,9 +170,13 @@ describe("eval live output tail counts hidden rows exactly (senpi#2933 review NE
 		output,
 	});
 
-	it.each([3, 4, 10] as const)(
-		"Given %i output lines at 80 cols then the marker says %i - 1 earlier lines and shows the last line",
-		(count) => {
+	it.each([
+		{ count: 3, earlier: 2 },
+		{ count: 4, earlier: 3 },
+		{ count: 10, earlier: 9 },
+	] as const)(
+		"Given $count output lines at 80 cols then the marker says $earlier earlier lines and shows the last line",
+		({ count }) => {
 			const output = Array.from({ length: count }, (_, i) => `line-${i + 1}`).join("\n");
 			const lines = renderResult(cellResult(cellWithOutput(output)), { width: 80, now: STARTED_AT + 1_000 });
 			const text = lines.join("\n");
@@ -208,7 +215,7 @@ describe("eval live status tail keeps the newest event rows (senpi#2933 review N
 		expect(text).toContain("1 earlier status events");
 	});
 
-	it("Given one 4-line event at 40 cols then its newest rows are kept and the cut row ends with an ellipsis", () => {
+	it("Given one 4-line event at 40 cols then its newest row is kept and the marker counts the rows cut from its head", () => {
 		const lines = renderResult(
 			cellResult({
 				status: "running",
@@ -219,7 +226,8 @@ describe("eval live status tail keeps the newest event rows (senpi#2933 review N
 		);
 		const text = lines.join("\n");
 		expect(text).toContain("line4");
-		expect(text).toContain("line3…");
+		expect(text).toContain("3 earlier rows of this event");
+		expect(text).not.toContain("line3");
 		expect(text).not.toContain("line2");
 		expect(text).not.toContain("line1");
 		expect(text).not.toContain("earlier status events");
@@ -261,7 +269,7 @@ describe("eval live block: truly constant total height (senpi#2933 review HIGH-C
 		expect(new Set(heights.map(([, h]) => h)).size, JSON.stringify(heights)).toBe(1);
 	});
 
-	it("Given a long status event at 40 cols then the event truncates with an ellipsis rather than wrapping past the budget", () => {
+	it("Given a long status event at 40 cols then its newest rows stay inside the budget and the cut rows are counted", () => {
 		const lines = renderResult(
 			cellResult({
 				status: "running",
@@ -271,7 +279,7 @@ describe("eval live block: truly constant total height (senpi#2933 review HIGH-C
 			{ width: 40, now: STARTED_AT + 1_000 },
 		);
 		for (const line of lines) expect(visibleWidth(line)).toBeLessThanOrEqual(40);
-		expect(lines.join("\n")).toContain("…");
+		expect(lines.join("\n")).toMatch(/[1-9]\d* earlier rows of this event/);
 	});
 
 	it("Given one output line when rendered then the block keeps the full height (no flicker)", () => {

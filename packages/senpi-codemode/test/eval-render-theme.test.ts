@@ -276,10 +276,10 @@ describe("eval renderer theme hierarchy", () => {
 		expect.soft(errorLine).toContain(TEST_THEME.getFgAnsi("warning"));
 	});
 
-	it("Given a themed live status tail whose newest event overflows then the ellipsis never splits an escape sequence (senpi#2933 review NEW-3)", () => {
-		// Given: two 2-line events at 40 cols overflow the 2-row tail, so the oldest shown row
-		// truncates with an ellipsis. Styled with the real Theme, a character-index cut would
-		// leave a partial CSI like ESC[39 on the row.
+	it("Given a themed live status tail whose newest event overflows then every row keeps one frame border and whole escape sequences (senpi#2933 review NEW-3)", () => {
+		// Given: two 2-line events at 40 cols overflow the 2-row tail, so the older event folds
+		// and the newest event's head row is cut. Styled with the real Theme, a clipped row must
+		// still carry exactly one frame border and no partial escape sequence (review r4 HIGH-1).
 		const result = evalResult(
 			{
 				language: "py",
@@ -312,11 +312,15 @@ describe("eval renderer theme hierarchy", () => {
 			resultContext({ now: 1_700_000_001_000 }),
 		).render(40);
 
-		// Then: the newest event stays visible, the clipped row carries the ellipsis, and no
-		// escape sequence is partial — every CSI ends in a final byte (senpi#2839's inert rule).
+		// Then: the newest row stays visible, the marker counts what was cut, no row doubles its
+		// border, and every CSI ends in a final byte (senpi#2839's inert rule).
 		const text = lines.join("\n");
 		expect(text).toContain("fourth");
-		expect(text).toContain("…");
+		expect(text.replace(/\u001b\[[0-9;]*m/gu, "")).toContain("1 earlier status events, 1 rows");
+		for (const line of lines) {
+			const plain = line.replace(/\u001b\[[0-9;]*m/gu, "");
+			expect(/│\s*│/u.test(plain), JSON.stringify(line)).toBe(false);
+		}
 		const trailing = /\u001b\[[0-9;]*$/u;
 		for (const line of lines) {
 			expect(trailing.test(line), JSON.stringify(line)).toBe(false);
