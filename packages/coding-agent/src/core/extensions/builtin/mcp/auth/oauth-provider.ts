@@ -53,6 +53,20 @@ export function storedGrantIssuer(record: McpStoredAuth | undefined): string | u
 	return record?.issuer ?? record?.discoveryState?.authorizationServerUrl?.toString();
 }
 
+/**
+ * Fixes who an unstamped grant belongs to before the discovery record it falls back to is replaced (senpi#2940).
+ * A later discovery reflects what the MCP server advertises now, not where the grant was issued, so it must never
+ * attribute an existing grant: the grant keeps the server it was attributed to, or loses its refresh token.
+ */
+export function freezeGrantAttribution(record: McpStoredAuth | undefined): McpStoredAuth {
+	const next: McpStoredAuth = { ...(record ?? {}) };
+	if (next.issuer !== undefined || (next.accessToken === undefined && next.refreshToken === undefined)) return next;
+	const issuer = storedGrantIssuer(next);
+	if (issuer !== undefined) next.issuer = issuer;
+	else delete next.refreshToken;
+	return next;
+}
+
 export function storedAuthToTokens(record: McpStoredAuth | undefined, now = Date.now()): OAuthTokens | undefined {
 	if (record?.accessToken === undefined || record.accessToken.length === 0) return undefined;
 	const expiresIn =
@@ -149,7 +163,7 @@ export class McpOAuthProvider implements OAuthClientProvider {
 	}
 
 	async saveDiscoveryState(state: OAuthDiscoveryState): Promise<void> {
-		await this.#store.update((current) => ({ ...(current ?? {}), discoveryState: state }));
+		await this.#store.update((current) => ({ ...freezeGrantAttribution(current), discoveryState: state }));
 	}
 
 	discoveryState(): OAuthDiscoveryState | undefined {

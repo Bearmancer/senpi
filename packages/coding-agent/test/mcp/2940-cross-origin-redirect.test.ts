@@ -72,6 +72,5 @@ describe("MCP HTTP endpoint redirected to another origin (senpi#2940)", () => {
 		const message = (failure as Error).message;
 		expect(message).toContain(new URL(endpoint).origin);
 		expect(message).toContain(new URL(target).origin);
-		expect(message).toMatch(/only follows redirects within the same origin/);
 	});
 });

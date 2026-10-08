@@ -1,6 +1,7 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { auth } from "@modelcontextprotocol/sdk/client/auth.js";
 import { afterEach, describe, expect, it } from "vitest";
 import { beginAuthorization, completeAuthorization } from "../../src/core/extensions/builtin/mcp/auth/oauth.ts";
 import { McpOAuthProvider } from "../../src/core/extensions/builtin/mcp/auth/oauth-provider.ts";
@@ -112,5 +113,41 @@ describe("MCP OAuth credentials stay with the authorization server that issued t
 
 		expect((await fixture.getLog()).tokenHits).toBe(before);
 		expect(store.read()).toBeUndefined();
+	});
+
+	it("#given an unattributed saved grant #when a sign-in or the SDK's auth() runs discovery #then its refresh token is never sent to the server discovered now", async () => {
+		for (const run of ["beginAuthorization", "sdk auth()"] as const) {
+			const { fixture, store, provider } = await setup();
+			await store.write({
+				accessToken: "AT_older",
+				refreshToken: "RT_older",
+				expiresAt: Date.now() + 60_000,
+				resource: fixture.mcpUrl,
+			});
+
+			if (run === "beginAuthorization") await beginAuthorization(provider);
+			else await auth(provider, { serverUrl: fixture.mcpUrl });
+
+			const refreshes = (await fixture.getLog()).requests.filter((entry) => entry.grantType === "refresh_token");
+			expect({ run, refreshes: refreshes.length }).toEqual({ run, refreshes: 0 });
+			expect(provider.tokens()?.refresh_token).toBeUndefined();
+		}
+	});
+
+	it("#given a saved grant whose sign-in discovered another authorization server #when the SDK's auth() rediscovers #then the grant stays bound to the original server and nothing is sent", async () => {
+		const { fixture, store, provider } = await setup();
+		await store.write({
+			accessToken: "AT_older",
+			refreshToken: "RT_older",
+			expiresAt: Date.now() + 60_000,
+			resource: fixture.mcpUrl,
+			discoveryState: { authorizationServerUrl: OTHER_AS },
+		});
+
+		await auth(provider, { serverUrl: fixture.mcpUrl });
+
+		const refreshes = (await fixture.getLog()).requests.filter((entry) => entry.grantType === "refresh_token");
+		expect(refreshes).toHaveLength(0);
+		expect(store.read()?.issuer).toBe(OTHER_AS);
 	});
 });

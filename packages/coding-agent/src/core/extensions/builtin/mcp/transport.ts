@@ -256,5 +256,7 @@ function crossOriginRedirectReason(error: unknown, endpoint: URL | undefined): s
 		if (parseError instanceof TypeError) return undefined;
 		throw parseError;
 	}
+	// The SDK refuses some same-origin redirects too (a POST answered with 301-303, added userinfo); keep its text.
+	if (targetOrigin === endpoint.origin) return undefined;
 	return `the endpoint at ${endpoint.origin} redirected to ${targetOrigin}, and senpi only follows redirects within the same origin, so credentials and requests never move to another server without your say-so. Point the server's url at ${target} if that is where it now lives.`;
 }
