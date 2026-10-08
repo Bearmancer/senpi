@@ -1,3 +1,80 @@
+## 2026-10-08 - Runtime diagnostics carry an optional machine code (senpi#2906)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session-services.ts`: `AgentSessionRuntimeDiagnostic` gains an optional `code`; the only value is `"model_unresolved"`, set by `buildSessionOptions` when a requested model cannot be resolved.
+
+### Why
+
+The RPC host fails an `open_session` whose requested model did not resolve (it used to open on the default model). It must recognise that one diagnostic without matching message text.
+
+### Why an extension could not handle it
+
+The diagnostic type is part of the core runtime contract that `main.ts` and the RPC registry share.
+
+### Expected merge conflict zones
+
+- LOW: the `AgentSessionRuntimeDiagnostic` interface body (additive optional field).
+
+## 2026-10-07 - The session mirror shares a persisted message's content (senpi#2537)
+
+### What changed
+
+- `packages/coding-agent/src/core/session-manager.ts`: new `appendOwnedMessage`, used by `AgentSession` for the agent's own persisted messages. When the externalized entry holds no resident token and the message is plain JSON (`isPlainJson`: no Date, NaN, class instance or undefined array element), `_shareMessage` stores a shallow copy of the agent's message in the mirror entry: a separate object, so context projections tag it and never the agent's object (exactly as with the old JSON copy), whose content arrays are the agent's own, so the message's bulk is held once. The shared entry is marked token-free, so `materialize` returns it as is. The public `appendMessage` keeps the full JSON copy, because a caller may still change its object after appending.
+- `packages/coding-agent/src/core/session-resident-store.ts`: `isTokenFree` / `adoptTokenFree` expose the store's token-free set.
+- `packages/coding-agent/src/core/agent-session.ts`: the agent's own turn messages are persisted through `appendOwnedMessage`. The notes added to a failed turn's assistant message after it is persisted still go on the agent's object in place, as before: the mirror's shallow copy keeps what was persisted.
+
+### Why
+
+The mirror kept its own JSON copy of every message the agent persisted, so each message's object and array structure was held twice (the strings were already shared). In a deterministic SessionManager driver (3,000 turns, heap after GC) the mirror's own cost per turn was about 2.6-2.7 KB; with the shallow copy it is about 1.9-2.0 KB, independent of tool-result size.
+
+### Why an extension could not handle it
+
+Session persistence and the mirror are core state.
+
+### Expected merge conflict zones
+
+- `SessionManager.appendMessage` / `_appendEntry`, and the failed-turn notes in `AgentSession`'s `agent_end` handling.
+
+## 2026-10-07 - Retry summary authentication on transient refresh (senpi#2893)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: summary auth rethrows branded transient refresh errors and uses the existing bounded retry helper, settings and summary callbacks. Compaction and branch summaries forward their cancellation signals through auth and backoff.
+
+- `agent-session.ts`: session-title generation passes its own abort signal and silent callbacks to the summarization auth, so a transient refresh failure during a background title neither shows a retry or summary indicator nor outlives an aborted title.
+### Why
+
+Summary authentication swallowed a refresh outage as missing auth, and compaction authenticated outside its summarizer's retry boundary.
+
+### Why an extension could not handle it
+
+Private request-auth resolution runs before summarization and compaction extension results can recover it.
+
+### Expected merge conflict zones
+
+- Summary auth helpers and the default compaction/branch-summary auth calls in `agent-session.ts`.
+
+## 2026-10-07 - Context entry identity survives handler derivation (senpi#2525)
+
+### What changed
+
+- `packages/coding-agent/src/core/session-manager.ts`: new `inheritSessionContextEntryId(derived, source)` copies a message's context entry id onto a derived message object — into the WeakMap, and as the own enumerable property the id would have carried via spread on the clone path (`canonical-routes.test.ts` pins the descriptor). Context pipeline stages that spread messages call it, so checkpoint provenance reaches the openai-remote replay boundary on the shared-transcript path exactly as on the clone path. Sources are only read, never written.
+- `packages/coding-agent/src/core/session-resident-store.ts`: `_mutateStringsInPlace` no longer writes a string slot when the mapped value is unchanged, so a read-only walk (a fully materialized message) never touches a frozen or shared object.
+
+### Why
+
+senpi#2525: with the runner sharing the live transcript with declared context hooks, originals are no longer cloned, so their entry ids would otherwise stop reaching derived pipeline messages, and the per-turn materialization walk would fault on objects a caller froze.
+
+### Why an extension could not handle it
+
+The entry-id WeakMap and the resident string store are core session internals; extensions never see either.
+
+### Expected merge conflict zones
+
+- `session-manager.ts`: the `contextMessageEntryIds` helpers beside `withContextEntryId`.
+- `session-resident-store.ts`: the `_mutateStringsInPlace` loop.
+
 ## 2026-10-08 - Session-holder claims follow paths the OmO desktop moved (senpi#2898)
 
 ### What changed

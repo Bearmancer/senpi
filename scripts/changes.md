@@ -1,3 +1,21 @@
+## 2026-10-07 - The ./models entry graph allows one more file (senpi#2893)
+
+### What changed
+
+- `scripts/check-entry-graphs.mjs`: the `@earendil-works/pi-ai` `./models` budget is 22 files (was 21). The added file is `utils/oauth-refresh-error.ts`, the typed transient/permanent refresh classification that `auth/resolve.ts` raises; the reason is recorded beside the budget.
+
+### Why
+
+senpi#2893: a transient OAuth refresh failure must be typed where it happens. `resolve.ts` raises that type, so its module joins the `./models` graph.
+
+### Why an extension could not handle it
+
+The entry-graph budgets are a repository build check.
+
+### Expected merge conflict zones
+
+- The `./models` row in `check-entry-graphs.mjs`.
+
 ## 2026-10-03 - Publish-only releases ship the full native PTY prebuild matrix (senpi#1193)
 
 ### What changed

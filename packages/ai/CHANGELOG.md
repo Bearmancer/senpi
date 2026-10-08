@@ -12,6 +12,8 @@
 
 ### Fixed
 
+- Transient OAuth token refresh failures retain structured transport and HTTP facts, preserve stored credentials, and mark failed requests for same-model retry rather than ending the turn ([#2893](https://github.com/code-yeongyu/senpi/issues/2893)).
+
 ### Removed
 
 ## [2026.10.10-6] - 2026-10-07

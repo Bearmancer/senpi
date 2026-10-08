@@ -5,6 +5,7 @@
  * It is only intended for CLI use, not browser environments.
  */
 
+import { OAuthTokenEndpointError } from "../../utils/oauth-refresh-error.ts";
 import { getProviderEnvValue } from "../../utils/provider-env.ts";
 import type { OAuthAuth, OAuthCredential, ProviderAuthInteraction } from "../types.ts";
 import {
@@ -71,7 +72,10 @@ async function postJson(url: string, body: Record<string, string | number>, sign
 	const responseBody = await response.text();
 
 	if (!response.ok) {
-		throw new Error(`HTTP request failed. status=${response.status}; url=${url}; body=${responseBody}`);
+		throw new OAuthTokenEndpointError(
+			`HTTP request failed. status=${response.status}; url=${url}; body=${responseBody}`,
+			response.status,
+		);
 	}
 
 	return responseBody;
@@ -101,6 +105,7 @@ async function exchangeAuthorizationCode(
 	} catch (error) {
 		throw new Error(
 			`Token exchange request failed. url=${TOKEN_URL}; redirect_uri=${redirectUri}; response_type=authorization_code; details=${formatErrorDetails(error)}`,
+			{ cause: error },
 		);
 	}
 
@@ -276,7 +281,10 @@ async function refreshAnthropicToken(refreshToken: string, signal: AbortSignal):
 			signal,
 		);
 	} catch (error) {
-		throw new Error(`Anthropic token refresh request failed. url=${TOKEN_URL}; details=${formatErrorDetails(error)}`);
+		throw new Error(
+			`Anthropic token refresh request failed. url=${TOKEN_URL}; details=${formatErrorDetails(error)}`,
+			{ cause: error },
+		);
 	}
 
 	let data: { access_token: string; refresh_token: string; expires_in: number; scope?: string };

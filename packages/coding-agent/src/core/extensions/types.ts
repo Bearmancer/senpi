@@ -1435,6 +1435,20 @@ export interface BeforeAgentStartHandlerOptions {
 	previewSafe?: boolean;
 }
 
+/** Registration options for `pi.on("context", handler, options)` and `pi.on("context_with_system", handler, options)`. */
+export interface ContextHandlerOptions {
+	/**
+	 * Opt-in performance declaration (senpi#2525). `false` declares that the handler never
+	 * mutates a message object — or anything nested in one — in place; it may still return a
+	 * new list holding new message objects. When every `context` and `context_with_system`
+	 * handler about to run declares this, the runner shares the live transcript objects with
+	 * those handlers instead of deep-cloning the whole context every turn. While any handler
+	 * has not declared it, behavior is unchanged: one deep clone up front, and in-place edits
+	 * stay isolated from the runtime transcript.
+	 */
+	mutatesMessages?: boolean;
+}
+
 /** Fired when an agent loop starts */
 export interface AgentStartEvent {
 	type: "agent_start";
@@ -2259,8 +2273,16 @@ export interface ExtensionAPI {
 		handler: ExtensionHandler<SessionBeforeTreeEvent, SessionBeforeTreeResult>,
 	): () => void;
 	on(event: "session_tree", handler: ExtensionHandler<SessionTreeEvent>): () => void;
-	on(event: "context", handler: ExtensionHandler<ContextEvent, ContextEventResult>): () => void;
-	on(event: "context_with_system", handler: ExtensionHandler<ContextWithSystemEvent, ContextEventResult>): () => void;
+	on(
+		event: "context",
+		handler: ExtensionHandler<ContextEvent, ContextEventResult>,
+		options?: ContextHandlerOptions,
+	): () => void;
+	on(
+		event: "context_with_system",
+		handler: ExtensionHandler<ContextWithSystemEvent, ContextEventResult>,
+		options?: ContextHandlerOptions,
+	): () => void;
 	on(
 		event: "before_provider_request",
 		handler: ExtensionHandler<BeforeProviderRequestEvent, BeforeProviderRequestEventResult>,
@@ -3124,6 +3146,8 @@ export interface Extension {
 	handlers: Map<string, HandlerFn[]>;
 	/** `before_agent_start` handlers registered with `{ previewSafe: true }`. */
 	previewSafeHandlers?: WeakSet<HandlerFn>;
+	/** `context`/`context_with_system` handlers registered with `{ mutatesMessages: false }`. */
+	nonMutatingContextHandlers?: WeakSet<HandlerFn>;
 	tools: Map<string, RegisteredTool>;
 	/** Optional for compatibility with extension records created before this additive registry. */
 	removedToolHints?: Map<string, string>;

@@ -437,7 +437,8 @@ Key methods for working with sessions programmatically.
 - `createBranchedSession(leafId)` - Extract branch to new session file
 
 ### Instance Methods - Appending (all return entry ID)
-- `appendMessage(message)` - Add message
+- `appendMessage(message)` - Add message (the session history keeps its own JSON copy)
+- `appendOwnedMessage(message)` - Add a message the session's own agent produced: the history keeps a shallow copy sharing the message's content (falls back to the JSON copy for a message with a resident string or a non-JSON value)
 - `appendThinkingLevelChange(level)` - Record thinking change
 - `appendModelChange(provider, modelId)` - Record model change
 - `appendCompaction(summary, firstKeptEntryId, tokensBefore, details?, fromHook?, usage?)` - Add compaction; pass `null` as `firstKeptEntryId` to retain no earlier entries

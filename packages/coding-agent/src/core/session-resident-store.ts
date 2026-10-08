@@ -102,6 +102,19 @@ export class ResidentStringStore {
 		return transformJson(value, (text) => this.materializeString(text, onMissing));
 	}
 
+	/**
+	 * Whether `externalize` returned this value without any resident token: it is then the store's
+	 * JSON-normalized copy and `materialize` returns it as is.
+	 */
+	isTokenFree(value: object): boolean {
+		return this.tokenFree.has(value);
+	}
+
+	/** Records `value` as token-free, so `materialize` returns it as is (senpi#2537). */
+	adoptTokenFree(value: object): void {
+		this.tokenFree.add(value);
+	}
+
 	resolvedBlobsDir(): string | undefined {
 		return this.blobsDir?.();
 	}
@@ -128,7 +141,10 @@ export class ResidentStringStore {
 		for (const key of Object.keys(record)) {
 			const current = record[key];
 			if (typeof current === "string") {
-				record[key] = mutate(current);
+				const next = mutate(current);
+				// Skip the write when nothing changes: a read-only walk must stay safe on
+				// frozen or shared message objects (senpi#2525).
+				if (next !== current) record[key] = next;
 			} else if (typeof current === "object" && current !== null) {
 				this._mutateStringsInPlace(current, seen, mutate);
 			}

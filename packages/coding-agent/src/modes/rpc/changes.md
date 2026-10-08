@@ -1,3 +1,23 @@
+## 2026-10-08 - open_session runs on the model it names, or fails (senpi#2906)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/open-session-model.ts` (new) and `session-registry.ts`: `openSession` fails with `open_failed: model_unavailable: <reason>` (`errorData { reason, requestedModel }`) when the open named a model and the runtime reports the `model_unresolved` diagnostic. The failure happens before the entry is marked open, so the existing rollback disposes the runtime and releases the reservation.
+- `session-command-router.ts`: `open_session` with `provider` but no `modelId` (or the reverse) is `invalid_launch_profile`, because a half-named model used to be dropped silently. A worker-relayed refusal that already reads `open_failed: ...` keeps one prefix.
+- `worker-session-registry.ts`: the failure-callback relay keeps one `open_failed` prefix too (defensive; the real worker reports this refusal as the commit result).
+
+### Why
+
+An open that named a model the host could not resolve ran on the default model and reported success, so a caller that pinned a model got work from another one (code-yeongyu/oh-my-openagent#9722).
+
+### Why an extension could not handle it
+
+The RPC session registry and command router are core host code; extensions load inside the session the open creates.
+
+### Expected merge conflict zones
+
+- `SessionRegistry.openSession` between runtime creation and `entry.state = "open"`; the launch-profile validation block in `SessionCommandRouter`'s `open_session` case; `code()`.
+
 ## 2026-10-08 - Moved-path open: one shared step and the same typed refusal from a worker (senpi#2898 re-review)
 
 ### What changed

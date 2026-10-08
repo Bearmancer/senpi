@@ -1,3 +1,24 @@
+## 2026-10-07 - Compaction context hook declares non-mutation (senpi#2525)
+
+### What changed
+
+- `index.ts`: the `context` handler is registered `{ mutatesMessages: false }`. The pipeline only derives or replaces messages, never mutates them in place — audited through `admitContextToolResults`, `reduceContextMessages`, `hardLimitEmergencyPrune`, `injectTokenBudgetReminder`, `markOpenAiRemoteReplayBoundary`, `repairOrphanedToolResults` and `convertToLlm`.
+- `orchestration.ts`, `context-reduction.ts`, `emergency-prune.ts`: every `{ ...message }` derivation routes through `inheritSessionContextEntryId`, so entry identity survives derivation without writing to the transcript objects.
+- `overflow-retry.ts`: `estimateWireTokens` memoizes per message object behind the same JSON-text key as `estimateTokens`, and reuses that serialization for its CJK scan, so a miss costs no extra `JSON.stringify` and an unchanged message skips the scan.
+
+### Why
+
+senpi#2525: on a 10k-message uncompacted transcript the per-turn clone plus re-estimation dominated turn preparation; the declaration lets the runner share the transcript, and the caches make estimation proportional to what changed.
+
+### Why an extension could not handle it
+
+This is the extension; the declaration and the identity propagation only take effect because the host runner honors them (see `src/core/extensions/changes.md`).
+
+### Expected merge conflict zones
+
+- `index.ts`: the `pi.on("context")` registration.
+- The derivation lines in `orchestration.ts`, `context-reduction.ts` and `emergency-prune.ts`.
+
 ## 2026-10-05 - Attribute shared compaction logs to a session (senpi#2778)
 
 ### What changed

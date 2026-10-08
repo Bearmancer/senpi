@@ -14,6 +14,7 @@ if (typeof process !== "undefined" && (process.versions?.node || process.version
 }
 
 import { extractChatGptSubscriptionAccountId } from "../../utils/chatgpt-subscription-auth.ts";
+import { OAuthTokenEndpointError } from "../../utils/oauth-refresh-error.ts";
 import { getProviderEnvValue } from "../../utils/provider-env.ts";
 import { getWireIdentity } from "../../wire-identity.ts";
 import type { OAuthAuth, OAuthCredential, ProviderAuthInteraction } from "../types.ts";
@@ -104,8 +105,9 @@ async function fetchWithLoginCancellation(input: string, init: RequestInit): Pro
 async function readTokenResponse(response: Response, operation: TokenOperation): Promise<OAuthToken> {
 	if (!response.ok) {
 		const text = await response.text().catch(() => "");
-		throw new Error(
+		throw new OAuthTokenEndpointError(
 			`ChatGPT Subscription token ${operation} failed (${response.status}): ${text || response.statusText}`,
+			response.status,
 		);
 	}
 
@@ -164,6 +166,7 @@ async function refreshAccessToken(refreshToken: string, signal: AbortSignal): Pr
 	} catch (error) {
 		throw new Error(
 			`ChatGPT Subscription token refresh error: ${error instanceof Error ? error.message : String(error)}`,
+			{ cause: error },
 		);
 	}
 

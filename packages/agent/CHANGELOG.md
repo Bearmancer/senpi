@@ -10,6 +10,8 @@
 
 ### Fixed
 
+- Terminal assistant messages preserve a structural retry diagnostic when request preparation fails on transient OAuth refresh ([#2893](https://github.com/code-yeongyu/senpi/issues/2893)).
+
 ### Removed
 
 ## [2026.10.10-6] - 2026-10-07
