@@ -2231,16 +2231,29 @@ function getBetaFeatures(
 			if (name.toLowerCase() === "anthropic-beta") configuredFeatures = value;
 		}
 	}
-	if (configuredFeatures === null) return [];
+	// Betas the request's own shape depends on: the API rejects the request without them (senpi#2957).
+	const required: NonNullable<MessageCreateParamsStreaming["betas"]> = [];
+	if (isOAuthToken) required.push("claude-code-20250219", "oauth-2025-04-20");
+	if (model.compat?.supportsMidConvoEffort === true) {
+		required.push(MID_CONVERSATION_OUTPUT_CONFIG_BETA, THINKING_BINDING_CONTROLS_BETA);
+	}
+	if (nativeToolChanges) required.push(MID_CONVERSATION_TOOL_CHANGES_BETA);
+	if (configuredFeatures === null) {
+		if (required.length > 0) {
+			throw new Error(
+				`The anthropic-beta header is set to null, which suppresses betas this ${model.provider}/${model.id} request needs: ${required.join(", ")}. Remove the null, or list the betas you want instead; senpi adds the ones a request needs.`,
+			);
+		}
+		return [];
+	}
+	// A configured header owns the optional betas and is merged with the required ones, never replacing them:
+	// a proxy route's own header used to drop the effort beta, and Claude 5.5 models then 400ed (senpi#2957).
 	if (configuredFeatures !== undefined) {
-		return [
-			...new Set(
-				configuredFeatures
-					.split(",")
-					.map((feature) => feature.trim())
-					.filter(Boolean),
-			),
-		];
+		const configured = configuredFeatures
+			.split(",")
+			.map((feature) => feature.trim())
+			.filter(Boolean);
+		return [...new Set([...configured, ...required])];
 	}
 	const features: NonNullable<MessageCreateParamsStreaming["betas"]> = [];
 	if (isOAuthToken) features.push("claude-code-20250219", "oauth-2025-04-20");
@@ -2254,10 +2267,7 @@ function getBetaFeatures(
 		features.push(INTERLEAVED_THINKING_BETA);
 	}
 	if (shouldUseServerSideFallbackBeta(model)) features.push(SERVER_SIDE_FALLBACK_BETA);
-	if (model.compat?.supportsMidConvoEffort === true) {
-		features.push(MID_CONVERSATION_OUTPUT_CONFIG_BETA, THINKING_BINDING_CONTROLS_BETA);
-	}
-	if (nativeToolChanges) features.push(MID_CONVERSATION_TOOL_CHANGES_BETA);
+	features.push(...required.filter((feature) => !features.includes(feature)));
 	return [...new Set(features)];
 }
 

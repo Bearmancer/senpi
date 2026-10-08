@@ -224,6 +224,86 @@ describe("Anthropic mid-conversation effort", () => {
 		expect(betaHeader).toContain("thinking-binding-controls-2026-08-01");
 	});
 
+	// senpi#2957: a provider or route that configures its own anthropic-beta header must not drop the betas the
+	// request needs. A proxy route with a custom header used to replace senpi's list, so Claude 5.5 models 400ed on
+	// the first call ("messages.1.output_config: Extra inputs are not permitted").
+	describe("a configured anthropic-beta header (senpi#2957)", () => {
+		const PROXY_BETAS = "interleaved-thinking-2025-05-14,fine-grained-tool-streaming-2025-05-14";
+
+		async function wireBetas(model: Model<"anthropic-messages">, headers?: Record<string, string | null>) {
+			const sent: string[] = [];
+			const events = [
+				{
+					type: "message_start",
+					message: { id: "msg_test", model: model.id, usage: { input_tokens: 1, output_tokens: 0 } },
+				},
+				{ type: "message_delta", delta: { stop_reason: "end_turn" }, usage: { input_tokens: 1, output_tokens: 1 } },
+				{ type: "message_stop" },
+			];
+			const body = events.map((event) => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`).join("");
+			const fetchImpl: typeof fetch = async (input, init) => {
+				const request = input instanceof Request ? input : new Request(input, init);
+				sent.push(request.headers.get("anthropic-beta") ?? "");
+				return new Response(body, { status: 200, headers: { "content-type": "text/event-stream" } });
+			};
+			const result = await stream(
+				{ ...model, baseUrl: "http://127.0.0.1:9" },
+				normalizeContext({ messages: [user("one", 1)] }),
+				{
+					apiKey: "test-key",
+					cacheRetention: "none",
+					fetch: fetchImpl,
+					...(headers ? { headers } : {}),
+				},
+			).result();
+			const betas = sent.length > 0 ? sent[0].split(",").map((beta) => beta.trim()) : [];
+			return { result, betas, requests: sent.length };
+		}
+
+		const haiku = (headers?: Record<string, string>): Model<"anthropic-messages"> => {
+			const model = getModel("anthropic", "claude-haiku-5-5") as Model<"anthropic-messages">;
+			expect(model.compat?.supportsMidConvoEffort).toBe(true);
+			return headers ? { ...model, headers } : model;
+		};
+
+		it("merges a model-level header with the effort and binding betas, configured first, each once", async () => {
+			const { result, betas } = await wireBetas(haiku({ "anthropic-beta": PROXY_BETAS }));
+			expect(result.stopReason).toBe("stop");
+			expect(betas.slice(0, 2)).toEqual([
+				"interleaved-thinking-2025-05-14",
+				"fine-grained-tool-streaming-2025-05-14",
+			]);
+			expect(betas).toContain("mid-conversation-output-config-2026-07-01");
+			expect(betas).toContain("thinking-binding-controls-2026-08-01");
+			expect(new Set(betas).size).toBe(betas.length);
+		});
+
+		it("merges a per-request header the same way", async () => {
+			const { betas } = await wireBetas(haiku(), { "anthropic-beta": "custom-proxy-beta" });
+			expect(betas[0]).toBe("custom-proxy-beta");
+			expect(betas).toContain("mid-conversation-output-config-2026-07-01");
+			expect(betas).toContain("thinking-binding-controls-2026-08-01");
+		});
+
+		it("does not repeat a needed beta the header already lists", async () => {
+			const { betas } = await wireBetas(
+				haiku({ "anthropic-beta": "mid-conversation-output-config-2026-07-01, custom-proxy-beta" }),
+			);
+			expect(betas.filter((beta) => beta === "mid-conversation-output-config-2026-07-01")).toHaveLength(1);
+			expect(betas).toContain("custom-proxy-beta");
+			expect(betas).toContain("thinking-binding-controls-2026-08-01");
+		});
+
+		it("fails before sending, naming the betas, when a header suppresses betas the request needs", async () => {
+			const { result, requests } = await wireBetas(haiku(), { "anthropic-beta": null });
+			expect(requests).toBe(0);
+			expect(result.stopReason).toBe("error");
+			expect(result.errorMessage).toContain("mid-conversation-output-config-2026-07-01");
+			expect(result.errorMessage).toContain("thinking-binding-controls-2026-08-01");
+			expect(result.errorMessage).toContain("anthropic-beta");
+		});
+	});
+
 	// senpi#2912: the content-less effort markers must survive every pre-send pass and reach the HTTP body.
 	it.each(["claude-sonnet-5-5", "claude-opus-5-5", "claude-fable-5-1"] as const)(
 		"puts the chosen effort marker on the wire for %s",

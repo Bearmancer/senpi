@@ -216,7 +216,7 @@ describe("Anthropic-compatible user agents", () => {
 		expect(headers["User-Agent"]).toBe("custom-client");
 	});
 
-	it("preserves explicit Anthropic beta header replacement", async () => {
+	it("sends a configured Anthropic beta header", async () => {
 		await streamAnthropic(anthropicModel, context, {
 			apiKey: "anthropic-key",
 			headers: { "anthropic-beta": "custom-beta" },

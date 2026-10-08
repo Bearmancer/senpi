@@ -1,3 +1,21 @@
+## 2026-10-08 - A configured anthropic-beta header is merged with the betas a request needs (senpi#2957)
+
+### What changed
+
+- `packages/ai/src/api/anthropic-messages.ts` `getBetaFeatures`: a configured `anthropic-beta` header (model-level `headers` or per-request `options.headers`) used to replace the whole computed beta list. It now owns only the optional betas: the betas the request's own shape needs are appended to it, de-duplicated, with the configured order first. Those are the OAuth identity betas, the mid-conversation effort and thinking-binding betas on `supportsMidConvoEffort` models, and mid-conversation tool changes. A header set to `null` still suppresses every beta when the request needs none. When the request does need some, the call now fails before sending with an error that names them, instead of reaching the API.
+
+### Why
+
+A proxy route that sets its own `anthropic-beta` header dropped `mid-conversation-output-config-2026-07-01` while senpi still sent the mid-conversation effort message. Claude Haiku 5.5, and Opus and Sonnet 5.5, then failed the first request with `400 messages.1.output_config: Extra inputs are not permitted`.
+
+### Why an extension could not handle it
+
+The beta list is assembled inside the provider's request builder, after every extension hook has run.
+
+### Expected merge conflict zones
+
+- `getBetaFeatures` in `anthropic-messages.ts` (rewritten branch for a configured header).
+
 ## 2026-10-08 - Claude Haiku 5.5 joins the adaptive-only families (senpi#2892)
 
 ### What changed
