@@ -35,8 +35,25 @@ export function rememberedReused(key: string): boolean | undefined {
 	return reusedDecisions.get(key);
 }
 
-export function rememberTrustedBreadcrumb(oldRoot: string, breadcrumb: MovedBreadcrumb): void {
-	known.set(oldRoot, breadcrumb);
+/**
+ * Remembers a trusted breadcrumb under its old root as the walk spelled it (realpath'd), and re-spelled under every
+ * spelling of the user's home (`homes`: as `os.homedir()` spells it and its realpath) the root lies under. Commands
+ * name `~/.t3/...` in the `$HOME` spelling, so on a host whose `$HOME` is a symlink the text fallback and the probe
+ * ranking would otherwise never match it (fifth review M-2). The spellings come from the walk's own `home` step, so the
+ * text checks stay free of filesystem work.
+ */
+export function rememberTrustedBreadcrumb(
+	oldRoot: string,
+	breadcrumb: MovedBreadcrumb,
+	homes: readonly string[],
+	platform: PathPlatform,
+): void {
+	const spellings = new Set([oldRoot]);
+	for (const home of homes) {
+		const under = matchMovedPrefix(oldRoot, home, [[]], platform);
+		if (under) for (const other of homes) spellings.add(join(other, ...under.remainder));
+	}
+	for (const spelling of spellings) known.set(spelling, breadcrumb);
 }
 
 export function looksMoved(path: string, platform: PathPlatform = currentPathPlatform()): boolean {

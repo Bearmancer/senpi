@@ -49,9 +49,10 @@ function* movedOnce(path: string, platform: PathPlatform, onReused?: OnReused): 
 		// The listed-prefix match comes first: a breadcrumb that lists nothing this path is under never makes the
 		// walk touch the folder it names.
 		const match = breadcrumb && movedMatch(dir, breadcrumb, canonical, platform);
+		const homes = match ? yield* homeSpellings() : [];
 		if (
 			match &&
-			movedToInHome(dir, breadcrumb, yield* homeSpellings(), platform) &&
+			movedToInHome(dir, breadcrumb, homes, platform) &&
 			trustedBreadcrumb(dir, breadcrumb, yield { op: "json", file: homeMarkerFile(breadcrumb.movedTo) }, platform)
 		) {
 			// The re-used decision is recorded before the breadcrumb is remembered, so no text fallback in this call can
@@ -67,7 +68,7 @@ function* movedOnce(path: string, platform: PathPlatform, onReused?: OnReused): 
 				reused = typeof answer === "boolean" ? answer : (rememberedReused(key) ?? false);
 			}
 			if (reused) onReused?.(dir, breadcrumb, match.prefix);
-			rememberTrustedBreadcrumb(dir, breadcrumb);
+			rememberTrustedBreadcrumb(dir, breadcrumb, homes, platform);
 			if (!reused) return match.moved;
 		}
 		if (dir === stop || dirname(dir) === dir) return undefined;
