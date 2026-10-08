@@ -14,10 +14,7 @@ const plainTheme = {
 	italic: (text: string) => text,
 };
 
-function cellResult(
-	cell: Partial<EvalCellResult>,
-	text = "",
-): AgentToolResult<EvalToolDetails> {
+function cellResult(cell: Partial<EvalCellResult>, text = ""): AgentToolResult<EvalToolDetails> {
 	return {
 		content: [{ type: "text", text }],
 		details: {
@@ -62,13 +59,17 @@ function renderCallStreaming(
 	args: Partial<EvalToolInput>,
 	options: { expanded?: boolean; width?: number; now?: number; spinnerFrame?: number } = {},
 ): string[] {
-	const component = renderEvalCall(args as EvalToolInput, plainTheme as never, {
-		...callContext({
-			...(options.expanded === undefined ? {} : { expanded: options.expanded }),
-			...(options.now === undefined ? {} : { now: options.now }),
-		}),
-		...(options.spinnerFrame === undefined ? {} : { spinnerFrame: options.spinnerFrame }),
-	} as never);
+	const component = renderEvalCall(
+		args as EvalToolInput,
+		plainTheme as never,
+		{
+			...callContext({
+				...(options.expanded === undefined ? {} : { expanded: options.expanded }),
+				...(options.now === undefined ? {} : { now: options.now }),
+			}),
+			...(options.spinnerFrame === undefined ? {} : { spinnerFrame: options.spinnerFrame }),
+		} as never,
+	);
 	return component.render(options.width ?? 80).map(stripAnsi);
 }
 
@@ -191,10 +192,10 @@ describe("eval live block: one-line terminal rows (senpi#2933)", () => {
 	});
 
 	it("Given a cancelled cell when rendered collapsed then it is exactly one line", () => {
-		const lines = renderResult(
-			cellResult({ status: "cancelled", summary: "stopped early", durationMs: 400 }),
-			{ width: 80, isPartial: false },
-		);
+		const lines = renderResult(cellResult({ status: "cancelled", summary: "stopped early", durationMs: 400 }), {
+			width: 80,
+			isPartial: false,
+		});
 		expect(lines).toHaveLength(1);
 		expect(lines[0]).toContain("×");
 		expect(lines[0]).toContain("stopped early");

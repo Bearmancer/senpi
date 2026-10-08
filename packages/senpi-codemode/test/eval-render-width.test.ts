@@ -279,12 +279,12 @@ describe("eval renderer cell detail width", () => {
 			"",
 		);
 
-		// When
+		// When: the collapsed row is one line (senpi#2933), so the detail render goes through expand
 		const lines = renderEvalResult(
 			givenResult,
-			{ expanded: false, isPartial: false },
+			{ expanded: true, isPartial: false },
 			undefined,
-			resultContext(),
+			resultContext({ expanded: true }),
 		).render(width);
 		const text = lines.join("\n");
 

@@ -90,15 +90,22 @@ describe("eval ToolExecutionComponent lifecycle", () => {
 		expect.soft(runningText).toContain("running");
 		expect.soft(runningText).not.toContain("pending");
 
-		// When the final result arrives
+		// When the final result arrives, the collapsed row is the one-line terminal summary (senpi#2933)
 		component.updateResult(cellResult("complete", OUTPUT, 12), false);
 		const done = component.render(80);
 		const doneText = stripAnsi(done.join("\n"));
+		const doneRows = done.map(stripAnsi).filter((line) => line.includes("eval py done"));
 		expect.soft(countBoxes(done)).toBe(1); // was 2: a stale pending frame stacked above the done frame
-		expect.soft(doneText).toContain("done");
+		expect.soft(doneRows).toHaveLength(1);
+		expect.soft(doneRows[0]).toMatch(/╶─ ✓/u);
 		expect.soft(doneText).not.toContain("pending");
 		expect.soft(doneText).not.toContain("running");
-		expect.soft(doneText).toContain("favoriteModels");
+		expect.soft(doneText).not.toContain("favoriteModels");
+
+		// When the row expands, the full output returns
+		component.setExpanded(true);
+		const expandedText = stripAnsi(component.render(80).join("\n"));
+		expect.soft(expandedText).toContain("favoriteModels");
 
 		component.stopAnimation();
 	});
@@ -182,15 +189,6 @@ describe("eval summary in transcript frames", () => {
 		return component;
 	}
 
-	function expectSummaryUnderHeader(lines: readonly string[], status: string): void {
-		const plain = lines.map(stripAnsi);
-		const headerIndex = plain.findIndex((line) => line.includes("eval py"));
-		expect(headerIndex).toBeGreaterThanOrEqual(0);
-		expect.soft(plain[headerIndex]).toContain(`eval py ${status}`);
-		expect.soft(plain[headerIndex]).not.toContain("collect progress");
-		expect.soft(plain[headerIndex + 1]?.replace("│", "").trim()).toBe("collect progress");
-	}
-
 	function expectSummaryHeadline(lines: readonly string[], status: string): void {
 		const plain = lines.map(stripAnsi);
 		const headerIndex = plain.findIndex((line) => line.includes("eval py"));
@@ -213,21 +211,24 @@ describe("eval summary in transcript frames", () => {
 		component.stopAnimation();
 	});
 
-	it("Given a completed eval with a summary when the result frame renders then it carries the summary", () => {
+	it("Given a completed eval with a summary when the result row renders then the one-line row carries the summary (senpi#2933)", () => {
 		// Given the real interactive component receiving its final result
 		const component = summaryComponent();
 		component.markExecutionStarted();
 		component.updateResult(cellResult("complete", OUTPUT, 12, "collect progress"), false);
 
-		// When the done frame renders
+		// When the done row renders
 		const lines = component.render(80);
 
-		// Then the result frame carries the summary under the title-less header
-		expectSummaryUnderHeader(lines, "done");
+		// Then the collapsed terminal row is one line leading with the summary
+		const plain = lines.map(stripAnsi);
+		const doneRows = plain.filter((line) => line.includes("eval py done"));
+		expect.soft(doneRows).toHaveLength(1);
+		expect.soft(doneRows[0]).toMatch(/╶─ ✓ collect progress · eval py done/u);
 		component.stopAnimation();
 	});
 
-	it("Given a six-line cell with a summary when collapsed then the summary line and a four-line code preview render", () => {
+	it("Given a six-line cell with a summary when collapsed and expanded then the one-line row and the full code render (senpi#2933)", () => {
 		// Given a finished cell whose code overflows the collapsed preview budget
 		const codeLines = ["a = 1", "b = 2", "c = 3", "d = 4", "e = 5", "f = 6"];
 		const details: EvalToolDetails = {
@@ -286,13 +287,13 @@ describe("eval summary in transcript frames", () => {
 			isError: false,
 		}).render(80);
 
-		// Then collapsed shows the summary plus exactly the last four code lines; expanded keeps the summary too
+		// Then the collapsed row is one line with the summary headline; expanded shows the full code
 		const collapsedText = collapsed.join("\n");
 		const expandedText = expanded.join("\n");
+		expect.soft(collapsed).toHaveLength(1);
 		expect.soft(collapsedText).toContain("tally rows");
-		expect.soft(collapsedText).toContain("2 earlier code lines");
-		for (const visibleLine of codeLines.slice(-4)) expect.soft(collapsedText).toContain(visibleLine);
-		for (const hiddenLine of codeLines.slice(0, 2)) expect.soft(collapsedText).not.toContain(hiddenLine);
+		expect.soft(collapsedText).toContain("eval py done");
+		for (const codeLine of codeLines) expect.soft(collapsedText).not.toContain(codeLine);
 		expect.soft(expandedText).toContain("tally rows");
 		for (const codeLine of codeLines) expect.soft(expandedText).toContain(codeLine);
 	});

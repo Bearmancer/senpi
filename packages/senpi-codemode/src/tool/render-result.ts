@@ -14,12 +14,13 @@ import {
 	renderNow,
 	style,
 } from "./render-blocks.ts";
-import { hasLiveCell, summaryBlock } from "./render-cell.ts";
+import { summaryBlock } from "./render-cell.ts";
 import { nestedToolCallBlock, renderDetailedLines, renderJsonOutputs, toolCallRows } from "./render-detail.ts";
+import { hasLiveCell } from "./render-live.ts";
 import { formatThroughputBadge, renderStatusEvents } from "./render-status.ts";
 import { formatRuntimeBadge } from "./runtime-label.ts";
 import { formatDuration } from "./tool-widgets.ts";
-import type { EvalResultDetails, EvalToolDetails } from "./types.ts";
+import type { EvalResultDetails, EvalStatusEvent, EvalToolDetails } from "./types.ts";
 
 function textOutput(result: AgentToolResult<EvalResultDetails>, showImageFallback: boolean): string {
 	const lines: string[] = [];
@@ -138,7 +139,9 @@ export function renderEvalResult(
 	const rawOutput = textOutput(result, context.showImages && imageProtocol === null);
 	const output = rawOutput.trimEnd();
 	const hasRenderedImage =
-		context.showImages && imageProtocol !== null && result.content.some((part) => part.type === "image");
+		context.showImages &&
+		imageProtocol !== null &&
+		result.content.some((part: { type: string }) => part.type === "image");
 	if (output.length > 0) {
 		blocks.push({
 			kind: "text",
@@ -149,8 +152,8 @@ export function renderEvalResult(
 		});
 	} else if (!hasRenderedImage) blocks.push({ kind: "text", text: style(theme, "muted", "(no output)") });
 	const statusEvents = details?.statusEvents ?? [];
-	const nonAgentEvents = statusEvents.filter((event) => event.op !== "agent");
-	const agentEvents = statusEvents.filter((event) => event.op === "agent");
+	const nonAgentEvents = statusEvents.filter((event: EvalStatusEvent) => event.op !== "agent");
+	const agentEvents = statusEvents.filter((event: EvalStatusEvent) => event.op === "agent");
 	if (nonAgentEvents.length > 0 || agentEvents.length > 0) {
 		blocks.push(
 			{ kind: "blank" },

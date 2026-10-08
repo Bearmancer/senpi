@@ -326,14 +326,14 @@ describe("eval renderer preview", () => {
 			.render(80)
 			.join("\n");
 
-		// Then
-		expect.soft(collapsedText).toContain("2 earlier status events");
-		expect.soft(collapsedText).not.toContain("status-1");
-		expect.soft(collapsedText).not.toContain("status-2");
-		for (const visibleStatus of ["status-3", "status-4", "status-5"])
-			expect.soft(collapsedText).toContain(visibleStatus);
-		expect.soft(collapsedText).not.toContain(codeLines[0]);
-		expect.soft(collapsedText).not.toMatch(/cell-output-1(?:\r?\n|$)/u);
+		// Then: the collapsed row is the one-line terminal summary (senpi#2933); the expanded frame
+		// keeps the newest-rows previews for status, code and output.
+		const collapsedLines = collapsedText.split("\n");
+		expect.soft(collapsedLines).toHaveLength(1);
+		expect.soft(collapsedLines[0]).toContain(codeLines[0]);
+		expect.soft(collapsedLines[0]).toContain("eval js done");
+		expect.soft(collapsedText).not.toContain("status-5");
+		expect.soft(collapsedText).not.toContain("cell-output-6");
 		for (const status of statusEvents) expect.soft(expandedText).toContain(status.message);
 		for (const codeLine of codeLines) expect.soft(expandedText).toContain(codeLine);
 		for (const outputLine of outputLines) expect.soft(expandedText).toContain(outputLine);
@@ -385,11 +385,11 @@ describe("eval renderer preview", () => {
 			.render(80)
 			.join("\n");
 
-		// Then: collapsing keeps the newest three rows and reports 19,901 + 2 sliced omissions,
-		// while expanding shows every retained row above the exact marker count.
-		expect.soft(collapsedText).toContain("19903 earlier status events");
-		for (const visibleStatus of ["status-3", "status-4", "status-5"])
-			expect.soft(collapsedText).toContain(visibleStatus);
+		// Then: the collapsed row is the one-line terminal summary (senpi#2933); expanding shows
+		// every retained row above the exact marker count.
+		expect.soft(collapsedText.split("\n")).toHaveLength(1);
+		expect.soft(collapsedText).toContain("run()");
+		expect.soft(collapsedText).toContain("eval js done");
 		expect.soft(expandedText).toContain("19901 earlier status events");
 		for (let index = 1; index <= 5; index++) expect.soft(expandedText).toContain(`status-${index}`);
 		expect.soft(expandedText).not.toContain("status-events-omitted");

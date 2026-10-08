@@ -26,7 +26,7 @@ function detailsWithCell(runtime: EvalToolDetails["runtime"]): EvalToolDetails {
 }
 
 describe("eval renderer runtime badge", () => {
-	it("shows version and home-contracted interpreter path in the cell header", () => {
+	it("shows version and home-contracted interpreter path in the collapsed one-line cell row (senpi#2933)", () => {
 		const pythonPath = join(homedir(), ".venv", "bin", "python3");
 		const result = evalResult(detailsWithCell({ name: "python", version: "3.14.7", path: pythonPath }), "done");
 
@@ -34,7 +34,7 @@ describe("eval renderer runtime badge", () => {
 			renderEvalResult(result, { expanded: false, isPartial: false }, undefined, resultContext(undefined, false)),
 		);
 
-		expect(rendered[0]).toBe("\u256d\u2500 eval py (3.14.7, ~/.venv/bin/python3) done \u2713");
+		expect(rendered[0]).toBe("╶─ ✓ print(1) · eval py (3.14.7, ~/.venv/bin/python3) done");
 	});
 
 	it("labels the js runtime with its name so node and bun are distinguishable", () => {
@@ -58,7 +58,7 @@ describe("eval renderer runtime badge", () => {
 		expect(rendered[0]).toBe("eval js (node 26.7.0) done");
 	});
 
-	it("renders headers without any badge when runtime is unknown", () => {
+	it("renders the collapsed one-line row without any badge when runtime is unknown (senpi#2933)", () => {
 		const rendered = renderLines(
 			renderEvalResult(
 				evalResult(detailsWithCell(undefined), "done"),
@@ -68,6 +68,6 @@ describe("eval renderer runtime badge", () => {
 			),
 		);
 
-		expect(rendered[0]).toBe("\u256d\u2500 eval py done \u2713");
+		expect(rendered[0]).toBe("╶─ ✓ print(1) · eval py done");
 	});
 });

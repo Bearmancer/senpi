@@ -14,7 +14,8 @@ import {
 	spinner,
 	style,
 } from "./render-blocks.ts";
-import { headlined, LIVE_LINE_PREFIX, renderCell, summaryBlock } from "./render-cell.ts";
+import { renderCell, summaryBlock } from "./render-cell.ts";
+import { headlined, LIVE_LINE_PREFIX } from "./render-live.ts";
 import type { EvalCellResult, EvalToolRequest } from "./types.ts";
 
 // The call renderer reads the assistant message's raw arguments, which keep the provider's

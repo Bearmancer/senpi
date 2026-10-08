@@ -159,7 +159,8 @@ describe("eval renderer theme hierarchy", () => {
 			output,
 		);
 
-		// When
+		// When: a collapsed detached cell keeps the framed code preview (senpi#2933), and the
+		// non-cell result keeps its output and tool-call collapse rows.
 		const lines = [
 			...renderEvalResult(
 				evalResult(
@@ -173,8 +174,8 @@ describe("eval renderer theme hierarchy", () => {
 								index: 0,
 								code,
 								language: "js",
-								output: "",
-								status: "complete",
+								output: "detached chunk",
+								status: "detached",
 								durationMs: 1,
 								summary: "collapse previews",
 							},
@@ -235,7 +236,7 @@ describe("eval renderer theme hierarchy", () => {
 		expect.soft(codeLine.startsWith(TEST_THEME.getFgAnsi("mdCodeBlock"))).toBe(false);
 	});
 
-	it("Given themed status events when rendered then operation and error summaries use semantic colors", () => {
+	it("Given themed status events when rendered expanded then operation and error summaries use semantic colors (senpi#2933)", () => {
 		// Given
 		const result = evalResult(
 			{
@@ -260,10 +261,13 @@ describe("eval renderer theme hierarchy", () => {
 			"",
 		);
 
-		// When
-		const lines = renderEvalResult(result, { expanded: false, isPartial: false }, TEST_THEME, resultContext()).render(
-			80,
-		);
+		// When: the collapsed row is one line, so the status history renders through expand
+		const lines = renderEvalResult(
+			result,
+			{ expanded: true, isPartial: false },
+			TEST_THEME,
+			resultContext({ expanded: true }),
+		).render(80);
 		const readLine = requiredLine(lines, "read 7 chars");
 		const errorLine = requiredLine(lines, "write: denied");
 
