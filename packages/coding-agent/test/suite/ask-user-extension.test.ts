@@ -268,4 +268,85 @@ describe("ask-user builtin", () => {
 			status: "answered",
 		});
 	});
+
+	it("refuses a required question's gated action through the real tool on timeout and on the re-ask guard", async () => {
+		// given a required question the user never answers
+		vi.useFakeTimers();
+		const { tool, ctx } = await setup();
+		ctx.ui.question = vi.fn(() => new Promise<QuestionResponse>(() => {}));
+		const gated = { ...args, required: true };
+
+		// when it times out, and a second required question is asked in the same turn
+		const first = required(tool).execute("gate", gated, undefined, undefined, ctx as ExtensionToolContext);
+		await vi.advanceTimersByTimeAsync(1_800_000);
+		const timedOut = await first;
+		const reask = await required(tool).execute(
+			"gate-again",
+			gated,
+			undefined,
+			undefined,
+			ctx as ExtensionToolContext,
+		);
+
+		// then neither tool result invites the model to proceed
+		for (const outcome of [timedOut, reask]) {
+			const text = outcome.content.map((block) => (block.type === "text" ? block.text : "")).join("\n");
+			expect(text).toContain("do not take the action it gates");
+			expect(text).not.toMatch(/best judgment|continue without asking/i);
+		}
+	});
+
+	it("keeps a UI failure's reason and refuses the gated action for a required question", async () => {
+		// given a required question whose UI fails while it is open
+		const { tool, ctx } = await setup();
+		ctx.ui.question = vi.fn(async (_request, options) => {
+			options?.onProgress?.({ answers: { q1: { selected: [], text: "only on staging" } } });
+			throw new Error("boom");
+		});
+
+		// when the blocking call settles
+		const outcome = await required(tool).execute(
+			"gate-ui",
+			{ ...args, required: true },
+			undefined,
+			undefined,
+			ctx as ExtensionToolContext,
+		);
+
+		// then the reason is kept and the model is told not to take the gated action
+		const text = outcome.content.map((block) => (block.type === "text" ? block.text : "")).join("\n");
+		expect(text).toContain("Question UI failed: boom");
+		expect(text).toContain("do not take the action it gates");
+		const userWords = (outcome.details as { userWords?: Array<{ label: string }> }).userWords ?? [];
+		expect(userWords).toHaveLength(1);
+		for (const word of userWords) expect(text).toContain(word.label);
+		expect(text).toContain("not an answer");
+		expect(text).not.toContain("The user dismissed the question.");
+	});
+
+	it("sends the user's typed draft along with a dismissed required question", async () => {
+		// given a required question the user typed a draft into and then dismissed
+		const { tool, ctx } = await setup();
+		ctx.ui.question = vi.fn(async () => ({
+			status: "cancelled" as const,
+			answers: { q1: { selected: [], text: "only after tests pass" } },
+			unanswered: [],
+		}));
+
+		// when the blocking call settles
+		const outcome = await required(tool).execute(
+			"gate-draft",
+			{ ...args, required: true },
+			undefined,
+			undefined,
+			ctx as ExtensionToolContext,
+		);
+
+		// then the refusal points at the draft and the draft travels in the result details
+		const text = outcome.content.map((block) => (block.type === "text" ? block.text : "")).join("\n");
+		expect(text).toContain("do not take the action it gates");
+		expect(text).not.toContain("only after tests pass");
+		const userWords = (outcome.details as { userWords?: Array<{ text: string }> }).userWords ?? [];
+		expect(userWords.map((word) => word.text)).toContain("only after tests pass");
+	});
 });

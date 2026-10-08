@@ -6,6 +6,8 @@
 
 ### Added
 
+- `ask_user_question` and `request_user_input` accept an optional `required: true` for a question that gates an action (an approval before an irreversible step). If such a question times out, is dismissed, is lost in a restart, or cannot be shown, the model is told not to take that action and to end the turn, instead of being told to continue on its best judgment. Questions without the flag behave as before ([#2949](https://github.com/code-yeongyu/senpi/issues/2949)).
+
 ### Changed
 
 ### Fixed

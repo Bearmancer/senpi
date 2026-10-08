@@ -83,7 +83,49 @@ function answeredLines(response: QuestionResponse, questions: Questions, words: 
 	return lines;
 }
 
-function formatBody(response: QuestionResponse, questions: Questions, words: WordPlacement): string {
+const GATED_NO_ANSWER = "No answer: do not take the action it gates. Keep that action pending and end the turn.";
+
+/** A required question gates an action, so every settlement without an answer refuses that action (senpi#2949). */
+function formatGatedNoAnswer(
+	response: QuestionResponse,
+	questions: Questions,
+	words: WordPlacement,
+	cancellationReason?: string,
+): string {
+	const reason =
+		cancellationReason ??
+		(response.status === "timed_out"
+			? `The user did not answer within ${Math.round((response.autoResolvedAfterMs ?? DEFAULT_ASK_USER_TIMEOUT_MS) / 60_000)} minutes. (사용자가 답변을 안하고 timeout 으로 종료됨)`
+			: response.status === "cancelled"
+				? "The user dismissed the question."
+				: response.status === "orphaned-after-restart"
+					? "The pending question could not be resumed after a restart."
+					: "This session has no user attached (subagent or headless).");
+	const lines = [reason];
+	const selected = answeredLines(response, questions, words);
+	if (selected.length > 0)
+		lines.push(`Before going idle the user had selected (not an answer): ${selected.join("; ")}`);
+	lines.push(GATED_NO_ANSWER);
+	return lines.join("\n");
+}
+
+/**
+ * A required question cancelled with a reason (a UI failure): the reason stands in for the status line,
+ * a draft the user typed is named and marked not an answer, and the action is refused (senpi#2949).
+ */
+export function formatGatedCancellation(
+	reason: string,
+	response: QuestionResponse,
+	requestId: string,
+	questions: Questions,
+): string {
+	return formatGatedNoAnswer(response, questions, separatedWords(requestId), reason);
+}
+
+function formatBody(response: QuestionResponse, questions: Questions, words: WordPlacement, required = false): string {
+	if (required && response.status !== "answered" && response.status !== "comment-submitted") {
+		return formatGatedNoAnswer(response, questions, words);
+	}
 	switch (response.status) {
 		case "answered": {
 			const lines = answeredLines(response, questions, words);
@@ -127,8 +169,9 @@ export function formatResultText(
 	_variant: AskUserVariant,
 	response: QuestionResponse,
 	questions: Questions = [],
+	required = false,
 ): string {
-	return formatBody(response, questions, INLINE_WORDS);
+	return formatBody(response, questions, INLINE_WORDS, required);
 }
 
 /**
@@ -139,9 +182,10 @@ export function formatModelAnswer(
 	response: QuestionResponse,
 	requestId: string,
 	questions: Questions = [],
+	required = false,
 ): { text: string; words: ToolResultUserWord[] } {
 	const placement = separatedWords(requestId);
-	return { text: formatBody(response, questions, placement), words: placement.words };
+	return { text: formatBody(response, questions, placement, required), words: placement.words };
 }
 
 /**
@@ -153,8 +197,9 @@ export function formatUserMessage(
 	response: QuestionResponse,
 	requestId: string,
 	questions: Questions = [],
+	required = false,
 ): string | TextContent[] {
-	const answer = formatModelAnswer(response, requestId, questions);
+	const answer = formatModelAnswer(response, requestId, questions, required);
 	const frame = `[Answer to question ${requestId}]\n${answer.text}`;
 	if (answer.words.length === 0) return frame;
 	return [{ type: "text", text: frame }, ...userWordBlocks(answer.words)];
@@ -190,8 +235,9 @@ export function formatResultDetails(
 	response: QuestionResponse,
 	requestId: string,
 	questions: Questions = [],
+	required = false,
 ): CodexResultDetails | ClaudeResultDetails {
-	const { words } = formatModelAnswer(response, requestId, questions);
+	const { words } = formatModelAnswer(response, requestId, questions, required);
 	if (variant === "codex") {
 		const answers: CodexResultDetails["answers"] = {};
 		for (const [id, answer] of Object.entries(response.answers)) {

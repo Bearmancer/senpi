@@ -110,7 +110,14 @@ function settleUnrestorable(
 	dangling: DanglingQuestion,
 	timeoutMs: number,
 ): void {
-	const lost: QuestionRequest = { requestId: dangling.toolCallId, questions: [], waitForAnswer: false, timeoutMs };
+	const required = isRecord(dangling.args) && dangling.args.required === true;
+	const lost: QuestionRequest = {
+		requestId: dangling.toolCallId,
+		questions: [],
+		waitForAnswer: false,
+		timeoutMs,
+		...(required ? { required: true } : {}),
+	};
 	const response: QuestionResponse = { status: "orphaned-after-restart", answers: {}, unanswered: [] };
 	pi.appendEntry(ASK_USER_SETTLEMENT_ENTRY, { requestId: lost.requestId, status: response.status });
 	emitAskUserClosed(pi, lost.requestId, response);

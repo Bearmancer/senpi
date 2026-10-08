@@ -121,7 +121,7 @@ export default function hooksExtension(pi: ExtensionAPI): void {
 						response === undefined
 							? `Question asked (${headers})`
 							: response.status === "timed_out"
-								? `Question timed out (${headers}): ${formatResultText(variant, response, request.questions)}`
+								? `Question timed out (${headers}): ${formatResultText(variant, response, request.questions, request.required === true)}`
 								: `Question ${response.status} (${headers})`,
 					requestId: request.requestId,
 					source: "ask-user",

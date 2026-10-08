@@ -1,7 +1,7 @@
 import type { ExtensionAPI, ExtensionContext, ToolDefinition } from "../../types.ts";
 import { WAKE_SOURCE_STATE_EVENT, type WakeSourceStateEvent } from "../monitor-state-event.ts";
 import { TOOL_NAMES } from "./family.ts";
-import { formatModelAnswer, formatResultDetails, formatUserMessage } from "./format.ts";
+import { formatGatedCancellation, formatModelAnswer, formatResultDetails, formatUserMessage } from "./format.ts";
 import {
 	ASK_USER_ASKED_EVENT,
 	ASK_USER_QUESTION_ENTRY,
@@ -34,6 +34,8 @@ export interface AskUserState {
 	unavailable: boolean;
 }
 const REASK = "The user did not answer the previous question this turn; continue without asking again.";
+const REASK_REQUIRED =
+	"The user did not answer the previous question this turn, so this one gets no answer either. No answer: do not take the action it gates. Keep that action pending and end the turn.";
 function result(
 	variant: AskUserVariant,
 	response: QuestionResponse,
@@ -41,8 +43,15 @@ function result(
 	text?: string,
 ): Awaited<ReturnType<ToolDefinition["execute"]>> {
 	return {
-		content: [{ type: "text", text: text ?? formatModelAnswer(response, request.requestId, request.questions).text }],
-		details: formatResultDetails(variant, response, request.requestId, request.questions),
+		content: [
+			{
+				type: "text",
+				text:
+					text ??
+					formatModelAnswer(response, request.requestId, request.questions, request.required === true).text,
+			},
+		],
+		details: formatResultDetails(variant, response, request.requestId, request.questions, request.required === true),
 	};
 }
 /**
@@ -61,7 +70,7 @@ export function deliverAnswer(
 	variant: "codex" | "claude",
 ): void {
 	if (response.status === "cancelled") return;
-	pi.sendUserMessage(formatUserMessage(response, request.requestId, request.questions), {
+	pi.sendUserMessage(formatUserMessage(response, request.requestId, request.questions, request.required === true), {
 		deliverAs: ctx.isIdle() ? "followUp" : "steer",
 	});
 	void emitAskUserNotification(pi, ctx, request, response, variant);
@@ -291,7 +300,7 @@ export function createAskUserTool(variant: AskUserVariant, pi: ExtensionAPI, sta
 		allowLazyActivation: false,
 		parameters: variant === "codex" ? CODEX_PARAMS : CLAUDE_PARAMS,
 		promptSnippet: "Ask a material question, explicitly choosing whether to wait or receive the answer later.",
-		description: `${opener} Set ${flag} true to pause here until the user answers (the answer returns as this tool's result, or a timeout result after 30 idle minutes); set ${flag} false to keep working while the question stays open (the answer arrives later as a user message). Use it only when the answer materially changes the work; if it returns no answers, continue with best judgment instead of asking again. Never use it for permission requests; ask those directly in your message. Unavailable to subagents.${variant === "claude" ? " Users will always be able to type a free-text answer or one comment covering everything; do not add an Other option." : ""} Call this tool directly, never from inside an eval cell (a cell that waits on the user would hold the kernel).`,
+		description: `${opener} Set ${flag} true to pause here until the user answers (the answer returns as this tool's result, or a timeout result after 30 idle minutes); set ${flag} false to keep working while the question stays open (the answer arrives later as a user message). Use it only when the answer materially changes the work; if it returns no answers, continue with best judgment instead of asking again, unless you set required true because the answer decides whether you take an action: then no answer means do not take it. Never use it for permission requests; ask those directly in your message. Unavailable to subagents.${variant === "claude" ? " Users will always be able to type a free-text answer or one comment covering everything; do not add an Other option." : ""} Call this tool directly, never from inside an eval cell (a cell that waits on the user would hold the kernel).`,
 		prepareArguments(args) {
 			toCanonical(variant, args);
 			return args;
@@ -315,7 +324,7 @@ export function createAskUserTool(variant: AskUserVariant, pi: ExtensionAPI, sta
 			};
 			if (state.timedOut) {
 				emitAskUserClosed(pi, request.requestId, unavailable);
-				return result(variant, unavailable, request, REASK);
+				return result(variant, unavailable, request, request.required === true ? REASK_REQUIRED : REASK);
 			}
 			if (
 				state.unavailable ||
@@ -344,7 +353,11 @@ export function createAskUserTool(variant: AskUserVariant, pi: ExtensionAPI, sta
 				variant,
 				response,
 				request,
-				response.status === "cancelled" && response.comment ? response.comment : undefined,
+				response.status === "cancelled" && response.comment
+					? request.required === true
+						? formatGatedCancellation(response.comment, response, request.requestId, request.questions)
+						: response.comment
+					: undefined,
 			);
 		},
 		renderCall,

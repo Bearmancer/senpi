@@ -4155,7 +4155,12 @@ export class InteractiveMode {
 			// Ordinary cancellation/abort stays silent in the builtin. Only this
 			// explicit command acknowledges dismissal, including on host bridges.
 			await this.session.sendUserMessage(
-				formatUserMessage(response, state.request.requestId, state.request.questions),
+				formatUserMessage(
+					response,
+					state.request.requestId,
+					state.request.questions,
+					state.request.required === true,
+				),
 				{
 					deliverAs: this.session.isStreaming ? "steer" : "followUp",
 				},

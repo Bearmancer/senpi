@@ -179,6 +179,8 @@ export interface QuestionRequest {
 	}>;
 	waitForAnswer: boolean;
 	timeoutMs: number;
+	/** The question gates an action: a missing answer means the action is not taken (senpi#2949). */
+	required?: boolean;
 }
 
 /** Outcome of ExtensionUIContext.question. */
