@@ -8339,6 +8339,9 @@ export class AgentSession {
 		allowSummaryOnly = false,
 		keepRecentTokensOverride?: number,
 	): Promise<boolean> {
+		// The flag reports THIS attempt's "nothing to compact" outcome only; a value left by an earlier attempt
+		// must not make a caller treat a cancelled or rejected compaction as too small (senpi#2925 review).
+		this._compactionSkippedTooSmall = false;
 		// An earlier external-owner rejection never answers for a rejected request
 		// awaiting its retry: whether the owner can recover it depends on the request
 		// that failed, so ask again. A completed turn keeps the sticky delegation (#1174).

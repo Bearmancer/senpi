@@ -129,3 +129,61 @@ describe("senpi#2925: a required compaction inside one tool-heavy turn", () => {
 		expect(harness.sessionManager.getEntries().some((entry) => entry.type === "compaction")).toBe(true);
 	});
 });
+
+describe("senpi#2925: the split-turn retry answers only a compaction that found nothing to compact", () => {
+	const harnesses: Harness[] = [];
+	afterEach(() => {
+		while (harnesses.length > 0) harnesses.pop()?.cleanup();
+	});
+
+	it("does not retry a compaction an extension rejected, even with an earlier attempt's flag left set", async () => {
+		// Given a session with older content to compact, an extension that rejects every compaction, and a
+		// "nothing to compact" outcome left over from an earlier attempt.
+		let beforeCompactCalls = 0;
+		const harness = await createHarness({
+			models: [{ id: "small-window", contextWindow: 20_000, maxTokens: 4_096 }],
+			settings: {
+				compaction: { enabled: true, reserveTokens: 1_000, keepRecentTokens: 1, speculativeEnabled: false },
+			},
+			extensionFactories: [
+				(pi) => {
+					pi.on("session_before_compact", () => {
+						beforeCompactCalls += 1;
+						return { cancel: true, reason: "rejected by test extension" };
+					});
+				},
+			],
+		});
+		harnesses.push(harness);
+		const now = Date.now() - 1_000;
+		harness.sessionManager.appendMessage({
+			role: "user",
+			content: [{ type: "text", text: "first request" }],
+			timestamp: now,
+		});
+		harness.sessionManager.appendMessage(
+			fauxAssistantMessage("older answer ".concat("x".repeat(60_000)), { timestamp: now + 1 }),
+		);
+		harness.sessionManager.appendMessage({
+			role: "user",
+			content: [{ type: "text", text: "second request" }],
+			timestamp: now + 2,
+		});
+		const assistant = fauxAssistantMessage("latest answer ".concat("y".repeat(20_000)), { timestamp: now + 3 });
+		harness.sessionManager.appendMessage(assistant);
+		harness.session.agent.state.messages = harness.sessionManager.buildSessionContext().messages;
+		Reflect.set(harness.session, "_compactionSkippedTooSmall", true);
+
+		// When the threshold check runs and the extension rejects the compaction.
+		const checkCompaction = Reflect.get(harness.session, "_checkCompaction") as (
+			message: AssistantMessage,
+			skipAbortedCheck: boolean,
+			inlineReason: "threshold",
+		) => Promise<boolean>;
+		const compacted = await checkCompaction.call(harness.session, assistant, true, "threshold");
+
+		// Then that one rejected attempt is the only one: it is not retried as if it had found nothing to compact.
+		expect(compacted).toBe(false);
+		expect(beforeCompactCalls).toBe(1);
+	});
+});
