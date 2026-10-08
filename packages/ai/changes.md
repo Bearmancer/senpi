@@ -8,6 +8,7 @@
   - The adaptive-only comment records that Haiku 5.5's handling of `thinking: {type: "disabled"}` is unverified.
   - `withClaudeHaiku55LongContextPricing`, run in the temporary-overrides pass, gives every Haiku 5.5 row that has no tier `inputTokensAbove: 100000` at five times each of its own base rates. Anthropic's long-context rates are exactly 5x the base. This covers regional Bedrock rows, OpenRouter's batch variant and gateway markups, and models.dev-tiered rows keep their tiers.
   - The explicit Sonnet 5.5 fallback row's cache read is 0.1.
+  - The same pass opens every Haiku 5.5 row at `contextWindow: 100000` (the threshold of the 5x band) with `maxTokens: 32000`, so compaction runs before a prompt crosses into long-context billing (upstream oh-my-pi #14903 caps the same way). The documented 1M / 128K is a `models.json` `modelOverrides` opt-in until senpi#2916 adds a first-class setting. Output drops with the window because compaction reserves min(maxTokens, half the window) for output: at 100K / 128K, emergency pruning would start at 47.5K, below the 60K adaptive threshold.
 - Regenerated with `--strict --providers anthropic,amazon-bedrock,opencode,opencode-go`:
   - `anthropic.json` `claude-haiku-5-5`.
   - `amazon-bedrock.json` `anthropic.`, `global.`, `us.`, `eu.`, `jp.`, `au.anthropic.claude-haiku-5-5`.
@@ -36,7 +37,7 @@ Generated catalog data and the generator's model-family rules.
 
 ### Expected merge conflict zones
 
-- LOW: the Anthropic family helpers, the explicit Opus/Sonnet/Haiku 5.5 rows and the temporary-overrides loop in `generate-models.ts`. Generated JSON regenerates. A full regeneration of openrouter, vercel-ai-gateway or venice also brings the drift left out here.
+- LOW: the Anthropic family helpers, the explicit Opus/Sonnet/Haiku 5.5 rows and the temporary-overrides loop (Haiku 5.5 tier and window cap) in `generate-models.ts`. Generated JSON regenerates. A full regeneration of openrouter, vercel-ai-gateway or venice also brings the drift left out here.
 
 ## 2026-10-02 - OpenGateway catalog stays current: shared OpenAI input cap (senpi#2552)
 

@@ -1621,6 +1621,7 @@ function roundCost(value: number): number {
 // tokens, on every route (https://platform.claude.com/docs/en/about-claude/pricing). Catalogs that list it
 // with flat prices (regional Bedrock, batch variants, gateways) take the tier from their own base rates.
 const CLAUDE_HAIKU_55_LONG_CONTEXT_INPUT_THRESHOLD = 100000;
+const CLAUDE_HAIKU_55_BANDED_MAX_TOKENS = 32000;
 
 function withClaudeHaiku55LongContextPricing(cost: ModelCost): ModelCost {
 	if (cost.tiers?.length) return cost;
@@ -3500,6 +3501,15 @@ async function generateModels() {
 
 		if (/haiku-5[.-]5/.test(candidate.id)) {
 			candidate.cost = withClaudeHaiku55LongContextPricing(candidate.cost);
+			// Open at the 100K price band so compaction runs before a prompt crosses into the 5x rates; the
+			// full 1M window with the documented 128K output is an explicit models.json `modelOverrides` opt-in
+			// (oh-my-pi #14903 caps the window the same way; senpi#2916 tracks a first-class opt-in). Output
+			// drops to 32K with it: compaction reserves min(maxTokens, half the window) for output, so 128K would
+			// start emergency pruning at under half of a 100K window.
+			if (candidate.contextWindow > CLAUDE_HAIKU_55_LONG_CONTEXT_INPUT_THRESHOLD) {
+				candidate.contextWindow = CLAUDE_HAIKU_55_LONG_CONTEXT_INPUT_THRESHOLD;
+				candidate.maxTokens = Math.min(candidate.maxTokens, CLAUDE_HAIKU_55_BANDED_MAX_TOKENS);
+			}
 		}
 
 		// models.dev may list Opus 5.5, Sonnet 5.5 and Haiku 5.5 before their effort metadata is complete.

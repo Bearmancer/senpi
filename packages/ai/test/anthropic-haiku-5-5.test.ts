@@ -3,13 +3,14 @@ import { describe, expect, it } from "vitest";
 import { stream as streamAnthropic } from "../src/api/anthropic-messages.ts";
 import { type BedrockOptions, stream as streamBedrock } from "../src/api/bedrock-converse-stream.ts";
 import { getModel, getModels, normalizeContext, streamSimple } from "../src/compat.ts";
+import { modelSupportsAssistantPrefill } from "../src/model.ts";
 import { calculateCost, getSupportedThinkingLevels } from "../src/models.ts";
 import type { Context, Model, SimpleStreamOptions, Usage } from "../src/types.ts";
 import { getAnthropicCompat } from "../src/utils/prompt-cache-ttl.ts";
 
 // Claude Haiku 5.5 (2026-10-07), senpi#2892. Generated-catalog and request-shape contract.
 // https://platform.claude.com/docs/en/models/haiku-5-5/overview and .../haiku-5-5/migration-guide:
-// 1M in / 128k out, text + image input, adaptive thinking with effort low..max (`budget_tokens` is a
+// 1M in / 128k out (senpi defaults to the 100K price band with 32K out; 1M / 128K is a models.json opt-in), text + image input, adaptive thinking with effort low..max (`budget_tokens` is a
 // 400, so `thinking` stays unset or adaptive), no `temperature` / `top_p` / `top_k`, forced
 // `tool_choice` accepted (unlike Opus/Sonnet 5.5), no server-side refusal fallback, and $0.1 / $0.5
 // per MTok with 0.01 cache reads and 0.125 cache writes; a prompt over 100,000 input tokens bills
@@ -123,8 +124,8 @@ function usage(input: number, output: number): Usage {
 describe("Claude Haiku 5.5 catalog row (anthropic)", () => {
 	it("carries the documented limits, input, prices and effort ladder", () => {
 		const model = haiku55();
-		expect(model.contextWindow).toBe(1_000_000);
-		expect(model.maxTokens).toBe(128_000);
+		expect(model.contextWindow).toBe(100_000);
+		expect(model.maxTokens).toBe(32_000);
 		expect(model.input).toEqual(["text", "image"]);
 		expect(model.cost).toEqual(HAIKU_55_COST);
 		expect(model.reasoning).toBe(true);
@@ -172,6 +173,10 @@ describe("Claude Haiku 5.5 catalog rows (every route)", () => {
 		const found = rows.flatMap((provider) => getModels(provider).filter((model) => /haiku-5[.-]5/.test(model.id)));
 		expect(new Set(found.map((model) => model.provider))).toEqual(new Set(rows));
 		for (const model of found) {
+			// The window stops where the 5x band starts, so compaction runs before a prompt crosses it.
+			expect(model.contextWindow, `${model.provider}/${model.id} window`).toBe(100_000);
+			// Below half the window, so the output reserve leaves emergency pruning at about 65% of it.
+			expect(model.maxTokens, `${model.provider}/${model.id} maxTokens`).toBe(32_000);
 			const { tiers, ...base } = model.cost;
 			expect(tiers, `${model.provider}/${model.id}`).toHaveLength(1);
 			const tier = tiers?.[0];
@@ -190,8 +195,8 @@ describe("Claude Haiku 5.5 catalog rows (Amazon Bedrock)", () => {
 		expect(ids).toContain("global.anthropic.claude-haiku-5-5");
 		for (const id of ["anthropic.claude-haiku-5-5", "global.anthropic.claude-haiku-5-5"] as const) {
 			const model = getModel("amazon-bedrock", id);
-			expect(model.contextWindow).toBe(1_000_000);
-			expect(model.maxTokens).toBe(128_000);
+			expect(model.contextWindow).toBe(100_000);
+			expect(model.maxTokens).toBe(32_000);
 			expect(model.cost).toEqual(HAIKU_55_COST);
 			expect(model.thinkingLevelMap?.off).toBeNull();
 			expect(getSupportedThinkingLevels(model)).not.toContain("off");
@@ -226,6 +231,96 @@ describe("Claude Haiku 5.5 catalog rows (Amazon Bedrock)", () => {
 			output_config: { effort: "medium" },
 		});
 		expect(captured?.additionalModelRequestFields?.thinking?.budget_tokens).toBeUndefined();
+	});
+});
+
+describe("Claude Haiku 5.5 API contract (migration guide)", () => {
+	// https://platform.claude.com/docs/en/models/haiku-5-5/migration-guide: temperature/top_p/top_k,
+	// `thinking.budget_tokens` and an assistant prefill are 400s; thinking is adaptive with effort.
+	it("never sends sampling params, budget_tokens or a prefill, and sends adaptive thinking with effort", async () => {
+		const model = haiku55();
+		const wire = wireRecorder();
+		await streamSimple({ ...model, baseUrl: "http://127.0.0.1:9" }, makeContext(), {
+			apiKey: "fake-key",
+			cacheRetention: "none",
+			reasoning: "high",
+			temperature: 0.2,
+			samplingParams: { top_p: 0.5, top_k: 10 },
+			fetch: wire.fetch,
+		}).result();
+		const body = wire.body();
+
+		for (const key of ["temperature", "top_p", "top_k"]) expect(body).not.toHaveProperty(key);
+		expect(body.thinking?.type).toBe("adaptive");
+		expect(body.thinking?.budget_tokens).toBeUndefined();
+		expect(body.messages.at(-1)).toMatchObject({ role: "system", output_config: { effort: "high" } });
+		// The request ends on the user turn plus its effort marker, never on an assistant turn.
+		expect(body.messages.filter((message) => message.role !== "system").at(-1)?.role).toBe("user");
+		// No prefill is ever offered: the catalog row does not claim support (the agent loop also refuses
+		// to continue from an assistant message, packages/agent/test/e2e.test.ts).
+		expect(model.supportsAssistantPrefill).toBeUndefined();
+		expect(modelSupportsAssistantPrefill(model, { thinkingEnabled: false })).toBe(false);
+	});
+
+	// https://platform.claude.com/docs/en/build-with-claude/prompt-caching: changing the top-level
+	// `output_config.effort` invalidates cached message blocks; a per-message effort change keeps the cache
+	// (https://platform.claude.com/docs/en/build-with-claude/effort#change-effort-mid-conversation-beta).
+	it("keeps the top-level effort fixed and moves only the trailing marker when effort changes", async () => {
+		const bodies: AnthropicPayload[] = [];
+		for (const reasoning of ["low", "max"] as const) {
+			const wire = wireRecorder();
+			await streamSimple({ ...haiku55(), baseUrl: "http://127.0.0.1:9" }, makeContext(), {
+				apiKey: "fake-key",
+				cacheRetention: "none",
+				reasoning,
+				fetch: wire.fetch,
+			}).result();
+			bodies.push(wire.body());
+		}
+		const [low, max] = bodies;
+		expect(low?.output_config).toEqual(max?.output_config);
+		expect(low?.thinking).toEqual(max?.thinking);
+		expect(low?.messages.slice(0, -1)).toEqual(max?.messages.slice(0, -1));
+		expect(low?.messages.at(-1)).toMatchObject({ output_config: { effort: "low" } });
+		expect(max?.messages.at(-1)).toMatchObject({ output_config: { effort: "max" } });
+	});
+
+	// Thinking is on by default, may arrive as an empty block carrying only a signature, and bills as
+	// output: `usage.output_tokens` already includes thinking tokens.
+	it("reads a leading signature-only thinking block by type and bills thinking as output", async () => {
+		const events = [
+			{
+				type: "message_start",
+				message: { id: "msg_test", usage: { input_tokens: 10, output_tokens: 0 } },
+			},
+			{ type: "content_block_start", index: 0, content_block: { type: "thinking", thinking: "", signature: "" } },
+			{ type: "content_block_delta", index: 0, delta: { type: "signature_delta", signature: "sig-haiku" } },
+			{ type: "content_block_stop", index: 0 },
+			{ type: "content_block_start", index: 1, content_block: { type: "text", text: "" } },
+			{ type: "content_block_delta", index: 1, delta: { type: "text_delta", text: "answer" } },
+			{ type: "content_block_stop", index: 1 },
+			{
+				type: "message_delta",
+				delta: { stop_reason: "end_turn" },
+				usage: { input_tokens: 10, output_tokens: 1000, output_tokens_details: { thinking_tokens: 800 } },
+			},
+			{ type: "message_stop" },
+		];
+		const sse = events.map((event) => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`).join("");
+		const message = await streamSimple({ ...haiku55(), baseUrl: "http://127.0.0.1:9" }, makeContext(), {
+			apiKey: "fake-key",
+			cacheRetention: "none",
+			reasoning: "medium",
+			fetch: async () => new Response(sse, { status: 200, headers: { "content-type": "text/event-stream" } }),
+		}).result();
+
+		expect(message.stopReason).toBe("stop");
+		expect(message.content.map((block) => block.type)).toEqual(["thinking", "text"]);
+		expect(message.content.find((block) => block.type === "text")).toMatchObject({ text: "answer" });
+		expect(message.content[0]).toMatchObject({ thinking: "", thinkingSignature: "sig-haiku" });
+		expect(message.usage.output).toBe(1000);
+		expect(message.usage.reasoning).toBe(800);
+		expect(message.usage.cost.output).toBeCloseTo((1000 * 0.5) / 1_000_000, 12);
 	});
 });
 
