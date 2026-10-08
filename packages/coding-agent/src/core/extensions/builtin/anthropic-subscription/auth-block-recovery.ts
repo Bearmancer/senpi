@@ -15,12 +15,13 @@ export type AuthBlockRecoveryInput = {
 	/** True when the token endpoint rejected the grant itself, not when it was throttled or unavailable. */
 	readonly isGrantRejected: (error: unknown) => boolean;
 	readonly reload: () => Promise<AccountSlot[]>;
-};
-
-export type AuthBlockRecovery = {
-	readonly accounts: AccountSlot[];
-	/** A refresh that failed for a reason other than a rejected grant; the slot stays blocked and is retried. */
-	readonly transientFailure: unknown;
+	/** Whether an account can serve this request now; recovery runs only when none can. */
+	readonly isUsable: (account: AccountSlot) => boolean;
+	/**
+	 * The request error for a refresh that failed for a reason other than a rejected grant (throttled,
+	 * unavailable, a busy store): the slot stays blocked and the next request tries it again.
+	 */
+	readonly transientError: (error: unknown) => Error;
 };
 
 /**
@@ -69,9 +70,9 @@ async function recoverSlot(input: AuthBlockRecoveryInput, name: string): Promise
 	});
 }
 
-export async function recoverAuthBlockedSlots(input: AuthBlockRecoveryInput): Promise<AuthBlockRecovery> {
+export async function recoverAuthBlockedSlots(input: AuthBlockRecoveryInput): Promise<AccountSlot[]> {
 	const candidates = input.accounts.filter(isAuthBlockRecoverable);
-	if (candidates.length === 0) return { accounts: [...input.accounts], transientFailure: undefined };
+	if (candidates.length === 0 || input.accounts.some(input.isUsable)) return [...input.accounts];
 	let transientFailure: unknown;
 	for (const candidate of candidates) {
 		try {
@@ -81,5 +82,9 @@ export async function recoverAuthBlockedSlots(input: AuthBlockRecoveryInput): Pr
 			transientFailure = error;
 		}
 	}
-	return { accounts: await input.reload(), transientFailure };
+	const accounts = await input.reload();
+	if (transientFailure !== undefined && !accounts.some(input.isUsable)) {
+		throw input.transientError(transientFailure);
+	}
+	return accounts;
 }

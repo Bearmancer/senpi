@@ -22,6 +22,7 @@ import { hasRequestOauthToken, mergeRequestAuthEnvironment, stripManagedAuthEnvi
 import { writeConfigDirCredential } from "./config-dir-credentials.ts";
 import { classifySdkError, sdkAssistantFailure, sdkResultFailure } from "./errors.ts";
 import { runFailover } from "./failover.ts";
+import { isGrantRejected, refreshFailure } from "./refresh-failure.ts";
 import { refusalError } from "./refusal.ts";
 import type { Options, SDKMessage, SdkQuery } from "./sdk-boundary.ts";
 import type { AnthropicSubscriptionProviderSettings, AnthropicSubscriptionTokenInjection } from "./settings.ts";
@@ -29,8 +30,6 @@ import type { AnthropicSubscriptionProviderSettings, AnthropicSubscriptionTokenI
 export { ANTHROPIC_SUBSCRIPTION_PROVIDER_ID } from "./account-management.ts";
 
 export const EXPIRING_WITHIN_MS = 5 * 60_000;
-
-const TRANSIENT_REFRESH_FAILURE = /\bstatus=5\d\d\b|\bTimeoutError\b/;
 
 /** A managed lane with an empty pool must refuse rather than spawn the SDK against ambient host credentials. */
 const NO_MANAGED_ACCOUNTS_ERROR =
@@ -131,11 +130,13 @@ async function managedPool(
 	return { accounts, environment, lane, pinnedAccount: settings.pinnedAccount ?? stored?.pinned, store };
 }
 
-function storedSlot(credential: Credential | undefined, pool: ManagedPool, name: string): AccountSlot | undefined {
+function storedAccounts(credential: Credential | undefined, pool: ManagedPool): AccountSlot[] {
 	const stored = credential?.type === "oauth" ? (credential as AnthropicSubscriptionCredential) : undefined;
-	return listAccounts(stored ?? emptyCredential(), (key) => pool.environment[key]).find(
-		(candidate) => candidate.name === name,
-	);
+	return listAccounts(stored ?? emptyCredential(), (key) => pool.environment[key]);
+}
+
+function storedSlot(credential: Credential | undefined, pool: ManagedPool, name: string): AccountSlot | undefined {
+	return storedAccounts(credential, pool).find((candidate) => candidate.name === name);
 }
 
 /**
@@ -152,17 +153,6 @@ async function continueWhileStoreBusy(pool: ManagedPool, slot: AccountSlot, busy
 	}
 	if (activeBoundary.now() < slot.expires) return;
 	throw busy;
-}
-
-/** Throttling, server errors and timeouts on the token endpoint are not a verdict on the grant. */
-function refreshFailure(error: unknown): Error {
-	const detail = error instanceof Error ? error.message : String(error);
-	const classification = classifySdkError(detail);
-	if (classification.kind === "rate_limit" || classification.kind === "overloaded") return new Error(detail);
-	if ((classification.kind === "other" && classification.retryable) || TRANSIENT_REFRESH_FAILURE.test(detail)) {
-		return new Error(`server_error: ${detail}`);
-	}
-	return new Error(`authentication_failed: ${detail}`);
 }
 
 async function prepareSlot(
@@ -238,29 +228,17 @@ export async function* queryWithAuthLane(input: AuthenticatedQueryInput): AsyncG
 		});
 		return;
 	}
-	const recovery = await recoverAuthBlockedSlots({
+	pool.accounts = await recoverAuthBlockedSlots({
 		store: pool.store,
 		providerId: ANTHROPIC_SUBSCRIPTION_PROVIDER_ID,
 		accounts: pool.accounts,
 		refresher: activeBoundary.refresher,
 		signal,
-		isGrantRejected: (error) => refreshFailure(error).message.startsWith("authentication_failed:"),
-		reload: async () =>
-			listAccounts(
-				((await pool.store.read(ANTHROPIC_SUBSCRIPTION_PROVIDER_ID)) as
-					| AnthropicSubscriptionCredential
-					| undefined) ?? emptyCredential(),
-				(name) => pool.environment[name],
-			),
+		isGrantRejected,
+		reload: async () => storedAccounts(await pool.store.read(ANTHROPIC_SUBSCRIPTION_PROVIDER_ID), pool),
+		isUsable: (account) => !isBlockedFor(account, activeBoundary.now(), input.model),
+		transientError: (error) => (error instanceof CredentialStoreBusyError ? error : refreshFailure(error)),
 	});
-	pool.accounts = recovery.accounts;
-	if (
-		recovery.transientFailure !== undefined &&
-		pool.accounts.every((account) => isBlockedFor(account, activeBoundary.now(), input.model))
-	) {
-		const failure = recovery.transientFailure;
-		throw failure instanceof CredentialStoreBusyError ? failure : refreshFailure(failure);
-	}
 	yield* runFailover({
 		accounts: pool.accounts,
 		selectFn: (accounts) =>
