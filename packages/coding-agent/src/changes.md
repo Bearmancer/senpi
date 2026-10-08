@@ -21,7 +21,7 @@ Session options are built before any extension loads, and the RPC host's open pa
 ### What changed
 
 - `packages/coding-agent/src/cli/print-then-exit.ts` (new): `printThenExit(print, code)` runs the printing function with stdout collected (`console.log` and `process.stdout.write`), writes the collected text as one chunk, waits for that write's own callback and for stderr, then exits. `exitAfterOutput(output, code)` is the same wait for a command that already printed. The wait is bounded (`OUTPUT_DELIVERY_LIMIT_MS`, 30 s, unref'd timer) and an EPIPE from a reader that closed the pipe ends it at once. Output that is already redirected (json mode routes `console.log` to stderr) is not collected.
-- `packages/coding-agent/src/main.ts`: `--list-models`, `--version`, `--export`, `--list-tips` and both `--help` branches (plain and the one reached with `--mode`/`-p`) use `printThenExit`; the package, host and schedule commands, which stream their own output, end with `exitAfterOutput`.
+- `packages/coding-agent/src/main.ts`: `--list-models`, `--version`, `--export`, `--list-tips` and both `--help` branches (plain and the one reached with `--mode`/`-p`) use `printThenExit`; the package, host and schedule commands, which stream their own output, end with `exitAfterOutput`. `host` writes its one line with `writeSync`, so it is complete on both runtimes; package and `schedule` output still streams through `process.stdout`, so under Bun output past the pipe buffer can still be dropped for a reader that falls behind (tracked as a follow-up).
 - `packages/coding-agent/src/cli.ts`: the `--version` and help fast paths use the same helper.
 
 ### Why
@@ -74,7 +74,6 @@ The copy-forward runs at startup, before any extension loads.
 
 - Fork-only file. `isSkipped`.
 
-||||||| parent of a51d1aeac5 (fix(cli): wait for stdout to drain before print-then-exit paths exit)
 ## 2026-10-06 - visibleWidth export for extensions that lay out their own rows (senpi#2831)
 
 ### What changed

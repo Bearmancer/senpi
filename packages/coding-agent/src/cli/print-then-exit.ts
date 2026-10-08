@@ -33,11 +33,15 @@ export async function captureStdout<T>(print: () => T | Promise<T>): Promise<{ r
 		done?.();
 		return true;
 	}) as typeof process.stdout.write;
+	let printed = false;
 	try {
-		return { result: await print(), output: chunks.join("") };
+		const result = await print();
+		printed = true;
+		return { result, output: chunks.join("") };
 	} finally {
 		console.log = nativeLog;
 		process.stdout.write = nativeStdoutWrite;
+		if (!printed && chunks.length > 0) process.stdout.write(chunks.join(""));
 	}
 }
 

@@ -69,8 +69,8 @@ describe("senpi#2937 a print-then-exit command delivers all of its output", () =
 			// when the command finishes printing
 			const code = await exited(process);
 
-			// then it has exited on its own, well inside the wait bound
-			expect(code).not.toBeNull();
+			// then it has exited on its own and successfully, not by crashing on the closed pipe
+			expect(code).toBe(0);
 		},
 		20_000,
 	);
