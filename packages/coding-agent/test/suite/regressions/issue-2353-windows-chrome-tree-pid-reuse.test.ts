@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+	bunChromeKillPlan,
 	bunChromeTree,
 	parseWindowsProcessRows,
 	type WindowsProcessRow,
@@ -14,20 +15,26 @@ const RUNNER_LISTENER = 6952;
 const RUNNER_WORKER = 6236;
 const BUN = 5000;
 
-function row(pid: number, parentPid: number, createdAt: number, bunChromeFlag = false): WindowsProcessRow {
-	return { pid, parentPid, createdAt: BigInt(createdAt), bunChromeFlag };
+function row(
+	pid: number,
+	parentPid: number,
+	createdAt: number,
+	bunChromeFlag = false,
+	name = "chrome.exe",
+): WindowsProcessRow {
+	return { pid, parentPid, createdAt: BigInt(createdAt), bunChromeFlag, name };
 }
 
 // The ancestry a hosted windows-latest runner reports (senpi#2353 probe): wininit.exe names a parent
 // that exited at boot, and the runner itself descends from wininit.exe.
 const runner = [
-	row(WININIT, DEAD_BOOT_PARENT, 100),
-	row(SERVICES, WININIT, 110),
-	row(SVCHOST, SERVICES, 200),
-	row(HOSTED_COMPUTE_AGENT, SVCHOST, 300),
-	row(RUNNER_LISTENER, HOSTED_COMPUTE_AGENT, 400),
-	row(RUNNER_WORKER, RUNNER_LISTENER, 410),
-	row(BUN, RUNNER_WORKER, 500),
+	row(WININIT, DEAD_BOOT_PARENT, 100, false, "wininit.exe"),
+	row(SERVICES, WININIT, 110, false, "services.exe"),
+	row(SVCHOST, SERVICES, 200, false, "svchost.exe"),
+	row(HOSTED_COMPUTE_AGENT, SVCHOST, 300, false, "hosted-compute-agent"),
+	row(RUNNER_LISTENER, HOSTED_COMPUTE_AGENT, 400, false, "Runner.Listener.exe"),
+	row(RUNNER_WORKER, RUNNER_LISTENER, 410, false, "Runner.Worker.exe"),
+	row(BUN, RUNNER_WORKER, 500, false, "bun.exe"),
 ];
 const runnerPids = runner.map((process) => process.pid);
 
@@ -72,17 +79,63 @@ describe("Bun's Chrome tree on Windows (senpi#2353)", () => {
 		expect(tree.sort((a, b) => a - b)).toEqual([7000, 7010, 7020]);
 	});
 
-	it("#given PowerShell output with CRLF, blank lines and FILETIMEs beyond 2^53 #when parsed #then rows keep exact creation times", () => {
+	it("#given PowerShell output with CRLF, blank lines, spaced image names and FILETIMEs beyond 2^53 #when parsed #then rows keep exact values", () => {
 		// given
-		const stdout = "896 776 134046261411081720 0\r\n\r\n7000 5000 134046263569141430 1\r\nnot a row\r\n";
+		const stdout =
+			"896 776 134046261411081720 0 wininit.exe\r\n\r\n0 0 0 0 System Idle Process\r\n7000 5000 134046263569141430 1 chrome.exe\r\nnot a row\r\n";
 
 		// when
 		const rows = parseWindowsProcessRows(stdout);
 
 		// then
 		expect(rows).toEqual([
-			{ pid: 896, parentPid: 776, createdAt: 134046261411081720n, bunChromeFlag: false },
-			{ pid: 7000, parentPid: 5000, createdAt: 134046263569141430n, bunChromeFlag: true },
+			{ pid: 896, parentPid: 776, createdAt: 134046261411081720n, bunChromeFlag: false, name: "wininit.exe" },
+			{ pid: 7000, parentPid: 5000, createdAt: 134046263569141430n, bunChromeFlag: true, name: "chrome.exe" },
 		]);
+	});
+
+	it("#given a protected OS image that genuinely descends from Bun's Chrome #when the kill plan is made #then it is skipped and reported, and the browser is still ended", () => {
+		// given
+		const rows = [...runner, row(7000, BUN, 600, true), row(7400, 7000, 610, false, "svchost.exe")];
+
+		// when
+		const plan = bunChromeKillPlan(rows, BUN);
+
+		// then
+		expect(plan.kill).toEqual([7000]);
+		expect(plan.skipped).toEqual([{ pid: 7400, name: "svchost.exe", reason: "protected_image" }]);
+	});
+
+	it("#given creation times equal to the tick, so an ancestor of Bun passes the creation rule #when the kill plan is made #then that ancestor is skipped, never killed", () => {
+		// given
+		const rows = [
+			row(RUNNER_WORKER, 7000, 500, false, "Runner.Worker.exe"),
+			row(BUN, RUNNER_WORKER, 500, false, "bun.exe"),
+			row(7000, BUN, 500, true),
+		];
+
+		// when
+		const plan = bunChromeKillPlan(rows, BUN);
+
+		// then
+		expect(bunChromeTree(rows, BUN)).toContain(RUNNER_WORKER);
+		expect(plan.kill).not.toContain(RUNNER_WORKER);
+		expect(plan.skipped).toContainEqual({
+			pid: RUNNER_WORKER,
+			name: "Runner.Worker.exe",
+			reason: "ancestor_of_this_process",
+		});
+	});
+
+	it("#given the measured runner with a Chrome helper on wininit's recycled parent pid #when the kill plan is made #then only Bun's own Chrome tree is killed and nothing is skipped", () => {
+		// given
+		const rows = [...runner, row(7000, BUN, 600, true), row(DEAD_BOOT_PARENT, 7000, 610), row(7100, 7000, 620)];
+
+		// when
+		const plan = bunChromeKillPlan(rows, BUN);
+
+		// then
+		expect([...plan.kill].sort((a, b) => a - b)).toEqual([DEAD_BOOT_PARENT, 7000, 7100]);
+		expect(plan.skipped).toEqual([]);
 	});
 });

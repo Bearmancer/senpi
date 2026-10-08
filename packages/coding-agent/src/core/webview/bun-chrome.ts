@@ -1,6 +1,7 @@
 import { execFile } from "node:child_process";
+import { appendFileSync } from "node:fs";
 import type { NativeWebViewClass } from "./native-webview.ts";
-import { bunChromeTree, parseWindowsProcessRows, WINDOWS_PROCESS_ROWS } from "./windows-chrome-tree.ts";
+import { bunChromeKillPlan, parseWindowsProcessRows, WINDOWS_PROCESS_ROWS } from "./windows-chrome-tree.ts";
 
 // Bun launches its Chrome with exactly this default flag run (see `Bun.WebView` backend docs);
 // together with the parent pid it tells Bun's browser apart from any other Chrome we spawned.
@@ -21,10 +22,21 @@ function positivePids(texts: readonly string[]): number[] {
 }
 
 // Bun's Chrome browsers and every process under them, from one CIM listing (see windows-chrome-tree.ts
-// for why a recorded parent pid alone is not proof of parentage).
+// for why a recorded parent pid alone is not proof of parentage). Anything the plan refuses to kill is
+// written to the CI readiness log, so a wrong adoption shows up as a line instead of a dead runner.
 async function windowsBunChromeTree(): Promise<number[]> {
 	const stdout = await run("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", WINDOWS_PROCESS_ROWS]);
-	return bunChromeTree(parseWindowsProcessRows(stdout), process.pid);
+	const plan = bunChromeKillPlan(parseWindowsProcessRows(stdout), process.pid);
+	const log = process.env.SENPI_WEBVIEW_READINESS_LOG;
+	if (log !== undefined && log.length > 0) {
+		for (const skip of plan.skipped) {
+			appendFileSync(
+				log,
+				`${new Date().toISOString()} pid=${process.pid} chrome-retire skipped ${skip.name} (${skip.pid}): ${skip.reason}\n`,
+			);
+		}
+	}
+	return [...plan.kill];
 }
 
 async function windowsListedPids(): Promise<Set<number>> {
