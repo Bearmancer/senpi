@@ -1,3 +1,25 @@
+## 2026-10-08 - moved-path-guard: third review fixes (senpi#2898)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/moved-path-guard/walk.ts`: a path whose canonicalization fails or times out is walked by its own spelling, so a moved prefix is still refused and an unrelated path still is not; the re-used (`.git`) decision is recorded before the breadcrumb is remembered, and a breadcrumb whose `movedTo` lies outside the user's home is ignored before that folder is touched.
+- `resolve-async.ts`, `known-moves.ts`, `index.ts`: the probe records step timeouts (logged as `call_bound_reached {bound: "step"}`), clears every target under a re-used prefix (keyed by breadcrumb content, so every spelling of a root shares it), never text-refuses a cleared target, and stops all filesystem work at the call deadline.
+- `breadcrumb-trust.ts`: trust is decided from `fstat` of an `O_NOFOLLOW` descriptor, and at most that size is read from the same descriptor.
+- `guard-log.ts`: rotates once at 1 MiB, dedupes on the reason (not the count), and computes its path inside the write chain.
+- `resolve.ts`: documents the synchronous bound.
+
+### Why
+
+Third review of PR #2900: the step deadline failed open silently; the text fallback refused re-used worktrees; trust was decided on a different open than the read; the log was unbounded; the probe kept working past the deadline; the sync open path could touch any `movedTo`.
+
+### Why an extension could not handle it
+
+It is an extension.
+
+### Expected merge conflict zones
+
+- Fork-only directory.
+
 ## 2026-10-08 - moved-path-guard: re-review fixes (senpi#2898)
 
 ### What changed
