@@ -15,7 +15,8 @@ function createApplyPatchEvalHarness(model: { readonly api: string; readonly id:
 	let activeToolNames: string[] = [];
 	let lazyToolActivator: LazyToolActivator | undefined;
 
-	registerApplyPatchExtension({
+	type ApplyPatchExtensionApi = Parameters<typeof registerApplyPatchExtension>[0];
+	const api: ApplyPatchExtensionApi = {
 		registerTool(tool: ToolDefinition) {
 			registeredTools.set(tool.name, tool);
 		},
@@ -30,7 +31,8 @@ function createApplyPatchEvalHarness(model: { readonly api: string; readonly id:
 		on(event: string, handler: ExtensionHandler) {
 			handlers.set(event, handler);
 		},
-	} as never);
+	};
+	registerApplyPatchExtension(api);
 
 	const selectModel = async () => {
 		const handler = handlers.get("model_select");

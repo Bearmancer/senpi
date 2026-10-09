@@ -10,6 +10,17 @@ import { hasPython3 } from "./py-kernel/fixtures.ts";
 
 type Gate = { readonly opened: Promise<void>; open(): void };
 
+function isCustomEventWith<T>(event: Event): event is CustomEvent<T> {
+	return event instanceof CustomEvent;
+}
+
+function toolArgs(request: BridgeHttpCallRequest): { readonly path?: string } {
+	const args: unknown = request.args;
+	if (typeof args !== "object" || args === null) return {};
+	if (!("path" in args) || typeof args.path !== "string") return {};
+	return { path: args.path };
+}
+
 function gate(): Gate {
 	let open = (): void => undefined;
 	const opened = new Promise<void>((resolve) => {
@@ -77,7 +88,8 @@ async function bridge(
 function nextLog(frames: EventTarget, text: string): Promise<void> {
 	return new Promise((resolve) => {
 		const listener = (event: Event) => {
-			const message = (event as CustomEvent<KernelToHostMessage>).detail;
+			if (!isCustomEventWith<KernelToHostMessage>(event)) return;
+			const message = event.detail;
 			if (message.type === "log" && message.message === text) {
 				frames.removeEventListener("frame", listener);
 				resolve();
@@ -111,7 +123,8 @@ function invokeRequest(found: KernelToolDescriptor, args: unknown): KernelToolsI
 function replies(kernel: PythonKernel): KernelToolReplyEvent[] {
 	const seen: KernelToolReplyEvent[] = [];
 	kernel.kernelToolEvents.addEventListener("kernelToolReply", (event) => {
-		seen.push((event as CustomEvent<KernelToolReplyEvent>).detail);
+		if (!isCustomEventWith<KernelToolReplyEvent>(event)) return;
+		seen.push(event.detail);
 	});
 	return seen;
 }
@@ -293,7 +306,7 @@ describe.skipIf(!(await hasPython3()))("Python kernel tools (@tool)", () => {
 		const parentParked = gate();
 		const order: string[] = [];
 		const { kernel } = await bridge(async (request) => {
-			const args = request.args as { path?: string };
+			const args = toolArgs(request);
 			if (args.path === "parent") {
 				parentParked.open();
 				await releaseParent.opened;
@@ -328,7 +341,7 @@ describe.skipIf(!(await hasPython3()))("Python kernel tools (@tool)", () => {
 		const releaseHost = gate();
 		const hostCalled = gate();
 		const { kernel, calls } = await bridge(async (request) => {
-			if ((request.args as { path?: string }).path === "slow") {
+			if (toolArgs(request).path === "slow") {
 				hostCalled.open();
 				await releaseHost.opened;
 			}
@@ -373,7 +386,7 @@ describe.skipIf(!(await hasPython3()))("Python kernel tools (@tool)", () => {
 			message: "cancelled: took effect at a host park point",
 		});
 		expect(queuedResult.ok && queuedResult.valueRepr).toBe("1");
-		expect(calls.filter((call) => (call.args as { path?: string }).path === "slow")).toHaveLength(1);
+		expect(calls.filter((call) => toolArgs(call).path === "slow")).toHaveLength(1);
 	}, 90_000);
 
 	it("a sync callback cancelled mid-computation finishes, and its late result is dropped with an explicit reply", async () => {
@@ -390,7 +403,8 @@ describe.skipIf(!(await hasPython3()))("Python kernel tools (@tool)", () => {
 		const computing = nextLog(frames, "computing");
 		const reply = new Promise<KernelToolReplyEvent>((resolve) => {
 			const listener = (event: Event) => {
-				const detail = (event as CustomEvent<KernelToolReplyEvent>).detail;
+				if (!isCustomEventWith<KernelToolReplyEvent>(event)) return;
+				const detail = event.detail;
 				if (detail.ok === false) {
 					kernel.kernelToolEvents.removeEventListener("kernelToolReply", listener);
 					resolve(detail);
@@ -434,7 +448,7 @@ describe.skipIf(!(await hasPython3()))("Python kernel tools (@tool)", () => {
 	it("a reset while a callback is mid-flight ends it as kernel_tool_stale and leaves no thread or token behind", async () => {
 		const hostCalled = gate();
 		const { kernel } = await bridge(async (request) => {
-			if ((request.args as { path?: string }).path === "hang") {
+			if (toolArgs(request).path === "hang") {
 				hostCalled.open();
 				await new Promise(() => undefined);
 			}
@@ -498,7 +512,7 @@ describe.skipIf(!(await hasPython3()))("Python kernel tools inside parallel() an
 		const releaseHold = gate();
 		const held = gate();
 		const { kernel } = await bridge(async (request) => {
-			if ((request.args as { path?: string }).path === "hold") {
+			if (toolArgs(request).path === "hold") {
 				held.open();
 				await releaseHold.opened;
 			}
@@ -541,7 +555,7 @@ describe.skipIf(!(await hasPython3()))("Python kernel tools inside parallel() an
 		const releaseParent = gate();
 		const parentParked = gate();
 		const { kernel, messages } = await bridge(async (request) => {
-			if ((request.args as { path?: string }).path === "parent") {
+			if (toolArgs(request).path === "parent") {
 				parentParked.open();
 				await releaseParent.opened;
 			}

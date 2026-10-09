@@ -17,6 +17,11 @@ import { FakeKernel, FakeManager, fakeExtensionContext, result } from "./eval/fa
 type ToolDefParam = NonNullable<ConstructorParameters<typeof ToolExecutionComponent>[4]>;
 type ExecResult = Parameters<ToolExecutionComponent["updateResult"]>[0];
 
+/** The TUI surface the component touches in these tests; a full TUI is not needed. */
+function renderOnlyTui(): Pick<TUI, "requestRender"> {
+	return { requestRender: () => {} };
+}
+
 const CODE = "d = {}\nd['favoriteModels'] = ['apitopia/kimi-k3']\nprint(d)";
 const OUTPUT = "{'favoriteModels': ['apitopia/kimi-k3']}";
 
@@ -30,15 +35,25 @@ function stripAnsi(text: string): string {
 }
 
 function evalToolDef(): ToolDefParam {
-	return {
+	const definition = {
 		name: "eval",
 		label: "Eval",
 		description: "eval",
-		parameters: { type: "object" } as unknown as ToolDefParam["parameters"],
+		parameters: { type: "object" },
 		execute: async () => ({ content: [] }),
-		renderCall: renderEvalCall as unknown as ToolDefParam["renderCall"],
-		renderResult: renderEvalResult as unknown as ToolDefParam["renderResult"],
-	} as unknown as ToolDefParam;
+		renderCall: renderEvalCall,
+		renderResult: renderEvalResult,
+	};
+	if (!isToolDefParam(definition)) throw new Error("ToolExecutionComponent's tool definition shape changed");
+	return definition;
+}
+
+function isToolDefParam(value: unknown): value is ToolDefParam {
+	if (typeof value !== "object" || value === null) return false;
+	for (const key of ["name", "label", "description", "parameters", "execute", "renderCall", "renderResult"] as const) {
+		if (!(key in value)) return false;
+	}
+	return true;
 }
 
 function cellResult(status: "running" | "complete", output: string, durationMs: number, summary?: string): ExecResult {
@@ -64,7 +79,7 @@ describe("eval ToolExecutionComponent lifecycle", () => {
 
 	it("Given the pending -> running -> done lifecycle then exactly one framed box renders at every state", () => {
 		// Given the real interactive tool-execution component for an eval call
-		const ui = { requestRender: () => {} } as unknown as TUI;
+		const ui = renderOnlyTui();
 		const component = new ToolExecutionComponent(
 			"eval",
 			"eval-1",
@@ -175,7 +190,7 @@ describe("eval summary in transcript frames", () => {
 	});
 
 	function summaryComponent(): ToolExecutionComponent {
-		const ui = { requestRender: () => {} } as unknown as TUI;
+		const ui = renderOnlyTui();
 		const component = new ToolExecutionComponent(
 			"eval",
 			"eval-summary",

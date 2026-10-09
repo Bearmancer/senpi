@@ -259,7 +259,7 @@ describe("bridge protocol JSONL framing", () => {
 			},
 		];
 		for (const message of messages) {
-			expect(decodeBridgeFrame(encodeBridgeFrame(message as never))).toEqual({ ok: true, message });
+			expect(decodeBridgeFrame(encodeBridgeFrame(message))).toEqual({ ok: true, message });
 		}
 	});
 });

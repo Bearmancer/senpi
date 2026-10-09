@@ -1,8 +1,8 @@
-import type { AgentToolResult } from "@code-yeongyu/senpi";
+import type { AgentToolResult, Theme } from "@code-yeongyu/senpi";
 import { visibleWidth } from "@code-yeongyu/senpi";
 import { describe, expect, it } from "vitest";
 import { renderEvalCall, renderEvalResult } from "../src/tool/render.ts";
-import type { EvalCellResult, EvalToolDetails, EvalToolInput } from "../src/tool/types.ts";
+import type { EvalCellResult, EvalToolDetails, EvalToolRequest } from "../src/tool/types.ts";
 import { callContext, renderLines, resultContext, stripAnsi } from "./eval-render-fixtures.ts";
 
 const plainTheme = {
@@ -10,7 +10,7 @@ const plainTheme = {
 	bold: (text: string) => text,
 	bg: (_color: string, text: string) => text,
 	italic: (text: string) => text,
-};
+} satisfies Theme;
 const code = "const sh = async (cmd) => {\n  return cmd;\n};\nawait sh('ls')";
 const summary = "Listing the repo with a shell helper";
 
@@ -28,19 +28,15 @@ function liveResult(cell: Partial<EvalCellResult>): AgentToolResult<EvalToolDeta
 }
 
 function render(result: AgentToolResult<EvalToolDetails>, expanded = false, width = 90): string[] {
-	const component = renderEvalResult(
-		result,
-		{ expanded, isPartial: true },
-		plainTheme as never,
-		{ ...resultContext({ args: { language: "js", code, summary } } as never), spinnerFrame: 1 } as never,
-	);
+	const component = renderEvalResult(result, { expanded, isPartial: true }, plainTheme, {
+		...resultContext({ args: { language: "js", code, summary } }),
+		spinnerFrame: 1,
+	});
 	return component.render(width).map(stripAnsi);
 }
 
-function renderCall(args: Partial<EvalToolInput>, spinnerFrame: number | undefined = 1): string[] {
-	return renderLines(
-		renderEvalCall(args as EvalToolInput, plainTheme as never, { ...callContext(), spinnerFrame } as never),
-	).map(stripAnsi);
+function renderCall(args: EvalToolRequest, spinnerFrame: number | undefined = 1): string[] {
+	return renderLines(renderEvalCall(args, plainTheme, { ...callContext(), spinnerFrame })).map(stripAnsi);
 }
 
 describe("live eval rows lead with the cell's summary (senpi#2802)", () => {
@@ -123,9 +119,9 @@ describe("live eval rows stay clean in the terminal (senpi#2831)", () => {
 	});
 
 	it("Given a peek or stop call still streaming without its cell id when it renders then the title has no undefined", () => {
-		expect(renderCall({ action: "peek" } as never)).toEqual(["eval peek"]);
-		expect(renderCall({ action: "stop" } as never)).toEqual(["eval stop"]);
-		expect(renderCall({ action: "peek", cell_id: "toolu_A" } as never)).toEqual(["eval peek toolu_A"]);
+		expect(renderCall({ action: "peek", cell_id: "" })).toEqual(["eval peek"]);
+		expect(renderCall({ action: "stop", cell_id: "" })).toEqual(["eval stop"]);
+		expect(renderCall({ action: "peek", cell_id: "toolu_A" })).toEqual(["eval peek toolu_A"]);
 	});
 
 	it("Given a cell without a summary whose first code line carries escape and control characters when its live row renders then the header and window carry none of them (senpi#2839)", () => {

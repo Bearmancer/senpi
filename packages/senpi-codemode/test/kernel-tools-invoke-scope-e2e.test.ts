@@ -20,6 +20,10 @@ import { fakeExtensionContext } from "./eval/fakes.ts";
 
 type ProbeArgs = { readonly path: string };
 
+function isProbeArgs(value: unknown): value is ProbeArgs {
+	return typeof value === "object" && value !== null && "path" in value && typeof value.path === "string";
+}
+
 type DeniedRecord = { readonly code?: string; readonly details?: unknown };
 
 type HostObservation = {
@@ -91,9 +95,10 @@ function scopedProbeTool(ctx: ExtensionContext, observations: HostObservation[],
 		hostCalls.push(toolName);
 		if (toolName === "read") return textResult("file-body");
 		if (toolName === "write") return textResult("host-write-happened");
-		const probe = params as ProbeArgs;
-		const kernelTools = ctx.kernelTools as KernelToolsCapability | undefined;
-		if (!kernelTools) throw new Error("kernel tools unavailable at the host dispatch point");
+		if (!isProbeArgs(params)) throw new Error(`probe expected { path: string }, got ${JSON.stringify(params)}`);
+		const probe = params;
+		const kernelTools: KernelToolsCapability | undefined = ctx.kernelTools;
+		if (kernelTools === undefined) throw new Error("kernel tools unavailable at the host dispatch point");
 		const described = await kernelTools.describe(["guarded_fs", "strict_fs"]);
 		const guardedEntry = described.results[0];
 		const strictEntry = described.results[1];

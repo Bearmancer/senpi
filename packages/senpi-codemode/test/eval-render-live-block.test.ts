@@ -1,4 +1,4 @@
-import type { AgentToolResult } from "@code-yeongyu/senpi";
+import type { AgentToolResult, Theme } from "@code-yeongyu/senpi";
 import { visibleWidth } from "@code-yeongyu/senpi";
 import { describe, expect, it, vi } from "vitest";
 import { renderEvalCall, renderEvalResult } from "../src/tool/render.ts";
@@ -12,7 +12,7 @@ const plainTheme = {
 	bold: (text: string) => text,
 	bg: (_color: string, text: string) => text,
 	italic: (text: string) => text,
-};
+} satisfies Theme;
 
 function cellResult(cell: Partial<EvalCellResult>, text = ""): AgentToolResult<EvalToolDetails> {
 	return {
@@ -43,33 +43,37 @@ function renderResult(
 	const component = renderEvalResult(
 		result,
 		{ expanded: options.expanded ?? false, isPartial: options.isPartial ?? true },
-		plainTheme as never,
+		plainTheme,
 		{
 			...resultContext({
 				args: { language: "js", code: "line1\nline2", summary: "fixture" },
 				...(options.now === undefined ? {} : { now: options.now }),
 			}),
 			...(options.spinnerFrame === undefined ? {} : { spinnerFrame: options.spinnerFrame }),
-		} as never,
+		},
 	);
 	return component.render(options.width ?? 80).map(stripAnsi);
 }
 
+type StreamingCallArgs = {
+	readonly language?: EvalToolInput["language"];
+	readonly code?: string;
+	readonly summary?: string;
+	readonly reset?: boolean;
+	readonly timeout?: number;
+};
+
 function renderCallStreaming(
-	args: Partial<EvalToolInput>,
+	args: StreamingCallArgs,
 	options: { expanded?: boolean; width?: number; now?: number; spinnerFrame?: number } = {},
 ): string[] {
-	const component = renderEvalCall(
-		args as EvalToolInput,
-		plainTheme as never,
-		{
-			...callContext({
-				...(options.expanded === undefined ? {} : { expanded: options.expanded }),
-				...(options.now === undefined ? {} : { now: options.now }),
-			}),
-			...(options.spinnerFrame === undefined ? {} : { spinnerFrame: options.spinnerFrame }),
-		} as never,
-	);
+	const component = renderEvalCall(args, plainTheme, {
+		...callContext({
+			...(options.expanded === undefined ? {} : { expanded: options.expanded }),
+			...(options.now === undefined ? {} : { now: options.now }),
+		}),
+		...(options.spinnerFrame === undefined ? {} : { spinnerFrame: options.spinnerFrame }),
+	});
 	return component.render(options.width ?? 80).map(stripAnsi);
 }
 
@@ -315,11 +319,10 @@ describe("eval live block: streaming header names the state (senpi#2933)", () =>
 		vi.useFakeTimers();
 		try {
 			const invalidate = vi.fn();
-			renderEvalCall(
-				{ language: "js", code: "const a = 1;", summary: "stream" } as EvalToolInput,
-				plainTheme as never,
-				{ ...callContext({ invalidate, now: STARTED_AT }), spinnerFrame: undefined } as never,
-			);
+			renderEvalCall({ language: "js", code: "const a = 1;", summary: "stream" }, plainTheme, {
+				...callContext({ invalidate, now: STARTED_AT }),
+				spinnerFrame: undefined,
+			});
 			vi.advanceTimersByTime(1_000);
 			expect(invalidate).toHaveBeenCalled();
 		} finally {

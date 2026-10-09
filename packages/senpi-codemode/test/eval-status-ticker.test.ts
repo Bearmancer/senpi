@@ -18,7 +18,13 @@ describe("EvalStatusTicker", () => {
 
 	it("unrefs the interval handle so it never keeps the process alive", () => {
 		const unref = vi.fn();
-		const fakeHandle = { unref, ref: vi.fn(), hasRef: () => true } as unknown as NodeJS.Timeout;
+		const fakeHandle = {
+			unref,
+			ref: vi.fn(),
+			hasRef: () => true,
+			refresh: () => {},
+			[Symbol.toPrimitive]: () => 0,
+		};
 		const setIntervalSpy = vi.spyOn(globalThis, "setInterval").mockReturnValue(fakeHandle);
 		const ticker = new EvalStatusTicker({ render: () => {}, now: () => T0 });
 

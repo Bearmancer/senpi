@@ -1,28 +1,36 @@
 import { describe, expect, it } from "vitest";
 import { RESERVED_AGENT_TOOL, RESERVED_OUTPUT_TOOL, RESERVED_SCHEMA_TOOL } from "../src/bridge/reserved.ts";
+import type { KernelToolDescriptor, KernelToolsDescribeResult } from "../src/kernels/js/kernel-tools-types.ts";
 
 const production = await import(new URL("../src/kernels/js/kernel-tools-registry.js", import.meta.url).href);
-const createKernelToolRegistry = production.createKernelToolRegistry as (options?: object) => {
+
+type Registry = {
 	generation: number;
-	define: (
-		fn: object,
-		metadata?: unknown,
-	) => {
-		name: string;
-		description: string;
-		language: string;
-		kernel_generation: number;
-		definition_revision: number;
-		input_schema: unknown;
-	};
-	describe: (names: readonly string[]) => { results: Array<{ name: string; ok: boolean; error?: { code: string } }> };
+	define: (fn: object, metadata?: unknown) => KernelToolDescriptor;
+	describe: (names: readonly string[]) => KernelToolsDescribeResult;
 	invoke: (request: object) => Promise<unknown>;
 	bumpGeneration: () => number;
 };
-const createToolNamespace = production.createToolNamespace as (
+type ToolNamespace = ((fn: object, metadata?: unknown) => unknown) & { read: (args?: unknown) => Promise<unknown> };
+
+/** The dynamic import is intentionally untyped (the test exercises the worker entry's module shape); these are the boundary checks. */
+function isRegistryFactory(value: unknown): value is (options?: object) => Registry {
+	return typeof value === "function";
+}
+function isNamespaceFactory(
+	value: unknown,
+): value is (
 	define: (fn: object, metadata?: unknown) => unknown,
 	callHost: (name: string, args: unknown) => Promise<unknown>,
-) => ((fn: object, metadata?: unknown) => unknown) & { read: (args?: unknown) => Promise<unknown> };
+) => ToolNamespace {
+	return typeof value === "function";
+}
+if (!("createKernelToolRegistry" in production) || !isRegistryFactory(production.createKernelToolRegistry))
+	throw new Error("kernel-tools-registry module shape changed");
+if (!("createToolNamespace" in production) || !isNamespaceFactory(production.createToolNamespace))
+	throw new Error("kernel-tools-registry module shape changed");
+const createKernelToolRegistry = production.createKernelToolRegistry;
+const createToolNamespace = production.createToolNamespace;
 
 function lookup(path: string) {
 	return path;

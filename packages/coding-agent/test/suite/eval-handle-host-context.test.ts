@@ -23,7 +23,7 @@ const actions: ExtensionActions = {
 	setSessionName: () => {},
 	getSessionName: () => undefined,
 	setLabel: () => {},
-	executeTool: async <TDetails = unknown>() => ({ content: [], details: undefined as TDetails }),
+	executeTool: async () => ({ content: [], details: undefined }),
 	getActiveTools: () => [],
 	getAllTools: () => [],
 	getSettings: () => ({}),

@@ -1,4 +1,4 @@
-import type { AgentToolResult } from "@code-yeongyu/senpi";
+import type { AgentToolResult, Theme } from "@code-yeongyu/senpi";
 import { visibleWidth } from "@code-yeongyu/senpi";
 import { describe, expect, it } from "vitest";
 import { renderEvalCall, renderEvalResult } from "../src/tool/render.ts";
@@ -11,7 +11,7 @@ const plainTheme = {
 	bold: (text: string) => text,
 	bg: (_color: string, text: string) => text,
 	italic: (text: string) => text,
-};
+} satisfies Theme;
 
 function cellResult(cell: Partial<EvalCellResult>): AgentToolResult<EvalToolDetails> {
 	return {
@@ -39,31 +39,30 @@ function renderResult(
 	result: AgentToolResult<EvalToolDetails>,
 	options: { width: number; now?: number; args?: Partial<EvalToolInput> },
 ): string[] {
-	return renderEvalResult(
-		result,
-		{ expanded: false, isPartial: true },
-		plainTheme as never,
-		{
-			...resultContext({
-				args: { language: "js", code: "work();", summary: "fixture", ...options.args },
-				...(options.now === undefined ? {} : { now: options.now }),
-			}),
-			spinnerFrame: 2,
-		} as never,
-	)
+	return renderEvalResult(result, { expanded: false, isPartial: true }, plainTheme, {
+		...resultContext({
+			args: { language: "js", code: "work();", summary: "fixture", ...options.args },
+			...(options.now === undefined ? {} : { now: options.now }),
+		}),
+		spinnerFrame: 2,
+	})
 		.render(options.width)
 		.map(stripAnsi);
 }
 
-function renderStreamingCall(args: Partial<EvalToolInput>, width: number): string[] {
-	return renderEvalCall(
-		args as EvalToolInput,
-		plainTheme as never,
-		{
-			...callContext({ now: STARTED_AT }),
-			spinnerFrame: 2,
-		} as never,
-	)
+type StreamingCallArgs = {
+	readonly language?: EvalToolInput["language"];
+	readonly code?: string;
+	readonly summary?: string;
+	readonly reset?: boolean;
+	readonly timeout?: number;
+};
+
+function renderStreamingCall(args: StreamingCallArgs, width: number): string[] {
+	return renderEvalCall(args, plainTheme, {
+		...callContext({ now: STARTED_AT }),
+		spinnerFrame: 2,
+	})
 		.render(width)
 		.map(stripAnsi);
 }
