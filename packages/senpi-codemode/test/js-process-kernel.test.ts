@@ -274,7 +274,18 @@ describe("JavaScriptKernel process isolation", () => {
 			const serialized = parseJavaScriptResult(run.result);
 			if (typeof serialized !== "string")
 				throw new Error(`expected a JSON string result, got ${String(serialized)}`);
-			const value: { own: number; child: number } = JSON.parse(serialized);
+			const parsedJson: unknown = JSON.parse(serialized);
+			if (
+				typeof parsedJson !== "object" ||
+				parsedJson === null ||
+				!("own" in parsedJson) ||
+				typeof parsedJson.own !== "number" ||
+				!("child" in parsedJson) ||
+				typeof parsedJson.child !== "number"
+			) {
+				throw new Error(`expected { own: number; child: number }, got ${serialized}`);
+			}
+			const value = { own: parsedJson.own, child: parsedJson.child };
 
 			// PR_GET_DUMPABLE: 0 for the kernel child; exec resets it, so a process the cell starts reads 1.
 			expect(value).toEqual({ own: 0, child: 1 });

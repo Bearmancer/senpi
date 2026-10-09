@@ -14,6 +14,39 @@ const cleanupDirs: string[] = [];
 type PackageLock = { readonly packages: Record<string, { readonly resolved?: string }> };
 type PackageManifest = { readonly dependencies: Record<string, string> };
 
+function isStringRecord(value: unknown): value is Record<string, string> {
+	return (
+		typeof value === "object" &&
+		value !== null &&
+		!Array.isArray(value) &&
+		Object.values(value).every((entry) => typeof entry === "string")
+	);
+}
+
+function parsePackageLock(text: string): PackageLock {
+	const value: unknown = JSON.parse(text);
+	if (typeof value !== "object" || value === null || !("packages" in value))
+		throw new Error("package-lock has no packages");
+	const packages: unknown = value.packages;
+	if (typeof packages !== "object" || packages === null) throw new Error("package-lock packages is not an object");
+	const entries = Object.fromEntries(
+		Object.entries(packages).map(([key, entry]) => {
+			if (typeof entry !== "object" || entry === null) throw new Error(`package-lock entry ${key} is not an object`);
+			const resolved = "resolved" in entry && typeof entry.resolved === "string" ? { resolved: entry.resolved } : {};
+			return [key, resolved];
+		}),
+	);
+	return { packages: entries };
+}
+
+function parsePackageManifest(text: string): PackageManifest {
+	const value: unknown = JSON.parse(text);
+	if (typeof value !== "object" || value === null || !("dependencies" in value))
+		throw new Error("manifest has no dependencies");
+	if (!isStringRecord(value.dependencies)) throw new Error("manifest dependencies is not a string map");
+	return { dependencies: value.dependencies };
+}
+
 function listeningPort(address: ReturnType<ReturnType<typeof createServer>["address"]>): number {
 	if (typeof address !== "object" || address === null || !("port" in address) || typeof address.port !== "number")
 		throw new Error(`expected a bound TCP address, got ${JSON.stringify(address)}`);
@@ -224,7 +257,7 @@ describe.skipIf(!hasCommand("bun") || !hasCommand("npm"))("Given a package insta
 		expect(textOf(imported).trim()).toBe('"three"');
 		// npm keys each package by its path and records where a link points; neither may name a staging directory, or the
 		// lockfile stops resolving once the staged revision is renamed.
-		const lock: PackageLock = JSON.parse(await readFile(join(revision, "package-lock.json"), "utf8"));
+		const lock = parsePackageLock(await readFile(join(revision, "package-lock.json"), "utf8"));
 		const paths = Object.entries(lock.packages).flatMap(([key, entry]) => [key, entry.resolved ?? ""]);
 		expect(paths.filter((path) => path.includes(".staging-rev"))).toEqual([]);
 	}, 240_000);
@@ -360,7 +393,7 @@ describe.skipIf(!hasCommand("bun") || !hasCommand("npm"))("Given a package insta
 		await run(`%npm add ${tarball}`);
 		const revision = (await readActiveRevision(activeBase(root)))?.dir ?? "";
 		const manifestPath = join(revision, "package.json");
-		const manifest: PackageManifest = JSON.parse(await readFile(manifestPath, "utf8"));
+		const manifest = parsePackageManifest(await readFile(manifestPath, "utf8"));
 		delete manifest.dependencies["senpi-dir-forgotten"];
 		await writeFile(manifestPath, JSON.stringify(manifest));
 

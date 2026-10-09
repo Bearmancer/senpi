@@ -38,7 +38,7 @@ function createWindowsReader(): CpuReader | undefined {
 
 function bindGetProcessTimes({ dlopen, FFIType, ptr }: BunFfi): CpuReader {
 	const library = dlopen<{
-		OpenProcess: (access: number, inheritHandle: number, pid: number) => number;
+		OpenProcess: (access: number, inheritHandle: number, pid: number) => number | null;
 		GetProcessTimes: (handle: number, create: number, exit: number, kernel: number, user: number) => number;
 		CloseHandle: (handle: number) => number;
 	}>("kernel32.dll", {

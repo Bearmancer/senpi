@@ -85,7 +85,18 @@ describe("Given sandbox cells are turned on", () => {
 			const value: unknown = isolated.details.runtime;
 			if (typeof value !== "object" || value === null)
 				throw new Error("the isolated cell's runtime is not an object");
-			return Object.fromEntries(Object.entries(value));
+			const record = Object.fromEntries(Object.entries(value));
+			if (typeof record.name !== "string" || typeof record.version !== "string")
+				throw new Error(`unexpected runtime shape: ${JSON.stringify(record)}`);
+			const runtimeInfo: EvalRuntimeInfo = {
+				name: record.name,
+				version: record.version,
+				...(typeof record.path === "string" ? { path: record.path } : {}),
+				...(record.isolation === "process" || record.isolation === "sandbox"
+					? { isolation: record.isolation }
+					: {}),
+			};
+			return runtimeInfo;
 		})();
 		expect(formatRuntimeBadge("js", runtime)).toMatch(/^quickjs \d+\.\d+\.\d+, sandbox$/u);
 	}, 120_000);

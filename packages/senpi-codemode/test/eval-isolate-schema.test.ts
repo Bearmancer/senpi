@@ -61,7 +61,7 @@ describe("Given sandbox cells are turned on", () => {
 
 		expect(Object.keys(enabled.properties).filter((key) => !(key in base.properties))).toEqual(["isolate"]);
 		expect(enabled.properties.isolate).toMatchObject({ type: "boolean" });
-		expect(enabled.anyOf[0]?.properties).toHaveProperty("isolate");
+		expect(enabled.anyOf?.[0]?.properties).toHaveProperty("isolate");
 		const { isolate: _isolate, ...rest } = enabled.properties;
 		expect(JSON.stringify(rest)).toBe(JSON.stringify(base.properties));
 	});

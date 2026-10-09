@@ -660,6 +660,40 @@
 			],
 			"reason": "Lead decision A (2026-10-01), node 32: add event-ordered shell restart notice and preservation witnesses without changing default prompts, schemas, helpers, or native shell semantics."
 		},
+		"37": {
+			"additions": [
+				"imports/extension/packages/senpi-codemode/src/bridges/eval-environment-schemas.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/bridges/eval-environment-schemas.ts",
+				"legacyContracts/test/eval-virtual-environment-schemas.test.ts/tool_schema('eval:*') virtual entries are exactly the five documented names",
+				"legacyContracts/test/eval-virtual-environment-schemas.test.ts/tool_schema('eval:*') virtual entries document the magics, %load and the environment modes",
+				"legacyContracts/test/eval-virtual-environment-schemas.test.ts/tool_schema('eval:*') virtual entries document isolate, its refusals and the sandbox limits",
+				"legacyContracts/test/eval-virtual-environment-schemas.test.ts/tool_schema('eval:*') virtual entries name only error codes the source actually emits",
+				"legacyContracts/test/eval-virtual-environment-schemas.test.ts/tool_schema('eval:*') virtual entries keep each code in the entry that owns it"
+			],
+			"reason": "Plan row 37 (F4/F5 shortfall, IS-3): the eval:environments and eval:isolation virtual tool_schema entries, a module the extension and first kernel load, and their contract tests. Additive only; no prompt cell changes."
+		},
+		"38": {
+			"additions": [
+				"imports/extension/packages/senpi-codemode/src/environments/packages-install.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/environments/packages-install.ts",
+				"legacyContracts/test/environments/packages-install-e2e.test.ts/Given packages.install() in a JavaScript cell When it installs a local tarball with bun, then it returns the receipt %bun add reports and the next cell imports the package",
+				"legacyContracts/test/environments/packages-install-e2e.test.ts/Given packages.install() in a JavaScript cell When the owning cell is cancelled once the installer has started, then nothing is published and the kernel answers the next cell",
+				"legacyContracts/test/environments/packages-install-e2e.test.ts/Given packages.install() in a JavaScript cell When the manager is not a JavaScript installer, then the cell fails with environment_installer_unavailable and installs nothing",
+				"legacyContracts/test/environments/packages-install-e2e.test.ts/Given packages.install() in a Python cell When it installs a local wheel, then it returns the %pip receipt and the next cell imports the package",
+				"legacyContracts/test/environments/packages-install-e2e.test.ts/Given packages.install() in a Python cell When the install fails, then the cell error carries environment_install_failed and pip's stderr tail",
+				"legacyContracts/test/environments/packages-install.test.ts/packages.install() host dispatch fails with environment_install_timeout when the install outlives its timeout",
+				"legacyContracts/test/environments/packages-install.test.ts/packages.install() host dispatch reports the owning cell's stop as environment_install_cancelled, not as a timeout",
+				"legacyContracts/test/environments/packages-install.test.ts/packages.install() host dispatch refuses a manager whose environment the cell does not have",
+				"legacyContracts/test/environments/packages-install.test.ts/packages.install() host dispatch refuses malformed arguments before any install starts",
+				"legacyContracts/test/environments/packages-install-e2e.test.ts/Given packages.install() in a JavaScript cell When the owning cell is cancelled once the installer has started, then the install itself is cancelled, nothing is published and the kernel answers the next cell",
+				"legacyContracts/test/environments/packages-install-e2e.test.ts/Given packages.install() in a Python cell When the owning cell is cancelled once pip has started, then the install itself is cancelled and nothing is published",
+				"legacyContracts/test/environments/packages-install-runtime-wiring.test.ts/Given a session runtime with Python enabled When it is created, then the bridge's packages.install() and the %pip magics share one Python environment",
+				"legacyContracts/test/environments/packages-install.test.ts/packages.install() host dispatch passes the requirement list to the session installer as separate arguments, never re-split, and returns its receipt",
+				"legacyContracts/test/environments/packages-install.test.ts/packages.install() host dispatch validates a list with the same %pip rules, keeping markers and backslashes as written",
+				"legacyContracts/test/environments/py-environment.test.ts/Given a Python environment root When packages.install() passes a requirement list, then each item reaches pip as one argument: a path with a space and a marker stay intact"
+			],
+			"reason": "Plan row 38 (F4 shortfall, IS-6): the packages.install() cell helper, a module the extension and first kernel load, and its contract tests. The helper is reached through a reserved bridge tool and documented on demand; no prompt cell changes."
+		},
 		"2718": {
 			"additions": [
 				"imports/extension/packages/senpi-codemode/src/kernels/shared/process-cpu.ts",
@@ -1193,40 +1227,6 @@
 			],
 			"reason": "senpi#2850: a summary-less live row skips a first code line that sanitizes to nothing; the contract fails before the change (the row shows only the ellipsis)."
 		},
-		"37": {
-			"additions": [
-				"imports/extension/packages/senpi-codemode/src/bridges/eval-environment-schemas.ts",
-				"imports/firstKernel/packages/senpi-codemode/src/bridges/eval-environment-schemas.ts",
-				"legacyContracts/test/eval-virtual-environment-schemas.test.ts/tool_schema('eval:*') virtual entries are exactly the five documented names",
-				"legacyContracts/test/eval-virtual-environment-schemas.test.ts/tool_schema('eval:*') virtual entries document the magics, %load and the environment modes",
-				"legacyContracts/test/eval-virtual-environment-schemas.test.ts/tool_schema('eval:*') virtual entries document isolate, its refusals and the sandbox limits",
-				"legacyContracts/test/eval-virtual-environment-schemas.test.ts/tool_schema('eval:*') virtual entries name only error codes the source actually emits",
-				"legacyContracts/test/eval-virtual-environment-schemas.test.ts/tool_schema('eval:*') virtual entries keep each code in the entry that owns it"
-			],
-			"reason": "Plan row 37 (F4/F5 shortfall, IS-3): the eval:environments and eval:isolation virtual tool_schema entries, a module the extension and first kernel load, and their contract tests. Additive only; no prompt cell changes."
-		},
-		"38": {
-			"additions": [
-				"imports/extension/packages/senpi-codemode/src/environments/packages-install.ts",
-				"imports/firstKernel/packages/senpi-codemode/src/environments/packages-install.ts",
-				"legacyContracts/test/environments/packages-install-e2e.test.ts/Given packages.install() in a JavaScript cell When it installs a local tarball with bun, then it returns the receipt %bun add reports and the next cell imports the package",
-				"legacyContracts/test/environments/packages-install-e2e.test.ts/Given packages.install() in a JavaScript cell When the owning cell is cancelled once the installer has started, then nothing is published and the kernel answers the next cell",
-				"legacyContracts/test/environments/packages-install-e2e.test.ts/Given packages.install() in a JavaScript cell When the manager is not a JavaScript installer, then the cell fails with environment_installer_unavailable and installs nothing",
-				"legacyContracts/test/environments/packages-install-e2e.test.ts/Given packages.install() in a Python cell When it installs a local wheel, then it returns the %pip receipt and the next cell imports the package",
-				"legacyContracts/test/environments/packages-install-e2e.test.ts/Given packages.install() in a Python cell When the install fails, then the cell error carries environment_install_failed and pip's stderr tail",
-				"legacyContracts/test/environments/packages-install.test.ts/packages.install() host dispatch fails with environment_install_timeout when the install outlives its timeout",
-				"legacyContracts/test/environments/packages-install.test.ts/packages.install() host dispatch reports the owning cell's stop as environment_install_cancelled, not as a timeout",
-				"legacyContracts/test/environments/packages-install.test.ts/packages.install() host dispatch refuses a manager whose environment the cell does not have",
-				"legacyContracts/test/environments/packages-install.test.ts/packages.install() host dispatch refuses malformed arguments before any install starts",
-				"legacyContracts/test/environments/packages-install-e2e.test.ts/Given packages.install() in a JavaScript cell When the owning cell is cancelled once the installer has started, then the install itself is cancelled, nothing is published and the kernel answers the next cell",
-				"legacyContracts/test/environments/packages-install-e2e.test.ts/Given packages.install() in a Python cell When the owning cell is cancelled once pip has started, then the install itself is cancelled and nothing is published",
-				"legacyContracts/test/environments/packages-install-runtime-wiring.test.ts/Given a session runtime with Python enabled When it is created, then the bridge's packages.install() and the %pip magics share one Python environment",
-				"legacyContracts/test/environments/packages-install.test.ts/packages.install() host dispatch passes the requirement list to the session installer as separate arguments, never re-split, and returns its receipt",
-				"legacyContracts/test/environments/packages-install.test.ts/packages.install() host dispatch validates a list with the same %pip rules, keeping markers and backslashes as written",
-				"legacyContracts/test/environments/py-environment.test.ts/Given a Python environment root When packages.install() passes a requirement list, then each item reaches pip as one argument: a path with a space and a marker stay intact"
-			],
-			"reason": "Plan row 38 (F4 shortfall, IS-6): the packages.install() cell helper, a module the extension and first kernel load, and its contract tests. The helper is reached through a reserved bridge tool and documented on demand; no prompt cell changes."
-		},
 		"senpi#2909": {
 			"additions": [
 				"legacyContracts/test/bench/run-retry.test.ts/per-block spike retry (senpi#2909) keeps nothing from a discarded attempt that had already collected data",
@@ -1525,6 +1525,13 @@
 				"legacyContracts/test/process-group-retire.test.ts/cell process-group retirement (senpi#3020) Given the agent's own process group in the list when groups are retired then it is never signalled"
 			],
 			"reason": "senpi#3020: at cell retirement every process group the kernel gave a cell child is signalled, so a grandchild re-parented to init is stopped. The agent's own group, and a group whose exited leader's pid is held by a live process again, are never signalled."
+		},
+		"senpi#3005": {
+			"additions": [
+				"imports/extension/packages/senpi-codemode/src/kernels/shared/bun-ffi.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/kernels/shared/bun-ffi.ts"
+			],
+			"reason": "The shared isBunFfi/loadBunFfi guard module replaces the two getBuiltinModule('bun:ffi') casts in process-cpu.ts and process-group-cpu.ts; no behavior change."
 		}
 	}
 }

@@ -1,7 +1,7 @@
 import { basename, dirname } from "node:path";
 import { Check } from "typebox/value";
 import { runProcess } from "./gate-process.ts";
-import { canonical, GateInputError, type GateReport, reportSchema } from "./gate-report.ts";
+import { allowlistSchema, canonical, GateInputError, type GateReport, reportSchema } from "./gate-report.ts";
 
 export type BaselineChange = { readonly key: string; readonly reason: string };
 
@@ -124,24 +124,6 @@ export async function readBaseBaseline(input: {
 
 function parseAllowlist(text: string, sha: string): AllowlistNodes {
 	const value: unknown = JSON.parse(text);
-	if (!isAllowlistNodes(value)) throw new GateInputError(`allowlist at merge base ${sha}`);
+	if (!Check(allowlistSchema, value)) throw new GateInputError(`allowlist at merge base ${sha}`);
 	return value;
-}
-
-/** Structural check for the allowlist shape: `nodes` mapping to `{ additions: string[], changes?: { key, reason }[] }`. */
-function isAllowlistNodes(value: unknown): value is AllowlistNodes {
-	if (typeof value !== "object" || value === null) return false;
-	if (!("nodes" in value) || typeof value.nodes !== "object" || value.nodes === null) return false;
-	for (const node of Object.values(value.nodes)) {
-		if (typeof node !== "object" || node === null) return false;
-		if (!("additions" in node) || !Array.isArray(node.additions) || !node.additions.every((addition: unknown) => typeof addition === "string")) return false;
-		if (!("changes" in node) || node.changes === undefined) continue;
-		if (!Array.isArray(node.changes)) return false;
-		for (const change of node.changes) {
-			if (typeof change !== "object" || change === null) return false;
-			if (!("key" in change) || typeof change.key !== "string") return false;
-			if (!("reason" in change) || typeof change.reason !== "string") return false;
-		}
-	}
-	return true;
 }

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
 	BRIDGE_FRAME_MAX_BYTES,
+	type BridgeMessage,
 	decodeBridgeFrame,
 	encodeBridgeFrame,
 	generateBridgeToken,
@@ -215,7 +216,7 @@ describe("bridge protocol JSONL framing", () => {
 	});
 
 	it("round-trips kernel-tool describe and invoke frames", () => {
-		const messages = [
+		const messages: BridgeMessage[] = [
 			{
 				type: "init",
 				sessionId: "session-tools",

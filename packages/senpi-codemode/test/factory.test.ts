@@ -5,7 +5,9 @@ import senpiCodemode from "../src/index.ts";
 function isExtensionApi(value: unknown): value is ExtensionAPI {
 	if (typeof value !== "object" || value === null) return false;
 	for (const key of ["registerTool", "registerRemovedToolHint", "on"] as const) {
-		if (!(key in value) || typeof value[key] !== "function") return false;
+		if (!(key in value)) return false;
+		const member: unknown = Object.getOwnPropertyDescriptor(value, key)?.value;
+		if (typeof member !== "function") return false;
 	}
 	return true;
 }

@@ -10,8 +10,29 @@ import { hasPython3 } from "./py-kernel/fixtures.ts";
 
 type Gate = { readonly opened: Promise<void>; open(): void };
 
-function isCustomEventWith<T>(event: Event): event is CustomEvent<T> {
-	return event instanceof CustomEvent;
+function requireCustomEvent(event: Event): CustomEvent<unknown> {
+	if (!(event instanceof CustomEvent)) throw new Error(`expected a CustomEvent, got ${event.constructor.name}`);
+	return event;
+}
+
+function isKernelToHostMessage(detail: unknown): detail is KernelToHostMessage {
+	return typeof detail === "object" && detail !== null && "type" in detail && typeof detail.type === "string";
+}
+
+function requireKernelToHostMessage(detail: unknown): KernelToHostMessage {
+	if (!isKernelToHostMessage(detail))
+		throw new Error(`expected a kernel message detail, got ${JSON.stringify(detail)}`);
+	return detail;
+}
+
+function isKernelToolReply(detail: unknown): detail is KernelToolReplyEvent {
+	return typeof detail === "object" && detail !== null && "ok" in detail;
+}
+
+function requireKernelToolReply(detail: unknown): KernelToolReplyEvent {
+	if (!isKernelToolReply(detail))
+		throw new Error(`expected a kernel-tool reply detail, got ${JSON.stringify(detail)}`);
+	return detail;
 }
 
 function toolArgs(request: BridgeHttpCallRequest): { readonly path?: string } {
@@ -88,8 +109,7 @@ async function bridge(
 function nextLog(frames: EventTarget, text: string): Promise<void> {
 	return new Promise((resolve) => {
 		const listener = (event: Event) => {
-			if (!isCustomEventWith<KernelToHostMessage>(event)) return;
-			const message = event.detail;
+			const message = requireKernelToHostMessage(requireCustomEvent(event).detail);
 			if (message.type === "log" && message.message === text) {
 				frames.removeEventListener("frame", listener);
 				resolve();
@@ -123,8 +143,7 @@ function invokeRequest(found: KernelToolDescriptor, args: unknown): KernelToolsI
 function replies(kernel: PythonKernel): KernelToolReplyEvent[] {
 	const seen: KernelToolReplyEvent[] = [];
 	kernel.kernelToolEvents.addEventListener("kernelToolReply", (event) => {
-		if (!isCustomEventWith<KernelToolReplyEvent>(event)) return;
-		seen.push(event.detail);
+		seen.push(requireKernelToolReply(requireCustomEvent(event).detail));
 	});
 	return seen;
 }
@@ -403,8 +422,7 @@ describe.skipIf(!(await hasPython3()))("Python kernel tools (@tool)", () => {
 		const computing = nextLog(frames, "computing");
 		const reply = new Promise<KernelToolReplyEvent>((resolve) => {
 			const listener = (event: Event) => {
-				if (!isCustomEventWith<KernelToolReplyEvent>(event)) return;
-				const detail = event.detail;
+				const detail = requireKernelToolReply(requireCustomEvent(event).detail);
 				if (detail.ok === false) {
 					kernel.kernelToolEvents.removeEventListener("kernelToolReply", listener);
 					resolve(detail);

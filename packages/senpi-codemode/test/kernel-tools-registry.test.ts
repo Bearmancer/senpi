@@ -13,24 +13,19 @@ type Registry = {
 };
 type ToolNamespace = ((fn: object, metadata?: unknown) => unknown) & { read: (args?: unknown) => Promise<unknown> };
 
-/** The dynamic import is intentionally untyped (the test exercises the worker entry's module shape); these are the boundary checks. */
-function isRegistryFactory(value: unknown): value is (options?: object) => Registry {
+/** The dynamic import is intentionally untyped (the test exercises the worker entry's module shape); these check only that the two exports are callable, which is what the module-shape probe pins. */
+function isCallable(value: unknown): boolean {
 	return typeof value === "function";
 }
-function isNamespaceFactory(
-	value: unknown,
-): value is (
+if (!("createKernelToolRegistry" in production) || !isCallable(production.createKernelToolRegistry))
+	throw new Error("kernel-tools-registry module shape changed");
+if (!("createToolNamespace" in production) || !isCallable(production.createToolNamespace))
+	throw new Error("kernel-tools-registry module shape changed");
+const createKernelToolRegistry: (options?: object) => Registry = production.createKernelToolRegistry;
+const createToolNamespace: (
 	define: (fn: object, metadata?: unknown) => unknown,
 	callHost: (name: string, args: unknown) => Promise<unknown>,
-) => ToolNamespace {
-	return typeof value === "function";
-}
-if (!("createKernelToolRegistry" in production) || !isRegistryFactory(production.createKernelToolRegistry))
-	throw new Error("kernel-tools-registry module shape changed");
-if (!("createToolNamespace" in production) || !isNamespaceFactory(production.createToolNamespace))
-	throw new Error("kernel-tools-registry module shape changed");
-const createKernelToolRegistry = production.createKernelToolRegistry;
-const createToolNamespace = production.createToolNamespace;
+) => ToolNamespace = production.createToolNamespace;
 
 function lookup(path: string) {
 	return path;
@@ -118,8 +113,8 @@ describe("named functions expose fenced descriptors", () => {
 		const host: Array<{ name: string; args: unknown }> = [];
 		const tools = registry();
 		const tool = createToolNamespace(
-			(fn, metadata) => tools.define(fn, metadata),
-			async (name, args) => {
+			(fn: object, metadata?: unknown) => tools.define(fn, metadata),
+			async (name: string, args: unknown) => {
 				host.push({ name, args });
 				return { text: String(name) };
 			},

@@ -4,10 +4,7 @@
  * surface the CPU readers bind is treated as FFI - the same boundary `display-js.ts` uses for `Bun`.
  */
 export type BunFfi = {
-	readonly dlopen: <S extends Record<string, (...args: number[]) => number>>(
-		path: string,
-		definitions: Record<string, unknown>,
-	) => { readonly symbols: S };
+	readonly dlopen: <S>(path: string, definitions: Record<string, unknown>) => { readonly symbols: S };
 	readonly FFIType: Record<string, number>;
 	readonly ptr: (buffer: ArrayBufferView) => number;
 };

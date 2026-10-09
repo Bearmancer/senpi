@@ -21,6 +21,10 @@ function isProbeArgs(value: unknown): value is ProbeArgs {
 	return typeof value === "object" && value !== null && "phase" in value && typeof value.phase === "string";
 }
 
+function isKernelToolsDescribeResult(value: unknown): value is KernelToolsDescribeResult {
+	return typeof value === "object" && value !== null && "results" in value && Array.isArray(value.results);
+}
+
 type HostObservation = {
 	readonly phase: string;
 	readonly kernelToolsDefined: boolean;
@@ -105,7 +109,8 @@ function probingExecuteTool(ctx: ExtensionContext, observations: HostObservation
 			observations.push({ phase: probe.phase, kernelToolsDefined: false });
 			return textResult("kernel tools unavailable");
 		}
-		const described: KernelToolsDescribeResult = await kernelTools.describe([probe.tool ?? ""]);
+		const described = await kernelTools.describe([probe.tool ?? ""]);
+		if (!isKernelToolsDescribeResult(described)) throw new Error("describe returned an unexpected shape");
 		const entry = described.results[0];
 		if (entry?.ok !== true) {
 			observations.push({ phase: probe.phase, kernelToolsDefined: true, failure: `describe refused ${probe.tool}` });
@@ -304,20 +309,18 @@ describe("kernel tools on the real worker tool-call path", () => {
 			});
 			return Object.assign(new FakeKernel([]), {
 				describeKernelTools: async (names: readonly string[]): Promise<KernelToolsDescribeResult> => ({
-					results: [
-						{
-							name: names[0] ?? "add",
-							ok: true,
-							descriptor: {
-								name: names[0] ?? "add",
-								description: `from ${name}`,
-								input_schema: {},
-								language: "py",
-								kernel_generation: 1,
-								definition_revision: 1,
-							},
+					results: names.map((requested) => ({
+						name: requested,
+						ok: true as const,
+						descriptor: {
+							name: requested,
+							description: `from ${name}`,
+							input_schema: {},
+							language: "py" as const,
+							kernel_generation: 1,
+							definition_revision: 1,
 						},
-					],
+					})),
 				}),
 				invokeKernelTool: async (): Promise<unknown> => name,
 				drainPending: () => [],

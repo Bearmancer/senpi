@@ -1,6 +1,6 @@
 import type { AgentToolResult } from "@code-yeongyu/senpi";
 import { initTheme, ToolExecutionComponent } from "@code-yeongyu/senpi";
-import type { TUI } from "@earendil-works/pi-tui";
+import { TUI } from "@earendil-works/pi-tui";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { EvalDetachedCellManager } from "../src/tool/detached-cell-manager.ts";
 import { createEvalTool } from "../src/tool/eval-tool.ts";
@@ -17,9 +17,10 @@ import { FakeKernel, FakeManager, fakeExtensionContext, result } from "./eval/fa
 type ToolDefParam = NonNullable<ConstructorParameters<typeof ToolExecutionComponent>[4]>;
 type ExecResult = Parameters<ToolExecutionComponent["updateResult"]>[0];
 
-/** The TUI surface the component touches in these tests; a full TUI is not needed. */
-function renderOnlyTui(): Pick<TUI, "requestRender"> {
-	return { requestRender: () => {} };
+/** A real TUI over an in-memory terminal: the component renders against the same object the TUI mux uses. */
+async function renderOnlyTui(): Promise<TUI> {
+	const { VirtualTerminal } = await import("../../tui/test/virtual-terminal.ts");
+	return new TUI(new VirtualTerminal(80, 24));
 }
 
 const CODE = "d = {}\nd['favoriteModels'] = ['apitopia/kimi-k3']\nprint(d)";
@@ -77,9 +78,9 @@ describe("eval ToolExecutionComponent lifecycle", () => {
 		initTheme();
 	});
 
-	it("Given the pending -> running -> done lifecycle then exactly one framed box renders at every state", () => {
+	it("Given the pending -> running -> done lifecycle then exactly one framed box renders at every state", async () => {
 		// Given the real interactive tool-execution component for an eval call
-		const ui = renderOnlyTui();
+		const ui = await renderOnlyTui();
 		const component = new ToolExecutionComponent(
 			"eval",
 			"eval-1",
@@ -189,8 +190,8 @@ describe("eval summary in transcript frames", () => {
 		vi.useRealTimers();
 	});
 
-	function summaryComponent(): ToolExecutionComponent {
-		const ui = renderOnlyTui();
+	async function summaryComponent(): Promise<ToolExecutionComponent> {
+		const ui = await renderOnlyTui();
 		const component = new ToolExecutionComponent(
 			"eval",
 			"eval-summary",
@@ -212,9 +213,9 @@ describe("eval summary in transcript frames", () => {
 		expect.soft(plain.filter((line) => line.includes("collect progress"))).toHaveLength(1);
 	}
 
-	it("Given a running eval with a summary when the frame renders then the header leads with the summary (senpi#2802)", () => {
+	it("Given a running eval with a summary when the frame renders then the header leads with the summary (senpi#2802)", async () => {
 		// Given the real interactive component streaming a running result whose cell carries a summary
-		const component = summaryComponent();
+		const component = await summaryComponent();
 		component.markExecutionStarted();
 		component.updateResult(cellResult("running", "", 0, "collect progress"), true);
 
@@ -226,9 +227,9 @@ describe("eval summary in transcript frames", () => {
 		component.stopAnimation();
 	});
 
-	it("Given a completed eval with a summary when the result row renders then the one-line row carries the summary (senpi#2933)", () => {
+	it("Given a completed eval with a summary when the result row renders then the one-line row carries the summary (senpi#2933)", async () => {
 		// Given the real interactive component receiving its final result
-		const component = summaryComponent();
+		const component = await summaryComponent();
 		component.markExecutionStarted();
 		component.updateResult(cellResult("complete", OUTPUT, 12, "collect progress"), false);
 
