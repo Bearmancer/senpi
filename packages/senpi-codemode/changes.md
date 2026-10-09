@@ -1,5 +1,25 @@
 # senpi-codemode fork changes
 
+## 2026-10-09 - Reduce Python per-cell queue and capture bookkeeping (senpi#3034)
+
+### What changed
+
+- `packages/senpi-codemode/src/kernels/py/prelude.py`: the control-reader/main FIFO uses `queue.SimpleQueue` instead of `queue.Queue`; cell and callback execution share one combined stdout/stderr capture scope, retaining both thread-local targets and inherited context variables.
+- `packages/senpi-codemode/test/py-kernel-bookkeeping.test.ts`, `packages/senpi-codemode/test/py-kernel-bookkeeping.py`: count actual FIFO operations, Python queue condition entries/notifications, capture setups and owner acquisition/release on successful and raised cells. The real reader finishes admission before dispatch so scheduler-dependent waits do not enter the count.
+- `packages/senpi-codemode/test/gate/allowlist.json`: add the new regression key under `senpi#3034`; the baseline remains unchanged.
+
+### Why
+
+- The FIFO only needs put/get. Per cell, two Python queue lock entries and two notifications disappear, and capture setups fall from two to one. The reader thread and owner token remain in place.
+
+### Why an extension could not handle it
+
+- Control-frame dispatch and interpreter output routing belong to the embedded Python kernel.
+
+### Expected merge conflict zones
+
+- Python stream capture and main-loop queue construction; no ownership, scope, cancellation or descriptor changes.
+
 ## 2026-10-09 - Ruby and Julia globals diagnostics are requested only above host thresholds (senpi#3028)
 
 ### What changed

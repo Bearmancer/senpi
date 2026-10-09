@@ -14,6 +14,8 @@
 
 ### Fixed
 
+- Python cells use a C-backed FIFO and one combined stdout/stderr routing scope, reducing per-cell bookkeeping while retaining interpreter ownership, parked-cell callbacks, invocation scope, cancellation, and stale-descriptor fencing ([#3034](https://github.com/code-yeongyu/senpi/issues/3034)).
+
 - Ruby and Julia cells below the host-read memory notice threshold and ceiling no longer walk all globals or serialize an unused memory payload. Above either threshold, successful and raised cells both collect the same bounded globals diagnostic, including when hysteresis suppresses the notice text. Stopping while a finished cell waits for that optional diagnostic now settles its completed result without globals and keeps kernel state. Current-footprint accounting and ceiling enforcement still run on every cell ([#3028](https://github.com/code-yeongyu/senpi/issues/3028)).
 
 - Warm eval cells now recheck the session working directory synchronously instead of awaiting a filesystem thread-pool round trip. Every cell still refuses a deleted or non-directory cwd with the same error, and other filesystem errors still surface; kernel startup retains its asynchronous pre/post checks ([#3033](https://github.com/code-yeongyu/senpi/issues/3033)).
