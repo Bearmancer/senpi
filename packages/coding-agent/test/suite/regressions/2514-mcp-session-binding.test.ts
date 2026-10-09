@@ -2,12 +2,14 @@
 // connections, yet each session must keep its own binding: its own session ref and tool-search
 // service, never the binding of whichever session attached last.
 
-import { mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { execFileSync } from "node:child_process";
+import { closeSync, constants, mkdirSync, openSync, writeFileSync, writeSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import { ProviderScope, runWithProviderScope } from "@earendil-works/pi-ai/node/provider-scope";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ENV_AGENT_DIR } from "../../../src/config.ts";
+import { getMcpCatalogCachePath } from "../../../src/core/extensions/builtin/mcp/catalog-cache.ts";
 import mcpExtension from "../../../src/core/extensions/builtin/mcp/index.ts";
 import { getMcpService, resetMcpServiceForTests } from "../../../src/core/extensions/builtin/mcp/service.ts";
 import { parseSkillMcpDeclarations, type SkillLike } from "../../../src/core/extensions/builtin/mcp/skills.ts";
@@ -735,6 +737,39 @@ describe("senpi#2597: a session's MCP status and the service's teardown follow t
 		expect(result).toMatchObject({ content: [{ type: "text", text: JSON.stringify({ value: "c" }) }] });
 		expect(fixture.callAuthorizations).toEqual(["Bearer two"]);
 	});
+
+	// The FIFO holds the skill attach's catalog-cache read until the release has run, with no hook in the service.
+	it.skipIf(process.platform === "win32")(
+		"never re-creates a released session's skill server after a release re-sync that ran during its skill attach",
+		async () => {
+			// Given: a session in its own agent dir, whose catalog-cache file is a FIFO that blocks a read until the test
+			// writes it, and a live peer; neither declares a server of its own.
+			const owner = makeRoot("2597-skill-owner", cleanupTasks);
+			setConfig(owner, {});
+			setConfig(root, {});
+			const service = getMcpService();
+			const alphaPi = capturingPi();
+			await attachAs(alphaPi, owner, true, "alpha-secret");
+			await attachFake(capturingPi());
+			const cachePath = getMcpCatalogCachePath(owner.agentDir);
+			mkdirSync(dirname(cachePath), { recursive: true });
+			execFileSync("mkfifo", [cachePath]);
+			// Held open for writing, so a reader's open never blocks and its read waits for the test's data.
+			const writer = openSync(cachePath, constants.O_RDWR);
+
+			// When: the session loads a skill declaring a server, and quits while that skill attach is in flight.
+			const skills = parseSkillMcpDeclarations([skillDeclaring("own", "user", "fxs")]).servers;
+			const skillAttach = service.attachSkillMcpServers(skills, alphaPi);
+			await service.releaseSession(alphaPi, "quit");
+			writeSync(writer, "{}");
+			closeSync(writer);
+			await skillAttach;
+
+			// Then: the server only the released session declared has no connection, and the peer keeps the service.
+			expect(service.getConnection("fxs")).toBeUndefined();
+			expect(service.getSnapshot()).toMatchObject({ disposed: false, connectionCount: 0 });
+		},
+	);
 
 	it("lists only a session's own servers in its MCP status, never a peer's", async () => {
 		// Given: the first session's project declares `extra` beside the shared `fx`; a peer elsewhere declares only `fx`.

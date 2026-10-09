@@ -142,8 +142,7 @@ export class McpService {
 	): Promise<void> {
 		// Counted from the moment it queues, so a session's release cannot dispose the service
 		// under an attach that has not bound yet.
-		this.#pendingSyncs += 1;
-		const attach = this.#attachQueue.then(async () => {
+		await this.#queueSync(async () => {
 			if (this.#disposed) {
 				throw new Error("The MCP service is disposed; attach the session to a live service instead.");
 			}
@@ -184,12 +183,22 @@ export class McpService {
 				await this.#refreshWireStatus(ctx.sessionManager?.getSessionId?.(), () => binding ?? owner);
 			}
 		});
-		this.#attachQueue = attach.then(
+	}
+
+	/**
+	 * Run `body` on the attach queue, so it never interleaves with an attach or another sync, and count it as a pending
+	 * sync from the moment it queues: a release that empties the service defers its dispose until it settles instead of
+	 * disposing under it. Every attach, release re-sync, credential re-sync and skill attach runs through here.
+	 */
+	async #queueSync(body: () => Promise<void>): Promise<void> {
+		this.#pendingSyncs += 1;
+		const run = this.#attachQueue.then(body);
+		this.#attachQueue = run.then(
 			() => undefined,
 			() => undefined,
 		);
 		try {
-			await attach;
+			await run;
 		} finally {
 			this.#pendingSyncs -= 1;
 			await this.#disposeIfDeferredAndIdle();
@@ -337,8 +346,7 @@ export class McpService {
 	 */
 	async #resyncToLiveSessions(fallbackOwner?: McpConfigOwner): Promise<void> {
 		const awaited = this.#pendingSyncs === 0;
-		this.#pendingSyncs += 1;
-		const resync = this.#attachQueue.then(async () => {
+		const settled = this.#queueSync(async () => {
 			if (this.#disposed) return;
 			const latest = this.#liveBindings().at(-1);
 			const config = latest === undefined ? this.#config : this.#effectiveConfig(latest.config);
@@ -357,18 +365,6 @@ export class McpService {
 				await this.refreshWireStatusSnapshot(latest.context.sessionManager?.getSessionId?.());
 			}
 		});
-		this.#attachQueue = resync.then(
-			() => undefined,
-			() => undefined,
-		);
-		const settled = (async () => {
-			try {
-				await resync;
-			} finally {
-				this.#pendingSyncs -= 1;
-				await this.#disposeIfDeferredAndIdle();
-			}
-		})();
 		if (awaited) {
 			await settled;
 			return;
@@ -417,12 +413,17 @@ export class McpService {
 			added += 1;
 		}
 		if (added > 0) {
-			this.#config = this.#effectiveConfig(config);
-			await this.#syncFromConfig(this.#config, binding, false, binding);
-			await this.#registerDirectTools(binding);
-			if (shouldCaptureWireStatus(binding.context)) {
-				await this.refreshWireStatusSnapshot(binding.context.sessionManager?.getSessionId?.());
-			}
+			// Queued and counted like a re-sync: a release re-sync that runs meanwhile is never undone by servers this
+			// sync wanted before it, and a session released or attached again since then starts nothing from this binding.
+			await this.#queueSync(async () => {
+				if (this.#disposed || !this.#liveBindings().includes(binding)) return;
+				this.#config = this.#effectiveConfig(binding.config);
+				await this.#syncFromConfig(this.#config, binding, false, binding);
+				await this.#registerDirectTools(binding);
+				if (shouldCaptureWireStatus(binding.context)) {
+					await this.refreshWireStatusSnapshot(binding.context.sessionManager?.getSessionId?.());
+				}
+			});
 		}
 		return warnings;
 	}
