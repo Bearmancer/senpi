@@ -30,6 +30,8 @@
 
 - When sessions that share one MCP service differ in project trust, environment or agent directory, a session's skill-declared MCP servers now expand `${VAR}` values under its own trust and environment, and every MCP server spawns, re-authenticates and reports auth status with the credentials of a session that declares it, instead of those of whichever session attached last ([#2986](https://github.com/code-yeongyu/senpi/issues/2986) by [@ferose](https://github.com/ferose)).
 
+- On Windows, stopping a command's process tree (a timed-out or cancelled bash command, hooks, shutdown) no longer uses `taskkill /T`, which could also kill an unrelated older process whose dead parent's pid the command now holds; the tree is computed from creation times and each process is ended by pid ([#2993](https://github.com/code-yeongyu/senpi/issues/2993)).
+
 - When the session file refuses writes, an automatic-turn pause is still announced, a message from another session that arrives at the limit is settled instead of staying pending, and editing your message in `/tree` lifts a pause like sending a new one ([#2967](https://github.com/code-yeongyu/senpi/issues/2967); first listed under 2026.10.10-9 by mistake, it ships in this release).
 
 - A failed retirement of the Chrome a WebView used (for example when `taskkill` cannot run, or the CI readiness log cannot be written) no longer makes every later WebView launch and retirement in that process fail: the release that triggered it still fails with the error, CI's readiness log records it when it can be written, and the next launch and retirement run normally ([#2993](https://github.com/code-yeongyu/senpi/issues/2993)).
