@@ -90,7 +90,7 @@ it.runIf(process.platform === "linux")(
 	},
 );
 
-it.each(["observation", "claim", "localized claim"] as const)(
+it.each(["observation", "claim", "unparseable claim"] as const)(
 	"never treats an unknown %s identity as the daemon family",
 	async (kind) => {
 		await using holder = await startSessionHolder(file, id, root);
@@ -101,8 +101,7 @@ it.each(["observation", "claim", "localized claim"] as const)(
 			const claims = await readSessionPathClaims(hostDaemonDirectoryPaths(daemonDir).reservationsDir);
 			const claim = claims[0];
 			if (!claim) throw new Error("Claim was not published");
-			const processStartTime =
-				kind === "claim" ? null : "2026\uB144 10\uC6D4 9\uC77C \uAE08\uC694\uC77C 07\uC2DC 36\uBD84 42\uCD08";
+			const processStartTime = kind === "claim" ? null : "legacy timestamp unavailable";
 			await writeFile(claim.file, JSON.stringify({ ...claim.owner, processStartTime }));
 		}
 		const current = createSessionPathReservations({ daemonDir, instanceId: "current" });

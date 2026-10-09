@@ -3,6 +3,7 @@
 ### What changed
 
 - `daemon/process.ts` parses Windows FILETIME and ps/ISO process identities into milliseconds using a named FILETIME epoch, and owns the shared 3 s comparison tolerance. RPC family checks and terminal leases reuse this existing supervisor leaf.
+- The same parser recognizes persisted Korean year/month/day lstart and Japanese weekday/month-day lstart in the local timezone. Calendar rollover is rejected. Unrecognized formats remain unknown instead of becoming ownership proof.
 
 ### Why
 

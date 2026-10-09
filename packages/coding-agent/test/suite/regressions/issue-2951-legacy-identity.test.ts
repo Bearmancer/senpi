@@ -19,7 +19,7 @@ import {
 import { startSessionHolder } from "./issue-2951-holder-support.ts";
 
 const id = "29510000-0000-4000-8000-000000000005";
-const localized = "2026\uB144 10\uC6D4 9\uC77C \uAE08\uC694\uC77C 07\uC2DC 51\uBD84 43\uCD08";
+const unknownStart = "legacy timestamp unavailable";
 let root: string;
 let file: string;
 beforeEach(async () => {
@@ -32,14 +32,14 @@ afterEach(async () => {
 });
 
 it.each(["liveness", "registration"] as const)(
-	"preserves a live Korean legacy claim across %s without granting family membership",
+	"preserves a live unparseable legacy claim across %s without granting family membership",
 	async (boundary) => {
 		await using holder = await startSessionHolder(file, id, root);
 		const paths = createHostDaemonPaths({ agentDir: root, socket: join(root, "rpc.sock") });
 		await writeHostRegistration(
 			paths,
 			{
-				record: { pid: holder.pid, processStartTime: localized },
+				record: { pid: holder.pid, processStartTime: unknownStart },
 				socket: paths.socket,
 				instanceId: "legacy",
 				generation: 0,
@@ -51,7 +51,7 @@ it.each(["liveness", "registration"] as const)(
 		await previous.claim(file);
 		const claim = (await readSessionPathClaims(paths.reservationsDir))[0];
 		if (!claim) throw new Error("Legacy claim missing");
-		const owner = { ...claim.owner, processStartTime: localized };
+		const owner = { ...claim.owner, processStartTime: unknownStart };
 		await writeFile(claim.file, JSON.stringify(owner));
 		if (boundary === "registration")
 			await writeHostRegistration(paths, {
@@ -108,10 +108,10 @@ it.each([
 	).resolves.toBe(matches);
 });
 
-it("keeps a localized live pidfile unproven for signaling", async () => {
+it("keeps an unparseable live pidfile unproven for signaling", async () => {
 	await expect(
 		processMatchesPidFile(
-			{ pid: process.pid, processStartTime: localized },
+			{ pid: process.pid, processStartTime: unknownStart },
 			async () => "2026-10-08T12:00:00.000Z",
 			() => true,
 			{ attempts: 1 },

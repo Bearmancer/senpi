@@ -29,6 +29,7 @@ import { type HostDaemonPaths, sameEndpoint } from "./host-daemon-paths.ts";
 import { parseJson, readFileOrUndefined } from "./host-daemon-state.ts";
 import { GENERATION_HANDOFF_CAPABILITY } from "./host-decision.ts";
 import { probeProtocolInfo, probeSessionCount } from "./host-probe.ts";
+import { writeStderrLine } from "./host-supervisor-log.ts";
 
 export interface LegacyHost {
 	readonly record: DaemonPidFile;
@@ -80,7 +81,11 @@ export async function provenLegacyOwner(
 		return undefined;
 	}
 	const identity = { pid: legacy.record.pid, processStartTime: startTime };
-	return (await processMatchesPidFile(identity, readProcessStartTime).catch(() => false)) ? identity : undefined;
+	const proven = await processMatchesPidFile(identity, readProcessStartTime).catch((error: unknown) => {
+		if (error instanceof ProcessIdentityUnreadableError) logUnknownLegacyRecord(identity.pid);
+		return false;
+	});
+	return proven ? identity : undefined;
 }
 
 /**
@@ -108,6 +113,7 @@ async function judgeLegacyHost(
 	if (identity === "gone") return { verdict: "absent" };
 	const where = `pid ${pid} (${host.socket})`;
 	if (identity === "unreadable") {
+		logUnknownLegacyRecord(pid);
 		return {
 			verdict: "held",
 			detail: `${where} cannot be proven to be the process its record names; stop it by hand`,
@@ -126,6 +132,10 @@ async function judgeLegacyHost(
 	const sessions = await probeSessionCount(host.socket, LEGACY_PROBE_TIMEOUT_MS);
 	if (sessions === 0) return { verdict: "idle", host };
 	return { verdict: "held", detail: busyLegacyHostDetail(pid, host.socket, sessions) };
+}
+
+function logUnknownLegacyRecord(pid: number): void {
+	writeStderrLine(JSON.stringify({ event: "legacy_host_identity_unknown", record: "legacy_host.pid", pid }));
 }
 
 /** Why a proven legacy host that holds work is left alone, and the command that retires it. */
