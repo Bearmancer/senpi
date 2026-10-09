@@ -190,9 +190,12 @@ export class WebViewService {
 	#reportRetireFailure(error: unknown): void {
 		const message = error instanceof Error ? error.message : String(error);
 		try {
-			if (this.#onRetireFailure) return this.#onRetireFailure(message);
+			if (this.#onRetireFailure) {
+				this.#onRetireFailure(message);
+				return;
+			}
 		} catch {
-			// The diagnostics log can be the thing that failed; the warning below still reaches stderr.
+			// The diagnostics log can be the thing that failed; fall through to the process warning.
 		}
 		process.emitWarning(`WebView Chrome retirement failed: ${message}`, { code: "SENPI_WEBVIEW_RETIRE_FAILED" });
 	}
