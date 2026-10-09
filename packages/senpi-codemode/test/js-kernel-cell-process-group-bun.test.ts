@@ -49,14 +49,14 @@ const NODE_SPAWN_CELL = groupCell(
 	].join(" "),
 );
 
-// The command only echoes the kill, so nothing is signalled; the notice is what the cell must see.
+// Signal 0 to a group that does not exist only checks for it, so nothing is signalled; the notice is what the cell must see.
 const SHELL_GROUP_KILL_TEXT_CELL =
-	'await Bun.$`echo "kill -TERM -- -$PG"`.quiet(); print("REPORT=" + JSON.stringify({ agentPgid: 0, childPgid: 0, jobPgid: 0, jobAliveAfterGroupKill: false })); return "done"';
+	'await Bun.$`kill -0 -- -999999 2>/dev/null; true`.quiet(); print("REPORT=" + JSON.stringify({ agentPgid: 0, childPgid: 0, jobPgid: 0, jobAliveAfterGroupKill: false })); return "done"';
 
 // promisify(exec) must still resolve to { stdout, stderr } through the worker's wrapped child_process.
 const PROMISIFIED_EXEC_CELL = [
 	'import { exec } from "node:child_process"; import { promisify } from "node:util";',
-	'const result = await promisify(exec)("echo hi; echo kill -- -$$ >/dev/null");',
+	'const result = await promisify(exec)("echo hi; kill -0 -- -999999 2>/dev/null; true");',
 	'print("REPORT=" + JSON.stringify({ agentPgid: 0, childPgid: 0, jobPgid: 0, jobAliveAfterGroupKill: false, promisified: typeof result === "object" && result !== null && String(result.stdout).trim() === "hi" }));',
 	'return "done"',
 ].join(" ");
