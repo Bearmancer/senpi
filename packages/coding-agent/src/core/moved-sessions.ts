@@ -38,16 +38,14 @@ function newestFirst(a: SessionInfo, b: SessionInfo): number {
 	return b.modified.getTime() - a.modified.getTime();
 }
 
-// An unreadable or vanished session dir contributes nothing; it never fails a listing or --continue (senpi#2990
-// review L4). Any other fault, such as EIO or EMFILE, still surfaces instead of silently hiding sessions (L7).
-const SKIPPED_DIR_ERRORS = new Set(["EACCES", "EPERM", "ENOENT", "ENOTDIR"]);
-
+// A session dir that cannot be read contributes nothing; it never fails a listing or --continue (senpi#2990
+// review L4). Every error is skipped, as findMostRecentSession and listSessionsFromDir already do: --continue
+// reads other folders' dirs before its own, so one broken unrelated dir must not block the user's own session.
 async function readableEntries(dir: string): Promise<Dirent[]> {
 	try {
 		return await readdir(dir, { withFileTypes: true });
-	} catch (error) {
-		if (error instanceof Error && "code" in error && SKIPPED_DIR_ERRORS.has(String(error.code))) return [];
-		throw error;
+	} catch {
+		return [];
 	}
 }
 

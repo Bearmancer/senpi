@@ -131,15 +131,15 @@ describe("issue #2990 --continue looks only at sessions moved here", () => {
 		]);
 	});
 
-	it("an I/O fault reading a session dir fails --continue and the picker instead of hiding its sessions", async () => {
-		session(layout.newWorktree, "own", NEW);
+	it("an I/O fault on an unrelated session dir never blocks --continue or the picker of this folder", async () => {
+		const own = session(layout.newWorktree, "own", NEW);
 		readdirFault.dir = getDefaultSessionDir(join(layout.home, "gone", "0"));
 		readdirFault.code = "EIO";
 
-		await expect(continueFrom(layout.newWorktree)).rejects.toMatchObject({ code: "EIO" });
-		await expect(
-			withMovedSessions(SessionManager.list(layout.newWorktree), layout.newWorktree),
-		).rejects.toMatchObject({ code: "EIO" });
+		expect(await continueFrom(layout.newWorktree)).toBe(own);
+		await expect(withMovedSessions(SessionManager.list(layout.newWorktree), layout.newWorktree)).resolves.toEqual([
+			expect.objectContaining({ path: own }),
+		]);
 	});
 
 	it("the picker of a shared session dir lists that dir once", async () => {
