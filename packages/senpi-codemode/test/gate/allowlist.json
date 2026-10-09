@@ -1532,6 +1532,16 @@
 				"imports/firstKernel/packages/senpi-codemode/src/kernels/shared/bun-ffi.ts"
 			],
 			"reason": "The shared isBunFfi/loadBunFfi guard module replaces the two getBuiltinModule('bun:ffi') casts in process-cpu.ts and process-group-cpu.ts; no behavior change."
+		},
+		"senpi#3025": {
+			"additions": [
+				"legacyContracts/test/bench/head-budget.test.ts/crash-queue-100 absolute head budget (rb, jl) passes a head that recovers and runs every queued cell under the ceiling, although the base ratio is ~20x",
+				"legacyContracts/test/bench/head-budget.test.ts/crash-queue-100 absolute head budget (rb, jl) fails a head that leaves a queued cell unrun",
+				"legacyContracts/test/bench/head-budget.test.ts/crash-queue-100 absolute head budget (rb, jl) fails a head that runs a queued cell twice",
+				"legacyContracts/test/bench/head-budget.test.ts/crash-queue-100 absolute head budget (rb, jl) fails a head whose median wall time exceeds the ceiling",
+				"legacyContracts/test/bench/head-budget.test.ts/crash-queue-100 absolute head budget (rb, jl) keeps the base-ratio gate for runtimes without a budget"
+			],
+			"reason": "senpi#3025: the bench judges crash-queue-100 on rb and jl by an absolute head budget (all 100 queued cells run once after one replacement, within a median-wall ceiling), because their base never recovered from the crash and the head/base ratio compares a failure path with the real work. The listed contracts are the new comparator tests."
 		}
 	}
 }
