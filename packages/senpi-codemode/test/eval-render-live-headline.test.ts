@@ -44,12 +44,12 @@ function renderCall(args: Partial<EvalToolInput>, spinnerFrame: number | undefin
 }
 
 describe("live eval rows lead with the cell's summary (senpi#2802)", () => {
-	it("Given a running cell when its row renders collapsed then the header leads with the summary, language and state, and the code is hidden", () => {
+	it("Given a running cell when its row renders collapsed then the header leads with the summary and the code window follows (senpi#2933)", () => {
 		const lines = render(liveResult({ summary }));
 
 		expect(lines[0]).toMatch(/^╭─ . Listing the repo with a shell helper · eval js running/u);
-		expect(lines.join("\n")).not.toContain("const sh");
 		expect(lines.join("\n")).toContain("partial out");
+		expect(lines.at(-1)).toBe("╰─");
 	});
 
 	it("Given a queued and a detached cell when their rows render then both lead with the summary", () => {
@@ -75,18 +75,18 @@ describe("live eval rows lead with the cell's summary (senpi#2802)", () => {
 		expect(lines[0]?.length).toBeLessThanOrEqual(60);
 	});
 
-	it("Given a running cell with no output yet when its row renders collapsed then it is one line with no empty frame", () => {
-		expect(render(liveResult({ summary, output: "" }))).toEqual([
-			expect.stringMatching(/^╶─ . Listing the repo with a shell helper · eval js running/u),
-		]);
+	it("Given a running cell with no output yet when its row renders collapsed then it is the fixed-height block (senpi#2933)", () => {
+		const lines = render(liveResult({ summary, output: "" }));
+
+		expect(lines).toHaveLength(8);
+		expect(lines[0]).toMatch(/^╭─ . Listing the repo with a shell helper · eval js running/u);
+		expect(lines.at(-1)).toBe("╰─");
 	});
 
-	it("Given a completed cell when its row renders then it keeps the done header, the summary line and the code preview", () => {
+	it("Given a completed cell when its row renders collapsed then it is one line with icon summary status and duration (senpi#2933)", () => {
 		const lines = render(liveResult({ summary, status: "complete", durationMs: 1_000 }));
 
-		expect(lines[0]).toMatch(/^╭─ eval js done ✓/u);
-		expect(lines[1]).toContain(summary);
-		expect(lines.join("\n")).toContain("const sh = async (cmd) => {");
+		expect(lines).toEqual([expect.stringMatching(/^╶─ ✓ Listing the repo with a shell helper · eval js done · 1s/u)]);
 	});
 
 	it("Given a call still streaming with only code when it renders then it shows a headline row instead of failing", () => {
@@ -95,29 +95,31 @@ describe("live eval rows lead with the cell's summary (senpi#2802)", () => {
 		expect(renderCall({ code: "const sh = 1;" }, undefined)).toBeDefined();
 	});
 
-	it("Given a complete call before its result arrives when it renders then it leads with the summary", () => {
+	it("Given a complete call before its result arrives when it renders then the header says streaming (senpi#2933)", () => {
 		const lines = renderCall({ language: "js", code, summary });
-		expect(lines).toHaveLength(1);
-		expect(lines[0]).toMatch(/^╶─ . Listing the repo with a shell helper · eval js running/u);
+		expect(lines).toHaveLength(8);
+		expect(lines[0]).toMatch(/^╭─ . Listing the repo with a shell helper · eval js streaming/u);
+		expect(lines.at(-1)).toBe("╰─");
 	});
 });
 
-describe("live eval rows stay one clean line (senpi#2831)", () => {
-	it("Given a summary carrying escape and control characters when its live row renders then the row is one line with none of them", () => {
+describe("live eval rows stay clean in the terminal (senpi#2831)", () => {
+	it("Given a summary carrying escape and control characters when its live row renders then the header is one clean line with none of them", () => {
 		const lines = render(liveResult({ summary: "\u001b[31mred\u001b[0m step\rsecond\nthird", output: "" }));
 
-		expect(lines).toHaveLength(1);
 		expect(lines[0]).not.toMatch(/[\u001b\r\n]/u);
-		expect(lines[0]).toMatch(/^╶─ . .*red.* step.*second.*third · eval js running/u);
+		expect(lines[0]).toMatch(/^╭─ . .*red.* step.*second.*third · eval js running/u);
+		expect(lines).toHaveLength(8);
 	});
 
-	it("Given a wide-character summary when its live row renders in a narrow terminal then the row fits the width in screen cells", () => {
+	it("Given a wide-character summary when its live row renders in a narrow terminal then the header fits the width in screen cells", () => {
 		const wide = "저장소의 모든 파일을 셸 도우미로 나열하고 결과를 요약합니다 😀😀";
 		const lines = render(liveResult({ summary: wide, output: "" }), false, 40);
 
-		expect(lines).toHaveLength(1);
+		expect(lines[0]).toMatch(/^╭─ . 저장소.*… · eval js running/u);
 		expect(visibleWidth(lines[0] ?? "")).toBeLessThanOrEqual(40);
-		expect(lines[0]).toMatch(/^╶─ . 저장소.*… · eval js running/u);
+		for (const line of lines) expect(visibleWidth(line)).toBeLessThanOrEqual(40);
+		expect(lines).toHaveLength(8);
 	});
 
 	it("Given a peek or stop call still streaming without its cell id when it renders then the title has no undefined", () => {
@@ -126,18 +128,18 @@ describe("live eval rows stay one clean line (senpi#2831)", () => {
 		expect(renderCall({ action: "peek", cell_id: "toolu_A" } as never)).toEqual(["eval peek toolu_A"]);
 	});
 
-	it("Given a cell without a summary whose first code line carries escape and control characters when its live row renders then the row is one clean line (senpi#2839)", () => {
+	it("Given a cell without a summary whose first code line carries escape and control characters when its live row renders then the header and window carry none of them (senpi#2839)", () => {
 		const lines = render(liveResult({ code: "\u001b[31mawait step()\u001b[0m\rhidden\tmore\nsecond()", output: "" }));
 
-		expect(lines).toHaveLength(1);
 		expect(lines[0]).not.toMatch(/[\u001b\r\t]/u);
-		expect(lines[0]).toMatch(/^╶─ . .*await step\(\).*hidden.*more · eval js running/u);
+		expect(lines[0]).toMatch(/^╭─ . .*await step\(\).*hidden.*more · eval js running/u);
+		expect(lines.join("\n")).not.toMatch(/[\u001b\r\t]/u);
 	});
 
 	it("Given a cell without a summary whose first code line is only escape and control characters when its live row renders then the headline is the next line with content (senpi#2850)", () => {
 		const lines = render(liveResult({ code: "\u001b[0m\r\nreal()\nlater()", output: "" }));
 
-		expect(lines).toHaveLength(1);
-		expect(lines[0]).toMatch(/^╶─ . real\(\) · eval js running/u);
+		expect(lines[0]).toMatch(/^╭─ . real\(\) · eval js running/u);
+		expect(lines).toHaveLength(8);
 	});
 });

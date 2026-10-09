@@ -61,6 +61,7 @@ export function createMcpSessionConnection(options: SessionConnectionOptions): M
 			: registry.attach(key, options.owner, () => new ServerConnection(connectionOptions));
 	const entry: McpConnectionEntry = {
 		agentDir: session.agentDir,
+		env: session.env,
 		artifacts: options.artifacts,
 		authPlan,
 		cacheRefreshedAfterConnect: false,

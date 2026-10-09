@@ -159,6 +159,8 @@ export interface McpConnectionEntry {
 	readonly createdAtMs: number;
 	readonly counters: McpServerCounters;
 	readonly agentDir?: string;
+	/** The env the connection spawned with; with `agentDir`, its credentials resolve against it (senpi#2986). */
+	readonly env?: Record<string, string | undefined>;
 	readonly artifacts?: McpOutputArtifacts;
 	readonly authPlan?: ServerAuthPlan;
 	readonly isCurrent?: () => boolean;
