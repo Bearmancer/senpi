@@ -139,9 +139,12 @@ describe("eval tool schema", () => {
 			throw new Error("the eval schema has no summary field");
 		const raw: unknown = Object.getOwnPropertyDescriptor(properties, "summary")?.value;
 		if (typeof raw !== "object" || raw === null) throw new Error("the eval schema's summary field is not an object");
-		const summary: { readonly description?: string; readonly maxLength?: number } = Object.fromEntries(
-			Object.entries(raw),
-		);
+		const description: unknown = Object.getOwnPropertyDescriptor(raw, "description")?.value;
+		const maxLength: unknown = Object.getOwnPropertyDescriptor(raw, "maxLength")?.value;
+		const summary = {
+			description: typeof description === "string" ? description : undefined,
+			maxLength: typeof maxLength === "number" ? maxLength : undefined,
+		};
 		expect(summary.description).toContain(SUMMARY_SCHEMA_DESCRIPTION);
 		expect(summary.maxLength).toBeUndefined();
 	});

@@ -22,7 +22,16 @@ function schemaField(tool: EvalTool, field: string): { readonly description?: st
 	const value: unknown = Object.getOwnPropertyDescriptor(properties, field)?.value;
 	if (typeof value !== "object" || value === null)
 		throw new Error(`the eval schema's ${field} field is not an object`);
-	return Object.fromEntries(Object.entries(value));
+	return schemaFieldShape(value);
+}
+
+function schemaFieldShape(value: object): { readonly description?: string; readonly maxLength?: number } {
+	const description: unknown = Object.getOwnPropertyDescriptor(value, "description")?.value;
+	const maxLength: unknown = Object.getOwnPropertyDescriptor(value, "maxLength")?.value;
+	return {
+		...(typeof description === "string" ? { description } : {}),
+		...(typeof maxLength === "number" ? { maxLength } : {}),
+	};
 }
 
 function buildTool(): EvalTool {

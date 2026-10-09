@@ -36,25 +36,15 @@ function stripAnsi(text: string): string {
 }
 
 function evalToolDef(): ToolDefParam {
-	const definition = {
+	return {
 		name: "eval",
 		label: "Eval",
 		description: "eval",
 		parameters: { type: "object" },
-		execute: async () => ({ content: [] }),
+		execute: async () => ({ content: [], details: undefined }),
 		renderCall: renderEvalCall,
 		renderResult: renderEvalResult,
 	};
-	if (!isToolDefParam(definition)) throw new Error("ToolExecutionComponent's tool definition shape changed");
-	return definition;
-}
-
-function isToolDefParam(value: unknown): value is ToolDefParam {
-	if (typeof value !== "object" || value === null) return false;
-	for (const key of ["name", "label", "description", "parameters", "execute", "renderCall", "renderResult"] as const) {
-		if (!(key in value)) return false;
-	}
-	return true;
 }
 
 function cellResult(status: "running" | "complete", output: string, durationMs: number, summary?: string): ExecResult {
