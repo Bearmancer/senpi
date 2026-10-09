@@ -16,7 +16,10 @@ import { parseSkillMcpDeclarations, type SkillLike } from "../../../src/core/ext
 import { MCP_STARTUP_TIMEOUT_ENV } from "../../../src/core/extensions/builtin/mcp/startup-race.ts";
 import toolSearchExtension from "../../../src/core/extensions/builtin/tool-search/index.ts";
 import { getToolSearchService } from "../../../src/core/extensions/builtin/tool-search/service.ts";
-import type { ResourceLoader } from "../../../src/core/resource-loader.ts";
+import { DefaultResourceLoader, type ResourceLoader } from "../../../src/core/resource-loader.ts";
+import { createAgentSession } from "../../../src/core/sdk.ts";
+import { SessionManager } from "../../../src/core/session-manager.ts";
+import { SettingsManager } from "../../../src/core/settings-manager.ts";
 import type { ExtensionAPI, LoadExtensionsResult } from "../../../src/index.ts";
 import { type CapturingPi, capturingPi, registeredTool } from "../../mcp/fixtures/register-call.ts";
 import {
@@ -183,6 +186,113 @@ afterEach(async () => {
 });
 
 describe("senpi#2514: each session binds its own view of the shared MCP service", () => {
+	it(
+		"keeps classic parent MCP ownership across a builtin-only SDK child's lifecycle",
+		async () => {
+			// Given: the parent uses a common server and its own extension declaration.
+			setConfig(root, {
+				fx: {
+					...stdioServer(["--tools", "2", "--spawn-counter-file", spawnCounter]),
+					exposure: "direct",
+					lifecycle: "eager",
+				},
+			});
+			const parentOnlyTool = "mcp_parent_only_tool_1";
+			const parent = await openSession(
+				await mcpExtensions((pi) =>
+					pi.registerMcpServer("parent_only", { ...stdioServer(["--tools", "1"]), exposure: "direct" }),
+				),
+			);
+			await untilToolRegistered(parent, TOOL);
+			await untilToolRegistered(parent, parentOnlyTool);
+			const service = getMcpService();
+			await service.whenAttachSettled(REGISTRATION_TIMEOUT_MS);
+			const connection = service.getConnection("fx");
+			const pid = connection?.getRootPid();
+			const generation = connection?.generation;
+			const retained = parent.session.agent.state.tools.find((tool) => tool.name === TOOL);
+			if (retained === undefined) throw new Error("Parent MCP tool was not registered");
+			const parentValue = "parent-survives";
+			const assertParent = async () => {
+				for (const name of [TOOL, parentOnlyTool]) {
+					const result = await parent.session.executeTool(name, { value: parentValue });
+					expect(result).not.toHaveProperty("details.error");
+					expect(getMessageText(result)).toContain(`fixture tool_1 value=${parentValue}`);
+				}
+				const offeredResult = await retained.execute("retained-parent", { value: parentValue });
+				expect(offeredResult).not.toHaveProperty("details.error");
+				expect(getMessageText(offeredResult)).toContain(`fixture tool_1 value=${parentValue}`);
+				expect(service.getConnection("fx")?.getRootPid()).toBe(pid);
+				expect(service.getConnection("fx")?.generation).toBe(generation);
+			};
+			await assertParent();
+
+			// When: a real builtin-only loader loads before SDK session creation, outside a provider scope.
+			let registered = Promise.withResolvers<void>();
+			const settingsManager = SettingsManager.create(root.cwd, root.agentDir);
+			const childLoader = new DefaultResourceLoader({
+				cwd: root.cwd,
+				agentDir: root.agentDir,
+				settingsManager,
+				noExtensions: true,
+				noSkills: true,
+				noPromptTemplates: true,
+				noThemes: true,
+				noContextFiles: true,
+				extensionFactories: [
+					{
+						name: "child-registration",
+						factory: (pi) => {
+							pi.on("tool_activated", (event) => {
+								if (event.toolNames.includes(TOOL)) registered.resolve();
+							});
+						},
+					},
+				],
+			});
+			await childLoader.reload();
+			const { session: child } = await createAgentSession({
+				cwd: root.cwd,
+				agentDir: root.agentDir,
+				settingsManager,
+				resourceLoader: childLoader,
+				model: parent.getModel(),
+				sessionManager: SessionManager.inMemory(root.cwd),
+			});
+			try {
+				await child.bindExtensions({
+					mode: "print",
+					onError: ({ error }) => {
+						throw new Error(error);
+					},
+				});
+				await registered.promise;
+
+				// Then: the child neither inherits the parent's server nor changes its offered tools or connection.
+				expect(child.getToolDefinition(parentOnlyTool)).toBeUndefined();
+				const childValue = "child-private";
+				expect(getMessageText(await child.executeTool(TOOL, { value: childValue }))).toContain(
+					`fixture tool_1 value=${childValue}`,
+				);
+				await assertParent();
+				registered = Promise.withResolvers<void>();
+				await child.reload();
+				await registered.promise;
+				expect(getMessageText(await child.executeTool(TOOL, { value: childValue }))).toContain(
+					`fixture tool_1 value=${childValue}`,
+				);
+				await assertParent();
+			} finally {
+				await child.extensionRunner.emit({ type: "session_shutdown", reason: "quit" });
+				child.dispose();
+			}
+			await assertParent();
+			// The one shared `fx` process served the parent and the child across its attach, reload and quit.
+			expect(await readCounter(spawnCounter)).toBe(1);
+		},
+		REGISTRATION_TIMEOUT_MS,
+	);
+
 	it("shares one server process, yet lands and activates MCP tools in each session's own tool set", async () => {
 		// Given: two live sessions attach while the shared server's catalog is still loading.
 		configureGatedServer();
