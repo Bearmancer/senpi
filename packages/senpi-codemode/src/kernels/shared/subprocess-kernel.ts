@@ -1,3 +1,4 @@
+// allow: SIZE_OK — subprocess protocol, FIFO ownership, retirement, and replacement form one serialized state machine.
 import type { HostToKernelMessage, KernelToHostMessage } from "../../bridge/protocol.ts";
 import { decodeBridgeFrame, encodeBridgeFrame, isKernelToHostMessage } from "../../bridge/protocol.ts";
 import type { KernelInterruptHandle, PendingCell } from "../../tool/types.ts";
