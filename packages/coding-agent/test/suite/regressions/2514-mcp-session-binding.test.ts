@@ -657,9 +657,14 @@ function configureExtraForRootProject(): TestRoot {
 }
 
 /** Attach an app-server session in `project` whose session id is `sessionId`, sharing the agent dir. */
-async function attachInProject(pi: CapturingPi, project: TestRoot, sessionId: string): Promise<void> {
+async function attachInProject(
+	pi: CapturingPi,
+	project: TestRoot,
+	sessionId: string,
+	reason: "startup" | "reload" = "startup",
+): Promise<void> {
 	await getMcpService().attachSession(
-		{ type: "session_start", reason: "startup" },
+		{ type: "session_start", reason },
 		{
 			cwd: project.cwd,
 			isProjectTrusted: () => true,
@@ -789,6 +794,29 @@ describe("senpi#2597: a session's MCP status and the service's teardown follow t
 		expect(alpha.servers.map((server) => server.name)).toEqual(["extra", "fx"]);
 		expect(bravo.servers.map((server) => server.name)).toEqual(["fx"]);
 		expect(getMcpService().getConnection("extra")).toBeDefined();
+	});
+
+	it("keeps a reloading session's own servers running while a peer is live", async () => {
+		// Given: the first session alone declares `extra`, both declare `fx`, and both servers are connected.
+		const peer = configureExtraForRootProject();
+		const service = getMcpService();
+		const alphaPi = capturingPi();
+		const bravoPi = capturingPi();
+		await attachInProject(alphaPi, root, "alpha");
+		await untilFakeRegistered(alphaPi, EXTRA_TOOL);
+		await attachInProject(bravoPi, peer, "bravo");
+		await untilFakeRegistered(bravoPi, TOOL);
+		const extraPid = requiredPid(service, "extra");
+
+		// When: the first session reloads: its old extension instance is released with no dispose reason, and the
+		// reloaded one attaches.
+		await service.releaseSession(alphaPi);
+		await attachInProject(capturingPi(), root, "alpha", "reload");
+		await service.whenAttachSettled(REGISTRATION_TIMEOUT_MS);
+
+		// Then: its own `extra` kept running on the same process, never stopped and re-spawned.
+		expect(requiredPid(service, "extra")).toBe(extraPid);
+		await assertAlive(extraPid);
 	});
 
 	it("leaves no connection or server process when two sessions quit while a release re-sync is stopping a server", async () => {

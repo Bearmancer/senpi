@@ -299,7 +299,9 @@ export class McpService {
 		if (latest !== undefined) {
 			if (released === undefined) return;
 			if (this.#sessionContext === released.context) this.#sessionContext = latest.context;
-			await this.#resyncToLiveSessions();
+			// Only a session that is gone (quit, or the builtin removed) re-syncs. A reload, new, resume or fork attaches
+			// again next, and that attach drops what no live session declares without restarting the servers it keeps.
+			if (disposeReason !== undefined) await this.#resyncToLiveSessions();
 			return;
 		}
 		// A session whose attach is still queued has not bound yet but will use this service.
