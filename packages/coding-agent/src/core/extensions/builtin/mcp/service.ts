@@ -363,10 +363,14 @@ export class McpService {
 			const config = latest === undefined ? this.#config : this.#effectiveConfig(latest.config);
 			const owner = latest ?? fallbackOwner;
 			if (config === null || owner === undefined) return;
-			const before = [...this.#connections.keys()].join("\n");
+			// Compared by entry, not key: a connection re-created under its old key retires the offers made against it too.
+			const before = new Set(this.#connections.values());
 			this.#config = config;
 			await this.#syncFromConfig(config, owner, true, latest);
-			if (this.#disposed || latest === undefined || [...this.#connections.keys()].join("\n") === before) return;
+			const unchanged =
+				this.#connections.size === before.size &&
+				[...this.#connections.values()].every((entry) => before.has(entry));
+			if (this.#disposed || latest === undefined || unchanged) return;
 			// A replaced connection retires the offers made against it; republish them in every live session.
 			for (const live of this.#liveBindings()) {
 				await this.#registerDirectTools(live);
@@ -650,7 +654,9 @@ export class McpService {
 				server?.configHash === undefined
 					? undefined
 					: `${entry.name}\0${server.configHash}\0${credentialIdentities.get(entry.name) ?? "unknown"}`;
-			if (key === entry.key) continue;
+			// A connection whose credentials went stale is re-created with its declarer's options, never kept under an
+			// unchanged key: kept, it would refuse every session sharing it until the service is disposed.
+			if (key === entry.key && entry.credentialsCurrent?.() !== false) continue;
 			this.#connections.delete(entry.key);
 			this.#connectionKeysByName.delete(entry.name);
 			disposals.push(disposeEntryConnection(entry, this.#registry, this));

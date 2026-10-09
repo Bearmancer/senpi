@@ -853,6 +853,44 @@ describe("senpi#2597: a session's MCP status and the service's teardown follow t
 		expect(fixture.callAuthorizations).toEqual(["Bearer two"]);
 	});
 
+	it("re-creates a shared connection whose credentials went stale with the current declarer's, instead of refusing every session", async () => {
+		// Given: an http `fx` whose bearer token comes from each session's own env. Both sessions resolve the same token,
+		// so the second keeps the connection the first created with its own env. It is lazy, so once its catalog is cached
+		// a re-created connection does not connect on its own and only the re-sync republishes its tools.
+		const fixture = await sharingHttpFixture();
+		cleanupTasks.push(() => fixture.close());
+		setConfig(root, {
+			fx: { type: "http", url: fixture.url, auth: "bearer", bearerTokenEnv: "SENPI_2597_TOKEN", lifecycle: "lazy" },
+		});
+		const service = getMcpService();
+		const attachWithEnv = (pi: CapturingPi, env: Record<string, string>) =>
+			service.attachSession(
+				{ type: "session_start", reason: "startup" },
+				{ cwd: root.cwd, isProjectTrusted: () => true },
+				pi,
+				{ agentDir: root.agentDir, env },
+			);
+		const alphaEnv: Record<string, string> = { SENPI_2597_TOKEN: "shared" };
+		const alphaPi = capturingPi();
+		const bravoPi = capturingPi();
+		await attachWithEnv(alphaPi, alphaEnv);
+		await untilFakeRegistered(alphaPi, "mcp_fx_echo");
+		await attachWithEnv(bravoPi, { SENPI_2597_TOKEN: "shared" });
+		await untilFakeRegistered(bravoPi, "mcp_fx_echo");
+
+		// When: the first session's token rotates, and the connection reconnects and notices.
+		alphaEnv.SENPI_2597_TOKEN = "rotated";
+		await service.reconnectServer("fx");
+		await service.whenAttachSettled(REGISTRATION_TIMEOUT_MS);
+
+		// Then: the connection is re-created with the most recent declarer's credentials, and its call goes through.
+		expect(service.getConnection("fx")).toBeDefined();
+		const tool = registeredTool(bravoPi, "mcp_fx_echo");
+		const result = await Reflect.apply(tool.execute, tool, ["b", { value: "b" }, undefined, undefined]);
+		expect(result).toMatchObject({ content: [{ type: "text", text: JSON.stringify({ value: "b" }) }] });
+		expect(fixture.callAuthorizations).toEqual(["Bearer shared"]);
+	});
+
 	// The FIFO holds the skill attach's catalog-cache read until the release has run, with no hook in the service.
 	it.skipIf(process.platform === "win32")(
 		"never re-creates a released session's skill server after a release re-sync that ran during its skill attach",
