@@ -481,7 +481,7 @@ export class McpService {
 
 	/** Refresh and return the current session-owned MCP wire inventory. */
 	async refreshWireStatusSnapshot(sessionId?: string): Promise<McpWireStatusSnapshot> {
-		return await this.#refreshWireStatus(sessionId, () => this.#statusOwner(sessionId));
+		return this.#refreshWireStatus(sessionId, () => this.#statusOwner(sessionId));
 	}
 
 	/** `owner` is resolved when the queued capture runs, so it sees the bindings current at that point. */
