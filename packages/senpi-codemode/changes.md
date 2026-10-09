@@ -6,9 +6,9 @@
 
 - `packages/senpi-codemode/src/kernels/shared/kernel-memory-host.ts`: keep current-footprint accounting on every result, collect globals at or above either enabled notice/ceiling threshold regardless of notice hysteresis, and omit ordinary below-threshold result payloads.
 - `packages/senpi-codemode/src/kernels/shared/subprocess-memory-globals.ts`: bound the read-only diagnostic request to five seconds and fence replies by interpreter, pending run, and cell identity.
-- `packages/senpi-codemode/src/kernels/shared/subprocess-kernel.ts`, `packages/senpi-codemode/src/kernels/shared/subprocess-queue.ts`: retain FIFO ownership until diagnostics settle and clear the pending request on retirement.
+- `packages/senpi-codemode/src/kernels/shared/subprocess-kernel.ts`, `packages/senpi-codemode/src/kernels/shared/subprocess-queue.ts`: retain FIFO ownership until diagnostics settle, settle an already-finished result without globals when stop arrives during that optional request, and clear the pending request on retirement.
 - `packages/senpi-codemode/src/bridge/memory-protocol.ts`, `packages/senpi-codemode/src/bridge/protocol.ts`: advertise runner support and validate the cell-owned globals request/reply.
-- `packages/senpi-codemode/src/kernels/jl/runner.jl`, `packages/senpi-codemode/src/kernels/rb/runner.rb`: replace eager post-cell sizing and nested result serialization with a read-only request using the unchanged bounded sizers.
+- `packages/senpi-codemode/src/kernels/jl/runner.jl`, `packages/senpi-codemode/src/kernels/rb/runner.rb`: replace eager post-cell sizing and nested result serialization with a read-only request using the unchanged bounded sizers. Successful and raised cells both receive globals when their host-read footprint reaches a threshold.
 
 ### Why
 

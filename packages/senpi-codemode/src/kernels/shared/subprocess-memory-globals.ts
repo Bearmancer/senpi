@@ -15,6 +15,7 @@ interface PendingGlobals {
 	readonly run: PendingRun;
 	readonly result: KernelResult;
 	readonly report: KernelMemoryReport;
+	readonly memory: KernelMemoryHost;
 	readonly finish: (result: KernelResult) => void;
 	readonly timer: ReturnType<typeof setTimeout>;
 }
@@ -48,6 +49,7 @@ export class SubprocessMemoryGlobals {
 		const pending: PendingGlobals = {
 			...owner,
 			report,
+			memory,
 			finish,
 			timer: setTimeout(() => {
 				if (this.#pending !== pending) return;
@@ -62,6 +64,16 @@ export class SubprocessMemoryGlobals {
 				cellId: owner.result.cellId,
 			}),
 		);
+	}
+
+	/** Settles an already-finished cell immediately when stop arrives during its optional diagnostic. */
+	completeWithoutGlobals(): boolean {
+		const pending = this.#pending;
+		if (pending === null) return false;
+		clearTimeout(pending.timer);
+		this.#pending = null;
+		pending.finish(pending.memory.annotateReport(pending.result, pending.report));
+		return true;
 	}
 
 	reply(

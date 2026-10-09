@@ -93,6 +93,7 @@ export class SubprocessKernel {
 			this.runs.settleAll(new CellInterruptedError(reason));
 			return { stateRetained: Promise.resolve(true) };
 		}
+		if (this.globals.completeWithoutGlobals()) return { stateRetained: Promise.resolve(true) };
 		const process = this.process;
 		process?.retire();
 		this.globals.reset();

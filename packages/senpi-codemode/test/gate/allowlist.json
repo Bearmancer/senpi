@@ -14,6 +14,8 @@
 				"legacyContracts/test/subprocess-memory-globals.test.ts/owned memory globals request bounds a missing reply without skipping the footprint notice",
 				"legacyContracts/test/subprocess-memory-globals.test.ts/owned memory globals request retires the pending deadline on reset without formatting a stale notice",
 				"legacyContracts/test/subprocess-memory-globals.test.ts/owned memory globals request requests globals at an enabled ceiling even when the notice threshold is disabled",
+				"legacyContracts/test/kernels/rb/subprocess-memory-ceiling.test.ts/SubprocessKernel (rb) memory ceiling Given a finished cell waiting for globals when it is stopped then its result settles and kernel state survives",
+				"legacyContracts/test/kernels/rb/subprocess-memory-ceiling.test.ts/SubprocessKernel (jl) memory ceiling Given a finished cell waiting for globals when it is stopped then its result settles and kernel state survives",
 				"imports/extension/packages/senpi-codemode/src/kernels/shared/subprocess-memory-globals.ts",
 				"imports/firstKernel/packages/senpi-codemode/src/kernels/shared/subprocess-memory-globals.ts"
 			],
