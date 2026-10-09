@@ -1,4 +1,4 @@
-import { type ChildProcess, spawn } from "node:child_process";
+import { type ChildProcess, execFileSync, spawn } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -126,6 +126,54 @@ describe("issue #2990 headless resume of a session the OmO desktop moved", () =>
 		expect(server.requests.map((request) => request.text).join("\n")).toContain(PROMPT);
 		expect(readFileSync(sessionFile, "utf8").startsWith(header)).toBe(true);
 		expect(transcriptRoles(sessionFile)).toEqual(["user", "assistant"]);
+	});
+
+	// Round-2 review H1: in the default per-folder layout only the moved lookup finds the session; continue it in place.
+	it("`-p --continue` from the moved worktree continues the session recorded under the old folder", async () => {
+		const { layout, server, env } = await movedSession();
+		for (const args of [
+			["init", "-q"],
+			["commit", "-q", "--allow-empty", "-m", "init"],
+		])
+			execFileSync("git", args, {
+				cwd: layout.newWorktree,
+				env: {
+					...process.env,
+					GIT_AUTHOR_NAME: "t",
+					GIT_AUTHOR_EMAIL: "t@t",
+					GIT_COMMITTER_NAME: "t",
+					GIT_COMMITTER_EMAIL: "t@t",
+				},
+			});
+		const sessionFile = join(getDefaultSessionDir(layout.oldWorktree, env[ENV_AGENT_DIR]), `${SESSION_ID}.jsonl`);
+		writeSessionHeader(sessionFile, SESSION_ID, layout.oldWorktree);
+		const header = readFileSync(sessionFile, "utf8");
+
+		const result = await runCli(["-p", "--continue", PROMPT], layout.newWorktree, env);
+
+		expect(result.code).toBe(0);
+		expect(server.requests.map((request) => request.text).join("\n")).toContain(PROMPT);
+		expect(readFileSync(sessionFile, "utf8").startsWith(header)).toBe(true);
+		expect(transcriptRoles(sessionFile)).toEqual(["user", "assistant"]);
+	});
+
+	// Round-2 review L1: a session with no recorded folder is never "this folder's" session; it keeps the refusal.
+	it("`-p --session <id>` for another project's session without a recorded cwd keeps the cross-project refusal", async () => {
+		const { layout, server, env } = await movedSession();
+		const sessionFile = join(
+			getDefaultSessionDir(join(layout.home, "elsewhere"), env[ENV_AGENT_DIR]),
+			`${SESSION_ID}.jsonl`,
+		);
+		writeFileSync(
+			sessionFile,
+			`${JSON.stringify({ type: "session", version: 3, id: SESSION_ID, timestamp: "2026-10-07T00:00:00.000Z" })}\n`,
+		);
+
+		const result = await runCli(["-p", "--session", SESSION_ID, PROMPT], layout.newWorktree, env);
+
+		expect(result.code).toBe(1);
+		expect(result.output).toContain(`--fork '${SESSION_ID}'`);
+		expect(server.requests).toEqual([]);
 	});
 
 	it("a recorded cwd no breadcrumb lists still fails with the missing-cwd message", async () => {

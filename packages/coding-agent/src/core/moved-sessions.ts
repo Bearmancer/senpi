@@ -18,13 +18,19 @@ export interface MovedSessionOptions {
 	readonly readIdentity?: (dir: string) => Promise<RepositoryIdentity | undefined>;
 }
 
-// A session whose recorded cwd the OmO desktop moved to `cwd` is this folder's own session, not a moved one (senpi#2990).
-function movedChecker(cwd: string, current: RepositoryIdentity): (session: SessionInfo) => boolean {
+// A session recorded at a vanished path is "here" when the OmO desktop moved that path to `cwd`: it is this folder's
+// own session, listed without the moved badge and never rebound (senpi#2990). Otherwise it may be a moved one.
+type VanishedKind = "here" | "moved";
+
+function vanishedClassifier(
+	cwd: string,
+	current: RepositoryIdentity,
+): (session: SessionInfo) => VanishedKind | undefined {
 	const ownCwd = sessionCwdMatcher(cwd);
 	return (session) => {
-		if (!session.cwd || resolvePath(session.cwd) === cwd || existsSync(session.cwd)) return false;
-		if (ownCwd(session.cwd)) return false;
-		return compareRepositoryIdentities(session.repositoryIdentity, current) === "same";
+		if (!session.cwd || resolvePath(session.cwd) === cwd || existsSync(session.cwd)) return undefined;
+		if (ownCwd(session.cwd)) return "here";
+		return compareRepositoryIdentities(session.repositoryIdentity, current) === "same" ? "moved" : undefined;
 	};
 }
 
@@ -70,18 +76,35 @@ async function sessionsAtVanishedPaths(cwd: string): Promise<SessionInfo[]> {
 	return sessions;
 }
 
-export async function listMovedSessions(cwd: string, options: MovedSessionOptions = {}): Promise<SessionInfo[]> {
+async function vanishedSessions(
+	cwd: string,
+	options: MovedSessionOptions,
+): Promise<Record<VanishedKind, SessionInfo[]>> {
+	const found: Record<VanishedKind, SessionInfo[]> = { here: [], moved: [] };
 	const here = resolvePath(cwd);
 	const current = await (options.readIdentity ?? readRepositoryIdentity)(here);
-	if (current === undefined) return [];
+	if (current === undefined) return found;
 	const candidates = options.sessionDir
 		? await listSessionsFromDir(normalizePath(options.sessionDir))
 		: await sessionsAtVanishedPaths(here);
-	const isMoved = movedChecker(here, current);
-	return candidates
-		.filter(isMoved)
-		.map((session) => ({ ...session, moved: true }))
-		.sort(newestFirst);
+	const classify = vanishedClassifier(here, current);
+	for (const session of candidates) {
+		const kind = classify(session);
+		if (kind === "moved") found.moved.push({ ...session, moved: true });
+		else if (kind === "here") found.here.push(session);
+	}
+	found.here.sort(newestFirst);
+	found.moved.sort(newestFirst);
+	return found;
+}
+
+export async function listMovedSessions(cwd: string, options: MovedSessionOptions = {}): Promise<SessionInfo[]> {
+	return (await vanishedSessions(cwd, options)).moved;
+}
+
+/** Sessions of `cwd` recorded under a path the OmO desktop moved to it, newest first (senpi#2990). */
+export async function listSessionsMovedHere(cwd: string, options: MovedSessionOptions = {}): Promise<SessionInfo[]> {
+	return (await vanishedSessions(cwd, options)).here;
 }
 
 export async function markMovedSessions(
@@ -92,8 +115,8 @@ export async function markMovedSessions(
 	const here = resolvePath(cwd);
 	const current = await (options.readIdentity ?? readRepositoryIdentity)(here);
 	if (current === undefined) return [...sessions];
-	const isMoved = movedChecker(here, current);
-	return sessions.map((session) => (isMoved(session) ? { ...session, moved: true } : session));
+	const classify = vanishedClassifier(here, current);
+	return sessions.map((session) => (classify(session) === "moved" ? { ...session, moved: true } : session));
 }
 
 export async function withMovedSessions(
@@ -101,6 +124,9 @@ export async function withMovedSessions(
 	cwd: string,
 	options: MovedSessionOptions = {},
 ): Promise<SessionInfo[]> {
-	const [own, moved] = await Promise.all([local, listMovedSessions(cwd, options)]);
-	return [...own, ...moved].sort(newestFirst);
+	const [own, vanished] = await Promise.all([local, vanishedSessions(cwd, options)]);
+	// A shared session dir lists a desktop-moved session in both: one row, the folder's own.
+	const listed = new Set(own.map((session) => session.path));
+	const extra = [...vanished.here, ...vanished.moved].filter((session) => !listed.has(session.path));
+	return [...own, ...extra].sort(newestFirst);
 }

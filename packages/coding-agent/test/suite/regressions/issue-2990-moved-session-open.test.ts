@@ -1,10 +1,11 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { ENV_AGENT_DIR } from "../../../src/config.ts";
 import { markMovedSessions, withMovedSessions } from "../../../src/core/moved-sessions.ts";
 import { REPOSITORY_IDENTITY_ENTRY_TYPE, type RepositoryIdentity } from "../../../src/core/repository-identity.ts";
 import { resolveResumeTarget } from "../../../src/core/resume-target.ts";
-import { SessionManager } from "../../../src/core/session-manager.ts";
+import { getDefaultSessionDir, SessionManager } from "../../../src/core/session-manager.ts";
 import {
 	breadcrumbBody,
 	createMovedLayout,
@@ -32,7 +33,11 @@ afterEach(() => {
 function moved(options: Parameters<typeof createMovedLayout>[0] = {}) {
 	const layout = createMovedLayout(options);
 	layouts.push(layout);
-	const sessionFile = join(layout.newSessions, "s.jsonl");
+	const sessionFile = writeMovedSession(join(layout.newSessions, "s.jsonl"), layout);
+	return { layout, sessionFile, bytes: readFileSync(sessionFile) };
+}
+
+function writeMovedSession(sessionFile: string, layout: MovedLayout): string {
 	const entries: unknown[] = [
 		{ type: "session", version: 3, id: SESSION_ID, timestamp: "2026-10-07T00:00:00.000Z", cwd: layout.oldWorktree },
 		{
@@ -45,7 +50,7 @@ function moved(options: Parameters<typeof createMovedLayout>[0] = {}) {
 		},
 	];
 	writeFileSync(sessionFile, `${entries.map((entry) => JSON.stringify(entry)).join("\n")}\n`);
-	return { layout, sessionFile, bytes: readFileSync(sessionFile) };
+	return sessionFile;
 }
 
 describe("issue #2990 a moved session opens in the folder's new home", () => {
@@ -109,6 +114,31 @@ describe("issue #2990 a moved session opens in the folder's new home", () => {
 		);
 
 		expect(rows.map((row) => [row.path, row.moved === true])).toEqual([[sessionFile, false]]);
+	});
+
+	// Round-2 review H1: without a session dir the session sits in the old folder's default dir, which only the moved
+	// lookup reaches; it must still be listed, once and unbadged.
+	it("the current-scope resume picker lists the moved session once in the default per-folder layout", async () => {
+		const layout = createMovedLayout();
+		layouts.push(layout);
+		const inherited = process.env[ENV_AGENT_DIR];
+		process.env[ENV_AGENT_DIR] = join(layout.home, "agent");
+		try {
+			const sessionFile = writeMovedSession(join(getDefaultSessionDir(layout.oldWorktree), "s.jsonl"), layout);
+
+			const current = await withMovedSessions(SessionManager.list(layout.newWorktree), layout.newWorktree, {
+				readIdentity: async () => RECORDED,
+			});
+			const all = await markMovedSessions(await SessionManager.listAll(), layout.newWorktree, {
+				readIdentity: async () => RECORDED,
+			});
+
+			expect(current.map((row) => [row.path, row.moved === true])).toEqual([[sessionFile, false]]);
+			expect(all.map((row) => [row.path, row.moved === true])).toEqual([[sessionFile, false]]);
+		} finally {
+			if (inherited === undefined) delete process.env[ENV_AGENT_DIR];
+			else process.env[ENV_AGENT_DIR] = inherited;
+		}
 	});
 
 	it("the all-scope resume picker does not badge the moved session as moved", async () => {

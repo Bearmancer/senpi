@@ -2,7 +2,7 @@
 
 ### What changed
 
-- `packages/coding-agent/src/main.ts`: in `createSessionManager`, a `--session <id>` match found in another project (the `global` branch) whose recorded cwd `resolveMovedPath` maps to the current cwd opens directly instead of offering or printing the cross-project rebind/fork choice. `SessionManager.open` then maps the cwd; the file is not rewritten.
+- `packages/coding-agent/src/main.ts`: in `createSessionManager`, a `--session <id>` match found in another project (the `global` branch) whose non-empty recorded cwd `resolveMovedPath` maps to the current cwd opens directly instead of offering or printing the cross-project rebind/fork choice. `--continue` with no session of its own continues the newest session `listSessionsMovedHere` finds before falling back to the moved-repository rebind offer. `SessionManager.open` then maps the cwd; the file is not rewritten.
 
 ### Why
 
@@ -14,7 +14,7 @@ Session selection runs in `main.ts` before any extension loads.
 
 ### Expected merge conflict zones
 
-- LOW: the start of the `case "global"` block under `if (parsed.session)` in `createSessionManager`.
+- LOW: the start of the `case "global"` block under `if (parsed.session)` and the `if (parsed.continue)` block in `createSessionManager`.
 
 ## 2026-10-08 - JSON print mode exits non-zero when the run ran out of context (senpi#2925)
 

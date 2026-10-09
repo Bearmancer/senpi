@@ -88,7 +88,7 @@ import {
 	type ScopedModel,
 } from "./core/model-resolver.ts";
 import { ModelRuntime } from "./core/model-runtime.ts";
-import { markMovedSessions, withMovedSessions } from "./core/moved-sessions.ts";
+import { listSessionsMovedHere, markMovedSessions, withMovedSessions } from "./core/moved-sessions.ts";
 import { restoreStdout, takeOverStdout } from "./core/output-guard.ts";
 import { recordProcessLifetime } from "./core/process-crash-record.ts";
 import { type AppMode, resolveProjectTrusted } from "./core/project-trust.ts";
@@ -577,7 +577,7 @@ export async function createSessionManager(
 
 			case "global": {
 				// Recorded under a folder the OmO desktop moved here: this folder's own session (senpi#2990).
-				if (resolvePath(resolveMovedPath(resolved.cwd)) === resolvePath(cwd))
+				if (resolved.cwd !== "" && resolvePath(resolveMovedPath(resolved.cwd)) === resolvePath(cwd))
 					return openSessionOrExit(resolved.path, sessionDir);
 				// The confirmation blocks on readline, which only an interactive session can
 				// answer. Print, JSON, RPC, and app-server runs reach here with a TTY attached
@@ -646,6 +646,9 @@ export async function createSessionManager(
 		const recent = SessionManager.continueRecent(cwd, sessionDir);
 		const recentFile = recent.getSessionFile();
 		if (recentFile !== undefined && existsSync(recentFile)) return recent;
+		// Recorded under a folder the OmO desktop moved here: continue it in place, without a rebind (senpi#2990).
+		const [movedHere] = await listSessionsMovedHere(cwd, sessionDir === undefined ? {} : { sessionDir });
+		if (movedHere) return SessionManager.open(movedHere.path, sessionDir);
 		const moved = await movedSessionToContinue({
 			cwd,
 			...(sessionDir === undefined ? {} : { sessionDir }),
