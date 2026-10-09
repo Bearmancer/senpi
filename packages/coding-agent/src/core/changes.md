@@ -1,3 +1,22 @@
+## 2026-10-09 - Durable engine self-stop signals (senpi#3007)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: appends `engine-paused` beside engine limits (`cap-per-message` or `cap-per-minute`) and at the final idle boundary after a repetitive-turns corrective turn. Deferred turn claims, active work, and settlement epochs prevent a premature pause while another turn starts. Limit signals retain the existing best-effort write behavior.
+- `packages/coding-agent/src/core/engine-paused.ts`: reads durable branch evidence to identify the latest corrective turn and to avoid duplicate pause entries after an already-recorded self-stop.
+
+### Why
+
+RPC clients otherwise infer pauses from several unrelated entries or from an ambiguous corrective-turn-to-idle sequence.
+
+### Why an extension could not handle it
+
+Only the engine owns cross-source limits and knows whether settlement-deferred turns actually started before the final idle edge.
+
+### Expected merge conflict zones
+
+The final idle boundary, engine-turn admission, and user/start reset bookkeeping in `agent-session.ts`; the helper is fork-owned.
+
 ## 2026-10-09 - A session the OmO desktop moved resumes in the folder's new home (senpi#2990)
 
 ### What changed
