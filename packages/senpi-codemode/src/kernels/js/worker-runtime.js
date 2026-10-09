@@ -5,7 +5,7 @@ import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, normalize, resolve, sep } from "node:path";
 import { inspect } from "node:util";
 import { encodeDisplayImage, resolveDisplayOps } from "./display-image.js";
-import { terminateProcessTrees } from "./process-tree.js";
+import { terminateProcessGroups, terminateProcessTrees } from "./process-tree.js";
 import { awaitMaybePromise, indirectEval, wrapUserCode } from "./worker-indirect-eval.js";
 import { INJECTED_GROUP } from "./worker-cwd.js";
 import { installShellCapture } from "./worker-shell-capture.js";
@@ -34,6 +34,9 @@ export class JsWorkerRuntime {
 	#hooks = null;
 	#pendingDisplays = [];
 	#children = new Set();
+	// Groups the worker created for cell children (senpi#2995). A group outlives its leader, so a grandchild re-parented
+	// to init is still found through it at retirement (senpi#3020).
+	#ownedGroups = new Set();
 	#childrenStopping;
 	#shellWaits = new Set();
 	#onChildEvent;
@@ -116,6 +119,9 @@ export class JsWorkerRuntime {
 		if (isPlainObject(spawnOptions) && spawnOptions.detached === true && !groupInjected) return;
 		this.#children.add(child);
 		const pid = Number.isInteger(child.pid) && child.pid > 0 ? child.pid : null;
+		// Bun.spawn children get their group from worker-cwd.js without the injection marker, so every tracked child is
+		// recorded; a child that is not a group leader names no group, and signalling it later finds nothing.
+		if (pid !== null && process.platform !== "win32") this.#ownedGroups.add(pid);
 		// The host keeps its own copy of live pids: if this worker is terminated
 		// while blocked, only the host can still retire them.
 		if (pid !== null) this.#onChildEvent?.({ pid, state: "spawned" });
@@ -129,10 +135,15 @@ export class JsWorkerRuntime {
 	#terminateChildren() {
 		const children = [...this.#children].filter(child => child.exitCode === null && child.signalCode === null);
 		this.#children.clear();
-		if (children.length === 0) return undefined;
+		const groups = [...this.#ownedGroups];
+		this.#ownedGroups.clear();
+		if (children.length === 0 && groups.length === 0) return undefined;
 		const roots = children.map(child => child.pid).filter(pid => Number.isInteger(pid) && pid > 0);
 		const settled = Promise.allSettled(children.map(child => (child.exited instanceof Promise ? child.exited : Promise.resolve())));
-		return terminateProcessTrees(roots, { graceMs: CHILD_TERMINATION_GRACE_MS, settled });
+		return Promise.all([
+			roots.length > 0 ? terminateProcessTrees(roots, { graceMs: CHILD_TERMINATION_GRACE_MS, settled }) : undefined,
+			terminateProcessGroups(groups, { graceMs: CHILD_TERMINATION_GRACE_MS }),
+		]);
 	}
 
 	async #drainPendingDisplays() {

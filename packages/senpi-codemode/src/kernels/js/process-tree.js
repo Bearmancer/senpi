@@ -100,6 +100,49 @@ export async function terminateProcessTrees(roots, options) {
 	await waitForExit(survivors, options.killWaitMs ?? options.graceMs, options.settled);
 }
 
+/**
+ * Retire whole process groups the worker created (POSIX): SIGTERM each group that still has members, wait `graceMs`,
+ * then SIGKILL what is left. The agent's own group is never signalled, whatever the list holds.
+ */
+export async function terminateProcessGroups(groups, options) {
+	if (process.platform === "win32") return;
+	// Without the agent's own group there is no way to rule it out, so nothing is signalled.
+	const ownGroup = await processGroupOf(process.pid);
+	if (ownGroup === undefined) return;
+	const live = groups.filter((pgid) => Number.isInteger(pgid) && pgid > 1 && pgid !== ownGroup && groupHasMembers(pgid));
+	if (live.length === 0) return;
+	for (const pgid of live) signalGroup(pgid, "SIGTERM");
+	const deadline = Date.now() + options.graceMs;
+	let remaining = live;
+	while (remaining.length > 0 && Date.now() < deadline) {
+		await sleep(EXIT_POLL_MS);
+		remaining = remaining.filter(groupHasMembers);
+	}
+	for (const pgid of remaining) signalGroup(pgid, "SIGKILL");
+}
+
+function groupHasMembers(pgid) {
+	try {
+		process.kill(-pgid, 0);
+		return true;
+	} catch (error) {
+		return isRecord(error) && error.code === "EPERM";
+	}
+}
+
+function signalGroup(pgid, signal) {
+	try {
+		process.kill(-pgid, signal);
+	} catch {
+		// The group emptied between the check and the signal.
+	}
+}
+
+async function processGroupOf(pid) {
+	const text = (await ps(["-o", "pgid=", "-p", String(pid)])).trim();
+	return /^\d+$/u.test(text) ? Number(text) : undefined;
+}
+
 // `kill(pid, 0)` still succeeds for a zombie, and a child whose owning worker is
 // blocked or gone is never reaped, so liveness also consults `ps` state.
 async function waitForExit(pids, graceMs, settled) {
