@@ -127,20 +127,26 @@ describe("changes.md tracker parsing and rename coverage", () => {
 // packages/ai/src/{api,auth,auth/oauth,providers,utils}/ that named only the files
 // that PR touched. Coverage is resolved against the exact nearest tracker, so the
 // upstream-modified files beneath them - covered by packages/ai/src/changes.md until
-// then - turned uncovered overnight (43 of 487). These fixtures pin that shape:
-// a newly added nearest tracker must not hide paths its parent tracker covered.
-describe("changes.md audit: a newly added nearest tracker (senpi#3006)", () => {
+// then - turned uncovered overnight (43 of 487). This is a characterization pin of
+// the #2895 fixture shape (a nearest tracker listing only some of the files beneath
+// it, so the rest go uncovered); the same nearest-tracker shadowing rule is already
+// pinned generically in check-pr-changes-md.test.mjs ("fails when only a non-nearest
+// changes.md is touched", "does not fall through an existing empty nearest tracker
+// to a parent"). The durable recurrence guard is the repository-wide audit now run
+// in the changelog-gate CI job (.github/workflows/changelog-gate.yml).
+describe("changes.md audit: the senpi#2895 fixture shape (senpi#3006)", () => {
 	const AI_SRC_TRACKER = "packages/ai/src/changes.md";
 	const API_TRACKER = "packages/ai/src/api/changes.md";
 	const PRE_EXISTING = ["packages/ai/src/api/cloudflare.ts", "packages/ai/src/api/pi-messages.ts"];
 	const NEW_PR_FILE = "packages/ai/src/api/lazy.ts";
 	const inventory = [...PRE_EXISTING, NEW_PR_FILE];
 
-	it("fails when the new nearest tracker hides paths the parent tracker covered", () => {
+	it("reports uncovered when a new nearest tracker lists only some of the files beneath it", () => {
 		const result = auditRepository(inventory, {
 			trackerDiffs: {
 				[AI_SRC_TRACKER]: [trackerEntry([...PRE_EXISTING])],
-				// senpi#2895's shape: the new tracker covers only the file its PR added.
+				// senpi#2895's shape: the new tracker covers only the file its PR added,
+				// so the pre-existing files its parent covered turn uncovered.
 				[API_TRACKER]: [trackerEntry([NEW_PR_FILE])],
 			},
 		});
@@ -152,17 +158,4 @@ describe("changes.md audit: a newly added nearest tracker (senpi#3006)", () => {
 		);
 		assert.match(result.reason, /changes\.md coverage missing/, "failure names changes.md coverage");
 	});
-
-	it("passes once the new nearest tracker covers every upstream-modified path beneath it", () => {
-		const result = auditRepository(inventory, {
-			trackerDiffs: {
-				[AI_SRC_TRACKER]: [trackerEntry([...PRE_EXISTING])],
-				// The #3006 fix: the nearest tracker carries forward the parent's coverage.
-				[API_TRACKER]: [trackerEntry([...PRE_EXISTING, NEW_PR_FILE])],
-			},
-		});
-		assert.deepEqual(result.uncovered, [], "full nearest-tracker coverage clears every path");
-		assert.equal(result.pass, true);
-	});
-
 });

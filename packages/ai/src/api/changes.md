@@ -16,11 +16,11 @@
 - `packages/ai/src/api/simple-options.ts`: context-exhausted refusal, not a shrink to one token.
 - `packages/ai/src/api/transform-messages.ts`: cross-provider message transform contract preserving redacted thinking on same-model transforms.
 
-These files were covered by `packages/ai/src/changes.md` until senpi#2895 added this nearer tracker without listing them, hiding them from the audit's exact-nearest-tracker rule.
+These files were covered by the parent tracker until senpi#2895 added this nearer tracker without listing them, hiding them from the audit's exact-nearest-tracker rule.
 
 ### Why
 
-The repository audit (`scripts/audit-changes-md.mjs`) requires every upstream-modified production path to be named by an entry in its exact nearest changes.md tracker. senpi#2895 introduced this tracker and named only the files it touched, so the 15 pre-existing upstream-modified files beneath it lost the coverage the parent tracker had provided and were reported uncovered.
+The repository audit requires every upstream-modified production path to be named by an entry in its exact nearest changes.md tracker. senpi#2895 introduced this tracker and named only the files it touched, so the 15 pre-existing upstream-modified files beneath it lost the coverage the parent tracker had provided and were reported uncovered.
 
 ### Why an extension could not handle it
 
@@ -28,7 +28,11 @@ changes.md coverage is fork-owned documentation metadata; no extension or runtim
 
 ### Expected merge conflict zones
 
-- LOW: the `### What changed` bullet list in this entry as future entries are prepended above it.
+- The provider option-normalization and `extraBody` handling in `packages/ai/src/api/simple-options.ts` and `packages/ai/src/api/openai-prompt-cache.ts`, against upstream changes to the request builders.
+- The forced-`tool_choice` fallback and `reasoning_details` replay logic in `packages/ai/src/api/openai-completions.ts`, against upstream Completions changes.
+- The Responses shared helpers (tool placement, prefix prewarm, completion-phase watchdog) in `packages/ai/src/api/openai-responses-shared.ts`, against upstream Responses changes.
+- The Google conversion/thinking-level logic in `packages/ai/src/api/google-shared.ts`, `packages/ai/src/api/google-generative-ai.ts`, and `packages/ai/src/api/google-vertex.ts`, against upstream Google adapter changes.
+- The cross-provider message coercion in `packages/ai/src/api/transform-messages.ts`, against upstream message-shape changes.
 
 ## 2026-10-08 - Sol Ultrafast uses published sixfold pricing (senpi#2975)
 

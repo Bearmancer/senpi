@@ -6,11 +6,11 @@
 - `packages/ai/src/auth/helpers.ts`: shared auth helpers carried through the v0.99.1 sync and Copilot token re-exchange (senpi#2297).
 - `packages/ai/src/auth/types.ts`: auth resolution types — ambient shared-cloud credential chains (senpi#2327), immutable account ids (senpi#1495), and the `ApiKeyAuth.ambientOnly` compatibility marker.
 
-These files were covered by `packages/ai/src/changes.md` until senpi#2895 added this nearer tracker without listing them, hiding them from the audit's exact-nearest-tracker rule.
+These files were covered by the parent tracker until senpi#2895 added this nearer tracker without listing them, hiding them from the audit's exact-nearest-tracker rule.
 
 ### Why
 
-The repository audit (`scripts/audit-changes-md.mjs`) requires every upstream-modified production path to be named by an entry in its exact nearest changes.md tracker. senpi#2895 introduced this tracker and named only `oauth-refresh.ts` and `resolve.ts`, so the 3 pre-existing upstream-modified files beneath it lost the coverage the parent tracker had provided and were reported uncovered.
+The repository audit requires every upstream-modified production path to be named by an entry in its exact nearest changes.md tracker. senpi#2895 introduced this tracker and named only the two files it touched, so the 3 pre-existing upstream-modified files beneath it lost the coverage the parent tracker had provided and were reported uncovered.
 
 ### Why an extension could not handle it
 
@@ -18,7 +18,9 @@ changes.md coverage is fork-owned documentation metadata; no extension or runtim
 
 ### Expected merge conflict zones
 
-- LOW: the `### What changed` bullet list in this entry as future entries are prepended above it.
+- The `ApiKeyAuth` / auth-resolution type fields (ambient markers, account-id metadata) in `packages/ai/src/auth/types.ts`, against upstream auth-contract changes.
+- The stored-credential/env precedence in `packages/ai/src/auth/helpers.ts`, against upstream auth-resolution changes.
+- The pooled-entry storage shape in `packages/ai/src/auth/credential-store.ts`, against upstream credential-model changes.
 
 ## 2026-10-07 - Preserve transient OAuth exchange failures (senpi#2893)
 
