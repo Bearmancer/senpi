@@ -62,6 +62,13 @@ describe("process-group signal detection (senpi#2995)", () => {
 		["pkill -g0 sleep"],
 		["sudo killall node"],
 		["kill -- -$$"],
+		["  kill -TERM -- -5"],
+		["if true; then kill -- -5; fi"],
+		["for p in 1; do kill -- -$p; done"],
+		["{ kill -- -5; }"],
+		["nohup kill -- -5"],
+		["xargs kill -- -5"],
+		["sudo -n kill -9 -5"],
 		["sh -c 'killall -TERM node'"],
 	])("Given %s when scanned then it is a group signal", (command) => {
 		// when / then

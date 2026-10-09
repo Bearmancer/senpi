@@ -3,9 +3,10 @@
 // keeps the terminal), so a group-wide signal from the same cell stops the agent. Such a command gets a notice; the
 // notice only warns and never fails the cell.
 
-// A command starts a line, follows `;`, `|`, `&`, `(` or a backtick, follows `sudo`, or opens a `-c '...'` script; a
+// A command starts a (possibly indented) line, follows `;`, `|`, `&`, `(`, a backtick, `{`, `!`, a shell keyword
+// (`then`, `do`, `else`) or a runner (`nohup`, `time`, `xargs`, `env`, `exec`, `sudo` with flags), or opens a `-c '...'` script; a
 // `kill` word anywhere else (`git log --grep kill`, `echo kill ...`) is text.
-const COMMAND_POSITION = String.raw`(?:^|[;|&(\x60]\s*|\bsudo\s+|\s-[A-Za-z]*c\s+['"]\s*)`;
+const COMMAND_POSITION = String.raw`(?:^\s*|[;|&(\x60]\s*|\b(?:then|do|else|nohup|time|xargs|env|exec)\s+|[{!]\s+|\bsudo(?:\s+-\S+)*\s+|\s-[A-Za-z]*c\s+['"]\s*)`;
 
 // A group target is a dash argument after the signal options: a number, `$var`, `${var}` or `$(...)`.
 const GROUP_TARGET = String.raw`-(?:\d+|\$\$|\$\{?\w+\}?|\$\()`;
