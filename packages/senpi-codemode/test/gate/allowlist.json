@@ -1,6 +1,26 @@
 {
 	"version": 1,
 	"nodes": {
+		"senpi#3028": {
+			"additions": [
+				"legacyContracts/test/kernel-memory-globals.test.ts/lazy memory globals jl does no globals work or payload serialization below threshold",
+				"legacyContracts/test/kernel-memory-globals.test.ts/lazy memory globals jl preserves above threshold notice and globals payload",
+				"legacyContracts/test/kernel-memory-globals.test.ts/lazy memory globals jl collects globals above threshold when hysteresis suppresses notice",
+				"legacyContracts/test/kernel-memory-globals.test.ts/lazy memory globals rb does no globals work or payload serialization below threshold",
+				"legacyContracts/test/kernel-memory-globals.test.ts/lazy memory globals rb preserves above threshold notice and globals payload",
+				"legacyContracts/test/kernel-memory-globals.test.ts/lazy memory globals rb collects globals above threshold when hysteresis suppresses notice",
+				"legacyContracts/test/subprocess-memory-globals.test.ts/owned memory globals request retains ownership until a matching reply and reads the footprint once",
+				"legacyContracts/test/subprocess-memory-globals.test.ts/owned memory globals request ignores replies from a different process cell or pending run",
+				"legacyContracts/test/subprocess-memory-globals.test.ts/owned memory globals request bounds a missing reply without skipping the footprint notice",
+				"legacyContracts/test/subprocess-memory-globals.test.ts/owned memory globals request retires the pending deadline on reset without formatting a stale notice",
+				"legacyContracts/test/subprocess-memory-globals.test.ts/owned memory globals request requests globals at an enabled ceiling even when the notice threshold is disabled",
+				"legacyContracts/test/kernels/rb/subprocess-memory-ceiling.test.ts/SubprocessKernel (rb) memory ceiling Given a finished cell waiting for globals when it is stopped then its result settles and kernel state survives",
+				"legacyContracts/test/kernels/rb/subprocess-memory-ceiling.test.ts/SubprocessKernel (jl) memory ceiling Given a finished cell waiting for globals when it is stopped then its result settles and kernel state survives",
+				"imports/extension/packages/senpi-codemode/src/kernels/shared/subprocess-memory-globals.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/kernels/shared/subprocess-memory-globals.ts"
+			],
+			"reason": "senpi#3028 separates every-cell footprint accounting from bounded, cell-owned globals diagnostics; below-threshold work counts and main notice snapshots prove parity."
+		},
 		"1": {
 			"additions": [],
 			"reason": "The initial harness preserves the merge-base surfaces without additive production changes."

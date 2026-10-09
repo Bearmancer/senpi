@@ -14,6 +14,8 @@
 
 ### Fixed
 
+- Ruby and Julia cells below the host-read memory notice threshold and ceiling no longer walk all globals or serialize an unused memory payload. Above either threshold, successful and raised cells both collect the same bounded globals diagnostic, including when hysteresis suppresses the notice text. Stopping while a finished cell waits for that optional diagnostic now settles its completed result without globals and keeps kernel state. Current-footprint accounting and ceiling enforcement still run on every cell ([#3028](https://github.com/code-yeongyu/senpi/issues/3028)).
+
 - When a Python, Ruby, Julia or process-isolated JavaScript kernel dies while a frame is being sent to it, the failed write (EPIPE) is reported as that kernel's error instead of surfacing as an unhandled error. Before, that unhandled error could end the host, or make a test run where every test passed exit 1 ([#3016](https://github.com/code-yeongyu/senpi/issues/3016)).
 
 - On macOS and Linux, when a JavaScript eval cell ends or is interrupted, a process its child started and left behind (re-parented to init after the child exited, as with `(sleep 30 &)`) is now stopped too: every process group the kernel gave a cell child is signalled at retirement. The agent's own group is never signalled, nor a group whose leader exited and whose pid was since reused, and children the cell started with `detached: true` are left running ([#3020](https://github.com/code-yeongyu/senpi/issues/3020)).
