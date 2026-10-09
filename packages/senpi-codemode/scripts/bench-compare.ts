@@ -80,7 +80,12 @@ export interface SeriesResult {
 	readonly medianPairedRatio: number;
 	readonly verdict: RowVerdict;
 	/** Set when the row is judged by an absolute head budget instead of the base ratio. */
-	readonly headBudget?: { readonly maxMedianWallMs: number; readonly reason: string; readonly violations: readonly string[] };
+	readonly headBudget?: {
+		readonly maxMedianWallMs: number;
+		readonly maxMedianCpuMs: number;
+		readonly reason: string;
+		readonly violations: readonly string[];
+	};
 }
 
 export interface Decision {
@@ -163,11 +168,16 @@ function headReps(series: Series): Rep[] {
 }
 
 function judgeHeadBudget(judged: SeriesResult, series: Series, budget: HeadBudget): SeriesResult {
-	const violations = headBudgetViolations(budget, headReps(series));
+	const violations = headBudgetViolations(budget, headReps(series), judged.metric);
 	return {
 		...judged,
 		verdict: violations.length === 0 ? "PASS" : "FAIL",
-		headBudget: { maxMedianWallMs: budget.maxMedianWallMs, reason: budget.reason, violations },
+		headBudget: {
+			maxMedianWallMs: budget.maxMedianWallMs,
+			maxMedianCpuMs: budget.maxMedianCpuMs,
+			reason: budget.reason,
+			violations,
+		},
 	};
 }
 

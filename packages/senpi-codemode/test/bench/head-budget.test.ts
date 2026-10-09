@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { type BenchInput, decide, type PairedBlock, type Rep, type Series } from "../../scripts/bench-compare.ts";
 import { HEAD_BUDGETS } from "../../scripts/bench-head-budget.ts";
+import { injectSlow, parseInjection } from "../../scripts/bench-inject.ts";
 
 const RECOVERED = { queuedOk: 100, queuedFailed: 0, idsExecuted: 100, maxExecutionsPerId: 1, replacements: 1 };
 const NO_RECOVERY = { queuedOk: 0, queuedFailed: 100, idsExecuted: 0, maxExecutionsPerId: 0, replacements: 0 };
@@ -10,10 +11,18 @@ function rep(wallMs: number, observations: Rep["observations"]): Rep {
 }
 
 /** Base fails every queued cell in ~20 ms; the head recovers and runs them all. */
-function crashBlocks(headWallMs: number, headObservations: Rep["observations"] = RECOVERED): readonly PairedBlock[] {
+function crashBlocks(
+	headWallMs: number,
+	headObservations: Rep["observations"] = RECOVERED,
+	headCpuMs: number = headWallMs * 0.4,
+): readonly PairedBlock[] {
 	return Array.from({ length: 3 }, () => ({
 		first: [20, 21, 19].map((wall) => rep(wall, NO_RECOVERY)),
-		second: [headWallMs, headWallMs * 1.01, headWallMs * 0.99].map((wall) => rep(wall, headObservations)),
+		second: [1, 1.01, 0.99].map((scale) => ({
+			cpuMs: headCpuMs * scale,
+			wallMs: headWallMs * scale,
+			observations: headObservations,
+		})),
 	}));
 }
 
@@ -85,6 +94,32 @@ describe("crash-queue-100 absolute head budget (rb, jl)", () => {
 		// Then the slowdown fails even though every cell ran.
 		expect(result.exitCode).toBe(1);
 		expect(result.lines.join("\n")).toContain(`> ceiling ${ceiling} ms`);
+	});
+
+	it("fails a head whose median cpu exceeds the ceiling while wall stays under it", () => {
+		// Given a recovery that burns cpu but still finishes inside the wall ceiling on jl.
+		const budget = HEAD_BUDGETS.find((entry) => entry.runtimeId === "jl");
+		// When the head's median cpu is above the cpu ceiling.
+		const result = decide(inputFor("jl", crashBlocks(1300, RECOVERED, (budget?.maxMedianCpuMs ?? 0) * 1.2)));
+		// Then the cpu row fails and the wall row passes.
+		expect(result.exitCode).toBe(1);
+		expect(result.results.find((row) => row.metric === "cpu")?.verdict).toBe("FAIL");
+		expect(result.results.find((row) => row.metric === "wall")?.verdict).toBe("PASS");
+		expect(result.lines.join("\n")).toContain(`> ceiling ${budget?.maxMedianCpuMs} ms`);
+	});
+
+	it("tests the wall ceiling through --inject-slow, keeping the recorded observations", () => {
+		// Given a recovering head under the ceiling and a 2.5x head-only injection on crash-queue-100.
+		const input = inputFor("rb", crashBlocks(410));
+		const [series] = input.series;
+		if (series === undefined) throw new Error("no crash-queue-100 series");
+		// When the CLI's injection path scales the head.
+		const result = decide({ ...input, series: [injectSlow(series, [parseInjection("head:crash-queue-100:2.5")])] });
+		// Then the wall ceiling fails, not a missing observation.
+		expect(result.exitCode).toBe(1);
+		const text = result.lines.join("\n");
+		expect(text).toContain("> ceiling 820 ms");
+		expect(text).not.toContain("undefined");
 	});
 
 	it("keeps the base-ratio gate for runtimes without a budget", () => {
