@@ -1435,6 +1435,19 @@
 				}
 			],
 			"reason": "senpi#2933 (Q): render.ts is split by responsibility into render-*.ts modules (pure move, new import-census entries for the extension and first kernel), and the eval row gains a fixed-height live code window while streaming/queued/running plus a one-line collapsed row for done/error/cancelled; new contracts in eval-render-live-block.test.ts, and the live-row contracts whose layout changed are renamed (see changes). No prompt cell changes."
+		},
+		"senpi#2999": {
+			"additions": [
+				"legacyContracts/test/windows-tree-kill.test.ts/codemode Windows tree kill (senpi#2999) #given a kernel child on wininit's recycled parent pid #when its tree is planned #then the system tree stays out",
+				"legacyContracts/test/windows-tree-kill.test.ts/codemode Windows tree kill (senpi#2999) #given a protected image under the root #when planned #then only the root is killed",
+				"legacyContracts/test/windows-tree-kill.test.ts/codemode Windows tree kill (senpi#2999) #given the root is an ancestor of this process #when planned #then nothing is killed",
+				"legacyContracts/test/windows-tree-kill.test.ts/codemode Windows tree kill (senpi#2999) #given a listing or none #when kill args are built #then pids are named without /T, or /T on the root alone",
+				"legacyContracts/test/windows-tree-kill.test.ts/codemode Windows tree kill (senpi#2999) #given an older process that names the root's recycled pid #when planned #then it is not adopted",
+				"legacyContracts/test/windows-tree-kill.test.ts/codemode Windows tree kill (senpi#2999) #given the root is no longer listed #when planned #then nothing is killed",
+				"imports/extension/packages/senpi-codemode/src/kernels/js/windows-tree-kill.js",
+				"imports/firstKernel/packages/senpi-codemode/src/kernels/js/windows-tree-kill.js"
+			],
+			"reason": "senpi#2999: new contracts for codemode's Windows tree kill: a tree computed from creation-time-checked parentage instead of taskkill /T, the protected-image and ancestor guards, the /T fallback without a listing, a root no longer listed, and an older process naming the root's recycled pid. The kernels' process-tree modules now import the new windows-tree-kill.js module, which adds it to the extension and first-kernel import graphs."
 		}
 	}
 }

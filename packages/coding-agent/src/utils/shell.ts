@@ -319,6 +319,7 @@ function trackedDetachedChildIsGone(entry: TrackedDetachedChildState): boolean {
 
 export function killTrackedDetachedChildren(): void {
 	pruneTrackedDetachedChildren();
+	if (trackedDetachedChildren.size === 0) return;
 	// One listing for the whole batch: each tree kill would otherwise list every process again.
 	const rows = process.platform === "win32" ? listWindowsProcesses() : undefined;
 	for (const entry of trackedDetachedChildren.values()) {

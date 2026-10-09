@@ -95,6 +95,6 @@ export async function killWindowsTree(pid, listing = listWindowsRows()) {
 	const args = windowsTreeKillArgs(pid, await listing);
 	if (args.length === 0) return;
 	await new Promise((resolve) => {
-		execFile("taskkill", args, { windowsHide: true }, () => resolve());
+		execFile("taskkill", args, { timeout: LISTING_TIMEOUT_MS, windowsHide: true }, () => resolve());
 	});
 }

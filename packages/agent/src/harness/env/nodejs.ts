@@ -1045,7 +1045,7 @@ export class NodeExecutionEnv implements ExecutionEnv {
 	}
 
 	async cleanup(_context: Context): Promise<void> {
-		if (process.platform === "win32") {
+		if (process.platform === "win32" && this.activeChildPids.size > 0) {
 			// One listing for the whole batch: each tree kill would otherwise list every process again.
 			const rows = listWindowsProcesses();
 			for (const pid of this.activeChildPids) killWindowsProcessTree(pid, undefined, () => rows);
