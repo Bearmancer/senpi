@@ -2,6 +2,7 @@ import { execFileSync } from "node:child_process";
 import { chmodSync, utimesSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { parseArgs } from "../../../src/cli/args.ts";
 import { ENV_AGENT_DIR } from "../../../src/config.ts";
 import { withMovedSessions } from "../../../src/core/moved-sessions.ts";
 import { readRepositoryIdentity } from "../../../src/core/repository-identity.ts";
@@ -65,7 +66,13 @@ function session(cwd: string, name: string, mtime: Date): string {
 async function continueFrom(cwd: string): Promise<string | undefined> {
 	identityReads.mockClear();
 	dirListings.mockClear();
-	const manager = await createSessionManager({ continue: true }, cwd, undefined, SettingsManager.inMemory(), "print");
+	const manager = await createSessionManager(
+		parseArgs(["--continue"]),
+		cwd,
+		undefined,
+		SettingsManager.inMemory(),
+		"print",
+	);
 	return manager.getSessionFile();
 }
 
