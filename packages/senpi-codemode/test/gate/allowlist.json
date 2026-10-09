@@ -1515,6 +1515,16 @@
 				"legacyContracts/test/subprocess-stdin-epipe.test.ts/subprocess kernel stdin write failures (senpi#3016) Given a kernel child that closed its stdin when a frame is sent then the EPIPE is reported once through onError and the host survives"
 			],
 			"reason": "senpi#3016: a kernel child's stdin write failure (EPIPE) is reported once through onError, for the shared subprocess kernels and the Python transport, instead of an unhandled stream error ending the host. A send after exit is refused."
+		},
+		"senpi#3020": {
+			"additions": [
+				"legacyContracts/test/js-kernel-cell-orphan-group-bun.test.ts/JavaScript kernel retires a cell's orphaned grandchildren through their process group (senpi#3020) Given a Bun.spawn child whose grandchild was re-parented to init when the cell settles then the grandchild is gone and the agent is alive",
+				"legacyContracts/test/js-kernel-cell-orphan-group-bun.test.ts/JavaScript kernel retires a cell's orphaned grandchildren through their process group (senpi#3020) Given a node:child_process child whose grandchild was re-parented to init when the cell settles then the grandchild is gone and the agent is alive",
+				"legacyContracts/test/process-group-retire.test.ts/cell process-group retirement (senpi#3020) Given a cell child's live group when groups are retired then it gets SIGTERM and then SIGKILL",
+				"legacyContracts/test/process-group-retire.test.ts/cell process-group retirement (senpi#3020) Given a recorded leader that exited and a live process now holding its pid when groups are retired then that group is left alone",
+				"legacyContracts/test/process-group-retire.test.ts/cell process-group retirement (senpi#3020) Given the agent's own process group in the list when groups are retired then it is never signalled"
+			],
+			"reason": "senpi#3020: at cell retirement every process group the kernel gave a cell child is signalled, so a grandchild re-parented to init is stopped. The agent's own group, and a group whose exited leader's pid is held by a live process again, are never signalled."
 		}
 	}
 }
