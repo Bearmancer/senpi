@@ -2,6 +2,7 @@ import { execFile } from "node:child_process";
 import { appendFileSync } from "node:fs";
 import type { NativeWebViewClass } from "./native-webview.ts";
 import {
+	BROWSER_IMAGE,
 	bunChromeKillPlan,
 	type ChromeKillPlan,
 	parseWindowsProcessRows,
@@ -91,14 +92,13 @@ async function waitForExit(pids: readonly number[]): Promise<void> {
 }
 
 // A zombie keeps no command line, so a dead browser child is recognized by its name alone.
-const BROWSER_NAME = /chrom|msedge|brave/iu;
 
 async function deadBrowserChildren(): Promise<number[]> {
 	if (process.platform === "win32") return [];
 	const pids: string[] = [];
 	for (const line of (await run("ps", ["-axo", "pid=,ppid=,stat=,comm="])).split("\n")) {
 		const [pidText = "", ppidText, stat = "", ...command] = line.trim().split(/\s+/u);
-		if (Number(ppidText) === process.pid && stat.startsWith("Z") && BROWSER_NAME.test(command.join(" ")))
+		if (Number(ppidText) === process.pid && stat.startsWith("Z") && BROWSER_IMAGE.test(command.join(" ")))
 			pids.push(pidText);
 	}
 	return positivePids(pids);

@@ -43,14 +43,14 @@ export function parseWindowsProcessRows(stdout: string): WindowsProcessRow[] {
 	return rows;
 }
 
-/**
- * Bun's Chrome browsers (direct children of `ownerPid` carrying the flag, started after it) and every
- * process that genuinely descends from them. The walk only ever goes down from those roots.
- */
-// A concurrent retirement's own CIM listing is also Bun's child and its command line names the flag; only a
-// browser image is a root (measured: a PowerShell and its console host adopted on 26 of 30 runner retirements).
-const BROWSER_IMAGE = /chrom|msedge|brave/iu;
+// A browser process by image name. Bun's other children can carry the Chrome flag on their command line (a
+// PowerShell listing processes, measured on 26 of 30 runner retirements), so only a browser image roots the tree.
+export const BROWSER_IMAGE = /chrom|msedge|brave/iu;
 
+/**
+ * Bun's Chrome browsers (direct children of `ownerPid` with a browser image and the flag, started after it) and
+ * every process that genuinely descends from them. The walk only ever goes down from those roots.
+ */
 export function bunChromeTree(rows: readonly WindowsProcessRow[], ownerPid: number): number[] {
 	const byPid = new Map(rows.map((row) => [row.pid, row]));
 	const startedAfter = (child: WindowsProcessRow, parentPid: number): boolean => {
@@ -104,8 +104,9 @@ export interface ChromeKillPlan {
 }
 
 /**
- * The tree to end, minus anything that must never be killed even if a future walk adopted it: a protected
- * OS image, or an ancestor of this very process (killing one would end the caller). Skips are reported.
+ * The tree to end. If the walk adopted anything that must never be killed - a protected OS image, or an ancestor
+ * of this very process (killing one would end the caller) - the walk is not trusted: nothing is killed and every
+ * such process is reported.
  */
 export function bunChromeKillPlan(rows: readonly WindowsProcessRow[], ownerPid: number): ChromeKillPlan {
 	const byPid = new Map(rows.map((row) => [row.pid, row]));
