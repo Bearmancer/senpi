@@ -12,7 +12,7 @@
  */
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { processStartTimeMs, readProcessIdentity } from "../app-server/daemon/process.ts";
+import { processStartTimeMs, readProcessIdentity, sameProcessStartMs } from "../app-server/daemon/process.ts";
 import {
 	createGenerationDirectory,
 	generationPaths,
@@ -55,24 +55,27 @@ export function sameHostOwner(
 	a: HostLifetimeOwner | null | undefined,
 	b: HostLifetimeOwner | null | undefined,
 ): boolean {
-	return a != null && b != null && a.pid === b.pid && a.startTime === b.startTime;
+	if (a == null || b == null || a.pid !== b.pid) return false;
+	// A pipe binds one incarnation: liveness tolerance must not merge two replacement owners.
+	const started = processStartTimeMs(a.startTime);
+	return started !== undefined && started === processStartTimeMs(b.startTime);
 }
 
 export async function callerHostOwner(): Promise<HostLifetimeOwner> {
-	const observed = await readProcessIdentity(process.pid);
+	const observed = await readProcessIdentity(process.pid, process.platform, undefined, undefined, "UTC");
 	if (observed.kind !== "present" || processStartTimeMs(observed.identity) === undefined)
 		throw new Error("cannot establish RPC host owner OS start identity");
 	return { pid: process.pid, startTime: observed.identity };
 }
 
 export async function hostOwnerGone(owner: HostLifetimeOwner): Promise<boolean> {
-	const observed = await readProcessIdentity(owner.pid, process.platform, 1_000);
+	const observed = await readProcessIdentity(owner.pid, process.platform, 1_000, undefined, "UTC");
 	return (
 		observed.kind === "absent" ||
 		(observed.kind === "present" &&
 			processStartTimeMs(observed.identity) !== undefined &&
 			processStartTimeMs(owner.startTime) !== undefined &&
-			observed.identity !== owner.startTime)
+			!sameProcessStartMs(processStartTimeMs(observed.identity), processStartTimeMs(owner.startTime)))
 	);
 }
 

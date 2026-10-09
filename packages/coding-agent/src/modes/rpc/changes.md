@@ -1,3 +1,27 @@
+## 2026-10-09 - Owner lifetime review corrections (senpi#3045)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-lifecycle-activity.ts`: only a bound owner opens a filesystem watcher; synchronous watch failure and later watcher errors degrade to record polling. Polling discovers an owner claimed on an initially unowned host. Pipe-less OS probes back off from 1 s to a 5 s cap, resetting on owner replacement.
+- `packages/coding-agent/src/modes/rpc/host-daemon-state.ts`: capture and probe request UTC/C-locale identities and compare parsed milliseconds with the shared process-start tolerance rather than timestamp text. Pipe-binding equality remains exact, so that tolerance cannot merge replacement owners.
+- `packages/coding-agent/src/modes/rpc/host-lifecycle.ts` and `packages/coding-agent/src/modes/rpc/host-lifecycle-proxy.ts`: admission, attached-peer activity, observed runs and observer loss reset owner grace immediately, including activity entirely between lifecycle ticks. The ticker's in-flight flag is initialized before registration.
+- `packages/coding-agent/src/modes/rpc/AGENTS.md` and `packages/coding-agent/docs/rpc.md`: correct I3's owner-record cross-writer exception and document watch degradation, continuous grace and bounded polling cadence.
+- Real-supervisor controlled-clock tests reject zero grace and handoff-drain mutants, assert `owner_gone` plus complete generation/registration cleanup, reproduce ENOSPC startup and between-tick activity, and bound OS probe counts. Cross-timezone tests use the real process reader.
+
+### Why
+
+The initial owner implementation could abort an unowned host on watch exhaustion, classify a live owner as dead after a timezone change, miss brief activity, and spawn a process query every second indefinitely.
+
+### Why an extension could not handle it
+
+The detached supervisor owns the lifetime pipe, registration observation, peer accounting and shutdown decision.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/host-lifecycle-activity.ts`: owner watcher, activity callbacks and probe scheduler.
+- `packages/coding-agent/src/modes/rpc/host-daemon-state.ts`: owner identity capture and comparison.
+- `packages/coding-agent/src/modes/rpc/host-lifecycle.ts` and `packages/coding-agent/src/modes/rpc/host-lifecycle-proxy.ts`: activity callback wiring and ticker setup.
+
 ## 2026-10-08 - Live foreign holders refuse host admission (senpi#2951)
 
 ### What changed

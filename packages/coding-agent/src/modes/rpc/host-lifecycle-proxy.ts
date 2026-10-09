@@ -25,6 +25,8 @@ export interface PublicProxyOptions {
 	readonly refusing: () => boolean;
 	/** A client went away: occupancy changed. */
 	readonly onDetach: () => void;
+	/** A new, still-unclassified peer must reset owner grace before its first request arrives. */
+	readonly onAdmit?: () => void;
 }
 
 export function createPublicProxy(options: PublicProxyOptions): Server {
@@ -46,6 +48,7 @@ export function createPublicProxy(options: PublicProxyOptions): Server {
 			// moment its first request line arrives, before a later tick can reuse the preceding
 			// idle window. An observing read (`status`) is never recorded (host-client-occupancy.ts).
 			clients.admit(client);
+			options.onAdmit?.();
 			const detach = (): void => {
 				clients.release(client);
 				options.onDetach();

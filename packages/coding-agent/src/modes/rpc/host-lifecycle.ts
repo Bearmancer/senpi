@@ -100,14 +100,15 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 		publicSocketIdentity: undefined,
 		endpointReplaced: false,
 	};
+	const owner = new SupervisorOwner(generation.dir);
 	const activity = new SupervisorActivity({
 		idleExitMs: policy.coldStart === "persistent" ? Number.POSITIVE_INFINITY : policy.idleExitMs,
 		internalSocket,
 		...(internalSecret ? { internalSecret } : {}),
 		settled: () => state.shuttingDown,
+		onActivity: () => owner.activity(),
 	});
 	const watchers: Array<() => void> = [];
-	const owner = new SupervisorOwner(generation.dir);
 
 	const child = spawnHostChild({
 		launch,
@@ -160,11 +161,13 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 		clients: activity.clients,
 		refusing: () => state.shuttingDown || drain.active,
 		onDetach: () => activity.refresh(),
+		onAdmit: () => owner.activity(),
 	});
 	server.once("error", (cause) => {
 		if (!state.shuttingDown) void shutdown(`public socket listener failed: ${errorMessage(cause)}`, 1);
 	});
 	const tickIntervalMs = Math.max(20, Math.min(1_000, policy.idleExitMs / 4));
+	let ownerCheck = false;
 	const ticker = setInterval(() => {
 		if (!drain.active && activity.refresh() === "exit" && activity.clients.unclassifiedCount === 0)
 			void shutdown("idle", 0);
@@ -180,7 +183,6 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 				});
 		}
 	}, tickIntervalMs);
-	let ownerCheck = false;
 	watchers.push(() => clearInterval(ticker));
 	watchers.push(() => owner.stop());
 

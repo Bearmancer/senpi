@@ -215,8 +215,10 @@ its write end without keeping its own event loop alive; supervisor EOF proves ow
 including SIGKILL and PID reuse. Releasing `EnsuredHost.release()` releases only the attach
 hold, not ownership. The supervisor waits for two seconds of continuous quiescence after
 confirmed death: no attached or unclassified public peers, no active runs, and a healthy
-activity observer. The existing one-second maximum lifecycle tick adds at most two ticks
-to detection/window accounting, then normal child shutdown applies (five-second graceful
+activity observer. Every admission, attached-peer activity, run start, and observer loss
+resets the grace even if it occurs entirely between ticks. After death is observed, the
+existing one-second maximum lifecycle tick adds at most two ticks to window accounting,
+then normal child shutdown applies (five-second graceful
 stop before the existing escalation policy). A stalled child retains that policy's longer
 bounded wait. No peer is drained and no active turn is interrupted by owner death.
 
@@ -224,13 +226,22 @@ Reusing a running supervisor cannot inherit another fd. A generation successor l
 by a process other than the owner also cannot inherit the owner's fd. These paths, and
 launches where opening the inherited pipe fails, compare the recorded PID and OS process
 start identity through the existing process reader (`ps lstart` on POSIX, CIM creation
-FILETIME on Windows). The supervisor checks at its lifecycle cadence with a one-second
-probe budget; failed or unreadable observations never authorize owner-death shutdown.
+FILETIME on Windows). Both capture and probe pin `TZ=UTC` and `LC_ALL=C`; POSIX identities
+carry an explicit UTC suffix. Parsed milliseconds are compared with the existing process-start
+tolerance, never by raw timestamp spelling. Pipe-less probes back off from one second to a
+five-second maximum interval, with a one-second query budget. This adds at most that polling
+interval before owner death can be observed; failed or unreadable observations never authorize shutdown.
 Windows handoff remains unsupported, as before. A successor launched by the owner inherits
 a fresh pipe. Ownership survives handoff independently of the attach hold.
 
+Pipe-binding equality uses the exact parsed start instant; the liveness tolerance cannot
+merge two different process incarnations into one pipe owner.
+
 Each new generation records `owner.json` as `{ owner: { pid, startTime } }`, or
-`{ owner: null }` when unowned. An ensure may update only this ownership record under the
+`{ owner: null }` when unowned. Unowned generations open no owner filesystem watcher.
+A failed or exhausted watcher degrades to record polling without aborting startup; polling
+also discovers a first owner claimed on a previously unowned generation.
+An ensure may update only this ownership record under the
 endpoint lock while holding an attachment. The same owner can ensure again; a new caller
 may replace only a confirmed-dead owner (or claim an unowned host). A different live or
 unknown owner is refused. An old host without an ownership record refuses an ownership

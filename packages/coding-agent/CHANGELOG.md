@@ -6,7 +6,7 @@
 
 ### Added
 
-- RPC hosts can opt into their ensure caller's lifetime with `owner: "caller"`. After that process exits or is killed, the supervisor stops an idle host after a short grace instead of leaving the shard resident for the normal idle timeout. Surviving peers and active turns keep running; ownership is preserved across reuse and generation handoff ([#3044](https://github.com/code-yeongyu/senpi/issues/3044)).
+- RPC hosts can opt into their ensure caller's lifetime with `owner: "caller"`. After that process exits or is killed, the supervisor stops an idle host after a short grace instead of leaving the shard resident for the normal idle timeout. Surviving peers and active turns keep running; ownership is preserved across reuse and generation handoff. Unowned hosts require no owner filesystem watcher, watch exhaustion falls back to polling, owner identities are timezone-independent, and brief activity resets the grace window ([#3044](https://github.com/code-yeongyu/senpi/issues/3044)).
 
 ### Changed
 

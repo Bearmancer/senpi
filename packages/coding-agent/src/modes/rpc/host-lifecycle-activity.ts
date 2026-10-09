@@ -19,6 +19,8 @@ export interface SupervisorActivityOptions {
 	readonly internalSecret?: Buffer;
 	/** The supervisor is leaving: the observer stops reconnecting. */
 	readonly settled: () => boolean;
+	/** Resets owner grace even for activity that starts and ends between lifecycle ticks. */
+	readonly onActivity?: () => void;
 }
 
 export class SupervisorActivity {
@@ -63,7 +65,10 @@ export class SupervisorActivity {
 	}
 
 	refresh(): IdleExitDecision {
-		return this.decider.update(this.current());
+		const current = this.current();
+		if (current.connections > 0 || current.activeTurns > 0 || this.clients.unclassifiedCount > 0)
+			this.options.onActivity?.();
+		return this.decider.update(current);
 	}
 
 	/** Owner death never turns an unknown observer snapshot into permission to stop a turn. */
@@ -96,8 +101,12 @@ export class SupervisorActivity {
 		attachJsonlLineReader(next, (line) => this.observeHostEvent(line), { maxLineLength: MAX_RPC_LINE_CHARACTERS });
 		return {
 			onLost: (handler: () => void) => {
-				next.once("close", handler);
-				next.once("error", handler);
+				const lost = () => {
+					handler();
+					this.options.onActivity?.();
+				};
+				next.once("close", lost);
+				next.once("error", lost);
 			},
 		};
 	}
@@ -109,6 +118,7 @@ export class SupervisorActivity {
 
 /** Continuous quiet time, in addition to attach holds and confirmed owner death (#3044). */
 export const OWNER_EXIT_GRACE_MS = 2_000;
+const OWNER_PROBE_MAX_INTERVAL_MS = 5_000;
 
 /**
  * Fresh starts inherit an event-loop pipe on POSIX and Windows. An existing supervisor cannot
@@ -119,6 +129,9 @@ export class SupervisorOwner {
 	private owner: HostLifetimeOwner | null | undefined;
 	private pipe: Socket | undefined;
 	private watcher: FSWatcher | undefined;
+	private watchFailed = false;
+	private nextProbeAt = 0;
+	private probeIntervalMs = 1_000;
 	private gone = false;
 	private revision = 0;
 	private stopped = false;
@@ -130,15 +143,6 @@ export class SupervisorOwner {
 	}
 
 	async start(fd: number | undefined): Promise<void> {
-		this.watcher = watch(this.generationDir, (_event, filename) => {
-			if (filename?.toString() !== "owner.json") return;
-			void this.reload();
-		});
-		this.watcher.on("error", () => {
-			this.owner = undefined;
-			this.gone = false;
-			this.revision++;
-		});
 		await this.reload();
 		if (fd === undefined || this.owner == null) return;
 		try {
@@ -172,18 +176,46 @@ export class SupervisorOwner {
 			this.pipe?.destroy();
 			this.pipe = undefined;
 			this.gone = false;
-			this.idle.update({ connections: 1, activeTurns: 0 });
+			this.nextProbeAt = 0;
+			this.probeIntervalMs = 1_000;
+			this.activity();
 		}
 		this.owner = next;
+		if (next == null) {
+			this.watcher?.close();
+			this.watcher = undefined;
+		} else if (!this.watcher && !this.watchFailed) {
+			try {
+				this.watcher = watch(this.generationDir, (_event, filename) => {
+					if (filename?.toString() === "owner.json") void this.reload();
+				});
+				this.watcher.once("error", () => {
+					this.watchFailed = true;
+					this.watcher?.close();
+					this.watcher = undefined;
+				});
+			} catch {
+				// Exhausted or unavailable filesystem watches degrade to record polling, not startup failure.
+				this.watchFailed = true;
+			}
+		}
+	}
+
+	activity(): void {
+		this.idle.update({ connections: 1, activeTurns: 0 });
 	}
 
 	async shouldExit(activity: SupervisorActivity): Promise<boolean> {
+		// Also discovers a first owner claimed on an initially unowned generation, without an fs watcher.
+		if (!this.watcher) await this.reload();
 		const owner = this.owner;
 		const revision = this.revision;
-		if (owner != null && !this.pipe && !this.gone) {
+		if (owner != null && !this.pipe && !this.gone && performance.now() >= this.nextProbeAt) {
 			const gone = await hostOwnerGone(owner);
 			if (this.stopped || revision !== this.revision) return false;
 			this.gone = gone;
+			this.nextProbeAt = performance.now() + this.probeIntervalMs;
+			this.probeIntervalMs = Math.min(OWNER_PROBE_MAX_INTERVAL_MS, this.probeIntervalMs * 2);
 		}
 		const quiet = this.gone && owner != null && activity.quiescent();
 		if (this.idle.update({ connections: quiet ? 0 : 1, activeTurns: 0 }) !== "exit") return false;
