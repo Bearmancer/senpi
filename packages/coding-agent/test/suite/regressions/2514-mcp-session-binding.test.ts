@@ -949,6 +949,28 @@ describe("senpi#2597: a session's MCP status and the service's teardown follow t
 		await assertAlive(extraPid);
 	});
 
+	it("stops a session's own servers when a reload removes the MCP builtin while a peer is live", async () => {
+		// Given: the first session alone declares `extra`, both declare `fx`, and both servers are connected.
+		const peer = configureExtraForRootProject();
+		const service = getMcpService();
+		const alphaPi = capturingPi();
+		const bravoPi = capturingPi();
+		await attachInProject(alphaPi, root, "alpha");
+		await untilFakeRegistered(alphaPi, EXTRA_TOOL);
+		await attachInProject(bravoPi, peer, "bravo");
+		await untilFakeRegistered(bravoPi, TOOL);
+		const extraPid = requiredPid(service, "extra");
+
+		// When: the first session reloads into a runtime without the MCP builtin: its shutdown releases it with no dispose
+		// reason, then the builtin's removal releases it again with one.
+		await service.releaseSession(alphaPi);
+		await service.releaseSession(alphaPi, "reload");
+
+		// Then: the server no live session declares any more is stopped.
+		expect(service.getConnection("extra")).toBeUndefined();
+		await assertProcessDead(extraPid);
+	});
+
 	it("leaves no connection or server process when two sessions quit while a release re-sync is stopping a server", async () => {
 		// Given: the first session alone declares `extra`, both declare `fx`, and both servers are connected.
 		const peer = configureExtraForRootProject();

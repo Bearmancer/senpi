@@ -305,10 +305,11 @@ export class McpService {
 		}
 		const latest = live.at(-1);
 		if (latest !== undefined) {
-			if (released === undefined) return;
-			if (this.#sessionContext === released.context) this.#sessionContext = latest.context;
+			if (released !== undefined && this.#sessionContext === released.context) this.#sessionContext = latest.context;
 			// Only a session that is gone (quit, or the builtin removed) re-syncs. A reload, new, resume or fork attaches
 			// again next, and that attach drops what no live session declares without restarting the servers it keeps.
+			// A gone session re-syncs even when an earlier release with no reason already dropped its binding: a reload
+			// into a runtime without the builtin shuts the session down first, so its servers would otherwise outlive it.
 			if (disposeReason !== undefined) await this.#resyncToLiveSessions();
 			return;
 		}
