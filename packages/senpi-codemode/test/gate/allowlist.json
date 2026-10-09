@@ -21,6 +21,18 @@
 			],
 			"reason": "senpi#3028 separates every-cell footprint accounting from bounded, cell-owned globals diagnostics; below-threshold work counts and main notice snapshots prove parity."
 		},
+		"senpi#3033": {
+			"additions": [
+				"legacyContracts/test/session-manager-warm-cwd.test.ts/warm cells validate the session cwd without async stat round trips performs zero async stat round trips on each warm cell",
+				"legacyContracts/test/session-manager-warm-cwd.test.ts/warm cells validate the session cwd without async stat round trips refuses the very next cell when the cwd is deleted",
+				"legacyContracts/test/session-manager-warm-cwd.test.ts/warm cells validate the session cwd without async stat round trips refuses the very next cell when the cwd is replaced by a file",
+				"legacyContracts/test/session-manager-warm-cwd.test.ts/warm cells validate the session cwd without async stat round trips surfaces the original EACCES error on warm reuse",
+				"legacyContracts/test/session-manager-warm-cwd.test.ts/warm cells validate the session cwd without async stat round trips surfaces the original ELOOP error on warm reuse",
+				"legacyContracts/test/session-manager-warm-cwd.test.ts/warm cells validate the session cwd without async stat round trips surfaces the original EMFILE error on warm reuse",
+				"legacyContracts/test/session-manager-warm-cwd.test.ts/warm cells validate the session cwd without async stat round trips surfaces the original EIO error on warm reuse"
+			],
+			"reason": "senpi#3033, plan row 45 fix b: warm cells check the real cwd on every reuse without an async filesystem round trip; deletion and replacement refuse the next cell with the existing error, and unrelated I/O errors retain their identity."
+		},
 		"1": {
 			"additions": [],
 			"reason": "The initial harness preserves the merge-base surfaces without additive production changes."
