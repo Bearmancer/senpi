@@ -3,6 +3,10 @@
 // keeps the terminal), so a group-wide signal from the same cell stops the agent. Such a command gets a notice; the
 // notice only warns and never fails the cell.
 
+// A command starts a line, follows `;`, `|`, `&`, `(` or a backtick, follows `sudo`, or opens a `-c '...'` script; a
+// `kill` word anywhere else (`git log --grep kill`, `echo kill ...`) is text.
+const COMMAND_POSITION = String.raw`(?:^|[;|&(\x60]\s*|\bsudo\s+|\s-[A-Za-z]*c\s+['"]\s*)`;
+
 // A group target is a dash argument after the signal options: a number, `$var`, `${var}` or `$(...)`.
 const GROUP_TARGET = String.raw`-(?:\d+|\$\$|\$\{?\w+\}?|\$\()`;
 const SIGNAL_OPTION = String.raw`(?:-s\s+\w+|-n\s+\d+|-[A-Za-z]+\d*|-\d+)`;
@@ -10,16 +14,16 @@ const SIGNAL_OPTION = String.raw`(?:-s\s+\w+|-n\s+\d+|-[A-Za-z]+\d*|-\d+)`;
 // `kill -- -<pgid>`, `kill -SIG -<pgid>`, `kill -TERM 1234 -5678`, `kill -- -$$`.
 const PID = String.raw`[^\s\-;|&][^\s;|&]*`;
 const KILL_GROUP = new RegExp(
-	String.raw`\bkill\b(?:` +
+	String.raw`${COMMAND_POSITION}kill\b(?:` +
 		String.raw`\s+--\s+${GROUP_TARGET}` +
 		String.raw`|(?:\s+${SIGNAL_OPTION})+(?:\s+${PID})*\s+(?:--\s+)?${GROUP_TARGET}` +
 		String.raw`|(?:\s+${SIGNAL_OPTION})*(?:\s+${PID})+\s+${GROUP_TARGET})`,
-	"u",
+	"mu",
 );
-const PKILL_GROUP = /\bpkill\b[^\n;|&]*\s(?:-g\d*|--pgroup)\b/u;
+const PKILL_GROUP = new RegExp(String.raw`${COMMAND_POSITION}pkill\b[^\n;|&]*\s(?:-g\d*|--pgroup)\b`, "mu");
 // `killall` in command position (also after `sudo` or as a `-c` script) signals every process with that name, which
 // can include the agent's own (bun, node, senpi). Inside an `echo` string it is only text.
-const KILLALL = /(?:^|[;|&(`]\s*|\bsudo\s+|-c\s+['"]\s*)killall\s/mu;
+const KILLALL = new RegExp(String.raw`${COMMAND_POSITION}killall\s`, "mu");
 
 export const GROUP_SIGNAL_NOTICE_TAG = "[senpi:group-signal]";
 
@@ -90,7 +94,7 @@ export function noticeChildProcessGroupSignals(emitText, isActive) {
 		// Every own property, symbols included: `util.promisify.custom` is what makes promisify(exec) resolve to
 		// { stdout, stderr }. That custom function calls the original directly, so it is scanned too.
 		for (const key of Reflect.ownKeys(original)) {
-			if (key === "length" || key === "name" || key === "prototype") continue;
+			if (key === "length" || key === "name" || key === "prototype" || key === promisify.custom) continue;
 			const descriptor = Object.getOwnPropertyDescriptor(original, key);
 			if (descriptor) Object.defineProperty(scanned, key, descriptor);
 		}
