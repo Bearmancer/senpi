@@ -1,6 +1,6 @@
 import { spawn as nodeSpawn } from "node:child_process";
 import { createInterface, type Interface as ReadlineInterface } from "node:readline";
-import { killWindowsTree } from "../js/windows-tree-kill.js";
+import { killWindowsTree } from "../js/windows-tree-kill-host.ts";
 
 export interface SubprocessLike {
 	readonly pid?: number;

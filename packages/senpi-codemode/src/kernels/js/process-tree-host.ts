@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { killWindowsTree, listWindowsRows } from "./windows-tree-kill.js";
+import { killWindowsTree, listWindowsRows } from "./windows-tree-kill-host.ts";
 
 // Host-side twin of worker-runtime's `process-tree.js`. The worker file must stay plain
 // JavaScript (a Node worker thread spawned from a `.js` entry has no TypeScript loader), and

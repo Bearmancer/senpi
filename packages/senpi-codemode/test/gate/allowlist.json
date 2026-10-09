@@ -1438,16 +1438,23 @@
 		},
 		"senpi#2999": {
 			"additions": [
-				"legacyContracts/test/windows-tree-kill.test.ts/codemode Windows tree kill (senpi#2999) #given a kernel child on wininit's recycled parent pid #when its tree is planned #then the system tree stays out",
-				"legacyContracts/test/windows-tree-kill.test.ts/codemode Windows tree kill (senpi#2999) #given a protected image under the root #when planned #then only the root is killed",
-				"legacyContracts/test/windows-tree-kill.test.ts/codemode Windows tree kill (senpi#2999) #given the root is an ancestor of this process #when planned #then nothing is killed",
-				"legacyContracts/test/windows-tree-kill.test.ts/codemode Windows tree kill (senpi#2999) #given a listing or none #when kill args are built #then pids are named without /T, or /T on the root alone",
-				"legacyContracts/test/windows-tree-kill.test.ts/codemode Windows tree kill (senpi#2999) #given an older process that names the root's recycled pid #when planned #then it is not adopted",
-				"legacyContracts/test/windows-tree-kill.test.ts/codemode Windows tree kill (senpi#2999) #given the root is no longer listed #when planned #then nothing is killed",
-				"imports/extension/packages/senpi-codemode/src/kernels/js/windows-tree-kill.js",
-				"imports/firstKernel/packages/senpi-codemode/src/kernels/js/windows-tree-kill.js"
+				"imports/extension/packages/senpi-codemode/src/kernels/js/windows-tree-kill-host.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/kernels/js/windows-tree-kill-host.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/kernels/js/windows-tree-kill.js",
+				"legacyContracts/test/windows-tree-kill.test.ts/codemode Windows tree kill, host copy (senpi#2999) #given a kernel child on wininit's recycled parent pid #when its tree is planned #then the system tree stays out",
+				"legacyContracts/test/windows-tree-kill.test.ts/codemode Windows tree kill, host copy (senpi#2999) #given a listing or none #when kill args are built #then pids are named without /T, or /T on the root alone",
+				"legacyContracts/test/windows-tree-kill.test.ts/codemode Windows tree kill, host copy (senpi#2999) #given a protected image under the root #when planned #then only the root is killed",
+				"legacyContracts/test/windows-tree-kill.test.ts/codemode Windows tree kill, host copy (senpi#2999) #given an older process that names the root's recycled pid #when planned #then it is not adopted",
+				"legacyContracts/test/windows-tree-kill.test.ts/codemode Windows tree kill, host copy (senpi#2999) #given the root is an ancestor of this process #when planned #then nothing is killed",
+				"legacyContracts/test/windows-tree-kill.test.ts/codemode Windows tree kill, host copy (senpi#2999) #given the root is no longer listed #when planned #then nothing is killed",
+				"legacyContracts/test/windows-tree-kill.test.ts/codemode Windows tree kill, worker copy (senpi#2999) #given a kernel child on wininit's recycled parent pid #when its tree is planned #then the system tree stays out",
+				"legacyContracts/test/windows-tree-kill.test.ts/codemode Windows tree kill, worker copy (senpi#2999) #given a listing or none #when kill args are built #then pids are named without /T, or /T on the root alone",
+				"legacyContracts/test/windows-tree-kill.test.ts/codemode Windows tree kill, worker copy (senpi#2999) #given a protected image under the root #when planned #then only the root is killed",
+				"legacyContracts/test/windows-tree-kill.test.ts/codemode Windows tree kill, worker copy (senpi#2999) #given an older process that names the root's recycled pid #when planned #then it is not adopted",
+				"legacyContracts/test/windows-tree-kill.test.ts/codemode Windows tree kill, worker copy (senpi#2999) #given the root is an ancestor of this process #when planned #then nothing is killed",
+				"legacyContracts/test/windows-tree-kill.test.ts/codemode Windows tree kill, worker copy (senpi#2999) #given the root is no longer listed #when planned #then nothing is killed"
 			],
-			"reason": "senpi#2999: new contracts for codemode's Windows tree kill: a tree computed from creation-time-checked parentage instead of taskkill /T, the protected-image and ancestor guards, the /T fallback without a listing, a root no longer listed, and an older process naming the root's recycled pid. The kernels' process-tree modules now import the new windows-tree-kill.js module, which adds it to the extension and first-kernel import graphs."
+			"reason": "senpi#2999: codemode's Windows tree kill computes the tree from creation-time-checked parentage instead of taskkill /T. The listed keys are the parameterized contracts that run on both the host copy (windows-tree-kill-host.ts) and the worker copy (windows-tree-kill.js), plus the import-graph additions those modules bring."
 		}
 	}
 }
