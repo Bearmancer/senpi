@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { KernelToHostMessage } from "../src/bridge/protocol.ts";
 import { KernelMemoryHost } from "../src/kernels/shared/kernel-memory-host.ts";
 import { SubprocessMemoryGlobals } from "../src/kernels/shared/subprocess-memory-globals.ts";
 import { createPendingRun } from "../src/kernels/shared/subprocess-run.ts";
@@ -68,7 +69,7 @@ describe("owned memory globals request", () => {
 			type: "memory-globals-result",
 			cellId: "owned",
 			globals: [],
-		} as const;
+		} satisfies Extract<KernelToHostMessage, { type: "memory-globals-result" }>;
 		f.diagnostics.reply({ process: other, run: f.run }, reply, f.memory);
 		f.diagnostics.reply({ process, run: createPendingRun(f.run.input, () => {}) }, reply, f.memory);
 		f.diagnostics.reply({ process, run: f.run }, { ...reply, cellId: "stale" }, f.memory);
