@@ -25,7 +25,7 @@ export interface PublicProxyOptions {
 	readonly refusing: () => boolean;
 	/** A client went away: occupancy changed. */
 	readonly onDetach: () => void;
-	/** A new, still-unclassified peer must reset owner grace before its first request arrives. */
+	/** A dropped unclassified admission breaks quiescence; a proven observing read does not. */
 	readonly onAdmit?: () => void;
 }
 
@@ -48,9 +48,10 @@ export function createPublicProxy(options: PublicProxyOptions): Server {
 			// moment its first request line arrives, before a later tick can reuse the preceding
 			// idle window. An observing read (`status`) is never recorded (host-client-occupancy.ts).
 			clients.admit(client);
-			options.onAdmit?.();
 			const detach = (): void => {
-				clients.release(client);
+				// Classification resets activity for attachments. Defer the unknown-admission reset
+				// until release so a status read never resets owner grace, even between ticks.
+				if (clients.release(client)) options.onAdmit?.();
 				options.onDetach();
 				internal.destroy();
 				client.destroy();

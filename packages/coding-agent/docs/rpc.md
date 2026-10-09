@@ -215,8 +215,15 @@ its write end without keeping its own event loop alive; supervisor EOF proves ow
 including SIGKILL and PID reuse. Releasing `EnsuredHost.release()` releases only the attach
 hold, not ownership. The supervisor waits for two seconds of continuous quiescence after
 confirmed death: no attached or unclassified public peers, no active runs, and a healthy
-activity observer. Every admission, attached-peer activity, run start, and observer loss
-resets the grace even if it occurs entirely between ticks. After death is observed, the
+activity observer. Classification follows the normal idle policy: observe-only reads
+(`senpi host status`, including repeated polls) and `warm` never reset the grace.
+Attached-peer activity, run start, and observer loss reset it even between ticks.
+A peer with no complete first request is unclassified and blocks exit, just as it does
+under the normal idle policy. If it disconnects before classification, its unknown
+admission breaks continuous quiescence and resets owner grace on disconnect; it is
+not treated as a proven observing read or an attached client. This deferred reset
+lets dropped connects restart the grace without letting status connections restart it.
+After death is observed, the
 existing one-second maximum lifecycle tick adds at most two ticks to window accounting,
 then normal child shutdown applies (five-second graceful
 stop before the existing escalation policy). A stalled child retains that policy's longer
