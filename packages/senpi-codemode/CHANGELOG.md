@@ -14,7 +14,7 @@
 
 - When a Python, Ruby, Julia or process-isolated JavaScript kernel dies while a frame is being sent to it, the failed write (EPIPE) is reported as that kernel's error instead of surfacing as an unhandled error. Before, that unhandled error could end the host, or make a test run where every test passed exit 1 ([#3016](https://github.com/code-yeongyu/senpi/issues/3016)).
 
-- On macOS and Linux, when a JavaScript eval cell ends, is interrupted or times out, a process its child started and left behind (re-parented to init after the child exited, as with `(sleep 30 &)`) is now stopped too: every process group the kernel gave a cell child is signalled at retirement. The agent's own group is never signalled, and children the cell started with `detached: true` are left running ([#3020](https://github.com/code-yeongyu/senpi/issues/3020)).
+- On macOS and Linux, when a JavaScript eval cell ends or is interrupted, a process its child started and left behind (re-parented to init after the child exited, as with `(sleep 30 &)`) is now stopped too: every process group the kernel gave a cell child is signalled at retirement. The agent's own group is never signalled, nor a group whose leader exited and whose pid was since reused, and children the cell started with `detached: true` are left running ([#3020](https://github.com/code-yeongyu/senpi/issues/3020)).
 
 - On Windows, ending a kernel's process tree (cell timeout, reset, shutdown) no longer uses `taskkill /T`: the tree is computed from creation times and each process is ended by pid, so an older, unrelated process holding a recycled parent pid is never killed ([#2999](https://github.com/code-yeongyu/senpi/issues/2999)).
 

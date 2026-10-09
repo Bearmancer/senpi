@@ -7,6 +7,8 @@ import { killWindowsTree, listWindowsRows } from "./windows-tree-kill.js";
 
 const PS_MAX_BUFFER = 16 * 1024 * 1024;
 const EXIT_POLL_MS = 25;
+// A hung `ps` must not hold a cell's retirement; empty output then means nothing is signalled.
+const PS_LOOKUP_TIMEOUT_MS = 2_000;
 const ZOMBIE_CHECK_INTERVAL_MS = 250;
 
 export function isProcessAlive(pid) {
@@ -102,23 +104,26 @@ export async function terminateProcessTrees(roots, options) {
 
 /**
  * Retire whole process groups the worker created (POSIX): SIGTERM each group that still has members, wait `graceMs`,
- * then SIGKILL what is left. The agent's own group is never signalled, whatever the list holds.
+ * then SIGKILL what is left. A group whose leader already exited is skipped while a live process holds the leader's
+ * pid, since that pid was reused. The agent's own group is never signalled.
  */
 export async function terminateProcessGroups(groups, options) {
 	if (process.platform === "win32") return;
+	const ours = (group) => groupHasMembers(group.pgid) && !(group.leaderExited && isProcessAlive(group.pgid));
+	const candidates = groups.filter((group) => Number.isInteger(group.pgid) && group.pgid > 1 && ours(group));
+	if (candidates.length === 0) return;
 	// Without the agent's own group there is no way to rule it out, so nothing is signalled.
 	const ownGroup = await processGroupOf(process.pid);
 	if (ownGroup === undefined) return;
-	const live = groups.filter((pgid) => Number.isInteger(pgid) && pgid > 1 && pgid !== ownGroup && groupHasMembers(pgid));
-	if (live.length === 0) return;
-	for (const pgid of live) signalGroup(pgid, "SIGTERM");
+	const live = candidates.filter((group) => group.pgid !== ownGroup && ours(group));
+	for (const group of live) signalGroup(group.pgid, "SIGTERM");
 	const deadline = Date.now() + options.graceMs;
 	let remaining = live;
 	while (remaining.length > 0 && Date.now() < deadline) {
 		await sleep(EXIT_POLL_MS);
-		remaining = remaining.filter(groupHasMembers);
+		remaining = remaining.filter(ours);
 	}
-	for (const pgid of remaining) signalGroup(pgid, "SIGKILL");
+	for (const group of remaining) signalGroup(group.pgid, "SIGKILL");
 }
 
 function groupHasMembers(pgid) {
@@ -139,7 +144,7 @@ function signalGroup(pgid, signal) {
 }
 
 async function processGroupOf(pid) {
-	const text = (await ps(["-o", "pgid=", "-p", String(pid)])).trim();
+	const text = (await ps(["-o", "pgid=", "-p", String(pid)], { timeout: PS_LOOKUP_TIMEOUT_MS })).trim();
 	return /^\d+$/u.test(text) ? Number(text) : undefined;
 }
 
@@ -177,9 +182,9 @@ async function withoutZombies(pids) {
 }
 
 // `ps -p` exits non-zero when any listed pid is gone but still prints the rest.
-function ps(args) {
+function ps(args, options = {}) {
 	return new Promise((resolve) => {
-		execFile("ps", args, { maxBuffer: PS_MAX_BUFFER, windowsHide: true }, (_error, output) =>
+		execFile("ps", args, { maxBuffer: PS_MAX_BUFFER, windowsHide: true, ...options }, (_error, output) =>
 			resolve(typeof output === "string" ? output : String(output ?? "")),
 		);
 	});

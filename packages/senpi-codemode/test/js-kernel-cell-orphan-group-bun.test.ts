@@ -77,7 +77,8 @@ async function runOrphanDriver(cell: string): Promise<OrphanReport> {
 		await writeFile(driverPath, driverSource(cell), "utf8");
 		const run = spawnSync("bun", [driverPath, reportPath], { encoding: "utf8", cwd: root, timeout: 90_000 });
 		if (run.status !== 0) throw new Error(`bun driver exited with ${run.status} ${run.signal ?? ""}: ${run.stderr}`);
-		return JSON.parse(await readFile(reportPath, "utf8"));
+		const report: OrphanReport = JSON.parse(await readFile(reportPath, "utf8"));
+		return report;
 	} finally {
 		await rm(root, { recursive: true, force: true });
 	}

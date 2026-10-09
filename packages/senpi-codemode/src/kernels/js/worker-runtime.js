@@ -36,7 +36,7 @@ export class JsWorkerRuntime {
 	#children = new Set();
 	// Groups the worker created for cell children (senpi#2995). A group outlives its leader, so a grandchild re-parented
 	// to init is still found through it at retirement (senpi#3020).
-	#ownedGroups = new Set();
+	#ownedGroups = new Map();
 	#childrenStopping;
 	#shellWaits = new Set();
 	#onChildEvent;
@@ -121,7 +121,8 @@ export class JsWorkerRuntime {
 		const pid = Number.isInteger(child.pid) && child.pid > 0 ? child.pid : null;
 		// Bun.spawn children get their group from worker-cwd.js without the injection marker, so every tracked child is
 		// recorded; a child that is not a group leader names no group, and signalling it later finds nothing.
-		if (pid !== null && process.platform !== "win32") this.#ownedGroups.add(pid);
+		const ownGroupLeader = !(isPlainObject(spawnOptions) && spawnOptions.detached === false);
+		if (pid !== null && process.platform !== "win32" && ownGroupLeader) this.#ownedGroups.set(pid, child);
 		// The host keeps its own copy of live pids: if this worker is terminated
 		// while blocked, only the host can still retire them.
 		if (pid !== null) this.#onChildEvent?.({ pid, state: "spawned" });
@@ -135,7 +136,12 @@ export class JsWorkerRuntime {
 	#terminateChildren() {
 		const children = [...this.#children].filter(child => child.exitCode === null && child.signalCode === null);
 		this.#children.clear();
-		const groups = [...this.#ownedGroups];
+		// A leader that already exited leaves its group id reserved only while the group has members; if that pid now
+		// names a live process, it was reused by someone else and the group is not ours to signal (senpi#3020 review).
+		const groups = [...this.#ownedGroups].map(([pgid, child]) => ({
+			pgid,
+			leaderExited: child.exitCode !== null || child.signalCode !== null,
+		}));
 		this.#ownedGroups.clear();
 		if (children.length === 0 && groups.length === 0) return undefined;
 		const roots = children.map(child => child.pid).filter(pid => Number.isInteger(pid) && pid > 0);
