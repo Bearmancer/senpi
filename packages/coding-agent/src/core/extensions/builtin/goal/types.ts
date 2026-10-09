@@ -69,6 +69,10 @@ export type GoalToolSnapshot = {
 
 export type GoalToolResponse = {
 	goal: GoalToolSnapshot | null;
+	continuation?: {
+		status: "stale_stopped";
+		message: string;
+	};
 };
 
 /** Preserve the store's resumable active state while displaying its closed window as paused. */

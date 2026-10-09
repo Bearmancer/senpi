@@ -1,5 +1,26 @@
 # goal Extension Changes
 
+## 2026-10-09 - Cover live stale stops and explain them to the model (senpi#3053)
+
+### What changed
+
+- `packages/coding-agent/test/suite/regressions/3026-stale-goal-accounting.test.ts`: active work accrues through the real extension, stale admission fires during that session, and subsequent `sendUserMessage` and `sendMessage({ triggerTurn: true })` turns retain the committed tokens/time. Both cases pass unchanged production at ca49caf25f and fail if `syncContinuationGoal` no longer clears the stopped accounting window.
+- `packages/coding-agent/src/core/extensions/builtin/goal/format.ts`: model tool JSON includes a `continuation` object for stale-stopped goals, with stable `status: "stale_stopped"` and a neutral explanation of stale progress and user-message or `/goal resume` recovery. Human-readable status formatting remains separate.
+- `packages/coding-agent/src/core/extensions/builtin/goal/types.ts`: declares the model-facing continuation object without changing persisted state, UI snapshots, or app-server protocol.
+- `packages/coding-agent/test/suite/regressions/3026-stale-goal-model-output.test.ts`: inspects the registered `get_goal` result's parsed status token and structured message, with active, paused, and completed controls. It does not pin explanation prose.
+
+### Why
+
+The earlier accounting tests started with a goal already stopped on disk and did not guard retirement of an existing live window. The model's paused snapshot also lacked an explicit stale-stop cause and recovery explanation.
+
+### Why an extension could not handle it
+
+The builtin owns live accounting synchronization and the goal tool response consumed by the model.
+
+### Expected merge conflict zones
+
+`format.ts` model response construction, `types.ts` response shape, and the two regression files. Keep UI labels, paused snapshots, persistent active-plus-marker state, and the accounting guards intact.
+
 ## 2026-10-09 - Pin stopped accounting and show paused-style stale status (senpi#3026)
 
 ### What changed

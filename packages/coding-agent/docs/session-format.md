@@ -318,6 +318,8 @@ The footer shows `Goal stopped: no progress (send a message or /goal resume)` wi
 
 In the persisted goal state, `lastStartedAt` is the last usage checkpoint, in Unix epoch seconds, not the start of the entire run. Clients displaying live elapsed time use committed `timeUsedSeconds` plus the nonnegative time since `lastStartedAt`. When `lastStartedAt` is absent, including after a stale stop, display only committed `timeUsedSeconds`.
 
+Model-facing goal tool JSON additionally includes `continuation: { status: "stale_stopped", message: string }` for a stale-stopped goal. The message explains that progress was stale and the goal resumes when the user sends a message or runs `/goal resume`. This object is absent for ordinary active, user-paused, and completed goals; it is not part of the stored goal, UI snapshot, or app-server schema.
+
 ### CustomMessageEntry
 
 Extension-injected messages that DO participate in LLM context.

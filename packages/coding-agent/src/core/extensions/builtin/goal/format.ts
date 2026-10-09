@@ -69,7 +69,18 @@ export function goalToolRenderDetails(goal: Goal | null, notice?: string): GoalT
 }
 
 export function goalToolResponse(goal: Goal | null): GoalToolResponse {
-	return { goal: goal === null ? null : goalToolSnapshot(goal) };
+	return {
+		goal: goal === null ? null : goalToolSnapshot(goal),
+		...(goal?.status === "active" && goal.continuationStoppedAt !== undefined
+			? {
+					continuation: {
+						status: "stale_stopped" as const,
+						message:
+							"The goal stopped because progress was stale. It resumes when the user sends a message or runs /goal resume.",
+					},
+				}
+			: {}),
+	};
 }
 
 export function formatGoalToolResponse(goal: Goal | null, notice?: string): string {
