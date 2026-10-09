@@ -4,11 +4,11 @@
 // notice only warns and never fails the cell.
 
 // A group target is a dash argument after the signal options: a number, `$var`, `${var}` or `$(...)`.
-const GROUP_TARGET = String.raw`-(?:\d+|\$\{?\w+\}?|\$\()`;
+const GROUP_TARGET = String.raw`-(?:\d+|\$\$|\$\{?\w+\}?|\$\()`;
 const SIGNAL_OPTION = String.raw`(?:-s\s+\w+|-n\s+\d+|-[A-Za-z]+\d*|-\d+)`;
 // The first dash argument is a signal, so a group is one after `--`, after a signal option, or after a plain pid:
-// `kill -- -<pgid>`, `kill -SIG -<pgid>`, `kill -TERM 1234 -5678`.
-const PID = String.raw`[^\s\-;|&]\S*`;
+// `kill -- -<pgid>`, `kill -SIG -<pgid>`, `kill -TERM 1234 -5678`, `kill -- -$$`.
+const PID = String.raw`[^\s\-;|&][^\s;|&]*`;
 const KILL_GROUP = new RegExp(
 	String.raw`\bkill\b(?:` +
 		String.raw`\s+--\s+${GROUP_TARGET}` +
@@ -39,9 +39,9 @@ export function groupSignalNotice(api, readGroup = agentProcessGroup) {
 
 let cachedGroup;
 
-// One bounded `ps` lookup per kernel; a missing `ps` or a failed run only drops the number from the notice.
+// A bounded `ps` lookup, kept once it succeeds; a missing `ps` or a failed run only drops the number from this notice.
 export function agentProcessGroup(spawnSync = globalThis.Bun?.spawnSync) {
-	if (cachedGroup !== undefined) return cachedGroup || undefined;
+	if (cachedGroup !== undefined) return cachedGroup;
 	let text = "";
 	try {
 		const result = spawnSync?.(["ps", "-o", "pgid=", "-p", String(process.pid)], { timeout: 2_000 });
@@ -49,8 +49,9 @@ export function agentProcessGroup(spawnSync = globalThis.Bun?.spawnSync) {
 	} catch {
 		text = "";
 	}
-	cachedGroup = /^\d+$/u.test(text) ? text : "";
-	return cachedGroup || undefined;
+	if (!/^\d+$/u.test(text)) return undefined;
+	cachedGroup = text;
+	return cachedGroup;
 }
 
 export function shellCommandText(strings, expressions) {
@@ -58,6 +59,7 @@ export function shellCommandText(strings, expressions) {
 	return strings.reduce((text, part, index) => text + part + (index < expressions.length ? String(expressions[index]) : ""), "");
 }
 
+const { promisify } = process.getBuiltinModule("node:util");
 const SCANNED_SPAWNERS = ["exec", "execFile", "execSync", "execFileSync", "spawnSync"];
 
 function commandTextOf(name, args) {
@@ -72,7 +74,7 @@ export function noticeChildProcessGroupSignals(emitText, isActive) {
 		const original = childProcess[name];
 		if (typeof original !== "function") continue;
 		originals.set(name, original);
-		const scanned = function scannedSpawner(...args) {
+		const scan = (args) => {
 			try {
 				if (isActive() && signalsProcessGroup(commandTextOf(name, args))) {
 					emitText("stderr", groupSignalNotice(`child_process.${name}`));
@@ -80,14 +82,27 @@ export function noticeChildProcessGroupSignals(emitText, isActive) {
 			} catch {
 				// The notice is advisory; the call itself always runs.
 			}
+		};
+		const scanned = function scannedSpawner(...args) {
+			scan(args);
 			return original.apply(this, args);
 		};
 		// Every own property, symbols included: `util.promisify.custom` is what makes promisify(exec) resolve to
-		// { stdout, stderr }.
+		// { stdout, stderr }. That custom function calls the original directly, so it is scanned too.
 		for (const key of Reflect.ownKeys(original)) {
 			if (key === "length" || key === "name" || key === "prototype") continue;
 			const descriptor = Object.getOwnPropertyDescriptor(original, key);
 			if (descriptor) Object.defineProperty(scanned, key, descriptor);
+		}
+		const customPromisify = original[promisify.custom];
+		if (typeof customPromisify === "function") {
+			Object.defineProperty(scanned, promisify.custom, {
+				configurable: true,
+				value: function scannedPromisified(...args) {
+					scan(args);
+					return customPromisify.apply(this, args);
+				},
+			});
 		}
 		childProcess[name] = scanned;
 	}

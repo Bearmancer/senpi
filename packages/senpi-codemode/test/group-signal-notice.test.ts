@@ -61,6 +61,7 @@ describe("process-group signal detection (senpi#2995)", () => {
 		["pkill --pgroup 5 sleep"],
 		["pkill -g0 sleep"],
 		["sudo killall node"],
+		["kill -- -$$"],
 		["sh -c 'killall -TERM node'"],
 	])("Given %s when scanned then it is a group signal", (command) => {
 		// when / then
@@ -79,6 +80,8 @@ describe("process-group signal detection (senpi#2995)", () => {
 		["grep -c killall notes.txt"],
 		['echo "killall bun stops every bun"'],
 		["kill -0 1234"],
+		["kill $PID; head -5 log.txt"],
+		["git log --grep kill foo -1"],
 	])("Given %s when scanned then it is not a group signal", (command) => {
 		// when / then
 		expect(signalsProcessGroup(command)).toBe(false);
