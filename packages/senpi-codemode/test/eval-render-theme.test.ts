@@ -316,6 +316,9 @@ describe("eval renderer theme hierarchy", () => {
 		// border, and every CSI ends in a final byte (senpi#2839's inert rule).
 		const text = lines.join("\n");
 		expect(text).toContain("fourth");
+		const fourthRow =
+			lines.map((line) => line.replace(/\u001b\[[0-9;]*m/gu, "")).find((line) => line.includes("fourth")) ?? "";
+		expect(fourthRow.trimEnd().endsWith("fourth"), "the kept row is whole, never clipped").toBe(true);
 		expect(text.replace(/\u001b\[[0-9;]*m/gu, "")).toContain("1 earlier status events, 1 rows");
 		for (const line of lines) {
 			const plain = line.replace(/\u001b\[[0-9;]*m/gu, "");

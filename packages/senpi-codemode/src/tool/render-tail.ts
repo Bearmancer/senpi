@@ -123,12 +123,14 @@ export function cellStatusSection(cell: EvalCellResult, environment: RenderEnvir
 function statusMarker(skippedEvents: number, cutRows: number, environment: RenderEnvironment): string {
 	const candidates =
 		cutRows === 0
-			? [`├ … ${skippedEvents} earlier status events`, `├ … ${skippedEvents} earlier`]
+			? [`├ … ${skippedEvents} earlier status events`, `├ … ${skippedEvents} earlier`, `├ … ${skippedEvents}`]
 			: skippedEvents === 0
-				? [`├ … ${cutRows} earlier rows of this event`, `├ … ${cutRows} earlier rows`]
+				? [`├ … ${cutRows} earlier rows of this event`, `├ … ${cutRows} earlier rows`, `├ … ${cutRows} rows`]
 				: [
 						`├ … ${skippedEvents} earlier status events, ${cutRows} rows`,
 						`├ … ${skippedEvents} events, ${cutRows} rows`,
+						`├ … ${skippedEvents} ev, ${cutRows} rows`,
+						`├ … ${skippedEvents}ev ${cutRows}r`,
 					];
 	const innerWidth = Math.max(1, environment.width - visibleWidth(FRAME_INNER_PREFIX.prefix));
 	const text = candidates.find((candidate) => visibleWidth(candidate) <= innerWidth) ?? candidates.at(-1) ?? "";

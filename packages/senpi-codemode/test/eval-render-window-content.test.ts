@@ -106,6 +106,9 @@ const LONG_SQL = [
 	'print("done");',
 ].join("\n");
 
+const plainRow = (lines: readonly string[], needle: string): string =>
+	(lines.map((line) => line.replace(/\u001b\[[0-9;]*m/gu, "")).find((line) => line.includes(needle)) ?? "").trimEnd();
+
 describe("eval live window always shows the newest line (senpi#2933 review HIGH-B)", () => {
 	it("Given the 6-line JS cell with one long SQL line at 100 cols then the newest line is visible and the marker is not zero", () => {
 		const lines = renderStreamingCall({ language: "js", code: LONG_SQL, summary: "long sql" }, 100);
@@ -210,6 +213,7 @@ describe("eval live status tail keeps the newest event rows (senpi#2933 review N
 		);
 		const text = lines.join("\n");
 		expect(text).toContain("fourth");
+		expect(plainRow(lines, "fourth").endsWith("fourth"), "the kept row is whole, never clipped").toBe(true);
 		expect(text).not.toContain("first");
 		expect(text).not.toContain("second");
 		expect(text).toContain("1 earlier status events");
@@ -226,12 +230,34 @@ describe("eval live status tail keeps the newest event rows (senpi#2933 review N
 		);
 		const text = lines.join("\n");
 		expect(text).toContain("line4");
+		expect(plainRow(lines, "line4").endsWith("line4"), "the kept row is whole, never clipped").toBe(true);
 		expect(text).toContain("3 earlier rows of this event");
 		expect(text).not.toContain("line3");
 		expect(text).not.toContain("line2");
 		expect(text).not.toContain("line1");
 		expect(text).not.toContain("earlier status events");
 	});
+
+	it.each([20, 25, 30] as const)(
+		"Given the stored bound, folded events and a cut event at %i cols then the one-row marker keeps both counts",
+		(width) => {
+			const lines = renderResult(
+				cellResult({
+					status: "running",
+					startedAt: STARTED_AT,
+					statusEvents: [
+						{ op: "status-events-omitted", count: 19901 },
+						{ op: "log", message: "older" },
+						{ op: "log", message: "a\nb\nc\nd\ne" },
+					],
+				}),
+				{ width, now: STARTED_AT + 1_000 },
+			);
+			const marker = plainRow(lines, "\u251c \u2026");
+			expect(marker, JSON.stringify(lines)).toMatch(/19902\D.*\b4\D*$/u);
+			for (const line of lines) expect(visibleWidth(line)).toBeLessThanOrEqual(width);
+		},
+	);
 });
 
 describe("eval live block: truly constant total height (senpi#2933 review HIGH-C)", () => {
