@@ -1,5 +1,24 @@
 # goal Extension Changes
 
+## 2026-10-09 - Failed stop publication cannot skip lifecycle cleanup (senpi#3014)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/goal/lifecycle-helpers.ts`: independently catch and warn on both additive stop-entry appends, including the engine-pause history lookup, then return the persisted stop decision. Capture the session logger before the asynchronous claim so reporting a retired-context failure does not read that context again.
+- Lifecycle regressions drive stale and cap denials through the real agent-end handler, its UI/timer synchronization, the todo backstop and shutdown. A failed first append still attempts the second entry.
+
+### Why
+
+An append failure escaped after the goal file was stopped, skipping the caller's cleanup. A stale goal accrued another 600 seconds at shutdown, and blocking guards skipped UI synchronization and the todo backstop.
+
+### Why an extension could not handle it
+
+The builtin owns the persisted stop decision and must return it even when additive publication fails.
+
+### Expected merge conflict zones
+
+`lifecycle-helpers.ts` denial publication and logger import. Preserve independent best-effort writes and the return of the persisted goal.
+
 ## 2026-10-09 - Guard side effects precede additive stop publication (senpi#3007, senpi#3014)
 
 ### What changed

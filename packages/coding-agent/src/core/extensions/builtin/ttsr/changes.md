@@ -1,5 +1,23 @@
 # TTSR Fork Tracker
 
+## 2026-10-09 - A failed engine pause write preserves the TTSR stop announcement (senpi#3014)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/ttsr/index.ts`: retain the existing loop-stop entry, event and notice before attempting the new engine pause entry; catch and warn on that additive publication failure using a session logger captured before publication.
+
+### Why
+
+The new second append could throw between the existing loop-stop entry and its event/notice, hiding the stop announcement.
+
+### Why an extension could not handle it
+
+This builtin owns the repeated-rule stop branch and must complete its existing announcement.
+
+### Expected merge conflict zones
+
+`ttsr/index.ts` logger import and repeated-rule `agent_settled` branch. Keep the existing announcement ahead of the best-effort engine pause write.
+
 ## 2026-10-09 - Publish the common engine pause entry (senpi#3007)
 
 ### What changed
