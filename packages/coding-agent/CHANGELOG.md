@@ -12,6 +12,8 @@
 
 - A multi-session RPC host refuses open/attach and every new session-writing RPC when another live process outside its daemon family holds the file, with typed `session_held` and pid/cwd data. Both guarded host runtimes advertise the exact `session_held` protocol capability; classic bindings do not. Open rechecks after holder publication and rolls back raced admission; stale holders clear automatically. Own workers and predecessor generations preserve existing reservation retry/reclaim semantics. Already-admitted turns finish if a holder arrives mid-turn. Interactive startup and `/resume` warn, including advisory lookup failures, without aborting ([#2951](https://github.com/code-yeongyu/senpi/issues/2951)).
 
+- On Windows, stopping a command's process tree (a timed-out or cancelled bash command, hooks, shutdown) no longer uses `taskkill /T`, which could also kill an unrelated older process whose dead parent's pid the command now holds; the tree is computed from creation times and each process is ended by pid ([#2999](https://github.com/code-yeongyu/senpi/issues/2999)).
+
 ### Removed
 
 ## [2026.10.10-10] - 2026-10-09

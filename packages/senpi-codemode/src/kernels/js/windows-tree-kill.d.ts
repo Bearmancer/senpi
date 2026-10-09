@@ -12,4 +12,8 @@ export function windowsTreeKillArgs(
 	rows: readonly WindowsProcessRow[] | undefined,
 	selfPid?: number,
 ): string[];
-export function killWindowsTree(pid: number): Promise<void>;
+export function listWindowsRows(): Promise<WindowsProcessRow[] | undefined>;
+export function killWindowsTree(
+	pid: number,
+	listing?: Promise<readonly WindowsProcessRow[] | undefined>,
+): Promise<void>;

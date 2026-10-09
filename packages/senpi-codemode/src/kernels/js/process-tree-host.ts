@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { killWindowsTree } from "./windows-tree-kill.js";
+import { killWindowsTree, listWindowsRows } from "./windows-tree-kill.js";
 
 // Host-side twin of worker-runtime's `process-tree.js`. The worker file must stay plain
 // JavaScript (a Node worker thread spawned from a `.js` entry has no TypeScript loader), and
@@ -110,7 +110,8 @@ export async function terminateProcessTrees(
 	const liveRoots = roots.filter(isProcessAlive);
 	if (liveRoots.length === 0) return;
 	if (process.platform === "win32") {
-		for (const pid of liveRoots) await killWindowsTree(pid);
+		const listing = listWindowsRows();
+		for (const pid of liveRoots) await killWindowsTree(pid, listing);
 		return;
 	}
 	const table = await readProcessTable();

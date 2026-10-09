@@ -20,7 +20,7 @@ const host = [
 	row(SELF, 6952, 500, "bun.exe"),
 ];
 
-describe("Windows tree kill plan (senpi#2993)", () => {
+describe("Windows tree kill plan (senpi#2999)", () => {
 	it("#given a child whose pid is the recycled pid of wininit's dead parent #when its tree is planned #then wininit and the agent's ancestry stay out", () => {
 		// given
 		const rows = [...host, row(776, SELF, 600, "bash.exe"), row(7100, 776, 610, "node.exe")];
@@ -88,5 +88,44 @@ describe("Windows tree kill plan (senpi#2993)", () => {
 
 		// then
 		expect(rows).toEqual([{ pid: 896, parentPid: 776, createdAt: 134046261411081720n, name: "wininit.exe" }]);
+	});
+
+	it("#given the root is no longer listed #when the tree is planned #then nothing is killed", () => {
+		// when
+		const plan = windowsTreeKillPlan(host, 7000, SELF);
+
+		// then
+		expect(plan.kill).toEqual([]);
+	});
+
+	it("#given a protected image as the root #when the tree is planned #then nothing is killed", () => {
+		// when
+		const plan = windowsTreeKillPlan(host, 1008, SELF);
+
+		// then
+		expect(plan.kill).toEqual([]);
+		expect(plan.refused).toContainEqual({ pid: 1008, name: "services.exe" });
+	});
+
+	it("#given a child created in the same tick as its parent, and one with an unreadable creation time #when planned #then only the same-tick child is adopted", () => {
+		// given
+		const rows = [...host, row(7000, SELF, 600), row(7010, 7000, 600), row(7020, 7000, 0)];
+
+		// when
+		const plan = windowsTreeKillPlan(rows, 7000, SELF);
+
+		// then
+		expect([...plan.kill].sort((a, b) => a - b)).toEqual([7000, 7010]);
+	});
+
+	it("#given a parent cycle above this process #when the tree is planned #then the ancestor walk ends", () => {
+		// given
+		const rows = [row(10, 11, 50), row(11, 10, 50), row(SELF, 10, 60), row(7000, SELF, 70), row(7010, 7000, 80)];
+
+		// when
+		const plan = windowsTreeKillPlan(rows, 7000, SELF);
+
+		// then
+		expect([...plan.kill].sort((a, b) => a - b)).toEqual([7000, 7010]);
 	});
 });

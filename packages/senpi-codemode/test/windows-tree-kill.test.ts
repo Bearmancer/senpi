@@ -13,7 +13,7 @@ const host = [
 	row(SELF, 6952, 500, "bun.exe"),
 ];
 
-describe("codemode Windows tree kill (senpi#2993)", () => {
+describe("codemode Windows tree kill (senpi#2999)", () => {
 	it("#given a kernel child on wininit's recycled parent pid #when its tree is planned #then the system tree stays out", () => {
 		// given
 		const rows = [...host, row(776, SELF, 600, "python.exe"), row(7100, 776, 610)];
@@ -45,5 +45,18 @@ describe("codemode Windows tree kill (senpi#2993)", () => {
 		// when / then
 		expect(windowsTreeKillArgs(7000, rows, SELF)).toEqual(["/F", "/PID", "7000", "/PID", "7010"]);
 		expect(windowsTreeKillArgs(7000, undefined, SELF)).toEqual(["/F", "/T", "/PID", "7000"]);
+	});
+
+	it("#given an older process that names the root's recycled pid #when planned #then it is not adopted", () => {
+		// given
+		const rows = [...host, row(7000, SELF, 600, "python.exe"), row(7200, 7000, 450, "older.exe")];
+
+		// when / then
+		expect(windowsTreeKillPids(rows, 7000, SELF)).toEqual([7000]);
+	});
+
+	it("#given the root is no longer listed #when planned #then nothing is killed", () => {
+		// when / then
+		expect(windowsTreeKillPids(host, 7000, SELF)).toEqual([]);
 	});
 });

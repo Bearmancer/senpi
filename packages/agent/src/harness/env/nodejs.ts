@@ -36,7 +36,7 @@ import {
 	toError,
 } from "../types.ts";
 import { OutputCapture } from "../utils/output-capture.ts";
-import { listWindowsProcessRowsSync, windowsTreeKillArgs } from "./windows-process-tree.ts";
+import { listWindowsProcessRowsSync, type WindowsProcessRow, windowsTreeKillArgs } from "./windows-process-tree.ts";
 
 const MAX_TIMEOUT_MS = 2_147_483_647;
 const MAX_TIMEOUT_SECONDS = MAX_TIMEOUT_MS / 1000;
@@ -298,6 +298,10 @@ function killProcessDirectly(pid: number): void {
 /** Upper bound on how long a teardown may block waiting for `taskkill` to finish. */
 const TASKKILL_TIMEOUT_MS = 5_000;
 
+function listWindowsProcesses(): readonly WindowsProcessRow[] | undefined {
+	return listWindowsProcessRowsSync(TASKKILL_TIMEOUT_MS);
+}
+
 function taskkillHandledTree(taskkillPath: string, killArgs: readonly string[]): boolean {
 	if (killArgs.length === 0) return true;
 	try {
@@ -315,7 +319,10 @@ function taskkillHandledTree(taskkillPath: string, killArgs: readonly string[]):
 }
 
 /**
- * Kill a process and all its children on Windows via `taskkill /T`.
+ * Kill a process and its descendants on Windows: one process listing (bounded by `TASKKILL_TIMEOUT_MS`)
+ * decides the tree, a process counting as a child only when it started at or after the parent it names,
+ * and `taskkill /F` ends each pid by name. `/T` would also adopt an unrelated older process through a
+ * recycled parent pid (senpi#2999); it is used only when no listing can be read.
  *
  * Synchronous on purpose. A caller that tears down and exits in the same tick would never
  * observe an asynchronous killer's `error` event, leaving the target alive. `spawnSync`
@@ -328,10 +335,12 @@ function taskkillHandledTree(taskkillPath: string, killArgs: readonly string[]):
  * touch descendants; nothing in-process can walk a Windows process tree without an
  * external tool, so this still beats leaving the whole tree running.
  */
-export function killWindowsProcessTree(pid: number, taskkillPaths = windowsTaskkillCandidates()): void {
-	// The tree is computed from one bounded process listing so a recycled parent pid cannot pull an
-	// unrelated process into it (senpi#2993); without a listing the kill falls back to `/T` on the root.
-	const killArgs = windowsTreeKillArgs(pid, listWindowsProcessRowsSync(TASKKILL_TIMEOUT_MS));
+export function killWindowsProcessTree(
+	pid: number,
+	taskkillPaths = windowsTaskkillCandidates(),
+	listProcesses: () => readonly WindowsProcessRow[] | undefined = listWindowsProcesses,
+): void {
+	const killArgs = windowsTreeKillArgs(pid, listProcesses());
 	for (const taskkillPath of taskkillPaths) {
 		if (taskkillHandledTree(taskkillPath, killArgs)) return;
 	}
@@ -1036,7 +1045,13 @@ export class NodeExecutionEnv implements ExecutionEnv {
 	}
 
 	async cleanup(_context: Context): Promise<void> {
-		for (const pid of this.activeChildPids) killProcessTree(pid);
+		if (process.platform === "win32") {
+			// One listing for the whole batch: each tree kill would otherwise list every process again.
+			const rows = listWindowsProcesses();
+			for (const pid of this.activeChildPids) killWindowsProcessTree(pid, undefined, () => rows);
+		} else {
+			for (const pid of this.activeChildPids) killProcessTree(pid);
+		}
 		this.activeChildPids.clear();
 	}
 }

@@ -1,8 +1,8 @@
 import { execFile } from "node:child_process";
 
-// Plain JS (with windows-tree-kill.d.ts) because the worker runtime imports it. senpi#2993: `taskkill /T`
+// Plain JS (with windows-tree-kill.d.ts) because the worker runtime imports it. `taskkill /T`
 // adopts every process whose recorded ParentProcessId equals the root's pid, and Windows never rewrites that
-// field when a parent exits and reuses pids. The tree is computed from one process listing instead: a process
+// field when a parent exits and reuses pids (senpi#2999). The tree is computed from one process listing instead: a process
 // belongs to it only when it started at or after the parent it names, and each pid is killed by name.
 
 const LISTING_TIMEOUT_MS = 5_000;
@@ -73,7 +73,7 @@ export function windowsTreeKillArgs(rootPid, rows, selfPid = process.pid) {
 	return ["/F", ...pids.flatMap((pid) => ["/PID", String(pid)])];
 }
 
-function listWindowsRows() {
+export function listWindowsRows() {
 	return new Promise((resolve) => {
 		execFile(
 			"powershell.exe",
@@ -87,9 +87,12 @@ function listWindowsRows() {
 	});
 }
 
-/** Kills the checked process tree rooted at `pid`; resolves once taskkill has run (or nothing needed killing). */
-export async function killWindowsTree(pid) {
-	const args = windowsTreeKillArgs(pid, await listWindowsRows());
+/**
+ * Kills the checked process tree rooted at `pid`; resolves once taskkill has run (or nothing needed killing).
+ * A batch passes one shared `listing` so every tree is planned from the same snapshot.
+ */
+export async function killWindowsTree(pid, listing = listWindowsRows()) {
+	const args = windowsTreeKillArgs(pid, await listing);
 	if (args.length === 0) return;
 	await new Promise((resolve) => {
 		execFile("taskkill", args, { windowsHide: true }, () => resolve());

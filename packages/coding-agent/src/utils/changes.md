@@ -1,6 +1,6 @@
 # changes
 
-## 2026-10-09 - Windows tree kills no longer use taskkill /T (senpi#2993 follow-up)
+## 2026-10-09 - Windows tree kills no longer use taskkill /T (senpi#2999 follow-up)
 
 ### What changed
 

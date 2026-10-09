@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
 
-// senpi#2993 (follow-up of #2353): `taskkill /T` adopts every process whose recorded ParentProcessId
+// senpi#2999 (follow-up of #2353): `taskkill /T` adopts every process whose recorded ParentProcessId
 // equals the root's pid. Windows never rewrites that field when a parent exits and reuses pids, so an
 // older, unrelated process that names a long-dead parent whose pid the root now holds is killed too.
 // The tree is computed here instead: a process belongs to it only when it started at or after the
