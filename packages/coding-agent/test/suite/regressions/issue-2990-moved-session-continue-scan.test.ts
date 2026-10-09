@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { chmodSync, utimesSync } from "node:fs";
+import { chmodSync, mkdirSync, utimesSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { parseArgs } from "../../../src/cli/args.ts";
@@ -20,6 +20,22 @@ vi.mock("../../../src/core/repository-identity.ts", async (importOriginal) => {
 vi.mock("../../../src/core/session-discovery.ts", async (importOriginal) => {
 	const actual = await importOriginal<typeof import("../../../src/core/session-discovery.ts")>();
 	return { ...actual, listSessionsFromDir: vi.fn(actual.listSessionsFromDir) };
+});
+// Every readdir reaches disk except the one dir a test makes fail with a chosen errno.
+const readdirFault = vi.hoisted(() => ({ dir: "", code: "" }));
+vi.mock("node:fs/promises", async (importOriginal) => {
+	const actual = await importOriginal<typeof import("node:fs/promises")>();
+	return {
+		...actual,
+		readdir: (...args: Parameters<typeof actual.readdir>) => {
+			if (readdirFault.dir !== "" && args[0] === readdirFault.dir) {
+				return Promise.reject(
+					Object.assign(new Error(`${readdirFault.code}: injected`), { code: readdirFault.code }),
+				);
+			}
+			return actual.readdir(...args);
+		},
+	};
 });
 
 /**
@@ -51,6 +67,8 @@ beforeEach(() => {
 	}
 });
 afterEach(() => {
+	readdirFault.dir = "";
+	readdirFault.code = "";
 	if (inherited === undefined) delete process.env[ENV_AGENT_DIR];
 	else process.env[ENV_AGENT_DIR] = inherited;
 	layout.cleanup();
@@ -100,6 +118,50 @@ describe("issue #2990 --continue looks only at sessions moved here", () => {
 		const rows = await withMovedSessions(SessionManager.list(layout.newWorktree), layout.newWorktree);
 
 		expect(rows.map((row) => [row.path, row.moved === true])).toEqual([[moved, false]]);
+	});
+
+	it("a session dir that vanished mid-scan is skipped", async () => {
+		const own = session(layout.newWorktree, "own", NEW);
+		readdirFault.dir = getDefaultSessionDir(join(layout.home, "gone", "0"));
+		readdirFault.code = "ENOENT";
+
+		expect(await continueFrom(layout.newWorktree)).toBe(own);
+		await expect(withMovedSessions(SessionManager.list(layout.newWorktree), layout.newWorktree)).resolves.toEqual([
+			expect.objectContaining({ path: own }),
+		]);
+	});
+
+	it("an I/O fault reading a session dir fails --continue and the picker instead of hiding its sessions", async () => {
+		session(layout.newWorktree, "own", NEW);
+		readdirFault.dir = getDefaultSessionDir(join(layout.home, "gone", "0"));
+		readdirFault.code = "EIO";
+
+		await expect(continueFrom(layout.newWorktree)).rejects.toMatchObject({ code: "EIO" });
+		await expect(
+			withMovedSessions(SessionManager.list(layout.newWorktree), layout.newWorktree),
+		).rejects.toMatchObject({ code: "EIO" });
+	});
+
+	it("the picker of a shared session dir lists that dir once", async () => {
+		const sessionDir = join(layout.home, "shared");
+		const own = join(sessionDir, "own.jsonl");
+		const moved = join(sessionDir, "moved.jsonl");
+		mkdirSync(sessionDir, { recursive: true });
+		writeSessionHeader(own, "0199f0d4-2990-7000-8000-0000000c0a01", layout.newWorktree);
+		writeSessionHeader(moved, "0199f0d4-2990-7000-8000-0000000c0b01", layout.oldWorktree);
+		utimesSync(own, OLD, OLD);
+		utimesSync(moved, NEW, NEW);
+		dirListings.mockClear();
+
+		const rows = await withMovedSessions(SessionManager.list(layout.newWorktree, sessionDir), layout.newWorktree, {
+			sessionDir,
+		});
+
+		expect(rows.map((row) => [row.path, row.moved === true])).toEqual([
+			[moved, false],
+			[own, false],
+		]);
+		expect(dirListings).toHaveBeenCalledTimes(1);
 	});
 
 	describe.runIf(process.platform !== "win32" && process.getuid?.() !== 0)("an unreadable session dir", () => {

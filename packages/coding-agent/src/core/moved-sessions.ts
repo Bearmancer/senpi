@@ -38,12 +38,15 @@ function newestFirst(a: SessionInfo, b: SessionInfo): number {
 	return b.modified.getTime() - a.modified.getTime();
 }
 
-// An unreadable session dir contributes nothing; it never fails a listing or --continue (senpi#2990 review L4).
+// An unreadable or vanished session dir contributes nothing; it never fails a listing or --continue (senpi#2990
+// review L4). Any other fault, such as EIO or EMFILE, still surfaces instead of silently hiding sessions (L7).
+const SKIPPED_DIR_ERRORS = new Set(["EACCES", "EPERM", "ENOENT", "ENOTDIR"]);
+
 async function readableEntries(dir: string): Promise<Dirent[]> {
 	try {
 		return await readdir(dir, { withFileTypes: true });
 	} catch (error) {
-		if (error instanceof Error) return [];
+		if (error instanceof Error && "code" in error && SKIPPED_DIR_ERRORS.has(String(error.code))) return [];
 		throw error;
 	}
 }
@@ -155,8 +158,11 @@ export async function withMovedSessions(
 	cwd: string,
 	options: MovedSessionOptions = {},
 ): Promise<SessionInfo[]> {
-	const [own, vanished] = await Promise.all([local, vanishedSessions(cwd, options, ["here", "moved"])]);
-	// A shared session dir lists a desktop-moved session in both: one row, the folder's own.
+	// A shared session dir's own listing already holds the sessions the desktop moved here, so only the default
+	// per-folder layout looks for them elsewhere.
+	const wanted: readonly VanishedKind[] = options.sessionDir ? ["moved"] : ["here", "moved"];
+	const [own, vanished] = await Promise.all([local, vanishedSessions(cwd, options, wanted)]);
+	// Defensive dedupe: a session listed by both lookups stays one row, the folder's own.
 	const listed = new Set(own.map((session) => session.path));
 	const extra = [...vanished.here, ...vanished.moved].filter((session) => !listed.has(session.path));
 	return [...own, ...extra].sort(newestFirst);
