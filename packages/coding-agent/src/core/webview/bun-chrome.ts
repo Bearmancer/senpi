@@ -1,5 +1,13 @@
 import { execFile } from "node:child_process";
+import { appendFileSync } from "node:fs";
 import type { NativeWebViewClass } from "./native-webview.ts";
+import {
+	BROWSER_IMAGE,
+	bunChromeKillPlan,
+	type ChromeKillPlan,
+	parseWindowsProcessRows,
+	WINDOWS_PROCESS_ROWS,
+} from "./windows-chrome-tree.ts";
 
 // Bun launches its Chrome with exactly this default flag run (see `Bun.WebView` backend docs);
 // together with the parent pid it tells Bun's browser apart from any other Chrome we spawned.
@@ -19,17 +27,23 @@ function positivePids(texts: readonly string[]): number[] {
 	return texts.map(Number).filter((pid) => Number.isInteger(pid) && pid > 0);
 }
 
-// Bun's Chrome browsers (direct children with Bun's flags) and every process under them, in one
-// CIM listing; the listing's own PowerShell is excluded because its command line names the flag.
-const WINDOWS_CHROME_TREE = `$all = Get-CimInstance Win32_Process | Select-Object ProcessId, ParentProcessId, CommandLine
-$tree = [System.Collections.Generic.HashSet[int]]::new()
-foreach ($p in $all) { if ($p.ParentProcessId -eq ${process.pid} -and $p.ProcessId -ne $PID -and $p.CommandLine -like '*--remote-debugging-pipe*') { [void]$tree.Add([int]$p.ProcessId) } }
-do { $grew = $false; foreach ($p in $all) { if ($tree.Contains([int]$p.ParentProcessId) -and $tree.Add([int]$p.ProcessId)) { $grew = $true } } } while ($grew)
-$tree`;
+// Bun's Chrome browsers and every process under them, from one CIM listing (see windows-chrome-tree.ts
+// for why a recorded parent pid alone is not proof of parentage).
+async function windowsBunChromeKillPlan(): Promise<ChromeKillPlan> {
+	const stdout = await run("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", WINDOWS_PROCESS_ROWS]);
+	return bunChromeKillPlan(parseWindowsProcessRows(stdout), process.pid);
+}
 
-async function windowsBunChromeTree(): Promise<number[]> {
-	const stdout = await run("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", WINDOWS_CHROME_TREE]);
-	return positivePids(stdout.split(/\r?\n/u).map((line) => line.trim()));
+// A refused kill is written to the CI readiness log, so a wrong adoption shows up as a line instead of a dead runner.
+function logSkippedKills(plan: ChromeKillPlan): void {
+	const log = process.env.SENPI_WEBVIEW_READINESS_LOG;
+	if (log === undefined || log.length === 0) return;
+	for (const skip of plan.skipped) {
+		appendFileSync(
+			log,
+			`${new Date().toISOString()} pid=${process.pid} chrome-retire skipped ${skip.name} (${skip.pid}): ${skip.reason}\n`,
+		);
+	}
 }
 
 async function windowsListedPids(): Promise<Set<number>> {
@@ -78,14 +92,13 @@ async function waitForExit(pids: readonly number[]): Promise<void> {
 }
 
 // A zombie keeps no command line, so a dead browser child is recognized by its name alone.
-const BROWSER_NAME = /chrom|msedge|brave/iu;
 
 async function deadBrowserChildren(): Promise<number[]> {
 	if (process.platform === "win32") return [];
 	const pids: string[] = [];
 	for (const line of (await run("ps", ["-axo", "pid=,ppid=,stat=,comm="])).split("\n")) {
 		const [pidText = "", ppidText, stat = "", ...command] = line.trim().split(/\s+/u);
-		if (Number(ppidText) === process.pid && stat.startsWith("Z") && BROWSER_NAME.test(command.join(" ")))
+		if (Number(ppidText) === process.pid && stat.startsWith("Z") && BROWSER_IMAGE.test(command.join(" ")))
 			pids.push(pidText);
 	}
 	return positivePids(pids);
@@ -112,11 +125,12 @@ export async function retireBunChrome(webViewClass: NativeWebViewClass): Promise
 	// 1.25 s), and a Chrome launched meanwhile finds the profile locked ("Chrome process closed the
 	// pipe"). So the tree is listed first, ended as a whole, and awaited.
 	if (process.platform === "win32") {
-		const tree = await windowsBunChromeTree();
+		const plan = await windowsBunChromeKillPlan();
 		webViewClass.closeAll();
-		const running = tree.filter(alive);
+		const running = plan.kill.filter(alive);
 		if (running.length > 0) await run("taskkill", ["/F", ...running.flatMap((pid) => ["/PID", String(pid)])]);
-		await waitForWindowsRemoval(tree);
+		await waitForWindowsRemoval(plan.kill);
+		logSkippedKills(plan);
 		return;
 	}
 	const pids = await bunChromePids();
