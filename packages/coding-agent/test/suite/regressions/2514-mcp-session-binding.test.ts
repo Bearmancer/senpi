@@ -796,6 +796,26 @@ describe("senpi#2597: a session's MCP status and the service's teardown follow t
 		expect(getMcpService().getConnection("extra")).toBeDefined();
 	});
 
+	it("drops a quit session's MCP status snapshot and keeps the live session's", async () => {
+		// Given: two sessions with their own session ids, each with a captured MCP status.
+		configureServer();
+		const service = getMcpService();
+		const alphaPi = capturingPi();
+		const bravoPi = capturingPi();
+		await attachInProject(alphaPi, root, "alpha");
+		await attachInProject(bravoPi, root, "bravo");
+		await untilFakeRegistered(bravoPi, TOOL);
+		await service.refreshWireStatusSnapshot("alpha");
+		await service.refreshWireStatusSnapshot("bravo");
+
+		// When: the first session quits.
+		await service.releaseSession(alphaPi, "quit");
+
+		// Then: its snapshot is gone, while the live session's stays.
+		expect(service.getWireStatusSnapshot("alpha")).toEqual({ servers: [] });
+		expect(service.getWireStatusSnapshot("bravo").servers.map((server) => server.name)).toEqual(["fx"]);
+	});
+
 	it("keeps a reloading session's own servers running while a peer is live", async () => {
 		// Given: the first session alone declares `extra`, both declare `fx`, and both servers are connected.
 		const peer = configureExtraForRootProject();

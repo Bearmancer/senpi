@@ -82,6 +82,8 @@ interface McpSessionBinding {
 	readonly options: McpSessionOptions;
 	readonly registeredIdentities: Map<string, string>;
 	registration: McpSessionRegistration | undefined;
+	/** The session id read at attach, while the context is live: a released session's context may already be stale. */
+	readonly sessionId: string | undefined;
 }
 
 /** A session's resolved config with the context and options that declared it; a binding is one. */
@@ -261,6 +263,7 @@ export class McpService {
 			...owner,
 			registeredIdentities: previous?.registeredIdentities ?? new Map(),
 			registration: previous?.registration,
+			sessionId: owner.context.sessionManager?.getSessionId?.(),
 		};
 		// Re-inserting keeps the most recent attach last, which is what a caller naming no session gets.
 		this.#bindings.delete(pi);
@@ -295,6 +298,11 @@ export class McpService {
 		this.#bindings.delete(pi);
 		if (disposeReason !== undefined) this.#releasedSessions.add(pi);
 		const live = this.#liveBindings();
+		// A released session's status snapshot goes with it, unless a live binding still reports under its session id.
+		const releasedId = released?.sessionId;
+		if (releasedId !== undefined && !live.some((binding) => binding.sessionId === releasedId)) {
+			this.#wireStatusBySession.delete(releasedId);
+		}
 		const latest = live.at(-1);
 		if (latest !== undefined) {
 			if (released === undefined) return;
