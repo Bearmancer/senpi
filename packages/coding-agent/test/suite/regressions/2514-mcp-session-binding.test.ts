@@ -964,6 +964,57 @@ describe("senpi#2597: a session's MCP status and the service's teardown follow t
 		expect(service.getWireStatusSnapshot("bravo").servers.map((server) => server.name)).toEqual(["fx"]);
 	});
 
+	// The FIFO holds the attach's catalog-cache read, after it bound, until the test writes it.
+	it.skipIf(process.platform === "win32")(
+		"stores no MCP status for a session that quits while its own attach is running",
+		async () => {
+			// Given: a live peer, and a session in its own agent dir whose project declares `extra` and whose catalog-cache
+			// file is a FIFO.
+			configureServer();
+			const service = getMcpService();
+			await attachInProject(capturingPi(), root, "bravo");
+			const owner = makeRoot("2597-capture-owner", cleanupTasks);
+			setConfig(owner, {});
+			writeProjectConfig(owner.cwd, {
+				extra: { ...stdioServer(["--tools", "1"]), exposure: "search", lifecycle: "eager" },
+			});
+			const cachePath = getMcpCatalogCachePath(owner.agentDir);
+			mkdirSync(dirname(cachePath), { recursive: true });
+			execFileSync("mkfifo", [cachePath]);
+
+			// When: the session's attach binds and waits on the FIFO; the session quits, then the attach resumes.
+			const alphaPi = capturingPi();
+			const bound = Promise.withResolvers<void>();
+			const attach = service.attachSession(
+				{ type: "session_start", reason: "startup" },
+				{
+					cwd: owner.cwd,
+					isProjectTrusted: () => true,
+					mode: "app-server",
+					sessionManager: { getEntries: () => [], getSessionId: () => "alpha" },
+					// Read just before the attach binds; the rest of its turn runs to the cache read before this resolves.
+					getRegisteredMcpServers: () => {
+						bound.resolve();
+						return [];
+					},
+				},
+				alphaPi,
+				{ agentDir: owner.agentDir },
+			);
+			await bound.promise;
+			await service.releaseSession(alphaPi, "quit");
+			// Opening for writing blocks until the attach's read has opened the FIFO, so it receives the data and the end.
+			const writer = openSync(cachePath, constants.O_WRONLY);
+			writeSync(writer, "{}");
+			closeSync(writer);
+			await attach;
+			await service.whenAttachSettled(REGISTRATION_TIMEOUT_MS);
+
+			// Then: the closed session's status snapshot was never stored.
+			expect(service.getWireStatusSnapshot("alpha")).toEqual({ servers: [] });
+		},
+	);
+
 	it("keeps a reloading session's own servers running while a peer is live", async () => {
 		// Given: the first session alone declares `extra`, both declare `fx`, and both servers are connected.
 		const peer = configureExtraForRootProject();

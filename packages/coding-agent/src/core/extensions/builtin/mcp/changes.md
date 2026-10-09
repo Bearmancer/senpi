@@ -34,6 +34,7 @@
 - `service.ts`: `releaseSession` re-syncs on a dispose reason even when this call finds no binding because an earlier release with no reason already dropped it. A reload into a runtime without the MCP builtin fires `session_shutdown` (a release with no reason) and then `session_extensions_removed` (a release with `reload`), so the second release now stops the servers only that session declared. It hands `#sessionContext` to the most recent live binding only when it released the binding that held it.
 - `service.ts`: `#syncFromConfig` never keeps a connection whose credentials went stale (`credentialsCurrent()` is false), even when its recomputed key is unchanged. It re-creates the connection with the options of the session that declares it now, so the most recent live declarer's credentials win, as they do at attach. `#resyncToLiveSessions` decides whether to republish by comparing the connection entries before and after the sync, not their keys, because a re-created connection keeps its key and the offers made against the old entry stay retired until the tools are republished.
 - `service.ts`: a credential re-sync (`#resyncToLiveSessions` called with a fallback owner, from `onCredentialsChanged`) syncs the current `#config` and no longer recomputes the effective config of the live sessions. It re-keys the changed connection and stops nothing. A release re-sync still recomputes the effective config.
+- `service.ts`: an attach's status capture resolves its owner when the capture runs: the attaching session's binding only while it is still that session's current binding, and nothing once the session was released. An attach that binds no session still reports its own config.
 
 ### Why
 
@@ -49,6 +50,7 @@
 - A reload or session switch into a runtime without the MCP builtin released the session twice: first with no reason, which dropped the binding without a re-sync, then with `reload`, which found no binding and returned. While a peer stayed live, the servers only that session declared kept running with its options and credentials.
 - A connection created with one session's env stayed bound to that env while a peer resolving the same token shared it. When the first session's token rotated, the credential re-sync recomputed the key from the peer's still-matching credentials, found it unchanged and kept the stale connection. `getConnection` then returned nothing and every sharing session's calls were refused, with nothing left to re-key the connection.
 - A credential re-sync recomputed the effective config from the live sessions. During a peer's reload window (released with no reason, not yet attached again) that config lacked the reloading session's servers, so a token change in another session stopped them, and the reloaded attach then re-spawned them: the restart the reasonless release had stopped doing.
+- An attach's status capture fell back to the binding it created even after the session was released. A session that quit while its own attach was running therefore had its snapshot stored after the release had already deleted it, and the snapshot outlived the session.
 
 ### Why an extension could not handle it
 

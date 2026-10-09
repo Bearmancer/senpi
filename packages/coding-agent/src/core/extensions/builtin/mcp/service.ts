@@ -180,9 +180,12 @@ export class McpService {
 			// one turn late. Doing it here puts restored tools on the very first
 			// wire payload after a --continue/resume.
 			if (binding !== undefined) this.#rehydrateFromSessionHistory(binding);
-			// An unbound attach (no `pi`) still reports its own config.
+			// An unbound attach (no `pi`) still reports its own config; a session released while this attach ran reports
+			// nothing, so no snapshot outlives its release.
 			if (shouldCaptureWireStatus(ctx)) {
-				await this.#refreshWireStatus(ctx.sessionManager?.getSessionId?.(), () => binding ?? owner);
+				await this.#refreshWireStatus(ctx.sessionManager?.getSessionId?.(), () =>
+					binding === undefined ? owner : this.#bindings.get(binding.pi) === binding ? binding : undefined,
+				);
 			}
 		});
 	}
