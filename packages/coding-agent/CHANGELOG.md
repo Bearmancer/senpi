@@ -12,7 +12,7 @@
 
 ### Fixed
 
-- When the session file refuses writes, an automatic-turn pause is still announced, a message from another session that arrives at the limit is settled instead of staying pending, and editing your message in `/tree` lifts a pause like sending a new one ([#2967](https://github.com/code-yeongyu/senpi/issues/2967)).
+- When the session file refuses writes, an automatic-turn pause is still announced, a message from another session that arrives at the limit is settled instead of staying pending, and editing your message in `/tree` lifts a pause like sending a new one ([#2967](https://github.com/code-yeongyu/senpi/issues/2967); first listed under 2026.10.10-9 by mistake, it ships in this release).
 
 - On Windows, ending a Chrome-backed WebView no longer force-kills unrelated system processes, including the CI runner itself. The cleanup listed Chrome's process tree by recorded parent pid, which Windows never updates when a parent exits and reuses quickly, so a Chrome process that got a dead process's pid pulled whole system trees into the kill list (measured: 145 processes, `csrss.exe` and `wininit.exe` among them). A process now counts as Chrome's child only when it started after the parent it names, and protected system images or ancestors of the current process are never killed even if adopted ([#2353](https://github.com/code-yeongyu/senpi/issues/2353)).
 
@@ -37,6 +37,8 @@
 ### Changed
 
 ### Fixed
+
+- When the session file refuses writes, an automatic-turn pause is still announced, a message from another session that arrives at the limit is settled instead of staying pending, and editing your message in `/tree` lifts a pause like sending a new one ([#2967](https://github.com/code-yeongyu/senpi/issues/2967)).
 
 - The engine no longer starts turns on its own without bound. After one user message, automatic turns (stream-rule nudges, goal continuations and any other extension follow-up) pause after 150, or as soon as 12 automatic turns within a minute did no work (called no tool); each stream rule sends at most one correction per message. When it pauses, the session says so, and any message you send continues right away. Both numbers are settings (`engineTurns.maxPerUserInput`, `engineTurns.maxToolFreePerMinute`; `0` turns one off). One message had produced 66 turns, and another 93 requests in 3 s, until Stop ([#2967](https://github.com/code-yeongyu/senpi/issues/2967)).
 
