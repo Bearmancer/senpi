@@ -109,7 +109,7 @@ export class McpService {
 	readonly #bindings = new Map<object, McpSessionBinding>();
 	// Attaches and release re-syncs queued or running: a release defers its dispose until none is left.
 	#pendingSyncs = 0;
-	// Sessions that quit while their own attach was still queued: the attach must not bind them (#2524 review).
+	// Sessions that quit while their own attach was still queued: that attach starts nothing (#2524 review, senpi#2597).
 	readonly #releasedSessions = new WeakSet<object>();
 	#deferredDisposeReason: McpDisposeReason | undefined;
 	// Releases waiting for the attaches that deferred their dispose: they settle once the last one does.
@@ -147,6 +147,9 @@ export class McpService {
 			if (this.#disposed) {
 				throw new Error("The MCP service is disposed; attach the session to a live service instead.");
 			}
+			// A session that quit while this attach was queued is gone: it binds nothing, and adopting its config would
+			// replace the servers its live peers use, with no re-sync to follow. A deferred dispose still runs after it.
+			if (_pi !== undefined && this.#releasedSessions.has(_pi)) return;
 			this.#sessionContext = ctx;
 			this.#skillServerWarnings.clear();
 			this.#sessionStartCount += 1;
@@ -165,7 +168,7 @@ export class McpService {
 			});
 			mergeExtensionMcpServers(config, ctx.getRegisteredMcpServers?.() ?? []);
 			const owner: McpConfigOwner = { config, options: sessionOptions, context: ctx };
-			const binding = _pi === undefined || this.#releasedSessions.has(_pi) ? undefined : this.#bind(_pi, owner);
+			const binding = _pi === undefined ? undefined : this.#bind(_pi, owner);
 			const current = this.#adoptEffectiveConfig(config);
 			this.#config = current;
 			await this.#syncFromConfig(current, binding ?? owner, event.reason !== "reload", binding);
@@ -176,7 +179,7 @@ export class McpService {
 			// one turn late. Doing it here puts restored tools on the very first
 			// wire payload after a --continue/resume.
 			if (binding !== undefined) this.#rehydrateFromSessionHistory(binding);
-			// An unbound attach (no `pi`, or a session that quit while queued) still reports its own config.
+			// An unbound attach (no `pi`) still reports its own config.
 			if (shouldCaptureWireStatus(ctx)) {
 				await this.#refreshWireStatus(ctx.sessionManager?.getSessionId?.(), () => binding ?? owner);
 			}

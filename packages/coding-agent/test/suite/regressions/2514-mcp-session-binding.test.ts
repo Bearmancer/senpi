@@ -18,6 +18,7 @@ import type { ResourceLoader } from "../../../src/core/resource-loader.ts";
 import type { ExtensionAPI, LoadExtensionsResult } from "../../../src/index.ts";
 import { type CapturingPi, capturingPi, registeredTool } from "../../mcp/fixtures/register-call.ts";
 import {
+	assertAlive,
 	cleanupRoots,
 	makeRoot,
 	readCounter,
@@ -514,22 +515,21 @@ describe("senpi#2514: the shared service keeps sessions apart under concurrency 
 		expect(alphaPi.registeredTools).toContain("mcp_fx_echo");
 	});
 
-	it("disposes the service when the only session quits before its own attach finishes", async () => {
-		// Given: a session whose attach is still in progress.
+	it("disposes the service, starting no server, when the only session quits while its attach is still queued", async () => {
+		// Given: the only session, whose attach is still queued.
 		configureServer();
 		const service = getMcpService();
 		const alphaPi = capturingPi();
 		const attach = attachFake(alphaPi);
 
-		// When: it quits before the attach settles (a short-lived child that finishes immediately).
+		// When: it quits before the attach runs (a short-lived child that finishes immediately).
 		await service.releaseSession(alphaPi, "quit");
-		await attach.catch(() => undefined);
+		await attach;
 		await service.whenAttachSettled(REGISTRATION_TIMEOUT_MS);
 
-		// Then: no session is left, so the service and its server process are released, not leaked.
-		const pid = service.getConnection("fx")?.getRootPid();
-		expect(service.getSnapshot()).toMatchObject({ disposed: true, connectionCount: 0 });
-		if (pid !== null && pid !== undefined) await assertProcessDead(pid);
+		// Then: the service is disposed, and the attach of the closed session started no session and no server process.
+		expect(service.getSnapshot()).toMatchObject({ disposed: true, connectionCount: 0, sessionStartCount: 0 });
+		await expect(readCounter(spawnCounter)).rejects.toThrow();
 	});
 
 	it("still delivers a refreshed tool list to the other sessions when one session's registration throws", async () => {
@@ -670,6 +670,39 @@ async function attachInProject(pi: CapturingPi, project: TestRoot, sessionId: st
 }
 
 describe("senpi#2597: a session's MCP status and the service's teardown follow the live sessions", () => {
+	it("starts nothing for a session that quits while its first attach is queued, leaving the peer's servers untouched", async () => {
+		// Given: a bound session on the global `fx`, and a peer project declaring its own `fx` and an `extra`.
+		configureServer();
+		const peer = makeRoot("2597-quit-queued", cleanupTasks);
+		writeProjectConfig(peer.cwd, {
+			fx: { ...stdioServer(["--tools", "3"]), exposure: "search", lifecycle: "eager" },
+			extra: { ...stdioServer(["--tools", "1"]), exposure: "search", lifecycle: "eager" },
+		});
+		const service = getMcpService();
+		const alphaPi = capturingPi();
+		await attachFake(alphaPi);
+		await untilFakeRegistered(alphaPi, TOOL);
+		const fxPid = requiredPid(service, "fx");
+
+		// When: the peer's first attach is queued, and the peer quits before it runs.
+		const bravoPi = capturingPi();
+		const bravoAttach = attachInProject(bravoPi, peer, "bravo");
+		await service.releaseSession(bravoPi, "quit");
+		await bravoAttach;
+		await service.whenAttachSettled(REGISTRATION_TIMEOUT_MS);
+
+		// Then: the bound session keeps its own `fx` process and tools, and the closed peer started no server.
+		expect(requiredPid(service, "fx")).toBe(fxPid);
+		await assertAlive(fxPid);
+		expect(service.getConnection("extra")).toBeUndefined();
+		const tool = registeredTool(alphaPi, TOOL);
+		const result = await Reflect.apply(tool.execute, tool, ["q", { value: "after-quit" }, undefined, undefined]);
+		expect(result).toMatchObject({
+			content: [{ type: "text", text: expect.stringContaining("fixture tool_1 value=after-quit") }],
+		});
+		expect(service.getSnapshot()).toMatchObject({ disposed: false, connectionCount: 1 });
+	});
+
 	it("lists only a session's own servers in its MCP status, never a peer's", async () => {
 		// Given: the first session's project declares `extra` beside the shared `fx`; a peer elsewhere declares only `fx`.
 		const peer = configureExtraForRootProject();
