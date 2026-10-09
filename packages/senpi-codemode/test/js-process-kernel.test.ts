@@ -709,6 +709,8 @@ return "done";`,
 				expect(pidAlive(childPid)).toBe(true);
 				const hostExited = new Promise<void>((resolve) => host.once("exit", () => resolve()));
 
+				// The host may already be gone (EPIPE); its exit is what the test waits for either way (senpi#3016).
+				host.stdin.on("error", () => {});
 				if (how === "exits without closing its kernel") host.stdin.write("exit\n");
 				else host.kill("SIGKILL");
 				await hostExited;

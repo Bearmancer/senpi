@@ -1508,6 +1508,13 @@
 				"legacyContracts/test/js-kernel-cell-process-group-bun.test.ts/JavaScript kernel children start their own process group (senpi#2995) Given a node:child_process background job when the cell signals the job's process group then the agent is not in it and the job is gone"
 			],
 			"reason": "senpi#2995: the worker's shell capture imports the new group-signal-notice.js. It warns when a Bun.$, exec/execFile or synchronous-spawner command signals a process group, since those children stay in the agent's group. The listed contracts cover child process groups, the detector, the notice tag, a missing ps, and promisify(exec)."
+		},
+		"senpi#3016": {
+			"additions": [
+				"legacyContracts/test/subprocess-stdin-epipe.test.ts/subprocess kernel stdin write failures (senpi#3016) Given a Python interpreter that closed its stdin when the transport sends its init frame then start fails with the EPIPE and the host survives",
+				"legacyContracts/test/subprocess-stdin-epipe.test.ts/subprocess kernel stdin write failures (senpi#3016) Given a kernel child that closed its stdin when a frame is sent then the EPIPE is reported once through onError and the host survives"
+			],
+			"reason": "senpi#3016: a kernel child's stdin write failure (EPIPE) is reported once through onError, for the shared subprocess kernels and the Python transport, instead of an unhandled stream error ending the host. A send after exit is refused."
 		}
 	}
 }
