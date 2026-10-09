@@ -24,6 +24,10 @@
 
 ### Fixed
 
+- When sessions that share one MCP service resolve different MCP configs (for example a main session and in-process sidecar sessions that load without extensions), one session's attach no longer makes every other session's MCP tools fail with "MCP session or server configuration was replaced.", no longer shuts down MCP servers another live session still declares, and no longer keeps running an MCP server that only a closed session declared ([#2597](https://github.com/code-yeongyu/senpi/issues/2597) by [@ferose](https://github.com/ferose)).
+
+- When sessions that share one MCP service differ in project trust, environment or agent directory, a session's skill-declared MCP servers now expand `${VAR}` values under its own trust and environment, and every MCP server spawns, re-authenticates and reports auth status with the credentials of a session that declares it, instead of those of whichever session attached last ([#2986](https://github.com/code-yeongyu/senpi/issues/2986) by [@ferose](https://github.com/ferose)).
+
 - When the session file refuses writes, an automatic-turn pause is still announced, a message from another session that arrives at the limit is settled instead of staying pending, and editing your message in `/tree` lifts a pause like sending a new one ([#2967](https://github.com/code-yeongyu/senpi/issues/2967); first listed under 2026.10.10-9 by mistake, it ships in this release).
 
 - On Windows, ending a Chrome-backed WebView no longer force-kills unrelated system processes, including the CI runner itself. The cleanup listed Chrome's process tree by recorded parent pid, which Windows never updates when a parent exits and reuses quickly, so a Chrome process that got a dead process's pid pulled whole system trees into the kill list (measured: 145 processes, `csrss.exe` and `wininit.exe` among them). A process now counts as Chrome's child only when it started after the parent it names, and protected system images or ancestors of the current process are never killed even if adopted ([#2353](https://github.com/code-yeongyu/senpi/issues/2353)).
