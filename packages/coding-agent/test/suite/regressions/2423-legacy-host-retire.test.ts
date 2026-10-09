@@ -110,7 +110,7 @@ describe.skipIf(process.platform === "win32")("a live pre-layout-2 host (#2423)"
 		const legacy = await startLegacyHost("l2r");
 		// Same pid, different identity guard: the record describes a process that is gone, and the live
 		// process now holding that pid proves nothing. Neither a drain nor an ensure may signal it.
-		const stale = `${JSON.stringify({ pid: legacy.pid, processStartTime: "not-the-live-start-time" })}\n`;
+		const stale = `${JSON.stringify({ pid: legacy.pid, processStartTime: "1970-01-01T00:00:00.000Z" })}\n`;
 		await writeFile(flatPidFile(legacy), stale, { mode: 0o600 });
 
 		const stop = await stopHost({ socket: legacy.socket, agentDir: legacy.qa.agentDir, drain: true });
