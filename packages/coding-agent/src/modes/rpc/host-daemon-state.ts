@@ -34,8 +34,13 @@ export async function readHostOwner(generationDir: string): Promise<HostLifetime
 	if (record?.owner === null) return null;
 	if (!isRecord(record?.owner)) return undefined;
 	const { pid, startTime } = record.owner;
-	return typeof pid === "number" && Number.isSafeInteger(pid) && pid > 0 &&
-		typeof startTime === "string" && startTime.length > 0 ? { pid, startTime } : undefined;
+	return typeof pid === "number" &&
+		Number.isSafeInteger(pid) &&
+		pid > 0 &&
+		typeof startTime === "string" &&
+		startTime.length > 0
+		? { pid, startTime }
+		: undefined;
 }
 
 /**
@@ -46,7 +51,10 @@ export function writeHostOwner(generationDir: string, owner: HostLifetimeOwner |
 	return writeJsonAtomic(join(generationDir, "owner.json"), { owner });
 }
 
-export function sameHostOwner(a: HostLifetimeOwner | null | undefined, b: HostLifetimeOwner | null | undefined): boolean {
+export function sameHostOwner(
+	a: HostLifetimeOwner | null | undefined,
+	b: HostLifetimeOwner | null | undefined,
+): boolean {
 	return a != null && b != null && a.pid === b.pid && a.startTime === b.startTime;
 }
 
@@ -59,9 +67,13 @@ export async function callerHostOwner(): Promise<HostLifetimeOwner> {
 
 export async function hostOwnerGone(owner: HostLifetimeOwner): Promise<boolean> {
 	const observed = await readProcessIdentity(owner.pid, process.platform, 1_000);
-	return observed.kind === "absent" || (observed.kind === "present" &&
-		processStartTimeMs(observed.identity) !== undefined &&
-		processStartTimeMs(owner.startTime) !== undefined && observed.identity !== owner.startTime);
+	return (
+		observed.kind === "absent" ||
+		(observed.kind === "present" &&
+			processStartTimeMs(observed.identity) !== undefined &&
+			processStartTimeMs(owner.startTime) !== undefined &&
+			observed.identity !== owner.startTime)
+	);
 }
 
 /** A live or unknown different owner is never silently replaced. Called inside the ensure lock. */

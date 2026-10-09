@@ -28,8 +28,15 @@ const options = {
 	agentDir,
 	...(ownership === "caller" ? { owner: "caller" as const } : {}),
 	policy: { idleExitMs: 60_000 },
-	hostArgs: ["--no-extensions", "--no-skills", "--no-prompt-templates",
-		"--provider", MOCK_PROVIDER, "--model", MOCK_MODEL],
+	hostArgs: [
+		"--no-extensions",
+		"--no-skills",
+		"--no-prompt-templates",
+		"--provider",
+		MOCK_PROVIDER,
+		"--model",
+		MOCK_MODEL,
+	],
 	_test: { launch: supervisorLaunch },
 };
 try {
@@ -38,10 +45,11 @@ try {
 	process.send?.({ type: "ready", pid: ensured.pid, reused: ensured.reused });
 	process.on("message", (message) => {
 		if (message === "exit") process.disconnect?.();
-		if (message === "reuse") void ensureHost(options).then((reused) => {
-			reused.release();
-			process.send?.({ type: "reused", reused: reused.reused });
-		});
+		if (message === "reuse")
+			void ensureHost(options).then((reused) => {
+				reused.release();
+				process.send?.({ type: "reused", reused: reused.reused });
+			});
 	});
 } catch (cause) {
 	process.send?.({ type: "failure", error: String(cause) });

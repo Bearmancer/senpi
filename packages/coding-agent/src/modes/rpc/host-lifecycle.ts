@@ -170,9 +170,14 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 			void shutdown("idle", 0);
 		if (!ownerCheck && !state.shuttingDown && !drain.active) {
 			ownerCheck = true;
-			void owner.shouldExit(activity).then((exit) => {
-				if (exit && !state.shuttingDown && !drain.active) void shutdown("owner_gone", 0);
-			}).finally(() => { ownerCheck = false; });
+			void owner
+				.shouldExit(activity)
+				.then((exit) => {
+					if (exit && !state.shuttingDown && !drain.active) void shutdown("owner_gone", 0);
+				})
+				.finally(() => {
+					ownerCheck = false;
+				});
 		}
 	}, tickIntervalMs);
 	let ownerCheck = false;
@@ -209,7 +214,7 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 	try {
 		// Direct supervisor launches predate owner records and may have no generation directory.
 		// Ensured starts create it before spawning and always carry an explicit owner/null record.
-		if (launch.ownerFd !== undefined || await readSettingsFile(generation.settingsFile)) {
+		if (launch.ownerFd !== undefined || (await readSettingsFile(generation.settingsFile))) {
 			await owner.start(launch.ownerFd);
 		}
 		await waitForListener(internalSocket, 30_000, internalSecret);

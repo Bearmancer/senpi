@@ -68,8 +68,12 @@ export class SupervisorActivity {
 
 	/** Owner death never turns an unknown observer snapshot into permission to stop a turn. */
 	quiescent(): boolean {
-		return this.observerLink.healthy() && this.runs.busySessions === 0 &&
-			this.clients.attachedCount === 0 && this.clients.unclassifiedCount === 0;
+		return (
+			this.observerLink.healthy() &&
+			this.runs.busySessions === 0 &&
+			this.clients.attachedCount === 0 &&
+			this.clients.unclassifiedCount === 0
+		);
 	}
 
 	openObserver(): Promise<void> {

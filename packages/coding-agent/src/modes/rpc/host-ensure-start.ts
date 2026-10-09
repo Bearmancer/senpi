@@ -75,7 +75,8 @@ export async function startHost(
 	let childExit: Promise<ChildExit> | undefined;
 	try {
 		const supervisorArgs = [
-			"--socket", socket,
+			"--socket",
+			socket,
 			...(options.owner ? ["--owner-fd", String(OWNER_WATCH_FD)] : []),
 			...(options.hostArgs ?? []),
 		];

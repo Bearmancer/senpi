@@ -28,8 +28,13 @@ import {
 	writeHostRegistration,
 } from "./host-daemon-registration.ts";
 import {
-	callerHostOwner, readFileOrUndefined, readHostOwner, readHostSettings, sameHostOwner,
-	writeHostOwner, writeHostSettings,
+	callerHostOwner,
+	readFileOrUndefined,
+	readHostOwner,
+	readHostSettings,
+	sameHostOwner,
+	writeHostOwner,
+	writeHostSettings,
 } from "./host-daemon-state.ts";
 import { announceStop, recordEscalation, type StopTarget, signalPid } from "./host-ensure-stop.ts";
 import type { HandoffHostOptions, HandoffRefusal, HandoffResult } from "./host-handoff.ts";

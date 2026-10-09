@@ -21,7 +21,8 @@ describe("RPC owner OS identity fallback", () => {
 
 	it("compares Windows FILETIME identities without uptime-derived estimates", async () => {
 		vi.spyOn(processIdentity, "readProcessIdentity").mockResolvedValue({
-			kind: "present", identity: "134044416000000001",
+			kind: "present",
+			identity: "134044416000000001",
 		});
 		expect(await hostOwnerGone({ pid: 42, startTime: "134044416000000000" })).toBe(true);
 	});

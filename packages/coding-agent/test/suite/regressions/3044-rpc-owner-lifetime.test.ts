@@ -1,17 +1,22 @@
-import childProcess, { type ChildProcess, execFileSync, spawn, type SpawnOptions } from "node:child_process";
+import childProcess, { type ChildProcess, execFileSync, type SpawnOptions, spawn } from "node:child_process";
 import { once } from "node:events";
 import { readFile, rm } from "node:fs/promises";
-import { Socket } from "node:net";
 import { syncBuiltinESMExports } from "node:module";
+import { Socket } from "node:net";
 import { join } from "node:path";
 import { mock } from "node:test";
 import { afterEach, describe, expect, it } from "vitest";
 import { createHostDaemonPaths, generationPaths } from "../../../src/modes/rpc/host-daemon-paths.ts";
 import { readHostRegistration } from "../../../src/modes/rpc/host-daemon-registration.ts";
-import { handoffHost, type HandoffResult } from "../../../src/modes/rpc/host-handoff.ts";
+import { type HandoffResult, handoffHost } from "../../../src/modes/rpc/host-handoff.ts";
 import {
-	generationEnv, generationScratch, type GenerationScratch, HeldAnthropicModel,
-	JsonlPeer, openedSessionId, supervisorLaunch,
+	type GenerationScratch,
+	generationEnv,
+	generationScratch,
+	HeldAnthropicModel,
+	JsonlPeer,
+	openedSessionId,
+	supervisorLaunch,
 } from "../../helpers/rpc-generation-support.ts";
 import { writeRpcModelsJson } from "../../helpers/rpc-hermetic.ts";
 import { processAlive } from "../../helpers/spawned-host-reaper.ts";
@@ -109,9 +114,12 @@ function verifyCommand(pid: number): void {
 async function bounded<T>(operation: Promise<T>, ms: number, label: string): Promise<T> {
 	let timer: ReturnType<typeof setTimeout> | undefined;
 	try {
-		return await Promise.race([operation, new Promise<never>((_resolve, reject) => {
-			timer = setTimeout(() => reject(new Error(`${label} still alive after ${ms}ms`)), ms);
-		})]);
+		return await Promise.race([
+			operation,
+			new Promise<never>((_resolve, reject) => {
+				timer = setTimeout(() => reject(new Error(`${label} still alive after ${ms}ms`)), ms);
+			}),
+		]);
 	} finally {
 		clearTimeout(timer);
 	}
@@ -132,7 +140,9 @@ async function peer(qa: GenerationScratch, observe = false): Promise<JsonlPeer> 
 }
 
 async function allGone(): Promise<void> {
-	await Promise.all([...supervisors].map(([pid, supervisor]) => bounded(supervisor.exited, EXIT_BOUND_MS, `pid ${pid}`)));
+	await Promise.all(
+		[...supervisors].map(([pid, supervisor]) => bounded(supervisor.exited, EXIT_BOUND_MS, `pid ${pid}`)),
+	);
 	for (const pid of pids.keys()) {
 		expect(processAlive(pid), `pid ${pid} still alive after owner exit`).toBe(false);
 	}
@@ -141,23 +151,28 @@ async function allGone(): Promise<void> {
 // Here elapsed time IS the assertion: a lifetime must survive the short owner-death exit window.
 async function survivesOwnerGrace(connection: JsonlPeer): Promise<void> {
 	await expect(connection.waitForClose(4_000)).rejects.toThrow("connection stayed open");
-	expect(await connection.request({ id: "still-serving", type: "get_protocol_info", observe: true }))
-		.toMatchObject({ success: true });
+	expect(await connection.request({ id: "still-serving", type: "get_protocol_info", observe: true })).toMatchObject({
+		success: true,
+	});
 }
 
 // #3044: the real detached supervisor and real in-process host must not wait out the 15-minute idle policy.
 // POSIX process-table assertions follow the existing supervised lifecycle harness.
 describe.skipIf(process.platform === "win32")("RPC owner lifetime", () => {
-	it.each(["normal", "SIGKILL"] as const)("exits within the bound after owner %s exit", async (exit) => {
-		const qa = generationScratch("owner");
-		roots.push(qa);
-		const owner = await caller(qa);
-		const exited = once(owner, "exit", { signal: AbortSignal.timeout(EXIT_BOUND_MS) });
-		if (exit === "normal") owner.send("exit");
-		else owner.kill("SIGKILL");
-		await exited;
-		await allGone();
-	}, 45_000);
+	it.each(["normal", "SIGKILL"] as const)(
+		"exits within the bound after owner %s exit",
+		async (exit) => {
+			const qa = generationScratch("owner");
+			roots.push(qa);
+			const owner = await caller(qa);
+			const exited = once(owner, "exit", { signal: AbortSignal.timeout(EXIT_BOUND_MS) });
+			if (exit === "normal") owner.send("exit");
+			else owner.kill("SIGKILL");
+			await exited;
+			await allGone();
+		},
+		45_000,
+	);
 
 	it("keeps serving a second peer until it disconnects", async () => {
 		const qa = generationScratch("peer");
@@ -179,7 +194,12 @@ describe.skipIf(process.platform === "win32")("RPC owner lifetime", () => {
 		const owner = await caller(qa);
 		const observer = await peer(qa, true);
 		const attached = await peer(qa);
-		const opened = await attached.request({ id: "open", type: "open_session", cwd: qa.cwd, retainOnDisconnect: true });
+		const opened = await attached.request({
+			id: "open",
+			type: "open_session",
+			cwd: qa.cwd,
+			retainOnDisconnect: true,
+		});
 		const sessionId = openedSessionId(opened);
 		const data = opened.data;
 		if (typeof data !== "object" || data === null) throw new Error("missing open data");
@@ -195,28 +215,38 @@ describe.skipIf(process.platform === "win32")("RPC owner lifetime", () => {
 		await survivesOwnerGrace(observer);
 		model.release();
 		await allGone();
-		const entries: unknown[] = (await readFile(sessionFile, "utf8")).trim().split("\n").map((line) => JSON.parse(line));
-		expect(entries).toContainEqual(expect.objectContaining({
-			message: expect.objectContaining({
-				role: "assistant", stopReason: "stop",
-				content: expect.arrayContaining([expect.objectContaining({ type: "text", text: "held turn complete" })]),
+		const entries: unknown[] = (await readFile(sessionFile, "utf8"))
+			.trim()
+			.split("\n")
+			.map((line) => JSON.parse(line));
+		expect(entries).toContainEqual(
+			expect.objectContaining({
+				message: expect.objectContaining({
+					role: "assistant",
+					stopReason: "stop",
+					content: expect.arrayContaining([expect.objectContaining({ type: "text", text: "held turn complete" })]),
+				}),
 			}),
-		}));
+		);
 	}, 45_000);
 
-	it.each(["unowned", "live"] as const)("does not exit early when %s", async (mode) => {
-		const qa = generationScratch(mode);
-		roots.push(qa);
-		const owner = await caller(qa, mode === "unowned" ? "none" : "caller");
-		const observer = await peer(qa, true);
-		if (mode === "unowned") await exitOwner(owner);
-		else {
-			const reused = once(owner, "message", { signal: AbortSignal.timeout(10_000) });
-			owner.send("reuse");
-			expect((await reused)[0]).toEqual({ type: "reused", reused: true });
-		}
-		await survivesOwnerGrace(observer);
-	}, 45_000);
+	it.each(["unowned", "live"] as const)(
+		"does not exit early when %s",
+		async (mode) => {
+			const qa = generationScratch(mode);
+			roots.push(qa);
+			const owner = await caller(qa, mode === "unowned" ? "none" : "caller");
+			const observer = await peer(qa, true);
+			if (mode === "unowned") await exitOwner(owner);
+			else {
+				const reused = once(owner, "message", { signal: AbortSignal.timeout(10_000) });
+				owner.send("reuse");
+				expect((await reused)[0]).toEqual({ type: "reused", reused: true });
+			}
+			await survivesOwnerGrace(observer);
+		},
+		45_000,
+	);
 
 	it("refuses a different live owner and lets a new caller replace a dead one on reuse", async () => {
 		const qa = generationScratch("reuse");
@@ -238,25 +268,31 @@ describe.skipIf(process.platform === "win32")("RPC owner lifetime", () => {
 		roots.push(qa);
 		const owner = await caller(qa);
 		const original = childProcess.spawn;
-		const observed = mock.method(childProcess, "spawn", (command: string, args: readonly string[], options: SpawnOptions) => {
-			if (!args[0]?.endsWith("host-lifecycle.ts")) return original(command, args, options);
-			const stdio = Array.isArray(options.stdio) ? [...options.stdio] : [];
-			stdio[1] = "pipe";
-			const child = original(command, args, { ...options, stdio });
-			if (child.pid === undefined || !(child.stdout instanceof Socket)) throw new Error("missing successor pipe");
-			remember(child.pid);
-			supervisors.set(child.pid, {
-				pipe: child.stdout,
-				exited: new Promise<void>((resolve) => child.once("exit", () => resolve())),
-			});
-			child.stdout.resume();
-			return child;
-		});
+		const observed = mock.method(
+			childProcess,
+			"spawn",
+			(command: string, args: readonly string[], options: SpawnOptions) => {
+				if (!args[0]?.endsWith("host-lifecycle.ts")) return original(command, args, options);
+				const stdio = Array.isArray(options.stdio) ? [...options.stdio] : [];
+				stdio[1] = "pipe";
+				const child = original(command, args, { ...options, stdio });
+				if (child.pid === undefined || !(child.stdout instanceof Socket)) throw new Error("missing successor pipe");
+				remember(child.pid);
+				supervisors.set(child.pid, {
+					pipe: child.stdout,
+					exited: new Promise<void>((resolve) => child.once("exit", () => resolve())),
+				});
+				child.stdout.resume();
+				return child;
+			},
+		);
 		syncBuiltinESMExports();
 		let result: HandoffResult;
 		try {
 			result = await handoffHost({
-				socket: qa.socket, agentDir: qa.agentDir, env: generationEnv(qa),
+				socket: qa.socket,
+				agentDir: qa.agentDir,
+				env: generationEnv(qa),
 				_test: { launch: supervisorLaunch },
 			});
 		} finally {
