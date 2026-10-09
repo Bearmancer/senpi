@@ -47,6 +47,7 @@ export function headBudgetFor(
 	return budgets.find((budget) => budget.scenario === scenario && budget.runtimeId === runtimeId);
 }
 
+/** A p95 row (none of today's budget scenarios records one) is checked on its observations only. */
 export type BudgetMetric = "cpu" | "wall" | "p95";
 
 /** The reasons a head series misses its budget on one metric row; empty when it meets it. */

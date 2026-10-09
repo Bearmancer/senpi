@@ -1539,7 +1539,9 @@
 				"legacyContracts/test/bench/head-budget.test.ts/crash-queue-100 absolute head budget (rb, jl) fails a head that leaves a queued cell unrun",
 				"legacyContracts/test/bench/head-budget.test.ts/crash-queue-100 absolute head budget (rb, jl) fails a head that runs a queued cell twice",
 				"legacyContracts/test/bench/head-budget.test.ts/crash-queue-100 absolute head budget (rb, jl) fails a head whose median wall time exceeds the ceiling",
-				"legacyContracts/test/bench/head-budget.test.ts/crash-queue-100 absolute head budget (rb, jl) keeps the base-ratio gate for runtimes without a budget"
+				"legacyContracts/test/bench/head-budget.test.ts/crash-queue-100 absolute head budget (rb, jl) keeps the base-ratio gate for runtimes without a budget",
+				"legacyContracts/test/bench/head-budget.test.ts/crash-queue-100 absolute head budget (rb, jl) fails a head whose median cpu exceeds the ceiling while wall stays under it",
+				"legacyContracts/test/bench/head-budget.test.ts/crash-queue-100 absolute head budget (rb, jl) tests the wall ceiling through --inject-slow, keeping the recorded observations"
 			],
 			"reason": "senpi#3025: the bench judges crash-queue-100 on rb and jl by an absolute head budget (all 100 queued cells run once after one replacement, within a median-wall ceiling), because their base never recovered from the crash and the head/base ratio compares a failure path with the real work. The listed contracts are the new comparator tests."
 		}
