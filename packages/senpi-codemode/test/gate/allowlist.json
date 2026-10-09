@@ -1,6 +1,12 @@
 {
 	"version": 1,
 	"nodes": {
+		"senpi#3034": {
+			"additions": [
+				"legacyContracts/test/py-kernel-bookkeeping.test.ts/Python per-cell bookkeeping uses two FIFO operations zero Python queue locks and one capture scope per cell"
+			],
+			"reason": "senpi#3034, plan row 45 fix c: deterministic reader/main work counts retain two FIFO operations and one owner acquire/release while removing Python queue condition work and halving capture-scope setups."
+		},
 		"senpi#3028": {
 			"additions": [
 				"legacyContracts/test/kernel-memory-globals.test.ts/lazy memory globals jl does no globals work or payload serialization below threshold",
