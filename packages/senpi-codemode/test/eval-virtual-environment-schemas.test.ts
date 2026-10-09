@@ -68,7 +68,14 @@ describe("tool_schema('eval:*') virtual entries", () => {
 		for (const text of ["%pip install", "%bun add", "%npm add", "%environment managed | project", "%load", "8 MiB"]) {
 			expect(description).toContain(text);
 		}
-		expect(Object.keys(propertiesOf(parameters))).toEqual(["%pip", "%bun", "%npm", "%environment", "%load", "packages.install"]);
+		expect(Object.keys(propertiesOf(parameters))).toEqual([
+			"%pip",
+			"%bun",
+			"%npm",
+			"%environment",
+			"%load",
+			"packages.install",
+		]);
 	});
 
 	it("document packages.install with its signature, managers, receipt and codes", () => {
