@@ -35,6 +35,24 @@ The threshold decision, the cut point and the `RequiredCompactionError` throw al
 
 - LOW: the `if (inlineReason)` branch of the threshold block in `_checkCompaction`, and the `RequiredCompactionError` class header.
 
+## 2026-10-09 - Accurate turn_end report when the session shuts down mid-turn (senpi#2995)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `dispose()` sets a private `_disposed` flag. When the `turn_end` boundary cannot resolve the assistant entry after that, it reports "turn_end skipped: the session shut down during this turn, so its last response was not saved", replacing "turn_end could not resolve the persisted assistant entry ID".
+
+### Why
+
+- A signal shutdown (SIGTERM/SIGHUP) disposes the session while a response is still streaming. The aborted response is never persisted, so the boundary cannot resolve its entry. The old text pointed at a persistence bug that did not exist, and sent the senpi#2995 diagnosis the wrong way.
+
+### Why an extension could not handle it
+
+- The `<boundary>` error is emitted by `AgentSession` itself, before any extension handler runs.
+
+### Expected merge conflict zones
+
+- LOW: the `!messageEntryId` branch of `_dispatchTurnEndBoundary` and the first line of `dispose()` in `agent-session.ts`.
+
 ## 2026-10-09 - Concurrent log rotation never disables a log sink (senpi#2976)
 
 ### What changed

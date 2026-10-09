@@ -7,6 +7,7 @@ import { inspect } from "node:util";
 import { encodeDisplayImage, resolveDisplayOps } from "./display-image.js";
 import { terminateProcessTrees } from "./process-tree.js";
 import { awaitMaybePromise, indirectEval, wrapUserCode } from "./worker-indirect-eval.js";
+import { INJECTED_GROUP } from "./worker-cwd.js";
 import { installShellCapture } from "./worker-shell-capture.js";
 import { bindKernelBun } from "./worker-webview.js";
 import { createWorkpool } from "./workpool.js";
@@ -111,7 +112,8 @@ export class JsWorkerRuntime {
 	#trackChild(child, spawnOptions) {
 		if (child === null || typeof child !== "object" || typeof child.kill !== "function") return;
 		// `detached: true` is the cell saying it wants the process to outlive it.
-		if (isPlainObject(spawnOptions) && spawnOptions.detached === true) return;
+		const groupInjected = (globalThis[INJECTED_GROUP] ?? 0) > 0;
+		if (isPlainObject(spawnOptions) && spawnOptions.detached === true && !groupInjected) return;
 		this.#children.add(child);
 		const pid = Number.isInteger(child.pid) && child.pid > 0 ? child.pid : null;
 		// The host keeps its own copy of live pids: if this worker is terminated

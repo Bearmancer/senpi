@@ -1234,6 +1234,8 @@ export class AgentSession {
 	/** Assistant turns whose `turn_end` boundary committed entries, so the next request must re-read agent state. */
 	private readonly _boundaryRefreshedTurns = new WeakSet<object>();
 	private _lastActivityOutcome: AgentActivityOutcome = "completed";
+	/** Set when dispose() starts; a turn still unwinding after it cannot resolve persisted entries (senpi#2995). */
+	private _disposed = false;
 	private _isBeforeSettle = false;
 	private _abortDuringBeforeSettle = false;
 
@@ -1920,7 +1922,10 @@ export class AgentSession {
 			this._extensionRunner.emitError({
 				extensionPath: "<boundary>",
 				event: "turn_end",
-				error: "turn_end could not resolve the persisted assistant entry ID",
+				// After dispose() the aborted response is never persisted, so a missing entry there is the shutdown.
+				error: this._disposed
+					? "turn_end skipped: the session shut down during this turn, so its last response was not saved"
+					: "turn_end could not resolve the persisted assistant entry ID",
 			});
 			return false;
 		}
@@ -3842,6 +3847,7 @@ export class AgentSession {
 	 * Call this when completely done with the session.
 	 */
 	dispose(): void {
+		this._disposed = true;
 		for (const dispose of this._toolContextDisposers) dispose();
 		try {
 			this._probeBackScheduler.cancel("dispose");

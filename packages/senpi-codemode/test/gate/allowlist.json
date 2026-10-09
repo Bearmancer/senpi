@@ -1462,6 +1462,52 @@
 				"legacyContracts/test/eval-virtual-environment-schemas.test.ts/tool_schema('eval:*') virtual entries document every error code the source raises"
 			],
 			"reason": "senpi#3003: tool_schema(\"eval:environments\") now documents packages.install(manager, requirements, {timeout?}) — its signature, the per-language managers (pip; bun/npm), the receipt fields, cancellation by stop and the environment_install_timeout code — and the virtual-schema contract test gains a two-way emitted-vs-documented code check plus the packages.install assertions. No prompt, description, snippet, guidelines or input-schema changes."
+		},
+		"senpi#2995": {
+			"additions": [
+				"imports/firstKernel/packages/senpi-codemode/src/kernels/js/group-signal-notice.js",
+				"legacyContracts/test/group-signal-notice.test.ts/process-group signal detection (senpi#2995) Given   kill -TERM -- -5 when scanned then it is a group signal",
+				"legacyContracts/test/group-signal-notice.test.ts/process-group signal detection (senpi#2995) Given PG=$(ps -o pgid= -p $W | tr -d ' '); kill -TERM -- -$PG when scanned then it is a group signal",
+				"legacyContracts/test/group-signal-notice.test.ts/process-group signal detection (senpi#2995) Given a ps that cannot be spawned when the agent group is read then the lookup returns nothing instead of throwing",
+				"legacyContracts/test/group-signal-notice.test.ts/process-group signal detection (senpi#2995) Given bash -lc 'kill -KILL -- -$GROUP' when scanned then it is a group signal",
+				"legacyContracts/test/group-signal-notice.test.ts/process-group signal detection (senpi#2995) Given echo \"killall bun stops every bun\" when scanned then it is not a group signal",
+				"legacyContracts/test/group-signal-notice.test.ts/process-group signal detection (senpi#2995) Given echo \"run kill -9 on the stuck pid\" when scanned then it is not a group signal",
+				"legacyContracts/test/group-signal-notice.test.ts/process-group signal detection (senpi#2995) Given echo \"use kill -9 1234 if needed\" when scanned then it is not a group signal",
+				"legacyContracts/test/group-signal-notice.test.ts/process-group signal detection (senpi#2995) Given echo killed -- -1 when scanned then it is not a group signal",
+				"legacyContracts/test/group-signal-notice.test.ts/process-group signal detection (senpi#2995) Given for p in 1; do kill -- -$p; done when scanned then it is a group signal",
+				"legacyContracts/test/group-signal-notice.test.ts/process-group signal detection (senpi#2995) Given git log --grep kill foo -1 when scanned then it is not a group signal",
+				"legacyContracts/test/group-signal-notice.test.ts/process-group signal detection (senpi#2995) Given grep -c killall notes.txt when scanned then it is not a group signal",
+				"legacyContracts/test/group-signal-notice.test.ts/process-group signal detection (senpi#2995) Given if true; then kill -- -5; fi when scanned then it is a group signal",
+				"legacyContracts/test/group-signal-notice.test.ts/process-group signal detection (senpi#2995) Given kill $PID; head -5 log.txt when scanned then it is not a group signal",
+				"legacyContracts/test/group-signal-notice.test.ts/process-group signal detection (senpi#2995) Given kill -- -$$ when scanned then it is a group signal",
+				"legacyContracts/test/group-signal-notice.test.ts/process-group signal detection (senpi#2995) Given kill -- -1234 when scanned then it is a group signal",
+				"legacyContracts/test/group-signal-notice.test.ts/process-group signal detection (senpi#2995) Given kill -0 1234 when scanned then it is not a group signal",
+				"legacyContracts/test/group-signal-notice.test.ts/process-group signal detection (senpi#2995) Given kill -9 -1234 when scanned then it is a group signal",
+				"legacyContracts/test/group-signal-notice.test.ts/process-group signal detection (senpi#2995) Given kill -9 1234 when scanned then it is not a group signal",
+				"legacyContracts/test/group-signal-notice.test.ts/process-group signal detection (senpi#2995) Given kill -TERM $PID when scanned then it is not a group signal",
+				"legacyContracts/test/group-signal-notice.test.ts/process-group signal detection (senpi#2995) Given kill -TERM -$(cat /tmp/job.pgid) when scanned then it is a group signal",
+				"legacyContracts/test/group-signal-notice.test.ts/process-group signal detection (senpi#2995) Given kill -TERM 1234 -5678 when scanned then it is a group signal",
+				"legacyContracts/test/group-signal-notice.test.ts/process-group signal detection (senpi#2995) Given kill -l when scanned then it is not a group signal",
+				"legacyContracts/test/group-signal-notice.test.ts/process-group signal detection (senpi#2995) Given kill -s TERM -${PG} when scanned then it is a group signal",
+				"legacyContracts/test/group-signal-notice.test.ts/process-group signal detection (senpi#2995) Given kill 1234 when scanned then it is not a group signal",
+				"legacyContracts/test/group-signal-notice.test.ts/process-group signal detection (senpi#2995) Given killall bun when scanned then it is a group signal",
+				"legacyContracts/test/group-signal-notice.test.ts/process-group signal detection (senpi#2995) Given no readable process group when the notice is built then it still carries its tag",
+				"legacyContracts/test/group-signal-notice.test.ts/process-group signal detection (senpi#2995) Given nohup kill -- -5 when scanned then it is a group signal",
+				"legacyContracts/test/group-signal-notice.test.ts/process-group signal detection (senpi#2995) Given pkill --pgroup 5 sleep when scanned then it is a group signal",
+				"legacyContracts/test/group-signal-notice.test.ts/process-group signal detection (senpi#2995) Given pkill -g 77 sleep when scanned then it is a group signal",
+				"legacyContracts/test/group-signal-notice.test.ts/process-group signal detection (senpi#2995) Given pkill -g0 sleep when scanned then it is a group signal",
+				"legacyContracts/test/group-signal-notice.test.ts/process-group signal detection (senpi#2995) Given sh -c 'killall -TERM node' when scanned then it is a group signal",
+				"legacyContracts/test/group-signal-notice.test.ts/process-group signal detection (senpi#2995) Given skill -9 1234 when scanned then it is not a group signal",
+				"legacyContracts/test/group-signal-notice.test.ts/process-group signal detection (senpi#2995) Given sudo -n kill -9 -5 when scanned then it is a group signal",
+				"legacyContracts/test/group-signal-notice.test.ts/process-group signal detection (senpi#2995) Given sudo killall node when scanned then it is a group signal",
+				"legacyContracts/test/group-signal-notice.test.ts/process-group signal detection (senpi#2995) Given xargs kill -- -5 when scanned then it is a group signal",
+				"legacyContracts/test/group-signal-notice.test.ts/process-group signal detection (senpi#2995) Given { kill -- -5; } when scanned then it is a group signal",
+				"legacyContracts/test/js-kernel-cell-process-group-bun.test.ts/JavaScript kernel children start their own process group (senpi#2995) Given a Bun.$ command that signals a process group when it runs then the cell gets the shared-group notice",
+				"legacyContracts/test/js-kernel-cell-process-group-bun.test.ts/JavaScript kernel children start their own process group (senpi#2995) Given a Bun.spawn background job when the cell signals the job's process group then the agent is not in it and the job is gone",
+				"legacyContracts/test/js-kernel-cell-process-group-bun.test.ts/JavaScript kernel children start their own process group (senpi#2995) Given a cell that promisifies child_process.exec when it runs then the result keeps stdout and stderr and the group-signal notice still fires",
+				"legacyContracts/test/js-kernel-cell-process-group-bun.test.ts/JavaScript kernel children start their own process group (senpi#2995) Given a node:child_process background job when the cell signals the job's process group then the agent is not in it and the job is gone"
+			],
+			"reason": "senpi#2995: the worker's shell capture imports the new group-signal-notice.js. It warns when a Bun.$, exec/execFile or synchronous-spawner command signals a process group, since those children stay in the agent's group. The listed contracts cover child process groups, the detector, the notice tag, a missing ps, and promisify(exec)."
 		}
 	}
 }
