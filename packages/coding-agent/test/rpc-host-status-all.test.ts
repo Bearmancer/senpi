@@ -6,13 +6,14 @@
  */
 import { realpathSync } from "node:fs";
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
-import { join, relative } from "node:path";
+import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { createHostDaemonPaths, daemonDirectoryName } from "../src/modes/rpc/host-daemon-paths.ts";
+import { createHostDaemonPaths, daemonDirectoryName, generationPaths } from "../src/modes/rpc/host-daemon-paths.ts";
 import { listHostEndpoints } from "../src/modes/rpc/host-endpoints.ts";
 import { handoffHost } from "../src/modes/rpc/host-handoff.ts";
 import { probeHost } from "../src/modes/rpc/host-probe.ts";
 import { readHostStatus } from "../src/modes/rpc/host-status.ts";
+import { LOOP_LAG_ERROR_MS_ENV, LOOP_LAG_WARN_MS_ENV } from "../src/modes/rpc/loop-lag-watchdog.ts";
 import { HeldAnthropicModel, JsonlPeer, openedSessionId } from "./helpers/rpc-generation-support.ts";
 import {
 	canonicalSocket,
@@ -31,20 +32,34 @@ import {
 } from "./helpers/rpc-host-endpoint-scratch.ts";
 import { daemonTreeDigest, killEndpointUnclean } from "./helpers/rpc-host-endpoints.ts";
 import { processAlive, waitForPidGone } from "./helpers/spawned-host-reaper.ts";
-import { generationPaths } from "../src/modes/rpc/host-generation-paths.ts";
 
-/** The heartbeat file of the generation `socket`'s pointer names, after proving that generation's host is alive. */
-async function liveGenerationHeartbeat(socket: string, agentDir: string): Promise<string> {
+// A host's loop-lag watchdog writes into its own daemon directory while it runs: a heartbeat every fifth of
+// the error threshold, and warnings and stall evidence when its loop lags (senpi#2932). A case that proves a
+// reader wrote nothing raises both thresholds so the live host writes its first heartbeat at start and then
+// nothing for minutes, and the whole tree can be compared with no exclusion.
+const QUIET_HOST_MS = String(30 * 60_000);
+const QUIET_HOST_ENV = { [LOOP_LAG_WARN_MS_ENV]: QUIET_HOST_MS, [LOOP_LAG_ERROR_MS_ENV]: QUIET_HOST_MS };
+
+/** Waits until the live generation of `socket` has written its start heartbeat, its writer proven alive. */
+async function startHeartbeatWritten(socket: string, agentDir: string): Promise<void> {
 	const paths = createHostDaemonPaths({ socket, agentDir });
 	const pointer = JSON.parse(await readFile(paths.pointerFile, "utf8")) as { instance_id?: unknown };
 	const generation = generationPaths(paths, String(pointer.instance_id));
-	const { pid } = JSON.parse(await readFile(generation.pidFile, "utf8")) as { pid?: unknown };
-	expect(typeof pid === "number" && processAlive(pid)).toBe(true);
-	return generation.aliveFile;
-}
-
-function withoutKey(digest: Record<string, string>, key: string): Record<string, string> {
-	return Object.fromEntries(Object.entries(digest).filter(([path]) => path !== key));
+	const { pid } = JSON.parse(await readFile(generation.childPidFile, "utf8")) as { pid?: unknown };
+	expect({ hostChild: pid, alive: typeof pid === "number" && processAlive(pid) }).toEqual({
+		hostChild: pid,
+		alive: true,
+	});
+	await expect
+		.poll(
+			() =>
+				stat(generation.aliveFile).then(
+					() => true,
+					() => false,
+				),
+			{ timeout: 20_000 },
+		)
+		.toBe(true);
 }
 
 afterEach(sweepEndpointScratches, 180_000);
@@ -176,17 +191,12 @@ describe.skipIf(process.platform === "win32")("host status --all against real ho
 
 	it("reports an unclean death's stale registration without touching a byte, while one status prunes it", async () => {
 		const qa = endpointScratch("stale");
-		await Promise.all([realHost(qa, qa.shard), realHost(qa, qa.legacy)]);
+		await Promise.all([realHost(qa, qa.shard), realHost(qa, qa.legacy, { env: QUIET_HOST_ENV })]);
 		const death = await killEndpointUnclean(qa.shard, qa.agentDir);
 		tracked.internalDirs.push(...death.internalDirs);
 		const daemonRoot = join(qa.agentDir, "rpc-host-daemon");
-		// The other endpoint is still running, and its host refreshes its own heartbeat on every healthy tick
-		// (senpi#2932): that one file is the live host's write, not status's. It is left out of both digests,
-		// and rewritten here so the late write always happens; every other byte, the dead generation's
-		// heartbeat included, still has to match.
-		const liveHeartbeat = await liveGenerationHeartbeat(qa.legacy, qa.agentDir);
-		const before = withoutKey(await daemonTreeDigest(daemonRoot), relative(daemonRoot, liveHeartbeat));
-		await writeFile(liveHeartbeat, `${JSON.stringify({ at: new Date().toISOString() })}\n`);
+		await startHeartbeatWritten(qa.legacy, qa.agentDir);
+		const before = await daemonTreeDigest(daemonRoot);
 
 		const { exitCode, endpoints } = await statusAll(qa);
 
@@ -196,7 +206,7 @@ describe.skipIf(process.platform === "win32")("host status --all against real ho
 		expect(stale.generations).toEqual([
 			expect.objectContaining({ instanceId: death.instanceId, pid: death.supervisorPid, alive: false }),
 		]);
-		expect(withoutKey(await daemonTreeDigest(daemonRoot), relative(daemonRoot, liveHeartbeat))).toEqual(before);
+		expect(await daemonTreeDigest(daemonRoot)).toEqual(before);
 		// The single-socket read is unchanged: reading is cleaning, there.
 		const single = await readHostStatus({ socket: qa.shard, agentDir: qa.agentDir });
 		expect(single.generations).toEqual([]);
