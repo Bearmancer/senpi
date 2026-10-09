@@ -6,6 +6,36 @@
 
 ### Added
 
+- The ChatGPT Subscription catalog includes `gpt-6.1-sol-ultrafast`, sending upstream `gpt-6.1-sol` with the Ultrafast service tier and default `xhigh` reasoning without a local extension. Both OpenAI adapters estimate Sol and Astra Ultrafast costs at the published 6x Standard rates, including pinned aliases ([#2975](https://github.com/code-yeongyu/senpi/pull/2975) by [@audreyt](https://github.com/audreyt)).
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.10-9] - 2026-10-08
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+- The bundled model catalog is refreshed from models.dev and the providers' model listings (`openrouter`).
+
+### Fixed
+
+- A provider or route that sets its own `anthropic-beta` header no longer drops the betas a request needs: the configured betas are merged with them. Claude Haiku, Opus and Sonnet 5.5 through such a route no longer fail the first call with `400 messages.1.output_config: Extra inputs are not permitted`, and a request with server-side fallbacks keeps its fallback beta. `anthropic-beta: null` now sends a request that needs no beta (current tool list, top-level effort, no fallbacks) instead of an invalid one ([#2957](https://github.com/code-yeongyu/senpi/issues/2957)).
+
+### Removed
+
+## [2026.10.10-8] - 2026-10-08
+
+### Breaking Changes
+
+### Added
+
 - Claude Haiku 5.5 (`claude-haiku-5-5`) on Anthropic, Amazon Bedrock (on-demand plus global/us/eu/jp/au inference profiles), OpenCode, OpenCode Go, OpenRouter, Vercel AI Gateway and Venice: text and image input, adaptive thinking with effort low through max, forced tool choice kept, and prices that bill a prompt over 100K input tokens entirely at the 5x long-context rate. It opens with a 100K context window and 32K output so a session compacts before it crosses that band; set `contextWindow: 1000000` and `maxTokens: 128000` under `modelOverrides` in `models.json` for the full window ([#2892](https://github.com/code-yeongyu/senpi/issues/2892)).
 
 ### Changed
@@ -14,8 +44,11 @@
 
 ### Fixed
 
+- Kimi K3 on Moonshot's own API (`moonshotai`, `moonshotai-cn`) and the Kimi Coding estimate now price cache writes at the official $3 per million tokens (5-minute TTL; [Kimi API pricing](https://platform.kimi.ai/docs/pricing/chat)). It was listed as free, which undercounted cost on requests that write the cache.
+
 - The reasoning effort you pick for Claude Opus 5 / 5.5, Sonnet 5.5 and Fable 5.1 now reaches Anthropic: it was always sent as `high`. On a thinking-off turn, Opus 5.5, Sonnet 5.5 and Fable 5.1 (which cannot disable thinking) send and record effort `low`, and Opus 5 sends `thinking: disabled` with no effort ([#2912](https://github.com/code-yeongyu/senpi/issues/2912)).
 - Claude Sonnet 5.5 cache reads are priced at $0.10 per MTok (0.05x input) as Anthropic documents, and the deprecated Claude Sonnet 4.5 reports its 200K context window ([#2892](https://github.com/code-yeongyu/senpi/issues/2892)).
+- Mistral requests send consecutive user turns as one user message instead of two in a row ([#2920](https://github.com/code-yeongyu/senpi/issues/2920)).
 - Transient OAuth token refresh failures retain structured transport and HTTP facts, preserve stored credentials, and mark failed requests for same-model retry rather than ending the turn ([#2893](https://github.com/code-yeongyu/senpi/issues/2893)).
 
 ### Removed

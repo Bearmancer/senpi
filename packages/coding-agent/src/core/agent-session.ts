@@ -156,6 +156,15 @@ import {
 	userTextEquals,
 } from "./edited-user-message.ts";
 import {
+	ENGINE_TURN_LIMIT_ENTRY_TYPE,
+	ENGINE_TURN_LIMIT_EVENT,
+	ENGINE_TURN_START_ENTRY_TYPE,
+	type EngineTurnStartRecord,
+	engineTurnLimitNotice,
+	engineTurnStop,
+	isUserDirectedTurn,
+} from "./engine-turn-limit.ts";
+import {
 	type EnvironmentContext,
 	environmentContextMessageIfChanged,
 	resolveEnvironmentContext,
@@ -164,6 +173,7 @@ import { areExperimentalFeaturesEnabled } from "./experimental.ts";
 import { exportSessionToHtml, type ToolHtmlRenderer } from "./export-html/index.ts";
 import { createToolHtmlRenderer } from "./export-html/tool-renderer.ts";
 import { ANTHROPIC_SUBSCRIPTION_PROVIDER_ID } from "./extensions/builtin/anthropic-subscription/account-management.ts";
+import { askUserAnswerDisplayText } from "./extensions/builtin/ask-user/format.ts";
 import { getPromptCachePrewarmUsage } from "./extensions/builtin/cache-keepalive/prewarm-entry.ts";
 import {
 	type ModelUsabilityAdmission,
@@ -343,6 +353,7 @@ import { createToolDefinitionFromAgentTool } from "./tools/tool-definition-wrapp
 import { TranscriptWriteFailures } from "./transcript-write-failures.ts";
 import { commandShapedName, findUnknownCommand } from "./unknown-command.ts";
 import { addUsageToTotals, combineUsage, createUsageTotals } from "./usage-totals.ts";
+import { keepsTextBlocksVerbatim, userTextContent } from "./user-text-blocks.ts";
 import {
 	findLatestResponse,
 	getBranchSelection,
@@ -841,9 +852,13 @@ class ModelNotReadyError extends Error {
 	}
 }
 
+/** The error a turn ends with when a required compaction could not bring the context back under the window. */
+export const REQUIRED_COMPACTION_ERROR_MESSAGE =
+	"Context remains above the compaction threshold because compaction did not complete";
+
 class RequiredCompactionError extends Error {
 	constructor() {
-		super("Context remains above the compaction threshold because compaction did not complete");
+		super(REQUIRED_COMPACTION_ERROR_MESSAGE);
 		this.name = "RequiredCompactionError";
 	}
 }
@@ -925,6 +940,8 @@ export interface PromptOptions extends ClientMessageIdentity {
 	expandPromptTemplates?: boolean;
 	/** Image attachments */
 	images?: ImageContent[];
+	/** Internal: the text blocks an extension sent `text` as; kept as separate blocks while they still spell it. */
+	textBlocks?: readonly string[];
 	/** When streaming, how to queue the message: "steer" (interrupt) or "followUp" (wait). Required if streaming. */
 	streamingBehavior?: "steer" | "followUp";
 	/** Session-only thinking level applied before starting this prompt. */
@@ -1075,6 +1092,7 @@ export class AgentSession {
 	private _sessionStartDispatching = false;
 	/** User-abort generation at the start of an idle trigger turn's awaited admission hooks. */
 	private _triggerTurnAdmissionAbortGeneration: number | undefined;
+	private _engineTurnStarts: EngineTurnStartRecord[] = [];
 	private _nextInputId = 0;
 	private _idleWaitPromise: Promise<void> | undefined;
 	private _resolveIdleWait: (() => void) | undefined;
@@ -3165,6 +3183,7 @@ export class AgentSession {
 
 		// Handle session persistence
 		if (event.type === "message_end") {
+			this._observeEngineTurnMessage(event.message);
 			let entryId: string | undefined;
 			try {
 				// Check if this is a custom message from extensions
@@ -4883,7 +4902,7 @@ export class AgentSession {
 					preflightResult?.(true);
 					return;
 				}
-				if (inputResult.action === "transform") {
+				if (inputResult.action === "transform" && !keepsTextBlocksVerbatim(options?.textBlocks)) {
 					currentText = inputResult.text;
 					currentImages = inputResult.images ?? currentImages;
 				}
@@ -5042,7 +5061,7 @@ export class AgentSession {
 			if (environmentContext) messages.push(environmentContext);
 
 			// Add user message
-			const userContent: (TextContent | ImageContent)[] = [{ type: "text", text: expandedText }];
+			const userContent: (TextContent | ImageContent)[] = userTextContent(expandedText, options?.textBlocks);
 			if (currentImages) {
 				userContent.push(...currentImages);
 			}
@@ -5450,14 +5469,22 @@ export class AgentSession {
 	/**
 	 * Internal: Queue a steering message (already expanded, no extension command check).
 	 */
-	private async _queueSteer(text: string, images?: ImageContent[], options?: QueuedInputOptions): Promise<void> {
+	private async _queueSteer(
+		text: string,
+		images?: ImageContent[],
+		options?: QueuedInputOptions & Pick<PromptOptions, "textBlocks">,
+	): Promise<void> {
 		this._enqueuePreparedInput({ ...options, text, images, mode: "steer" });
 	}
 
 	/**
 	 * Internal: Queue a follow-up message (already expanded, no extension command check).
 	 */
-	private async _queueFollowUp(text: string, images?: ImageContent[], options?: QueuedInputOptions): Promise<void> {
+	private async _queueFollowUp(
+		text: string,
+		images?: ImageContent[],
+		options?: QueuedInputOptions & Pick<PromptOptions, "textBlocks">,
+	): Promise<void> {
 		this._enqueuePreparedInput({ ...options, text, images, mode: "followUp" });
 	}
 
@@ -5466,7 +5493,9 @@ export class AgentSession {
 		this._enqueuePreparedInput(input);
 	}
 
-	private _enqueuePreparedInput(input: QueuedInputOptions & Omit<PreparedClientInput, "enqueueOrder">): void {
+	private _enqueuePreparedInput(
+		input: QueuedInputOptions & Omit<PreparedClientInput, "enqueueOrder"> & Pick<PromptOptions, "textBlocks">,
+	): void {
 		const enqueueOrder = input.enqueueOrder ?? this.reserveQueuedInputOrder();
 		const prepared = {
 			...clientMessageIdentity(input),
@@ -5484,7 +5513,10 @@ export class AgentSession {
 			count: queue.length,
 		});
 		this._emitQueueUpdate();
-		const content: (TextContent | ImageContent)[] = [{ type: "text", text: input.text }, ...(input.images ?? [])];
+		const content: (TextContent | ImageContent)[] = [
+			...userTextContent(input.text, input.textBlocks),
+			...(input.images ?? []),
+		];
 		const message: AgentMessage = {
 			role: "user",
 			content,
@@ -5607,6 +5639,8 @@ export class AgentSession {
 				} else {
 					this.agent.steer(appMessage);
 				}
+			} else if (options?.triggerTurn && this._stopEngineTurn(message.customType)) {
+				this._recordRefusedEngineTurnMessage(appMessage);
 			} else if (options?.triggerTurn) {
 				finishSessionWork ??= this._sessionWorkBarrier.begin();
 				const environmentContext = this._pendingEnvironmentContextMessage();
@@ -5653,6 +5687,7 @@ export class AgentSession {
 				} finally {
 					this._triggerTurnAdmissionAbortGeneration = undefined;
 				}
+				if (!isUserDirectedTurn(message.customType)) this._recordEngineTurnStart(message.customType);
 				await this._promptAgent(messages, deferredTurnClaim);
 			} else if (this.isStreaming) {
 				this._pendingCustomMessages.push(appMessage);
@@ -5663,6 +5698,83 @@ export class AgentSession {
 			deferredTurnClaim?.resolve("finished-without-start");
 			finishSessionWork?.();
 		}
+	}
+
+	/**
+	 * The engine-turn bound's bookkeeping must never stop a turn: a session file that refuses the write (read-only,
+	 * full disk) only loses the count, as the turn's own persistence reports the failure (senpi#2967).
+	 */
+	private _recordEngineTurnStart(customType: string): void {
+		this._engineTurnStarts.push({ at: Date.now(), toolUsed: false });
+		try {
+			this._emitEntryAppended(this.sessionManager.appendCustomEntry(ENGINE_TURN_START_ENTRY_TYPE, { customType }));
+		} catch (error) {
+			this._sessionLogger.warn("engine_turn_record_write_failed", {
+				entry: ENGINE_TURN_START_ENTRY_TYPE,
+				error: error instanceof Error ? error.message : String(error),
+			});
+		}
+	}
+
+	/**
+	 * A refused engine turn still records its message and settles a cross-session delivery it carries. A delivery
+	 * whose entry the file refuses leaves the context too: its sender redelivers it, and it must not appear twice.
+	 */
+	private _recordRefusedEngineTurnMessage(appMessage: CustomMessage): void {
+		try {
+			this._appendCustomMessage(appMessage);
+			this.externalAdmission.observePersisted(appMessage);
+		} catch (error) {
+			if (deliveryIdOf(appMessage) !== undefined) {
+				const index = this.agent.state.messages.lastIndexOf(appMessage);
+				if (index >= 0) this.agent.state.messages.splice(index, 1);
+			}
+			this.externalAdmission.observeRefused(appMessage, error instanceof Error ? error.message : String(error));
+		}
+	}
+
+	/** Keeps this process's engine-turn record: a user message clears it, a tool call marks the running engine turn. */
+	private _observeEngineTurnMessage(message: AgentMessage): void {
+		if (message.role === "user" || (message.role === "custom" && isUserDirectedTurn(message.customType))) {
+			this._engineTurnStarts = [];
+			return;
+		}
+		const running = this._engineTurnStarts.at(-1);
+		if (
+			running !== undefined &&
+			message.role === "assistant" &&
+			message.content.some((block) => block.type === "toolCall")
+		) {
+			running.toolUsed = true;
+		}
+	}
+
+	/**
+	 * An engine-originated turn (an extension's `sendMessage` with `triggerTurn`, from any source) that would
+	 * exceed the engine-wide bound is not started: the message is still recorded, and the stop is recorded (best
+	 * effort), emitted and shown, so a session file that refuses writes still pauses visibly (senpi#2967).
+	 */
+	private _stopEngineTurn(customType: string): boolean {
+		if (isUserDirectedTurn(customType)) return false;
+		const stop = engineTurnStop(
+			this.sessionManager.getEntries(),
+			Date.now(),
+			this.settingsManager.getEngineTurnSettings(),
+			this._engineTurnStarts,
+		);
+		if (stop === null) return false;
+		const details = { customType, ...stop, at: Date.now() };
+		try {
+			this._emitEntryAppended(this.sessionManager.appendCustomEntry(ENGINE_TURN_LIMIT_ENTRY_TYPE, details));
+		} catch (error) {
+			this._sessionLogger.warn("engine_turn_record_write_failed", {
+				entry: ENGINE_TURN_LIMIT_ENTRY_TYPE,
+				error: error instanceof Error ? error.message : String(error),
+			});
+		}
+		this._extensionRunner.emitBusEvent(ENGINE_TURN_LIMIT_EVENT, details);
+		this._extensionRunner.getUIContext().notify(engineTurnLimitNotice(stop), "warning");
+		return true;
 	}
 
 	/** Environment context a new turn must carry: set when cwd or date differs from the latest one visible (senpi#2093). */
@@ -5724,6 +5836,7 @@ export class AgentSession {
 		// try below, so resolve the deferred-turn claim first to keep agent_idle reachable.
 		let text: string;
 		let images: ImageContent[] | undefined;
+		let textBlocks: string[] | undefined;
 
 		try {
 			if (typeof content === "string") {
@@ -5739,6 +5852,7 @@ export class AgentSession {
 					}
 				}
 				text = textParts.join("\n");
+				if (textParts.length > 1) textBlocks = textParts;
 				if (images.length === 0) images = undefined;
 			}
 		} catch (error) {
@@ -5758,6 +5872,7 @@ export class AgentSession {
 				expandPromptTemplates: options?.expandPromptTemplates ?? false,
 				streamingBehavior: options?.deliverAs,
 				images,
+				textBlocks,
 				source: "extension",
 				promptDisposition: (nextDisposition) => {
 					disposition = nextDisposition;
@@ -5777,9 +5892,9 @@ export class AgentSession {
 			// before prompt() accepted the message must not silently drop it.
 			if (disposition === undefined) {
 				if (options?.deliverAs === "steer") {
-					await this._queueSteer(text, images);
+					await this._queueSteer(text, images, { textBlocks });
 				} else {
-					await this._queueFollowUp(text, images);
+					await this._queueFollowUp(text, images, { textBlocks });
 				}
 			}
 			throw error;
@@ -8261,11 +8376,25 @@ export class AgentSession {
 		}
 		if (shouldCompact(contextTokens, contextWindow, settings)) {
 			if (inlineReason) {
+				const compacted = await this._runPrePromptCompaction(
+					assistantMessage,
+					skipAbortedCheck,
+					inlineReason,
+					retryAfterCompaction,
+				);
+				if (compacted || !this._compactionSkippedTooSmall) return compacted;
+				// Everything compactable sits inside the recent window, typically one long tool-heavy turn on a
+				// small window whose system prompt and tool schemas already fill most of it (senpi#2925). Split
+				// the current turn: summarize its earlier steps and keep only the latest one, as the overflow
+				// path's second rung does.
+				this._compactionSkippedTooSmall = false;
 				return await this._runPrePromptCompaction(
 					assistantMessage,
 					skipAbortedCheck,
 					inlineReason,
 					retryAfterCompaction,
+					false,
+					0,
 				);
 			} else {
 				const compacted = await this._runAutoCompaction("threshold", retryAfterCompaction);
@@ -8321,6 +8450,9 @@ export class AgentSession {
 		allowSummaryOnly = false,
 		keepRecentTokensOverride?: number,
 	): Promise<boolean> {
+		// The flag reports THIS attempt's "nothing to compact" outcome only; a value left by an earlier attempt
+		// must not make a caller treat a cancelled or rejected compaction as too small (senpi#2925 review).
+		this._compactionSkippedTooSmall = false;
 		// An earlier external-owner rejection never answers for a rejected request
 		// awaiting its retry: whether the owner can recover it depends on the request
 		// that failed, so ask again. A completed turn keeps the sticky delegation (#1174).
@@ -10869,6 +11001,7 @@ export class AgentSession {
 			}
 
 			const editedEntryId = replacement ? this.sessionManager.appendMessage(replacement) : undefined;
+			if (replacement) this._observeEngineTurnMessage(replacement);
 
 			// Attach label to target entry when not summarizing (no summary entry to label)
 			if (label && !summaryText) {
@@ -10918,7 +11051,7 @@ export class AgentSession {
 			if (entry.type !== "message") continue;
 			if (entry.message.role !== "user") continue;
 
-			const text = contentText(entry.message.content, "");
+			const text = askUserAnswerDisplayText(entry.message.content) ?? contentText(entry.message.content, "");
 			if (text) {
 				result.push({ entryId: entry.id, text });
 			}

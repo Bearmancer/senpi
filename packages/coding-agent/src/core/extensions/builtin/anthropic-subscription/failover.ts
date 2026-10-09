@@ -12,6 +12,9 @@ import type { SdkErrorClassification } from "./errors.ts";
 
 export const MAX_RATE_LIMIT_BLOCK_MS = 48 * 60 * 60 * 1_000;
 export const DEFAULT_RATE_LIMIT_BLOCK_MS = 60_000;
+/** Same-account retries per turn for a transient failure (overload, network, server error) before rotating. */
+export const TRANSIENT_RETRIES_PER_TURN = 2;
+export const TRANSIENT_RETRY_DELAY_MS = 1_000;
 export const TURN_RETRY_SUPPRESSION_PREFIX = "senpi:no-turn-retry:";
 
 type RecordValue = Record<string, unknown>;
@@ -38,6 +41,9 @@ export type FailoverOptions<TEvent> = {
 	onFailover?: (event: FailoverEvent) => void | Promise<void>;
 	errorFromEvent?: (event: TEvent) => unknown | undefined;
 	isVisibleDelta?: (event: TEvent) => boolean;
+	/** Waits before a transient same-account retry; injectable for tests. */
+	sleep?: (ms: number, signal?: AbortSignal) => Promise<void>;
+	signal?: AbortSignal;
 };
 
 export class ClassifiedSdkError extends Error {
@@ -114,6 +120,28 @@ function blockedAccount(
 	return { ...account, blockedUntil: now + duration, blockReason: classification.kind };
 }
 
+function isTransient(classification: SdkErrorClassification): boolean {
+	return classification.kind === "overloaded" || classification.kind === "other";
+}
+
+function abortableSleep(ms: number, signal?: AbortSignal): Promise<void> {
+	return new Promise((resolve, reject) => {
+		if (signal?.aborted) {
+			reject(signal.reason);
+			return;
+		}
+		const timer = setTimeout(() => {
+			signal?.removeEventListener("abort", onAbort);
+			resolve();
+		}, ms);
+		const onAbort = () => {
+			clearTimeout(timer);
+			reject(signal?.reason);
+		};
+		signal?.addEventListener("abort", onAbort, { once: true });
+	});
+}
+
 function replaceAccount(accounts: readonly AccountSlot[], replacement: AccountSlot): AccountSlot[] {
 	return accounts.map((account) => (account.name === replacement.name ? replacement : account));
 }
@@ -186,7 +214,8 @@ function usable(account: AccountSlot, now: number, model: string | undefined): b
 }
 
 /**
- * Runs at most one attempt per account. A retry is transparent only before a
+ * Runs one attempt per account, plus at most TRANSIENT_RETRIES_PER_TURN same-account retries
+ * for a transient failure (and one retry on newer stored credentials). A retry is transparent only before a
  * text, thinking, or tool-call event reaches the caller; post-delta failures
  * are marked so AgentSession never replays the partial turn.
  */
@@ -196,11 +225,16 @@ export async function* runFailover<TEvent>(options: FailoverOptions<TEvent>): As
 	let accounts = clearExpiredBlocks(options.accounts, now());
 	let lastError: ClassifiedSdkError | undefined;
 	const retriedOnStoredMaterial = new Set<string>();
+	let transientRetriesUsed = 0;
+	let retryAccountName: string | undefined;
 
 	for (let attempt = 0; attempt < accounts.length; attempt++) {
 		// Each attempt gets its own copy: prepareSlot refreshes the slot in place, and a concurrent
 		// attempt holding the same stored object must still report the token it actually sent.
-		const account = { ...options.selectFn(accounts) };
+		const retrySlot =
+			retryAccountName === undefined ? undefined : accounts.find((slot) => slot.name === retryAccountName);
+		retryAccountName = undefined;
+		const account = { ...(retrySlot ?? options.selectFn(accounts)) };
 		let visibleDeltaEmitted = false;
 		try {
 			const attemptStream = await options.runAttempt(account);
@@ -216,6 +250,23 @@ export async function* runFailover<TEvent>(options: FailoverOptions<TEvent>): As
 			const classified = new ClassifiedSdkError(classification, error, visibleDeltaEmitted);
 			lastError = classified;
 			if (!classification.retryable) throw classified;
+
+			// A transient failure says nothing about the account, and on the config-dir lane moving
+			// to another account re-sends the whole conversation (senpi#2891): retry it in place first.
+			// The budget is per turn, not per account: an outage that fails every account must not
+			// multiply into retries on each of them.
+			if (!visibleDeltaEmitted && isTransient(classification) && transientRetriesUsed < TRANSIENT_RETRIES_PER_TURN) {
+				const delayMs = TRANSIENT_RETRY_DELAY_MS * 2 ** transientRetriesUsed;
+				transientRetriesUsed += 1;
+				try {
+					await (options.sleep ?? abortableSleep)(delayMs, options.signal);
+				} catch {
+					throw classified;
+				}
+				retryAccountName = account.name;
+				attempt--;
+				continue;
+			}
 
 			const blocked = blockedAccount(account, classification, now(), attempt, baseBlockMs, error, options.model);
 			const superseded = await persistBlock(options.store, options.providerId, blocked, now());

@@ -97,13 +97,13 @@ describe("CLI service-tier decorator handoff (#2412)", () => {
 		30_000,
 	);
 
-	it("warns when --model pairs ultrafast with a model other than GPT-6 Astra, and still sends it", async () => {
+	it("carries Sol's documented Ultrafast tier without a warning", async () => {
 		const opened = await open("--model", "openai/gpt-6.1-sol:ultrafast");
 		try {
 			expect(opened.session.model?.id).toBe("gpt-6.1-sol");
 			expect(opened.session.serviceTier).toBe("ultrafast");
-			expect(opened.diagnostics.map((diagnostic) => diagnostic.message)).toContain(
-				"Ultrafast is documented for GPT-6 Astra only; openai/gpt-6.1-sol may reject or ignore it",
+			expect(opened.diagnostics.some((diagnostic) => diagnostic.message.includes("Ultrafast is documented"))).toBe(
+				false,
 			);
 		} finally {
 			await opened.close();

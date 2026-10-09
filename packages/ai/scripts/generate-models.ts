@@ -411,11 +411,13 @@ const KIMI_K3_THINKING_LEVEL_MAP = {
 	max: "max",
 } as const;
 const KIMI_K3_MAX_TOKENS = 131072;
+// Official Kimi K3 API prices per 1M tokens (platform.kimi.ai/docs/pricing/chat): cache writes bill at the
+// default 5-minute TTL rate, $3 ($6 for the 1-hour TTL); a cache hit bills only the cached-input price.
 const KIMI_K3_COST = {
 	input: 3,
 	output: 15,
 	cacheRead: 0.3,
-	cacheWrite: 0,
+	cacheWrite: 3,
 } as const;
 const KIMI_CODING_STABLE_MODELS = {
 	"kimi-for-coding": {
@@ -4288,6 +4290,22 @@ async function generateModels() {
 		});
 	}
 	allModels.push(...openAiFastVariants, ...codexFastVariants);
+
+	// Subscription-only alias: keep Standard rates; adapters apply Ultrafast pricing at request time.
+	// Clone after metadata application, just like the Priority variants above.
+	const codexUltrafastVariants: Model<Api>[] = [];
+	for (const model of allModels) {
+		if (model.provider !== "chatgpt-subscription" || model.id !== "gpt-6.1-sol") continue;
+		codexUltrafastVariants.push({
+			...model,
+			id: `${model.id}-ultrafast`,
+			name: `${model.name} Ultrafast`,
+			upstreamModelId: model.id,
+			serviceTier: "ultrafast",
+			defaultThinkingLevel: "xhigh",
+		});
+	}
+	allModels.push(...codexUltrafastVariants);
 
 	// Keep chat and image catalogs separate so one upstream ID can expose both
 	// operations with different API implementations.

@@ -15,12 +15,14 @@ import {
 	refreshSlot,
 	type SlotRefresher,
 } from "./accounts.ts";
-import { selectAccount } from "./affinity.ts";
+import { isBlockedFor, selectAccount } from "./affinity.ts";
 import { type AuthenticatedAttemptInput, createAttemptMessages, type RetainableAttempt } from "./auth-attempt.ts";
+import { recoverAuthBlockedSlots } from "./auth-block-recovery.ts";
 import { hasRequestOauthToken, mergeRequestAuthEnvironment, stripManagedAuthEnvironment } from "./auth-environment.ts";
 import { writeConfigDirCredential } from "./config-dir-credentials.ts";
 import { classifySdkError, sdkAssistantFailure, sdkResultFailure } from "./errors.ts";
 import { runFailover } from "./failover.ts";
+import { isGrantRejected, refreshFailure } from "./refresh-failure.ts";
 import { refusalError } from "./refusal.ts";
 import type { Options, SDKMessage, SdkQuery } from "./sdk-boundary.ts";
 import type { AnthropicSubscriptionProviderSettings, AnthropicSubscriptionTokenInjection } from "./settings.ts";
@@ -28,8 +30,6 @@ import type { AnthropicSubscriptionProviderSettings, AnthropicSubscriptionTokenI
 export { ANTHROPIC_SUBSCRIPTION_PROVIDER_ID } from "./account-management.ts";
 
 export const EXPIRING_WITHIN_MS = 5 * 60_000;
-
-const TRANSIENT_REFRESH_FAILURE = /\bstatus=5\d\d\b|\bTimeoutError\b/;
 
 /** A managed lane with an empty pool must refuse rather than spawn the SDK against ambient host credentials. */
 const NO_MANAGED_ACCOUNTS_ERROR =
@@ -82,6 +82,8 @@ export type AuthenticatedQueryInput = {
 	model?: string;
 	/** Request-scoped CLI pin; takes precedence over persistent settings and account pins. */
 	pinnedAccount?: string;
+	/** The account this session's SDK transcript lives under; preferred while it can serve (senpi#2891). */
+	preferredAccount?: string;
 	onQuery?: (query: ReturnType<SdkQuery>) => void;
 	createAttempt?: (
 		input: AuthenticatedAttemptInput,
@@ -130,11 +132,13 @@ async function managedPool(
 	return { accounts, environment, lane, pinnedAccount: settings.pinnedAccount ?? stored?.pinned, store };
 }
 
-function storedSlot(credential: Credential | undefined, pool: ManagedPool, name: string): AccountSlot | undefined {
+function storedAccounts(credential: Credential | undefined, pool: ManagedPool): AccountSlot[] {
 	const stored = credential?.type === "oauth" ? (credential as AnthropicSubscriptionCredential) : undefined;
-	return listAccounts(stored ?? emptyCredential(), (key) => pool.environment[key]).find(
-		(candidate) => candidate.name === name,
-	);
+	return listAccounts(stored ?? emptyCredential(), (key) => pool.environment[key]);
+}
+
+function storedSlot(credential: Credential | undefined, pool: ManagedPool, name: string): AccountSlot | undefined {
+	return storedAccounts(credential, pool).find((candidate) => candidate.name === name);
 }
 
 /**
@@ -151,17 +155,6 @@ async function continueWhileStoreBusy(pool: ManagedPool, slot: AccountSlot, busy
 	}
 	if (activeBoundary.now() < slot.expires) return;
 	throw busy;
-}
-
-/** Throttling, server errors and timeouts on the token endpoint are not a verdict on the grant. */
-function refreshFailure(error: unknown): Error {
-	const detail = error instanceof Error ? error.message : String(error);
-	const classification = classifySdkError(detail);
-	if (classification.kind === "rate_limit" || classification.kind === "overloaded") return new Error(detail);
-	if ((classification.kind === "other" && classification.retryable) || TRANSIENT_REFRESH_FAILURE.test(detail)) {
-		return new Error(`server_error: ${detail}`);
-	}
-	return new Error(`authentication_failed: ${detail}`);
 }
 
 async function prepareSlot(
@@ -237,12 +230,24 @@ export async function* queryWithAuthLane(input: AuthenticatedQueryInput): AsyncG
 		});
 		return;
 	}
+	pool.accounts = await recoverAuthBlockedSlots({
+		store: pool.store,
+		providerId: ANTHROPIC_SUBSCRIPTION_PROVIDER_ID,
+		accounts: pool.accounts,
+		refresher: activeBoundary.refresher,
+		signal,
+		isGrantRejected,
+		reload: async () => storedAccounts(await pool.store.read(ANTHROPIC_SUBSCRIPTION_PROVIDER_ID), pool),
+		isUsable: (account) => !isBlockedFor(account, activeBoundary.now(), input.model),
+		transientError: (error) => (error instanceof CredentialStoreBusyError ? error : refreshFailure(error)),
+	});
 	yield* runFailover({
 		accounts: pool.accounts,
 		selectFn: (accounts) =>
 			selectAccount(accounts, {
 				sessionId: input.sessionId,
 				pinnedAccount: input.pinnedAccount ?? pool.pinnedAccount,
+				...(input.preferredAccount === undefined ? {} : { preferredAccount: input.preferredAccount }),
 				now: activeBoundary.now(),
 				...(input.model === undefined ? {} : { model: input.model }),
 			}),
@@ -266,6 +271,7 @@ export async function* queryWithAuthLane(input: AuthenticatedQueryInput): AsyncG
 		now: activeBoundary.now,
 		errorFromEvent: sdkFailure,
 		isVisibleDelta: visibleSdkMessage,
+		signal,
 		onFailover: ({ account, nextAccount, classification }) => {
 			emitProviderAccountsChanged(ANTHROPIC_SUBSCRIPTION_PROVIDER_ID);
 			if (nextAccount) {

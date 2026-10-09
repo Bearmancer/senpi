@@ -10,6 +10,30 @@
 
 ### Fixed
 
+### Removed
+
+## [2026.10.10-9] - 2026-10-08
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.10-8] - 2026-10-08
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
 - Inside tmux, screen or Zellij, a focus event or a pane width change no longer re-emits the whole transcript into the pane's history: a pane that loses focus repaints nothing, and one that regains focus or changes width repaints only its visible rows, so scrollback is not flooded with a copy of the transcript per event ([#1704](https://github.com/code-yeongyu/senpi/issues/1704)).
 
 ### Removed

@@ -15,6 +15,7 @@ import {
 } from "@earendil-works/pi-ai";
 import { ENVIRONMENT_CONTEXT_MESSAGE_TYPE, foldEnvironmentContextIntoNextUserMessage } from "./environment-context.ts";
 import { omitProviderRejectedImages } from "./provider-rejected-images.ts";
+import { appendToolResultUserWords } from "./tool-result-user-words.ts";
 
 export const COMPACTION_SUMMARY_PREFIX = `The conversation history before this point was compacted into the following summary:
 
@@ -256,8 +257,10 @@ export function convertToLlm(messages: AgentMessage[]): Message[] {
 	// user message it precedes, so strict-alternation chat templates never see
 	// two consecutive user messages. senpi#2170: images a failed turn proves the
 	// provider rejected are replaced first, while the failed turn is still visible.
+	// senpi#2920: words a user typed into a tool's answer follow that batch's tool
+	// results as a user turn, rebuilt here from the persisted result on every request.
 	return foldEnvironmentContextIntoNextUserMessage(
-		dropFailedAssistantTurns(omitProviderRejectedImages(converted)),
+		appendToolResultUserWords(dropFailedAssistantTurns(omitProviderRejectedImages(converted))),
 		environmentMessages,
 	);
 }

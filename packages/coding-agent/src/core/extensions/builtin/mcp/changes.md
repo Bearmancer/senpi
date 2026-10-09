@@ -32,6 +32,24 @@
 - Single-flight attachment and `before_agent_start` in `packages/coding-agent/src/core/extensions/builtin/mcp/index.ts`.
 - Startup synchronization and wire inventory in `packages/coding-agent/src/core/extensions/builtin/mcp/service.ts`; collection and normalization in `packages/coding-agent/src/core/extensions/builtin/mcp/catalog-cache.ts`.
 
+## 2026-10-09 - Concurrent log rotation never disables a log sink (senpi#2976)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/log.ts`: `FileMcpLogger` rotates through `rotateLogIfNeeded` (its private `#rotateIfNeeded` is gone) and its file sink retries after `LOG_SINK_RETRY_MS` instead of staying disabled for the process lifetime; the ring buffer still records the failure.
+
+### Why
+
+- Several processes share one agent dir (engine host, CLI, desktop host). Rotation was a non-atomic stat, remove `.1`, rename: when two crossed the cap together, the loser's rename threw ENOENT and its sink stayed disabled for the rest of the process, and the remove step could delete a generation another process had just rotated. A four-process burst dropped hundreds of lines per losing process. Rotation now goes through `core/log-file-rotation.ts` (an exclusive lock file and a size re-check under it), a lost race keeps appending, a failed sink retries after `LOG_SINK_RETRY_MS` (5 s), and the mode is set on the open descriptor.
+
+### Why an extension could not handle it
+
+- This is the builtin extension's own log writer.
+
+### Expected merge conflict zones
+
+- LOW: `FileMcpLogger.#writeFile` in `mcp/log.ts`.
+
 ## 2026-10-04 - Interactive MCP server manager (senpi#2716)
 
 ### What changed
@@ -1019,3 +1037,26 @@ The token store is the fork's credential-persistence layer; no extension hook si
 ### Expected merge conflict zones
 
 Upstream edits to `token-store.ts` legacy migration at the next sync.
+
+
+## 2026-10-08 - Bind stored OAuth credentials to their authorization server; legible cross-origin redirect refusal (senpi#2940)
+
+### What changed
+
+- `packages/coding-agent/package.json`: `@modelcontextprotocol/sdk` 1.30.0 -> 1.32.1 (GHSA-6qxp-vccf-f47h: the OAuth client could send credentials to an authorization server chosen by the MCP server). `proxy-addr` resolves 2.0.8 (GHSA-jqcg-44mw-7w3h) in the lockfiles.
+- `auth/token-store.ts`, `auth/oauth-provider.ts`: `McpStoredAuth.issuer` records the authorization server that issued the tokens. `mergeTokensIntoStoredAuth` keeps the SDK's `issuer` stamp (it was dropped before, so the SDK's binding never applied to refresh tokens), and `storedAuthToTokens` hands it back. `storedGrantIssuer` falls back to the sign-in's `discoveryState.authorizationServerUrl` for a record saved before the stamp existed; a record with neither cannot be attributed, and its refresh token is withheld.
+- `auth/oauth-refresh.ts`: `McpRefreshManager` refreshes only at the authorization server that issued the grant. An unattributed grant or one bound to a different authorization server is a continuity break: the credentials are cleared and `needs_auth` asks for a fresh sign-in, naming both servers.
+- `auth/oauth.ts`: client-credentials tokens are stamped with the discovered authorization server.
+- `transport.ts`: the SDK (1.32+) follows HTTP redirects only within the endpoint's origin; senpi keeps that default. A connect that fails on a cross-origin redirect now names the endpoint origin, the redirect origin, the same-origin rule and the URL to configure.
+
+### Why
+
+A refresh token is a long-lived credential; presenting it to an authorization server other than its issuer leaks it. The SDK fixed this by stamping what it saves, which only works if the provider persists the stamp.
+
+### Why an extension could not handle it
+
+The token store and refresh manager are this builtin's credential layer.
+
+### Expected merge conflict zones
+
+`auth/oauth-provider.ts` token mapping and `auth/oauth-refresh.ts` `#doRefresh` at the next SDK or upstream sync.

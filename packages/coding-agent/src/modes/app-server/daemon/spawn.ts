@@ -1,5 +1,6 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import { open, writeFile } from "node:fs/promises";
+import { runtimeExecArgv } from "../../../utils/runtime-exec-argv.ts";
 import type { AppServerListen } from "../cli-args.ts";
 import { cleanupState } from "./probe.ts";
 import { readProcessStartTime, waitForStartTime } from "./process.ts";
@@ -41,7 +42,7 @@ export async function spawnDaemon(
 		const child = spawn(
 			daemonExec,
 			[
-				...(process.versions.bun ? [] : process.execArgv),
+				...(process.versions.bun ? [] : runtimeExecArgv()),
 				cliMainPath,
 				"app-server",
 				"--listen",

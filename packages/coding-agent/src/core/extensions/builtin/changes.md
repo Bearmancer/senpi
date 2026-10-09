@@ -1,3 +1,186 @@
+## 2026-10-08 - moved-path-guard: folder check follows only a legacy-root symlink (senpi#2898)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/moved-path-guard/walk.ts`, `resolve.ts`, `resolve-async.ts`, `breadcrumb-trust.ts`: the breadcrumb folder step follows a symlink (`stat`) only when the folder is, by text, a legacy data root directly under a home spelling; anywhere else it uses `lstat`, so a symlinked folder is untrusted.
+
+### Why
+
+The seventh-review delta check reproduced a race on the `stat` fix: another local user could repoint a symlink of theirs between the breadcrumb read (through a shared folder) and the folder check (now naming a folder the user owns), so a planted breadcrumb was trusted. A link inside the user's own home cannot be repointed by anyone else, so following only there keeps the LOW-B fix for a symlinked `~/.t3`.
+
+### Why an extension could not handle it
+
+It is an extension.
+
+### Expected merge conflict zones
+
+- Fork-only directory.
+
+## 2026-10-08 - moved-path-guard: seventh review fixes (senpi#2898)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/moved-path-guard/resolve.ts`, `resolve-async.ts`, `breadcrumb-trust.ts`: the breadcrumb folder check uses `stat` (follows a symlinked old root) instead of `lstat`.
+- `known-moves.ts`, `walk.ts`: an old root's called spelling is registered only when it is, by text, a legacy data root (`.t3`, `.omo-app`) directly under one of the user's home spellings (`isLegacyRoot`).
+
+### Why
+
+Seventh review of PR #2900: with `~/.t3` a symlink and the path's canonicalization failing, `lstat` saw the symlink and the first call failed open; a same-named symlink elsewhere (`~/code/worktrees -> ~/.t3/worktrees`) registered `~/code` as an old-root spelling and refused live paths there on a step timeout.
+
+### Why an extension could not handle it
+
+It is an extension.
+
+### Expected merge conflict zones
+
+- Fork-only directory.
+
+## 2026-10-08 - moved-path-guard: sixth review fixes (senpi#2898)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/moved-path-guard/known-moves.ts`, `walk.ts`, `path-match.ts`: a trusted old root is also registered as the walk's caller spelled it (the called path minus the segments the canonical path has below the root), and every registered spelling is re-spelled under each home spelling; all spellings key their decisions by the realpath'd root. The walk documents that a remembered "re-used" answer does not expire by itself (accepted).
+- `breadcrumb-trust.ts`, `walk.ts`, `resolve.ts`, `resolve-async.ts`: the fifth review's `nlink === 1` rule is removed; once a breadcrumb lists the path, the walk `lstat`s its folder and, on POSIX, trusts it only when this user owns the folder and nobody else can write it.
+- `resolve.ts`: the `.git` step uses `accessSync`, `false` only for ENOENT/ENOTDIR and unknown otherwise, as the async probe does. `resolve-async.ts` reads the error code without `instanceof Error`.
+
+### Why
+
+Sixth review of PR #2900: a symlinked `~/.t3` still made the text fallback and ranking fail open; the nlink rule let a second hard link (another user, or a `cp -al`/`rsync --link-dest` backup) turn the guard off for its owner; the sync resolver still overwrote a remembered "re-used" on EACCES/ELOOP.
+
+### Why an extension could not handle it
+
+It is an extension.
+
+### Expected merge conflict zones
+
+- Fork-only directory.
+
+## 2026-10-08 - moved-path-guard: fifth review fixes (senpi#2898)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/moved-path-guard/known-moves.ts`: `knownMove` skips a listed prefix whose last `.git` answer in this process was "re-used"; a trusted old root is registered under every spelling of the user's home the walk resolved (`os.homedir()` and its realpath).
+- `walk.ts`: passes the home spellings to `rememberTrustedBreadcrumb`.
+- `breadcrumb-trust.ts`: on POSIX a trust file must have exactly one link (`nlink === 1`).
+- `resolve-async.ts`: `pathExists` returns `false` only for ENOENT/ENOTDIR and `undefined` (unknown) for any other `access` error.
+
+### Why
+
+Fifth review of PR #2900: a timed-out breadcrumb read sent a re-used worktree to a text fallback that ignored the remembered re-used decision; with a symlinked `$HOME` the text fallback and the probe ranking compared `~` spellings against the realpath'd old root and allowed moved targets; a hard link of the user's breadcrumb passed the uid/mode checks; an unreadable `.git` overwrote a remembered "re-used".
+
+### Why an extension could not handle it
+
+It is an extension.
+
+### Expected merge conflict zones
+
+- Fork-only directory.
+
+## 2026-10-08 - moved-path-guard: fourth review fixes (senpi#2898)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/moved-path-guard/breadcrumb-trust.ts`: trust files are opened with `O_NONBLOCK` (and `O_NOFOLLOW`), so a FIFO named as a breadcrumb opens at once and `fstat` rejects it; without `O_NONBLOCK` (Windows) an `lstat` refuses non-regular files first. `movedTo` may lie under `os.homedir()` or its realpath.
+- `walk.ts`, `resolve.ts`, `resolve-async.ts`: the home's realpath is one more yielded step (sync `realpathSync`, async memoized `realpath`); a `.git` check that cannot answer uses this process's last answer for the prefix, else "not re-used".
+- `known-moves.ts`: remembers `.git` answers by `prefixKey`.
+- `index.ts`: after any step timeout every target gets the text check; targets are probed in three tiers (known listed prefix, legacy root only, rest).
+
+### Why
+
+Fourth review of PR #2900: a planted FIFO hung the synchronous resolver and pinned threadpool threads; a symlinked home silently disabled the guard; timed-out breadcrumb and `.git` steps decided the opposite of the text fallback; unlisted legacy paths could push a re-used worktree into the text fallback.
+
+### Why an extension could not handle it
+
+It is an extension.
+
+### Expected merge conflict zones
+
+- Fork-only directory.
+
+## 2026-10-08 - moved-path-guard: third review fixes (senpi#2898)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/moved-path-guard/walk.ts`: a path whose canonicalization fails or times out is walked by its own spelling, so a moved prefix is still refused and an unrelated path still is not; the re-used (`.git`) decision is recorded before the breadcrumb is remembered, and a breadcrumb whose `movedTo` lies outside the user's home is ignored before that folder is touched.
+- `resolve-async.ts`, `known-moves.ts`, `index.ts`: the probe records step timeouts (logged as `call_bound_reached {bound: "step"}`), clears every target under a re-used prefix (keyed by breadcrumb content, so every spelling of a root shares it), never text-refuses a cleared target, and stops all filesystem work at the call deadline.
+- `breadcrumb-trust.ts`: trust is decided from `fstat` of an `O_NOFOLLOW` descriptor, and at most that size is read from the same descriptor.
+- `guard-log.ts`: rotates once at 1 MiB, dedupes on the reason (not the count), and computes its path inside the write chain.
+- `resolve.ts`: documents the synchronous bound.
+
+### Why
+
+Third review of PR #2900: the step deadline failed open silently; the text fallback refused re-used worktrees; trust was decided on a different open than the read; the log was unbounded; the probe kept working past the deadline; the sync open path could touch any `movedTo`.
+
+### Why an extension could not handle it
+
+It is an extension.
+
+### Expected merge conflict zones
+
+- Fork-only directory.
+
+## 2026-10-08 - moved-path-guard: re-review fixes (senpi#2898)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/moved-path-guard/walk.ts` (new): the one decision both resolvers drive; every filesystem step is yielded, and a failed or timed-out step answers "not moved". The listed-prefix match runs before the marker at `movedTo` is read. `resolve.ts` and `resolve-async.ts` only answer the steps.
+- `breadcrumb-trust.ts`: a breadcrumb or marker counts only as a regular file (lstat, never followed) of at most 64 KiB, owned by the current uid and not group/world-writable on POSIX. `home-marker.ts`: a newer marker schema is untrusted and logged at warn level.
+- `guard-log.ts` (new): asynchronous, ordered JSON-line log at `<agentDir>/logs/moved-path-guard.log`; no synchronous write on the tool-call path.
+- `known-moves.ts` (new), `index.ts`: legacy-root and known-prefix targets are probed first; at most 64 paths get filesystem work within 2 s (500 ms per step); paths past either bound are refused by text against breadcrumbs trusted earlier in this process, and reaching a bound is logged.
+- `command-paths.ts`: clustered short flags (`-xf/path`) and `@/path` are scanned; the mention-in-text over-block is documented.
+
+### Why
+
+Re-review of PR #2900: realpath errors escaped into tool calls and failed ordinary commands; a planted shared-folder breadcrumb was trusted; the call bounds failed open.
+
+### Why an extension could not handle it
+
+It is an extension.
+
+### Expected merge conflict zones
+
+- Fork-only directory.
+
+## 2026-10-08 - moved-path-guard: review fixes (senpi#2898)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/moved-path-guard/breadcrumb.ts`, `home-marker.ts` (new), `breadcrumb-trust.ts` (new), `resolve.ts`: a breadcrumb is trusted only when `movedTo` is absolute and normalized on the host's path rules, lies outside the breadcrumb's folder, and holds the desktop's ownership marker `omo-desktop-home.json` with the breadcrumb's `homeId`. Ignored breadcrumbs go to the debug log, not the terminal.
+- `resolve-async.ts` (new), `index.ts`: tool calls are checked with an async probe that canonicalizes through `canonicalizeFilesystemPath`; at most `MAX_PATHS_PER_CALL` (64) paths and `CALL_DEADLINE_MS` (2 s) per call. A tool missing from the class table has every string argument scanned.
+- `command-paths.ts`: anchored paths are found anywhere in the text (inline code, glued flags, quote-split words); relative words resolve against the latest `cd` in the same text.
+- `tool-classes.ts`: `eval` (its `code`) and `tool_search` are classified.
+
+### Why
+
+Review of PR #2900: an untrusted breadcrumb could redirect writes, embedded or `cd`-relative paths bypassed the command guard, an unclassified tool was allowed, and the per-call check did unbounded synchronous I/O on the session loop.
+
+### Why an extension could not handle it
+
+It is an extension.
+
+### Expected merge conflict zones
+
+- Fork-only directory.
+
+## 2026-10-08 - moved-path-guard: guard and resolve paths the OmO desktop moved (senpi#2898)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/moved-path-guard/` (new): `breadcrumb.ts` vendors the `omo-desktop-moved.json` contract (writer: omo-desktop-app `packages/shared/src/appHomePrepare.ts`; a higher `schemaVersion` is ignored and logged); `path-match.ts` matches prefixes on a segment boundary, case-folded on darwin and win32, `/`/`\` equal and `\\?\` stripped on win32; `resolve.ts` exports `findMovedPath`/`resolveMovedPath` (realpath of the deepest existing ancestor, ancestor walk to `$HOME`'s parent or the root, up to three moves, a listed `worktrees/...` prefix that holds its own `.git` is not moved); `tool-classes.ts` classifies every builtin tool; `command-paths.ts` extracts path tokens from shell text; `index.ts` registers a filesystem policy (deny writes into a moved prefix; deny a read/enumerate of a moved path that is gone, with the new location) and a blocking `tool_call` handler for `apply_patch`, the shell tools and path-field tools.
+- `packages/coding-agent/src/core/extensions/builtin/index.ts`: registers `moved-path-guard` right after `loop-guard`, ahead of hooks and the permission system.
+
+### Why
+
+After the OmO desktop moves its data home (omo-desktop-app#1829), session history still names absolute paths under the old root; `write` creates parents and `bash` can `mkdir -p`, so an agent reusing one silently re-creates the old worktree and writes outside the real one.
+
+### Why an extension could not handle it
+
+It is an extension; it is builtin so the guard runs in every session, CLI and desktop alike, without configuration.
+
+### Expected merge conflict zones
+
+- Fork-only directory. The `builtinExtensions` order in `index.ts`.
+
 ## 2026-10-06 — html-render writes its offline policy first in every page (#2846)
 
 **What:** `html-render/bootstrap.ts` starts every written page with a UTF-8 byte order mark, `<!doctype html>` and the policy meta, and drops a page's own leading doctype only when it is printable ASCII. Tests: comment forms `<!-->`, `<!--->`, `--!>` and plain comments ahead of a doctype, and an ISO-2022-JP escape inside a doctype.

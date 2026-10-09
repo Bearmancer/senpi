@@ -1,3 +1,22 @@
+## 2026-10-08 - Native ChatGPT Subscription Sol Ultrafast catalog variant
+
+### What changed
+
+- `packages/ai/scripts/generate-models.ts`: clones the fully processed ChatGPT Subscription `gpt-6.1-sol` row into `gpt-6.1-sol-ultrafast`, with upstream model `gpt-6.1-sol`, service tier `ultrafast`, and default thinking level `xhigh`. The generated subscription shard and manifest are regenerated with a provider-scoped run.
+
+### Why
+
+- Make the working subscription alias selectable from the native catalog without a local extension. Preserve Sol's Standard base and long-context cost metadata; the adapters apply the published Ultrafast 6x multiplier at request time without double-counting.
+- The `xhigh` default deliberately preserves the existing local alias's high-reasoning preset while requesting faster serving; it is not the backend's default effort or a minimum-latency preset, and users can select a lower effort.
+
+### Why an extension could not handle it
+
+- A local extension can register the alias, but cannot make it part of the shipped catalog for every installation.
+
+### Expected merge conflict zones
+
+- LOW: the variant emission block after metadata application in `packages/ai/scripts/generate-models.ts`. Regenerate catalog JSON and its manifest rather than hand-merging.
+
 ## 2026-10-08 - Claude Haiku 5.5 catalog rows (senpi#2892)
 
 ### What changed
@@ -1845,3 +1864,22 @@ The package manifest and its export map are not an extension surface.
 ### Expected merge conflict zones
 
 Upstream manifest edits at the next sync.
+
+
+## 2026-10-08 - Official Kimi K3 cache-write price
+
+### What changed
+
+- `packages/ai/scripts/generate-models.ts`: `KIMI_K3_COST.cacheWrite` 0 -> 3, used for Moonshot's own K3 endpoints when upstream omits a price and for the Kimi Coding implied estimate.
+
+### Why
+
+- The official Kimi API price list (https://platform.kimi.ai/docs/pricing/chat) bills Kimi K3 cache writes at $3 per 1M tokens for the default 5-minute TTL ($6 for 1 hour); the catalog still had them at $0, which undercounted cost on requests that write the cache and failed the 2026.10.10-8 release regeneration once upstream data caught up.
+
+### Why an extension could not handle it
+
+- Built-in model prices are catalog data generated or kept in this package; nothing at runtime can correct them.
+
+### Expected merge conflict zones
+
+- LOW: the Kimi K3 cost constants when upstream reprices Kimi models.

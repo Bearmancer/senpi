@@ -195,7 +195,14 @@ describe("async ask-user question in the interactive TUI", () => {
 		// Exactly one framed message, delivered by the extension and not by the widget.
 		expect(delivery.deliveries).toEqual([
 			{
-				content: "[Answer to question tc-async]\nThe user responded: just use bun\nUnanswered: Library",
+				content: [
+					{
+						type: "text",
+						text: "[Answer to question tc-async]\nThe user responded: (see [The user's comment for question tc-async] below)\nUnanswered: Library",
+					},
+					{ type: "text", text: "[The user's comment for question tc-async]" },
+					{ type: "text", text: "just use bun" },
+				],
 				options: { deliverAs: "steer" },
 			},
 		]);

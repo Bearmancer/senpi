@@ -1,3 +1,45 @@
+## 2026-10-08 - A required question never tells the model to proceed without an answer (senpi#2949)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts`: `QuestionRequest` gains optional `required?: boolean`.
+- `packages/coding-agent/src/core/extensions/builtin/ask-user/params.ts`: both tool schemas (`ask_user_question` and `request_user_input`) accept an optional `required` boolean.
+- `packages/coding-agent/src/core/extensions/builtin/ask-user/schema.ts`: `toCanonical` validates `required` and carries it on the request only when true.
+- `packages/coding-agent/src/core/extensions/builtin/ask-user/format.ts`: for a required question, every settlement without an answer (`timed_out`, `cancelled`, `orphaned-after-restart`, `unavailable`) renders "No answer: do not take the action it gates. Keep that action pending and end the turn." in both the tool result and the late-answer frame; a selection made before going idle is shown but labelled not an answer. Calls without the flag render exactly as before.
+- `packages/coding-agent/src/core/extensions/builtin/ask-user/tool.ts`: passes `required` to both formatters; the same-turn re-ask guard uses the no-action text for a required question; the tool description says what `required` does in one clause.
+- `packages/coding-agent/src/core/extensions/builtin/ask-user/resume.ts`: a required question that cannot be restored after a restart keeps its flag, so its orphaned notice is the no-action text.
+- `packages/coding-agent/src/core/extensions/builtin/hooks/index.ts`: the ask-user timeout Notification renders the required text for a required question, so it no longer says the agent continues on best judgment.
+
+### Why
+
+- An approval gate asked through the question tool had no "no answer means don't" mode: a timeout told the model to "continue the work to completion on your best judgment", and a real model weighed that harness text above the skill's "a timed-out answer is not approval" and took the gated action (senpi#2949).
+
+### Why an extension could not handle it
+
+- The result text of every settlement is produced by the builtin ask-user tool; another extension cannot change what this tool returns.
+
+### Expected merge conflict zones
+
+- LOW: `ask-user/format.ts` `formatBody` and its two exports, `ask-user/params.ts` both parameter objects, `ask-user/tool.ts` `result`/`deliverAnswer`/re-ask guard, `types.ts` `QuestionRequest`.
+
+## 2026-10-08 - ExtensionRunner.emitBusEvent (senpi#2967)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/runner.ts`: `emitBusEvent(channel, data)` publishes on the shared extension event bus, the counterpart of `onBusEvent`. The session uses it to announce `engine:turn-limit` when it refuses an engine-originated turn.
+
+### Why
+
+- The engine-wide turn bound (`src/core/engine-turn-limit.ts`) lives in the session, not in an extension, and hosts/extensions need an observable signal when it trips.
+
+### Why an extension could not handle it
+
+- The session owns the runner's bus; extensions emit through `pi.events`, which the session cannot reach.
+
+### Expected merge conflict zones
+
+- LOW: `runner.ts` next to `onBusEvent`.
+
 ## 2026-10-07 - Opt-in shared transcript for non-mutating context hooks (senpi#2525)
 
 ### What changed

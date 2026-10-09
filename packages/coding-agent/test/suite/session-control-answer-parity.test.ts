@@ -128,39 +128,87 @@ async function answerOnTerminal(frame: Frame, questions: AskedQuestions = ASYNC_
 	return { reply: reply.record, delivered: delivery.deliveries.map((entry) => entry.content), pending: stillPending };
 }
 
+type Delivered = string | ReadonlyArray<{ readonly type: "text"; readonly text: string }>;
+
+const COMMENT_LABEL = "[The user's comment for question ask-1]";
+const answerLabel = (header: string) => `[The user's answer to ${header} for question ask-1]`;
+const commentRef = `(see ${COMMENT_LABEL} below)`;
+const answerRef = (header: string) => `(see ${answerLabel(header)} below)`;
+
+/** senpi#2920: the frame block, then each of the user's words after its own label block. */
+function framed(frame: string, ...words: ReadonlyArray<readonly [label: string, text: string]>): Delivered {
+	if (words.length === 0) return frame;
+	return [
+		{ type: "text", text: frame },
+		...words.flatMap(([label, text]) => [
+			{ type: "text" as const, text: label },
+			{ type: "text" as const, text },
+		]),
+	];
+}
+
+/** Host and terminal deliver the same message, and each of the user's words appears exactly once. */
+function expectParity(host: Outcome, terminal: Outcome, words: readonly string[]): void {
+	expect(host.delivered).toEqual(terminal.delivered);
+	const body = JSON.stringify(host.delivered);
+	for (const word of words) expect(body.split(JSON.stringify(word)).length - 1).toBe(1);
+}
+
 /** The combined text frame omo's relay sends for a question reported without a kind. */
 const combined = (text: string): Body => ({ value: text, answers: {}, comment: text });
 
-const ANSWERED: ReadonlyArray<{ readonly name: string; readonly body: Body; readonly model: string }> = [
+const ANSWERED: ReadonlyArray<{
+	readonly name: string;
+	readonly body: Body;
+	readonly model: Delivered;
+	readonly words: readonly string[];
+}> = [
 	{
 		name: "the combined text frame (value + answers:{} + comment)",
 		body: combined("ship it"),
-		model: "[Answer to question ask-1]\nThe user responded: ship it\nUnanswered: Library",
+		model: framed(`[Answer to question ask-1]\nThe user responded: ${commentRef}\nUnanswered: Library`, [
+			COMMENT_LABEL,
+			"ship it",
+		]),
+		words: ["ship it"],
 	},
 	{
 		name: "the combined text frame with a yes/no confirmed",
 		body: { ...combined("yes"), confirmed: true },
-		model: "[Answer to question ask-1]\nThe user responded: yes\nUnanswered: Library",
+		model: framed(`[Answer to question ask-1]\nThe user responded: ${commentRef}\nUnanswered: Library`, [
+			COMMENT_LABEL,
+			"yes",
+		]),
+		words: ["yes"],
 	},
 	{
 		name: "a comment-only question frame",
 		body: { answers: {}, comment: "ship it" },
-		model: "[Answer to question ask-1]\nThe user responded: ship it\nUnanswered: Library",
+		model: framed(`[Answer to question ask-1]\nThe user responded: ${commentRef}\nUnanswered: Library`, [
+			COMMENT_LABEL,
+			"ship it",
+		]),
+		words: ["ship it"],
 	},
 	{
 		name: "a structured answer",
 		body: { answers: { q1: { selected: ["OAuth"] } } },
-		model: "[Answer to question ask-1]\nLibrary: OAuth",
+		model: framed("[Answer to question ask-1]\nLibrary: OAuth"),
+		words: [],
 	},
 	{
 		name: "a structured answer with a comment",
 		body: { answers: { q1: { selected: ["OAuth"] } }, comment: "and cache it" },
-		model: "[Answer to question ask-1]\nThe user responded: and cache it\nLibrary: OAuth",
+		model: framed(`[Answer to question ask-1]\nThe user responded: ${commentRef}\nLibrary: OAuth`, [
+			COMMENT_LABEL,
+			"and cache it",
+		]),
+		words: ["and cache it"],
 	},
 ];
 
 describe("one extension_ui_response frame, host and terminal", () => {
-	for (const { name, body, model } of ANSWERED) {
+	for (const { name, body, model, words } of ANSWERED) {
 		it(`delivers ${name} to the model identically, under the frame id`, async () => {
 			const host = await answerOnHost((uiRequestId) => ({
 				type: "extension_ui_response",
@@ -175,6 +223,7 @@ describe("one extension_ui_response frame, host and terminal", () => {
 				...body,
 			}));
 
+			expectParity(host, terminal, words);
 			for (const outcome of [host, terminal]) {
 				expect(outcome.reply).toMatchObject({ id: "answer-1", command: "extension_ui_response", success: true });
 				expect(outcome.delivered).toEqual([model]);
@@ -195,10 +244,14 @@ describe("one extension_ui_response frame, host and terminal", () => {
 			...combined("ship it"),
 		}));
 
+		expectParity(host, terminal, ["ship it"]);
 		for (const outcome of [host, terminal]) {
 			expect(outcome.reply).toMatchObject({ success: true });
 			expect(outcome.delivered).toEqual([
-				"[Answer to question ask-1]\nThe user responded: ship it\nUnanswered: Library",
+				framed(`[Answer to question ask-1]\nThe user responded: ${commentRef}\nUnanswered: Library`, [
+					COMMENT_LABEL,
+					"ship it",
+				]),
 			]);
 		}
 	});
@@ -218,6 +271,7 @@ describe("one extension_ui_response frame, host and terminal", () => {
 			...blank,
 		}));
 
+		expectParity(host, terminal, []);
 		for (const outcome of [host, terminal]) {
 			expect(outcome.reply).toMatchObject({ id: "answer-1", success: false, error: "question_incomplete" });
 			expect(outcome.delivered).toEqual([]);
@@ -232,7 +286,12 @@ const THREE_QUESTIONS: AskedQuestions = [
 	{ header: "Deploy", question: "When to deploy?", multiSelect: false },
 ];
 
-const MULTI: ReadonlyArray<{ readonly name: string; readonly body: Frame; readonly model: readonly string[] }> = [
+const MULTI: ReadonlyArray<{
+	readonly name: string;
+	readonly body: Frame;
+	readonly model: readonly Delivered[];
+	readonly words: readonly string[];
+}> = [
 	{
 		name: "a partial answer: one selected, one blank entry, one text-only",
 		body: (uiRequestId) => ({
@@ -241,7 +300,13 @@ const MULTI: ReadonlyArray<{ readonly name: string; readonly body: Frame; readon
 			uiRequestId,
 			answers: { q1: { selected: ["OAuth"] }, q2: { selected: [] }, q3: { selected: [], text: "nightly" } },
 		}),
-		model: ["[Answer to question ask-1]\nLibrary: OAuth\nDeploy: nightly\nUnanswered: Cache"],
+		model: [
+			framed(`[Answer to question ask-1]\nLibrary: OAuth\nDeploy: ${answerRef("Deploy")}\nUnanswered: Cache`, [
+				answerLabel("Deploy"),
+				"nightly",
+			]),
+		],
+		words: ["nightly"],
 	},
 	{
 		name: "the combined text frame with confirmed: false",
@@ -252,21 +317,29 @@ const MULTI: ReadonlyArray<{ readonly name: string; readonly body: Frame; readon
 			...combined("ship it"),
 			confirmed: false,
 		}),
-		model: ["[Answer to question ask-1]\nThe user responded: ship it\nUnanswered: Library, Cache, Deploy"],
+		model: [
+			framed(`[Answer to question ask-1]\nThe user responded: ${commentRef}\nUnanswered: Library, Cache, Deploy`, [
+				COMMENT_LABEL,
+				"ship it",
+			]),
+		],
+		words: ["ship it"],
 	},
 	{
 		name: "a cancel",
 		body: (uiRequestId) => ({ type: "extension_ui_response", id: "answer-1", uiRequestId, cancelled: true }),
 		model: [],
+		words: [],
 	},
 ];
 
 describe("one extension_ui_response frame to a three-question request, host and terminal", () => {
-	for (const { name, body, model } of MULTI) {
+	for (const { name, body, model, words } of MULTI) {
 		it(`settles ${name} identically, with the unanswered headers`, async () => {
 			const host = await answerOnHost(body, THREE_QUESTIONS);
 			const terminal = await answerOnTerminal(body, THREE_QUESTIONS);
 
+			expectParity(host, terminal, words);
 			for (const outcome of [host, terminal]) {
 				expect(outcome.reply).toMatchObject({ id: "answer-1", command: "extension_ui_response", success: true });
 				expect(outcome.delivered).toEqual(model);

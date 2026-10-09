@@ -1,5 +1,23 @@
 # changes
 
+## 2026-10-08 - Script children inherit runtime options, not caller entry modes (senpi#2599)
+
+### What changed
+
+- `packages/coding-agent/src/utils/runtime-exec-argv.ts`: shares the existing Node/Bun entry-mode filter outside RPC without changing its filtering contract.
+
+### Why
+
+An eval or print flag belongs to the embedding caller. Passing it before a child script entry replays the caller instead of starting that child; loader and runtime flags still have to reach the child.
+
+### Why an extension could not handle it
+
+Native process launchers construct their command before a child can load an extension.
+
+### Expected merge conflict zones
+
+- LOW: the shared runtime argument filter and its direct launch-site imports.
+
 ## 2026-10-01 - Agent shells get a real `bun` inside a compiled executable (omo#9362)
 
 ### What changed

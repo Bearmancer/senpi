@@ -1,3 +1,51 @@
+## 2026-10-08 - Sol Ultrafast uses published sixfold pricing (senpi#2975)
+
+### What changed
+
+- `packages/ai/src/api/openai-responses.ts` and `packages/ai/src/api/openai-codex-responses.ts`: Ultrafast estimated costs apply the published 6x Standard multiplier to GPT-6.1 Sol as well as GPT-6 Astra. The pricing lookup uses `upstreamModelId ?? id`, covering pinned aliases while leaving the wire request unchanged.
+
+### Why
+
+- [OpenAI's pricing page](https://developers.openai.com/api/docs/pricing) now lists Sol Ultrafast at $12/$0.60/$15/$60 per million input/cached-input/cache-write/output tokens, and $24/$1.20/$30/$90 for long context. Both tables are 6x Standard. Matching only the catalog id undercounted the native alias by sixfold.
+
+### Why an extension could not handle it
+
+- Both adapters calculate streamed usage costs internally after response processing.
+
+### Expected merge conflict zones
+
+- LOW: `getServiceTierCostMultiplier` and `applyServiceTierPricing` in both adapters.
+
+## 2026-10-08 - A configured anthropic-beta header is merged with the betas the request body needs (senpi#2957)
+
+### What changed
+
+- `packages/ai/src/api/anthropic-messages.ts` `getBetaFeatures`: a configured `anthropic-beta` header (model `headers` or per-request `options.headers`) used to replace the whole computed beta list. It now owns only the optional betas, and the betas the request body depends on are appended to it, de-duplicated, configured order first. Those betas come from the request shape `buildParams` decided (`BetaDependentShape`):
+  - OAuth identity;
+  - mid-conversation effort markers, plus thinking binding when thinking is on;
+  - native tool changes;
+  - `fallbacks` in the body (`server-side-fallback-2026-07-01`, which a configured header also dropped before).
+
+  Interleaved thinking is stripped from a configured list on adaptive models, as it already was from the client headers.
+- `buildParams`: `anthropic-beta: null` makes the request take a shape that needs no beta:
+  - the current tool list instead of native tool changes;
+  - top-level effort instead of per-message effort markers and `block_binding`;
+  - no `fallbacks`.
+
+  The client-level fallback beta follows the same rule. Only an OAuth token, whose credential depends on its identity betas, still fails, before sending, with an error that names them.
+
+### Why
+
+A proxy route that sets its own `anthropic-beta` header dropped `mid-conversation-output-config-2026-07-01` while senpi still sent the mid-conversation effort message. Claude Haiku, Opus and Sonnet 5.5 then failed the first request with `400 messages.1.output_config: Extra inputs are not permitted`. A `null` header must keep working: a request it would otherwise invalidate switches shape instead of failing.
+
+### Why an extension could not handle it
+
+The beta list and the request shape are assembled inside the provider's request builder, after every extension hook has run.
+
+### Expected merge conflict zones
+
+- `getBetaFeatures` (with `configuredBetaHeader`, `defaultOptionalBetas`) and the `nativeToolChanges` / effort / `fallbacks` decisions in `buildParams`.
+
 ## 2026-10-08 - Claude Haiku 5.5 joins the adaptive-only families (senpi#2892)
 
 ### What changed
@@ -57,3 +105,21 @@ The lazy setup converter owns the assistant message before session retry hooks s
 ### Expected merge conflict zones
 
 - `createSetupErrorMessage` in `lazy.ts`.
+
+## 2026-10-08 - Mistral sends consecutive user turns as one user message (senpi#2920)
+
+### What changed
+
+- `packages/ai/src/api/mistral-conversations.ts`: `toChatMessages` appends every user turn through `appendUserMessage`, which merges it into the previous message when that message is also a user message (string content becomes a text chunk), as the OpenAI Chat converter does for non-OpenAI endpoints.
+
+### Why
+
+The coding agent now sends a blocking ask-user answer's own words as a user message right after the tool results, so a following steer or prompt produced two user messages in a row; Mistral's role-order rules are not documented to accept that.
+
+### Why an extension could not handle it
+
+The Mistral message mapping runs inside the provider adapter after every extension hook.
+
+### Expected merge conflict zones
+
+- LOW: the `msg.role === "user"` branch of `toChatMessages` and the new `appendUserMessage` helper above it in `mistral-conversations.ts`.

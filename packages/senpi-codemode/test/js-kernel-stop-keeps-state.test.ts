@@ -120,6 +120,29 @@ describe("JavaScriptKernel stop on a free event loop", () => {
 		).resolves.toMatchObject({ ok: true, valueRepr: "[false,true]" });
 	});
 
+	it("Given a first cell whose import of node:net is built from a string at run time when stopped then its server closes", async () => {
+		const { kernel, entry } = await createKernel();
+		const { run } = await startedCell(
+			kernel,
+			"string-built-import",
+			[
+				"globalThis.keep = 41;",
+				'const net = await new Function("return import(\'node:" + "net\')")();',
+				"globalThis.hidden = net.createServer(() => {}); await new Promise((r) => hidden.listen(0, '127.0.0.1', r));",
+				"await new Promise(() => {});",
+			].join(" "),
+		);
+
+		await stopAndExpectStateKept(kernel, entry, run);
+		await expect(
+			kernel.run({
+				cellId: "after",
+				code: "await new Promise((r) => setTimeout(r, 100)); return hidden.listening",
+				timeoutMs: 5_000,
+			}),
+		).resolves.toMatchObject({ ok: true, valueRepr: "false" });
+	});
+
 	it("Given a stopped cell whose floating fetch rethrows a new error with a cause then the kernel keeps its state and reports it on the next cell", async () => {
 		const { kernel, entry } = await createKernel();
 		const server = await silentServer();

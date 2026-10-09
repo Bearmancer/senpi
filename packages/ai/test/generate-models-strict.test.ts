@@ -183,7 +183,7 @@ describe("strict model generation", () => {
 				`  throw new Error(\`Unexpected fetch: \${url}\`);\n` +
 				`};\n`,
 		);
-		const selected = ["zai", "zai-coding-cn"];
+		const selected = ["zai", "zai-coding-cn", "chatgpt-subscription"];
 		const unselectedPath = join(isolatedPackageRoot, "src/providers/data/openrouter.json");
 		const unselectedBefore = readFileSync(unselectedPath, "utf8");
 		const args = [
@@ -202,7 +202,16 @@ describe("strict model generation", () => {
 		const selectedFirst = selected.map((provider) =>
 			readFileSync(join(isolatedPackageRoot, `src/providers/data/${provider}.json`), "utf8"),
 		);
-		for (const content of selectedFirst) expect(content).toContain('"chat:glm-4.7"');
+		for (const content of selectedFirst.slice(0, 2)) expect(content).toContain('"chat:glm-4.7"');
+		const subscription = JSON.parse(selectedFirst[2])["openai-codex-responses"];
+		expect(subscription["chat:gpt-6.1-sol-ultrafast"]).toEqual({
+			...subscription["chat:gpt-6.1-sol"],
+			id: "gpt-6.1-sol-ultrafast",
+			name: "GPT-6.1 Sol Ultrafast",
+			upstreamModelId: "gpt-6.1-sol",
+			serviceTier: "ultrafast",
+			defaultThinkingLevel: "xhigh",
+		});
 		const manifestFirst = readFileSync(join(isolatedPackageRoot, "src/providers/data/.manifest.json"), "utf8");
 
 		const second = spawnSync(process.execPath, args, { cwd: isolatedPackageRoot, encoding: "utf8", timeout: 10_000 });

@@ -1,3 +1,81 @@
+## 2026-10-08 - A required compaction inside one long turn splits that turn instead of ending it (senpi#2925)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: when the inline threshold path's required compaction finds nothing older than the recent window ("Nothing to compact (session too small)"), `_checkCompaction` runs it once more with `keepRecentTokens` 0. That summarizes the earlier steps of the current turn and keeps only its latest step, as the overflow path's second rung already does. It only throws `RequiredCompactionError` if that also fails. `REQUIRED_COMPACTION_ERROR_MESSAGE` is exported so callers can recognise the terminal error without copying its text.
+
+### Why
+
+On a small context window the system prompt and tool schemas already fill most of the window. A single tool-heavy turn then crosses the threshold after two or three large tool results, while the transcript holds nothing older than that turn. The threshold counts provider usage, which includes that overhead, but the cut point only counts messages and found nothing to cut. The turn ended with "Context remains above the compaction threshold because compaction did not complete", and print-mode children returned an empty result. This was reproduced on a 100K-window model (sessions: one compaction attempt, `Nothing to compact`, no compaction entry).
+
+### Why an extension could not handle it
+
+The threshold decision, the cut point and the `RequiredCompactionError` throw all happen inside `AgentSession`'s pre-provider enforcement, before any extension hook can intervene.
+
+### Expected merge conflict zones
+
+- LOW: the `if (inlineReason)` branch of the threshold block in `_checkCompaction`, and the `RequiredCompactionError` class header.
+
+## 2026-10-09 - Concurrent log rotation never disables a log sink (senpi#2976)
+
+### What changed
+
+- `packages/coding-agent/src/core/log-file-rotation.ts` (new): `rotateLogIfNeeded(filePath, incomingBytes, maxBytes)` rotates under a `<file>.rotate-lock` created with `wx`, re-checks the size under the lock, treats a lost rename (ENOENT) as done, clears a lock older than 10 s, and exports `LOG_SINK_RETRY_MS`.
+- `packages/coding-agent/src/core/session-log.ts`: `writeLine` rotates through it and sets the mode on the open descriptor.
+- `packages/coding-agent/src/core/retry-fallback/log.ts`: `writeLine` rotates through it and sets the mode on the open descriptor.
+
+### Why
+
+- Several processes share one agent dir (engine host, CLI, desktop host). Rotation was a non-atomic stat, remove `.1`, rename: when two crossed the cap together, the loser's rename threw ENOENT and its sink was disabled for the whole process (config-reload, MCP) or the line was lost (session, fallback), and the remove step could delete a generation another process had just rotated. A two-to-four-process burst dropped hundreds of lines per losing process. Rotation now runs under an exclusive lock file and re-checks the size while holding it, a lost race keeps appending, and a failed sink retries after `LOG_SINK_RETRY_MS` (5 s) instead of staying off. The `chmod` after each append moved onto the open descriptor (`fchmodSync`), since the path may already name a newer file another process created.
+
+### Why an extension could not handle it
+
+- These are the engine's own log writers.
+
+### Expected merge conflict zones
+
+- LOW: the `writeLine` helpers in `session-log.ts` and `retry-fallback/log.ts`.
+
+## 2026-10-09 - The engine-turn pause stays visible when the session file refuses writes (senpi#2967 follow-up)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `_stopEngineTurn` records its `engine-turn-limit` entry best effort (a refused write is logged as `engine_turn_record_write_failed`), so `engine:turn-limit` and the "Paused" notice still fire, and a refused message's cross-session delivery is still settled. A delivery whose own entry the file refuses is also taken out of the context, since its sender redelivers it. The `engine-turn-start` write logs its refusal instead of dropping it. A user message edited in `/tree` (written directly, not through `message_end`) clears the in-process engine-turn record like a new user message.
+
+### Why
+
+- After #2969 a session file that refuses writes reaches the pause through the in-process count; the unguarded limit-entry write then threw before the event, the notice and the delivery settlement, so the cap held silently and a delivery arriving at it stayed pending, keeping `release_session` busy.
+
+### Why an extension could not handle it
+
+- The pause and its bookkeeping live in the session's `sendCustomMessage` path.
+
+### Expected merge conflict zones
+
+- LOW: `agent-session.ts` `_stopEngineTurn`, `_recordEngineTurnStart`, `_recordRefusedEngineTurnMessage`, and the edited-message write in `_navigateTree`.
+
+## 2026-10-08 - Engine-originated turns are bounded per user message and per minute (senpi#2967)
+
+### What changed
+
+- `packages/coding-agent/src/core/engine-turn-limit.ts` (new): `engineTurnStop(entries, now, limits)` counts the `engine-turn-start` entries since the user's last message and returns a stop when the next engine-originated turn (any extension's `sendMessage` with `triggerTurn` that starts a turn while idle) would exceed `maxPerUserInput` (default 150) or `maxToolFreePerMinute` engine turns in the last 60 s whose reply called no tool (default 12). Only turns after the last user message count, so any user message lifts a pause; `0` turns a limit off.
+- `packages/coding-agent/src/core/agent-session.ts`: `sendCustomMessage` checks it before starting a `triggerTurn` turn and, once the turn is admitted, records an `engine-turn-start` entry. A `.` manual continue and a continue-from-leaf are the user's own requests: they are never limited and count as a user message. On a stop no turn starts but the message is still recorded (eval results, terminal notices and cross-session messages are not re-sent) and a cross-session delivery it carries is settled as persisted or refused. The `engine-turn-start` write is best-effort and never stops a turn; the session also keeps an in-process record of the engine turns it started since the user's last message (cleared by a user message, marked by a tool call), and the larger of the persisted and in-process counts is enforced, so a session file that refuses writes is still bounded within the running process; an `engine-turn-limit` entry is appended (and published as `entry_appended`), `engine:turn-limit` is emitted on the extension bus and the user sees "Paused: ... Send any message to continue." Messages queued while a turn is streaming or a compaction is pending join that running turn and start none.
+- `packages/coding-agent/src/core/settings-manager.ts`: `engineTurns.maxPerUserInput` and `engineTurns.maxToolFreePerMinute` settings with those defaults; `0` disables (`getEngineTurnSettings`). Documented in `docs/settings.md`.
+- `packages/coding-agent/src/core/extensions/runner.ts`: `emitBusEvent(channel, data)` beside `onBusEvent`.
+
+### Why
+
+- One user message drove 66 turns in about 66 s through the ttsr `repetitive-turns` nudge, and 93 requests in 3 s through goal continuation, until the user pressed Stop (senpi#2967). The desktop's server-hosted session reopens the session around every turn, so in-memory guards in the extensions reset; the bound is read from the session itself.
+- The per-minute breaker counts only tool-free engine turns because of measured data: across 604 local sessions with goals (27,650 goal continuations), continuations that called a tool were never closer than 36.8 s apart at p1, and every window with 8 or more tool-free continuations per minute (30 sessions, maximum 14) consisted entirely of `stopReason: error` turns, i.e. runaways.
+
+### Why an extension could not handle it
+
+- Each extension only sees its own turns; the bound has to cover every source and survive extension rebuilds, so it sits where `triggerTurn` starts a turn.
+
+### Expected merge conflict zones
+
+- MEDIUM: `agent-session.ts` `sendCustomMessage` `triggerTurn` branch and its imports; LOW: `settings-manager.ts` `Settings` fields, `runner.ts` bus methods.
+
 ## 2026-10-08 - Runtime diagnostics carry an optional machine code (senpi#2906)
 
 ### What changed
@@ -74,6 +152,24 @@ The entry-id WeakMap and the resident string store are core session internals; e
 
 - `session-manager.ts`: the `contextMessageEntryIds` helpers beside `withContextEntryId`.
 - `session-resident-store.ts`: the `_mutateStringsInPlace` loop.
+
+## 2026-10-08 - Session-holder claims follow paths the OmO desktop moved (senpi#2898)
+
+### What changed
+
+- `packages/coding-agent/src/core/session-holders.ts`: `holdersDir` and the `expectExisting` check of `holdSessionFile` resolve the session file through `resolveMovedPath` (builtin `moved-path-guard`), so a claim, a holder listing and a move lock on an old spelling of a moved file are the moved file's.
+
+### Why
+
+After the OmO desktop moves its data home (omo-desktop-app#1829), a process holding a session under its old path and one probing the new path must see each other; otherwise schedule delivery would start a second writer on a session that is open.
+
+### Why an extension could not handle it
+
+Holder records are the cross-process session ownership protocol, used before and outside any session's extensions.
+
+### Expected merge conflict zones
+
+- LOW: `holdersDir` and the `expectExisting` branch of `holdSessionFile`.
 
 ## 2026-10-08 - A fallback rung the context-window guard refuses no longer ends the chain (senpi#2894)
 
@@ -9268,3 +9364,40 @@ The `promptSurface` plumbing in `agent-session.ts`, `agent-session-services.ts` 
 ### Expected merge conflict zones
 
 - LOW: the `projectCodemodeNamesExecutable` helpers after `LEGACY_PROJECT_CONFIG_DIR_NAME`, the `bundled-resources.ts` import, and the one-line call after the config-dir check at the top of `hasTrustRequiringProjectResources` in `packages/coding-agent/src/core/trust-manager.ts`.
+
+## 2026-10-08 - A tool's answer words reach the model as a user turn after its tool results (senpi#2920)
+
+### What changed
+
+- `packages/coding-agent/src/core/messages.ts`: `convertToLlm` ends by passing its output through `appendToolResultUserWords` (`core/tool-result-user-words.ts`): after each contiguous run of tool results, one user message holds, for every result whose `details.userWords` lists `{ label, text }` words, a `[label]` text block followed by the word as its own text block. It is skipped when the next message already starts with those blocks (converting twice adds it once), and it carries its own copy of the last word-carrying result's request-local context provenance (sealed with its own fingerprint only while that result still matches its seal), so OpenAI remote-compaction replay treats it as part of the same checkpoint.
+- `packages/coding-agent/src/core/agent-session.ts`: `sendUserMessage` with a content array of more than one text part passes the parts to `prompt()` as the internal `PromptOptions.textBlocks`. The started prompt (`userContent`) and a queued steer or follow-up (`_enqueuePreparedInput`) build the user message's text through `userTextContent` (`core/user-text-blocks.ts`), which keeps the parts as separate text blocks while they still spell the final text joined by a newline, and falls back to one block when a template expansion rewrote it. An `input` handler's rewrite is not applied to a built-in later ask-user answer (`keepsTextBlocksVerbatim`). `getUserMessagesForForking` shows such an answer with its words in place (`askUserAnswerDisplayText`).
+
+### Why
+
+- Anthropic's Claude Haiku 5.5 guide ("Mid-turn user messages") says user text inside a `tool_result` may be treated as untrusted, and that a harness notice and the user's words must not share a block. The ask-user builtin keeps a blocking answer's words in the persisted tool result instead of the tool content; building the user message from that result on every request means no queue operation (Esc, `clear_queue`, an abort, a session release) can drop or delay them, and live requests, resumed sessions and compaction all see the same messages. A later answer arrives as a frame block plus labelled word blocks, which the joined-text paths used to merge.
+
+### Why an extension could not handle it
+
+- The message-to-LLM conversion and the prompt/queue paths that build the user message are the host's own; an extension can only hand content to `pi.sendUserMessage` or return a tool result.
+
+### Expected merge conflict zones
+
+- LOW: the final `return` of `convertToLlm` and its import in `messages.ts`; in `agent-session.ts`, `PromptOptions` (new `textBlocks`), the `inputResult.action === "transform"` branch and the `userContent` line in `prompt()`, the `_queueSteer` / `_queueFollowUp` / `_enqueuePreparedInput` signatures and content line, the text-part loop plus `prompt()` call in `sendUserMessage`, and the `text` line of `getUserMessagesForForking`.
+
+## 2026-10-08 - Recognize GPT-6.1 Sol as a documented Ultrafast model (senpi#2975)
+
+### What changed
+
+- `packages/coding-agent/src/core/ultrafast-lanes.ts`: the documented model set includes `gpt-6-astra` and `gpt-6.1-sol`, so the native Sol Ultrafast alias does not emit an unsupported-tier warning after the service-tier extension resolves its upstream id. Other models and non-first-party providers retain their warnings.
+
+### Why
+
+- The current subscription catalog advertises Ultrafast for both models; the previous Astra-only notice was misleading for Sol.
+
+### Why an extension could not handle it
+
+- Model resolution and the builtin service-tier extension share this core warning policy.
+
+### Expected merge conflict zones
+
+- LOW: the documented model set and warning text in `packages/coding-agent/src/core/ultrafast-lanes.ts`.

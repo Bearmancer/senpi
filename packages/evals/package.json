@@ -11,8 +11,8 @@
 		"test": "vitest run --config vitest.test.config.ts"
 	},
 	"devDependencies": {
-		"@earendil-works/pi-ai": "^2026.10.10-6",
-		"@code-yeongyu/senpi": "^2026.10.10-6",
+		"@earendil-works/pi-ai": "^2026.10.10-9",
+		"@code-yeongyu/senpi": "^2026.10.10-9",
 		"@types/node": "26.6.2",
 		"@vitest-evals/core": "0.17.0",
 		"@vitest/coverage-v8": "5.0.1",

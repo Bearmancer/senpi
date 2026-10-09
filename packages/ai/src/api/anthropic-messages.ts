@@ -1380,7 +1380,7 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 						apiKey,
 						options?.interleavedThinking ?? true,
 						shouldUseFineGrainedToolStreamingBeta(model, normalizedContext),
-						options?.refusalFallbacks !== undefined,
+						options?.refusalFallbacks !== undefined && configuredBetaHeader(model, options) !== null,
 						optionsHeaders,
 						options?.fetch,
 						copilotDynamicHeaders,
@@ -2218,32 +2218,63 @@ export function buildAnthropicWarmPromptCacheParams(
 	}) as MessageCreateParamsNonStreaming;
 }
 
+function configuredBetaHeader(
+	model: Model<"anthropic-messages">,
+	options: AnthropicOptions | undefined,
+): string | null | undefined {
+	let configured: string | null | undefined;
+	for (const headers of [model.headers, options?.headers]) {
+		for (const [name, value] of Object.entries(headers ?? {})) {
+			if (name.toLowerCase() === "anthropic-beta") configured = value;
+		}
+	}
+	return configured;
+}
+
+/** What the request body carries that the API accepts only under a beta (senpi#2957). */
+interface BetaDependentShape {
+	midConvoEffort: boolean;
+	thinkingBinding: boolean;
+	nativeToolChanges: boolean;
+	refusalFallbacks: boolean;
+}
+
 function getBetaFeatures(
 	model: Model<"anthropic-messages">,
 	context: TranscriptContext,
 	isOAuthToken: boolean,
-	nativeToolChanges: boolean,
+	shape: BetaDependentShape,
 	options?: AnthropicOptions,
 ): NonNullable<MessageCreateParamsStreaming["betas"]> {
-	let configuredFeatures: string | null | undefined;
-	for (const headers of [model.headers, options?.headers]) {
-		for (const [name, value] of Object.entries(headers ?? {})) {
-			if (name.toLowerCase() === "anthropic-beta") configuredFeatures = value;
-		}
-	}
-	if (configuredFeatures === null) return [];
-	if (configuredFeatures !== undefined) {
-		return [
-			...new Set(
-				configuredFeatures
+	const configured = configuredBetaHeader(model, options);
+	if (configured === null) return [];
+	// Betas the request body depends on: the API rejects the request without them.
+	const required: NonNullable<MessageCreateParamsStreaming["betas"]> = [];
+	if (isOAuthToken) required.push("claude-code-20250219", "oauth-2025-04-20");
+	if (shape.midConvoEffort) required.push(MID_CONVERSATION_OUTPUT_CONFIG_BETA);
+	if (shape.thinkingBinding) required.push(THINKING_BINDING_CONTROLS_BETA);
+	if (shape.nativeToolChanges) required.push(MID_CONVERSATION_TOOL_CHANGES_BETA);
+	if (shape.refusalFallbacks) required.push(SERVER_SIDE_FALLBACK_BETA);
+	// A configured header owns the optional betas and is merged with the required ones, never replacing them: a
+	// proxy route's own header used to drop the effort beta, and Claude 5.5 models then 400ed (senpi#2957).
+	// Interleaved thinking is stripped on adaptive models here too, as it is from the client headers.
+	const optional =
+		configured === undefined
+			? defaultOptionalBetas(model, context, options)
+			: configured
 					.split(",")
 					.map((feature) => feature.trim())
-					.filter(Boolean),
-			),
-		];
-	}
-	const features: NonNullable<MessageCreateParamsStreaming["betas"]> = [];
-	if (isOAuthToken) features.push("claude-code-20250219", "oauth-2025-04-20");
+					.filter(Boolean)
+					.filter((feature) => !(feature === INTERLEAVED_THINKING_BETA && supportsAdaptiveThinking(model)));
+	return [...new Set([...optional, ...required])];
+}
+
+function defaultOptionalBetas(
+	model: Model<"anthropic-messages">,
+	context: TranscriptContext,
+	options: AnthropicOptions | undefined,
+): string[] {
+	const features: string[] = [];
 	if (shouldUseFineGrainedToolStreamingBeta(model, context)) features.push(FINE_GRAINED_TOOL_STREAMING_BETA);
 	if (
 		model.reasoning &&
@@ -2254,11 +2285,7 @@ function getBetaFeatures(
 		features.push(INTERLEAVED_THINKING_BETA);
 	}
 	if (shouldUseServerSideFallbackBeta(model)) features.push(SERVER_SIDE_FALLBACK_BETA);
-	if (model.compat?.supportsMidConvoEffort === true) {
-		features.push(MID_CONVERSATION_OUTPUT_CONFIG_BETA, THINKING_BINDING_CONTROLS_BETA);
-	}
-	if (nativeToolChanges) features.push(MID_CONVERSATION_TOOL_CHANGES_BETA);
-	return [...new Set(features)];
+	return features;
 }
 
 function buildParams(
@@ -2282,7 +2309,18 @@ function buildParams(
 	// and Anthropic rejects a tool list where every tool is deferred, so there must be an
 	// initial active tool to anchor the deferred ones. Otherwise the current tool list is sent.
 	const initialTools = initialSystemMessage?.toolsAdded ?? [];
+	// A configured `anthropic-beta: null` asks for no betas at all, so the request takes a shape that needs none:
+	// the current tool list instead of native tool changes, top-level effort instead of per-message markers, and
+	// no server-side fallbacks (senpi#2957). OAuth still needs its identity betas; getBetaFeatures names them.
+	const betasSuppressed = configuredBetaHeader(model, options) === null;
+	if (betasSuppressed && isOAuthToken) {
+		throw new Error(
+			`The anthropic-beta header is set to null, but ${model.provider}/${model.id} is called with an OAuth token, which needs the claude-code-20250219 and oauth-2025-04-20 betas. Remove the null, or list the betas you want instead; senpi adds the ones a request needs.`,
+		);
+	}
+	const midConvoEffort = model.compat?.supportsMidConvoEffort === true && !betasSuppressed;
 	const nativeToolChanges =
+		!betasSuppressed &&
 		supportsMidConvoSystemMessages(model) &&
 		supportsMidConvoToolChanges(model) &&
 		initialTools.length > 0 &&
@@ -2313,7 +2351,19 @@ function buildParams(
 	}
 	const deferredToolNames = new Set(deferredTools.map((tool) => normalizeToolName(tool.name)));
 	const activeEffort = managedEffortForRequest(model, options) ?? "high";
-	const betaFeatures = getBetaFeatures(model, context, isOAuthToken, nativeToolChanges, options);
+	const sendFallbacks = options?.refusalFallbacks !== undefined && !betasSuppressed;
+	const betaFeatures = getBetaFeatures(
+		model,
+		context,
+		isOAuthToken,
+		{
+			midConvoEffort,
+			thinkingBinding: midConvoEffort && options?.thinkingEnabled !== false,
+			nativeToolChanges,
+			refusalFallbacks: sendFallbacks,
+		},
+		options,
+	);
 	const convertedMessages = convertMessages(
 		conversationMessages,
 		model,
@@ -2322,16 +2372,15 @@ function buildParams(
 		unsignedThinkingReplay,
 		deferredToolNames,
 		normalizeToolName,
-		model.compat?.supportsMidConvoEffort === true ? model.provider : undefined,
+		midConvoEffort ? model.provider : undefined,
 		nativeToolChanges,
 	);
-	const messages =
-		model.compat?.supportsMidConvoEffort === true
-			? insertThinkingLevelMessages(convertedMessages, activeEffort)
-			: convertedMessages.messages;
+	const messages = midConvoEffort
+		? insertThinkingLevelMessages(convertedMessages, activeEffort)
+		: convertedMessages.messages;
 	// Effort markers are appended after history; re-run the fork's final-user cache checkpoint
 	// against the actual last user/tool-result message so the marker cannot displace cache_control.
-	if (model.compat?.supportsMidConvoEffort === true && cacheControl) {
+	if (midConvoEffort && cacheControl) {
 		for (let index = messages.length - 1; index >= 0; index--) {
 			const message = messages[index];
 			// A native system update after the last turn already holds the checkpoint;
@@ -2438,7 +2487,7 @@ function buildParams(
 	// be dropped instead of surfacing as persistent 400 responses. A thinking-off turn
 	// skips this branch: `disableThinkingForRequest` sends `disabled` where the family
 	// accepts it and pins effort `low` where it does not (Opus/Sonnet/Haiku 5.5, Fable, Mythos).
-	if (model.compat?.supportsMidConvoEffort === true && options?.thinkingEnabled !== false) {
+	if (midConvoEffort && options?.thinkingEnabled !== false) {
 		params.thinking = {
 			type: "adaptive",
 			display: options?.thinkingDisplay ?? "summarized",
@@ -2512,7 +2561,7 @@ function buildParams(
 
 	applyExtraBodyToAnthropicParams(params, options?.extraBody);
 
-	if (options?.refusalFallbacks !== undefined) {
+	if (sendFallbacks && options?.refusalFallbacks !== undefined) {
 		// AnthropicRefusalFallback models a readonly list; the SDK's BetaFallbacksParam
 		// is mutable, so copy rather than widen the fork's public type.
 		params.fallbacks = options.refusalFallbacks === "default" ? "default" : [...options.refusalFallbacks];

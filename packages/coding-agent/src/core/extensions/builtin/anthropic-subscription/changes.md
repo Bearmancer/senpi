@@ -1,3 +1,90 @@
+## 2026-10-08 - An auth-blocked account recovers once through its saved grant (senpi#2926)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/auth-block-recovery.ts` (new): before account selection, when no account can serve the request, each stored slot blocked with `auth_error` that still holds refresh material redeems that grant once under the auth.json lock. Success stores the new token and clears the block; a grant the token endpoint rejects stays blocked. Either way the slot records `authRecoveryGrant`, a digest of the grant it must not redeem again (the rejected one, or the one the recovery produced), so one auth block gets at most one recovery. A throttled or unavailable token endpoint records nothing and is retried on the next request.
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/auth-lane.ts`: `queryWithAuthLane` runs that recovery before `runFailover` and takes the re-read pool; when the recovery failed only transiently and still no account is usable, the request fails with the classified refresh error (retryable) instead of "blocked until re-login". A healthy sibling serves the request without any refresh of the blocked slot.
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/refresh-failure.ts` (new): the token-endpoint failure classification (`refreshFailure`, `isGrantRejected`) moved out of `auth-lane.ts` unchanged, shared by the lane refresh and the recovery.
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/accounts.ts`: `AccountSlot.authRecoveryGrant`, `authGrantDigest`; `upsertAccount` (re-login) clears the recovery marker with the block stamps.
+
+### Why
+
+- An `auth_error` block was kept until re-login (`affinity.ts` `isAccountBlocked` / `clearExpiredBlocks`), and `selectAccount` excluded the slot before `prepareSlot` could refresh it. A slot whose access token failed while its saved refresh token was still accepted therefore dead-ended every request with "All Claude accounts ... are currently blocked (authentication error)" although redeeming its own grant recovered it (senpi#2926).
+
+### Why an extension could not handle it
+
+- Account selection, block state and the refresh lane are owned by this builtin; there is no hook between the stored pool and account selection.
+
+### Expected merge conflict zones
+
+- LOW: `auth-lane.ts` `queryWithAuthLane` (before `runFailover`), `accounts.ts` `AccountSlot` and `upsertAccount`.
+
+## 2026-10-09 - A rebuilt Anthropic Subscription prompt is a cacheable prefix of the next one (senpi#2982, senpi#2891)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/prompt-bridge.ts`: `buildPromptBlocks` takes `{ cacheBreakpoint: "5m" | "1h" }`; when set, the last replayed-history TEXT block carries `cache_control: { type: "ephemeral", ttl }`, before `CONVERSATION_HISTORY_CLOSER` (now exported). Claude Code drops a breakpoint on an image, so a history ending in a screenshot still gets one. The closer, recovered tool results, the instruction and the current message stay after it. `buildDeferredPromptStream` builds the prompt each time it is iterated, so a failover retry gets a full prompt for its own lane.
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/prompt-cache-ttl.ts` (new): `pinOneShotPromptCacheTtl` sets `CLAUDE_CODE_PROMPT_CACHE_TTL` on a one-shot query and returns it for the breakpoint: `FORCE_PROMPT_CACHING_5M` wins and pins `5m` (Claude Code reads it first), then an explicit `CLAUDE_CODE_PROMPT_CACHE_TTL`; the managed lanes (`oauth-slots`, `config-dir`) otherwise pin `1h` (Claude Code's subscription default), and the ambient lane pins nothing, so it gets no breakpoint. Known limits: the ambient lane (a `claude` CLI login with no managed accounts) still re-sends without a cache read; a turn with 10 or more parallel tool calls can push the next breakpoint past the API's ~20-block lookback; and once a session has more than 8 distinct history images, a new image replaces an older one with a note, which changes earlier history for that turn.
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/prompt-directive-dedupe.ts`: `dedupeUltraworkBlocks` collapses a history directive only when it is byte-identical to the directive just before it, so a changed directive is kept in full and the newest wording is always present; it never collapses after the closer (the current message keeps its directive), and it preserves other block fields (`cache_control`). It used to keep only the LAST copy.
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/stream.ts`: the one-shot path (resume off, or no session) pins the cache lifetime in `buildOptions` for the attempt's lane and builds its prompt with that breakpoint through `buildDeferredPromptStream`; the `disabled`/`resume_mode_off` observation carries `settingSource`.
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/settings.ts`: `resumeModeSource(settings)` reports which layer set `resumeMode` (`env`, `project`, `global`).
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/session-observability.ts`: `ContinuityObservation.settingSource`, also written to the session log.
+
+### Why
+
+- With resume off every turn is a fresh query whose prompt replays the whole conversation, and Claude Code's own breakpoints sit after the per-turn tail, so no earlier request ever wrote a cache entry that the next one starts with: a community session wrote ~330K cache tokens on each of 136 turns. The history itself only grows by appending, so a breakpoint at its end makes request k a cache-readable prefix of request k+1. Keeping the last directive copy broke that prefix whenever a new ultrawork prompt arrived, and rebuilding text blocks dropped the breakpoint. Claude Code forwards a `cache_control` set on our user-message block. On subscription auth it marks its own breakpoints 1 hour, and the API rejects a longer lifetime after a shorter one, so ours must match: Claude Code 2.1.292 captured against a local endpoint with senpi's shipped options (string system prompt, a custom tool) sends exactly four breakpoints (two system, ours, its trailing one), all with the pinned lifetime. Four is the API maximum, which the capture test pins. Resume off is only ever set by the user, so the existing once-per-session notice now names where.
+
+### Why an extension could not handle it
+
+- The prompt is assembled inside this builtin lane.
+
+### Expected merge conflict zones
+
+- LOW: `buildPromptBlocks`, `dedupeUltraworkBlocks`, `buildOptions` and the one-shot `queryWithAuthLane` call and the `disabled` observation in `stream.ts`, `loadAnthropicSubscriptionProviderSettings`.
+
+## 2026-10-09 - A session keeps its account through transient errors (senpi#2891)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/failover.ts`: `runFailover` retries a transient failure (`overloaded`, or a retryable `other`: network errors, `server_error`) on the SAME account with a budget of `TRANSIENT_RETRIES_PER_TURN` (2) per turn, not per account, and a doubling delay from `TRANSIENT_RETRY_DELAY_MS` (1 s, abortable), before blocking it and rotating. Usage limits, rate limits, auth and billing failures still rotate at once. New options: `sleep` (injectable wait) and `signal`.
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/affinity.ts`: `selectAccount` takes `preferredAccount`, the account the session's SDK transcript lives under; it is chosen after a valid pin and before HRW order while it can serve the model.
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/auth-lane.ts`: `AuthenticatedQueryInput.preferredAccount` is passed to selection, and the request signal to `runFailover`.
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/session-stream.ts`: the resident path prefers the live session's or restored binding's account.
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/session-continuity.ts`: on the config-dir lane, a live session whose account differs from the serving account flattens (`cross_root_unsupported`) instead of attempting a reattach that fails with "No conversation found".
+
+### Why
+
+- On the config-dir lane every change of serving account re-sends the whole conversation, because each account has its own `CLAUDE_CONFIG_DIR` transcript root. One transient error rotated the session away (blocking the account for 60 s) and HRW order moved it back on the next turn: two full re-sends per blip. A reporter measured 137-196 such re-seeds per day after one pinned account was hard-limited. A replayed day of 200 turns with 10 overloads and one limit moved accounts 22 times before this change and once after it.
+
+### Why an extension could not handle it
+
+- Account selection, failover and continuity decisions are internal to this builtin lane.
+
+### Expected merge conflict zones
+
+- LOW: `runFailover`'s catch block, `selectUnblocked`, `queryWithAuthLane`'s `selectFn`, `residentAuthLaneMessages`, and the head of `decideFromState`.
+
+## 2026-10-09 - The session stream applies backpressure instead of overflowing (senpi#2822)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/bounded-queue.ts`: `push` no longer throws at capacity; `writable()` resolves once fewer than `capacity` values wait (or the queue ended), and `next`/`close`/`fail` release waiting producers.
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/session-registry-pump.ts`: the pump awaits the active turn's `writable()` before it reads the next SDK message; `SessionTurnRequest` carries it.
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/session-turn-types.ts`: `ActiveTurn.writable`.
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/session-turn-attempt.ts`: passes the queue's `writable` and closes the queue when the consumer stops reading, so the pump is never left waiting.
+
+### Why
+
+- A long streamed tool call (a `team_create` spec, a large `write`) produced more than 256 SDK events before the consumer pulled; `push` threw inside the SDK message callback, the query failed after visible output, and failover marked it `no-turn-retry` (a failure after a visible delta is never retried, to avoid duplicating output), so the tool call was lost (senpi#2822). With backpressure the buffer holds at most `capacity` plus one pump step (the pre-replay flush, itself capped at 64), and nothing throws.
+
+### Why an extension could not handle it
+
+- This is the builtin anthropic-subscription extension's own pump and queue.
+
+### Expected merge conflict zones
+
+- LOW: `runPump` loop in `session-registry-pump.ts`; the attempt generator in `session-turn-attempt.ts`.
+
 ## 2026-10-07 - A restored binding with no recorded assistant turn is never resumed unchecked (senpi#2858)
 
 ### What changed

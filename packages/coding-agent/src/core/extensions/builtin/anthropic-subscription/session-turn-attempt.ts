@@ -88,6 +88,7 @@ export function createSessionTurnAttempt(
 					recordAssistantUuid(entry, hashes.length, sdkMessage);
 					queue.push(sdkMessage);
 				},
+				writable: () => queue.writable(),
 			});
 			void completion.then(
 				() => queue.close(),
@@ -122,6 +123,9 @@ export function createSessionTurnAttempt(
 					rememberRetryCheckpoint(entry, hashes);
 				}
 				throw error;
+			} finally {
+				// A consumer that stops reading early must not leave the pump waiting for room.
+				queue.close();
 			}
 		})(),
 		discard: (): void => {

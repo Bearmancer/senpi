@@ -1,5 +1,24 @@
 # TTSR Fork Tracker
 
+## 2026-10-08 - One corrective follow-up per rule per user message (senpi#2967)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/ttsr/follow-up-limit.ts` (new): `ruleAlreadyCorrected(entries, rule)` reports whether a `ttsr-injection` for that rule was already sent since the user's last message, read from the session entries.
+- `packages/coding-agent/src/core/extensions/builtin/ttsr/index.ts`: `agent_settled` sends a rule's corrective nudge (with `triggerTurn`) at most once per user message; a repeat appends `ttsr-loop-stopped`, emits `ttsr:loop-stopped` and tells the user the rule flagged the reply again after its correction.
+
+### Why
+
+- One user message drove 66 turns in about 66 s through the `repetitive-turns` nudge until Stop (senpi#2967). The desktop's server-hosted session fires `session_start` around every turn, so this extension started each automatic turn with fresh in-memory state and re-armed. The limit is read from the session, so a rebuild cannot reset it; the engine-wide turn bound (`src/core/engine-turn-limit.ts`) covers every other source.
+
+### Why an extension could not handle it
+
+- The follow-up turn is started by this builtin's own `agent_settled` handler.
+
+### Expected merge conflict zones
+
+- LOW: `ttsr/index.ts` `agent_settled` handler and imports.
+
 ## 2026-10-07 - Code-shaped lines are left out of near-duplicate scoring (senpi#2865)
 
 ### What changed

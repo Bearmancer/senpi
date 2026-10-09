@@ -28,6 +28,7 @@ import loopExtension from "./loop/index.ts";
 import loopGuardExtension from "./loop-guard/index.ts";
 import mcpExtension from "./mcp/index.ts";
 import modelFallbackExtension from "./model-fallback/index.ts";
+import movedPathGuardExtension from "./moved-path-guard/index.ts";
 import nestedAgentsMdExtension from "./nested-agents-md/index.ts";
 import openaiImageGenExtension from "./openai-image-gen/index.ts";
 import openaiWebSearchExtension from "./openai-web-search/index.ts";
@@ -68,6 +69,8 @@ export const globalDefaultExtensionFactories = {
 export const builtinExtensions: BuiltinExtensionFactory[] = [
 	// Loop guard owns the first veto opportunity so repeated calls never re-run hooks or permission prompts.
 	{ id: "loop-guard", factory: loopGuardExtension },
+	// Ahead of hooks and permission-system: a path the desktop moved is refused before any hook runs or prompt asks.
+	{ id: "moved-path-guard", factory: movedPathGuardExtension },
 	{ id: "hooks", factory: hooksExtension },
 	{ id: "permission-system", factory: permissionSystemExtension },
 	{ id: "gpt-apply-patch", factory: gptApplyPatchExtension },
