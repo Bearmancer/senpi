@@ -30,6 +30,7 @@ import {
 } from "../app-server/daemon/process.ts";
 import { createHostDaemonPaths, HOST_DAEMON_DIR_ENV, hostDaemonDirectoryPaths } from "./host-daemon-paths.ts";
 import { parseJson, readFileOrUndefined } from "./host-daemon-state.ts";
+import { logUnknownHostIdentity } from "./host-supervisor-log.ts";
 
 /** How long a client should wait before retrying a path another generation still holds. */
 export const SESSION_PATH_RETRY_AFTER_MS = 2_000;
@@ -276,9 +277,11 @@ async function readOwner(file: string): Promise<SessionPathOwner | undefined> {
  */
 export async function claimOwnerIsLive(owner: SessionPathOwner): Promise<boolean> {
 	if (!processIsLive(owner.pid)) return false;
-	if (owner.processStartTime === null) return true;
-	const recorded = processStartTimeMs(owner.processStartTime);
-	if (recorded === undefined) return true;
+	const recorded = owner.processStartTime === null ? undefined : processStartTimeMs(owner.processStartTime);
+	if (recorded === undefined) {
+		logUnknownHostIdentity("session-path-claim", owner.pid);
+		return true;
+	}
 	const current = await readProcessStartTime(owner.pid).catch(() => undefined);
 	const observed = current === undefined ? undefined : processStartTimeMs(current);
 	return observed === undefined || sameProcessStartMs(recorded, observed);

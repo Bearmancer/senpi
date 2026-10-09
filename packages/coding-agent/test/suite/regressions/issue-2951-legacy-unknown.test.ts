@@ -60,7 +60,7 @@ it("logs an unknown legacy identity across caller restarts without retiring it, 
 					.split("\n")
 					.filter(Boolean)
 					.map((line) => JSON.parse(line)),
-			).toEqual([unknownEvent, unknownEvent]);
+			).toEqual([unknownEvent]);
 			expect(processIsLive(holder.pid)).toBe(true);
 			expect(await readFile(paths.legacyPidFile, "utf8")).toBe(record);
 		}
