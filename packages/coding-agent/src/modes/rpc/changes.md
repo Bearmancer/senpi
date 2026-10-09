@@ -5372,3 +5372,33 @@ The `select` / `input` lines of `createExtensionUIContext` in `connection-handle
 ### Expected merge conflict zones
 
 - LOW: `createDaemonDirectories` in `host-daemon-paths.ts`, the head of `writeHostRegistration`, and the `watchInbox` call in `HostSessionControl.register`. All three files are fork-only.
+
+## 2026-10-09 - Explicit caller lifetime for RPC host shards (senpi#3044)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-ensure-types.ts`: additive `owner: "caller"` option on the already-public `EnsureHostOptions`.
+- `packages/coding-agent/src/modes/rpc/host-ensure-start.ts` and `packages/coding-agent/src/modes/rpc/host-lifecycle-launch.ts`: fresh detached supervisors inherit an owner-lifetime pipe; its write end is retained but unref'd in the caller, independently of its attach hold.
+- `packages/coding-agent/src/modes/rpc/host-daemon-state.ts` and `packages/coding-agent/src/modes/rpc/host-ensure.ts`: per-generation atomic owner records and endpoint-locked claims; another live or unknown owner is refused, while confirmed-dead owners can be replaced without replacing the host.
+- `packages/coding-agent/src/modes/rpc/host-lifecycle-activity.ts` and `packages/coding-agent/src/modes/rpc/host-lifecycle.ts`: EOF authorizes a two-second continuous-quiescence window, checked at the existing lifecycle cadence. Attached and unclassified peers, active runs, and an unhealthy activity observer prevent owner-death exit. Rebinding a live supervisor uses PID plus OS start identity because an already-running process cannot inherit a new fd; failed identity probes are unknown, never death.
+- `packages/coding-agent/src/modes/rpc/host-successor.ts`: successors inherit ownership, with a fresh pipe when the launching process is the owner and OS-identity observation otherwise. Windows starts inherit a pipe; Windows generation handoff remains unsupported.
+- `packages/coding-agent/docs/rpc.md`: public integration, platform paths, grace and shutdown bounds, ownership conflict policy, and the narrowly authorized owner-record cross-writer.
+
+### Why
+
+A task shard was deliberately detached but had no caller-lifetime contract, so quitting its root TUI left a zero-peer host resident until the ordinary fifteen-minute idle timeout. Parent PID alone neither identifies the root session tree nor survives PID reuse.
+
+### Why an extension could not handle it
+
+An extension cannot observe its own SIGKILL. The detached supervisor must hold the kernel lifetime binding and combine it with its authoritative peer and turn observations.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/host-ensure-types.ts`: ensure option fields.
+- `packages/coding-agent/src/modes/rpc/host-ensure-start.ts`: boot settings and detached spawn.
+- `packages/coding-agent/src/modes/rpc/host-lifecycle-launch.ts`: supervisor argv and inherited stdio.
+- `packages/coding-agent/src/modes/rpc/host-daemon-state.ts`: generation state read/write helpers.
+- `packages/coding-agent/src/modes/rpc/host-ensure.ts`: held reuse and upgrade decisions.
+- `packages/coding-agent/src/modes/rpc/host-lifecycle-activity.ts`: activity observation and owner watch.
+- `packages/coding-agent/src/modes/rpc/host-lifecycle.ts`: lifecycle ticker and watcher teardown.
+- `packages/coding-agent/src/modes/rpc/host-successor.ts`: successor boot settings and spawn.

@@ -3,8 +3,10 @@
  * always-on observer connection sees start and settle on the internal socket. Feeds the idle-exit
  * decision. Split out of `host-lifecycle.ts`, which keeps the supervisor's orchestration (senpi#2566).
  */
-import { createConnection, type Socket } from "node:net";
+import { type FSWatcher, watch } from "node:fs";
+import { createConnection, Socket } from "node:net";
 import { ClientOccupancy } from "./host-client-occupancy.ts";
+import { type HostLifetimeOwner, hostOwnerGone, readHostOwner, sameHostOwner } from "./host-daemon-state.ts";
 import { type HostActivity, IdleExitDecider, type IdleExitDecision } from "./host-lifecycle-policy.ts";
 import { SessionRunActivity } from "./host-run-activity.ts";
 import { attachJsonlLineReader, MAX_RPC_LINE_CHARACTERS } from "./jsonl.ts";
@@ -64,6 +66,12 @@ export class SupervisorActivity {
 		return this.decider.update(this.current());
 	}
 
+	/** Owner death never turns an unknown observer snapshot into permission to stop a turn. */
+	quiescent(): boolean {
+		return this.observerLink.healthy() && this.runs.busySessions === 0 &&
+			this.clients.attachedCount === 0 && this.clients.unclassifiedCount === 0;
+	}
+
 	openObserver(): Promise<void> {
 		return this.observerLink.open();
 	}
@@ -92,6 +100,99 @@ export class SupervisorActivity {
 
 	private observeHostEvent(line: string): void {
 		if (this.runs.observe(line)) this.refresh();
+	}
+}
+
+/** Continuous quiet time, in addition to attach holds and confirmed owner death (#3044). */
+export const OWNER_EXIT_GRACE_MS = 2_000;
+
+/**
+ * Fresh starts inherit an event-loop pipe on POSIX and Windows. An existing supervisor cannot
+ * receive a newly inherited fd, nor can a foreign handoff caller pass the original owner's fd:
+ * those bindings use the OS start identity. Failed observations are never death.
+ */
+export class SupervisorOwner {
+	private owner: HostLifetimeOwner | null | undefined;
+	private pipe: Socket | undefined;
+	private watcher: FSWatcher | undefined;
+	private gone = false;
+	private revision = 0;
+	private stopped = false;
+	private readonly idle = new IdleExitDecider(OWNER_EXIT_GRACE_MS, () => performance.now());
+	private readonly generationDir: string;
+
+	constructor(generationDir: string) {
+		this.generationDir = generationDir;
+	}
+
+	async start(fd: number | undefined): Promise<void> {
+		this.watcher = watch(this.generationDir, (_event, filename) => {
+			if (filename?.toString() !== "owner.json") return;
+			void this.reload();
+		});
+		this.watcher.on("error", () => {
+			this.owner = undefined;
+			this.gone = false;
+			this.revision++;
+		});
+		await this.reload();
+		if (fd === undefined || this.owner == null) return;
+		try {
+			const pipe = new Socket({ fd, readable: true, writable: false });
+			this.pipe = pipe;
+			const bound = this.owner;
+			let failed = false;
+			const eof = (): void => {
+				if (!failed && !this.stopped && sameHostOwner(this.owner, bound)) this.gone = true;
+			};
+			pipe.once("end", eof);
+			// Windows may report a clean close without an end; an errored pipe remains unknown.
+			if (process.platform === "win32") pipe.once("close", eof);
+			pipe.once("error", () => {
+				failed = true;
+				if (this.pipe === pipe) this.pipe = undefined;
+				pipe.destroy();
+			});
+			pipe.resume();
+		} catch {
+			// Inheritance was unavailable on this launch path: use the recorded OS identity.
+			this.pipe = undefined;
+		}
+	}
+
+	private async reload(): Promise<void> {
+		const revision = ++this.revision;
+		const next = await readHostOwner(this.generationDir);
+		if (this.stopped || revision !== this.revision) return;
+		if (!sameHostOwner(this.owner, next)) {
+			this.pipe?.destroy();
+			this.pipe = undefined;
+			this.gone = false;
+			this.idle.update({ connections: 1, activeTurns: 0 });
+		}
+		this.owner = next;
+	}
+
+	async shouldExit(activity: SupervisorActivity): Promise<boolean> {
+		const owner = this.owner;
+		const revision = this.revision;
+		if (owner != null && !this.pipe && !this.gone) {
+			const gone = await hostOwnerGone(owner);
+			if (this.stopped || revision !== this.revision) return false;
+			this.gone = gone;
+		}
+		const quiet = this.gone && owner != null && activity.quiescent();
+		if (this.idle.update({ connections: quiet ? 0 : 1, activeTurns: 0 }) !== "exit") return false;
+		// fs.watch may lag a new owner's atomic write. Its ensure holds a connection until this
+		// publication, so re-read the record AND occupancy before authorizing synchronous shutdown.
+		const current = await readHostOwner(this.generationDir);
+		return !this.stopped && revision === this.revision && sameHostOwner(owner, current) && activity.quiescent();
+	}
+
+	stop(): void {
+		this.stopped = true;
+		this.watcher?.close();
+		this.pipe?.destroy();
 	}
 }
 

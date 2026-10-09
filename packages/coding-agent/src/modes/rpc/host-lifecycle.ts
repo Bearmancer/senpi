@@ -8,7 +8,7 @@ import { classifyChildExit, noteChildExit } from "./host-child-exit.ts";
 import { hostCrashCleanupPaths } from "./host-cleanup-paths.ts";
 import { createHostDaemonPaths, generationPaths } from "./host-daemon-paths.ts";
 import { HOST_INSTANCE_ID_ENV } from "./host-identity-env.ts";
-import { SupervisorActivity } from "./host-lifecycle-activity.ts";
+import { SupervisorActivity, SupervisorOwner } from "./host-lifecycle-activity.ts";
 import { drainOnPublicSocketLoss, SupervisorDrain, watchWin32ChildIdentity } from "./host-lifecycle-drain.ts";
 import {
 	HOST_CHILD_WATCH_FD,
@@ -107,6 +107,7 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 		settled: () => state.shuttingDown,
 	});
 	const watchers: Array<() => void> = [];
+	const owner = new SupervisorOwner(generation.dir);
 
 	const child = spawnHostChild({
 		launch,
@@ -167,8 +168,16 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 	const ticker = setInterval(() => {
 		if (!drain.active && activity.refresh() === "exit" && activity.clients.unclassifiedCount === 0)
 			void shutdown("idle", 0);
+		if (!ownerCheck && !state.shuttingDown && !drain.active) {
+			ownerCheck = true;
+			void owner.shouldExit(activity).then((exit) => {
+				if (exit && !state.shuttingDown && !drain.active) void shutdown("owner_gone", 0);
+			}).finally(() => { ownerCheck = false; });
+		}
 	}, tickIntervalMs);
+	let ownerCheck = false;
 	watchers.push(() => clearInterval(ticker));
+	watchers.push(() => owner.stop());
 
 	const teardown: SupervisorShutdown = {
 		paths,
@@ -198,6 +207,11 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 	// default kill, which would leave that directory behind.
 	registerSupervisorSignals(shutdown, () => drain.drain());
 	try {
+		// Direct supervisor launches predate owner records and may have no generation directory.
+		// Ensured starts create it before spawning and always carry an explicit owner/null record.
+		if (launch.ownerFd !== undefined || await readSettingsFile(generation.settingsFile)) {
+			await owner.start(launch.ownerFd);
+		}
 		await waitForListener(internalSocket, 30_000, internalSecret);
 		await activity.openObserver();
 		await prepareSocketPath(bindSocket);

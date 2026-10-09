@@ -10,6 +10,8 @@
 
 ### Fixed
 
+- RPC hosts can opt into their ensure caller's lifetime with `owner: "caller"`. After that process exits or is killed, the supervisor stops an idle host after a short grace instead of leaving the shard resident for the normal idle timeout. Surviving peers and active turns keep running; ownership is preserved across reuse and generation handoff ([#3044](https://github.com/code-yeongyu/senpi/issues/3044)).
+
 - When a goal stops continuing because progress is stale, its elapsed timer now stops instead of running indefinitely. Goal guard denials and engine self-stops are persisted as `goal-continuation-stopped` and `engine-paused` entries and delivered to RPC clients; a user message or `/goal resume` resets the goal stop. Failures publishing these new entries no longer interrupt goal timer cleanup, todo processing, guard events or stream-rule stop announcements ([#3007](https://github.com/code-yeongyu/senpi/issues/3007)).
 
 - A scheduled prompt created in an OmO desktop thread before the desktop moved its data home now fires: the headless `--session` resume opens the session in the folder's new location instead of exiting with "Stored session working directory does not exist", and the job no longer ends in `failed/`. `--session <id>` and `--resume` find and open such a session from its new folder without offering a rebind, `--continue` continues it when it is the folder's most recently used session, and the resume picker lists it once. Only a folder the desktop's moved-folder record lists is mapped, and the session file is not rewritten ([#2990](https://github.com/code-yeongyu/senpi/issues/2990)).

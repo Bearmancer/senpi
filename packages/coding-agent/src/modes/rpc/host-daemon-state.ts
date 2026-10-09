@@ -11,6 +11,8 @@
  * is `host-daemon-paths.ts`; nothing here builds a path of its own.
  */
 import { readFile, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { processStartTimeMs, readProcessIdentity } from "../app-server/daemon/process.ts";
 import {
 	createGenerationDirectory,
 	generationPaths,
@@ -18,6 +20,61 @@ import {
 	type HostDaemonPaths,
 	HostDaemonStateError,
 } from "./host-daemon-paths.ts";
+import { readJsonObject, writeJsonAtomic } from "./host-state-json.ts";
+
+/** The OS start identity, never a timestamp estimated from uptime or the caller's clock. */
+export interface HostLifetimeOwner {
+	readonly pid: number;
+	readonly startTime: string;
+}
+
+/** Null explicitly means unowned; undefined is an unreadable/old generation, never permission to take over. */
+export async function readHostOwner(generationDir: string): Promise<HostLifetimeOwner | null | undefined> {
+	const record = await readJsonObject(join(generationDir, "owner.json"));
+	if (record?.owner === null) return null;
+	if (!isRecord(record?.owner)) return undefined;
+	const { pid, startTime } = record.owner;
+	return typeof pid === "number" && Number.isSafeInteger(pid) && pid > 0 &&
+		typeof startTime === "string" && startTime.length > 0 ? { pid, startTime } : undefined;
+}
+
+/**
+ * The one mutable ownership record: ensure writes it under the endpoint lock while holding an
+ * attachment. Supervisors only read it. Generation teardown removes it before the pointer (#2243).
+ */
+export function writeHostOwner(generationDir: string, owner: HostLifetimeOwner | null): Promise<void> {
+	return writeJsonAtomic(join(generationDir, "owner.json"), { owner });
+}
+
+export function sameHostOwner(a: HostLifetimeOwner | null | undefined, b: HostLifetimeOwner | null | undefined): boolean {
+	return a != null && b != null && a.pid === b.pid && a.startTime === b.startTime;
+}
+
+export async function callerHostOwner(): Promise<HostLifetimeOwner> {
+	const observed = await readProcessIdentity(process.pid);
+	if (observed.kind !== "present" || processStartTimeMs(observed.identity) === undefined)
+		throw new Error("cannot establish RPC host owner OS start identity");
+	return { pid: process.pid, startTime: observed.identity };
+}
+
+export async function hostOwnerGone(owner: HostLifetimeOwner): Promise<boolean> {
+	const observed = await readProcessIdentity(owner.pid, process.platform, 1_000);
+	return observed.kind === "absent" || (observed.kind === "present" &&
+		processStartTimeMs(observed.identity) !== undefined &&
+		processStartTimeMs(owner.startTime) !== undefined && observed.identity !== owner.startTime);
+}
+
+/** A live or unknown different owner is never silently replaced. Called inside the ensure lock. */
+export async function claimHostOwner(generationDir: string): Promise<void> {
+	const previous = await readHostOwner(generationDir);
+	if (previous === undefined) throw new Error("RPC host does not support owner lifetime registration");
+	const next = await callerHostOwner();
+	if (sameHostOwner(previous, next)) return;
+	if (previous !== null && !(await hostOwnerGone(previous))) {
+		throw new Error("RPC host lifetime owner is still alive or its identity is unknown");
+	}
+	await writeHostOwner(generationDir, next);
+}
 /** Settings a supervisor reads at boot. Written before the spawn, so it exists when the host starts. */
 export interface HostDaemonSettings {
 	readonly socket: string;
