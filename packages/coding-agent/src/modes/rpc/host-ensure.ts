@@ -16,6 +16,7 @@ import {
 	readHostRegistration,
 	writtenByThisProcess,
 } from "./host-daemon-registration.ts";
+import { claimHostOwner } from "./host-daemon-state.ts";
 import { decideHostAction, type HostDecision, HostEnsureRefusedError, type HostProtocolInfo } from "./host-decision.ts";
 import { ensureClient } from "./host-ensure-client.ts";
 import { publicEndpointAccepts, refuseIfStalled } from "./host-ensure-liveness.ts";
@@ -110,6 +111,16 @@ async function ensureHostLocked(
 		registeredHere && (await writtenByThisProcess(registered?.writer, testOptions?.readProcessStartTime));
 	const attachedPid = registeredHere ? (registered?.record.pid ?? 0) : 0;
 	const decision = decide(options, startedByUs, protocol);
+	if (options.owner && held && (decision.action === "reuse" || decision.action === "handoff")) {
+		try {
+			if (!registeredHere || !registered || registered.instanceId !== held.info.instanceId)
+				throw new Error("RPC host has no matching registered owner-lifetime generation");
+			await claimHostOwner(generationPaths(paths, registered.instanceId).dir);
+		} catch (cause) {
+			held.hold.release();
+			throw cause;
+		}
+	}
 	if (decision.action === "reuse" && held) {
 		// A compatible socket is attachable even when another client surface
 		// started it. Only hosts we spawned are eligible for lifecycle management.

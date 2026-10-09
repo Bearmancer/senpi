@@ -203,6 +203,51 @@ Compatibility is decided from `protocolVersion` + `capabilities`, and "is my bui
 A `serverVersion` string comparison is never a compatibility test: two hosts with different version strings can
 speak the same protocol, and a host whose ordinal is uncomparable is attached to, never replaced.
 
+### Caller-owned hosts (`ensureHost`)
+
+`ensureHost({ socket, agentDir, owner: "caller" })` opts an endpoint into the lifetime of
+the process making that call. The public `EnsureHostOptions` export carries this option.
+Omit `owner` for machine-wide hosts and desktop thread hosts; their existing idle policy
+is unchanged. An owner that is alive also leaves the normal idle policy unchanged.
+
+Fresh launches inherit a separate lifetime pipe on POSIX and Windows. The caller retains
+its write end without keeping its own event loop alive; supervisor EOF proves owner death,
+including SIGKILL and PID reuse. Releasing `EnsuredHost.release()` releases only the attach
+hold, not ownership. The supervisor waits for two seconds of continuous quiescence after
+confirmed death: no attached or unclassified public peers, no active runs, and a healthy
+activity observer. Every admission, attached-peer activity, run start, and observer loss
+resets the grace even if it occurs entirely between ticks. After death is observed, the
+existing one-second maximum lifecycle tick adds at most two ticks to window accounting,
+then normal child shutdown applies (five-second graceful
+stop before the existing escalation policy). A stalled child retains that policy's longer
+bounded wait. No peer is drained and no active turn is interrupted by owner death.
+
+Reusing a running supervisor cannot inherit another fd. A generation successor launched
+by a process other than the owner also cannot inherit the owner's fd. These paths, and
+launches where opening the inherited pipe fails, compare the recorded PID and OS process
+start identity through the existing process reader (`ps lstart` on POSIX, CIM creation
+FILETIME on Windows). Both capture and probe pin `TZ=UTC` and `LC_ALL=C`; POSIX identities
+carry an explicit UTC suffix. Parsed milliseconds are compared with the existing process-start
+tolerance, never by raw timestamp spelling. Pipe-less probes back off from one second to a
+five-second maximum interval, with a one-second query budget. This adds at most that polling
+interval before owner death can be observed; failed or unreadable observations never authorize shutdown.
+Windows handoff remains unsupported, as before. A successor launched by the owner inherits
+a fresh pipe. Ownership survives handoff independently of the attach hold.
+
+Pipe-binding equality uses the exact parsed start instant; the liveness tolerance cannot
+merge two different process incarnations into one pipe owner.
+
+Each new generation records `owner.json` as `{ owner: { pid, startTime } }`, or
+`{ owner: null }` when unowned. Unowned generations open no owner filesystem watcher.
+A failed or exhausted watcher degrades to record polling without aborting startup; polling
+also discovers a first owner claimed on a previously unowned generation.
+An ensure may update only this ownership record under the
+endpoint lock while holding an attachment. The same owner can ensure again; a new caller
+may replace only a confirmed-dead owner (or claim an unowned host). A different live or
+unknown owner is refused. An old host without an ownership record refuses an ownership
+claim rather than pretending it can honor one. The record is removed with the generation,
+before the registration pointer. Other daemon files retain their existing writer rules.
+
 ### Attach, start or refuse (`decideHostAction`)
 
 A client that finds a host on the shared socket decides what to do with it through one exported function,
@@ -265,7 +310,8 @@ are what this decision encodes; the other two are what a client must not undo el
   signal a generation (an ensure, `host stop`, a handoff abandoning its successor, the generation's own supervisor)
   first writes `generations/<instanceId>/stop-intent.json` `{ sender, targetPid, reason, signal, at }` into THAT
   generation's directory, because the target cannot know who is about to stop it; nothing ever reads or removes
-  another generation's intent, and a drain writes none.
+  another generation's intent, and a drain writes none. Caller-lifetime registration is the other
+  explicit cross-writer: only `owner.json`, under the endpoint lock and attach hold described above.
 - **I4 - machine-driven work is invisible by default.** A session opened with `kind: "worker"` is omitted from
   `list_sessions` unless the caller passes `include_workers: true`, its `context` is published on that listing only,
   and its `session_closed`/`session_parked` records reach only the connections attached to it. A client that never
