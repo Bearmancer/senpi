@@ -36,6 +36,7 @@ import {
 	toError,
 } from "../types.ts";
 import { OutputCapture } from "../utils/output-capture.ts";
+import { listWindowsProcessRowsSync, windowsTreeKillArgs } from "./windows-process-tree.ts";
 
 const MAX_TIMEOUT_MS = 2_147_483_647;
 const MAX_TIMEOUT_SECONDS = MAX_TIMEOUT_MS / 1000;
@@ -297,9 +298,10 @@ function killProcessDirectly(pid: number): void {
 /** Upper bound on how long a teardown may block waiting for `taskkill` to finish. */
 const TASKKILL_TIMEOUT_MS = 5_000;
 
-function taskkillHandledTree(pid: number, taskkillPath: string): boolean {
+function taskkillHandledTree(taskkillPath: string, killArgs: readonly string[]): boolean {
+	if (killArgs.length === 0) return true;
 	try {
-		const result = spawnSync(taskkillPath, ["/F", "/T", "/PID", String(pid)], {
+		const result = spawnSync(taskkillPath, [...killArgs], {
 			stdio: "ignore",
 			windowsHide: true,
 			timeout: TASKKILL_TIMEOUT_MS,
@@ -327,8 +329,11 @@ function taskkillHandledTree(pid: number, taskkillPath: string): boolean {
  * external tool, so this still beats leaving the whole tree running.
  */
 export function killWindowsProcessTree(pid: number, taskkillPaths = windowsTaskkillCandidates()): void {
+	// The tree is computed from one bounded process listing so a recycled parent pid cannot pull an
+	// unrelated process into it (senpi#2993); without a listing the kill falls back to `/T` on the root.
+	const killArgs = windowsTreeKillArgs(pid, listWindowsProcessRowsSync(TASKKILL_TIMEOUT_MS));
 	for (const taskkillPath of taskkillPaths) {
-		if (taskkillHandledTree(pid, taskkillPath)) return;
+		if (taskkillHandledTree(taskkillPath, killArgs)) return;
 	}
 	killProcessDirectly(pid);
 }

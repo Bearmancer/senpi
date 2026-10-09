@@ -1,5 +1,6 @@
 import { existsSync } from "node:fs";
 import { delimiter, join } from "node:path";
+import { listWindowsProcessRowsSync, windowsTreeKillArgs } from "@earendil-works/pi-agent-core/node";
 import { spawnSync } from "child_process";
 import { getBinDir } from "../config.ts";
 import { withBundledBunCommands } from "./bundled-bun.ts";
@@ -382,9 +383,10 @@ function killProcessDirectly(pid: number): void {
 /** Upper bound on how long a shutdown may block waiting for `taskkill` to finish. */
 const TASKKILL_TIMEOUT_MS = 5_000;
 
-function taskkillHandledTree(pid: number, taskkillPath: string): boolean {
+function taskkillHandledTree(taskkillPath: string, killArgs: readonly string[]): boolean {
+	if (killArgs.length === 0) return true;
 	try {
-		const result = spawnSync(taskkillPath, ["/F", "/T", "/PID", String(pid)], {
+		const result = spawnSync(taskkillPath, [...killArgs], {
 			stdio: "ignore",
 			windowsHide: true,
 			timeout: TASKKILL_TIMEOUT_MS,
@@ -414,8 +416,11 @@ function taskkillHandledTree(pid: number, taskkillPath: string): boolean {
  * still beats leaving the whole tree running.
  */
 export function killWindowsProcessTree(pid: number, taskkillPaths = windowsTaskkillCandidates()): void {
+	// One bounded process listing decides the tree, so a recycled parent pid cannot pull an unrelated
+	// process into it (senpi#2993); without a listing the kill falls back to `/T` on the root.
+	const killArgs = windowsTreeKillArgs(pid, listWindowsProcessRowsSync(TASKKILL_TIMEOUT_MS));
 	for (const taskkillPath of taskkillPaths) {
-		if (taskkillHandledTree(pid, taskkillPath)) return;
+		if (taskkillHandledTree(taskkillPath, killArgs)) return;
 	}
 	killProcessDirectly(pid);
 }

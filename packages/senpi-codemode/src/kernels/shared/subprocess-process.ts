@@ -1,5 +1,6 @@
 import { spawn as nodeSpawn } from "node:child_process";
 import { createInterface, type Interface as ReadlineInterface } from "node:readline";
+import { killWindowsTree } from "../js/windows-tree-kill.js";
 
 export interface SubprocessLike {
 	readonly pid?: number;
@@ -168,13 +169,9 @@ export class SubprocessProcess {
 	}
 }
 
-// Windows has no process-group signal: taskkill /T /F walks the tree rooted at the child.
+// Windows has no process-group signal: the checked tree rooted at the child is killed by pid.
 function killProcessTree(pid: number): void {
-	try {
-		nodeSpawn("taskkill", ["/PID", String(pid), "/T", "/F"], { stdio: "ignore" });
-	} catch (error) {
-		if (!(error instanceof Error)) throw error;
-	}
+	void killWindowsTree(pid);
 }
 
 export function spawnSubprocess(spawn: SubprocessSpawn | undefined, request: SubprocessSpawnRequest): SubprocessLike {
