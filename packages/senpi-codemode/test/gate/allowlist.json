@@ -1455,6 +1455,13 @@
 				"legacyContracts/test/windows-tree-kill.test.ts/codemode Windows tree kill, worker copy (senpi#2999) #given the root is no longer listed #when planned #then nothing is killed"
 			],
 			"reason": "senpi#2999: codemode's Windows tree kill computes the tree from creation-time-checked parentage instead of taskkill /T. The listed keys are the parameterized contracts that run on both the host copy (windows-tree-kill-host.ts) and the worker copy (windows-tree-kill.js), plus the import-graph additions those modules bring."
+		},
+		"senpi#3003": {
+			"additions": [
+				"legacyContracts/test/eval-virtual-environment-schemas.test.ts/tool_schema('eval:*') virtual entries document packages.install with its signature, managers, receipt and codes",
+				"legacyContracts/test/eval-virtual-environment-schemas.test.ts/tool_schema('eval:*') virtual entries document every error code the source raises"
+			],
+			"reason": "senpi#3003: tool_schema(\"eval:environments\") now documents packages.install(manager, requirements, {timeout?}) — its signature, the per-language managers (pip; bun/npm), the receipt fields, cancellation by stop and the environment_install_timeout code — and the virtual-schema contract test gains a two-way emitted-vs-documented code check plus the packages.install assertions. No prompt, description, snippet, guidelines or input-schema changes."
 		}
 	}
 }
