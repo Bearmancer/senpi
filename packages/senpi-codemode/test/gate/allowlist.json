@@ -1511,9 +1511,10 @@
 		},
 		"senpi#3016": {
 			"additions": [
+				"legacyContracts/test/subprocess-stdin-epipe.test.ts/subprocess kernel stdin write failures (senpi#3016) Given a Python interpreter that closed its stdin when the transport sends its init frame then start fails with the EPIPE and the host survives",
 				"legacyContracts/test/subprocess-stdin-epipe.test.ts/subprocess kernel stdin write failures (senpi#3016) Given a kernel child that closed its stdin when a frame is sent then the EPIPE is reported once through onError and the host survives"
 			],
-			"reason": "senpi#3016: a kernel child's stdin write failure (EPIPE) is reported once through onError, and a send after exit is refused, instead of an unhandled stream error ending the host."
+			"reason": "senpi#3016: a kernel child's stdin write failure (EPIPE) is reported once through onError, for the shared subprocess kernels and the Python transport, instead of an unhandled stream error ending the host. A send after exit is refused."
 		}
 	}
 }
