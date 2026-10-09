@@ -2,7 +2,7 @@
 
 ### What changed
 
-- `packages/coding-agent/src/main.ts`: in `createSessionManager`, a `--session <id>` match found in another project (the `global` branch) whose non-empty recorded cwd `resolveMovedPath` maps to the current cwd opens directly instead of offering or printing the cross-project rebind/fork choice. `--continue` without a session dir continues the newer, by file mtime, of the folder's newest own session and the newest session `listVanishedSessions` finds moved here, so the session used last wins as it already does with a shared session dir; with neither it falls back to the moved-repository rebind offer, passing it the same scan's moved list. `SessionManager.open` then maps the cwd; the file is not rewritten.
+- `packages/coding-agent/src/main.ts`: in `createSessionManager`, a `--session <id>` match found in another project (the `global` branch) whose non-empty recorded cwd `resolveMovedPath` maps to the current cwd opens directly instead of offering or printing the cross-project rebind/fork choice. `--continue` without a session dir first asks `movedHereSessionToContinue` (`core/moved-sessions.ts`) for a session the OmO desktop moved here that is newer, by file mtime, than the folder's own newest, so the session used last wins as it already does with a shared session dir. That lookup reads no git identity and lists only dirs whose recorded path moved here. The moved-repository rebind offer, which does both, still runs only when the folder has neither. `SessionManager.open` then maps the cwd; the file is not rewritten.
 
 ### Why
 
