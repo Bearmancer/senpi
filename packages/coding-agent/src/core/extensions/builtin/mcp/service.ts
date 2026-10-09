@@ -353,10 +353,11 @@ export class McpService {
 	 * After a release, bring the shared connections in line with the sessions still live (senpi#2597): the effective
 	 * config of the most recent live binding, with its options, so a server no live session declares is stopped
 	 * instead of outliving its session. It runs on the attach queue, never interleaved with an attach's own sync; the
-	 * release awaits it only when no attach is pending, because a hung attach must not hold a quit. It counts as a
-	 * pending sync like an attach, so a release that empties the service defers its dispose until the re-sync settles
-	 * instead of disposing under it. A credential change re-syncs the same way; with no live session (a connection an
-	 * unbound attach started), it re-syncs the current config with `fallbackOwner`, the owner that spawned it.
+	 * caller awaits it only when no sync of any kind is pending, because a hung attach must not hold a quit. It counts as
+	 * a pending sync like an attach, so a release that empties the service defers its dispose until the re-sync settles
+	 * instead of disposing under it. A credential change passes `fallbackOwner`, the owner of the sync that created the
+	 * connection, and re-syncs the current config instead, so it re-keys that connection and stops nothing; with no live
+	 * session (a connection an unbound attach started), it syncs with `fallbackOwner`'s options.
 	 */
 	async #resyncToLiveSessions(fallbackOwner?: McpConfigOwner): Promise<void> {
 		const awaited = this.#pendingSyncs === 0;
