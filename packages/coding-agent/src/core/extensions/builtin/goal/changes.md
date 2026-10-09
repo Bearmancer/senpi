@@ -1,5 +1,24 @@
 # goal Extension Changes
 
+## 2026-10-09 - Guard side effects precede additive stop publication (senpi#3007, senpi#3014)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/goal/lifecycle-helpers.ts`: after claiming and persisting a blocking denial, deliver the existing warning and `goal_continuation_guard_tripped` event before appending the additive stop entries.
+- The delayed-monitor cap regression now checks the blocked reason, guard payload and stopped-entry payload together, including a missing entry writer and a writer whose publication throws after append.
+
+### Why
+
+The new append ran before the existing guard side effects. A missing writer in the delayed-monitor fixture, or a failing entry publication in a real session, threw after the goal was blocked but prevented the guard notification and event.
+
+### Why an extension could not handle it
+
+The builtin's shared denial handler owns both the guard side effects and the additive stop entries.
+
+### Expected merge conflict zones
+
+`lifecycle-helpers.ts` denial handling. Preserve the locked claim and publish the existing guard side effects before the additive entry writes.
+
 ## 2026-10-09 - Durable continuation stop decisions and frozen stale accounting (senpi#3007)
 
 ### What changed

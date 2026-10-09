@@ -10,7 +10,7 @@
 
 ### Fixed
 
-- When a goal stops continuing because progress is stale, its elapsed timer now stops instead of running indefinitely. Goal guard denials and engine self-stops are persisted as `goal-continuation-stopped` and `engine-paused` entries and delivered to RPC clients; a user message or `/goal resume` resets the goal stop ([#3007](https://github.com/code-yeongyu/senpi/issues/3007)).
+- When a goal stops continuing because progress is stale, its elapsed timer now stops instead of running indefinitely. Goal guard denials and engine self-stops are persisted as `goal-continuation-stopped` and `engine-paused` entries and delivered to RPC clients; a user message or `/goal resume` resets the goal stop. Continuation-cap warnings and guard events are preserved if publishing a stop entry fails ([#3007](https://github.com/code-yeongyu/senpi/issues/3007)).
 
 - A multi-session RPC host refuses open/attach and every new session-writing RPC when another live process outside its daemon family holds the file, with typed `session_held` and pid/cwd data. Both guarded host runtimes advertise the exact `session_held` protocol capability; classic bindings do not. Open rechecks after holder publication and rolls back raced admission; stale holders clear automatically. Own workers and predecessor generations preserve existing reservation retry/reclaim semantics. Already-admitted turns finish if a holder arrives mid-turn. Interactive startup and `/resume` warn, including advisory lookup failures, without aborting ([#2951](https://github.com/code-yeongyu/senpi/issues/2951)).
 

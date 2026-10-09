@@ -192,6 +192,16 @@ async function handleDeniedContinuation(
 		blockedReason,
 	);
 	if (!stopped.recorded) return stopped.goal;
+	// Preserve the guard's existing side effects even if publishing the additive entries fails.
+	if (blockedReason !== undefined) {
+		if (ctx.hasUI) ctx.ui.notify(continuationCapRecoveryHint(blockedReason), "warning");
+		pi.events?.emit("goal_continuation_guard_tripped", {
+			goalId: goal.id,
+			reason,
+			count: input.consecutiveContinuations,
+			unattendedContinuations: goal.unattendedContinuations ?? 0,
+		});
+	}
 	pi.appendEntry("goal-continuation-stopped", {
 		goalId: goal.id,
 		reason,
@@ -207,14 +217,6 @@ async function handleDeniedContinuation(
 			at,
 		});
 	}
-	if (blockedReason === undefined) return stopped.goal;
-	if (ctx.hasUI) ctx.ui.notify(continuationCapRecoveryHint(blockedReason), "warning");
-	pi.events?.emit("goal_continuation_guard_tripped", {
-		goalId: goal.id,
-		reason,
-		count: input.consecutiveContinuations,
-		unattendedContinuations: goal.unattendedContinuations ?? 0,
-	});
 	return stopped.goal;
 }
 
