@@ -987,6 +987,51 @@ describe("senpi#2597: a session's MCP status and the service's teardown follow t
 		await assertAlive(extraPid);
 	});
 
+	it("keeps a reloading session's own servers running when a peer's credentials change before it attaches again", async () => {
+		// Given: the first session's project alone declares `extra`; a peer in its own agent dir alone declares an http
+		// `fx` whose bearer token comes from its env.
+		const fixture = await sharingHttpFixture();
+		cleanupTasks.push(() => fixture.close());
+		setConfig(root, {});
+		writeProjectConfig(root.cwd, {
+			extra: { ...stdioServer(["--tools", "1"]), exposure: "search", lifecycle: "eager" },
+		});
+		const peer = makeRoot("2597-credential-peer", cleanupTasks);
+		setConfig(peer, {
+			fx: { type: "http", url: fixture.url, auth: "bearer", bearerTokenEnv: "SENPI_2597_TOKEN", lifecycle: "eager" },
+		});
+		const service = getMcpService();
+		const alphaPi = capturingPi();
+		const bravoPi = capturingPi();
+		const bravoEnv: Record<string, string> = { SENPI_2597_TOKEN: "one" };
+		await attachInProject(alphaPi, root, "alpha");
+		await untilFakeRegistered(alphaPi, EXTRA_TOOL);
+		await service.attachSession(
+			{ type: "session_start", reason: "startup" },
+			{ cwd: peer.cwd, isProjectTrusted: () => true },
+			bravoPi,
+			{ agentDir: peer.agentDir, env: bravoEnv },
+		);
+		await untilFakeRegistered(bravoPi, "mcp_fx_echo");
+		const extraPid = requiredPid(service, "extra");
+
+		// When: the first session reloads: its old instance is released with no dispose reason, and before the reloaded
+		// one attaches, the peer's token changes and its connection reconnects and re-keys.
+		await service.releaseSession(alphaPi);
+		bravoEnv.SENPI_2597_TOKEN = "two";
+		await service.reconnectServer("fx");
+		await service.whenAttachSettled(REGISTRATION_TIMEOUT_MS);
+		expect(service.getConnection("fx")).toBeDefined();
+		const extraAfterCredentials = requiredPid(service, "extra");
+		await attachInProject(capturingPi(), root, "alpha", "reload");
+		await service.whenAttachSettled(REGISTRATION_TIMEOUT_MS);
+
+		// Then: `extra` kept the same process through the credential re-sync and the reloaded attach.
+		expect(extraAfterCredentials).toBe(extraPid);
+		expect(requiredPid(service, "extra")).toBe(extraPid);
+		await assertAlive(extraPid);
+	});
+
 	it("stops a session's own servers when a reload removes the MCP builtin while a peer is live", async () => {
 		// Given: the first session alone declares `extra`, both declare `fx`, and both servers are connected.
 		const peer = configureExtraForRootProject();

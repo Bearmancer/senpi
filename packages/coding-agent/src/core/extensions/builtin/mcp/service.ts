@@ -360,7 +360,10 @@ export class McpService {
 		const settled = this.#queueSync(async () => {
 			if (this.#disposed) return;
 			const latest = this.#liveBindings().at(-1);
-			const config = latest === undefined ? this.#config : this.#effectiveConfig(latest.config);
+			// A credential re-sync (with `fallbackOwner`) re-keys the current config and stops nothing: a session released
+			// for a reload still declares its servers in it until its next attach, which keeps them running.
+			const config =
+				fallbackOwner === undefined && latest !== undefined ? this.#effectiveConfig(latest.config) : this.#config;
 			const owner = latest ?? fallbackOwner;
 			if (config === null || owner === undefined) return;
 			// Compared by entry, not key: a connection re-created under its old key retires the offers made against it too.
