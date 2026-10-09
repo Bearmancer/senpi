@@ -364,6 +364,8 @@ export default function goalExtension(pi: ExtensionAPI): void {
 	}
 
 	function beginAgentGoalAccounting(goal: Goal): void {
+		// Goal usage accrues only while its accounting window is open. A stale stop
+		// excludes extension-driven turns, like other inactive goals, until input or resume.
 		if (goal.status !== "active" || goal.continuationStoppedAt !== undefined) return;
 		if (agentGoalAccounting?.goalId === goal.id) return;
 		turnUsage.discardPending();

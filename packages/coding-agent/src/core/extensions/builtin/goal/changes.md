@@ -1,5 +1,29 @@
 # goal Extension Changes
 
+## 2026-10-09 - Pin stopped accounting and show paused-style stale status (senpi#3026)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/goal/index.ts`: documents the lead's don't-count rule at accounting admission. Stale-stopped non-user-input turns remain excluded; active turns still accrue their assistant tokens and time. The existing one-shot stale-stop/reopen notice and no-auto-restart behavior remain intact.
+- `packages/coding-agent/src/core/extensions/builtin/goal/types.ts`: adds a shared display-status projection and the optional stop checkpoint to tool snapshots; the stored status and accounting fields do not change.
+- `packages/coding-agent/src/core/extensions/builtin/goal/ui.ts`: stale-stopped goals use the paused rendering branch and read `Goal stopped: no progress (send a message or /goal resume)` without a pursuit timer.
+- `packages/coding-agent/src/core/extensions/builtin/goal/format.ts`: `/goal` labels the stop; tool snapshots project paused status and preserve the checkpoint for client/rendering consumers.
+- `packages/coding-agent/src/core/extensions/builtin/goal/renderers.ts`: stopped cards use the paused glyph/color and recovery label through details and JSON fallback. Normal goal cards and committed usage totals remain unchanged.
+- `packages/coding-agent/test/suite/regressions/3026-stale-goal-accounting.test.ts`: real extension `sendUserMessage` and trigger-turn delivery tests pin current behavior in both directions; opening a stale window in a mutant fails both stopped cases.
+- `packages/coding-agent/test/suite/regressions/3026-stale-goal-status.test.ts`: failing-first coverage for the footer, `/goal`, light/dark cards, JSON snapshots, and app-server projection.
+
+### Why
+
+The lead decided that a stopped goal does not accrue background-turn usage and must look stopped, not actively pursued. A stale-stop marker previously froze usage while every display still said active or pursuing.
+
+### Why an extension could not handle it
+
+The builtin owns accounting admission, goal-tool snapshots, and the footer/card rendering paths.
+
+### Expected merge conflict zones
+
+`index.ts` accounting admission; `types.ts` tool snapshot shape; `format.ts`, `ui.ts`, and `renderers.ts` status formatting. Preserve internal active-plus-marker state and accepted-input/resume recovery. The historical notice entry below predates the lead's accounting decision.
+
 ## 2026-10-09 - Explain stale goal recovery at stop and reopen (senpi#3026)
 
 ### What changed
