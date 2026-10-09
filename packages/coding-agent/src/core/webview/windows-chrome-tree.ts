@@ -47,6 +47,10 @@ export function parseWindowsProcessRows(stdout: string): WindowsProcessRow[] {
  * Bun's Chrome browsers (direct children of `ownerPid` carrying the flag, started after it) and every
  * process that genuinely descends from them. The walk only ever goes down from those roots.
  */
+// A concurrent retirement's own CIM listing is also Bun's child and its command line names the flag; only a
+// browser image is a root (measured: a PowerShell and its console host adopted on 26 of 30 runner retirements).
+const BROWSER_IMAGE = /chrom|msedge|brave/iu;
+
 export function bunChromeTree(rows: readonly WindowsProcessRow[], ownerPid: number): number[] {
 	const byPid = new Map(rows.map((row) => [row.pid, row]));
 	const startedAfter = (child: WindowsProcessRow, parentPid: number): boolean => {
@@ -55,7 +59,13 @@ export function bunChromeTree(rows: readonly WindowsProcessRow[], ownerPid: numb
 	};
 	const tree = new Set<number>();
 	for (const row of rows) {
-		if (row.parentPid === ownerPid && row.bunChromeFlag && startedAfter(row, ownerPid)) tree.add(row.pid);
+		if (
+			row.parentPid === ownerPid &&
+			row.bunChromeFlag &&
+			BROWSER_IMAGE.test(row.name) &&
+			startedAfter(row, ownerPid)
+		)
+			tree.add(row.pid);
 	}
 	let grew = true;
 	while (grew) {
@@ -114,5 +124,6 @@ export function bunChromeKillPlan(rows: readonly WindowsProcessRow[], ownerPid: 
 		else if (ancestors.has(pid) || pid === ownerPid) skipped.push({ pid, name, reason: "ancestor_of_this_process" });
 		else kill.push(pid);
 	}
-	return { kill, skipped };
+	// Adopting a process that must never die means the walk itself went wrong, so nothing it found is trusted.
+	return skipped.length > 0 ? { kill: [], skipped } : { kill, skipped };
 }

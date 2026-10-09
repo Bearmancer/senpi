@@ -94,7 +94,7 @@ describe("Bun's Chrome tree on Windows (senpi#2353)", () => {
 		]);
 	});
 
-	it("#given a protected OS image that genuinely descends from Bun's Chrome #when the kill plan is made #then it is skipped and reported, and the browser is still ended", () => {
+	it("#given a protected OS image under Bun's Chrome tree #when the kill plan is made #then it is reported and nothing in that listing is killed", () => {
 		// given
 		const rows = [...runner, row(7000, BUN, 600, true), row(7400, 7000, 610, false, "svchost.exe")];
 
@@ -102,7 +102,7 @@ describe("Bun's Chrome tree on Windows (senpi#2353)", () => {
 		const plan = bunChromeKillPlan(rows, BUN);
 
 		// then
-		expect(plan.kill).toEqual([7000]);
+		expect(plan.kill).toEqual([]);
 		expect(plan.skipped).toEqual([{ pid: 7400, name: "svchost.exe", reason: "protected_image" }]);
 	});
 
@@ -119,7 +119,7 @@ describe("Bun's Chrome tree on Windows (senpi#2353)", () => {
 
 		// then
 		expect(bunChromeTree(rows, BUN)).toContain(RUNNER_WORKER);
-		expect(plan.kill).not.toContain(RUNNER_WORKER);
+		expect(plan.kill).toEqual([]);
 		expect(plan.skipped).toContainEqual({
 			pid: RUNNER_WORKER,
 			name: "Runner.Worker.exe",
@@ -137,5 +137,20 @@ describe("Bun's Chrome tree on Windows (senpi#2353)", () => {
 		// then
 		expect([...plan.kill].sort((a, b) => a - b)).toEqual([DEAD_BOOT_PARENT, 7000, 7100]);
 		expect(plan.skipped).toEqual([]);
+	});
+	it("#given a concurrent retirement's listing PowerShell under Bun whose command line names the flag #when the tree is listed #then it is not a Chrome root", () => {
+		// given
+		const rows = [
+			...runner,
+			row(7000, BUN, 600, true),
+			row(7600, BUN, 650, true, "powershell.exe"),
+			row(7610, 7600, 651, false, "conhost.exe"),
+		];
+
+		// when
+		const tree = bunChromeTree(rows, BUN);
+
+		// then
+		expect(tree).toEqual([7000]);
 	});
 });
