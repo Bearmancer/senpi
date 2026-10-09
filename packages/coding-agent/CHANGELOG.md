@@ -20,6 +20,12 @@
 
 - When the session shuts down while a response is still streaming (for example on SIGTERM), the turn_end boundary now says the session shut down during the turn instead of reporting that it could not resolve the persisted assistant entry ID ([#2995](https://github.com/code-yeongyu/senpi/issues/2995)).
 
+- When sessions that share one MCP service resolve different MCP configs (for example a main session and in-process sidecar sessions that load without extensions), one session's attach no longer makes every other session's MCP tools fail with "MCP session or server configuration was replaced.", no longer shuts down MCP servers another live session still declares, and no longer keeps running an MCP server that only a closed session declared ([#2597](https://github.com/code-yeongyu/senpi/issues/2597) by [@ferose](https://github.com/ferose)).
+
+- When sessions that share one MCP service differ in project trust, environment or agent directory, a session's skill-declared MCP servers now expand `${VAR}` values under its own trust and environment, and every MCP server spawns, re-authenticates and reports auth status with the credentials of a session that declares it, instead of those of whichever session attached last ([#2986](https://github.com/code-yeongyu/senpi/issues/2986) by [@ferose](https://github.com/ferose)).
+
+- A failed retirement of the Chrome a WebView used (for example when `taskkill` cannot run, or the CI readiness log cannot be written) no longer makes every later WebView launch and retirement in that process fail: the release that triggered it still fails with the error, CI's readiness log records it when it can be written, and the next launch and retirement run normally ([#2993](https://github.com/code-yeongyu/senpi/issues/2993)).
+
 ### Removed
 
 ## [2026.10.10-10] - 2026-10-09
