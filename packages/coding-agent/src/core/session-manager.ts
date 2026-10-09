@@ -30,6 +30,7 @@ import { join, resolve } from "path";
 import { StringDecoder } from "string_decoder";
 import { APP_NAME, getAgentDir as getDefaultAgentDir, getSessionsDir } from "../config.ts";
 import { normalizePath, resolvePath } from "../utils/paths.ts";
+import { resolveMovedPath } from "./extensions/builtin/moved-path-guard/resolve.ts";
 import type { ModelChangeOrigin, ModelChangeSource } from "./model-change-origin.ts";
 import type { RepositoryIdentity } from "./repository-identity.ts";
 import {
@@ -1026,8 +1027,10 @@ function getSessionHeaderCwd(header: SessionHeader): string | undefined {
 	return typeof cwd === "string" ? cwd : undefined;
 }
 
+// A session the OmO desktop moved still names its old cwd; it belongs to the folder that cwd moved to (senpi#2990).
 function sessionCwdMatches(cwd: string | undefined, resolvedCwd: string): boolean {
-	return cwd !== undefined && cwd !== "" && resolvePath(cwd) === resolvedCwd;
+	if (cwd === undefined || cwd === "") return false;
+	return resolvePath(cwd) === resolvedCwd || resolvePath(resolveMovedPath(cwd)) === resolvedCwd;
 }
 
 /** Exported for testing */
@@ -2724,7 +2727,10 @@ export class SessionManager {
 			const content = readFileSync(resolvedPath);
 			if (content.length > 0 && content[content.length - 1] !== 10) appendFileSync(resolvedPath, "\n");
 		}
-		const cwd = cwdOverride ?? (header ? getSessionHeaderCwd(header) : undefined) ?? process.cwd();
+		// The header keeps the cwd it was recorded with; a folder the OmO desktop moved opens where it lives now,
+		// and the file is never rewritten (senpi#2990).
+		const headerCwd = header ? getSessionHeaderCwd(header) : undefined;
+		const cwd = cwdOverride ?? (headerCwd ? resolveMovedPath(headerCwd) : headerCwd) ?? process.cwd();
 		// If no sessionDir provided, derive from file's parent directory
 		const dir = sessionDir ? normalizePath(sessionDir) : resolve(resolvedPath, "..");
 		return new SessionManager(cwd, dir, resolvedPath, true, options, preloadedFileEntries);
