@@ -2,6 +2,7 @@ import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { afterEach, describe, expect, it } from "vitest";
+import { TURN_END_SKIPPED_AFTER_SHUTDOWN } from "../../../src/core/agent-session.ts";
 import { emitSessionShutdownEvent } from "../../../src/core/extensions/runner.ts";
 import type { ExtensionError } from "../../../src/core/extensions/types.ts";
 import { createHarness, type Harness } from "../harness.ts";
@@ -67,6 +68,6 @@ describe("turn_end boundary when the session shuts down mid-turn (senpi#2995)", 
 		// then
 		const boundary = errors.filter((error) => error.extensionPath === "<boundary>").map((error) => error.error);
 		expect(boundary).not.toContain(MISLEADING);
-		expect(boundary).toEqual([expect.stringContaining("the session shut down during this turn")]);
+		expect(boundary).toEqual([TURN_END_SKIPPED_AFTER_SHUTDOWN]);
 	});
 });

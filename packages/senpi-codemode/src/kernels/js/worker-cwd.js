@@ -51,6 +51,7 @@ const FS_PATH_ARGS = {
 
 const CHILD_PROCESS_FILE_ARGS = ["spawn", "spawnSync", "execFile", "execFileSync", "fork"];
 const CHILD_PROCESS_COMMAND_ARGS = ["exec", "execSync"];
+const ASYNC_GROUP_SPAWNERS = new Set(["spawn", "fork"]);
 
 export function installSessionCwd(cwd, options) {
 	// A process-mode kernel child IS the main thread; the worker guard relaxes only for that entry.
@@ -95,11 +96,13 @@ function patchFs(fs, promises, at, root) {
 function patchChildProcess(childProcess, at, root) {
 	for (const name of CHILD_PROCESS_FILE_ARGS) {
 		replace(childProcess, name, (fn) => {
-			const withCwd = withOptionsCwd(fn, fileOptionsIndex, root, true);
+			// Only asynchronous spawners start a new group: a synchronous call keeps the terminal (ssh/sudo/git prompts),
+			// and Bun ignores `detached` for execFile. Those calls get a notice instead (group-signal-notice.js).
+			const withCwd = withOptionsCwd(fn, fileOptionsIndex, root, ASYNC_GROUP_SPAWNERS.has(name));
 			return name === "fork" ? resolvingArgs(withCwd, [0], at) : withCwd;
 		});
 	}
-	for (const name of CHILD_PROCESS_COMMAND_ARGS) replace(childProcess, name, (fn) => withOptionsCwd(fn, () => 1, root, true));
+	for (const name of CHILD_PROCESS_COMMAND_ARGS) replace(childProcess, name, (fn) => withOptionsCwd(fn, () => 1, root));
 }
 
 function patchBun(bun, at, root) {
@@ -107,7 +110,7 @@ function patchBun(bun, at, root) {
 	replace(bun, "file", (fn) => resolvingArgs(fn, [0], at));
 	replace(bun, "write", (fn) => resolvingArgs(fn, [0], at));
 	replace(bun, "spawn", (fn) => withBunSpawnCwd(fn, root));
-	replace(bun, "spawnSync", (fn) => withBunSpawnCwd(fn, root));
+	replace(bun, "spawnSync", (fn) => withBunSpawnCwd(fn, root, false));
 	if (typeof bun.$?.cwd === "function") bun.$.cwd(root);
 	const glob = bun.Glob?.prototype;
 	if (glob) {
@@ -172,16 +175,17 @@ function withOptionsCwd(fn, optionsIndex, root, inOwnGroup = false) {
 	};
 }
 
-function withBunSpawnCwd(fn, root) {
+function withBunSpawnCwd(fn, root, inOwnGroup = true) {
+	const group = inOwnGroup ? ownGroup : (options) => options;
 	return function spawnInSessionCwd(...args) {
 		const [first, second] = args;
 		if (Array.isArray(first)) {
 			const options = second === undefined || second === null ? {} : second;
 			if (typeof options !== "object") return fn.apply(this, args);
-			return fn.call(this, first, ownGroup({ ...options, cwd: cwdFrom(options.cwd, root) }), ...args.slice(2));
+			return fn.call(this, first, group({ ...options, cwd: cwdFrom(options.cwd, root) }), ...args.slice(2));
 		}
 		if (first !== null && typeof first === "object") {
-			return fn.call(this, ownGroup({ ...first, cwd: cwdFrom(first.cwd, root) }), ...args.slice(1));
+			return fn.call(this, group({ ...first, cwd: cwdFrom(first.cwd, root) }), ...args.slice(1));
 		}
 		return fn.apply(this, args);
 	};

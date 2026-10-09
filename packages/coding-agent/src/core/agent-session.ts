@@ -391,6 +391,10 @@ const DEFERRED_RETRY_QUEUE_OWNERS = new WeakSet<object>();
 // Skill Invocation Formatting and Parsing (see ./skill-invocation.ts)
 // ============================================================================
 
+/** The turn_end boundary report for a turn still unwinding after dispose() (senpi#2995). */
+export const TURN_END_SKIPPED_AFTER_SHUTDOWN =
+	"turn_end skipped: the session shut down during this turn, so its last response was not saved";
+
 export {
 	formatSkillInvocationPrompt,
 	MAX_SKILL_EXPANSIONS_PER_PROMPT,
@@ -1924,7 +1928,7 @@ export class AgentSession {
 				event: "turn_end",
 				// After dispose() the aborted response is never persisted, so a missing entry there is the shutdown.
 				error: this._disposed
-					? "turn_end skipped: the session shut down during this turn, so its last response was not saved"
+					? TURN_END_SKIPPED_AFTER_SHUTDOWN
 					: "turn_end could not resolve the persisted assistant entry ID",
 			});
 			return false;

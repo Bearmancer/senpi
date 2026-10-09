@@ -16,6 +16,7 @@ type GroupReport = {
 	readonly jobPgid: number;
 	readonly jobAliveAfterGroupKill: boolean;
 	readonly stderr: string;
+	readonly promisified?: boolean;
 };
 
 // The cell starts a background job through a shell (the `nohup ... &` shape from senpi#2995), reads the process
@@ -51,6 +52,14 @@ const NODE_SPAWN_CELL = groupCell(
 // The command only echoes the kill, so nothing is signalled; the notice is what the cell must see.
 const SHELL_GROUP_KILL_TEXT_CELL =
 	'await Bun.$`echo "kill -TERM -- -$PG"`.quiet(); print("REPORT=" + JSON.stringify({ agentPgid: 0, childPgid: 0, jobPgid: 0, jobAliveAfterGroupKill: false })); return "done"';
+
+// promisify(exec) must still resolve to { stdout, stderr } through the worker's wrapped child_process.
+const PROMISIFIED_EXEC_CELL = [
+	'import { exec } from "node:child_process"; import { promisify } from "node:util";',
+	'const result = await promisify(exec)("echo hi");',
+	'print("REPORT=" + JSON.stringify({ agentPgid: 0, childPgid: 0, jobPgid: 0, jobAliveAfterGroupKill: false, promisified: typeof result === "object" && result !== null && String(result.stdout).trim() === "hi" }));',
+	'return "done"',
+].join(" ");
 
 function driverSource(cell: string): string {
 	return [
@@ -122,7 +131,16 @@ describe.skipIf(!bunAvailable || !posix)(
 
 			// then
 			expect(report.ok).toBe(true);
-			expect(report.stderr).toContain("This command signals a process group");
+			expect(report.stderr).toContain("[senpi:group-signal]");
+		});
+
+		it("Given a cell that promisifies child_process.exec when it runs then the result keeps stdout and stderr", async () => {
+			// when
+			const report = await runGroupDriver(PROMISIFIED_EXEC_CELL);
+
+			// then
+			expect(report.ok).toBe(true);
+			expect(report.promisified).toBe(true);
 		});
 	},
 );
