@@ -16,6 +16,8 @@
 
 - On Windows, stopping a command's process tree (a timed-out or cancelled bash command, hooks, shutdown) no longer uses `taskkill /T`, which could also kill an unrelated older process whose dead parent's pid the command now holds; the tree is computed from creation times and each process is ended by pid ([#2999](https://github.com/code-yeongyu/senpi/issues/2999)).
 
+- When the session shuts down while a response is still streaming (for example on SIGTERM), the turn_end boundary now says the session shut down during the turn instead of reporting that it could not resolve the persisted assistant entry ID ([#2995](https://github.com/code-yeongyu/senpi/issues/2995)).
+
 ### Removed
 
 ## [2026.10.10-10] - 2026-10-09

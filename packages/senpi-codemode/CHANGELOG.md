@@ -16,6 +16,8 @@
 
 - `tool_schema("eval:environments")` now documents the `packages.install(manager, requirements, {timeout?})` cell helper that shipped in #2877: the signature (Python spells the option `timeout=`, default 600 s), the managers per language (`pip` for Python; `bun`/`npm` for JavaScript), the receipt fields, cancellation by `stop`, and the `environment_install_timeout` error code it raises. A two-way contract test now keeps every `environment_*`/`eval_isolate_*` code the source raises documented in its owning entry. ([#3003](https://github.com/code-yeongyu/senpi/issues/3003))
 
+- On macOS and Linux, a process started from a JavaScript eval cell with `node:child_process` or `Bun.spawn` now gets its own process group. A cell that later stops that job by its group (`kill -TERM -- -$PGID`) therefore no longer stops the agent itself. Named imports of `node:child_process`, `node:fs` and `node:path` in a cell now get the session cwd handling too. `Bun.$`, `exec`/`execFile` and the synchronous spawners (`spawnSync`, `execSync`, `execFileSync`, `Bun.spawnSync`, which keep the terminal) still share the agent's group, so a command there that signals a process group (including `pkill -g` and `killall`) prints a notice naming the agent's group. The notice is a warning only and never blocks the cell ([#2995](https://github.com/code-yeongyu/senpi/issues/2995)).
+
 ### Removed
 
 ## [2026.10.10-10] - 2026-10-09
