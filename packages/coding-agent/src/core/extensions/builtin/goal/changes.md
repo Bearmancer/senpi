@@ -1,5 +1,26 @@
 # goal Extension Changes
 
+## 2026-10-09 - Explain stale goal recovery at stop and reopen (senpi#3026)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/goal/lifecycle-helpers.ts`: a claimed stale denial emits one informational recovery notice before best-effort stop publication; repeated denial probes do not repeat it.
+- `packages/coding-agent/src/core/extensions/builtin/goal/index.ts`: startup and resume show the same notice for a stale-stopped active goal. Extension reload and rendering do not show it, and reopening never restarts the goal.
+- `packages/coding-agent/test/suite/regressions/3026-stale-goal-notice.test.ts`: covers stop deduplication, startup/resume, reload and state controls, and two separate reopens.
+- `packages/coding-agent/docs/session-format.md`: documents the recovery notice and client elapsed-time calculation from committed time plus the last usage checkpoint.
+
+### Why
+
+Stale stops persisted without telling the user how to continue. Usage-accounting policy remains unchanged pending the lead's product decision.
+
+### Why an extension could not handle it
+
+The builtin owns the locked stale-stop claim and session-open admission.
+
+### Expected merge conflict zones
+
+`lifecycle-helpers.ts` denial side effects and `index.ts` session-start handler. Keep notice emission outside rendering and reload paths, retain locked-claim deduplication, and preserve no-auto-restart admission.
+
 ## 2026-10-09 - Failed stop publication cannot skip lifecycle cleanup (senpi#3014)
 
 ### What changed

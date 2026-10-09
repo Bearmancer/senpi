@@ -12,6 +12,8 @@
 
 ### Fixed
 
+- A goal that stops auto-continuing because progress is stale now shows how to continue: send a message or run `/goal resume`. The notice appears once at the stop and once on each session reopen, without restarting the goal or repeating on extension reload ([#3026](https://github.com/code-yeongyu/senpi/issues/3026)).
+
 - Polling `senpi host status` no longer restarts a dead owner's two-second host-exit grace. Observe-only reads follow the normal idle policy, while a dropped unclassified peer and activity on an existing connection still reset continuous quiescence ([#3044](https://github.com/code-yeongyu/senpi/issues/3044)).
 
 ### Removed

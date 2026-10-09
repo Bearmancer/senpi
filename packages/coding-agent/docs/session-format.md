@@ -310,6 +310,10 @@ These custom entries are persisted in the session and delivered to RPC clients a
 
 `at` is Unix epoch milliseconds. Consumers can use these entries instead of parsing notice wording, and replay them from session history after reopen.
 
+Stale-stopped goals stay stopped when reopened. A notice at the stale stop and on each session open tells the user to send a message or run `/goal resume` to continue; rendering and extension reloads do not repeat the notice.
+
+In the persisted goal state, `lastStartedAt` is the last usage checkpoint, in Unix epoch seconds, not the start of the entire run. Clients displaying live elapsed time use committed `timeUsedSeconds` plus the nonnegative time since `lastStartedAt`. When `lastStartedAt` is absent, including after a stale stop, display only committed `timeUsedSeconds`.
+
 ### CustomMessageEntry
 
 Extension-injected messages that DO participate in LLM context.
