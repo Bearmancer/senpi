@@ -169,7 +169,7 @@ export class McpService {
 			mergeExtensionMcpServers(config, ctx.getRegisteredMcpServers?.() ?? []);
 			const owner: McpConfigOwner = { config, options: sessionOptions, context: ctx };
 			const binding = _pi === undefined ? undefined : this.#bind(_pi, owner);
-			const current = this.#adoptEffectiveConfig(config);
+			const current = this.#effectiveConfig(config);
 			this.#config = current;
 			await this.#syncFromConfig(current, binding ?? owner, event.reason !== "reload", binding);
 			if (binding !== undefined) await this.#registerDirectTools(binding);
@@ -217,14 +217,6 @@ export class McpService {
 			for (const [name, server] of Object.entries(binding.config.servers)) servers[name] ??= server;
 		}
 		return { ...preferred, servers };
-	}
-
-	/** `#effectiveConfig(preferred)`, keeping the current object when equivalent so credential refreshes it scheduled stay current. */
-	#adoptEffectiveConfig(preferred: ResolvedMcpConfig): ResolvedMcpConfig {
-		const effective = this.#effectiveConfig(preferred);
-		return this.#config !== null && JSON.stringify(this.#config) === JSON.stringify(effective)
-			? this.#config
-			: effective;
 	}
 
 	#bind(pi: McpToolRegistrar, owner: McpConfigOwner): McpSessionBinding {
@@ -340,18 +332,22 @@ export class McpService {
 	 * instead of outliving its session. It runs on the attach queue, never interleaved with an attach's own sync; the
 	 * release awaits it only when no attach is pending, because a hung attach must not hold a quit. It counts as a
 	 * pending sync like an attach, so a release that empties the service defers its dispose until the re-sync settles
-	 * instead of disposing under it.
+	 * instead of disposing under it. A credential change re-syncs the same way; with no live session (a connection an
+	 * unbound attach started), it re-syncs the current config with `fallbackOwner`, the owner that spawned it.
 	 */
-	async #resyncToLiveSessions(): Promise<void> {
+	async #resyncToLiveSessions(fallbackOwner?: McpConfigOwner): Promise<void> {
 		const awaited = this.#pendingSyncs === 0;
 		this.#pendingSyncs += 1;
 		const resync = this.#attachQueue.then(async () => {
+			if (this.#disposed) return;
 			const latest = this.#liveBindings().at(-1);
-			if (this.#disposed || latest === undefined) return;
+			const config = latest === undefined ? this.#config : this.#effectiveConfig(latest.config);
+			const owner = latest ?? fallbackOwner;
+			if (config === null || owner === undefined) return;
 			const before = [...this.#connections.keys()].join("\n");
-			this.#config = this.#adoptEffectiveConfig(latest.config);
-			await this.#syncFromConfig(this.#config, latest, true, latest);
-			if (this.#disposed || [...this.#connections.keys()].join("\n") === before) return;
+			this.#config = config;
+			await this.#syncFromConfig(config, owner, true, latest);
+			if (this.#disposed || latest === undefined || [...this.#connections.keys()].join("\n") === before) return;
 			// A replaced connection retires the offers made against it; republish them in every live session.
 			for (const live of this.#liveBindings()) {
 				await this.#registerDirectTools(live);
@@ -378,7 +374,7 @@ export class McpService {
 			return;
 		}
 		settled.catch((error: unknown) => {
-			createMcpLogger("service").error("Failed to re-sync MCP servers after a session release", error);
+			createMcpLogger("service").error("Failed to re-sync MCP servers", error);
 		});
 	}
 
@@ -671,10 +667,11 @@ export class McpService {
 				credentialIdentity,
 				credentialsCurrent: () =>
 					mcpCredentialIdentity(serverConfig, name, options.agentDir, options.env) === credentialIdentity,
+				// Re-key from the current live state, never the config this sync saw: any attach, release or skill attach
+				// may have replaced `#config` since, and an OAuth token refresh still has to reach this connection.
 				onCredentialsChanged: async () => {
-					if (this.#disposed || this.#config !== config || this.#entryForName(name) !== entry) return;
-					await this.#syncFromConfig(config, owner, true, binding);
-					for (const live of this.#liveBindings()) await this.#registerDirectTools(live);
+					if (this.#disposed || this.#entryForName(name) !== entry) return;
+					await this.#resyncToLiveSessions(owner);
 				},
 				session: options,
 				cwd: declarer.context.cwd,

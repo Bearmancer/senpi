@@ -703,6 +703,39 @@ describe("senpi#2597: a session's MCP status and the service's teardown follow t
 		expect(service.getSnapshot()).toMatchObject({ disposed: false, connectionCount: 1 });
 	});
 
+	it("re-keys a session's connection when its credentials change after a skill attach replaced the merged config", async () => {
+		// Given: a session whose http `fx` sends a bearer token from its own env, then loads a skill declaring a server.
+		const fixture = await sharingHttpFixture();
+		cleanupTasks.push(() => fixture.close());
+		setConfig(root, {
+			fx: { type: "http", url: fixture.url, auth: "bearer", bearerTokenEnv: "SENPI_2597_TOKEN", lifecycle: "eager" },
+		});
+		const env: Record<string, string> = { SENPI_2597_TOKEN: "one" };
+		const service = getMcpService();
+		const alphaPi = capturingPi();
+		await service.attachSession(
+			{ type: "session_start", reason: "startup" },
+			{ cwd: root.cwd, isProjectTrusted: () => true },
+			alphaPi,
+			{ agentDir: root.agentDir, env },
+		);
+		await untilFakeRegistered(alphaPi, "mcp_fx_echo");
+		const skills = [skillDeclaring("own", "user", "fxs")];
+		await service.attachSkillMcpServers(parseSkillMcpDeclarations(skills).servers, alphaPi);
+
+		// When: its token changes, and the connection reconnects and notices.
+		env.SENPI_2597_TOKEN = "two";
+		await service.reconnectServer("fx");
+		await service.whenAttachSettled(REGISTRATION_TIMEOUT_MS);
+
+		// Then: the connection is re-keyed to the new token, and the session's call goes through with it.
+		expect(service.getConnection("fx")).toBeDefined();
+		const tool = registeredTool(alphaPi, "mcp_fx_echo");
+		const result = await Reflect.apply(tool.execute, tool, ["c", { value: "c" }, undefined, undefined]);
+		expect(result).toMatchObject({ content: [{ type: "text", text: JSON.stringify({ value: "c" }) }] });
+		expect(fixture.callAuthorizations).toEqual(["Bearer two"]);
+	});
+
 	it("lists only a session's own servers in its MCP status, never a peer's", async () => {
 		// Given: the first session's project declares `extra` beside the shared `fx`; a peer elsewhere declares only `fx`.
 		const peer = configureExtraForRootProject();
