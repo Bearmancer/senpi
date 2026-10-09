@@ -8,6 +8,7 @@
 
 ### Changed
 
+- Replaced the plan-authored type assertions the F2 audit listed, in this package's production code and tests, with real types: `EvalKernel` now declares the optional `describeKernelTools` / `invokeKernelTool` capabilities, the JS `WorkerLike` carries an optional `pid`, `bun:ffi` is read through one shared `isBunFfi` guard, the sandbox `credits` buffer is typed as `Int32Array<SharedArrayBuffer>`, the gate allowlist is validated by the existing typebox `allowlistSchema`, and test fakes use `satisfies`, typed factories and narrowing guards instead of casts. No behavior change, except that a malformed base allowlist is now refused by the same schema the head allowlist already required. ([#3005](https://github.com/code-yeongyu/senpi/issues/3005))
 - A streaming, queued or running eval row now shows the cell's code in a fixed-height block that scrolls upward as lines arrive: the newest line always stays visible, older lines fold into an "N earlier code lines" row counted inside the block, and once output or status events arrive they share the block's rows instead of growing it, so the row never grows the transcript at any terminal width. The header stays one row, keeping the live spinner and render-clock elapsed time (a queued cell keeps its queued badge). Once a cell finishes, errs or is cancelled, the collapsed row is one line (icon, summary, status and duration), and expanding it shows the full code, output and status events. ([#2933](https://github.com/code-yeongyu/senpi/issues/2933))
 
 ### Fixed

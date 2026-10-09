@@ -311,8 +311,8 @@ class DefaultCodemodeSessionManager implements CodemodeSessionManager {
 	/** Only an already running JavaScript kernel can define a colliding name; none is started for this. */
 	#javaScriptKernelToolsDescribe(names: readonly string[]): Promise<KernelToolsDescribeResult> | undefined {
 		const js = this.#kernels.get("js");
-		if (!js || !("describeKernelTools" in js) || typeof js.describeKernelTools !== "function") return undefined;
-		return (js.describeKernelTools as (names: readonly string[]) => Promise<KernelToolsDescribeResult>)(names);
+		if (!js || typeof js.describeKernelTools !== "function") return undefined;
+		return js.describeKernelTools(names);
 	}
 
 	#foreignKernelToolNames(): string[] {
