@@ -12,6 +12,8 @@
 
 ### Fixed
 
+- Polling `senpi host status` no longer restarts a dead owner's two-second host-exit grace. Observe-only reads follow the normal idle policy, while a dropped unclassified peer and activity on an existing connection still reset continuous quiescence ([#3044](https://github.com/code-yeongyu/senpi/issues/3044)).
+
 ### Removed
 
 ## [2026.10.10-11] - 2026-10-09

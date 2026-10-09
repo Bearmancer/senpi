@@ -229,6 +229,66 @@ describe.skipIf(process.platform === "win32")("owner review regressions", () => 
 		await r.supervisor.exited;
 	});
 
+	it("exits within owner grace despite status reads every 500 milliseconds", async () => {
+		const r = await rig();
+		await r.exitOwner();
+		expect((await r.clock(0)).exit).toBe(false);
+		for (const now of [500, 1_000, 1_500, 1_999]) {
+			await r.clock(now, false);
+			const peer = await JsonlPeer.connect(r.qa.socket);
+			peers.push(peer);
+			expect(
+				await peer.request({ id: `status-info-${now}`, type: "get_protocol_info", observe: true }),
+			).toMatchObject({
+				success: true,
+			});
+			expect(
+				await peer.request({ id: `status-sessions-${now}`, type: "list_sessions", observe: true }),
+			).toMatchObject({
+				success: true,
+			});
+			const detached = r.supervisor.messages.wait("detached", r.supervisor.messages.seen.length);
+			peer.destroy();
+			await detached;
+			expect((await r.clock(now)).exit).toBe(false);
+		}
+		expect((await r.clock(2_000)).exit).toBe(true);
+		await r.supervisor.exited;
+	});
+
+	it("resets grace for an unclassified peer dropped entirely between ticks", async () => {
+		const r = await rig();
+		await r.exitOwner();
+		expect((await r.clock(0)).exit).toBe(false);
+		await r.clock(1_500, false);
+		const peer = await JsonlPeer.connect(r.qa.socket);
+		peers.push(peer);
+		const detached = r.supervisor.messages.wait("detached", r.supervisor.messages.seen.length);
+		peer.destroy();
+		await detached;
+		expect((await r.clock(2_000)).exit).toBe(false);
+		expect((await r.clock(3_999)).exit).toBe(false);
+		expect((await r.clock(4_000)).exit).toBe(true);
+		await r.supervisor.exited;
+	});
+
+	it("resets grace through refresh when an existing observer becomes attached between ticks", async () => {
+		const r = await rig();
+		await r.exitOwner();
+		expect((await r.clock(0)).exit).toBe(false);
+		await r.clock(1_500, false);
+		expect(await r.observer.request({ id: "attach-existing", type: "get_protocol_info" })).toMatchObject({
+			success: true,
+		});
+		const detached = r.supervisor.messages.wait("detached", r.supervisor.messages.seen.length);
+		r.observer.destroy();
+		await detached;
+		expect((await r.clock(2_000)).exit).toBe(false);
+		expect((await r.clock(3_999)).exit).toBe(false);
+		expect((await r.clock(4_000)).exit).toBe(true);
+		await r.supervisor.exited;
+	});
+
 	it("backs off live pipeless owner probes without exceeding a five second detection cadence", async () => {
 		const r = await rig();
 		for (let now = 0; now <= 27_000; now += 1_000) expect((await r.clock(now)).exit).toBe(false);

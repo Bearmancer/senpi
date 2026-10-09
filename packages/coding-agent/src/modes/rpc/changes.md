@@ -1,3 +1,25 @@
+## 2026-10-09 - Observe-only reads preserve owner grace (senpi#3044 follow-up)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-client-occupancy.ts`: release reports an unclassified peer only once, before discarding its classification. Observers and attached clients never report an unknown admission.
+- `packages/coding-agent/src/modes/rpc/host-lifecycle-proxy.ts`: defer the owner-grace admission reset until an unclassified peer disconnects. Classified attachments still reset through activity refresh; observing status reads and `warm` never reset the grace.
+- `packages/coding-agent/docs/rpc.md`: document the idle-policy classification and conservative treatment of dropped unclassified peers.
+- `packages/coding-agent/test/suite/regressions/3045-owner-review.test.ts`: real-supervisor controlled-clock cases independently cover an unclassified dropped connect, activity on a pre-existing observer, and repeated status reads inside the two-second grace.
+
+### Why
+
+Resetting on every accepted socket let frequent status polling keep a dead owner's host resident. The original between-tick test also could not distinguish admission resets from activity refresh resets.
+
+### Why an extension could not handle it
+
+The detached supervisor classifies public sockets and owns the quiescence window before any session extension runs.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/host-client-occupancy.ts`: release classification.
+- `packages/coding-agent/src/modes/rpc/host-lifecycle-proxy.ts`: admission and detach callbacks.
+
 ## 2026-10-09 - Owner lifetime review corrections (senpi#3045)
 
 ### What changed
