@@ -1,3 +1,35 @@
+## 2026-10-09 - Restore api-tracker coverage for upstream-modified paths (senpi#3006)
+
+### What changed
+
+- `packages/ai/src/api/azure-openai-responses.ts`: [OI]-family adapter divergence (option normalization, extraBody and reasoning ladders) carried through the v0.99.1 sync.
+- `packages/ai/src/api/cloudflare.ts`: Cloudflare base-URL routing on the v0.99.1 core.
+- `packages/ai/src/api/constrained-sampling.ts`: `constrainedSampling: false` honored as an explicit opt-out, distinct from absent, in the strict-JSON and grammar resolvers.
+- `packages/ai/src/api/github-copilot-headers.ts`: Copilot refusal explanation and one re-exchange of a token GitHub refuses (senpi#2297).
+- `packages/ai/src/api/google-generative-ai.ts`, `packages/ai/src/api/google-shared.ts`, `packages/ai/src/api/google-vertex.ts`: Google adapter re-divergence (FinishReason exhaustiveness, same-role message folding) carried through the v0.99.1 sync.
+- `packages/ai/src/api/openai-completions.ts`: forced tool_choice fallback, in-band refusal retry, reasoning_details replay, endpoint-advertised reasoning efforts, and gateway prompt-cache parsing.
+- `packages/ai/src/api/openai-prompt-cache.ts`: [OI] prompt-cache option normalization.
+- `packages/ai/src/api/openai-responses-shared.ts`: Astra Ultrafast tier, prefix prewarm with prompt_cache_diagnostics, nested WebSocket error surfacing, and the completion-phase watchdog.
+- `packages/ai/src/api/openai-responses.lazy.ts`: lazy Responses loader prewarmed with the GPT-5.6+ prefix (senpi#2096).
+- `packages/ai/src/api/openrouter-images.ts`: OpenRouter images on the v6 model surface.
+- `packages/ai/src/api/pi-messages.ts`: model-only text audience without changing provider payloads.
+- `packages/ai/src/api/simple-options.ts`: context-exhausted refusal, not a shrink to one token.
+- `packages/ai/src/api/transform-messages.ts`: cross-provider message transform contract preserving redacted thinking on same-model transforms.
+
+These files were covered by `packages/ai/src/changes.md` until senpi#2895 added this nearer tracker without listing them, hiding them from the audit's exact-nearest-tracker rule.
+
+### Why
+
+The repository audit (`scripts/audit-changes-md.mjs`) requires every upstream-modified production path to be named by an entry in its exact nearest changes.md tracker. senpi#2895 introduced this tracker and named only the files it touched, so the 15 pre-existing upstream-modified files beneath it lost the coverage the parent tracker had provided and were reported uncovered.
+
+### Why an extension could not handle it
+
+changes.md coverage is fork-owned documentation metadata; no extension or runtime hook can supply it.
+
+### Expected merge conflict zones
+
+- LOW: the `### What changed` bullet list in this entry as future entries are prepended above it.
+
 ## 2026-10-08 - Sol Ultrafast uses published sixfold pricing (senpi#2975)
 
 ### What changed

@@ -1,3 +1,24 @@
+## 2026-10-09 - Restore oauth-tracker coverage for upstream-modified paths (senpi#3006)
+
+### What changed
+
+- `packages/ai/src/auth/oauth/load.ts`: the bundled OAuth flow loader registry — the `cursor` flow joined the lazy loader registry and the standalone-Bun static bundle, and the subscription-provider symbol/module renames (senpi#1989) and the Devin CLI login flow were carried through the v0.99.1 sync.
+- `packages/ai/src/auth/oauth/openai-codex.ts`: the retired/renamed Codex OAuth flow kept as a compatibility module after the chatgpt-subscription rename (senpi#1989) and the v0.99.1 retired-path sync.
+
+These files were covered by `packages/ai/src/changes.md` until senpi#2895 added this nearer tracker without listing them, hiding them from the audit's exact-nearest-tracker rule.
+
+### Why
+
+The repository audit (`scripts/audit-changes-md.mjs`) requires every upstream-modified production path to be named by an entry in its exact nearest changes.md tracker. senpi#2895 introduced this tracker and named only the per-provider token-error modules it touched, so these 2 pre-existing upstream-modified files lost the coverage the parent tracker had provided and were reported uncovered.
+
+### Why an extension could not handle it
+
+changes.md coverage is fork-owned documentation metadata; no extension or runtime hook can supply it.
+
+### Expected merge conflict zones
+
+- LOW: the `### What changed` bullet list in this entry as future entries are prepended above it.
+
 ## 2026-10-07 - Token endpoint errors retain HTTP status (senpi#2893)
 
 ### What changed
