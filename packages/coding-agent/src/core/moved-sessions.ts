@@ -3,6 +3,7 @@ import { readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { getSessionsDir } from "../config.ts";
 import { normalizePath, resolvePath } from "../utils/paths.ts";
+import { sessionCwdMatcher } from "./moved-session-cwd.ts";
 import { compareRepositoryIdentities, type RepositoryIdentity, readRepositoryIdentity } from "./repository-identity.ts";
 import { listSessionsFromDir } from "./session-discovery.ts";
 import { getDefaultSessionDir, type SessionInfo } from "./session-manager.ts";
@@ -17,9 +18,14 @@ export interface MovedSessionOptions {
 	readonly readIdentity?: (dir: string) => Promise<RepositoryIdentity | undefined>;
 }
 
-function isMoved(session: SessionInfo, cwd: string, current: RepositoryIdentity): boolean {
-	if (!session.cwd || resolvePath(session.cwd) === cwd || existsSync(session.cwd)) return false;
-	return compareRepositoryIdentities(session.repositoryIdentity, current) === "same";
+// A session whose recorded cwd the OmO desktop moved to `cwd` is this folder's own session, not a moved one (senpi#2990).
+function movedChecker(cwd: string, current: RepositoryIdentity): (session: SessionInfo) => boolean {
+	const ownCwd = sessionCwdMatcher(cwd);
+	return (session) => {
+		if (!session.cwd || resolvePath(session.cwd) === cwd || existsSync(session.cwd)) return false;
+		if (ownCwd(session.cwd)) return false;
+		return compareRepositoryIdentities(session.repositoryIdentity, current) === "same";
+	};
 }
 
 function newestFirst(a: SessionInfo, b: SessionInfo): number {
@@ -71,8 +77,9 @@ export async function listMovedSessions(cwd: string, options: MovedSessionOption
 	const candidates = options.sessionDir
 		? await listSessionsFromDir(normalizePath(options.sessionDir))
 		: await sessionsAtVanishedPaths(here);
+	const isMoved = movedChecker(here, current);
 	return candidates
-		.filter((session) => isMoved(session, here, current))
+		.filter(isMoved)
 		.map((session) => ({ ...session, moved: true }))
 		.sort(newestFirst);
 }
@@ -85,7 +92,8 @@ export async function markMovedSessions(
 	const here = resolvePath(cwd);
 	const current = await (options.readIdentity ?? readRepositoryIdentity)(here);
 	if (current === undefined) return [...sessions];
-	return sessions.map((session) => (isMoved(session, here, current) ? { ...session, moved: true } : session));
+	const isMoved = movedChecker(here, current);
+	return sessions.map((session) => (isMoved(session) ? { ...session, moved: true } : session));
 }
 
 export async function withMovedSessions(

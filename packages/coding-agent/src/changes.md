@@ -1,3 +1,21 @@
+## 2026-10-09 - `--session <id>` opens a session recorded under a folder the OmO desktop moved here (senpi#2990)
+
+### What changed
+
+- `packages/coding-agent/src/main.ts`: in `createSessionManager`, a `--session <id>` match found in another project (the `global` branch) whose recorded cwd `resolveMovedPath` maps to the current cwd opens directly instead of offering or printing the cross-project rebind/fork choice. `SessionManager.open` then maps the cwd; the file is not rewritten.
+
+### Why
+
+After the desktop moves its data home, a session recorded in the old folder sits in that folder's default session dir, so `--session <id>` from the new folder only finds it in the global search. It is the same folder's session, and rebinding or forking it would rewrite or copy a file the desktop expects to stay as it is.
+
+### Why an extension could not handle it
+
+Session selection runs in `main.ts` before any extension loads.
+
+### Expected merge conflict zones
+
+- LOW: the start of the `case "global"` block under `if (parsed.session)` in `createSessionManager`.
+
 ## 2026-10-08 - JSON print mode exits non-zero when the run ran out of context (senpi#2925)
 
 ### What changed

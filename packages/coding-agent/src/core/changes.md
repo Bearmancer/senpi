@@ -2,8 +2,9 @@
 
 ### What changed
 
-- `packages/coding-agent/src/core/session-manager.ts`: `SessionManager.open` without a cwd override maps the header's cwd through `resolveMovedPath` (the senpi#2898 moved-path resolver) before using it; `sessionCwdMatches` (used by `findMostRecentSession`, `findById` and `list` when a session dir is given) also accepts a header cwd whose moved location is the current cwd. The session file is never rewritten.
+- `packages/coding-agent/src/core/session-manager.ts`: `SessionManager.open` without a cwd override maps the header's cwd through `resolveMovedPath` (the senpi#2898 moved-path resolver) before using it. `findMostRecentSession`, `findById` and `list` (with a session dir) match header cwds through one `sessionCwdMatcher` per call (`core/moved-session-cwd.ts`, new), which also accepts a header cwd whose moved location is the current cwd and resolves each distinct recorded cwd at most once, so `list`'s per-progress-tick re-filter stays linear. `sessionCwdMatches` is gone. The session file is never rewritten.
 - `packages/coding-agent/src/core/resume-target.ts`: `resolveResumeTarget` treats a session whose recorded cwd moved to the current cwd as the directory's own session, so `--resume` opens it without offering a rebind.
+- `packages/coding-agent/src/core/moved-sessions.ts`: such a session is not a repository-moved session, so the resume pickers list it once and without the moved badge.
 
 ### Why
 
@@ -15,7 +16,7 @@ The session cwd is decided while the CLI opens the session file, before any exte
 
 ### Expected merge conflict zones
 
-- LOW: the `cwd` line in `SessionManager.open` and the body of `sessionCwdMatches` in `session-manager.ts`.
+- LOW: the `cwd` line in `SessionManager.open`, and the cwd filters in `findMostRecentSession`, `findById` and `list` (upstream's `sessionCwdMatches` calls) in `session-manager.ts`.
 
 ## 2026-10-08 - A required compaction inside one long turn splits that turn instead of ending it (senpi#2925)
 

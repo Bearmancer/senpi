@@ -32,6 +32,7 @@ import { APP_NAME, getAgentDir as getDefaultAgentDir, getSessionsDir } from "../
 import { normalizePath, resolvePath } from "../utils/paths.ts";
 import { resolveMovedPath } from "./extensions/builtin/moved-path-guard/resolve.ts";
 import type { ModelChangeOrigin, ModelChangeSource } from "./model-change-origin.ts";
+import { sessionCwdMatcher } from "./moved-session-cwd.ts";
 import type { RepositoryIdentity } from "./repository-identity.ts";
 import {
 	ALL_SESSION_LIST_PUBLISH_INTERVAL,
@@ -1027,16 +1028,10 @@ function getSessionHeaderCwd(header: SessionHeader): string | undefined {
 	return typeof cwd === "string" ? cwd : undefined;
 }
 
-// A session the OmO desktop moved still names its old cwd; it belongs to the folder that cwd moved to (senpi#2990).
-function sessionCwdMatches(cwd: string | undefined, resolvedCwd: string): boolean {
-	if (cwd === undefined || cwd === "") return false;
-	return resolvePath(cwd) === resolvedCwd || resolvePath(resolveMovedPath(cwd)) === resolvedCwd;
-}
-
 /** Exported for testing */
 export function findMostRecentSession(sessionDir: string, cwd?: string): string | null {
 	const resolvedSessionDir = normalizePath(sessionDir);
-	const resolvedCwd = cwd ? resolvePath(cwd) : undefined;
+	const matchesCwd = cwd ? sessionCwdMatcher(resolvePath(cwd)) : undefined;
 	try {
 		const files = readdirSync(resolvedSessionDir)
 			.filter((file) => file.endsWith(".jsonl"))
@@ -1046,7 +1041,7 @@ export function findMostRecentSession(sessionDir: string, cwd?: string): string 
 
 		for (const { path } of files) {
 			const header = readSessionHeaderForDiscovery(path);
-			if (header && (!resolvedCwd || sessionCwdMatches(getSessionHeaderCwd(header), resolvedCwd))) return path;
+			if (header && (!matchesCwd || matchesCwd(getSessionHeaderCwd(header)))) return path;
 		}
 		return null;
 	} catch {
@@ -2826,7 +2821,7 @@ export class SessionManager {
 	static findById(cwd: string, id: string, sessionDir?: string): string | undefined {
 		const dir = sessionDir ? normalizePath(sessionDir) : getDefaultSessionDir(cwd);
 		const filterCwd = sessionDir !== undefined && dir !== getDefaultSessionDirPath(cwd);
-		const resolvedCwd = resolvePath(cwd);
+		const matchesCwd = sessionCwdMatcher(resolvePath(cwd));
 
 		try {
 			for (const file of readdirSync(dir)) {
@@ -2834,7 +2829,7 @@ export class SessionManager {
 				const path = join(dir, file);
 				const header = readSessionHeaderForDiscovery(path);
 				if (header?.id !== id) continue;
-				if (filterCwd && !sessionCwdMatches(getSessionHeaderCwd(header), resolvedCwd)) continue;
+				if (filterCwd && !matchesCwd(getSessionHeaderCwd(header))) continue;
 				return path;
 			}
 		} catch {
@@ -2857,8 +2852,8 @@ export class SessionManager {
 	): Promise<SessionInfo[]> {
 		const dir = sessionDir ? normalizePath(sessionDir) : getDefaultSessionDir(cwd);
 		const filterCwd = sessionDir !== undefined && dir !== getDefaultSessionDirPath(cwd);
-		const resolvedCwd = resolvePath(cwd);
-		const includeSession = (session: SessionInfo) => !filterCwd || sessionCwdMatches(session.cwd, resolvedCwd);
+		const matchesCwd = sessionCwdMatcher(resolvePath(cwd));
+		const includeSession = (session: SessionInfo) => !filterCwd || matchesCwd(session.cwd);
 		const progress: SessionListProgress | undefined = onProgress
 			? (loaded, total, partialSessions) => onProgress(loaded, total, partialSessions?.filter(includeSession))
 			: undefined;

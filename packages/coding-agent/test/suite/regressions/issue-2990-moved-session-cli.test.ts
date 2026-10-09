@@ -7,6 +7,7 @@ import { runDueJobs } from "../../../src/cli/schedule-runner.ts";
 import { ENV_AGENT_DIR } from "../../../src/config.ts";
 import { createScheduledJob } from "../../../src/core/extensions/builtin/schedule/store.ts";
 import { formatMissingSessionCwdError } from "../../../src/core/session-cwd.ts";
+import { getDefaultSessionDir } from "../../../src/core/session-manager.ts";
 import { type FakeModelServer, MOCK_MODEL, MOCK_PROVIDER, startFakeModelServer } from "../../helpers/rpc-fake-model.ts";
 import { hermeticProviderEnv, writeRpcModelsJson } from "../../helpers/rpc-hermetic.ts";
 import { assertWorkspaceBuildPrerequisite } from "../../support/workspace-build-prerequisite.ts";
@@ -109,6 +110,22 @@ describe("issue #2990 headless resume of a session the OmO desktop moved", () =>
 		expect(readFileSync(sessionFile, "utf8").startsWith(header)).toBe(true);
 		expect(transcriptRoles(sessionFile)).toEqual(["user", "assistant"]);
 		expect(readdirSync(layout.oldRoot)).toEqual(["omo-desktop-moved.json"]);
+	});
+
+	// Review L3: an id found in another project's default session dir whose cwd moved here is this folder's session.
+	it("`-p --session <id>` opens a session recorded under the old folder without the cross-project refusal", async () => {
+		const { layout, server, env } = await movedSession();
+		const sessionFile = join(getDefaultSessionDir(layout.oldWorktree, env[ENV_AGENT_DIR]), `${SESSION_ID}.jsonl`);
+		writeSessionHeader(sessionFile, SESSION_ID, layout.oldWorktree);
+		const header = readFileSync(sessionFile, "utf8");
+
+		const result = await runCli(["-p", "--session", SESSION_ID, PROMPT], layout.newWorktree, env);
+
+		expect(result.output).not.toContain(`--fork '${SESSION_ID}'`);
+		expect(result.code).toBe(0);
+		expect(server.requests.map((request) => request.text).join("\n")).toContain(PROMPT);
+		expect(readFileSync(sessionFile, "utf8").startsWith(header)).toBe(true);
+		expect(transcriptRoles(sessionFile)).toEqual(["user", "assistant"]);
 	});
 
 	it("a recorded cwd no breadcrumb lists still fails with the missing-cwd message", async () => {

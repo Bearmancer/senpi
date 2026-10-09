@@ -77,6 +77,7 @@ import { AuthStorage, ReadOnlyAuthStorage } from "./core/auth-storage.ts";
 import { envValue } from "./core/brand.ts";
 import { type CredentialAccountSummary, summarizeCredentialAccounts } from "./core/credential-accounts.ts";
 import { exportFromFile } from "./core/export-html/index.ts";
+import { resolveMovedPath } from "./core/extensions/builtin/moved-path-guard/resolve.ts";
 import type { InlineExtension } from "./core/extensions/types.ts";
 import { applyHttpProxySettings, configureHttpDispatcher } from "./core/http-dispatcher.ts";
 import { installMemoryReportSignal } from "./core/memory-report/memory-report-write.ts";
@@ -575,6 +576,9 @@ export async function createSessionManager(
 				return openSessionOrExit(resolved.path, sessionDir);
 
 			case "global": {
+				// Recorded under a folder the OmO desktop moved here: this folder's own session (senpi#2990).
+				if (resolvePath(resolveMovedPath(resolved.cwd)) === resolvePath(cwd))
+					return openSessionOrExit(resolved.path, sessionDir);
 				// The confirmation blocks on readline, which only an interactive session can
 				// answer. Print, JSON, RPC, and app-server runs reach here with a TTY attached
 				// too (`-p` from a terminal), where the question hangs the process or resolves

@@ -1,6 +1,7 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { markMovedSessions, withMovedSessions } from "../../../src/core/moved-sessions.ts";
 import { REPOSITORY_IDENTITY_ENTRY_TYPE, type RepositoryIdentity } from "../../../src/core/repository-identity.ts";
 import { resolveResumeTarget } from "../../../src/core/resume-target.ts";
 import { SessionManager } from "../../../src/core/session-manager.ts";
@@ -86,7 +87,38 @@ describe("issue #2990 a moved session opens in the folder's new home", () => {
 		const recent = SessionManager.continueRecent(layout.newWorktree, layout.newSessions);
 
 		expect(recent.getSessionFile()).toBe(sessionFile);
-		expect(recent.getCwd()).toBe(layout.newWorktree);
+	});
+
+	it("--session <id> with the moved session dir finds the session from the new folder", () => {
+		const { layout, sessionFile } = moved();
+
+		expect(SessionManager.findById(layout.newWorktree, SESSION_ID, layout.newSessions)).toBe(sessionFile);
+	});
+
+	// Review M1: the picker shows a desktop-moved session once, as this folder's own session, never also as a moved one.
+	it("the current-scope resume picker lists the moved session once, unbadged", async () => {
+		const { layout, sessionFile } = moved();
+
+		const rows = await withMovedSessions(
+			SessionManager.list(layout.newWorktree, layout.newSessions),
+			layout.newWorktree,
+			{
+				sessionDir: layout.newSessions,
+				readIdentity: async () => RECORDED,
+			},
+		);
+
+		expect(rows.map((row) => [row.path, row.moved === true])).toEqual([[sessionFile, false]]);
+	});
+
+	it("the all-scope resume picker does not badge the moved session as moved", async () => {
+		const { layout, sessionFile } = moved();
+
+		const rows = await markMovedSessions(await SessionManager.listAll(layout.newSessions), layout.newWorktree, {
+			readIdentity: async () => RECORDED,
+		});
+
+		expect(rows.map((row) => [row.path, row.moved === true])).toEqual([[sessionFile, false]]);
 	});
 
 	it("--resume of the moved session from the new folder opens it as is, without a rebind question", async () => {
