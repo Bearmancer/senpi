@@ -1,5 +1,6 @@
 import { getKeybindings } from "@earendil-works/pi-tui";
 
+import { enginePauseSinceLastTurn } from "../../../engine-paused.ts";
 import type { AgentEndEvent, ExtensionAPI, ExtensionContext, MessageUpdateEvent } from "../../types.ts";
 import { appendRuleActivation, registerRuleActivationRenderer } from "../rule-activation/index.ts";
 import { parseRuleActivationDetails, RULE_ACTIVATION_ENTRY_TYPE } from "../rule-activation/types.ts";
@@ -281,6 +282,14 @@ export default function ttsrExtension(pi: ExtensionAPI): void {
 		const [rule] = nudge.details.rules;
 		if (rule !== undefined && ruleAlreadyCorrected(ctx.sessionManager.getEntries(), rule)) {
 			pi.appendEntry(TTSR_LOOP_STOPPED_ENTRY_TYPE, { rules: nudge.details.rules, at: Date.now() });
+			if (!enginePauseSinceLastTurn(ctx.sessionManager.getEntries())) {
+				pi.appendEntry("engine-paused", {
+					reason: "repetition",
+					rule,
+					customType: TTSR_INJECTION_CUSTOM_TYPE,
+					at: Date.now(),
+				});
+			}
 			pi.events.emit(TTSR_LOOP_STOPPED_EVENT, { rules: nudge.details.rules });
 			ctx.ui.notify(ttsrLoopStoppedNotice(rule), "warning");
 			return;

@@ -1,5 +1,23 @@
 # TTSR Fork Tracker
 
+## 2026-10-09 - Publish the common engine pause entry (senpi#3007)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/ttsr/index.ts`: the consumed repeated-rule nudge appends `engine-paused` with reason `repetition`, its rule, and `ttsr-injection`, alongside the unchanged `ttsr-loop-stopped` entry, event, and notice.
+
+### Why
+
+Clients need one durable self-stop signal rather than interpreting TTSR notices.
+
+### Why an extension could not handle it
+
+This builtin owns the repeated-rule stop decision and consumes the nudge exactly once.
+
+### Expected merge conflict zones
+
+The `agent_settled` repeated-rule branch. The final idle case for a one-shot repetitive-turns correction is recorded in the engine after all deferred turn claims settle.
+
 ## 2026-10-08 - One corrective follow-up per rule per user message (senpi#2967)
 
 ### What changed

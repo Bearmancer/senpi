@@ -1,5 +1,29 @@
 # goal Extension Changes
 
+## 2026-10-09 - Durable continuation stop decisions and frozen stale accounting (senpi#3007)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/goal/lifecycle-helpers.ts`: every active-goal guard denial except eligibility/single-flight appends `goal-continuation-stopped` after a durable stop claim, with `engine-paused` for stale (`goal-stale`) and output repetition (`goal-repeat`).
+- `packages/coding-agent/src/core/extensions/builtin/goal/continuation.ts`: a claimed stop is ineligible on session-start until reset, so reopening or rebuilding the extension cannot silently restart a stale goal. A later real turn can still trip a blocking guard.
+- `packages/coding-agent/src/core/extensions/builtin/goal/store.ts`: claims a denial under the goal-file lock, closes the stale measurement tail, advances the measurement checkpoint when usage is committed, and resets the claim on accepted input, explicit resume, or continuation delivery. Blocking guards retain the existing status-transition counter reset.
+- `packages/coding-agent/src/core/extensions/builtin/goal/types.ts` and `packages/coding-agent/src/core/extensions/builtin/goal/persistence.ts`: optional sanitized `continuationStoppedAt` persists the claim across retries and reopen.
+- `packages/coding-agent/src/core/extensions/builtin/goal/index.ts` and `packages/coding-agent/src/core/extensions/builtin/goal/elapsed-ticker.ts`: stopped active goals retire live accounting and freeze elapsed time; the queue path synchronizes a changed goal even when its status remains active.
+- `packages/coding-agent/src/core/extensions/builtin/goal/direct-input-lifecycle.ts`: accepted input starts accounting again after resetting the stopped goal.
+- `packages/coding-agent/src/core/extensions/builtin/goal/monitor-continuation.ts`: a stale or overflow denial on the accepted-user-turn path reaches the same denial handler instead of returning silently.
+
+### Why
+
+Stale continuation denials left active goals with an open measurement window and no durable signal, so idle clients displayed an ever-growing pursuit timer.
+
+### Why an extension could not handle it
+
+This builtin owns admission, persisted goal state, and its accounting window.
+
+### Expected merge conflict zones
+
+Goal store mutations, denial admission, direct-input reset, and accounting/UI synchronization. Preserve the locked claim and measurement checkpoint together to avoid duplicate entries or elapsed double-counting.
+
 ## 2026-10-06 - A GPT-6 Astra receiver gets the goal contract without the completion audit (senpi#2796)
 
 ### What changed
