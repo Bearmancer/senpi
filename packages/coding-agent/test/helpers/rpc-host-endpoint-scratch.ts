@@ -117,6 +117,8 @@ export function hostArgs(extension?: string): string[] {
 
 type RealHostOptions = {
 	idleExitMs?: number;
+	/** Added to the host's environment, over `hostEnv(qa)`. */
+	env?: Readonly<Record<string, string>>;
 	extension?: string;
 	afterLockAcquired?: () => Promise<void>;
 	/** Return while the gc pass the ensure scheduled may still run; by default it has finished first. */
@@ -141,7 +143,7 @@ export async function heldRealHost(
 		agentDir: qa.agentDir,
 		policy: { idleExitMs: options.idleExitMs ?? 600_000 },
 		hostArgs: hostArgs(options.extension),
-		env: hostEnv(qa),
+		env: { ...hostEnv(qa), ...options.env },
 		_test: {
 			readinessTimeoutMs: 60_000,
 			launch: supervisorLaunch,

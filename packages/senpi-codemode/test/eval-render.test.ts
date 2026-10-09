@@ -323,7 +323,7 @@ describe("eval renderer", () => {
 		expect.soft(renderLines(yielded)).toEqual([]);
 	});
 
-	it("Given completed cell details when rendered then framed status agent and JSON output are visible", () => {
+	it("Given completed cell details when rendered expanded then framed status agent and JSON output are visible (senpi#2933)", () => {
 		// Given
 		const givenResult = evalResult(
 			{
@@ -352,9 +352,14 @@ describe("eval renderer", () => {
 			"",
 		);
 
-		// When
+		// When: the collapsed row is one line, so the framed detail renders through expand
 		const lines = renderLines(
-			renderEvalResult(givenResult, { expanded: false, isPartial: false }, undefined, resultContext()),
+			renderEvalResult(
+				givenResult,
+				{ expanded: true, isPartial: false },
+				undefined,
+				resultContext({ expanded: true }),
+			),
 		);
 		const text = lines.join("\n");
 

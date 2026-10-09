@@ -6,15 +6,33 @@
 
 ### Added
 
-- Select `chatgpt-subscription/gpt-6.1-sol-ultrafast` without a local extension to use Sol with the Ultrafast service tier and default `xhigh` reasoning. Usage estimates include its published 6x Standard pricing ([#2975](https://github.com/code-yeongyu/senpi/pull/2975) by [@audreyt](https://github.com/audreyt)).
-
 ### Changed
 
 ### Fixed
 
 - A multi-session RPC host refuses open/attach and every new session-writing RPC when another live process outside its daemon family holds the file, with typed `session_held` and pid/cwd data. Both guarded host runtimes advertise the exact `session_held` protocol capability; classic bindings do not. Open rechecks after holder publication and rolls back raced admission; stale holders clear automatically. Own workers and predecessor generations preserve existing reservation retry/reclaim semantics. Already-admitted turns finish if a holder arrives mid-turn. Interactive startup and `/resume` warn, including advisory lookup failures, without aborting ([#2951](https://github.com/code-yeongyu/senpi/issues/2951)).
 
+### Removed
+
+## [2026.10.10-10] - 2026-10-09
+
+### Breaking Changes
+
+### Added
+
+- Select `chatgpt-subscription/gpt-6.1-sol-ultrafast` without a local extension to use Sol with the Ultrafast service tier and default `xhigh` reasoning. Usage estimates include its published 6x Standard pricing ([#2975](https://github.com/code-yeongyu/senpi/pull/2975) by [@audreyt](https://github.com/audreyt)).
+
+### Changed
+
+### Fixed
+
+- When sessions that share one MCP service resolve different MCP configs (for example a main session and in-process sidecar sessions that load without extensions), one session's attach no longer makes every other session's MCP tools fail with "MCP session or server configuration was replaced.", no longer shuts down MCP servers another live session still declares, and no longer keeps running an MCP server that only a closed session declared ([#2597](https://github.com/code-yeongyu/senpi/issues/2597) by [@ferose](https://github.com/ferose)).
+
+- When sessions that share one MCP service differ in project trust, environment or agent directory, a session's skill-declared MCP servers now expand `${VAR}` values under its own trust and environment, and every MCP server spawns, re-authenticates and reports auth status with the credentials of a session that declares it, instead of those of whichever session attached last ([#2986](https://github.com/code-yeongyu/senpi/issues/2986) by [@ferose](https://github.com/ferose)).
+
 - When the session file refuses writes, an automatic-turn pause is still announced, a message from another session that arrives at the limit is settled instead of staying pending, and editing your message in `/tree` lifts a pause like sending a new one ([#2967](https://github.com/code-yeongyu/senpi/issues/2967); first listed under 2026.10.10-9 by mistake, it ships in this release).
+
+- A failed retirement of the Chrome a WebView used (for example when `taskkill` cannot run, or the CI readiness log cannot be written) no longer makes every later WebView launch and retirement in that process fail: the release that triggered it still fails with the error, CI's readiness log records it when it can be written, and the next launch and retirement run normally ([#2993](https://github.com/code-yeongyu/senpi/issues/2993)).
 
 - On Windows, ending a Chrome-backed WebView no longer force-kills unrelated system processes, including the CI runner itself. The cleanup listed Chrome's process tree by recorded parent pid, which Windows never updates when a parent exits and reuses quickly, so a Chrome process that got a dead process's pid pulled whole system trees into the kill list (measured: 145 processes, `csrss.exe` and `wininit.exe` among them). A process now counts as Chrome's child only when it started after the parent it names, and protected system images or ancestors of the current process are never killed even if adopted ([#2353](https://github.com/code-yeongyu/senpi/issues/2353)).
 
