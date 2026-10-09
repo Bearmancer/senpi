@@ -1,5 +1,5 @@
 import { type ChildProcess, execFileSync, spawn } from "node:child_process";
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, utimesSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { sessionResumeDelivery } from "../../../src/cli/schedule-delivery.ts";
@@ -89,6 +89,20 @@ async function runCli(args: string[], cwd: string, env: Record<string, string>) 
 	}
 }
 
+function gitRepo(dir: string): void {
+	const identity = {
+		GIT_AUTHOR_NAME: "t",
+		GIT_AUTHOR_EMAIL: "t@t",
+		GIT_COMMITTER_NAME: "t",
+		GIT_COMMITTER_EMAIL: "t@t",
+	};
+	for (const args of [
+		["init", "-q"],
+		["commit", "-q", "--allow-empty", "-m", "init"],
+	])
+		execFileSync("git", args, { cwd: dir, env: { ...process.env, ...identity } });
+}
+
 function transcriptRoles(sessionFile: string): string[] {
 	return readFileSync(sessionFile, "utf8")
 		.trim()
@@ -131,20 +145,7 @@ describe("issue #2990 headless resume of a session the OmO desktop moved", () =>
 	// Round-2 review H1: in the default per-folder layout only the moved lookup finds the session; continue it in place.
 	it("`-p --continue` from the moved worktree continues the session recorded under the old folder", async () => {
 		const { layout, server, env } = await movedSession();
-		for (const args of [
-			["init", "-q"],
-			["commit", "-q", "--allow-empty", "-m", "init"],
-		])
-			execFileSync("git", args, {
-				cwd: layout.newWorktree,
-				env: {
-					...process.env,
-					GIT_AUTHOR_NAME: "t",
-					GIT_AUTHOR_EMAIL: "t@t",
-					GIT_COMMITTER_NAME: "t",
-					GIT_COMMITTER_EMAIL: "t@t",
-				},
-			});
+		gitRepo(layout.newWorktree);
 		const sessionFile = join(getDefaultSessionDir(layout.oldWorktree, env[ENV_AGENT_DIR]), `${SESSION_ID}.jsonl`);
 		writeSessionHeader(sessionFile, SESSION_ID, layout.oldWorktree);
 		const header = readFileSync(sessionFile, "utf8");
@@ -155,6 +156,29 @@ describe("issue #2990 headless resume of a session the OmO desktop moved", () =>
 		expect(server.requests.map((request) => request.text).join("\n")).toContain(PROMPT);
 		expect(readFileSync(sessionFile, "utf8").startsWith(header)).toBe(true);
 		expect(transcriptRoles(sessionFile)).toEqual(["user", "assistant"]);
+	});
+
+	// Round-3 review M1: --continue takes the newest of the folder's own sessions and the ones moved here, as a shared
+	// session dir already does; the older one is left untouched.
+	it.each([
+		["the moved-here session is newer", "moved"],
+		["the folder's own session is newer", "own"],
+	] as const)("`-p --continue` in the default layout continues the newer session when %s", async (_label, newer) => {
+		const { layout, env } = await movedSession();
+		gitRepo(layout.newWorktree);
+		const movedFile = join(getDefaultSessionDir(layout.oldWorktree, env[ENV_AGENT_DIR]), `${SESSION_ID}.jsonl`);
+		writeSessionHeader(movedFile, SESSION_ID, layout.oldWorktree);
+		const ownFile = join(getDefaultSessionDir(layout.newWorktree, env[ENV_AGENT_DIR]), "own.jsonl");
+		writeSessionHeader(ownFile, "0199f0d4-2990-7000-8000-0000000000aa", layout.newWorktree);
+		const [older, newerFile] = newer === "moved" ? [ownFile, movedFile] : [movedFile, ownFile];
+		utimesSync(older, new Date("2026-10-01T00:00:00Z"), new Date("2026-10-01T00:00:00Z"));
+		utimesSync(newerFile, new Date("2026-10-08T00:00:00Z"), new Date("2026-10-08T00:00:00Z"));
+
+		const result = await runCli(["-p", "--continue", PROMPT], layout.newWorktree, env);
+
+		expect(result.code).toBe(0);
+		expect(transcriptRoles(newerFile)).toEqual(["user", "assistant"]);
+		expect(transcriptRoles(older)).toEqual([]);
 	});
 
 	// Round-2 review L1: a session with no recorded folder is never "this folder's" session; it keeps the refusal.

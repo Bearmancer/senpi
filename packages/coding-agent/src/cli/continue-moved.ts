@@ -1,5 +1,6 @@
 import chalk from "chalk";
 import { listMovedSessions, type MovedSessionOptions } from "../core/moved-sessions.ts";
+import type { SessionInfo } from "../core/session-manager.ts";
 import { confirmSameRepositoryRebind } from "./cross-project-session.ts";
 
 export interface ContinueMovedChoice extends MovedSessionOptions {
@@ -8,6 +9,8 @@ export interface ContinueMovedChoice extends MovedSessionOptions {
 	readonly confirm: (message: string) => Promise<boolean>;
 	readonly out: (line: string) => void;
 	readonly err: (line: string) => void;
+	/** The moved sessions when the caller already listed them, so the session dirs are not scanned twice. */
+	readonly moved?: readonly SessionInfo[];
 }
 
 /**
@@ -16,7 +19,7 @@ export interface ContinueMovedChoice extends MovedSessionOptions {
  * interactive session nothing is asked and the `--rebind` command is printed instead.
  */
 export async function movedSessionToContinue(choice: ContinueMovedChoice): Promise<string | undefined> {
-	const [newest] = await listMovedSessions(choice.cwd, choice);
+	const [newest] = choice.moved ?? (await listMovedSessions(choice.cwd, choice));
 	if (newest === undefined) return undefined;
 	if (!choice.interactive) {
 		choice.err(

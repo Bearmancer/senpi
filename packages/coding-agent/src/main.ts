@@ -6,7 +6,7 @@
  * createAgentSession() options. The SDK does the heavy lifting.
  */
 
-import { existsSync } from "node:fs";
+import { existsSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
 import { type ImageContent, modelsAreEqual } from "@earendil-works/pi-ai";
@@ -88,7 +88,7 @@ import {
 	type ScopedModel,
 } from "./core/model-resolver.ts";
 import { ModelRuntime } from "./core/model-runtime.ts";
-import { listSessionsMovedHere, markMovedSessions, withMovedSessions } from "./core/moved-sessions.ts";
+import { listVanishedSessions, markMovedSessions, withMovedSessions } from "./core/moved-sessions.ts";
 import { restoreStdout, takeOverStdout } from "./core/output-guard.ts";
 import { recordProcessLifetime } from "./core/process-crash-record.ts";
 import { type AppMode, resolveProjectTrusted } from "./core/project-trust.ts";
@@ -101,7 +101,13 @@ import {
 	type SessionCwdIssue,
 } from "./core/session-cwd.ts";
 import { sessionExtensionFlagValues } from "./core/session-extension-flags.ts";
-import { assertValidSessionId, SessionManager } from "./core/session-manager.ts";
+import {
+	assertValidSessionId,
+	findMostRecentSession,
+	getDefaultSessionDir,
+	type SessionInfo,
+	SessionManager,
+} from "./core/session-manager.ts";
 import { classifySessionRepository, readSessionCwd, rebindSessionFile } from "./core/session-rebind.ts";
 import { collectSettingsDiagnosticsWithContext } from "./core/settings-diagnostics.ts";
 import { SettingsManager } from "./core/settings-manager.ts";
@@ -504,6 +510,18 @@ async function rebindSessionOrExit(sourcePath: string, cwd: string, sessionDir?:
 	}
 }
 
+// The same basis findMostRecentSession orders by; a file that vanished since it was listed counts as oldest.
+function mtimeMs(path: string): number {
+	return statSync(path, { throwIfNoEntry: false })?.mtimeMs ?? 0;
+}
+
+function newestByMtime(paths: readonly string[]): string | undefined {
+	return paths.reduce<string | undefined>(
+		(newest, path) => (newest === undefined || mtimeMs(path) > mtimeMs(newest) ? path : newest),
+		undefined,
+	);
+}
+
 function sessionCwdOrUndefined(sessionFile: string): string | undefined {
 	try {
 		return readSessionCwd(sessionFile);
@@ -643,21 +661,30 @@ export async function createSessionManager(
 	}
 
 	if (parsed.continue) {
+		// A shared session dir matches sessions the OmO desktop moved here in continueRecent. In the default per-folder
+		// layout they sit in the old folder's dir: continue the newest of those and the folder's own, in place (senpi#2990).
+		let moved: readonly SessionInfo[] | undefined;
+		if (sessionDir === undefined) {
+			const vanished = await listVanishedSessions(cwd);
+			moved = vanished.moved;
+			const movedHere = newestByMtime(vanished.here.map((session) => session.path));
+			const own = findMostRecentSession(getDefaultSessionDir(cwd));
+			if (movedHere !== undefined && (own === null || mtimeMs(movedHere) > mtimeMs(own)))
+				return SessionManager.open(movedHere, sessionDir);
+		}
 		const recent = SessionManager.continueRecent(cwd, sessionDir);
 		const recentFile = recent.getSessionFile();
 		if (recentFile !== undefined && existsSync(recentFile)) return recent;
-		// Recorded under a folder the OmO desktop moved here: continue it in place, without a rebind (senpi#2990).
-		const [movedHere] = await listSessionsMovedHere(cwd, sessionDir === undefined ? {} : { sessionDir });
-		if (movedHere) return SessionManager.open(movedHere.path, sessionDir);
-		const moved = await movedSessionToContinue({
+		const movedChoice = await movedSessionToContinue({
 			cwd,
 			...(sessionDir === undefined ? {} : { sessionDir }),
+			...(moved === undefined ? {} : { moved }),
 			interactive: appMode === "interactive",
 			confirm: promptConfirm,
 			out: (line) => console.log(line),
 			err: (line) => console.error(line),
 		});
-		return moved === undefined ? recent : rebindSessionOrExit(moved, cwd, sessionDir);
+		return movedChoice === undefined ? recent : rebindSessionOrExit(movedChoice, cwd, sessionDir);
 	}
 
 	if (parsed.sessionId) {

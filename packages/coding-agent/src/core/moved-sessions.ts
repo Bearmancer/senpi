@@ -76,9 +76,13 @@ async function sessionsAtVanishedPaths(cwd: string): Promise<SessionInfo[]> {
 	return sessions;
 }
 
-async function vanishedSessions(
+/**
+ * One scan of the sessions recorded at vanished paths: `here` (the OmO desktop moved the path to `cwd`; senpi#2990)
+ * and `moved` (badged repository moves), each newest first.
+ */
+export async function listVanishedSessions(
 	cwd: string,
-	options: MovedSessionOptions,
+	options: MovedSessionOptions = {},
 ): Promise<Record<VanishedKind, SessionInfo[]>> {
 	const found: Record<VanishedKind, SessionInfo[]> = { here: [], moved: [] };
 	const here = resolvePath(cwd);
@@ -99,12 +103,7 @@ async function vanishedSessions(
 }
 
 export async function listMovedSessions(cwd: string, options: MovedSessionOptions = {}): Promise<SessionInfo[]> {
-	return (await vanishedSessions(cwd, options)).moved;
-}
-
-/** Sessions of `cwd` recorded under a path the OmO desktop moved to it, newest first (senpi#2990). */
-export async function listSessionsMovedHere(cwd: string, options: MovedSessionOptions = {}): Promise<SessionInfo[]> {
-	return (await vanishedSessions(cwd, options)).here;
+	return (await listVanishedSessions(cwd, options)).moved;
 }
 
 export async function markMovedSessions(
@@ -124,7 +123,7 @@ export async function withMovedSessions(
 	cwd: string,
 	options: MovedSessionOptions = {},
 ): Promise<SessionInfo[]> {
-	const [own, vanished] = await Promise.all([local, vanishedSessions(cwd, options)]);
+	const [own, vanished] = await Promise.all([local, listVanishedSessions(cwd, options)]);
 	// A shared session dir lists a desktop-moved session in both: one row, the folder's own.
 	const listed = new Set(own.map((session) => session.path));
 	const extra = [...vanished.here, ...vanished.moved].filter((session) => !listed.has(session.path));
