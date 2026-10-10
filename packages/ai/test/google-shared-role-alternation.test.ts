@@ -90,7 +90,9 @@ describe("google-shared role alternation (#2114)", () => {
 		expect(contents.map((content) => content.role)).toEqual(["user", "model", "user"]);
 		const parts = contents[2].parts ?? [];
 		expect(parts).toHaveLength(2);
-		expect(parts[0]?.functionResponse?.response).toEqual({ output: "alpha" });
+		// The unsigned Gemini 3 tool call replays as text, and its result pairs as text too.
+		expect(parts[0]?.functionResponse).toBeUndefined();
+		expect(parts[0]?.text).toBe("[Tool Result: read]\nalpha");
 		expect(parts[1]).toEqual({ text: "Now summarize it" });
 	});
 

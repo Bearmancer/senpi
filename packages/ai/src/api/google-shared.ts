@@ -173,6 +173,18 @@ export function requiresToolCallId(modelId: string): boolean {
 	);
 }
 
+/**
+ * Gemini 3+ strictly validates replayed tool calls: the first functionCall part of every step
+ * in the current turn must carry the thoughtSignature the model returned, or the API answers
+ * 400 "Function call is missing a thought_signature in functionCall parts" (Vertex and AI
+ * Studio both; enforced even at MINIMAL thinking). See:
+ * https://docs.cloud.google.com/vertex-ai/generative-ai/docs/thought-signatures
+ */
+function requiresThoughtSignatureReplay(modelId: string): boolean {
+	const geminiMajorVersion = getGeminiMajorVersion(modelId);
+	return geminiMajorVersion !== undefined && geminiMajorVersion >= 3;
+}
+
 function getGeminiMajorVersion(modelId: string): number | undefined {
 	const match = modelId.toLowerCase().match(/^gemini(?:-live)?-(\d+)/);
 	if (!match) return undefined;
@@ -214,6 +226,9 @@ export function convertMessages<T extends GoogleApiType>(
 	// Gemini has no mid-conversation system messages; the leading prompt is sent as systemInstruction.
 	const conversation = withoutInitialSystemMessage(collapseSystemMessages(context).messages);
 	const contents: Content[] = [];
+	// Tool-call blocks replayed as text under a strict-signature model; their paired tool
+	// results must follow the same shape so no unpaired functionResponse part is emitted.
+	const textToolCallIds = new Set<string>();
 	const normalizeId = (id: string): string => {
 		if (!requiresToolCallId(model.id)) return id;
 		return normalizeToolCallId(id);
@@ -254,6 +269,19 @@ export function convertMessages<T extends GoogleApiType>(
 			// Check if message is from same provider and model - only then keep thinking blocks
 			const isSameProviderAndModel = msg.provider === model.provider && msg.model === model.id;
 
+			// A step replays structured only when one of its tool calls carries a usable signature:
+			// parallel calls of one response legitimately keep the signature on the first part alone.
+			// Without any usable signature the whole step is replayed as text, because the documented
+			// skip_thought_signature_validator sentinel is rejected by Vertex (pi-mono #4032) and an
+			// unsigned functionCall part is a hard 400 on Gemini 3+.
+			const replayUnsignedToolCallsAsText =
+				requiresThoughtSignatureReplay(model.id) &&
+				!msg.content.some(
+					(block) =>
+						block.type === "toolCall" &&
+						resolveThoughtSignature(isSameProviderAndModel, block.thoughtSignature) !== undefined,
+				);
+
 			for (const block of msg.content) {
 				if (block.type === "text") {
 					const thoughtSignature = resolveThoughtSignature(isSameProviderAndModel, block.textSignature);
@@ -287,16 +315,25 @@ export function convertMessages<T extends GoogleApiType>(
 						});
 					}
 				} else if (block.type === "toolCall") {
-					const thoughtSignature = resolveThoughtSignature(isSameProviderAndModel, block.thoughtSignature);
-					const part: Part = {
-						functionCall: {
-							name: block.name,
-							args: block.arguments ?? {},
-							...(requiresToolCallId(model.id) ? { id: block.id } : {}),
-						},
-						...(thoughtSignature && { thoughtSignature }),
-					};
-					parts.push(part);
+					if (replayUnsignedToolCallsAsText) {
+						textToolCallIds.add(block.id);
+						parts.push({
+							text: sanitizeSurrogates(
+								`[Tool Call: ${block.name}]\nArguments: ${JSON.stringify(block.arguments ?? {}, null, 2)}`,
+							),
+						});
+					} else {
+						const thoughtSignature = resolveThoughtSignature(isSameProviderAndModel, block.thoughtSignature);
+						const part: Part = {
+							functionCall: {
+								name: block.name,
+								args: block.arguments ?? {},
+								...(requiresToolCallId(model.id) ? { id: block.id } : {}),
+							},
+							...(thoughtSignature && { thoughtSignature }),
+						};
+						parts.push(part);
+					}
 				} else if (block.type === "providerNative") {
 				}
 			}
@@ -310,6 +347,23 @@ export function convertMessages<T extends GoogleApiType>(
 			// Extract text and image content
 			const textContent = msg.content.filter((c): c is TextContent => c.type === "text");
 			const textResult = textContent.map((c) => c.text).join("\n");
+
+			// A tool call replayed as text pairs with its result as text: an unpaired
+			// functionResponse part would break the model turn's call/response pairing.
+			if (textToolCallIds.has(msg.toolCallId)) {
+				const imageContent = model.input.includes("image")
+					? msg.content.filter((c): c is ImageContent => c.type === "image")
+					: [];
+				let body = "(no output)";
+				if (textResult.length > 0) body = sanitizeSurrogates(textResult);
+				else if (imageContent.length > 0) body = "(see attached image)";
+				const errorMarker = msg.isError ? " (error)" : "";
+				appendContent(contents, {
+					role: "user",
+					parts: [{ text: `[Tool Result: ${msg.toolName}]${errorMarker}\n${body}` }],
+				});
+				continue;
+			}
 			const imageContent = model.input.includes("image")
 				? msg.content.filter((c): c is ImageContent => c.type === "image")
 				: [];

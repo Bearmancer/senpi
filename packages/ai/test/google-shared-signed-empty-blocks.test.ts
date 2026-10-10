@@ -102,8 +102,10 @@ describe("google-shared convertMessages — signed empty blocks", () => {
 			),
 		);
 		const modelTurn = contents.find((c) => c.role === "model");
+		// The empty blocks drop; the unsigned tool call replays as text on Gemini 3+.
 		expect(modelTurn?.parts).toHaveLength(1);
-		expect(modelTurn?.parts?.[0]?.functionCall).toBeTruthy();
+		expect(modelTurn?.parts?.[0]?.functionCall).toBeUndefined();
+		expect(modelTurn?.parts?.[0]?.text).toBe('[Tool Call: bash]\nArguments: {\n  "command": "ls"\n}');
 	});
 
 	it("still drops signed empty blocks from a different provider/model (signature unusable)", () => {
@@ -120,7 +122,7 @@ describe("google-shared convertMessages — signed empty blocks", () => {
 		);
 		const modelTurn = contents.find((c) => c.role === "model");
 		expect(modelTurn?.parts).toHaveLength(1);
-		expect(modelTurn?.parts?.[0]?.functionCall).toBeTruthy();
+		expect(modelTurn?.parts?.[0]?.functionCall).toBeUndefined();
 		expect(JSON.stringify(modelTurn)).not.toContain(VALID_SIG);
 	});
 });

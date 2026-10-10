@@ -10,6 +10,8 @@
 
 ### Fixed
 
+- Fixed Gemini 3+ (Vertex and AI Studio) rejecting replayed tool-call history with 400 "Function call is missing a thought_signature in functionCall parts". A replayed step whose function calls carry no usable thought signature (typical for a session that switched models mid-thread) is now sent as text call + text result instead of unsigned `functionCall` parts; steps with a valid signature stay structured.
+
 ### Removed
 
 ## [2026.10.10-11] - 2026-10-09
