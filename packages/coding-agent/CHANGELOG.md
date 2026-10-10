@@ -12,6 +12,8 @@
 
 ### Fixed
 
+- Required compaction no longer wedges when the newest retained message is unsafe. Recovery normalizes live values like session persistence, replaces unsafe tool results without breaking their call pairing, and omits unsafe signed turns only from replay. An unchanged terminal no-safe-suffix rejection is attempted once across automatic triggers and session reopen; provider and summarizer failures remain retryable instead of setting that latch. Recovery diagnostics are actionable and the original transcript is preserved ([#3060](https://github.com/code-yeongyu/senpi/issues/3060), [#3061](https://github.com/code-yeongyu/senpi/pull/3061)).
+
 - A goal that stops auto-continuing because progress is stale now reads "Goal stopped: no progress (send a message or /goal resume)" instead of pursuing with a frozen timer. Extension-triggered turns accrue no goal tokens or time while it is stopped; the same turns still count for an active goal. Goal-tool and app-server status snapshots present the stop as paused. The recovery notice appears once at the stop and once on each session reopen, without restarting the goal or repeating on extension reload ([#3026](https://github.com/code-yeongyu/senpi/issues/3026)).
 
 - The model-facing `get_goal` result now identifies stale stops with `continuation.status: "stale_stopped"` and explains that a user message or `/goal resume` resumes the goal. Regression coverage also pins both extension delivery paths after an active goal becomes stale in-session, preserving the committed usage at the stop ([#3053](https://github.com/code-yeongyu/senpi/pull/3053)).

@@ -9477,3 +9477,40 @@ The `promptSurface` plumbing in `agent-session.ts`, `agent-session-services.ts` 
 ### Expected merge conflict zones
 
 - LOW: the documented model set and warning text in `packages/coding-agent/src/core/ultrafast-lanes.ts`.
+## 2026-10-10 - Replay-safe retained recovery and durable rejection admission (senpi#3060)
+
+### What changed
+
+- `packages/coding-agent/src/core/session-manager.ts`: a deterministic checkpoint's `retainedMessagePolicy` applies JSON-normalized safe replacements to retained model context, carrying entry provenance onto copies. The policy survives later checkpoints and reopen, without rewriting source entries or applying to messages after the recovery boundary.
+- `packages/coding-agent/src/core/agent-session.ts`: pre-prompt and automatic compaction consult the persisted identical-recovery rejection latch before emitting an attempt. Manual compaction remains an explicit retry.
+
+### Why
+
+An unsafe newest result poisoned every retained suffix. Repeated automatic admission retried an unchanged impossible recovery, including after session reopen.
+
+### Why an extension could not handle it
+
+`packages/coding-agent/src/core/session-manager.ts` owns canonical replay, resume, and compaction admission projections. `packages/coding-agent/src/core/agent-session.ts` emits automatic attempt events before extension hooks run; both must honor the same durable policy.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/session-manager.ts`: `projectSession` provenance mapping.
+- `packages/coding-agent/src/core/agent-session.ts`: `_runPrePromptCompaction` and `_runAutoCompaction` admission.
+
+## 2026-10-10 - Share actual compaction admission with terminal rejection classification (senpi#3061)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `_wouldCompactionOverflow` delegates the existing projection, Cursor history admission and effective-reserve calculation to `wouldCompactionOverflow` in the compaction builtin's rejection helper.
+
+### Why
+
+- `packages/coding-agent/src/core/agent-session.ts`: a generated summary that core would accept must not be vetoed by the deterministic fallback's more conservative envelope estimator. The same calculation now gates both acceptance and terminal no-safe-suffix classification.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/agent-session.ts` owns final acceptance. Sharing its existing calculation avoids a second, divergent implementation in the builtin.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/agent-session.ts`: rejection-helper import and `_wouldCompactionOverflow` delegation.
