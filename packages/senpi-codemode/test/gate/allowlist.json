@@ -1,6 +1,14 @@
 {
 	"version": 1,
 	"nodes": {
+		"senpi#3048": {
+			"additions": [
+				"legacyContracts/test/bench/rescore.test.ts/rescoring a saved measurement refuses legacy embedded-clock samples instead of treating them as post-result CPU",
+				"legacyContracts/test/bench/session-postresult.test.ts/benchmark post-result CPU boundary (Refs senpi#3048) counts cold encoding before-value and flush work before sampling the received result",
+				"legacyContracts/test/bench/session-postresult.test.ts/benchmark post-result CPU boundary (Refs senpi#3048) counts cold encoding during-result and flush work before sampling the received result"
+			],
+			"reason": "Refs senpi#3048: RED-to-GREEN contracts prove complete post-result CPU sampling and refuse legacy saved CPU boundaries without changing the frozen baseline."
+		},
 		"senpi#3034": {
 			"additions": [
 				"legacyContracts/test/py-kernel-bookkeeping.test.ts/Python per-cell bookkeeping uses two FIFO operations zero Python queue locks and one capture scope per cell"
