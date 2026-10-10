@@ -1,3 +1,21 @@
+## 2026-10-10 - POSIX supervisor exit tests run on Linux and macOS (senpi#3054)
+
+### What changed
+
+- `.github/workflows/ci.yml`: the `rpc-owner-lifetime` matrix runs the owner-lifetime, owner-review, child-exit, missing-compiler and legacy-drain regressions on `ubuntu-latest` and `macos-latest`. A compiler preflight fails explicitly when `cc` is absent; tests compile the native exit waiter on demand. The required `Check and test` fan-in includes this matrix. Windows is excluded from this POSIX job.
+
+### Why
+
+- `.github/workflows/ci.yml`: the normal coding-agent shards cover Linux only. The kqueue branch also needs macOS coverage, and a missing C compiler must fail rather than silently skipping exit observation.
+
+### Why an extension could not handle it
+
+- `.github/workflows/ci.yml`: runner selection, compiler availability and required-status fan-in are repository CI configuration.
+
+### Expected merge conflict zones
+
+- `.github/workflows/ci.yml`: job definitions, the `check-and-test.needs` array and its summary list.
+
 ## 2026-10-09 - The changelog gate audits the whole tree against the upstream pin (senpi#3006)
 
 ### What changed
