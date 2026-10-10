@@ -1,3 +1,25 @@
+## 2026-10-10 - Retained child identity and shutdown recovery (senpi#3054 review)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-lifecycle-scratch.ts`: record the host child's OS start time in UTC with a C-locale probe, beside its PID. An unreadable identity is recorded as unknown and diagnosed.
+- `packages/coding-agent/src/modes/rpc/host-stalled-evidence.ts`: compare parsed start-time milliseconds using the shared process-start tolerance. A gone PID or proved start-time mismatch releases the guard; unreadable live identities keep the generation guarded and emit a diagnostic.
+- `packages/coding-agent/src/modes/rpc/host-lifecycle-shutdown.ts`: errors before child signalling still attempt SIGTERM, then SIGKILL and observed exit. Watcher/client cleanup errors take the same recovery path; a fired post-SIGKILL breaker is not restarted. Failures keep ownership metadata and exit non-zero.
+
+### Why
+
+A reused child PID could keep a dead supervisor's generation wedged indefinitely. Fallible stop metadata or pre-stop cleanup could also make the supervisor exit without ever signalling its child.
+
+### Why an extension could not handle it
+
+The supervisor and generation readers operate outside session extension lifetimes and own process identity, shutdown and registration release.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/host-lifecycle-scratch.ts`: child identity recording.
+- `packages/coding-agent/src/modes/rpc/host-stalled-evidence.ts`: retained-child identity guard.
+- `packages/coding-agent/src/modes/rpc/host-lifecycle-shutdown.ts`: shutdown failure recovery and escalation ordering.
+
 ## 2026-10-10 - Reap host children before supervisor exit (senpi#3054)
 
 ### What changed

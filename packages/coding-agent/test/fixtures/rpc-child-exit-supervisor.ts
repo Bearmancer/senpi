@@ -87,10 +87,12 @@ if (mode === "host" || mode === "host-term") {
 		child.once("exit", (code, signal) => process.send?.({ type: "reaped", pid: child?.pid, code, signal }));
 		return child;
 	});
-	if (mode === "held-kill") {
+	if (mode === "held-kill" || mode === "throw-before-term") {
 		const kill = process.kill;
 		mock.method(process, "kill", (pid: number, signal?: NodeJS.Signals | number) => {
-			if (pid === child?.pid && signal === "SIGKILL") {
+			if (pid === child?.pid && mode === "throw-before-term" && (signal === "SIGTERM" || signal === "SIGKILL"))
+				process.send?.({ type: "child-signal", signal });
+			if (mode === "held-kill" && pid === child?.pid && signal === "SIGKILL") {
 				// A live child past the breaker cannot be manufactured with a real SIGKILL.
 				process.send?.({ type: "kill-held", pid });
 				return true;
@@ -108,7 +110,12 @@ if (mode === "host" || mode === "host-term") {
 	process.on("message", (message: unknown) => {
 		if (typeof message !== "object" || message === null || !("type" in message)) throw new Error("bad control");
 		if (message.type === "release-exit") releaseExit?.();
-		else if (message.type === "expire" && "id" in message && typeof message.id === "number") {
+		else if (message.type === "inject-stop-error") {
+			mock.method(Date.prototype, "toISOString", () => {
+				throw new Error("injected before child SIGTERM");
+			});
+			process.send?.({ type: "stop-error-armed" });
+		} else if (message.type === "expire" && "id" in message && typeof message.id === "number") {
 			const run = waits.get(message.id);
 			if (!run) throw new Error("missing wait");
 			waits.delete(message.id);

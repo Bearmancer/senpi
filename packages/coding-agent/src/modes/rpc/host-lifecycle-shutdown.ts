@@ -66,13 +66,15 @@ export async function performShutdown(context: SupervisorShutdown, reason: strin
 	const { state, child } = context;
 	state.shuttingDown = true;
 	state.shutdownReason = reason;
-	context.stopWatchers();
-	context.drain.stop();
+	let childStopStarted = false;
 	let hardExit: ReturnType<typeof setTimeout> | undefined;
 	try {
+		context.stopWatchers();
+		context.drain.stop();
 		writeStderrLine(`senpi rpc host supervisor: ${reason} shutdown`);
 		context.activity.clients.destroyAll();
 		// No fallible socket/metadata cleanup may bypass the child's observed exit.
+		childStopStarted = true;
 		await stopChild(context, reason);
 		await state.childExitRecorded;
 		if (process.platform === "win32")
@@ -99,6 +101,14 @@ export async function performShutdown(context: SupervisorShutdown, reason: strin
 		// In particular, an unobserved child exit leaves its generation, pointer and settings intact.
 		supervisorLog(`shutdown failed for host child pid ${child.pid ?? "unknown"}: ${errorMessage(cause)}`);
 		exitCode = 1;
+		try {
+			if (!childStopStarted) await reapChildAfterFailure(child);
+			await state.childExitRecorded;
+		} catch (reapCause) {
+			supervisorLog(
+				`shutdown recovery failed for host child pid ${child.pid ?? "unknown"}: ${errorMessage(reapCause)}`,
+			);
+		}
 	} finally {
 		if (hardExit) clearTimeout(hardExit);
 		// Windows named-pipe handles can outlive their JavaScript wrappers, so cleanup failure must
@@ -116,31 +126,58 @@ async function stopChild(context: SupervisorShutdown, reason: string): Promise<v
 	const { child, generation } = context;
 	const pid = child.pid;
 	if (childExited(child) || pid === undefined) return;
-	const outer = await readStopIntent(generation).catch((cause) => {
-		supervisorLog(`cannot read child stop intent: ${errorMessage(cause)}`);
-		return undefined;
-	});
-	const at = new Date().toISOString();
-	const intent = layeredSupervisorIntent(outer, supervisorSender(context.instanceId), { targetPid: pid, reason, at });
-	await writeStopIntent(generation, intent, supervisorLog);
-	const signalledAt = Date.now();
-	signalChild(pid, "SIGTERM");
-	if (await waitForChildExit(child, CHILD_STOP_TIMEOUT_MS)) return;
-	const stallWaitMs = await waitOutStalledChild({
-		child,
-		generation,
-		signalledAt,
-		waitForExit: waitForChildExit,
-	});
-	if (childExited(child)) return;
-	if (stallWaitMs > 0) {
-		const escalated = { ...intent, reason: `${intent.reason}; escalated_after_stall_wait=${stallWaitMs}` };
-		await writeStopIntent(generation, escalated, supervisorLog);
+	let termAttempted = false;
+	let killAttempted = false;
+	try {
+		const outer = await readStopIntent(generation).catch((cause) => {
+			supervisorLog(`cannot read child stop intent: ${errorMessage(cause)}`);
+			return undefined;
+		});
+		const at = new Date().toISOString();
+		const intent = layeredSupervisorIntent(outer, supervisorSender(context.instanceId), {
+			targetPid: pid,
+			reason,
+			at,
+		});
+		await writeStopIntent(generation, intent, supervisorLog);
+		const signalledAt = Date.now();
+		termAttempted = true;
+		signalChild(pid, "SIGTERM");
+		if (await waitForChildExit(child, CHILD_STOP_TIMEOUT_MS)) return;
+		const stallWaitMs = await waitOutStalledChild({
+			child,
+			generation,
+			signalledAt,
+			waitForExit: waitForChildExit,
+		});
+		if (childExited(child)) return;
+		if (stallWaitMs > 0) {
+			const escalated = { ...intent, reason: `${intent.reason}; escalated_after_stall_wait=${stallWaitMs}` };
+			await writeStopIntent(generation, escalated, supervisorLog);
+		}
+		killAttempted = true;
+		signalChild(pid, "SIGKILL");
+		// SIGKILL cannot be ignored; the bound is only a circuit breaker for an uninterruptible kernel wait.
+		if (!(await waitForChildExit(child, CHILD_KILL_EXIT_TIMEOUT_MS)))
+			throw new Error(`host child pid ${pid} exit unobserved ${CHILD_KILL_EXIT_TIMEOUT_MS}ms after SIGKILL`);
+	} catch (cause) {
+		// Metadata/watch failures must not leave a child behind. A fired exit breaker is already
+		// the final bound: never restart it or enlarge the normal caller's shutdown budget.
+		if (!killAttempted) await reapChildAfterFailure(child, termAttempted);
+		throw cause;
+	}
+}
+
+async function reapChildAfterFailure(child: ChildProcess, termAttempted = false): Promise<void> {
+	const pid = child.pid;
+	if (childExited(child) || pid === undefined) return;
+	if (!termAttempted) {
+		signalChild(pid, "SIGTERM");
+		if (await waitForChildExit(child, CHILD_STOP_TIMEOUT_MS)) return;
 	}
 	signalChild(pid, "SIGKILL");
-	// SIGKILL cannot be ignored; the bound is only a circuit breaker for an uninterruptible kernel wait.
 	if (!(await waitForChildExit(child, CHILD_KILL_EXIT_TIMEOUT_MS)))
-		throw new Error(`host child pid ${pid} exit unobserved ${CHILD_KILL_EXIT_TIMEOUT_MS}ms after SIGKILL`);
+		throw new Error(`host child pid ${pid} exit unobserved ${CHILD_KILL_EXIT_TIMEOUT_MS}ms after recovery SIGKILL`);
 }
 
 function signalChild(pid: number, signal: NodeJS.Signals): boolean {

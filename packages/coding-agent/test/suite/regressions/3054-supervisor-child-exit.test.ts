@@ -3,7 +3,7 @@ import { once } from "node:events";
 import { access, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { readProcessStartTime } from "../../../src/modes/app-server/daemon/process.ts";
+import { processStartTimeMs, readProcessStartTime } from "../../../src/modes/app-server/daemon/process.ts";
 import { readHostCrashRecords } from "../../../src/modes/rpc/host-crash-record.ts";
 import {
 	createDaemonDirectories,
@@ -17,6 +17,8 @@ import { DEFAULT_STOP_TIMEOUT_MS, stopSpawnedChild } from "../../../src/modes/rp
 import { anyGenerationLive } from "../../../src/modes/rpc/host-gc-evidence.ts";
 import { pruneDeadGenerations } from "../../../src/modes/rpc/host-generations.ts";
 import type { ChildExit } from "../../../src/modes/rpc/host-readiness.ts";
+import { hostChildAlive } from "../../../src/modes/rpc/host-stalled-evidence.ts";
+import { writeJsonAtomic } from "../../../src/modes/rpc/host-state-json.ts";
 import { CHILD_KILL_EXIT_TIMEOUT_MS } from "../../../src/modes/rpc/host-stop-intent.ts";
 import { processExitEvent } from "../../helpers/process-exit-event.ts";
 import { type GenerationScratch, generationEnv, generationScratch } from "../../helpers/rpc-generation-support.ts";
@@ -177,6 +179,101 @@ describe.skipIf(process.platform !== "darwin" && process.platform !== "linux")("
 		expect(await readHostCrashRecords(r.paths.dir)).toContainEqual(expect.objectContaining({ signal: "SIGKILL" }));
 		await expect(access(r.generation.dir)).rejects.toMatchObject({ code: "ENOENT" });
 	});
+
+	// #3054: metadata failures cannot strand the host when its supervisor exits.
+	it("still sends TERM then KILL when shutdown throws before its first signal", async () => {
+		const r = await rig("throw-before-term");
+		const hostExit = await processExitEvent(r.hostPid);
+		try {
+			r.child.send({ type: "inject-stop-error" });
+			await r.wait("stop-error-armed");
+			const before = r.messages.length;
+			r.child.kill("SIGTERM");
+			const termWait = await r.wait("wait", before);
+			expect(termWait.ms, "shutdown recovery must wait after attempting SIGTERM").toBe(5_000);
+			r.child.send({ type: "expire", id: termWait.id });
+			await hostExit.wait(10_000, `host child after pre-signal shutdown failure ${r.hostPid}`);
+			expect(await r.wait("reaped", before), "shutdown recovery must escalate to SIGKILL").toMatchObject({
+				signal: "SIGKILL",
+			});
+			expect(
+				r.messages.filter((message) => message.type === "child-signal").map((message) => message.signal),
+			).toEqual(["SIGTERM", "SIGKILL"]);
+			expect(await r.exited).toEqual([1, null]);
+			expect(r.stderr()).toContain("injected before child SIGTERM");
+		} finally {
+			await hostExit.dispose();
+		}
+	});
+
+	// #3054: a dead supervisor's retained generation belongs to an OS process identity, not just a pid.
+	it.each(["same", "reused", "unreadable"] as const)(
+		"judges a kept generation with a %s child start time",
+		async (identity) => {
+			const r = await rig("held-kill");
+			const before = r.messages.length;
+			r.child.kill("SIGTERM");
+			const termWait = await r.wait("wait", before);
+			r.child.send({ type: "expire", id: termWait.id });
+			await r.wait("kill-held", before);
+			const killWait =
+				r.messages.slice(before).find((message) => message.type === "wait" && message.id !== termWait.id) ??
+				(await r.wait("wait", r.messages.length));
+			r.child.send({ type: "expire", id: killWait.id });
+			expect(await r.exited).toEqual([1, null]);
+			const recorded = JSON.parse(await readFile(r.generation.childPidFile, "utf8"));
+			expect(typeof recorded.processStartTime).toBe("string");
+			const startMs = processStartTimeMs(recorded.processStartTime);
+			if (startMs === undefined) throw new Error("fixture child start time unreadable");
+			await writeJsonAtomic(r.generation.childPidFile, {
+				pid: r.hostPid,
+				processStartTime:
+					identity === "unreadable"
+						? null
+						: new Date(startMs - (identity === "reused" ? 60_000 : 0)).toISOString(),
+			});
+			if (identity === "reused") {
+				expect(await hostChildAlive(r.generation), "reused PID must not guard the old generation").toBe(false);
+				expect(await anyGenerationLive(r.paths)).toBe(false);
+				expect((await pruneDeadGenerations(r.paths)).generations, "reused PID generation must be released").toEqual(
+					["child-exit"],
+				);
+				await expect(access(r.paths.pointerFile)).rejects.toMatchObject({ code: "ENOENT" });
+				const replacement = await ensureHost({
+					socket: r.qa.socket,
+					agentDir: r.qa.agentDir,
+					_test: {
+						spawn: {
+							command: process.execPath,
+							args: [
+								join(import.meta.dirname, "../../fixtures/rpc-host-fixture.mjs"),
+								r.qa.socket,
+								"fixture-version",
+								"multi_session,extension_events,session_context,session_kind",
+								"answer",
+							],
+						},
+					},
+				});
+				const replacementExit = await processExitEvent(replacement.pid);
+				try {
+					expect(replacement.reused, "ensure must replace the reused PID generation, not refuse it").toBe(false);
+				} finally {
+					replacement.release();
+					process.kill(replacement.pid, "SIGTERM");
+					await replacementExit.wait(10_000, "replacement fixture host");
+					await replacementExit.dispose();
+				}
+			} else {
+				expect(await hostChildAlive(r.generation), "same or unknown live child must remain guarded").toBe(true);
+				expect((await pruneDeadGenerations(r.paths)).generations).toEqual([]);
+				await expect(ensureHost({ socket: r.qa.socket, agentDir: r.qa.agentDir })).rejects.toMatchObject({
+					reason: "host_stalled",
+				});
+				await access(r.generation.pidFile);
+			}
+		},
+	);
 
 	it("waits for the actual child exit observation before releasing its generation", async () => {
 		const r = await rig("gate-exit");
