@@ -6,30 +6,56 @@ import { mock } from "node:test";
 import { runHostSupervisor } from "../../src/modes/rpc/host-lifecycle.ts";
 
 const [mode, socket, agentDir] = process.argv.slice(2);
-if (mode === "host") {
+if (mode === "host" || mode === "host-term") {
 	const address = process.argv.find((arg) => arg.startsWith("unix://"))?.slice(7);
 	if (!address) throw new Error("missing internal socket");
-	process.on("SIGTERM", () => {});
-	net.createServer((peer) => peer.resume()).listen(address);
+	const peers = new Set<net.Socket>();
+	const server = net
+		.createServer((peer) => {
+			peers.add(peer);
+			peer.once("close", () => peers.delete(peer));
+			peer.resume();
+		})
+		.listen(address);
+	process.on("SIGTERM", () => {
+		if (mode === "host-term") {
+			for (const peer of peers) peer.destroy();
+			server.close(() => process.exit(0));
+		}
+	});
+	if (mode === "host-term") server.once("listening", () => process.stderr.write("host-term-ready\n"));
 } else {
 	if (!socket || !agentDir) throw new Error("missing supervisor paths");
 	const timeout = globalThis.setTimeout;
 	const waits = new Map<number, () => void>();
 	let sequence = 0;
-	mock.method(globalThis, "setTimeout", (run: () => void, ms: number) => {
-		if (![2_000, 5_000, 30_000].includes(ms)) return timeout(run, ms);
-		const timer = timeout(() => {}, 2_147_483_647);
-		const id = ++sequence;
-		waits.set(id, run);
-		process.send?.({ type: "wait", id, ms });
-		return timer;
-	});
+	if (mode !== "honour-term")
+		mock.method(globalThis, "setTimeout", (run: () => void, ms: number) => {
+			if (![2_000, 5_000, 30_000].includes(ms)) return timeout(run, ms);
+			const timer = timeout(() => {}, 2_147_483_647);
+			const id = ++sequence;
+			waits.set(id, run);
+			process.send?.({ type: "wait", id, ms });
+			return timer;
+		});
 	const spawn = childProcess.spawn;
 	let child: childProcess.ChildProcess | undefined;
 	let releaseExit: (() => void) | undefined;
 	mock.method(childProcess, "spawn", (...args: Parameters<typeof childProcess.spawn>) => {
+		if (mode === "honour-term") {
+			if (!Array.isArray(args[2]?.stdio)) throw new Error("normal-stop fixture needs explicit child stdio");
+			args[2] = { ...args[2], stdio: args[2].stdio.map((value, index) => (index === 2 ? "pipe" : value)) };
+		}
 		child = spawn(...args);
 		process.send?.({ type: "host", pid: child.pid });
+		if (mode === "honour-term") {
+			let output = "";
+			child.stderr?.on("data", (chunk) => {
+				process.stderr.write(chunk);
+				output += chunk.toString();
+				if (output.includes("host-term-ready\n")) process.send?.({ type: "host-ready" });
+			});
+		}
 		if (mode === "gate-exit") {
 			// SIGKILL itself cannot be delayed deterministically: hold libuv's exit observation instead.
 			let code: number | null = null;
@@ -94,6 +120,6 @@ if (mode === "host") {
 		agentDir,
 		hostArgs: [],
 		childCommand: process.execPath,
-		childArgs: [import.meta.filename, "host"],
+		childArgs: [import.meta.filename, mode === "honour-term" ? "host-term" : "host"],
 	});
 }

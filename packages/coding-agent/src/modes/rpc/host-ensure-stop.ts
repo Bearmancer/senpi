@@ -95,7 +95,19 @@ export async function stopSpawnedChild(
 	const exited = () => child.exitCode !== null || child.signalCode !== null;
 	const pid = child.pid;
 	if (exited() || pid === undefined) return;
-	const waitFor = (ms: number) => Promise.race([childExit.then(() => true), delay(ms).then(() => exited())]);
+	const waitFor = async (ms: number): Promise<boolean> => {
+		let timer: ReturnType<typeof setTimeout> | undefined;
+		try {
+			return await Promise.race([
+				childExit.then(() => true),
+				new Promise<boolean>((resolve) => {
+					timer = setTimeout(() => resolve(exited()), ms);
+				}),
+			]);
+		} finally {
+			clearTimeout(timer);
+		}
+	};
 	const announced = await announceStop(target, pid);
 	signalPid(pid, "SIGTERM");
 	if (await waitWhileSupervisorReports(target, termTimeoutMs, waitFor)) return;

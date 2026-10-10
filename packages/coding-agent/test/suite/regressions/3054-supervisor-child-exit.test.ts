@@ -2,7 +2,7 @@ import { type ChildProcess, execFileSync, spawn } from "node:child_process";
 import { once } from "node:events";
 import { access, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { readProcessStartTime } from "../../../src/modes/app-server/daemon/process.ts";
 import { readHostCrashRecords } from "../../../src/modes/rpc/host-crash-record.ts";
 import {
@@ -13,8 +13,10 @@ import {
 import { writeHostRegistration } from "../../../src/modes/rpc/host-daemon-registration.ts";
 import { writeHostSettings } from "../../../src/modes/rpc/host-daemon-state.ts";
 import { ensureHost } from "../../../src/modes/rpc/host-ensure.ts";
+import { DEFAULT_STOP_TIMEOUT_MS, stopSpawnedChild } from "../../../src/modes/rpc/host-ensure-stop.ts";
 import { anyGenerationLive } from "../../../src/modes/rpc/host-gc-evidence.ts";
 import { pruneDeadGenerations } from "../../../src/modes/rpc/host-generations.ts";
+import type { ChildExit } from "../../../src/modes/rpc/host-readiness.ts";
 import { CHILD_KILL_EXIT_TIMEOUT_MS } from "../../../src/modes/rpc/host-stop-budget.ts";
 import { processExitEvent } from "../../helpers/process-exit-event.ts";
 import { type GenerationScratch, generationEnv, generationScratch } from "../../helpers/rpc-generation-support.ts";
@@ -82,6 +84,7 @@ async function rig(mode: string) {
 	if (typeof host.pid !== "number") throw new Error("missing host pid");
 	rigs.push({ child, exited, hostPid: host.pid, qa });
 	await wait("ready");
+	if (mode === "honour-term") await wait("host-ready");
 	await writeHostRegistration(paths, {
 		record: { pid: child.pid, processStartTime: (await readProcessStartTime(child.pid)) ?? null },
 		socket: qa.socket,
@@ -115,6 +118,46 @@ afterEach(async () => {
 
 // #3054: observe the real supervisor's exit, its child's reaping, and the retained ownership boundary.
 describe.skipIf(process.platform !== "darwin" && process.platform !== "linux")("supervisor child exit", () => {
+	it("stops a SIGTERM-honouring host well before the escalation grace", async () => {
+		const r = await rig("honour-term");
+		const hostExit = await processExitEvent(r.hostPid);
+		const before = r.messages.length;
+		try {
+			const started = performance.now();
+			r.child.kill("SIGTERM");
+			expect(await r.exited).toEqual([143, null]);
+			const elapsedMs = performance.now() - started;
+			expect(elapsedMs).toBeLessThan(3_000);
+			await hostExit.wait(10_000, `SIGTERM-honouring child ${r.hostPid}`);
+			expect(await r.wait("reaped", before)).toMatchObject({ code: 0, signal: null });
+			expect(processAlive(r.hostPid)).toBe(false);
+			await expect(access(r.generation.dir)).rejects.toMatchObject({ code: "ENOENT" });
+		} finally {
+			await hostExit.dispose();
+		}
+	});
+
+	it("disarms the caller deadline after a normal real-supervisor stop", async () => {
+		const r = await rig("honour-term");
+		const childExit = new Promise<ChildExit>((resolve) =>
+			r.child.once("exit", (code, signal) => resolve({ code, signal })),
+		);
+		vi.useFakeTimers();
+		try {
+			await stopSpawnedChild(r.child, childExit, DEFAULT_STOP_TIMEOUT_MS, {
+				daemonDir: r.paths.dir,
+				generation: r.generation,
+				instanceId: "child-exit",
+				sender: { pid: process.pid, kind: "ensure" },
+				reason: "normal-stop-test",
+			});
+			expect(vi.getTimerCount()).toBe(0);
+		} finally {
+			vi.useRealTimers();
+		}
+		expect(await r.exited).toEqual([143, null]);
+	});
+
 	it("reaps a SIGTERM-resistant child and records SIGKILL before exiting", async () => {
 		const r = await rig("ignore-term");
 		const hostExit = await processExitEvent(r.hostPid);

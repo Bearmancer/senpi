@@ -19,16 +19,25 @@ export interface ProcessExitEvent {
 /** Arm NOTE_EXIT/pidfd before triggering shutdown; Node cannot emit 'exit' for a non-child. */
 export async function processExitEvent(pid: number): Promise<ProcessExitEvent> {
 	if (!executable) {
-		directory = mkdtempSync(join(tmpdir(), "senpi-exit-event-"));
-		executable = join(directory, "wait-process-exit");
-		execFileSync("cc", [
-			"-Wall",
-			"-Wextra",
-			"-Werror",
-			join(import.meta.dirname, "../fixtures/wait-process-exit.c"),
-			"-o",
-			executable,
-		]);
+		const outputDirectory = mkdtempSync(join(tmpdir(), "senpi-exit-event-"));
+		const outputExecutable = join(outputDirectory, "wait-process-exit");
+		try {
+			execFileSync("cc", [
+				"-Wall",
+				"-Wextra",
+				"-Werror",
+				join(import.meta.dirname, "../fixtures/wait-process-exit.c"),
+				"-o",
+				outputExecutable,
+			]);
+		} catch (cause) {
+			rmSync(outputDirectory, { recursive: true, force: true });
+			if (cause instanceof Error && "code" in cause && cause.code === "ENOENT")
+				throw new Error("Missing C compiler 'cc' on PATH: required for POSIX process-exit tests", { cause });
+			throw cause;
+		}
+		directory = outputDirectory;
+		executable = outputExecutable;
 	}
 	const waiter = spawn(executable, [String(pid)], { stdio: ["ignore", "pipe", "pipe"] });
 	let stderr = "";

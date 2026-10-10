@@ -189,11 +189,7 @@ async function ensureHostLocked(
 	// A host from before this layout registered itself in the FLAT directory. Its files are another
 	// process's state: never read as ours, never removed. While it is alive this ensure never starts
 	// beside it: an idle one is drained and waited out (#2423), a busy or unprovable one is refused.
-	const legacyRefusal = await retireIdleLegacyHost(
-		paths,
-		probe,
-		testOptions?.stopTimeoutMs ?? DEFAULT_STOP_TIMEOUT_MS,
-	);
+	const legacyRefusal = await retireIdleLegacyHost(paths, probe, testOptions?.stopTimeoutMs);
 	if (legacyRefusal !== undefined) throw new HostEnsureRefusedError(socket, "legacy_host", protocol, legacyRefusal);
 	if (stranded !== undefined) return startHost(paths, socket, options, stranded.generation + 1);
 	if (registeredHere) await clearHostRegistration(paths);
