@@ -17,7 +17,7 @@ import { DEFAULT_STOP_TIMEOUT_MS, stopSpawnedChild } from "../../../src/modes/rp
 import { anyGenerationLive } from "../../../src/modes/rpc/host-gc-evidence.ts";
 import { pruneDeadGenerations } from "../../../src/modes/rpc/host-generations.ts";
 import type { ChildExit } from "../../../src/modes/rpc/host-readiness.ts";
-import { CHILD_KILL_EXIT_TIMEOUT_MS } from "../../../src/modes/rpc/host-stop-budget.ts";
+import { CHILD_KILL_EXIT_TIMEOUT_MS } from "../../../src/modes/rpc/host-stop-intent.ts";
 import { processExitEvent } from "../../helpers/process-exit-event.ts";
 import { type GenerationScratch, generationEnv, generationScratch } from "../../helpers/rpc-generation-support.ts";
 import { processAlive } from "../../helpers/spawned-host-reaper.ts";

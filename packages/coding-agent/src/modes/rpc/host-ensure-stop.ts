@@ -17,8 +17,13 @@ import type { HostStopSender } from "./host-crash-record.ts";
 import type { HostGenerationPaths } from "./host-daemon-paths.ts";
 import type { ChildExit } from "./host-readiness.ts";
 import { activeStopProgress, childStalledStopMaxMs } from "./host-stalled-evidence.ts";
-import { CHILD_KILL_EXIT_TIMEOUT_MS, CHILD_STOP_TIMEOUT_MS } from "./host-stop-budget.ts";
-import { type HostStopIntent, readStopIntent, writeStopIntent } from "./host-stop-intent.ts";
+import {
+	CHILD_KILL_EXIT_TIMEOUT_MS,
+	CHILD_STOP_TIMEOUT_MS,
+	type HostStopIntent,
+	readStopIntent,
+	writeStopIntent,
+} from "./host-stop-intent.ts";
 
 export const DEFAULT_STOP_TIMEOUT_MS =
 	Math.max(CHILD_STOP_TIMEOUT_MS, childStalledStopMaxMs()) + CHILD_KILL_EXIT_TIMEOUT_MS + 5_000;

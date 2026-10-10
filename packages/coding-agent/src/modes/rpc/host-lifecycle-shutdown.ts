@@ -13,12 +13,17 @@ import type { SupervisorActivity } from "./host-lifecycle-activity.ts";
 import type { SupervisorDrain } from "./host-lifecycle-drain.ts";
 import { closeServer } from "./host-lifecycle-proxy.ts";
 import { waitOutStalledChild } from "./host-lifecycle-stall-wait.ts";
-import { CHILD_KILL_EXIT_TIMEOUT_MS, CHILD_STOP_TIMEOUT_MS } from "./host-stop-budget.ts";
-import { layeredSupervisorIntent, readStopIntent, writeStopIntent } from "./host-stop-intent.ts";
+import {
+	CHILD_KILL_EXIT_TIMEOUT_MS,
+	CHILD_STOP_TIMEOUT_MS,
+	layeredSupervisorIntent,
+	readStopIntent,
+	writeStopIntent,
+} from "./host-stop-intent.ts";
 import { errorMessage, supervisorLog, writeStderrLine } from "./host-supervisor-log.ts";
 import { type SocketFileIdentity, shieldSocketDuringClose, unlinkOwnedSocket } from "./socket-ownership.ts";
 
-export { CHILD_STOP_TIMEOUT_MS } from "./host-stop-budget.ts";
+export { CHILD_STOP_TIMEOUT_MS } from "./host-stop-intent.ts";
 
 /** Win32 named-pipe shutdown can leave supervisor handles live after close starts. */
 const WINDOWS_SUPERVISOR_SHUTDOWN_HARD_EXIT_MS = 2_000;
