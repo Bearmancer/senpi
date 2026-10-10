@@ -182,12 +182,11 @@ import {
 	type ModelUsabilityBudgetProjection,
 	projectModelUsabilityBudget,
 } from "./extensions/builtin/compaction/model-usability-budget.ts";
+import { resolveEffectiveReserveTokens, shouldTriggerCompaction } from "./extensions/builtin/compaction/policy.ts";
 import {
-	resolveEffectiveReserveTokens,
-	resolveReserveTokens,
-	shouldTriggerCompaction,
-} from "./extensions/builtin/compaction/policy.ts";
-import { isAutomaticCompactionBlocked } from "./extensions/builtin/compaction/rejected-recovery.ts";
+	isAutomaticCompactionBlocked,
+	wouldCompactionOverflow,
+} from "./extensions/builtin/compaction/rejected-recovery.ts";
 import {
 	createResumeCompactionRequirement,
 	type ResumeCompactionRequirement,
@@ -312,7 +311,6 @@ import { computeSessionFailureReport, type SessionFailureReport } from "./sessio
 import { createSessionLogger, type SessionLogger } from "./session-log.ts";
 import type { BranchSummaryEntry, CompactionEntry, SessionEntry, SessionProjection } from "./session-manager.ts";
 import {
-	buildSessionContext,
 	CURRENT_SESSION_VERSION,
 	getLatestCompactionEntry,
 	type SessionHeader,
@@ -7840,41 +7838,13 @@ export class AgentSession {
 		fromExtension: boolean,
 		model: Model<Api>,
 	): Promise<boolean> {
-		const currentLeaf = pathEntries[pathEntries.length - 1];
-		if (!currentLeaf) return false;
-
-		const simulatedCompactionEntry: CompactionEntry = {
-			type: "compaction",
-			id: `simulated-${randomUUID()}`,
-			parentId: currentLeaf.id,
-			timestamp: new Date().toISOString(),
-			summary: compactionResult.summary,
-			firstKeptEntryId: compactionResult.firstKeptEntryId,
-			tokensBefore: compactionResult.tokensBefore,
-			details: compactionResult.details,
-			fromHook: fromExtension,
-		};
-
-		let simulatedMessages = buildSessionContext(
-			[...pathEntries, simulatedCompactionEntry],
-			simulatedCompactionEntry.id,
-		).messages;
-		// Size the same retained context that will be admitted to Cursor. Persisted JSONL
-		// remains verbatim, but the in-memory request representation is bounded first.
-		if (model.provider === "cursor" || model.provider === "cursor-cli-oauth") {
-			simulatedMessages =
-				admitCursorHistory({
-					messages: simulatedMessages,
-					budgetBytes: cursorAdmissionBudgetBytes(model.contextWindow),
-				}).messages ?? simulatedMessages;
-		}
-		const contextTokens = estimateMessagesTokens(filterContextExcludedMessages(simulatedMessages));
-		const settings = this._getCompactionSettings();
-		const reserveTokens =
-			settings.reserveScalingEnabled === false
-				? settings.reserveTokens
-				: resolveReserveTokens(model.contextWindow, settings.reserveTokens);
-		return contextTokens > model.contextWindow - reserveTokens;
+		return wouldCompactionOverflow(
+			pathEntries,
+			compactionResult,
+			fromExtension,
+			model,
+			this._getCompactionSettings(),
+		);
 	}
 
 	/**

@@ -28,6 +28,7 @@ import {
 	formatRequiredCompactionFallbackRejection,
 	type RequiredCompactionFallbackFailure,
 	stripTurnRetrySuppressionPrefix,
+	UnsafeRetainedSuffixError,
 } from "./deterministic-fallback.ts";
 import * as idle from "./idle.ts";
 import * as idleRetry from "./idle-retry.ts";
@@ -63,6 +64,7 @@ import {
 	compactionRecoveryStateKey,
 	isAutomaticCompactionBlocked,
 	REJECTED_RECOVERY_ENTRY,
+	wouldCompactionOverflow,
 } from "./rejected-recovery.ts";
 import * as restoration from "./restoration-tracker.ts";
 import {
@@ -355,7 +357,7 @@ export default function compactionExtension(
 		if (!snapshot) return;
 		getLogger(ctx).debug("speculative_started", { generation, origin: "speculative" });
 		const controller = new AbortController();
-		const settled = runExtensionCompaction(ctx, snapshot, controller.signal).then(
+		const settled = generateCompaction(ctx, snapshot, controller.signal).then(
 			(result) => ({ result, error: undefined }),
 			(error: unknown) => ({ result: undefined, error: error instanceof Error ? error : new Error(String(error)) }),
 		);
@@ -389,25 +391,85 @@ export default function compactionExtension(
 		todoBridge.persistTodoSnapshot(pi, metadata.todoSnapshot);
 	}
 
+	async function generateCompaction(
+		ctx: ExtensionContext,
+		snapshot: SpeculativeCompactionSnapshot,
+		signal?: AbortSignal,
+		onProgress?: (delta: string) => void,
+	): Promise<CompactionResult | undefined> {
+		const compaction = await runExtensionCompaction(ctx, snapshot, signal, onProgress);
+		if (!compaction || signal?.aborted) return compaction;
+		if (
+			!wouldCompactionOverflow(
+				snapshot.branchEntries ?? [],
+				compaction,
+				true,
+				snapshot.model,
+				snapshot.preparation.settings,
+			)
+		)
+			return compaction;
+		if (
+			!wouldCompactionOverflow(
+				snapshot.branchEntries ?? [],
+				{ ...compaction, summary: "" },
+				true,
+				snapshot.model,
+				snapshot.preparation.settings,
+			)
+		)
+			return compaction;
+
+		// #3061: only a SUCCESSFUL summary can establish a terminal context fault.
+		// A failed summary plus a rejected emergency checkpoint says nothing about
+		// whether a recovered provider could produce a smaller, usable summary.
+		// Probe with zero summary text so marker/previous-summary overhead alone
+		// cannot turn a provider failure or an oversized summary into a durable latch.
+		const diagnostics: DeterministicFallbackDiagnostic = {};
+		const viable = createRequiredCompactionFallback(
+			snapshot.preparation,
+			snapshot.contextWindow,
+			"unsafe-retained-content",
+			{ summary: "" },
+			snapshot.branchEntries,
+			diagnostics,
+		);
+		if (
+			!viable &&
+			(diagnostics.rejectionReason === "unsafe-retained-content" ||
+				diagnostics.rejectionReason === "atomic-tool-chain-cut" ||
+				diagnostics.rejectionReason === "retained-token-budget-exceeded")
+		) {
+			throw new UnsafeRetainedSuffixError(diagnostics);
+		}
+		return compaction;
+	}
+
 	function recoverRequiredCompaction(
 		ctx: ExtensionContext,
 		snapshot: SpeculativeCompactionSnapshot,
 		failureKind: RequiredCompactionFallbackFailure,
 		cause: unknown,
 	): { compaction?: CompactionResult; rejectionReason?: string } {
-		const diagnostics: DeterministicFallbackDiagnostic = {};
-		const compaction = createRequiredCompactionFallback(
-			snapshot.preparation,
-			snapshot.contextWindow,
-			failureKind,
-			{ taskIntent: resolveInheritedTaskIntent(snapshot.branchEntries ?? []) },
-			snapshot.branchEntries,
-			diagnostics,
-		);
+		const terminal = cause instanceof UnsafeRetainedSuffixError;
+		const diagnostics: DeterministicFallbackDiagnostic = terminal ? cause.diagnostics : {};
+		const compaction = terminal
+			? undefined
+			: createRequiredCompactionFallback(
+					snapshot.preparation,
+					snapshot.contextWindow,
+					failureKind,
+					{ taskIntent: resolveInheritedTaskIntent(snapshot.branchEntries ?? []) },
+					snapshot.branchEntries,
+					diagnostics,
+				);
 		if (!compaction) {
 			const branch = snapshot.branchEntries ?? [];
-			if (!isAutomaticCompactionBlocked(branch, snapshot.model, ctx.getCompactionSettings())) {
+			// Provider/timeout/abort/empty-summary failures never create or replace
+			// this record, even when their opportunistic deterministic fallback fails.
+			if (terminal && !isAutomaticCompactionBlocked(branch, snapshot.model, ctx.getCompactionSettings())) {
 				pi.appendEntry(REJECTED_RECOVERY_ENTRY, {
+					failureKind: "unsafe-retained-content",
 					stateKey: compactionRecoveryStateKey(branch, snapshot.model, ctx.getCompactionSettings()),
 					reason: diagnostics.rejectionReason,
 					entryId:
@@ -415,7 +477,7 @@ export default function compactionExtension(
 						diagnostics.candidateRejections?.at(-1)?.firstKeptEntryId,
 				});
 			}
-			return { rejectionReason: formatRequiredCompactionFallbackRejection(diagnostics) };
+			return { rejectionReason: formatRequiredCompactionFallbackRejection(diagnostics, terminal) };
 		}
 		// The compaction itself succeeds, so nothing else tells the user their
 		// transcript was reduced without a provider summary. Say it plainly here,
@@ -575,7 +637,7 @@ export default function compactionExtension(
 			}
 			let compaction: CompactionResult | undefined;
 			try {
-				compaction = await runExtensionCompaction(ctx, snapshot, feedbackSignal, (delta) =>
+				compaction = await generateCompaction(ctx, snapshot, feedbackSignal, (delta) =>
 					ctx.updateCompaction?.({
 						reason: "extension",
 						signal: feedbackSignal,
@@ -745,14 +807,15 @@ export default function compactionExtension(
 			let compaction: CompactionResult | undefined;
 			try {
 				if (inheritedWarmFailure) throw inheritedWarmFailure;
-				compaction = await runExtensionCompaction(ctx, snapshot, event.signal, (delta) =>
+				compaction = await generateCompaction(ctx, snapshot, event.signal, (delta) =>
 					ctx.updateCompaction?.({ reason: event.reason, signal: event.signal, delta }),
 				);
 			} catch (error) {
 				const message = error instanceof Error ? error.message : String(error);
 				const failureKind = classifyRequiredCompactionFallbackFailure(error);
 				if (
-					requiresDeterministicCompactionFallback(event, ctx.getContextUsage()) &&
+					(requiresDeterministicCompactionFallback(event, ctx.getContextUsage()) ||
+						failureKind === "unsafe-retained-content") &&
 					failureKind !== undefined &&
 					!event.signal.aborted
 				) {

@@ -9,7 +9,10 @@ import {
 } from "../../../src/core/extensions/builtin/compaction/deterministic-fallback.ts";
 import compactionExtension from "../../../src/core/extensions/builtin/compaction/index.ts";
 import { flushCompactionLogs } from "../../../src/core/extensions/builtin/compaction/log.ts";
-import { isAutomaticCompactionBlocked } from "../../../src/core/extensions/builtin/compaction/rejected-recovery.ts";
+import {
+	isAutomaticCompactionBlocked,
+	REJECTED_RECOVERY_ENTRY,
+} from "../../../src/core/extensions/builtin/compaction/rejected-recovery.ts";
 import { hasUnsafeRetainedContent } from "../../../src/core/extensions/builtin/compaction/retained-message-safety.ts";
 import { convertToLlm } from "../../../src/core/messages.ts";
 import { SessionManager } from "../../../src/core/session-manager.ts";
@@ -194,7 +197,8 @@ describe("issue #3060: unsafe newest retained message", () => {
 		seedLongSession(harness.sessionManager, false, Date.now() + 1);
 		harness.sessionManager.appendMessage({ role: "user", content: "huge input ".repeat(170_000), timestamp: 247 });
 		harness.session.agent.state.messages = harness.sessionManager.buildSessionContext().messages;
-		harness.setResponses(Array.from({ length: 8 }, () => fauxAssistantMessage("")));
+		// #3061: the provider succeeds; only the retained context is impossible.
+		harness.setResponses(Array.from({ length: 8 }, () => fauxAssistantMessage("A usable summary.")));
 		await harness.session.bindExtensions({});
 		const file = harness.sessionManager.getSessionFile();
 		if (!file) throw new Error("Expected session file");
@@ -239,10 +243,107 @@ describe("issue #3060: unsafe newest retained message", () => {
 			timestamp: 248,
 		});
 		reopened.session.agent.state.messages = reopened.sessionManager.buildSessionContext().messages;
-		reopened.setResponses([fauxAssistantMessage("")]);
+		reopened.setResponses([fauxAssistantMessage("A usable summary.")]);
 		await expect(reopened.session.prompt("continue")).rejects.toThrow(/compaction/i);
 		await reopened.session.waitForSettledSessionWork();
 		expect(reopened.eventsOfType("compaction_start")).toHaveLength(2);
 		expect(reopened.sessionManager.getBranch().filter((entry) => entry.type === "compaction")).toHaveLength(1);
+	});
+
+	it("retries automatic compaction after a transient summary failure and rejected fallback", async () => {
+		// #3061 Given: a short real summary fits, but the deterministic marker does not.
+		const harness = await createHarness({
+			models: [{ id: "faux-3061", contextWindow: 400_000, maxTokens: 1_000 }],
+			settings: { compaction: settings, retry: { enabled: false } },
+			extensionFactories: [compactionExtension],
+			persistSession: true,
+		});
+		harnesses.push(harness);
+		seedLongSession(harness.sessionManager);
+		const boundary = harness.sessionManager.appendMessage({
+			role: "user",
+			content: "input ".repeat(255_933),
+			timestamp: 247,
+		});
+		const fallback = recover(harness.sessionManager, boundary);
+		expect(fallback.result, JSON.stringify(fallback.diagnostics)).toBeUndefined();
+		expect(fallback.diagnostics.rejectionReason).toBe("retained-token-budget-exceeded");
+		harness.session.agent.state.messages = harness.sessionManager.buildSessionContext().messages;
+		harness.setResponses([
+			fauxAssistantMessage("", {
+				stopReason: "error",
+				errorMessage: "upstream_stream_truncated: temporary provider interruption",
+			}),
+		]);
+		await harness.session.bindExtensions({});
+
+		// When: the first real trigger fails, then the provider recovers on the next one.
+		await expect(harness.session.prompt("continue")).rejects.toThrow(/compaction/i);
+		await harness.session.waitForSettledSessionWork();
+		expect(harness.eventsOfType("compaction_start")).toHaveLength(1);
+		expect(harness.faux.state.callCount).toBe(1);
+		harness.setResponses([fauxAssistantMessage("Summary."), fauxAssistantMessage("Continued.")]);
+		await harness.session.prompt("continue");
+		await harness.session.waitForSettledSessionWork();
+
+		// Then: the recovered provider is reached and a real checkpoint is accepted.
+		expect(harness.eventsOfType("compaction_end").filter((event) => event.accepted)).toHaveLength(1);
+		expect(harness.sessionManager.getBranch().filter((entry) => entry.type === "compaction")).toHaveLength(1);
+		expect(
+			harness.sessionManager
+				.getBranch()
+				.filter((entry) => entry.type === "custom" && entry.customType === REJECTED_RECOVERY_ENTRY),
+		).toHaveLength(0);
+	});
+
+	it("preserves a deterministic latch when an explicit retry fails with a different failure kind", async () => {
+		// #3061 Given: successful summarization proves this retained turn cannot fit.
+		const harness = await createHarness({
+			models: [{ id: "faux-3061-kind", contextWindow: 400_000, maxTokens: 1_000 }],
+			settings: { compaction: settings, retry: { enabled: false } },
+			extensionFactories: [compactionExtension],
+			persistSession: true,
+		});
+		harnesses.push(harness);
+		seedLongSession(harness.sessionManager);
+		harness.sessionManager.appendMessage({ role: "user", content: "huge input ".repeat(170_000), timestamp: 247 });
+		harness.session.agent.state.messages = harness.sessionManager.buildSessionContext().messages;
+		harness.setResponses([fauxAssistantMessage("A usable summary.")]);
+		await harness.session.bindExtensions({});
+		await expect(harness.session.prompt("continue")).rejects.toThrow(/compaction/i);
+		await harness.session.waitForSettledSessionWork();
+		const rejections = () =>
+			harness.sessionManager
+				.getBranch()
+				.filter((entry) => entry.type === "custom" && entry.customType === REJECTED_RECOVERY_ENTRY);
+		const terminalRecords = rejections();
+		expect(terminalRecords).toHaveLength(1);
+		expect(terminalRecords[0]).toMatchObject({ data: { failureKind: "unsafe-retained-content" } });
+
+		// When: an explicit retry bypasses the latch but encounters a provider failure.
+		harness.setResponses([
+			fauxAssistantMessage("", {
+				stopReason: "error",
+				errorMessage: "upstream_stream_truncated: temporary provider interruption",
+			}),
+		]);
+		await expect(harness.session.compact()).rejects.toThrow(/compaction/i);
+		await harness.session.waitForSettledSessionWork();
+
+		// Then: a different failure neither overwrites nor clears the context latch.
+		expect(rejections()).toEqual(terminalRecords);
+		expect(
+			isAutomaticCompactionBlocked(
+				harness.sessionManager.getBranch(),
+				harness.getModel(),
+				harness.settingsManager.getCompactionSettings(),
+			),
+		).toBe(true);
+		const starts = harness.eventsOfType("compaction_start").length;
+		const notices = harness.eventsOfType("compaction_end").length;
+		await expect(harness.session.prompt("continue")).rejects.toThrow(/compaction/i);
+		await harness.session.waitForSettledSessionWork();
+		expect(harness.eventsOfType("compaction_start")).toHaveLength(starts);
+		expect(harness.eventsOfType("compaction_end")).toHaveLength(notices);
 	});
 });

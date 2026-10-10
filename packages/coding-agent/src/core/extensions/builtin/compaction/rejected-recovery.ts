@@ -1,9 +1,53 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import type { Model } from "@earendil-works/pi-ai";
-import type { CompactionPreparation } from "../../../compaction/index.ts";
-import { buildContextEntries, type SessionEntry } from "../../../session-manager.ts";
+import { type CompactionPreparation, type CompactionResult, estimateTokens } from "../../../compaction/index.ts";
+import { admitCursorHistory, cursorAdmissionBudgetBytes } from "../../../cursor-history-admission.ts";
+import { filterContextExcludedMessages } from "../../../messages.ts";
+import {
+	buildContextEntries,
+	buildSessionContext,
+	type CompactionEntry,
+	type SessionEntry,
+} from "../../../session-manager.ts";
+import { resolveEffectiveReserveTokens } from "./policy.ts";
 
 export const REJECTED_RECOVERY_ENTRY = "compaction-recovery-rejected";
+
+/** Shared with core admission: a fallback's conservative estimate cannot overrule a usable summary. */
+export function wouldCompactionOverflow(
+	pathEntries: SessionEntry[],
+	compactionResult: CompactionResult,
+	fromExtension: boolean,
+	model: Model<string>,
+	settings: CompactionPreparation["settings"],
+): boolean {
+	const currentLeaf = pathEntries.at(-1);
+	if (!currentLeaf) return false;
+	const simulatedCompactionEntry: CompactionEntry = {
+		type: "compaction",
+		id: `simulated-${randomUUID()}`,
+		parentId: currentLeaf.id,
+		timestamp: new Date().toISOString(),
+		summary: compactionResult.summary,
+		firstKeptEntryId: compactionResult.firstKeptEntryId,
+		tokensBefore: compactionResult.tokensBefore,
+		details: compactionResult.details,
+		fromHook: fromExtension,
+	};
+	let messages = buildSessionContext([...pathEntries, simulatedCompactionEntry], simulatedCompactionEntry.id).messages;
+	if (model.provider === "cursor" || model.provider === "cursor-cli-oauth") {
+		messages =
+			admitCursorHistory({
+				messages,
+				budgetBytes: cursorAdmissionBudgetBytes(model.contextWindow),
+			}).messages ?? messages;
+	}
+	const tokens = filterContextExcludedMessages(messages).reduce(
+		(total, message) => total + estimateTokens(message),
+		0,
+	);
+	return tokens > model.contextWindow - resolveEffectiveReserveTokens(model.contextWindow, settings);
+}
 
 /** State, not elapsed time or a synthetic message revision, releases the latch. */
 export function compactionRecoveryStateKey(
@@ -47,7 +91,13 @@ export function isAutomaticCompactionBlocked(
 	settings: CompactionPreparation["settings"],
 ): boolean {
 	const rejection = branch.findLast(
-		(entry) => entry.type === "custom" && entry.customType === REJECTED_RECOVERY_ENTRY,
+		(entry) =>
+			entry.type === "custom" &&
+			entry.customType === REJECTED_RECOVERY_ENTRY &&
+			entry.data !== null &&
+			typeof entry.data === "object" &&
+			"failureKind" in entry.data &&
+			entry.data.failureKind === "unsafe-retained-content",
 	);
 	if (rejection?.type !== "custom" || !rejection.data || typeof rejection.data !== "object") return false;
 	return (

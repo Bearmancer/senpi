@@ -22,6 +22,7 @@ import { SummaryGenerationError, SummaryRequestError } from "./speculative.ts";
 import { capUtf8Bytes } from "./task-intent.ts";
 
 export type RequiredCompactionFallbackFailure =
+	| "unsafe-retained-content"
 	| "summarization-timeout"
 	| "summarization-provider-failure"
 	| "upstream-stream-truncated"
@@ -32,6 +33,8 @@ interface RecoveryMetadata {
 	taskIntent?: string;
 	todoSnapshot?: unknown;
 	checkpoint?: unknown;
+	/** An empty summary probes suffix viability independently of checkpoint overhead. */
+	summary?: string;
 }
 
 export type DeterministicFallbackRejectionReason =
@@ -67,7 +70,20 @@ export interface DeterministicFallbackDiagnostic {
 	budgetTokens?: number;
 }
 
-export function formatRequiredCompactionFallbackRejection(diagnostics: DeterministicFallbackDiagnostic): string {
+export class UnsafeRetainedSuffixError extends Error {
+	readonly diagnostics: DeterministicFallbackDiagnostic;
+
+	constructor(diagnostics: DeterministicFallbackDiagnostic) {
+		super(formatRequiredCompactionFallbackRejection(diagnostics, true));
+		this.name = "UnsafeRetainedSuffixError";
+		this.diagnostics = diagnostics;
+	}
+}
+
+export function formatRequiredCompactionFallbackRejection(
+	diagnostics: DeterministicFallbackDiagnostic,
+	automaticPaused = false,
+): string {
 	const candidate = diagnostics.candidateRejections?.at(-1);
 	const reason = diagnostics.rejectionReason ?? "context-reconstruction-failed";
 	const recovery: Record<DeterministicFallbackRejectionReason, string> = {
@@ -102,7 +118,10 @@ export function formatRequiredCompactionFallbackRejection(diagnostics: Determini
 				}
 			: {}),
 	};
-	return `deterministic compaction fallback could not retain a safe suffix\n${JSON.stringify(diagnostic)}\n${recovery[reason]} Automatic compaction is paused for this unchanged transcript and model/settings. The original transcript has not been changed.`;
+	const pause = automaticPaused
+		? " Automatic compaction is paused for this unchanged transcript and model/settings."
+		: "";
+	return `deterministic compaction fallback could not retain a safe suffix\n${JSON.stringify(diagnostic)}\n${recovery[reason]}${pause} The original transcript has not been changed.`;
 }
 
 const NON_VISIBLE_USER_TEXT = /[\p{White_Space}\p{Default_Ignorable_Code_Point}]/gu;
@@ -151,6 +170,7 @@ function isTerminalSummarizationProviderFailure(error: unknown): boolean {
 export function classifyRequiredCompactionFallbackFailure(
 	error: unknown,
 ): RequiredCompactionFallbackFailure | undefined {
+	if (error instanceof UnsafeRetainedSuffixError) return "unsafe-retained-content";
 	if (
 		error instanceof StreamDurationBudgetError ||
 		error instanceof StreamIdleTimeoutError ||
@@ -176,6 +196,7 @@ export function classifyRequiredCompactionFallbackFailure(
 export { stripTurnRetrySuppressionPrefix };
 
 const FALLBACK_FAILURE_CAUSE: Record<RequiredCompactionFallbackFailure, string> = {
+	"unsafe-retained-content": "no replay-safe retained suffix fits the context",
 	"summarization-timeout": "the summary stream ran out of its time budget",
 	"summarization-provider-failure": "the provider ended the summary stream with an error",
 	"upstream-stream-truncated": "the provider truncated the summary stream",
@@ -235,8 +256,8 @@ export function createRequiredCompactionFallback(
 	const fixedText = taskIntent ? `${marker}\n\nTask intent:\n${taskIntent}` : marker;
 	const maxSummaryBytes = Math.max(1_024, Math.floor(contextWindow * 0.4));
 	const previousSummary = preparation.previousSummary?.trim();
-	let summary = fixedText;
-	if (previousSummary) {
+	let summary = metadata.summary ?? fixedText;
+	if (previousSummary && metadata.summary === undefined) {
 		const availableBytes = Math.max(0, maxSummaryBytes - Buffer.byteLength(`${fixedText}\n\nPrevious checkpoint:\n`));
 		const truncationMarker = "\n[Older checkpoint truncated]";
 		const boundedPrevious =

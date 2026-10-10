@@ -2141,3 +2141,27 @@ This is the owning builtin. The projection must also be applied by the session m
 - `packages/coding-agent/src/core/extensions/builtin/compaction/deterministic-fallback.ts`: recovery details, sizing and diagnostics.
 - `packages/coding-agent/src/core/extensions/builtin/compaction/index.ts`: recovery helper and blocking/speculative admission.
 - `retained-message-projection.ts` and `rejected-recovery.ts` are new fork-owned helpers.
+
+## 2026-10-10 - Distinguish terminal retained-context rejection from summarizer failure (senpi#3061)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/compaction/index.ts`: only a successful provider summary that core admission would reject, followed by a failed zero-summary suffix viability probe, produces a typed terminal rejection. A failed summarizer may still use deterministic recovery, but a rejected recovery from that path never writes the durable latch.
+- `packages/coding-agent/src/core/extensions/builtin/compaction/deterministic-fallback.ts`: add `UnsafeRetainedSuffixError`, carry its diagnostics separately from provider failure kinds, and support a zero-summary viability probe. Only latched terminal diagnostics claim automatic compaction is paused.
+- `packages/coding-agent/src/core/extensions/builtin/compaction/rejected-recovery.ts`: read only records carrying the deterministic `unsafe-retained-content` failure kind. Older untyped records and unrelated failure kinds cannot suppress a recovered provider or overwrite a valid context latch. Core and the extension share the existing projected-overflow calculation, including Cursor admission, so a conservative fallback estimate cannot overrule a usable generated summary.
+
+### Why
+
+- A rejected emergency checkpoint after a failed provider request does not establish that the next provider summary would fail: a short successful summary may fit where the recovery marker does not. Network, timeout, abort, rate-limit, empty-summary and other summarizer errors retain their existing retry/backoff behavior.
+- The deterministic terminal decision is made only after successful summary generation fails the exact core admission calculation and tests suffix viability without summary text or previous-checkpoint overhead. Structural, pairing and retained-token failures are terminal; missing boundaries and reconstruction errors are not promoted to a durable context fault.
+- Explicit manual retry remains allowed. A provider failure during that retry neither clears the earlier deterministic context finding nor writes a replacement; a changed context/model/budget still releases it.
+
+### Why an extension could not handle it
+
+- This is the owning builtin. Core delegates its existing projected-overflow calculation to the shared helper; there is no public extension API change.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/builtin/compaction/index.ts`: local summary generation and recovery decision points.
+- `packages/coding-agent/src/core/extensions/builtin/compaction/deterministic-fallback.ts`: failure-kind classifier, candidate summary construction and diagnostic formatting.
+- `packages/coding-agent/src/core/extensions/builtin/compaction/rejected-recovery.ts`: persisted rejection selection.
