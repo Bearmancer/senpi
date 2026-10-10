@@ -1,4 +1,4 @@
-import childProcess, { type ChildProcess, execFileSync, type SpawnOptions, spawn } from "node:child_process";
+import childProcess, { type ChildProcess, type SpawnOptions, spawn } from "node:child_process";
 import { once } from "node:events";
 import { readFile, rm } from "node:fs/promises";
 import { syncBuiltinESMExports } from "node:module";
@@ -8,6 +8,7 @@ import { mock } from "node:test";
 import { afterEach, describe, expect, it } from "vitest";
 import { createHostDaemonPaths, generationPaths } from "../../../src/modes/rpc/host-daemon-paths.ts";
 import { readHostRegistration } from "../../../src/modes/rpc/host-daemon-registration.ts";
+import { STOP_WAIT_BUDGET_MS } from "../../../src/modes/rpc/host-ensure-stop.ts";
 import { type HandoffResult, handoffHost } from "../../../src/modes/rpc/host-handoff.ts";
 import {
 	type GenerationScratch,
@@ -19,41 +20,28 @@ import {
 	supervisorLaunch,
 } from "../../helpers/rpc-generation-support.ts";
 import { writeRpcModelsJson } from "../../helpers/rpc-hermetic.ts";
-import { processAlive } from "../../helpers/spawned-host-reaper.ts";
+import { RpcOwnerProcesses } from "../../helpers/rpc-owner-processes.ts";
 
 const fixture = join(import.meta.dirname, "../../fixtures/rpc-owner-caller.ts");
 const roots: GenerationScratch[] = [];
-const owners: ChildProcess[] = [];
-const pids = new Map<number, string>();
+const processes = new RpcOwnerProcesses();
 const peers: JsonlPeer[] = [];
 const models: HeldAnthropicModel[] = [];
-const supervisors = new Map<number, { pipe: Socket; exited: Promise<void> }>();
 const EXIT_BOUND_MS = 10_000;
-
-function remember(pid: number): void {
-	const command = execFileSync("ps", ["-p", String(pid), "-o", "command="], { encoding: "utf8" }).trim();
-	if (!command) throw new Error(`missing command for started pid ${pid}`);
-	pids.set(pid, command);
-}
 
 async function caller(qa: GenerationScratch, ownership = "caller", failure?: string): Promise<ChildProcess> {
 	const child = spawn(process.execPath, [fixture, qa.socket, qa.agentDir, ownership], {
 		env: { ...process.env, ...generationEnv(qa), SENPI_CODING_AGENT_DIR: qa.agentDir },
 		stdio: ["ignore", "ignore", "inherit", "ipc"],
 	});
-	owners.push(child);
-	if (child.pid === undefined) throw new Error("owner did not start");
-	remember(child.pid);
+	processes.owner(child);
 	const ready = await new Promise<Record<string, unknown>>((resolve, reject) => {
 		const timer = setTimeout(() => reject(new Error("caller readiness timeout")), 30_000);
 		child.on("message", (message, handle) => {
 			if (typeof message !== "object" || message === null || !("type" in message)) return;
 			if (message.type === "supervisor" && "pid" in message && typeof message.pid === "number") {
 				if (!(handle instanceof Socket)) return reject(new Error("missing transferred exit pipe"));
-				const exited = new Promise<void>((done) => handle.once("end", done));
-				handle.resume();
-				supervisors.set(message.pid, { pipe: handle, exited });
-				remember(message.pid);
+				processes.supervisor(message.pid, handle);
 				return;
 			}
 			clearTimeout(timer);
@@ -66,6 +54,8 @@ async function caller(qa: GenerationScratch, ownership = "caller", failure?: str
 	}
 	expect(ready, JSON.stringify(ready)).toMatchObject({ type: "ready" });
 	await rememberHost(qa);
+	// Each native waiter is armed before this caller can be exited by the test.
+	await processes.ready();
 	return child;
 }
 
@@ -73,10 +63,10 @@ async function rememberHost(qa: GenerationScratch): Promise<void> {
 	const paths = createHostDaemonPaths({ socket: qa.socket, agentDir: qa.agentDir });
 	const registration = await readHostRegistration(paths);
 	if (!registration) throw new Error("no supervisor registration");
-	remember(registration.record.pid);
+	processes.remember(registration.record.pid);
 	const record = JSON.parse(await readFile(generationPaths(paths, registration.instanceId).childPidFile, "utf8"));
 	expect(record.pid).toBeTypeOf("number");
-	remember(record.pid);
+	processes.remember(record.pid);
 }
 
 afterEach(async () => {
@@ -85,45 +75,9 @@ afterEach(async () => {
 		model.release();
 		await model.close();
 	}
-	// Only exact PIDs observed from our ChildProcess and this sandbox's registration; never a process-group kill.
-	for (const child of owners.splice(0)) {
-		if (child.exitCode !== null || child.signalCode !== null || child.pid === undefined) continue;
-		const exited = once(child, "exit", { signal: AbortSignal.timeout(15_000) });
-		verifyCommand(child.pid);
-		child.kill("SIGTERM");
-		await exited;
-	}
-	for (const [pid, supervisor] of supervisors) {
-		if (!processAlive(pid)) continue;
-		verifyCommand(pid);
-		process.kill(pid, "SIGTERM");
-		await bounded(supervisor.exited, 15_000, `cleanup supervisor ${pid}`);
-	}
-	for (const pid of pids.keys()) expect(processAlive(pid), `cleanup pid ${pid}`).toBe(false);
-	for (const supervisor of supervisors.values()) supervisor.pipe.destroy();
-	supervisors.clear();
-	pids.clear();
+	await processes.cleanup();
 	for (const qa of roots.splice(0)) await rm(qa.root, { recursive: true, force: true });
-}, 60_000);
-
-function verifyCommand(pid: number): void {
-	const command = execFileSync("ps", ["-p", String(pid), "-o", "command="], { encoding: "utf8" }).trim();
-	if (command !== pids.get(pid)) throw new Error(`refusing changed process ${pid}`);
-}
-
-async function bounded<T>(operation: Promise<T>, ms: number, label: string): Promise<T> {
-	let timer: ReturnType<typeof setTimeout> | undefined;
-	try {
-		return await Promise.race([
-			operation,
-			new Promise<never>((_resolve, reject) => {
-				timer = setTimeout(() => reject(new Error(`${label} still alive after ${ms}ms`)), ms);
-			}),
-		]);
-	} finally {
-		clearTimeout(timer);
-	}
-}
+}, STOP_WAIT_BUDGET_MS + 30_000);
 
 async function exitOwner(owner: ChildProcess, signal?: "SIGKILL"): Promise<void> {
 	const exited = once(owner, "exit", { signal: AbortSignal.timeout(EXIT_BOUND_MS) });
@@ -137,15 +91,6 @@ async function peer(qa: GenerationScratch, observe = false): Promise<JsonlPeer> 
 	peers.push(result);
 	expect(await result.request({ id: "info", type: "get_protocol_info", observe })).toMatchObject({ success: true });
 	return result;
-}
-
-async function allGone(): Promise<void> {
-	await Promise.all(
-		[...supervisors].map(([pid, supervisor]) => bounded(supervisor.exited, EXIT_BOUND_MS, `pid ${pid}`)),
-	);
-	for (const pid of pids.keys()) {
-		expect(processAlive(pid), `pid ${pid} still alive after owner exit`).toBe(false);
-	}
 }
 
 // Here elapsed time IS the assertion: a lifetime must survive the short owner-death exit window.
@@ -169,7 +114,7 @@ describe.skipIf(process.platform === "win32")("RPC owner lifetime", () => {
 			if (exit === "normal") owner.send("exit");
 			else owner.kill("SIGKILL");
 			await exited;
-			await allGone();
+			await processes.allGone();
 		},
 		45_000,
 	);
@@ -182,7 +127,7 @@ describe.skipIf(process.platform === "win32")("RPC owner lifetime", () => {
 		await exitOwner(owner);
 		await survivesOwnerGrace(attached);
 		attached.destroy();
-		await allGone();
+		await processes.allGone();
 	}, 45_000);
 
 	it("finishes a disconnected in-flight turn before ownerless exit", async () => {
@@ -214,7 +159,7 @@ describe.skipIf(process.platform === "win32")("RPC owner lifetime", () => {
 		await exitOwner(owner, "SIGKILL");
 		await survivesOwnerGrace(observer);
 		model.release();
-		await allGone();
+		await processes.allGone();
 		const entries: unknown[] = (await readFile(sessionFile, "utf8"))
 			.trim()
 			.split("\n")
@@ -260,7 +205,7 @@ describe.skipIf(process.platform === "win32")("RPC owner lifetime", () => {
 		const observer = await peer(qa, true);
 		await survivesOwnerGrace(observer);
 		await exitOwner(replacement, "SIGKILL");
-		await allGone();
+		await processes.allGone();
 	}, 45_000);
 
 	it("inherits the owner through a foreign generation handoff", async () => {
@@ -277,12 +222,7 @@ describe.skipIf(process.platform === "win32")("RPC owner lifetime", () => {
 				stdio[1] = "pipe";
 				const child = original(command, args, { ...options, stdio });
 				if (child.pid === undefined || !(child.stdout instanceof Socket)) throw new Error("missing successor pipe");
-				remember(child.pid);
-				supervisors.set(child.pid, {
-					pipe: child.stdout,
-					exited: new Promise<void>((resolve) => child.once("exit", () => resolve())),
-				});
-				child.stdout.resume();
+				processes.successor(child, child.stdout);
 				return child;
 			},
 		);
@@ -304,6 +244,6 @@ describe.skipIf(process.platform === "win32")("RPC owner lifetime", () => {
 		const observer = await peer(qa, true);
 		await survivesOwnerGrace(observer);
 		await exitOwner(owner);
-		await allGone();
+		await processes.allGone();
 	}, 60_000);
 });

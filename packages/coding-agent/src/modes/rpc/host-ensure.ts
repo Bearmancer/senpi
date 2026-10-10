@@ -1,7 +1,7 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { getAgentDir } from "../../config.ts";
-import { readProcessStartTime } from "../app-server/daemon/process.ts";
+import { processIsLive, readProcessStartTime } from "../app-server/daemon/process.ts";
 import {
 	createDaemonDirectories,
 	createHostDaemonPaths,
@@ -31,6 +31,7 @@ import { retireIdleLegacyHost } from "./host-legacy.ts";
 import type { HostColdStart, HostLifecyclePolicyInput } from "./host-lifecycle.ts";
 import { holdProtocolInfo, probeSocketReachable } from "./host-probe.ts";
 import { isHostGenerationProcess } from "./host-process-role.ts";
+import { hostChildAlive } from "./host-stalled-evidence.ts";
 import { acquireOwnershipSafeLock } from "./ownership-safe-lock.ts";
 
 export {
@@ -104,6 +105,13 @@ async function ensureHostLocked(
 	// makes that structural, and the field stays as the second guard for a directory that was
 	// somehow reused: a second socket must never read the first socket's daemon as its own.
 	const registeredHere = registersSocket(registered, socket);
+	if (
+		registeredHere &&
+		registered &&
+		!processIsLive(registered.record.pid) &&
+		(await hostChildAlive(generationPaths(paths, registered.instanceId)))
+	)
+		throw new HostEnsureRefusedError(socket, "host_stalled", undefined);
 	// A reusable host is held from the connection that proved it compatible, never re-probed later.
 	const held = await holdProtocolInfo(socket, EXISTING_HOST_PROBE_TIMEOUT_MS);
 	const protocol = held?.info;

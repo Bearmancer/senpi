@@ -12,6 +12,8 @@
 
 ### Fixed
 
+- RPC supervisors wait for their host child's observed exit and exit record before releasing ownership. A child still unobserved 30 seconds after SIGKILL leaves its generation, pointer and settings intact and produces a non-zero supervisor exit with the child PID in the log. Stop callers allow the full shutdown budget, and owner-lifetime tests await OS exit events instead of treating pipe EOF as process exit ([#3054](https://github.com/code-yeongyu/senpi/issues/3054)).
+
 - Polling `senpi host status` no longer restarts a dead owner's two-second host-exit grace. Observe-only reads follow the normal idle policy, while a dropped unclassified peer and activity on an existing connection still reset continuous quiescence ([#3044](https://github.com/code-yeongyu/senpi/issues/3044)).
 
 ### Removed
