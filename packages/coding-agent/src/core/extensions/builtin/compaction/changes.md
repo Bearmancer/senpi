@@ -2119,3 +2119,25 @@ untouched. Expected upstream conflict zones: `builtin/compaction/speculative.ts`
 ### Expected merge conflict zones
 
 - LOW: `lane-policy.ts` `LaneContext` and `disablesSenpiCompaction()` provider-scoping logic.
+## 2026-10-10 - Recover unsafe newest entries without retrying identical rejections (senpi#3060)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/compaction/deterministic-fallback.ts`: fallback checkpoints select a replay policy that repairs unsafe messages before candidate sizing and pairing checks; rejection diagnostics describe RPC-capable recovery rather than requiring a new session.
+- `packages/coding-agent/src/core/extensions/builtin/compaction/retained-message-projection.ts`: normalize through the session writer's `transformJson` before bounded replay classification. Unsafe results retain their call ID as error placeholders. Unsafe signed assistants and their associated results are omitted together; readable user text survives malformed attachments. Active incomplete, duplicate, reversed and orphaned tool chains still fail structural admission.
+- `packages/coding-agent/src/core/extensions/builtin/compaction/rejected-recovery.ts`: persisted retained-context fingerprint plus reason/entry records stop repeated impossible recovery until context, model or compaction settings change. Summarized history, mirror-reconnected parent IDs and bookkeeping entries do not release the latch on reopen.
+- `packages/coding-agent/src/core/extensions/builtin/compaction/index.ts`: record failed recovery and gate blocking/speculative automatic routes on that durable state.
+
+### Why
+
+The cumulative unsafe suffix check rejected all 246 candidates when the newest eval result was unsafe. Live non-plain details could also fail bounded classification although their persisted JSON was safe. Time-based circuit breakers could not stop identical retries permanently.
+
+### Why an extension could not handle it
+
+This is the owning builtin. The projection must also be applied by the session manager, and core automatic admission must check the latch before opening another attempt.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/builtin/compaction/deterministic-fallback.ts`: recovery details, sizing and diagnostics.
+- `packages/coding-agent/src/core/extensions/builtin/compaction/index.ts`: recovery helper and blocking/speculative admission.
+- `retained-message-projection.ts` and `rejected-recovery.ts` are new fork-owned helpers.

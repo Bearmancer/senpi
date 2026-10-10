@@ -187,6 +187,7 @@ import {
 	resolveReserveTokens,
 	shouldTriggerCompaction,
 } from "./extensions/builtin/compaction/policy.ts";
+import { isAutomaticCompactionBlocked } from "./extensions/builtin/compaction/rejected-recovery.ts";
 import {
 	createResumeCompactionRequirement,
 	type ResumeCompactionRequirement,
@@ -8502,6 +8503,9 @@ export class AgentSession {
 		// The flag reports THIS attempt's "nothing to compact" outcome only; a value left by an earlier attempt
 		// must not make a caller treat a cancelled or rejected compaction as too small (senpi#2925 review).
 		this._compactionSkippedTooSmall = false;
+		if (isAutomaticCompactionBlocked(this.sessionManager.getBranch(), this.model, this._getCompactionSettings())) {
+			return false;
+		}
 		// An earlier external-owner rejection never answers for a rejected request
 		// awaiting its retry: whether the owner can recover it depends on the request
 		// that failed, so ask again. A completed turn keeps the sticky delegation (#1174).
@@ -8752,6 +8756,9 @@ export class AgentSession {
 		willRetry: boolean,
 		options: { keepRecentTokensOverride?: number } = {},
 	): Promise<boolean> {
+		if (isAutomaticCompactionBlocked(this.sessionManager.getBranch(), this.model, this._getCompactionSettings())) {
+			return false;
+		}
 		if (!(reason === "overflow" && willRetry) && this._isCompactionDelegated()) return false;
 		const { keepRecentTokensOverride } = options;
 		// Model identity is captured before the auth await below: a model switch during

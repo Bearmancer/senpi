@@ -59,6 +59,11 @@ import {
 } from "./orchestration.ts";
 import * as cap from "./per-turn-cap.ts";
 import * as policy from "./policy.ts";
+import {
+	compactionRecoveryStateKey,
+	isAutomaticCompactionBlocked,
+	REJECTED_RECOVERY_ENTRY,
+} from "./rejected-recovery.ts";
 import * as restoration from "./restoration-tracker.ts";
 import {
 	applyGeneratedCompaction,
@@ -339,6 +344,7 @@ export default function compactionExtension(
 
 	function startSpeculativeCompaction(ctx: ExtensionContext, customInstructions: string): void {
 		if (speculativeJob) return;
+		if (isAutomaticCompactionBlocked(ctx.sessionManager.getBranch(), ctx.model, ctx.getCompactionSettings())) return;
 		const generation = ++speculativeGeneration;
 		const snapshot = createSpeculativeCompactionSnapshot(ctx, {
 			generation,
@@ -398,7 +404,19 @@ export default function compactionExtension(
 			snapshot.branchEntries,
 			diagnostics,
 		);
-		if (!compaction) return { rejectionReason: formatRequiredCompactionFallbackRejection(diagnostics) };
+		if (!compaction) {
+			const branch = snapshot.branchEntries ?? [];
+			if (!isAutomaticCompactionBlocked(branch, snapshot.model, ctx.getCompactionSettings())) {
+				pi.appendEntry(REJECTED_RECOVERY_ENTRY, {
+					stateKey: compactionRecoveryStateKey(branch, snapshot.model, ctx.getCompactionSettings()),
+					reason: diagnostics.rejectionReason,
+					entryId:
+						diagnostics.candidateRejections?.at(-1)?.unsafeEntryId ??
+						diagnostics.candidateRejections?.at(-1)?.firstKeptEntryId,
+				});
+			}
+			return { rejectionReason: formatRequiredCompactionFallbackRejection(diagnostics) };
+		}
 		// The compaction itself succeeds, so nothing else tells the user their
 		// transcript was reduced without a provider summary. Say it plainly here,
 		// and never with the internal retry-suppression marker (#1741).
@@ -410,6 +428,9 @@ export default function compactionExtension(
 		ctx: ExtensionContext,
 		customInstructions: string,
 	): Promise<SpeculativeCompactionResult> {
+		if (isAutomaticCompactionBlocked(ctx.sessionManager.getBranch(), ctx.model, ctx.getCompactionSettings())) {
+			return { applied: false, reason: "rejected" };
+		}
 		const provider = ctx.model?.provider;
 		if ((provider === "cursor" || provider === "cursor-cli-oauth") && !ctx.isIdle()) {
 			getLogger(ctx).debug("skip_cursor_mid_turn", { route: "blocking" });
