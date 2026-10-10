@@ -13,6 +13,7 @@ import {
 import { clampThinkingLevel } from "../models.ts";
 import type {
 	ImageContent,
+	Message,
 	Model,
 	ProviderNativeContent,
 	StopReason,
@@ -20,6 +21,7 @@ import type {
 	TextContent,
 	ThinkingLevel,
 	Tool,
+	ToolCall,
 	TranscriptContext,
 } from "../types.ts";
 import { retryProviderRequest } from "../utils/provider-retry.ts";
@@ -215,6 +217,19 @@ function appendContent(contents: Content[], content: Content): void {
 	contents.push(content);
 }
 
+function findLastUserTextMessageIndex(messages: Message[]): number {
+	for (let i = messages.length - 1; i >= 0; i--) {
+		const msg = messages[i];
+		if (msg.role !== "user") continue;
+		if (typeof msg.content === "string") {
+			if (msg.content.trim().length > 0) return i;
+		} else if (msg.content.some((item) => item.type === "text" && item.text.trim().length > 0)) {
+			return i;
+		}
+	}
+	return -1;
+}
+
 /**
  * Convert internal messages to Gemini Content[] format.
  */
@@ -238,7 +253,10 @@ export function convertMessages<T extends GoogleApiType>(
 		preserveThinking: options.preserveThinking,
 	});
 
-	for (const msg of transformedMessages) {
+	const lastUserTextIndex = findLastUserTextMessageIndex(transformedMessages);
+
+	for (let msgIndex = 0; msgIndex < transformedMessages.length; msgIndex++) {
+		const msg = transformedMessages[msgIndex];
 		if (msg.role === "user") {
 			if (typeof msg.content === "string") {
 				appendContent(contents, {
@@ -269,18 +287,20 @@ export function convertMessages<T extends GoogleApiType>(
 			// Check if message is from same provider and model - only then keep thinking blocks
 			const isSameProviderAndModel = msg.provider === model.provider && msg.model === model.id;
 
-			// A step replays structured only when one of its tool calls carries a usable signature:
-			// parallel calls of one response legitimately keep the signature on the first part alone.
-			// Without any usable signature the whole step is replayed as text, because the documented
-			// skip_thought_signature_validator sentinel is rejected by Vertex (pi-mono #4032) and an
-			// unsigned functionCall part is a hard 400 on Gemini 3+.
+			// Strict validation (requiring a thoughtSignature on the first functionCall part) applies
+			// to the current turn — assistant steps after the last user message with text content.
+			// Earlier turns preserve structured function calls. In the current turn, if the first
+			// toolCall block lacks a valid signature, the whole step is replayed as text, because
+			// the documented skip_thought_signature_validator sentinel is rejected by Vertex (pi-mono #4032)
+			// and an unsigned functionCall part is a hard 400 on Gemini 3+.
+			const isCurrentTurn = msgIndex > lastUserTextIndex;
+			const firstToolCall = msg.content.find((b): b is ToolCall => b.type === "toolCall");
+			const hasValidFirstSignature =
+				firstToolCall !== undefined &&
+				resolveThoughtSignature(isSameProviderAndModel, firstToolCall.thoughtSignature) !== undefined;
+
 			const replayUnsignedToolCallsAsText =
-				requiresThoughtSignatureReplay(model.id) &&
-				!msg.content.some(
-					(block) =>
-						block.type === "toolCall" &&
-						resolveThoughtSignature(isSameProviderAndModel, block.thoughtSignature) !== undefined,
-				);
+				requiresThoughtSignatureReplay(model.id) && isCurrentTurn && !hasValidFirstSignature;
 
 			for (const block of msg.content) {
 				if (block.type === "text") {
@@ -319,7 +339,7 @@ export function convertMessages<T extends GoogleApiType>(
 						textToolCallIds.add(block.id);
 						parts.push({
 							text: sanitizeSurrogates(
-								`[Tool Call: ${block.name}]\nArguments: ${JSON.stringify(block.arguments ?? {}, null, 2)}`,
+								`[Tool Call: ${block.name} (id: ${block.id})]\nArguments: ${JSON.stringify(block.arguments ?? {}, null, 2)}`,
 							),
 						});
 					} else {
@@ -347,26 +367,41 @@ export function convertMessages<T extends GoogleApiType>(
 			// Extract text and image content
 			const textContent = msg.content.filter((c): c is TextContent => c.type === "text");
 			const textResult = textContent.map((c) => c.text).join("\n");
+			const allImageBlocks = msg.content.filter((c): c is ImageContent => c.type === "image");
+			const modelAcceptsImages = model.input.includes("image");
+			const imageContent = modelAcceptsImages ? allImageBlocks : [];
+
+			const imageParts: Part[] = imageContent.map((imageBlock) => ({
+				inlineData: {
+					mimeType: imageBlock.mimeType,
+					data: imageBlock.data,
+				},
+			}));
+
+			const sanitizedToolName = sanitizeSurrogates(msg.toolName);
 
 			// A tool call replayed as text pairs with its result as text: an unpaired
 			// functionResponse part would break the model turn's call/response pairing.
 			if (textToolCallIds.has(msg.toolCallId)) {
-				const imageContent = model.input.includes("image")
-					? msg.content.filter((c): c is ImageContent => c.type === "image")
-					: [];
-				let body = "(no output)";
-				if (textResult.length > 0) body = sanitizeSurrogates(textResult);
-				else if (imageContent.length > 0) body = "(see attached image)";
+				let bodyText = "";
+				if (textResult.length > 0) {
+					bodyText = `\n${sanitizeSurrogates(textResult)}`;
+				} else if (allImageBlocks.length > 0 && !modelAcceptsImages) {
+					bodyText = "\n(see attached image)";
+				} else if (allImageBlocks.length === 0) {
+					bodyText = "\n(no output)";
+				}
 				const errorMarker = msg.isError ? " (error)" : "";
+				const callIdPart = ` (id: ${msg.toolCallId})`;
 				appendContent(contents, {
 					role: "user",
-					parts: [{ text: `[Tool Result: ${msg.toolName}]${errorMarker}\n${body}` }],
+					parts: [
+						{ text: `[Tool Result: ${sanitizedToolName}${callIdPart}]${errorMarker}${bodyText}` },
+						...imageParts,
+					],
 				});
 				continue;
 			}
-			const imageContent = model.input.includes("image")
-				? msg.content.filter((c): c is ImageContent => c.type === "image")
-				: [];
 
 			const hasText = textResult.length > 0;
 			const hasImages = imageContent.length > 0;
@@ -379,17 +414,10 @@ export function convertMessages<T extends GoogleApiType>(
 			// Use "output" key for success, "error" key for errors as per SDK documentation
 			const responseValue = hasText ? sanitizeSurrogates(textResult) : hasImages ? "(see attached image)" : "";
 
-			const imageParts: Part[] = imageContent.map((imageBlock) => ({
-				inlineData: {
-					mimeType: imageBlock.mimeType,
-					data: imageBlock.data,
-				},
-			}));
-
 			const includeId = requiresToolCallId(model.id);
 			const functionResponsePart: Part = {
 				functionResponse: {
-					name: msg.toolName,
+					name: sanitizedToolName,
 					response: msg.isError ? { error: responseValue } : { output: responseValue },
 					...(hasImages && modelSupportsMultimodalFunctionResponse && { parts: imageParts }),
 					...(includeId ? { id: msg.toolCallId } : {}),
