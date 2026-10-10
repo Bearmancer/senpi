@@ -1,5 +1,26 @@
 # senpi-codemode fork changes
 
+## 2026-10-09 - Benchmark CPU includes result serialization (Refs senpi#3048)
+
+### What changed
+
+- `packages/senpi-codemode/scripts/bench-session.ts`, `scripts/bench-process-cpu.ts`, `scripts/bench-process-cpu.py`: obtain interpreter identity from the completed probe result, then read cumulative process CPU on the host. Darwin converts native Mach units; Linux converts process ticks; Node uses the already-required Python reader.
+- `packages/senpi-codemode/scripts/bench-cpu-contract.ts`, `scripts/bench-runtime.ts`, `scripts/bench-worker.ts`, `scripts/bench-eval.ts`, `scripts/bench-rescore.ts`: tag post-result CPU reports and reject legacy saved samples that cannot reconstruct serialization work.
+- `packages/senpi-codemode/scripts/bench-measure.ts`, `scripts/bench-scenarios-latency.ts`, `scripts/bench-scenarios-crash.ts`, `scripts/bench-compare.ts`, `scripts/bench-head-budget.ts`, `scripts/bench-validate.ts`, `scripts/bench-inject.ts`: retain PID-delta aggregation, millisecond units, comparator/budget arithmetic and injection semantics on complete post-result snapshots.
+- Tests cover cold work before evaluation and during encoding, flush/receive ordering, legacy-report refusal and updated runtime-report fixtures.
+
+### Why
+
+- An interpreter's embedded CPU clock is evaluated before its result is encoded. Startup reporting moved cold heterogeneous-Dict encoding before that clock, so old live samples compared different boundaries.
+
+### Why an extension could not handle it
+
+- The benchmark owns CPU sampling and saved-report provenance; runtime behavior is unchanged.
+
+### Expected merge conflict zones
+
+- Benchmark probe, report schemas and saved-report fixture metadata. No kernel protocol, progress, interrupt or runtime encoder changes.
+
 ## 2026-10-09 - Reduce Python per-cell queue and capture bookkeeping (senpi#3034)
 
 ### What changed
