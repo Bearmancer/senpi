@@ -1,3 +1,21 @@
+## 2026-10-09 - Stale goal display projects paused status (senpi#3026)
+
+### What changed
+
+- `packages/coding-agent/src/modes/app-server/threads/goal-wire.ts`: uses the builtin goal's display-status projection so a stale-stopped goal reports `ThreadGoal.status: "paused"` while retaining its committed tokens/time. Other statuses and the generated protocol shape are unchanged.
+
+### Why
+
+The app-server wire shape has no separate stale-stop status. Reporting active while goal accounting and continuation are stopped misleads desktop clients.
+
+### Why an extension could not handle it
+
+The thread-goal adapter owns the app-server response and notification projection outside the extension renderer.
+
+### Expected merge conflict zones
+
+`threads/goal-wire.ts` status mapping. Keep this projection read-only; the stored active-plus-marker state still governs accepted-input/resume behavior.
+
 ## 2026-10-09 - Explicit UTC process identity probes (senpi#3045)
 
 ### What changed
