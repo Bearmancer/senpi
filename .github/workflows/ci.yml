@@ -740,6 +740,41 @@ jobs:
             echo "- Status: ${{ job.status }}"
           } >> "$GITHUB_STEP_SUMMARY"
 
+  rpc-owner-lifetime:
+    name: RPC supervisor exit (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+          cache: npm
+      - name: Require the POSIX exit-event compiler
+        shell: bash
+        run: |
+          command -v cc >/dev/null || { echo "::error::Missing C compiler 'cc' on PATH for POSIX process-exit tests"; exit 1; }
+          cc --version
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+      - name: Build workspace package entries
+        run: npm run build
+      - name: Supervisor owner, normal-stop and compiler regressions
+        working-directory: packages/coding-agent
+        run: >
+          npx vitest run
+          test/suite/regressions/3044-rpc-owner-lifetime.test.ts
+          test/suite/regressions/3045-owner-review.test.ts
+          test/suite/regressions/3054-supervisor-child-exit.test.ts
+          test/suite/regressions/3054-process-exit-compiler.test.ts
+          test/suite/regressions/3054-legacy-drain-deadline.test.ts
+
   # Fan-in gate carrying the exact context name branch protection requires
   # ("Check and test"). It succeeds only when every check/test job above passed,
   # so the required-status contract is unchanged while the work runs in parallel.
@@ -750,6 +785,7 @@ jobs:
         check,
         codemode-gate,
         test-coding-agent,
+        rpc-owner-lifetime,
         grep-native-contract,
         hooks-trust-storage-windows,
         schedule-windows,
@@ -785,6 +821,7 @@ jobs:
             echo "- check: ${{ needs.check.result }}"
             echo "- codemode-gate: ${{ needs.codemode-gate.result }}"
             echo "- test-coding-agent: ${{ needs.test-coding-agent.result }}"
+            echo "- rpc-owner-lifetime: ${{ needs.rpc-owner-lifetime.result }}"
             echo "- grep-native-contract: ${{ needs.grep-native-contract.result }}"
             echo "- hooks-trust-storage-windows: ${{ needs.hooks-trust-storage-windows.result }}"
             echo "- schedule-windows: ${{ needs.schedule-windows.result }}"
