@@ -8,6 +8,18 @@
 
 ### Changed
 
+### Fixed
+
+### Removed
+
+## [2026.10.11] - 2026-10-11
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
 - The bundled model catalog is refreshed from models.dev and the providers' model listings (`openrouter`).
 
 ### Fixed
