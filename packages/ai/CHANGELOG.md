@@ -10,6 +10,8 @@
 
 ### Fixed
 
+- Fixed Gemini 3+ (Vertex and AI Studio) rejecting replayed tool-call history with 400 "Function call is missing a thought_signature in functionCall parts". When an assistant step in the current turn lacks a usable thought signature on its first tool call, calls and paired results replay as text with inline image support; earlier turns and steps with a valid first signature retain structured replay. The current turn ends at the last user message carrying content, an image-only user turn included.
+
 ### Removed
 
 ## [2026.10.11] - 2026-10-11
@@ -25,7 +27,6 @@
 ### Fixed
 
 - OpenAI models served through a Responses-compatible gateway (an `openai` provider whose `baseUrl` is not `api.openai.com`) no longer fail every turn with `Invalid value: 'allowed_tools'`. `tool_choice: allowed_tools` is sent only to the native endpoint; elsewhere requests carry only the active tools. If an endpoint still rejects the choice, the request is retried once with only the active tools and later requests to that model use that shape directly ([#3080](https://github.com/code-yeongyu/senpi/issues/3080)).
-- Fixed Gemini 3+ (Vertex and AI Studio) rejecting replayed tool-call history with 400 "Function call is missing a thought_signature in functionCall parts". When an assistant step in the current turn lacks a usable thought signature on its first tool call, calls and paired results replay as text with inline image support; earlier turns and steps with a valid first signature retain structured replay. The current turn ends at the last user message carrying content, an image-only user turn included.
 
 ### Removed
 
