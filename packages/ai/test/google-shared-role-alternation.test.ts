@@ -72,7 +72,16 @@ describe("google-shared role alternation (#2114)", () => {
 		const context: Context = {
 			messages: [
 				{ role: "user", content: "Read the file", timestamp: Date.now() },
-				assistant([{ type: "toolCall", id: "call_a", name: "read", arguments: { path: "a.txt" } }]),
+				assistant([
+					{
+						type: "toolCall",
+						id: "call_a",
+						name: "read",
+						arguments: { path: "a.txt" },
+						// Signed, so the structured functionResponse path under test stays on the wire (#3633).
+						thoughtSignature: "AAAAAAAAAAAAAAAAAAAAAA==",
+					},
+				]),
 				{
 					role: "toolResult",
 					toolCallId: "call_a",
@@ -90,8 +99,9 @@ describe("google-shared role alternation (#2114)", () => {
 		expect(contents.map((content) => content.role)).toEqual(["user", "model", "user"]);
 		const parts = contents[2].parts ?? [];
 		expect(parts).toHaveLength(2);
-		expect(parts[0]?.functionResponse?.response).toEqual({ output: "alpha" });
-		expect(parts[1]).toEqual({ text: "Now summarize it" });
+		// Gemini 3+ requires the function responses to close the turn (#3633).
+		expect(parts[0]).toEqual({ text: "Now summarize it" });
+		expect(parts[1]?.functionResponse?.response).toEqual({ output: "alpha" });
 	});
 
 	it("leaves an already alternating conversation unchanged", () => {

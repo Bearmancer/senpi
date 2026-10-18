@@ -277,10 +277,12 @@ describe("google-shared convertMessages — Gemini 3 unsigned tool calls", () =>
 			id: "call_old",
 		});
 
-		// Turn 1 user tool response: should be structured functionResponse
+		// Turn 1 user tool response: should be structured functionResponse, with the folded
+		// turn-2 prompt in front of it (#3633)
 		const oldUserTurn = contents[2];
 		expect(oldUserTurn?.role).toBe("user");
-		expect(oldUserTurn?.parts?.[0]?.functionResponse).toEqual({
+		expect(oldUserTurn?.parts?.[0]?.text).toBe("turn 2 prompt");
+		expect(oldUserTurn?.parts?.[1]?.functionResponse).toEqual({
 			name: "bash",
 			response: { output: "old output" },
 			id: "call_old",

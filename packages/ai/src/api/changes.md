@@ -1,3 +1,21 @@
+## 2026-10-18 - Keep a tool-result turn acceptable to Gemini after a user message (senpi#3633)
+
+### What changed
+
+- `packages/ai/src/api/google-shared.ts`: `appendContent` inserts a folded turn's parts in front of an existing function-response run instead of after it, and `convertMessages` takes the last assistant message carrying content as the live model turn for thought-signature replay (`findLiveModelTurnIndex`) instead of only the assistant steps after the last user message.
+
+### Why
+
+senpi#3633: Vertex answers `400 Requests ending with a model turn are not supported.` for a user turn whose functionResponse parts are followed by a text part, which is what folding a user message that follows tool results into that turn produced. The same trailing user message also pushed the producing step out of the current turn, so its unsigned functionCall parts were replayed structured and Gemini 3+ answered `400 Function call is missing a thought_signature in functionCall parts`.
+
+### Why an extension could not handle it
+
+The conversion to Gemini `contents` happens inside `pi-ai`; an extension cannot reorder parts or re-classify a request before it leaves the adapter.
+
+### Expected merge conflict zones
+
+- LOW: `packages/ai/src/api/google-shared.ts`, `appendContent`, `findLiveModelTurnIndex` and the `isCurrentTurn` computation in `convertMessages`.
+
 ## 2026-10-14 - Shared Vertex ADC resolution for Model Garden open models
 
 ### What changed

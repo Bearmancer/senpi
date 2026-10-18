@@ -211,10 +211,29 @@ function supportsMultimodalFunctionResponse(modelId: string): boolean {
 // results, the Gemini < 3 tool-result image turn), so a turn whose role matches the previous one is folded into it
 // with its parts kept in order. This also keeps every function response of one model turn in a single user turn,
 // which Cloud Code Assist requires.
-function appendContent(contents: Content[], content: Content): void {
+// Gemini 3+ (Vertex and AI Studio) reads a user turn whose functionResponse parts are followed by
+// other parts as a malformed model turn (400 "Requests ending with a model turn are not supported"),
+// so parts folded into such a turn go in front of its function responses. Gemini 2.5 accepts the
+// same shape, and its tool-result image turn is pinned to stay after the responses, so only the
+// models that enforce the ordering are reordered.
+function requiresFunctionResponsesLast(modelId: string): boolean {
+	const geminiMajorVersion = getGeminiMajorVersion(modelId);
+	return geminiMajorVersion !== undefined && geminiMajorVersion >= 3;
+}
+
+function appendContent(contents: Content[], content: Content, reorderFunctionResponses: boolean): void {
 	const previous = contents[contents.length - 1];
 	if (previous?.role === content.role && previous.parts && content.parts) {
-		previous.parts.push(...content.parts);
+		const incomingHasFunctionResponse = content.parts.some((part) => part.functionResponse !== undefined);
+		const firstFunctionResponse =
+			!reorderFunctionResponses || incomingHasFunctionResponse
+				? -1
+				: previous.parts.findIndex((part) => part.functionResponse !== undefined);
+		if (firstFunctionResponse === -1) {
+			previous.parts.push(...content.parts);
+			return;
+		}
+		previous.parts.splice(firstFunctionResponse, 0, ...content.parts);
 		return;
 	}
 	contents.push(content);
@@ -233,6 +252,17 @@ function findLastUserContentMessageIndex(messages: Message[]): number {
 		} else if (msg.content.some((item) => (item.type === "text" ? item.text.trim().length > 0 : true))) {
 			return i;
 		}
+	}
+	return -1;
+}
+
+// The server validates thought signatures on the live model turn only: the last assistant message
+// that carries content, whether or not a user message follows its tool results. A trailing user
+// message must not demote that step to history, or its unsigned function calls 400 on Gemini 3+.
+function findLiveModelTurnIndex(messages: Message[]): number {
+	for (let i = messages.length - 1; i >= 0; i--) {
+		const msg = messages[i];
+		if (msg.role === "assistant" && msg.content.length > 0) return i;
 	}
 	return -1;
 }
@@ -261,12 +291,15 @@ export function convertMessages<T extends GoogleApiType>(
 	});
 
 	const lastUserContentIndex = findLastUserContentMessageIndex(transformedMessages);
+	const liveModelTurnIndex = findLiveModelTurnIndex(transformedMessages);
+	const reorderFunctionResponses = requiresFunctionResponsesLast(model.id);
+	const append = (content: Content): void => appendContent(contents, content, reorderFunctionResponses);
 
 	for (let msgIndex = 0; msgIndex < transformedMessages.length; msgIndex++) {
 		const msg = transformedMessages[msgIndex];
 		if (msg.role === "user") {
 			if (typeof msg.content === "string") {
-				appendContent(contents, {
+				append({
 					role: "user",
 					parts: [{ text: sanitizeSurrogates(msg.content) }],
 				});
@@ -284,7 +317,7 @@ export function convertMessages<T extends GoogleApiType>(
 					}
 				});
 				if (parts.length === 0) continue;
-				appendContent(contents, {
+				append({
 					role: "user",
 					parts,
 				});
@@ -295,12 +328,13 @@ export function convertMessages<T extends GoogleApiType>(
 			const isSameProviderAndModel = msg.provider === model.provider && msg.model === model.id;
 
 			// Strict validation (requiring a thoughtSignature on the first functionCall part) applies
-			// to the current turn — assistant steps after the last user message carrying content.
-			// Earlier turns preserve structured function calls. In the current turn, if the first
-			// toolCall block lacks a valid signature, the whole step is replayed as text, because
-			// the documented skip_thought_signature_validator sentinel is rejected by Vertex (pi-mono #4032)
-			// and an unsigned functionCall part is a hard 400 on Gemini 3+.
-			const isCurrentTurn = msgIndex > lastUserContentIndex;
+			// to the live model turn - the last assistant message carrying content, which a trailing
+			// user message does not push into history. Earlier turns preserve structured function
+			// calls. In the live turn, if the first toolCall block lacks a valid signature, the whole
+			// step is replayed as text, because the documented skip_thought_signature_validator
+			// sentinel is rejected by Vertex (pi-mono #4032) and an unsigned functionCall part is a
+			// hard 400 on Gemini 3+.
+			const isCurrentTurn = msgIndex > lastUserContentIndex || msgIndex === liveModelTurnIndex;
 			const firstToolCall = msg.content.find((b): b is ToolCall => b.type === "toolCall");
 			const hasValidFirstSignature =
 				firstToolCall !== undefined &&
@@ -366,7 +400,7 @@ export function convertMessages<T extends GoogleApiType>(
 			}
 
 			if (parts.length === 0) continue;
-			appendContent(contents, {
+			append({
 				role: "model",
 				parts,
 			});
@@ -402,7 +436,7 @@ export function convertMessages<T extends GoogleApiType>(
 				}
 				const errorMarker = msg.isError ? " (error)" : "";
 				const callIdPart = ` (id: ${msg.toolCallId})`;
-				appendContent(contents, {
+				append({
 					role: "user",
 					parts: [
 						{ text: `[Tool Result: ${sanitizedToolName}${callIdPart}]${errorMarker}${bodyText}` },
@@ -433,14 +467,14 @@ export function convertMessages<T extends GoogleApiType>(
 				},
 			};
 
-			appendContent(contents, {
+			append({
 				role: "user",
 				parts: [functionResponsePart],
 			});
 
 			// For Gemini < 3, images follow the function response as plain parts of the same user turn
 			if (hasImages && !modelSupportsMultimodalFunctionResponse) {
-				appendContent(contents, {
+				append({
 					role: "user",
 					parts: [{ text: "Tool result image:" }, ...imageParts],
 				});
