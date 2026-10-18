@@ -4,6 +4,7 @@
 
 - RPC `get_pending_inputs` reads the inputs in durable custody with an explicit outcome per known id, and `pending_input_update` publishes each change with its journal cursor; the module is also exported as `@code-yeongyu/senpi/pending-input` ([#3549](https://github.com/code-yeongyu/senpi/issues/3549)).
 - Queued input with a client id is kept in durable custody: it is journaled in the session file before it is queued, delivered only after its consumption is recorded, and edited or removed in its record and the queue together; a repeated identical submit queues it once and a reused id with another payload is refused ([#3549](https://github.com/code-yeongyu/senpi/issues/3549)).
+- Terminal background sessions publish their wake snapshots to RPC clients: the `terminal-background-sessions` payload now also crosses `pi.rpc.emit`, so a supervisor can see that a session's own background jobs are still running after its turn ended ([#3492](https://github.com/code-yeongyu/senpi/issues/3492)).
 
 ### Breaking Changes
 
