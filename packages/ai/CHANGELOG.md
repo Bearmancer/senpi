@@ -8,6 +8,8 @@
 
 ### Changed
 
+- The bundled model catalog is refreshed from models.dev and the providers' model listings (`alibaba-token-plan`, `amazon-bedrock`, `azure-openai-responses`, `baseten`, `cerebras`, `cloudflare-ai-gateway`, `cloudflare-workers-ai`, `fireworks`, `github-copilot`, `google`, `groq`, `huggingface`, `minimax`, `minimax-cn`, `mistral`, `moonshotai-cn`, `nvidia`, `openai`, `opencode`, `opencode-go`, `opengateway`, `openrouter`, `qwen-token-plan`, `qwen-token-plan-cn`, `radius`, `together`, `venice`, `vercel-ai-gateway`, `xai`).
+
 ### Fixed
 
 - ChatGPT browser login no longer dead-ends on "State mismatch." when another session or an earlier attempt still holds the callback port: a new login asks the old listener to let go (as Codex CLI does), falls back to port 1457, always closes its own listener, and says plainly when the address has to be pasted. Reported by 채완 ([#3623](https://github.com/code-yeongyu/senpi/issues/3623)).
